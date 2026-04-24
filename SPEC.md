@@ -22,8 +22,12 @@ subtitle: "where the users are the developers are the users are the developers..
 
 ### URLs
 
-- Production apps: `appname.usernode.evanshapiro.dev`
-- Staging: `appname--username--abc123.usernode.evanshapiro.dev` (first 6 chars of commit hash)
+- Production apps: `appname.<USERNODE_DOMAIN>`
+- Staging: `appname--username--abc123.<USERNODE_DOMAIN>` (first 6 chars of commit hash)
+
+where `USERNODE_DOMAIN` is the hostname this instance is deployed at
+(set via env var; see `.env.example` and README). Wildcard DNS for
+`*.<USERNODE_DOMAIN>` is required so Caddy can issue per-app certs.
 
 ### Container Limits
 
@@ -118,15 +122,22 @@ The template is a stripped-down recipe-bot: Node.js/Express + single HTML page +
 
 ## Deploy Checklist
 
-### 1. Hetzner DNS
+> **Two deploy paths.** The steps below describe the *original*
+> `evanshapi.ro`-monorepo deploy, where Usernode is one of several
+> projects orchestrated by a shared `orchestrate.sh` + shared Caddy.
+> For the **standalone** deploy (dedicated VPS, self-contained
+> `docker-compose.yml`, the long-term home) see
+> [`README.md` → Standalone deployment](./README.md#standalone-deployment).
+> Most of sections 2–6 below (GitHub App registration, activation
+> codes, verification smoke test) apply to both paths.
 
-Add a wildcard A record in [Hetzner DNS Console](https://dns.hetzner.com):
+### 1. DNS (either path)
 
-| Type | Name | Value |
-|------|------|-------|
-| A | *.usernode | (your VPS IP) |
-
-This routes all `*.usernode.evanshapiro.dev` traffic to the VPS. Allow up to 10 minutes for propagation.
+Point an A record for `<USERNODE_DOMAIN>` and a wildcard A record for
+`*.<USERNODE_DOMAIN>` at the VPS IP. For the monorepo path that's
+`usernode` and `*.usernode` under `evanshapiro.dev` in [Hetzner
+DNS](https://dns.hetzner.com); for standalone it's whatever domain
+you've picked. Allow up to 10 minutes for propagation.
 
 ### 2. GitHub Bot Account
 

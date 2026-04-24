@@ -1,0 +1,127 @@
+# Standalone production stack for Usernode Social Vibecoding.
+#
+# Lives on a dedicated VPS at the domain set in `.env` (USERNODE_DOMAIN).
+# Three services: Caddy (TLS + reverse proxy), the platform itself,
+# and Postgres for platform data. Child apps are spawned at runtime by
+# the platform onto the same Docker network (`usernode-net`), so Caddy
+# can reach them by container name without any extra config.
+#
+# This compose file is consumed by .github/workflows/deploy.yml during
+# deploys. For local dev, see README.md.
+
+name: usernode
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Shared with the usernode service so it can write per-app route
+      # blocks (myapp.<USERNODE_DOMAIN> { reverse_proxy ... }) and
+      # reload Caddy via `docker exec caddy caddy reload`.
+      - caddy-runtime:/etc/caddy/runtime
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      # Caddyfile uses {$USERNODE_DOMAIN} substitution for the main
+      # vhost. Must be set in Caddy's process env at config-load time.
+      USERNODE_DOMAIN: ${USERNODE_DOMAIN}
+    networks:
+      - usernode-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: "0.5"
+
+  usernode:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-dev}
+    container_name: usernode
+    restart: unless-stopped
+    networks:
+      - usernode-net
+    expose:
+      - "3000"
+    env_file:
+      - ./.env
+    environment:
+      # Tell the platform which Docker network to spawn child apps on
+      # so Caddy can reach them, and which file path to write Caddy
+      # route blocks into. Both are read by src/services/{docker,
+      # caddy,worker}.js. Override DATABASE_URL inline to point at
+      # the in-compose Postgres service instead of project-usernode-db.
+      DOCKER_NETWORK: usernode-net
+      USERNODE_CONF_PATH: /etc/caddy/runtime/usernode.conf
+      DATABASE_URL: postgres://usernode:${USERNODE_DB_PASSWORD}@usernode-db:5432/usernode
+    volumes:
+      # Required: the platform spawns child-app containers via the
+      # host Docker daemon. Standard Usernode pattern.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Shared with Caddy — see comment on caddy service.
+      - caddy-runtime:/etc/caddy/runtime
+    depends_on:
+      usernode-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "1"
+    security_opt:
+      - no-new-privileges:true
+
+  usernode-db:
+    image: postgres:17-alpine
+    container_name: usernode-db
+    restart: unless-stopped
+    networks:
+      - usernode-net
+    volumes:
+      - usernode-db-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: usernode
+      POSTGRES_USER: usernode
+      POSTGRES_PASSWORD: ${USERNODE_DB_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U usernode"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "1"
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  usernode-net:
+    name: usernode-net
+    driver: bridge
+
+volumes:
+  caddy-runtime:
+  caddy-data:
+  caddy-config:
+  usernode-db-data:

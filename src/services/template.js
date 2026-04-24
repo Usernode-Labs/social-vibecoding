@@ -70,6 +70,16 @@ const DEV_CONSOLE_FORWARDER = `
   })();
   </script>`;
 
+// Resolved at module-load: which Usernode platform domain do we
+// inject into scaffolded apps? Apps need to point users back to the
+// platform that hosts them (the "Open in Usernode" landing page) and
+// reference its `/claude.md` URL. Driven by USERNODE_DOMAIN env so a
+// fork running at e.g. social-vibecoding.usernodelabs.org templates
+// the right URL into its child apps. Fallback covers the historical
+// monorepo deploy.
+const PLATFORM_DOMAIN = process.env.USERNODE_DOMAIN || 'usernode.evanshapiro.dev';
+const PLATFORM_BASE_URL = `https://${PLATFORM_DOMAIN}`;
+
 function getTemplateFiles(appName, slug, dbUrl, jwtSecret) {
   return [
     {
@@ -81,7 +91,7 @@ editing this repo, read the platform conventions before making
 changes:
 
 **Platform conventions (authoritative, always current):**
-https://usernode.evanshapiro.dev/claude.md
+${PLATFORM_BASE_URL}/claude.md
 
 Fetch that URL at the start of each session — it's the single source
 of truth for platform-wide behavior (auth model, \`USERNODE_ENV\`,
@@ -231,7 +241,7 @@ app.get('*', (req, res) => {
   <div style="max-width:24rem;padding:2rem;text-align:center">
     <h1 style="font-size:1.25rem;margin:0 0 0.5rem">Open this app inside Usernode</h1>
     <p style="color:#a1a1aa;font-size:0.9rem;margin:0 0 1.25rem">This page is served via the platform; direct visits aren't authenticated.</p>
-    <a href="https://usernode.evanshapiro.dev" style="display:inline-block;padding:0.5rem 1rem;background:#7c3aed;color:white;border-radius:0.5rem;text-decoration:none;font-size:0.9rem">Go to Usernode</a>
+    <a href="${PLATFORM_BASE_URL}" style="display:inline-block;padding:0.5rem 1rem;background:#7c3aed;color:white;border-radius:0.5rem;text-decoration:none;font-size:0.9rem">Go to Usernode</a>
   </div>
 </body>\`);
   }

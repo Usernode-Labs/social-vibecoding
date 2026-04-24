@@ -981,10 +981,10 @@ public/private tables, USERNODE_ENV, do-not-push, etc.) the block above
 is authoritative and overrides CLAUDE.md if they conflict.
 
 The repo's \`CLAUDE.md\` may reference a hosted copy of the platform
-conventions at \`https://usernode.evanshapiro.dev/claude.md\` — in
-dev-chat you already have those rules injected above, so ignore that
-instruction here. It's for humans or Claude Code invocations that run
-against this repo outside the harness.
+conventions at \`https://${process.env.USERNODE_DOMAIN || 'usernode.evanshapiro.dev'}/claude.md\` —
+in dev-chat you already have those rules injected above, so ignore
+that instruction here. It's for humans or Claude Code invocations
+that run against this repo outside the harness.
 
 INSTRUCTIONS:
 - IMPLEMENT the requested changes fully. Do not just explore — write code.

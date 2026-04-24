@@ -1,0 +1,83 @@
+name: Deploy
+
+# Standalone deploy for Usernode Social Vibecoding.
+#
+# Targets a dedicated VPS (see README — "Standalone deployment"). Code
+# is rsync'd to /opt/usernode, an `.env` is written from GitHub
+# secrets, then `docker compose up -d --build` brings the stack up.
+#
+# Triggers are currently manual-only (workflow_dispatch) so you can
+# verify the full deploy path end-to-end before enabling auto-deploy
+# on push-to-main. When ready, uncomment the `push` trigger below.
+
+on:
+  workflow_dispatch: {}
+  # push:
+  #   branches: [main]
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync repo to VPS
+        uses: easingthemes/ssh-deploy@v5.1.0
+        with:
+          SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          REMOTE_HOST: ${{ secrets.DEPLOY_HOST }}
+          REMOTE_USER: deploy
+          SOURCE: ./
+          TARGET: /opt/usernode/
+          # --delete keeps the remote tree a faithful mirror of this
+          # commit, but we exclude state + the on-server .env so they
+          # survive. .git/.github/node_modules are build-time only.
+          ARGS: "-avz --delete --exclude=.git --exclude=.github --exclude=node_modules --exclude=data --exclude=.env"
+
+      - name: Write .env and run docker compose
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: deploy
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/usernode
+
+            # Single-quoted heredoc: no shell expansion on the server.
+            # GitHub Actions has already substituted ${{ ... }} above,
+            # so the remote just sees literal key=value lines. Safer
+            # than double-quoted which would try to expand $-refs that
+            # might appear inside secrets (e.g. a $ sign in a password).
+            cat > .env <<'ENVEOF'
+            USERNODE_DOMAIN=${{ vars.USERNODE_DOMAIN }}
+            ADMIN_USERNAME=${{ secrets.USERNODE_ADMIN_USERNAME }}
+            ADMIN_PASSWORD=${{ secrets.USERNODE_ADMIN_PASSWORD }}
+            SESSION_SECRET=${{ secrets.USERNODE_SESSION_SECRET }}
+            JWT_SECRET=${{ secrets.USERNODE_JWT_SECRET }}
+            USERNODE_DB_PASSWORD=${{ secrets.USERNODE_DB_PASSWORD }}
+            GITHUB_APP_ID=${{ secrets.USERNODE_GITHUB_APP_ID }}
+            GITHUB_PRIVATE_KEY=${{ secrets.USERNODE_GITHUB_PRIVATE_KEY }}
+            GITHUB_BOT_TOKEN=${{ secrets.USERNODE_GITHUB_BOT_TOKEN }}
+            ANTHROPIC_API_KEY=${{ secrets.USERNODE_ANTHROPIC_API_KEY }}
+            LOG_LEVEL=INFO
+            GIT_SHA=${{ github.sha }}
+            ENVEOF
+            chmod 600 .env
+
+            # Bring everything up. Build is required on every deploy —
+            # the usernode image bakes in `COPY . .` so a rebuild is
+            # how new code gets in.
+            docker compose pull --ignore-buildable
+            docker compose up -d --build --remove-orphans
+
+            # Caddyfile is a read-only mount, so a rebuild of usernode
+            # alone won't restart caddy. Force a config reload so any
+            # Caddyfile changes from this deploy take effect. `|| true`
+            # because on the very first deploy caddy may not be fully
+            # up yet (it's racing with TLS issuance).
+            docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile || true

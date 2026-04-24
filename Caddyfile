@@ -1,0 +1,33 @@
+# Standalone Caddy config for Usernode Social Vibecoding.
+#
+# Domain is injected via {$USERNODE_DOMAIN} substitution — set in `.env`
+# and passed through by docker-compose. Per-app routes for child apps
+# (myapp.<USERNODE_DOMAIN>) are managed at runtime by the platform:
+# src/services/caddy.js writes route blocks into
+# /etc/caddy/runtime/usernode.conf and runs `caddy reload`. The glob
+# import below is tolerant of that file not existing yet.
+#
+# TLS: Caddy auto-issues Let's Encrypt certs for every hostname it
+# sees, including the per-app subdomains. For this to work, DNS for
+# *.<USERNODE_DOMAIN> must resolve to this VPS.
+
+# ── Main platform ────────────────────────────────────────────────
+{$USERNODE_DOMAIN} {
+	reverse_proxy usernode:3000
+
+	encode gzip
+
+	handle_errors {
+		respond "{err.status_code} {err.status_text}"
+	}
+}
+
+# ── Child-app routes (managed by the usernode platform itself) ───
+# src/services/caddy.js writes route blocks like:
+#
+#     myapp.<USERNODE_DOMAIN> {
+#         reverse_proxy usernode-app-myapp:3000
+#     }
+#
+# into /etc/caddy/runtime/usernode.conf and triggers a reload.
+import /etc/caddy/runtime/*.conf
