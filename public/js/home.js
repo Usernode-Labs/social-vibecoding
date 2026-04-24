@@ -1,0 +1,98 @@
+const Home = {
+  async load() {
+    const listEl = document.getElementById('app-list');
+    const emptyEl = document.getElementById('empty-state');
+
+    try {
+      const res = await fetch('/api/apps');
+      if (!res.ok) throw new Error('Failed to load apps');
+      const { apps } = await res.json();
+
+      if (apps.length === 0) {
+        listEl.innerHTML = '';
+        emptyEl.classList.remove('hidden');
+        return;
+      }
+
+      emptyEl.classList.add('hidden');
+      listEl.innerHTML = apps.map(Home.renderAppCard).join('');
+
+      listEl.querySelectorAll('.app-card').forEach((card) => {
+        card.addEventListener('click', (e) => {
+          if (e.target.closest('.retry-btn') || e.target.closest('.delete-btn')) return;
+          // Disabled while spinning up / errored — there's no iframe or
+          // chat history to render and the WS `app_status` handler will
+          // re-bind the card as soon as the container goes live.
+          if (card.dataset.status !== 'running') return;
+          App.navigateToApp(card.dataset.slug);
+        });
+      });
+
+      listEl.querySelectorAll('.retry-btn').forEach((btn) => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          btn.textContent = '...';
+          await fetch(`/api/apps/${btn.dataset.slug}/retry`, { method: 'POST' });
+          Home.load();
+        });
+      });
+
+      listEl.querySelectorAll('.delete-btn').forEach((btn) => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (!confirm('Delete this app?')) return;
+          btn.textContent = '...';
+          const res = await fetch(`/api/apps/${btn.dataset.slug}`, { method: 'DELETE' });
+          if (res.ok) {
+            btn.closest('.app-card').remove();
+          }
+          await Home.load();
+        });
+      });
+    } catch (err) {
+      listEl.innerHTML = `<div class="p-4 text-red-400 text-sm">Failed to load apps</div>`;
+    }
+  },
+
+  renderAppCard(app) {
+    const statusClass = app.status === 'running' ? 'running' : app.status === 'creating' ? 'creating' : 'error';
+    const statusLabel = app.status === 'running' ? '' : app.status === 'creating' ? 'Spinning up...' : 'Error';
+    const activity = parseInt(app.message_count || 0) + parseInt(app.total_seconds || 0);
+    const isError = app.status === 'error';
+    const isRunning = app.status === 'running';
+    const cursorClass = isRunning ? 'cursor-pointer' : 'cursor-not-allowed opacity-70';
+
+    return `
+      <div class="app-card px-4 py-3 ${cursorClass} flex items-center gap-3" data-slug="${app.slug}" data-status="${app.status}">
+        <div class="w-10 h-10 rounded-xl bg-violet-600/20 flex items-center justify-center text-violet-400 font-bold text-sm shrink-0">
+          ${app.name.charAt(0).toUpperCase()}
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="font-medium truncate">${escapeHtml(app.name)}</span>
+            <span class="status-dot ${statusClass}" title="${app.status}"></span>
+          </div>
+          ${statusLabel ? `<p class="text-xs text-yellow-500">${statusLabel}</p>` : ''}
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          ${!isError ? `<span class="text-xs text-zinc-500 dark:text-zinc-400">${formatActivity(activity)}</span>` : ''}
+          ${isError && (App.user?.isAdmin || App.user?.id === app.created_by) ? `<button class="retry-btn text-xs text-emerald-400 hover:text-emerald-300 px-1" data-slug="${app.slug}">Retry</button>` : ''}
+          ${App.user?.isAdmin ? `<button class="delete-btn text-xs text-red-400 hover:text-red-300 px-1" data-slug="${app.slug}">&times;</button>` : ''}
+        </div>
+      </div>
+    `;
+  },
+};
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function formatActivity(score) {
+  if (score === 0) return 'new';
+  if (score < 60) return `${score}s`;
+  if (score < 3600) return `${Math.floor(score / 60)}m`;
+  return `${Math.floor(score / 3600)}h`;
+}

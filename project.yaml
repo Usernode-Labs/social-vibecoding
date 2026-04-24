@@ -1,0 +1,8 @@
+name: usernode
+port: 3000
+healthcheck: /health
+subdomain: usernode
+env_file: .env
+memory: 512m
+cpus: 1
+volumes: /var/run/docker.sock:/var/run/docker.sock,./usernode.conf:/etc/caddy/usernode.conf

@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Usernode Social Vibecoding — Admin</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config = {
+    darkMode: 'class',
+    theme: { extend: { colors: {
+      zinc: { 50:'#f6f6fb',100:'#eeeef6',200:'#d4d4e4',300:'#b0b0c8',400:'#9898b0',500:'#6e6e8a',600:'#4e4e6a',700:'#484870',800:'#2e2e50',900:'#1a1a30',950:'#08080f' },
+      violet: { 400:'#a78bfa',500:'#8b5cf6',600:'#7c3aed',700:'#6d28d9' },
+    } } },
+  }</script>
+  <script>
+    if (localStorage.theme === 'light' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: light)').matches)) {
+      document.documentElement.classList.remove('dark');
+    }
+  </script>
+</head>
+<body class="bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 min-h-screen p-6">
+  <div class="max-w-2xl mx-auto">
+    <div class="flex items-center justify-between mb-8">
+      <h1 class="text-2xl font-bold">Admin Panel</h1>
+      <div class="flex items-center gap-3">
+        <a href="/status" class="text-sm text-violet-400 hover:text-violet-300">Full status &rarr;</a>
+        <a href="/" class="text-sm text-violet-400 hover:text-violet-300">&larr; Back to app</a>
+      </div>
+    </div>
+
+    <!-- Operations Overview -->
+    <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 mb-6 border border-zinc-200 dark:border-zinc-800">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-lg font-semibold">Operations</h2>
+        <button id="refresh-overview" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
+      </div>
+      <div class="grid grid-cols-3 gap-3 mb-4">
+        <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
+          <div class="text-xs uppercase tracking-wide text-zinc-500">Stuck apps</div>
+          <div id="overview-stuck" class="text-2xl font-bold mt-1">—</div>
+        </div>
+        <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
+          <div class="text-xs uppercase tracking-wide text-zinc-500">LLM spend today</div>
+          <div id="overview-llm" class="text-2xl font-bold mt-1">—</div>
+        </div>
+        <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
+          <div class="text-xs uppercase tracking-wide text-zinc-500">Orphan workers</div>
+          <div id="overview-orphan" class="text-2xl font-bold mt-1">—</div>
+        </div>
+      </div>
+      <div id="overview-details" class="space-y-3 text-sm"></div>
+    </div>
+
+    <!-- Activation Codes -->
+    <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 mb-6 border border-zinc-200 dark:border-zinc-800">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-lg font-semibold">Activation Codes</h2>
+        <button id="generate-code-btn" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Generate Code</button>
+      </div>
+      <div id="code-list" class="space-y-2"></div>
+      <p id="code-empty" class="text-sm text-zinc-500 hidden">No activation codes yet.</p>
+    </div>
+
+    <!-- User list -->
+    <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800">
+      <h2 class="text-lg font-semibold p-4 border-b border-zinc-200 dark:border-zinc-800">Users</h2>
+      <div id="user-list" class="divide-y divide-zinc-200 dark:divide-zinc-800"></div>
+    </div>
+  </div>
+
+  <script>
+    async function loadCodes() {
+      const res = await fetch('/api/admin/codes');
+      if (!res.ok) return;
+      const codes = await res.json();
+      renderCodes(codes);
+    }
+
+    function renderCodes(codes) {
+      const list = document.getElementById('code-list');
+      const empty = document.getElementById('code-empty');
+      list.innerHTML = '';
+
+      if (!codes.length) {
+        empty.classList.remove('hidden');
+        return;
+      }
+      empty.classList.add('hidden');
+
+      for (const code of codes) {
+        const el = document.createElement('div');
+        el.className = 'flex items-center justify-between gap-3 p-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800';
+
+        const used = !!code.used_by_username;
+        const codeDisplay = `<code class="font-mono text-sm ${used ? 'text-zinc-400 line-through' : 'text-violet-400'}">${escapeHtml(code.code)}</code>`;
+
+        let statusHtml;
+        if (used) {
+          const date = new Date(code.used_at).toLocaleDateString();
+          statusHtml = `<span class="text-xs text-zinc-500">Used by <strong class="text-zinc-400">${escapeHtml(code.used_by_username)}</strong> on ${date}</span>`;
+        } else {
+          statusHtml = `<span class="text-xs text-green-500">Available</span>`;
+        }
+
+        el.innerHTML = `
+          <div class="flex-1 flex items-center gap-3">
+            ${codeDisplay}
+            ${statusHtml}
+          </div>
+          <div class="flex items-center gap-2">
+            ${!used ? `<button class="copy-btn text-xs text-zinc-400 hover:text-violet-400 transition-colors" data-code="${escapeHtml(code.code)}">Copy</button>` : ''}
+            ${!used ? `<button class="share-btn text-xs text-zinc-400 hover:text-green-400 transition-colors" data-code="${escapeHtml(code.code)}">Share link</button>` : ''}
+            ${!used ? `<button class="delete-code-btn text-xs text-zinc-400 hover:text-red-400 transition-colors" data-id="${code.id}">&times;</button>` : ''}
+          </div>
+        `;
+        list.appendChild(el);
+      }
+
+      list.querySelectorAll('.copy-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          navigator.clipboard.writeText(btn.dataset.code);
+          btn.textContent = 'Copied!';
+          setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+        });
+      });
+
+      list.querySelectorAll('.share-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const url = `${location.origin}/register.html?code=${encodeURIComponent(btn.dataset.code)}`;
+          navigator.clipboard.writeText(url);
+          btn.textContent = 'Link copied!';
+          setTimeout(() => { btn.textContent = 'Share link'; }, 1500);
+        });
+      });
+
+      list.querySelectorAll('.delete-code-btn').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          await fetch(`/api/admin/codes/${btn.dataset.id}`, { method: 'DELETE' });
+          loadCodes();
+        });
+      });
+    }
+
+    document.getElementById('generate-code-btn').addEventListener('click', async () => {
+      await fetch('/api/admin/codes', { method: 'POST' });
+      loadCodes();
+    });
+
+    async function loadUsers() {
+      const res = await fetch('/api/admin/users');
+      if (res.status === 403) {
+        document.body.innerHTML = '<div class="flex items-center justify-center h-screen text-zinc-500">Admin access required</div>';
+        return;
+      }
+      if (!res.ok) return;
+      const users = await res.json();
+      renderUsers(users);
+    }
+
+    function renderUsers(users) {
+      const list = document.getElementById('user-list');
+      list.innerHTML = '';
+
+      for (const user of users) {
+        const el = document.createElement('div');
+        el.className = 'p-4 flex items-center gap-4';
+
+        const codeInfo = user.activation_code
+          ? `<span class="text-xs text-zinc-500">code: <code class="text-zinc-400">${escapeHtml(user.activation_code)}</code></span>`
+          : user.is_admin ? '' : '';
+
+        const costToday = (parseFloat(user.cost_today_cents || 0) / 100).toFixed(2);
+
+        el.innerHTML = `
+          <div class="flex-1">
+            <div class="font-medium">${escapeHtml(user.username)}${user.is_admin ? ' <span class="text-xs text-violet-400 ml-1">admin</span>' : ''}</div>
+            <div class="text-sm text-zinc-500">$${costToday} spent today ${codeInfo}</div>
+          </div>
+          ${!user.is_admin ? `<button data-delete-id="${user.id}" class="text-red-400 hover:text-red-300 text-sm delete-btn">Delete</button>` : ''}
+        `;
+        list.appendChild(el);
+      }
+
+      list.querySelectorAll('.delete-btn').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          if (!confirm('Delete this user? This will remove all their data.')) return;
+          const userId = btn.dataset.deleteId;
+          const res = await fetch(`/api/admin/users/${userId}`, { method: 'DELETE' });
+          if (res.ok) { loadUsers(); loadCodes(); }
+        });
+      });
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    async function loadOverview() {
+      const res = await fetch('/api/admin/overview');
+      if (!res.ok) return;
+      const data = await res.json();
+      renderOverview(data);
+    }
+
+    function renderOverview(data) {
+      const stuck = data.stuckApps || [];
+      const orphans = data.orphanWorkers || [];
+      const llm = data.llmToday || { totalSpendCents: 0, users: [] };
+
+      document.getElementById('overview-stuck').textContent = String(stuck.length);
+      document.getElementById('overview-orphan').textContent = String(orphans.length);
+      document.getElementById('overview-llm').textContent =
+        `$${(llm.totalSpendCents / 100).toFixed(2)}`;
+
+      const detail = document.getElementById('overview-details');
+      detail.innerHTML = '';
+
+      if (stuck.length) {
+        const sec = document.createElement('div');
+        sec.innerHTML = `
+          <div class="text-xs uppercase tracking-wide text-zinc-500 mb-1">Stuck apps</div>
+          <ul class="space-y-1">
+            ${stuck.map((a) => `
+              <li class="flex items-center justify-between gap-3 p-2 rounded bg-zinc-100 dark:bg-zinc-800">
+                <span>
+                  <span class="font-mono">${escapeHtml(a.slug)}</span>
+                  <span class="text-xs text-zinc-500">(${escapeHtml(a.dbStatus)}, by ${escapeHtml(a.createdBy || '—')})</span>
+                </span>
+                <span class="text-xs text-zinc-500">${new Date(a.createdAt).toLocaleString()}</span>
+              </li>`).join('')}
+          </ul>`;
+        detail.appendChild(sec);
+      }
+
+      if (orphans.length) {
+        const sec = document.createElement('div');
+        sec.innerHTML = `
+          <div class="text-xs uppercase tracking-wide text-zinc-500 mb-1">Orphan workers</div>
+          <ul class="space-y-1">
+            ${orphans.map((w) => `
+              <li class="flex items-center justify-between gap-3 p-2 rounded bg-zinc-100 dark:bg-zinc-800">
+                <span>
+                  <span class="font-mono">${escapeHtml(w.name)}</span>
+                  <span class="text-xs text-zinc-500">
+                    ${w.appSlug ? `app ${escapeHtml(w.appSlug)}` : 'no app'}
+                    · up ${Math.round((w.uptimeSeconds || 0) / 60)}m
+                    ${w.sessionArchived ? '· session archived' : ''}
+                  </span>
+                </span>
+              </li>`).join('')}
+          </ul>`;
+        detail.appendChild(sec);
+      }
+
+      if (llm.users?.length) {
+        const sec = document.createElement('div');
+        const rows = llm.users.slice(0, 5).map((u) =>
+          `<li class="flex items-center justify-between gap-3 p-2 rounded bg-zinc-100 dark:bg-zinc-800">
+            <span>${escapeHtml(u.username)}</span>
+            <span class="text-xs font-mono text-zinc-400">$${(u.costCents / 100).toFixed(2)}</span>
+          </li>`
+        ).join('');
+        sec.innerHTML = `
+          <div class="text-xs uppercase tracking-wide text-zinc-500 mb-1">Top LLM spenders today</div>
+          <ul class="space-y-1">${rows}</ul>`;
+        detail.appendChild(sec);
+      }
+    }
+
+    document.getElementById('refresh-overview').addEventListener('click', loadOverview);
+
+    loadCodes();
+    loadUsers();
+    loadOverview();
+  </script>
+</body>
+</html>

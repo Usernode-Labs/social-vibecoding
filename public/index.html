@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Usernode Social Vibecoding</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config = {
+    darkMode: 'class',
+    theme: { extend: { colors: {
+      zinc: { 50:'#f6f6fb',100:'#eeeef6',200:'#d4d4e4',300:'#b0b0c8',400:'#9898b0',500:'#6e6e8a',600:'#4e4e6a',700:'#484870',800:'#2e2e50',900:'#1a1a30',950:'#08080f' },
+      violet: { 400:'#a78bfa',500:'#8b5cf6',600:'#7c3aed',700:'#6d28d9' },
+    } } },
+  }</script>
+  <script>
+    if (localStorage.theme === 'light' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: light)').matches)) {
+      document.documentElement.classList.remove('dark');
+    }
+  </script>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body class="bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 flex flex-col" style="height:100dvh">
+
+  <!-- Top bar -->
+  <header class="flex items-center justify-between px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+    <button id="back-btn" class="text-zinc-400 hover:text-zinc-100 hidden" aria-label="Home">
+      <svg id="back-icon-home" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1h-2z"/></svg>
+      <svg id="back-icon-arrow" class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+    </button>
+    <span class="flex-1"></span>
+    <h1 id="header-title" class="text-lg font-bold">Usernode Social Vibecoding</h1>
+    <span class="flex-1"></span>
+    <!-- #21: deployed-version pill, populated by AppView.refreshVersionPill()
+         when an app is open. Sits at the start of the right-side button
+         group so it's close to the other app-context controls. -->
+    <span id="app-version-pill-slot" class="inline-flex mr-3"></span>
+    <button id="dev-console-btn" class="hidden relative text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Open developer console">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z"/></svg>
+      <span id="dev-console-badge" class="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"></span>
+    </button>
+    <a id="app-github-link" href="#" target="_blank" class="hidden text-zinc-400 hover:text-zinc-200 mr-2" aria-label="View on GitHub">
+      <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+    </a>
+    <button id="feedback-btn" class="text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Send feedback">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+    </button>
+    <!-- #30: Settings (BYOK) -->
+    <button id="settings-btn" class="relative text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Settings">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+      <span id="settings-byok-dot" class="hidden absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-500" aria-hidden="true"></span>
+    </button>
+    <button id="notifications-btn" class="relative text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Notifications">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+      <span id="notifications-badge" class="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"></span>
+    </button>
+    <button id="create-app-btn" class="w-8 h-8 flex items-center justify-center rounded-full bg-violet-600 hover:bg-violet-500 text-white text-xl leading-none" aria-label="Create new app">+</button>
+  </header>
+
+  <!-- Home screen: app list -->
+  <main id="home-screen" class="flex-1 overflow-y-auto" style="position:relative">
+    <div id="app-list" class="divide-y divide-zinc-200 dark:divide-zinc-800"></div>
+    <div id="empty-state" class="hidden flex flex-col items-center justify-center h-full text-zinc-500 dark:text-zinc-400 p-8">
+      <p class="text-lg mb-2">No apps yet</p>
+      <p class="text-sm">Tap <span class="text-violet-400 font-bold">+</span> to create your first app</p>
+    </div>
+    <div id="version-label" class="fixed bottom-2 right-3 text-xs font-mono text-zinc-700"></div>
+  </main>
+
+  <!-- App view (hidden by default) -->
+  <div id="app-view" class="hidden flex flex-col" style="flex:1;min-height:0;height:0">
+    <div id="app-content" class="flex-1" style="min-height:0;overflow:hidden">
+      <!-- Tab content renders here -->
+    </div>
+
+    <!-- Bottom tabs -->
+    <nav id="app-tabs" class="flex border-t border-zinc-200 dark:border-zinc-800 shrink-0">
+      <button class="app-tab flex-1 py-3 text-center text-sm font-medium transition-colors" data-tab="app">App</button>
+      <button class="app-tab flex-1 py-3 text-center text-sm font-medium transition-colors" data-tab="group-chat">Group Chat</button>
+      <button class="app-tab flex-1 py-3 text-center text-sm font-medium transition-colors" data-tab="individual-chat">Dev Chat</button>
+    </nav>
+  </div>
+
+  <!-- Notifications dropdown (top-right anchored). -->
+  <div id="notifications-panel" class="hidden fixed top-14 right-3 z-50 w-80 max-w-[95vw] max-h-[70vh] flex flex-col bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-2xl overflow-hidden">
+    <div class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+      <span class="text-sm font-medium text-zinc-800 dark:text-zinc-200">Notifications</span>
+      <span class="flex-1"></span>
+      <button id="notifications-mark-all" class="text-xs text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 disabled:opacity-40" disabled>Mark all read</button>
+    </div>
+    <div id="notifications-list" class="flex-1 overflow-y-auto"></div>
+    <div id="notifications-empty" class="hidden px-4 py-6 text-sm text-zinc-500 text-center">No notifications yet.</div>
+  </div>
+
+  <!-- Developer console (slide-up panel, anchored to bottom) -->
+  <div id="dev-console-panel" class="hidden fixed left-0 right-0 bottom-0 z-50 flex flex-col bg-zinc-950 border-t border-zinc-700" style="height:40vh;max-height:60vh">
+    <div class="flex items-center gap-3 px-3 py-2 border-b border-zinc-800 shrink-0 text-sm">
+      <span class="font-medium text-zinc-200">Developer console</span>
+      <span id="dev-console-counts" class="text-xs text-zinc-500"></span>
+      <span class="flex-1"></span>
+      <select id="dev-console-filter" class="text-xs bg-zinc-800 border border-zinc-700 rounded px-1 py-0.5 text-zinc-200">
+        <option value="all">All</option>
+        <option value="error">Errors</option>
+        <option value="warn">Warnings</option>
+        <option value="info">Info</option>
+        <option value="log">Log</option>
+        <option value="debug">Debug</option>
+      </select>
+      <button id="dev-console-clear" class="text-xs text-zinc-400 hover:text-zinc-200">Clear</button>
+      <button id="dev-console-close" class="text-zinc-400 hover:text-zinc-100" aria-label="Close">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div id="dev-console-log" class="flex-1 overflow-y-auto font-mono text-xs leading-relaxed p-2 space-y-0.5"></div>
+    <div id="dev-console-empty-hint" class="hidden px-3 py-2 text-xs text-zinc-500 border-t border-zinc-800 shrink-0">
+      No messages yet. If this app was created before dev-console support shipped, ask the coding agent in Dev Chat to "add dev-console forwarding to public/index.html".
+    </div>
+  </div>
+
+  <!-- Staging preview (fullscreen overlay) -->
+  <div id="staging-overlay" class="hidden fixed inset-0 z-40 bg-zinc-950 flex flex-col">
+    <div class="flex items-center gap-3 px-4 py-2 border-b border-zinc-800 shrink-0">
+      <button id="staging-back" class="text-zinc-400 hover:text-zinc-100 text-sm flex items-center gap-1">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        Back to session
+      </button>
+      <span class="flex-1"></span>
+      <span id="staging-url-label" class="text-xs text-zinc-500 font-mono truncate"></span>
+      <!-- Mirror of the main dev-console button. The overlay covers the
+           global header (z-40), so the original button is obscured —
+           we surface a duplicate inside the overlay's own chrome and
+           delegate its click to DevConsole.toggle(). -->
+      <button id="staging-dev-console-btn" class="relative text-zinc-400 hover:text-zinc-200" aria-label="Open developer console">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z"/></svg>
+        <span id="staging-dev-console-badge" class="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"></span>
+      </button>
+    </div>
+    <iframe id="staging-iframe" class="flex-1 border-0" style="background:#08080f"></iframe>
+  </div>
+
+  <!-- Create app modal -->
+  <div id="create-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm mx-4 shadow-xl">
+      <h2 class="text-lg font-bold mb-4">Create a new app</h2>
+      <form id="create-form" class="space-y-4">
+        <div>
+          <label for="app-name" class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">App name</label>
+          <input
+            id="app-name"
+            name="name"
+            type="text"
+            required
+            autocomplete="off"
+            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+            placeholder="my cool app"
+          >
+        </div>
+        <div id="create-error" class="text-red-400 text-sm hidden"></div>
+        <div class="flex gap-3">
+          <button type="button" id="create-cancel" class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
+          <button type="submit" class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Create</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Rename app modal -->
+  <div id="rename-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm mx-4 shadow-xl">
+      <h2 class="text-lg font-bold mb-1">Propose rename</h2>
+      <p class="text-xs text-zinc-500 mb-4">Current name: <span id="rename-current" class="font-mono text-zinc-300"></span></p>
+      <form id="rename-form" class="space-y-4">
+        <div>
+          <label for="rename-input" class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">New name</label>
+          <input
+            id="rename-input"
+            type="text"
+            required
+            minlength="3"
+            maxlength="64"
+            autocomplete="off"
+            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+            placeholder="a better name"
+          >
+          <p class="text-xs text-zinc-500 mt-1">3–64 characters. Display name only; the URL won't change.</p>
+        </div>
+        <div id="rename-error" class="text-red-400 text-sm hidden"></div>
+        <div class="flex gap-3">
+          <button type="button" id="rename-cancel" class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
+          <button type="submit" id="rename-submit" class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Propose</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Feedback modal -->
+  <div id="feedback-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm mx-4 shadow-xl">
+      <h2 class="text-lg font-bold mb-4">Send Feedback</h2>
+      <textarea id="feedback-text" rows="4" maxlength="2000" placeholder="Describe the issue or suggestion..."
+        class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 resize-none"></textarea>
+      <div id="feedback-status" class="text-sm mt-2 hidden"></div>
+      <div class="flex gap-3 mt-4">
+        <button id="feedback-cancel" class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
+        <button id="feedback-submit" class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Submit</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- #30: Settings modal (BYOK — user Anthropic API key) -->
+  <div id="settings-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md mx-4 shadow-xl">
+      <h2 class="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">Settings</h2>
+      <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-4">Bring your own Anthropic API key to bypass the shared daily budget. Usage bills directly to your Anthropic account.</p>
+
+      <label class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1" for="settings-api-key">Anthropic API key</label>
+      <div id="settings-key-display" class="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-700 dark:text-zinc-300 mb-2">
+        sk-ant-…<span id="settings-key-last4"></span>
+      </div>
+      <input id="settings-api-key" type="password" placeholder="sk-ant-..." autocomplete="off" spellcheck="false"
+        class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono" />
+      <p class="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+        Encrypted at rest, verified against Anthropic before saving, never shown in full after save.
+        The server decrypts it in memory to call Anthropic on your behalf &mdash; don't paste keys into services you don't trust with that level of access.
+        <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener" class="text-violet-500 hover:text-violet-400 underline">Set tight spend limits</a> on the key itself for defense in depth.
+      </p>
+
+      <div id="settings-status" class="text-sm mt-3 hidden"></div>
+
+      <div class="flex gap-3 mt-5">
+        <button id="settings-cancel" class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
+        <button id="settings-remove" class="hidden rounded-lg border border-red-400 dark:border-red-700 px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors">Remove</button>
+        <button id="settings-save" class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/dev-host.js"></script>
+  <script src="/js/dev-console.js"></script>
+  <script src="/js/notifications.js"></script>
+  <script src="/js/settings.js"></script>
+  <script src="/js/group-chat.js"></script>
+  <script src="/js/dev-chat.js"></script>
+  <script src="/js/app-view.js"></script>
+  <script src="/js/home.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

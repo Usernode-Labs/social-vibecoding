@@ -1,0 +1,142 @@
+const log = require('./logger');
+const github = require('./github');
+const docker = require('./docker');
+const caddy = require('./caddy');
+const dbManager = require('./db-manager');
+const { getTemplateFiles } = require('./template');
+const { getPool } = require('../db/pool');
+const { pushAppStatusUpdate } = require('./ws');
+
+async function createApp(config, appRow) {
+  const pool = getPool(config);
+  const { id: appId, name, slug } = appRow;
+
+  try {
+    log.info('app-creator', 'Starting app creation', { appId, slug });
+
+    await updateStatus(pool, appId, 'creating');
+
+    // 1. Create the database for this app
+    const dbName = dbManager.appDbName(slug);
+    await dbManager.createDatabase(dbName);
+    const dbUrl = await dbManager.connectionUrl(dbName);
+
+    // 2. Create GitHub repo (if GitHub is configured)
+    let repoUrl = null;
+    let useGitHub = false;
+    if (github.isEnabled()) {
+      try {
+        const botUsername = await github.getBotUsername();
+        const repo = await github.createRepo(botUsername, slug, {
+          description: `${name} — built on Usernode Social Vibecoding`,
+        });
+        repoUrl = repo.html_url;
+
+        const files = getTemplateFiles(name, slug, dbUrl, config.jwtSecret);
+        await github.pushFiles(botUsername, slug, files, {
+          message: `Initialize ${name} from Usernode template`,
+        });
+
+        await pool.query('UPDATE apps SET repo_url = $1 WHERE id = $2', [repoUrl, appId]);
+        useGitHub = true;
+      } catch (err) {
+        log.warn('app-creator', 'GitHub repo creation failed, falling back to local build', { err: err.message });
+      }
+    }
+
+    // 3. Build Docker image
+    const containerName = `usernode-app-${slug}`;
+    const imageName = `usernode-app-${slug}:latest`;
+    const tempDir = `/tmp/usernode-build-${slug}`;
+    const fs = require('fs');
+    const path = require('path');
+
+    await docker.execFileAsync('rm', ['-rf', tempDir]).catch(() => {});
+
+    if (useGitHub) {
+      const botUsername = await github.getBotUsername();
+      const cloneUrl = await github.getCloneUrl(botUsername, slug);
+      await docker.execFileAsync('git', ['clone', '--depth', '1', cloneUrl, tempDir], {
+        timeout: 60000,
+      });
+    } else {
+      fs.mkdirSync(tempDir, { recursive: true });
+      fs.mkdirSync(path.join(tempDir, 'public'), { recursive: true });
+
+      const files = getTemplateFiles(name, slug, dbUrl, config.jwtSecret);
+      for (const f of files) {
+        const filePath = path.join(tempDir, f.path);
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        fs.writeFileSync(filePath, f.content);
+      }
+    }
+
+    // Snapshot the SHA (if this was a git clone) so the UI can show
+    // what commit is live on prod (#21). Local-template builds stay
+    // null; that's fine — the pill just hides until the first merge.
+    let mainSha = null;
+    if (useGitHub) {
+      try {
+        const { stdout } = await docker.execFileAsync('git', [
+          '-C', tempDir, 'rev-parse', 'HEAD',
+        ], { timeout: 5000 });
+        mainSha = (stdout || '').trim() || null;
+      } catch (err) {
+        log.warn('app-creator', 'Failed to capture initial SHA', { slug, err: err.message });
+      }
+    }
+
+    await docker.buildImage(tempDir, imageName);
+    await docker.execFileAsync('rm', ['-rf', tempDir]).catch(() => {});
+
+    // 4. Remove any existing container with the same name
+    await docker.stopAndRemove(containerName).catch(() => {});
+
+    // 5. Run the container
+    const containerId = await docker.runContainer(containerName, {
+      image: imageName,
+      env: {
+        DATABASE_URL: dbUrl,
+        JWT_SECRET: config.jwtSecret,
+        PORT: '3000',
+      },
+      port: 3000,
+    });
+
+    // 6. Wait for health
+    await docker.waitForHealthy(containerName, 3000, '/health');
+
+    // 7. Register Caddy route (may fail in local dev — that's ok)
+    const hostname = caddy.productionHostname(slug);
+    await caddy.registerRoute(hostname, containerName, 3000).catch((err) => {
+      log.warn('app-creator', 'Caddy route registration failed (ok in local dev)', { err: err.message });
+    });
+
+    // 8. Determine the app's accessible URL
+    const isLocalDev = !!process.env.DOCKER_NETWORK;
+    let appUrl = `https://${hostname}`;
+    if (isLocalDev) {
+      const hostPort = await docker.getHostPort(containerName, 3000);
+      if (hostPort) appUrl = `http://localhost:${hostPort}`;
+    }
+
+    // 9. Update app status
+    await pool.query(
+      'UPDATE apps SET status = $1, container_id = $2, main_sha = $3 WHERE id = $4',
+      ['running', containerId, mainSha || null, appId]
+    );
+
+    pushAppStatusUpdate({ id: appId, slug, status: 'running', url: appUrl });
+    log.info('app-creator', 'App created successfully', { appId, slug, hostname, appUrl, repoUrl });
+  } catch (err) {
+    log.error('app-creator', 'App creation failed', { appId, slug, err: err.message });
+    await updateStatus(pool, appId, 'error');
+    pushAppStatusUpdate({ id: appId, slug, status: 'error' });
+  }
+}
+
+async function updateStatus(pool, appId, status) {
+  await pool.query('UPDATE apps SET status = $1 WHERE id = $2', [status, appId]);
+}
+
+module.exports = { createApp };

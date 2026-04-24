@@ -1,0 +1,577 @@
+:root {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f4f4f5;
+  --bg-tertiary: #e4e4e7;
+  --bg-code: #f4f4f5;
+  --bg-code-header: #e4e4e7;
+  --bg-card: rgba(139, 92, 246, 0.06);
+  --bg-card-alt: rgba(16, 185, 129, 0.04);
+  --bg-input: #f4f4f5;
+  --border: #d4d4d8;
+  --border-light: #e4e4e7;
+  --text-primary: #18181b;
+  --text-secondary: #3f3f46;
+  --text-muted: #71717a;
+  --text-faint: #a1a1aa;
+  --text-code: #3f3f46;
+  --accent: #7c3aed;
+  --accent-light: #8b5cf6;
+}
+
+.dark {
+  --bg-primary: #08080f;
+  --bg-secondary: #1a1a30;
+  --bg-tertiary: #2e2e50;
+  --bg-code: #0f0f1a;
+  --bg-code-header: #1a1a30;
+  --bg-card: rgba(139, 92, 246, 0.08);
+  --bg-card-alt: rgba(16, 185, 129, 0.05);
+  --bg-input: #1a1a30;
+  --border: #2e2e50;
+  --border-light: #484870;
+  --text-primary: #f4f4f5;
+  --text-secondary: #e4e4e7;
+  --text-muted: #6e6e8a;
+  --text-faint: #9898b0;
+  --text-code: #e4e4e7;
+  --accent: #a78bfa;
+  --accent-light: #c4b5fd;
+}
+
+html, body {
+  height: 100dvh;
+  overflow: hidden;
+  touch-action: pan-x pan-y;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* ── Tabs ──────────────────────────────────────────────── */
+
+.app-tab { color: var(--text-muted); }
+.app-tab.active { color: var(--accent); border-top: 2px solid currentColor; }
+
+/* ── App cards ─────────────────────────────────────────── */
+
+.app-card { transition: background-color 150ms; }
+.app-card:hover { background-color: var(--bg-card); }
+
+/* ── Status dots ───────────────────────────────────────── */
+
+.status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.status-dot.running { background-color: #22c55e; }
+.status-dot.creating { background-color: #eab308; animation: pulse 1.5s ease-in-out infinite; }
+.status-dot.error { background-color: #ef4444; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ── App iframe ────────────────────────────────────────── */
+
+#app-content { position: relative; }
+
+#app-iframe {
+  position: absolute;
+  top: 0; left: 0; width: 100%; height: 100%;
+  border: 0;
+  background: var(--bg-primary);
+}
+
+/* ── Dev chat messages ─────────────────────────────────── */
+
+.dc-messages-container { scroll-behavior: smooth; }
+
+.dc-msg { padding: 8px 12px; max-width: 92%; }
+
+.dc-msg-user {
+  margin-left: auto;
+  background: var(--bg-card);
+  border-radius: 12px 12px 4px 12px;
+  margin-bottom: 4px;
+}
+
+.dc-msg-assistant {
+  margin-right: auto;
+  background: var(--bg-card-alt);
+  border-radius: 12px 12px 12px 4px;
+  margin-bottom: 4px;
+}
+
+.dc-msg-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.dc-msg-content {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.dc-msg-content p, .dc-p { margin-top: 0.5em; }
+
+/* ── Markdown ──────────────────────────────────────────── */
+
+.dc-h3 { font-size: 15px; font-weight: 600; margin: 12px 0 4px; color: var(--text-primary); }
+.dc-h4 { font-size: 14px; font-weight: 600; margin: 10px 0 4px; color: var(--text-secondary); }
+
+.dc-msg-content strong { font-weight: 600; color: var(--text-primary); }
+.dc-msg-content em { font-style: italic; color: var(--text-faint); }
+
+.dc-code-header {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 4px 12px;
+  background: var(--bg-code-header);
+  border-radius: 8px 8px 0 0;
+  border-bottom: 1px solid var(--border);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.dc-code-block {
+  background: var(--bg-code);
+  border-radius: 0 0 8px 8px;
+  padding: 12px;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-code);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  margin: 4px 0 8px;
+}
+
+.dc-code-header + .dc-code-block { border-radius: 0 0 8px 8px; }
+.dc-code-block:not(.dc-code-header + .dc-code-block) { border-radius: 8px; }
+
+.dc-inline-code {
+  background: var(--bg-code-header);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.dc-blockquote {
+  border-left: 3px solid var(--border-light);
+  padding: 4px 12px;
+  margin: 8px 0;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
+.dc-ol { list-style: decimal; padding-left: 20px; margin: 6px 0; }
+.dc-ul { list-style: disc; padding-left: 20px; margin: 6px 0; }
+.dc-ol li, .dc-ul li { margin: 2px 0; }
+
+/* ── Status lines (deploying, building, etc.) ──────────── */
+
+.dc-status-log {
+  margin-bottom: 8px;
+  border-left: 2px solid var(--border-light);
+  padding-left: 8px;
+}
+
+.dc-status-line {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 2px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Explicit square box with centered glyph is required for the
+   rotation animation to spin around the glyph's visual center. Without
+   width/height/line-height, the span's transform-origin ends up wherever
+   the inline-block glyph happens to sit, which makes the animation look
+   static or wobbly on a radially-symmetric character like ⚙. */
+.dc-status-icon {
+  font-size: 12px;
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  line-height: 14px;
+  text-align: center;
+  transform-origin: 50% 50%;
+}
+
+.dc-cc-progress {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 2px 0 2px 22px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dc-status-spinning {
+  animation: dc-spin 1.5s linear infinite;
+  color: var(--accent);
+}
+
+/* Pure-CSS arc spinner used for "in-progress" status lines. The gear
+   glyph is too rotationally symmetric to read as spinning; an arc with
+   ~270° of border vs a transparent gap is unambiguous. Sized to align
+   with the gear so layout doesn't shift when the line transitions from
+   active to done. */
+.dc-status-spinner-arc {
+  box-sizing: border-box;
+  width: 12px;
+  height: 12px;
+  margin: 1px;
+  border: 2px solid var(--accent);
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: dc-spin 0.8s linear infinite;
+  vertical-align: -2px;
+}
+
+/* Completed state — explicit green check so a glance at the chat tells
+   the user which steps finished. Kept at the same box dimensions as
+   the spinner so nothing shifts when a step transitions from active
+   → done. */
+.dc-status-check {
+  color: #10b981;
+  font-weight: 700;
+}
+
+/* ── PR card ────────────────────────────────────────────── */
+
+.dc-pr-card {
+  margin: 8px 12px;
+  padding: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  transition: background 300ms;
+}
+
+.dc-pr-card-highlight { background: rgba(139, 92, 246, 0.2); }
+.dc-pr-card-header { margin-bottom: 8px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+
+.dc-pr-link { font-size: 14px; font-weight: 600; color: var(--accent); text-decoration: none; }
+.dc-pr-link:hover { color: var(--accent-light); text-decoration: underline; }
+
+.dc-pr-title { font-size: 13px; color: var(--text); font-weight: 500; }
+
+.dc-pr-card-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.dc-pr-btn {
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: background 150ms;
+}
+
+.dc-pr-btn-preview {
+  background: var(--bg-secondary);
+  color: var(--accent);
+  border: 1px solid var(--border);
+}
+.dc-pr-btn-preview:hover { background: var(--bg-tertiary); }
+
+.dc-pr-btn-promote { background: #7c3aed; color: white; }
+.dc-pr-btn-promote:hover { background: #6d28d9; }
+.dc-pr-btn-promote:disabled { background: #3f3f46; cursor: not-allowed; }
+
+/* ── Claude Code log (collapsible) ─────────────────────── */
+
+.dc-cc-log {
+  margin: 6px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.dc-cc-log-toggle {
+  cursor: pointer;
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-code);
+  user-select: none;
+}
+.dc-cc-log-toggle:hover { color: var(--text-faint); }
+.dc-cc-log[open] .dc-cc-log-toggle { border-bottom: 1px solid var(--border); }
+
+.dc-cc-log-content {
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-faint);
+  background: var(--bg-primary);
+  max-height: 300px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  margin: 0;
+}
+
+/* ── Vote panel ─────────────────────────────────────────── */
+
+.gc-vote-btn {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-faint);
+  transition: all 150ms;
+}
+.gc-vote-btn:hover { background: var(--bg-tertiary); }
+
+.gc-vote-btn-yes { color: #22c55e; }
+.gc-vote-btn-yes:hover { background: rgba(34, 197, 94, 0.15); }
+.gc-vote-btn-no { color: #ef4444; }
+.gc-vote-btn-no:hover { background: rgba(239, 68, 68, 0.15); }
+.gc-vote-btn-preview { color: var(--accent); }
+.gc-vote-btn-preview:hover { background: rgba(167, 139, 250, 0.15); }
+.gc-vote-active { background: var(--bg-tertiary); font-weight: 600; }
+
+/* ── Developer console ─────────────────────────────────── */
+
+#dev-console-panel {
+  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.dc-log-entry {
+  display: grid;
+  grid-template-columns: max-content max-content 1fr;
+  gap: 6px;
+  padding: 2px 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.dc-log-time {
+  color: #6e6e8a;
+  font-size: 10px;
+  align-self: center;
+}
+
+.dc-log-level {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  align-self: center;
+  text-align: center;
+  min-width: 44px;
+}
+
+.dc-log-msg { color: #e4e4e7; }
+
+.dc-log-log   .dc-log-level { background: #27272a; color: #a1a1aa; }
+.dc-log-info  .dc-log-level { background: #1e3a5f; color: #93c5fd; }
+.dc-log-debug .dc-log-level { background: #27272a; color: #6e6e8a; }
+.dc-log-warn  .dc-log-level { background: #78350f; color: #fde68a; }
+.dc-log-warn  .dc-log-msg   { color: #fcd34d; }
+.dc-log-error .dc-log-level { background: #7f1d1d; color: #fecaca; }
+.dc-log-error .dc-log-msg   { color: #fca5a5; }
+
+#dev-console-log::-webkit-scrollbar { width: 8px; }
+#dev-console-log::-webkit-scrollbar-track { background: transparent; }
+#dev-console-log::-webkit-scrollbar-thumb { background: #2e2e50; border-radius: 4px; }
+#dev-console-log { scrollbar-width: thin; scrollbar-color: #2e2e50 transparent; }
+
+/* ── Group chat messages ───────────────────────────────── */
+
+.gc-msg {
+  padding: 6px 12px;
+  transition: background 150ms;
+}
+
+.gc-msg:hover { background: var(--bg-card-alt); }
+.gc-msg-self { background: var(--bg-card); }
+
+.gc-msg-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.gc-msg-username {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.gc-msg-username-self { color: var(--accent); }
+
+.gc-msg-time {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.gc-msg-content {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.gc-mention {
+  color: var(--accent);
+  font-weight: 500;
+}
+.gc-mention-self {
+  background: rgba(139, 92, 246, 0.18);
+  padding: 0 4px;
+  border-radius: 4px;
+  color: var(--accent-light, var(--accent));
+  font-weight: 600;
+}
+
+.gc-msg-system {
+  padding: 4px 12px;
+  font-size: 11px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.gc-msg-vote { color: var(--accent); }
+
+/* ── Streaming spinner (bouncing dots) ─────────────────── */
+
+.dc-streaming-dots { display: flex; gap: 4px; padding: 4px 0; }
+.dc-streaming-dots span {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--text-muted);
+  animation: dc-dot-bounce 1.4s ease-in-out infinite;
+}
+.dc-streaming-dots span:nth-child(2) { animation-delay: 0.16s; }
+.dc-streaming-dots span:nth-child(3) { animation-delay: 0.32s; }
+
+@keyframes dc-dot-bounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+  40% { transform: translateY(-6px); opacity: 1; }
+}
+
+/* ── Send button streaming state ───────────────────────── */
+
+.dc-send-btn {
+  min-width: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 38px;
+}
+
+.dc-btn-streaming { background: var(--bg-tertiary) !important; cursor: not-allowed; }
+.dc-btn-streaming:hover { background: var(--bg-tertiary) !important; }
+
+/* Stop-turn affordance (#28): red button with a square glyph, replaces
+   the emerald Send button while the turn is interruptible (mayor1 / cc
+   phases). Phase-2 falls back to the spinner state above. */
+.dc-btn-stop { background: #dc2626 !important; cursor: pointer; }
+.dc-btn-stop:hover { background: #b91c1c !important; }
+.dc-stop-icon {
+  width: 12px;
+  height: 12px;
+  background: #fff;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.dc-send-spinner {
+  width: 16px; height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--text-faint);
+  border-radius: 50%;
+  animation: dc-spin 0.7s linear infinite;
+}
+
+@keyframes dc-spin { to { transform: rotate(360deg); } }
+
+/* ── Textarea auto-resize ──────────────────────────────── */
+
+.dc-textarea { max-height: 120px; overflow-y: auto; line-height: 1.5; }
+
+/* ── Keyboard shortcut hints ───────────────────────────── */
+
+.dc-kbd {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 10px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+/* ── Scrollbar styling ─────────────────────────────────── */
+
+.dc-messages-container::-webkit-scrollbar,
+#gc-messages::-webkit-scrollbar,
+#app-list::-webkit-scrollbar,
+#home-screen::-webkit-scrollbar { width: 6px; }
+
+.dc-messages-container::-webkit-scrollbar-track,
+#gc-messages::-webkit-scrollbar-track,
+#app-list::-webkit-scrollbar-track,
+#home-screen::-webkit-scrollbar-track { background: transparent; }
+
+.dc-messages-container::-webkit-scrollbar-thumb,
+#gc-messages::-webkit-scrollbar-thumb,
+#app-list::-webkit-scrollbar-thumb,
+#home-screen::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.dc-messages-container::-webkit-scrollbar-thumb:hover,
+#gc-messages::-webkit-scrollbar-thumb:hover,
+#app-list::-webkit-scrollbar-thumb:hover,
+#home-screen::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
+
+.dc-messages-container, #gc-messages, #app-list, #home-screen {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+/* ── #21 Live app version pill ─────────────────────────── */
+
+/* Sits in the shared header next to the app title. Low-emphasis chip
+   showing which commit is currently deployed to prod; clicks open the
+   associated PR on GitHub. Theme-aware so it blends into the header
+   in both light and dark modes. */
+.app-version-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-decoration: none;
+  line-height: 1;
+  border: 1px solid var(--border-light);
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.app-version-pill:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+.app-version-pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.18);
+}
+.app-version-pill-label { letter-spacing: 0.02em; }
