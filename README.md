@@ -96,7 +96,9 @@ trigger in `.github/workflows/deploy.yml` to enable auto-deploy.
 
 ## Running locally
 
-Fill in `.env.example` → `.env`, then:
+Fill in `.env.example` → `.env`, set `USERNODE_LOCAL_DEV=1` in your
+local `.env` (so app/staging URLs fall back to `http://localhost:<port>`
+since Caddy can't issue real certs against `localhost`), then:
 
 ```bash
 docker compose up -d --build

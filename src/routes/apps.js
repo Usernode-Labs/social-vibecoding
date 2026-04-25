@@ -7,7 +7,13 @@ const docker = require('../services/docker');
 const { drainGuard } = require('../services/lifecycle');
 const { appCreateLimiter } = require('../middleware/rate-limits');
 
-const IS_LOCAL_DEV = process.env.NODE_ENV === 'development' || !!process.env.DOCKER_NETWORK;
+// Local-dev URL fallback ("http://localhost:<hostport>" instead of the
+// real "https://<slug>.<USERNODE_DOMAIN>") is opt-in via env. Previously
+// any value of DOCKER_NETWORK flipped this on, but standalone production
+// also has to set DOCKER_NETWORK (to point child apps at the platform's
+// network) — so DOCKER_NETWORK is no longer a clean signal. Set
+// USERNODE_LOCAL_DEV=1 in your local .env to get the localhost fallback.
+const IS_LOCAL_DEV = process.env.NODE_ENV === 'development' || process.env.USERNODE_LOCAL_DEV === '1';
 
 // If app creation hasn't reached `running` within this window, a watchdog
 // flips the row to `error` so the home screen stops showing "Spinning up..."

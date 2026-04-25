@@ -113,7 +113,8 @@ async function createApp(config, appRow) {
     });
 
     // 8. Determine the app's accessible URL
-    const isLocalDev = !!process.env.DOCKER_NETWORK;
+    // See routes/apps.js for why we don't key off DOCKER_NETWORK anymore.
+    const isLocalDev = process.env.NODE_ENV === 'development' || process.env.USERNODE_LOCAL_DEV === '1';
     let appUrl = `https://${hostname}`;
     if (isLocalDev) {
       const hostPort = await docker.getHostPort(containerName, 3000);

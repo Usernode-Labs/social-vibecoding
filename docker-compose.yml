@@ -60,14 +60,18 @@ services:
     env_file:
       - ./.env
     environment:
-      # Tell the platform which Docker network to spawn child apps on
-      # so Caddy can reach them, and which file path to write Caddy
-      # route blocks into. Both are read by src/services/{docker,
-      # caddy,worker}.js. Override DATABASE_URL inline to point at
-      # the in-compose Postgres service instead of project-usernode-db.
-      DOCKER_NETWORK: usernode-net
-      USERNODE_CONF_PATH: /etc/caddy/runtime/usernode.conf
-      DATABASE_URL: postgres://usernode:${USERNODE_DB_PASSWORD}@usernode-db:5432/usernode
+              # Tell the platform which Docker network to spawn child apps on
+              # so Caddy can reach them, and which file path to write Caddy
+              # route blocks into. Both are read by src/services/{docker,
+              # caddy,worker}.js. Override DATABASE_URL inline to point at
+              # the in-compose Postgres service instead of project-usernode-db.
+              # DB_CONTAINER is the name `db-manager.js` `docker exec`'s into
+              # to spawn per-app databases — must match the usernode-db
+              # service's container_name below.
+              DOCKER_NETWORK: usernode-net
+              DB_CONTAINER: usernode-db
+              USERNODE_CONF_PATH: /etc/caddy/runtime/usernode.conf
+              DATABASE_URL: postgres://usernode:${USERNODE_DB_PASSWORD}@usernode-db:5432/usernode
     volumes:
       # Required: the platform spawns child-app containers via the
       # host Docker daemon. Standard Usernode pattern.
