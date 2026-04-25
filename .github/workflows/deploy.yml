@@ -84,15 +84,9 @@ jobs:
             SESSION_SECRET=${{ secrets.USERNODE_SESSION_SECRET }}
             JWT_SECRET=${{ secrets.USERNODE_JWT_SECRET }}
             USERNODE_DB_PASSWORD=${{ secrets.USERNODE_DB_PASSWORD }}
-                    GITHUB_APP_ID=${{ secrets.USERNODE_GITHUB_APP_ID }}
-                    # Single-quoted: secret value contains literal \n escape
-                    # sequences (PEM key collapsed to one line). Quotes survive
-                    # into the on-disk .env; docker-compose's env_file parser
-                    # strips matching outer quotes when handing to the container,
-                    # which then sees the un-quoted value with literal \n's that
-                    # config.js un-escapes at startup. Matches the legacy deploy.
-                    GITHUB_PRIVATE_KEY='${{ secrets.USERNODE_GITHUB_PRIVATE_KEY }}'
-                    GITHUB_BOT_TOKEN=${{ secrets.USERNODE_GITHUB_BOT_TOKEN }}
+            GITHUB_APP_ID=${{ secrets.USERNODE_GITHUB_APP_ID }}
+            GITHUB_PRIVATE_KEY='${{ secrets.USERNODE_GITHUB_PRIVATE_KEY }}'
+            GITHUB_BOT_TOKEN=${{ secrets.USERNODE_GITHUB_BOT_TOKEN }}
             ANTHROPIC_API_KEY=${{ secrets.USERNODE_ANTHROPIC_API_KEY }}
             LOG_LEVEL=INFO
             GIT_SHA=${{ github.sha }}
@@ -110,7 +104,7 @@ jobs:
             # Caddyfile changes from this deploy take effect. `|| true`
             # because on the very first deploy caddy may not be fully
             # up yet (it's racing with TLS issuance).
-                    docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile || true
+            docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile || true
 
       # Always clear the deploy-in-progress flag so the /status banner goes
       # away even when the deploy itself failed or was cancelled.
