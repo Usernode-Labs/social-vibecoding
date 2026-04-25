@@ -49,10 +49,11 @@ jobs:
             cd /opt/usernode
 
             # Single-quoted heredoc: no shell expansion on the server.
-            # GitHub Actions has already substituted ${{ ... }} above,
-            # so the remote just sees literal key=value lines. Safer
-            # than double-quoted which would try to expand $-refs that
-            # might appear inside secrets (e.g. a $ sign in a password).
+            # GitHub Actions has already substituted all the expression
+            # interpolations above, so the remote just sees literal
+            # key=value lines. Safer than double-quoted, which would try
+            # to expand $-refs that might appear inside secrets (e.g. a
+            # $ sign in a password).
             cat > .env <<'ENVEOF'
             USERNODE_DOMAIN=${{ vars.USERNODE_DOMAIN }}
             ADMIN_USERNAME=${{ secrets.USERNODE_ADMIN_USERNAME }}
