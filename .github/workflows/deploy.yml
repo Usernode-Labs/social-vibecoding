@@ -6,17 +6,22 @@ name: Deploy
 # is rsync'd to /opt/usernode, an `.env` is written from GitHub
 # secrets, then `docker compose up -d --build` brings the stack up.
 #
-# Triggers are currently manual-only (workflow_dispatch) so you can
-# verify the full deploy path end-to-end before enabling auto-deploy
-# on push-to-main. When ready, uncomment the `push` trigger below.
+# Auto-deploys on every push to `main`. workflow_dispatch is kept for
+# manual re-runs (e.g. rolling forward without a new commit, or
+# replaying a deploy after rotating secrets).
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch: {}
-  # push:
-  #   branches: [main]
 
 concurrency:
   group: deploy-${{ github.ref }}
+  # When multiple commits land in rapid succession, queue them rather than
+  # cancelling. Each deploy is small enough (~1–2 min) that running them in
+  # order is fine, and we avoid the case where a cancelled deploy leaves
+  # the rsync mid-state on disk. Flip to `true` if queueing ever becomes
+  # painful (e.g. a long batch of small commits during active work).
   cancel-in-progress: false
 
 jobs:
