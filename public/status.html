@@ -47,6 +47,21 @@
     </div>
   </header>
 
+  <!-- Deploy-in-progress banner. Hidden by default; renderDeploy() toggles. -->
+  <div id="deploy-banner" class="hidden mb-4 rounded-lg border border-violet-700/50 bg-violet-900/20 px-4 py-3">
+    <div class="flex items-center gap-3">
+      <span class="relative flex h-2.5 w-2.5">
+        <span class="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75 animate-ping"></span>
+        <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-violet-500"></span>
+      </span>
+      <div class="text-sm">
+        <span class="font-semibold text-violet-200">Deploy in progress</span>
+        <span class="text-violet-300/80"> — your changes may take a minute to go live.</span>
+      </div>
+      <span id="deploy-meta" class="ml-auto text-xs mono text-violet-400"></span>
+    </div>
+  </div>
+
   <!-- Summary bar -->
   <div id="summary" class="grid grid-cols-2 md:grid-cols-6 gap-2 mb-6"></div>
 
@@ -310,6 +325,21 @@ function renderDrift(drift) {
     </div>`).join('');
 }
 
+function renderDeployBanner(deploy) {
+  const banner = document.getElementById('deploy-banner');
+  if (!deploy?.deploying) {
+    banner.classList.add('hidden');
+    return;
+  }
+  banner.classList.remove('hidden');
+  const meta = document.getElementById('deploy-meta');
+  const sha = deploy.sha ? deploy.sha.substring(0, 7) : '';
+  const elapsed = deploy.startedAt
+    ? fmtDuration(Math.floor((Date.now() - new Date(deploy.startedAt).getTime()) / 1000))
+    : '';
+  meta.textContent = [sha, elapsed && `${elapsed} ago`].filter(Boolean).join(' · ');
+}
+
 function renderEvents(events) {
   if (!events.length) return '<div class="text-zinc-500 text-xs">no events yet</div>';
   return events.map((e) => {
@@ -332,6 +362,7 @@ async function refresh() {
 
     document.body.classList.toggle('is-admin', !!data.isAdmin);
     document.getElementById('version').textContent = data.version;
+    renderDeployBanner(data.deployProgress);
     document.getElementById('summary').innerHTML = renderSummary(data.summary);
     document.getElementById('apps').innerHTML = renderApps(data.apps);
     document.getElementById('workers').innerHTML = renderWorkers(data.workers);

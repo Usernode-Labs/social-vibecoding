@@ -71,13 +71,22 @@ services:
               DOCKER_NETWORK: usernode-net
               DB_CONTAINER: usernode-db
               USERNODE_CONF_PATH: /etc/caddy/runtime/usernode.conf
+              # Where the platform reads ambient host-state from — currently
+              # just deploy-status.json, written by the deploy workflow so the
+              # /status page can render an in-progress banner. See
+              # services/status.js + .github/workflows/deploy.yml.
+              USERNODE_RUNTIME_PATH: /var/lib/usernode/runtime
               DATABASE_URL: postgres://usernode:${USERNODE_DB_PASSWORD}@usernode-db:5432/usernode
-    volumes:
-      # Required: the platform spawns child-app containers via the
-      # host Docker daemon. Standard Usernode pattern.
-      - /var/run/docker.sock:/var/run/docker.sock
-      # Shared with Caddy — see comment on caddy service.
-      - caddy-runtime:/etc/caddy/runtime
+            volumes:
+              # Required: the platform spawns child-app containers via the
+              # host Docker daemon. Standard Usernode pattern.
+              - /var/run/docker.sock:/var/run/docker.sock
+              # Shared with Caddy — see comment on caddy service.
+              - caddy-runtime:/etc/caddy/runtime
+              # Read-only host bind for deploy signals (see deploy workflow).
+              # The deploy user on the host writes /opt/usernode/runtime/
+              # deploy-status.json; the platform reads it from in-container.
+              - /opt/usernode/runtime:/var/lib/usernode/runtime:ro
     depends_on:
       usernode-db:
         condition: service_healthy

@@ -23,6 +23,22 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      # Signal deploy-in-progress to the /status page BEFORE doing anything
+      # else, so users hitting the page during the deploy see "deploy in
+      # progress". The matching "Signal deploy finished" step at the bottom
+      # runs `if: always()` so cancelled/failed deploys also clear the flag.
+      - name: Signal deploy started
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: deploy
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            mkdir -p /opt/usernode/runtime
+            cat > /opt/usernode/runtime/deploy-status.json <<EOF
+            {"deploying":true,"sha":"${{ github.sha }}","startedAt":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+            EOF
+
       - uses: actions/checkout@v4
 
       - name: Sync repo to VPS
@@ -36,7 +52,9 @@ jobs:
           # --delete keeps the remote tree a faithful mirror of this
           # commit, but we exclude state + the on-server .env so they
           # survive. .git/.github/node_modules are build-time only.
-          ARGS: "-avz --delete --exclude=.git --exclude=.github --exclude=node_modules --exclude=data --exclude=.env"
+          # `runtime/` is host-side ephemeral state (deploy-status.json,
+          # bind-mounted into the container) — must survive a sync.
+          ARGS: "-avz --delete --exclude=.git --exclude=.github --exclude=node_modules --exclude=data --exclude=.env --exclude=runtime"
 
       - name: Write .env and run docker compose
         uses: appleboy/ssh-action@v1
@@ -87,4 +105,19 @@ jobs:
             # Caddyfile changes from this deploy take effect. `|| true`
             # because on the very first deploy caddy may not be fully
             # up yet (it's racing with TLS issuance).
-            docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile || true
+                    docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile || true
+
+      # Always clear the deploy-in-progress flag so the /status banner goes
+      # away even when the deploy itself failed or was cancelled.
+      # `if: always()` runs on success/failure/cancel, so this is the
+      # closest we get to a guaranteed cleanup.
+      - name: Signal deploy finished
+        if: always()
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: deploy
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            mkdir -p /opt/usernode/runtime
+            echo '{"deploying":false}' > /opt/usernode/runtime/deploy-status.json
