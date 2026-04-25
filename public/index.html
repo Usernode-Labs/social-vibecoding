@@ -21,17 +21,33 @@
 </head>
 <body class="bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 flex flex-col" style="height:100dvh">
 
-  <!-- Top bar -->
-  <header class="flex items-center justify-between px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+  <!-- Top bar.
+       Layout note: the title is *absolutely* positioned at the geometric
+       center of the header (left:50%, translate-x:-50%) rather than living
+       between two flex spacers. The flex-spacer approach drifted the title
+       leftward as right-side icons accumulated, because the spacers split
+       only the space *not* consumed by content — so an unbalanced left/right
+       made the title's center point unbalanced too. Absolute positioning
+       decouples the title from the flow entirely, so left and right groups
+       can grow independently without ever moving it. `pointer-events-none`
+       prevents the (potentially overlapping) title from blocking icon
+       clicks; `truncate` + max-width keeps long app names from running
+       into the right-side group. -->
+  <header class="relative flex items-center px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
     <button id="back-btn" class="text-zinc-400 hover:text-zinc-100 hidden" aria-label="Home">
       <svg id="back-icon-home" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1h-2z"/></svg>
       <svg id="back-icon-arrow" class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
     </button>
-    <span class="flex-1"></span>
-    <h1 id="header-title" class="text-lg font-bold">Usernode Social Vibecoding</h1>
-    <span class="flex-1"></span>
+
+    <h1 id="header-title"
+        class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-lg font-bold pointer-events-none truncate max-w-[40%] text-center">Usernode Social Vibecoding</h1>
+
+    <!-- Right-side group. `ml-auto` shoves it to the right edge; back-btn
+         (or its empty space when hidden) stays at the left edge. The
+         absolutely-positioned title floats above this row at center. -->
+    <div class="ml-auto flex items-center">
     <!-- Platform-version pill: which SHA of usernode itself is currently
-         live. Populated by Home.refreshPlatformVersionPill() (polled on
+         live. Populated by App.renderPlatformVersionPill() (polled on
          a timer so it flips to a yellow "deploying" state when a new
          deploy is in flight, and to a "reload" hint when the running
          platform has rolled past the SHA this page loaded against).
@@ -61,6 +77,7 @@
       <span id="notifications-badge" class="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"></span>
     </button>
     <button id="create-app-btn" class="w-8 h-8 flex items-center justify-center rounded-full bg-violet-600 hover:bg-violet-500 text-white text-xl leading-none" aria-label="Create new app">+</button>
+    </div>
   </header>
 
   <!-- Home screen: app list -->

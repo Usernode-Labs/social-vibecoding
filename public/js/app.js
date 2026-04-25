@@ -47,9 +47,11 @@ const App = {
     } catch {}
   },
 
-  // Three rendering states. Reuses .app-version-pill base styles + a
+  // Four rendering states. Reuses .app-version-pill base styles + a
   // couple of modifier classes (see public/css/app.css) for the deploying
-  // and stale variants.
+  // and stale variants. Always leads with the project name (e.g.
+  // "usernode") so it reads symmetrically with the per-app pill that
+  // sits next to it ("myapp · 1a2b3c4 · #42").
   renderPlatformVersionPill(info) {
     const slot = document.getElementById('platform-version-pill-slot');
     if (!slot) return;
@@ -64,13 +66,18 @@ const App = {
       && runningSha !== App.loadedPlatformSha
       && runningSha !== 'dev';
 
+    // Project label — sourced from the server (env-overridable, defaults
+    // to "usernode"). Run through a tiny escaper since it's user-config.
+    const safeName = App._escapeHtml(info.name || 'usernode');
+    const namePart = `<span class="app-version-pill-name">${safeName}</span><span class="app-version-pill-sep">·</span>`;
+
     if (!runningSha || runningSha === 'dev') {
       // Local dev / no GIT_SHA — render a low-key "dev" chip so the slot
       // isn't empty (which can look like a layout bug).
       slot.innerHTML = `
         <span class="app-version-pill" title="Running outside of a deploy (no GIT_SHA set)">
           <span class="app-version-pill-dot" style="background:#71717a;box-shadow:none"></span>
-          <span class="app-version-pill-label">dev</span>
+          <span class="app-version-pill-label">${namePart}dev</span>
         </span>`;
       return;
     }
@@ -84,11 +91,11 @@ const App = {
       const tipParts = [`Deploying ${newShort || 'new build'}`];
       if (oldShort) tipParts.push(`from ${oldShort}`);
       if (elapsed != null) tipParts.push(`${elapsed}s elapsed`);
-      const label = newShort ? `→ ${newShort}` : 'deploying';
+      const shaLabel = newShort ? `→ ${newShort}` : 'deploying';
       slot.innerHTML = `
         <span class="app-version-pill app-version-pill--deploying" title="${tipParts.join(' · ')}">
           <span class="app-version-pill-spinner" aria-hidden="true"></span>
-          <span class="app-version-pill-label">${label}</span>
+          <span class="app-version-pill-label">${namePart}${shaLabel}</span>
         </span>`;
       return;
     }
@@ -102,7 +109,7 @@ const App = {
                 title="Platform updated from ${oldShort} to ${newShort}. Click to reload."
                 onclick="location.reload()">
           <span class="app-version-pill-dot"></span>
-          <span class="app-version-pill-label">${newShort} · reload</span>
+          <span class="app-version-pill-label">${namePart}${newShort} · reload</span>
         </button>`;
       return;
     }
@@ -112,8 +119,18 @@ const App = {
     slot.innerHTML = `
       <a href="${href}" target="_blank" rel="noopener" class="app-version-pill" title="Platform commit ${shortSha}">
         <span class="app-version-pill-dot"></span>
-        <span class="app-version-pill-label">${shortSha}</span>
+        <span class="app-version-pill-label">${namePart}${shortSha}</span>
       </a>`;
+  },
+
+  // Tiny local HTML-escaper so the project name (sourced from an env
+  // var on the server) can't break out of the attribute/text context.
+  // Kept on App rather than reaching into app-view.js's helpers since
+  // those load conditionally / aren't guaranteed to be in scope here.
+  _escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    })[c]);
   },
 
   eventsWs: null,

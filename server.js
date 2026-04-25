@@ -41,10 +41,14 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
-// Lightweight endpoint polled by the homescreen "platform version" pill
-// (public/js/home.js). Three pieces of information packaged together so
-// the client only needs one fetch:
+// Lightweight endpoint polled by the header "platform version" pill
+// (public/js/app.js → renderPlatformVersionPill). Four pieces of
+// information packaged together so the client only needs one fetch:
 //   - `sha`            : the SHA the running platform was built from.
+//   - `name`           : short label shown in the pill (mirrors how the
+//                        per-app pill leads with the app slug, so the
+//                        two read symmetrically as "usernode · sha"
+//                        and "myapp · sha · #pr"). Overridable via env.
 //   - `repoUrl`        : where to link the pill (commit on GitHub).
 //                        Overridable via env so forks point at their own repo.
 //   - `deployProgress` : null in idle state, or { deploying, sha, startedAt }
@@ -54,6 +58,7 @@ const deployStatus = require('./src/services/deploy-status');
 app.get('/api/version', (_req, res) => {
   res.json({
     sha: process.env.GIT_SHA || 'dev',
+    name: process.env.USERNODE_PROJECT_NAME || 'usernode',
     repoUrl: process.env.USERNODE_REPO_URL || 'https://github.com/Usernode-Labs/social-vibecoding',
     deployProgress: deployStatus.read(),
   });
