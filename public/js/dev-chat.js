@@ -1098,6 +1098,14 @@ const DevChat = {
   // Apply a previously saved scroll position for the current session, if
   // any. Falls back to scrolling to the bottom (which is the desired
   // behavior on first entry into a session).
+  //
+  // We use scrollTo({ behavior: 'instant' }) rather than assigning
+  // .scrollTop directly because .dc-messages-container has CSS
+  // `scroll-behavior: smooth` set (so streaming messages glide nicely).
+  // That CSS rule applies to .scrollTop assignments too, which would
+  // otherwise turn the tab-switch restore into a multi-second animated
+  // scroll from 0 → scrollHeight. 'instant' overrides the CSS just for
+  // this one programmatic jump.
   restoreSessionScroll() {
     const container = document.getElementById('dc-messages');
     if (!container) return;
@@ -1105,10 +1113,10 @@ const DevChat = {
       ? DevChat._savedScrollBySession[DevChat.currentSession.id]
       : null;
     if (saved && !saved.lockedToBottom) {
-      container.scrollTop = saved.scrollTop;
+      container.scrollTo({ top: saved.scrollTop, behavior: 'instant' });
       DevChat._lockedToBottom = false;
     } else {
-      container.scrollTop = container.scrollHeight;
+      container.scrollTo({ top: container.scrollHeight, behavior: 'instant' });
       DevChat._lockedToBottom = true;
     }
   },
