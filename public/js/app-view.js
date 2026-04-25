@@ -138,13 +138,22 @@ const AppView = {
       if (info.mergedBy) parts.push(`by @${info.mergedBy}`);
       if (info.mergedAt) parts.push(relTime(info.mergedAt));
       const tip = parts.length ? parts.join(' · ') : `Commit ${info.shortSha}`;
-      const label = info.prNumber
+      // Lead with the app slug so this pill is unambiguously distinguishable
+      // from the platform-version pill (which lives in the same header and
+      // would otherwise be visually identical at a glance — both are just
+      // a green dot + a short SHA).
+      const slug = AppView.appData.slug;
+      const sha = info.prNumber
         ? `${info.shortSha} · #${info.prNumber}`
         : info.shortSha;
       slot.innerHTML = `
         <a href="${href}" target="_blank" rel="noopener" class="app-version-pill" title="${escapeAttr(tip)}">
           <span class="app-version-pill-dot"></span>
-          <span class="app-version-pill-label">${escapeHtml(label)}</span>
+          <span class="app-version-pill-label">
+            <span class="app-version-pill-name">${escapeHtml(slug)}</span>
+            <span class="app-version-pill-sep">·</span>
+            ${escapeHtml(sha)}
+          </span>
         </a>`;
     } catch {
       // Non-critical; if the fetch fails the pill just doesn't render.

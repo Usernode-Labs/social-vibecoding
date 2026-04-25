@@ -21,17 +21,99 @@ const App = {
     App.connectEvents();
     App.loadVersion();
     App.restoreFromHash();
+
+    // Re-poll the platform version every 10s so the header pill flips to
+    // its "deploying" state within seconds of the deploy workflow signaling
+    // start, and back to "current" (or "stale") when it finishes. Cheap
+    // endpoint — just reads one tiny file off disk on the server.
+    setInterval(App.loadVersion, 10_000);
   },
+
+  // The SHA the currently-loaded client JS was shipped with. Captured on
+  // first poll so we can compare against later polls and surface a
+  // "platform updated, reload to use new features" hint when the running
+  // platform has moved on but this tab hasn't.
+  loadedPlatformSha: null,
 
   async loadVersion() {
     try {
       const res = await fetch('/api/version');
-      if (res.ok) {
-        const { sha } = await res.json();
-        const el = document.getElementById('version-label');
-        if (el) el.textContent = sha;
+      if (!res.ok) return;
+      const info = await res.json();
+      if (!App.loadedPlatformSha && info.sha && info.sha !== 'dev') {
+        App.loadedPlatformSha = info.sha;
       }
+      App.renderPlatformVersionPill(info);
     } catch {}
+  },
+
+  // Three rendering states. Reuses .app-version-pill base styles + a
+  // couple of modifier classes (see public/css/app.css) for the deploying
+  // and stale variants.
+  renderPlatformVersionPill(info) {
+    const slot = document.getElementById('platform-version-pill-slot');
+    if (!slot) return;
+
+    const runningSha = info.sha;
+    const repoUrl = info.repoUrl || '#';
+    const deploy = info.deployProgress;
+    const isDeploying = !!(deploy && deploy.deploying);
+    const isStale = !isDeploying
+      && App.loadedPlatformSha
+      && runningSha
+      && runningSha !== App.loadedPlatformSha
+      && runningSha !== 'dev';
+
+    if (!runningSha || runningSha === 'dev') {
+      // Local dev / no GIT_SHA — render a low-key "dev" chip so the slot
+      // isn't empty (which can look like a layout bug).
+      slot.innerHTML = `
+        <span class="app-version-pill" title="Running outside of a deploy (no GIT_SHA set)">
+          <span class="app-version-pill-dot" style="background:#71717a;box-shadow:none"></span>
+          <span class="app-version-pill-label">dev</span>
+        </span>`;
+      return;
+    }
+
+    if (isDeploying) {
+      const newShort = (deploy.sha || '').slice(0, 7);
+      const oldShort = runningSha.slice(0, 7);
+      const elapsed = deploy.startedAt
+        ? Math.max(0, Math.floor((Date.now() - new Date(deploy.startedAt).getTime()) / 1000))
+        : null;
+      const tipParts = [`Deploying ${newShort || 'new build'}`];
+      if (oldShort) tipParts.push(`from ${oldShort}`);
+      if (elapsed != null) tipParts.push(`${elapsed}s elapsed`);
+      const label = newShort ? `→ ${newShort}` : 'deploying';
+      slot.innerHTML = `
+        <span class="app-version-pill app-version-pill--deploying" title="${tipParts.join(' · ')}">
+          <span class="app-version-pill-spinner" aria-hidden="true"></span>
+          <span class="app-version-pill-label">${label}</span>
+        </span>`;
+      return;
+    }
+
+    if (isStale) {
+      const oldShort = App.loadedPlatformSha.slice(0, 7);
+      const newShort = runningSha.slice(0, 7);
+      slot.innerHTML = `
+        <button type="button"
+                class="app-version-pill app-version-pill--stale"
+                title="Platform updated from ${oldShort} to ${newShort}. Click to reload."
+                onclick="location.reload()">
+          <span class="app-version-pill-dot"></span>
+          <span class="app-version-pill-label">${newShort} · reload</span>
+        </button>`;
+      return;
+    }
+
+    const shortSha = runningSha.slice(0, 7);
+    const href = `${repoUrl.replace(/\/$/, '')}/commit/${runningSha}`;
+    slot.innerHTML = `
+      <a href="${href}" target="_blank" rel="noopener" class="app-version-pill" title="Platform commit ${shortSha}">
+        <span class="app-version-pill-dot"></span>
+        <span class="app-version-pill-label">${shortSha}</span>
+      </a>`;
   },
 
   eventsWs: null,

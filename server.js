@@ -41,8 +41,22 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
+// Lightweight endpoint polled by the homescreen "platform version" pill
+// (public/js/home.js). Three pieces of information packaged together so
+// the client only needs one fetch:
+//   - `sha`            : the SHA the running platform was built from.
+//   - `repoUrl`        : where to link the pill (commit on GitHub).
+//                        Overridable via env so forks point at their own repo.
+//   - `deployProgress` : null in idle state, or { deploying, sha, startedAt }
+//                        when the deploy workflow has flagged a redeploy in
+//                        flight (see services/deploy-status.js + deploy.yml).
+const deployStatus = require('./src/services/deploy-status');
 app.get('/api/version', (_req, res) => {
-  res.json({ sha: process.env.GIT_SHA || 'dev' });
+  res.json({
+    sha: process.env.GIT_SHA || 'dev',
+    repoUrl: process.env.USERNODE_REPO_URL || 'https://github.com/Usernode-Labs/social-vibecoding',
+    deployProgress: deployStatus.read(),
+  });
 });
 
 // Public conventions endpoint. Apps' own CLAUDE.md files point here so

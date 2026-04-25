@@ -574,4 +574,70 @@ html, body {
   background: #10b981;
   box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.18);
 }
-.app-version-pill-label { letter-spacing: 0.02em; }
+.app-version-pill-label {
+  letter-spacing: 0.02em;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+/* Slug part of the per-app pill — slightly brighter than the SHA so the
+   pill reads as "<app> · <commit>" at a glance and can't be mistaken
+   for the platform-version pill sitting next to it. */
+.app-version-pill-name {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.app-version-pill-sep {
+  color: var(--border);
+}
+
+/* ── Platform-version pill states ─────────────────────────
+   Same base shape as .app-version-pill; modifiers for the
+   two non-idle states the platform pill can be in. */
+
+/* "A new deploy is currently rolling out." Yellow tint + spinner. */
+.app-version-pill--deploying {
+  background: rgba(234, 179, 8, 0.12);
+  border-color: rgba(234, 179, 8, 0.45);
+  color: #facc15;
+}
+.app-version-pill--deploying:hover {
+  background: rgba(234, 179, 8, 0.18);
+  border-color: rgba(234, 179, 8, 0.6);
+  color: #fde047;
+}
+.app-version-pill-spinner {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(234, 179, 8, 0.25);
+  border-top-color: #facc15;
+  animation: app-version-pill-spin 0.9s linear infinite;
+}
+@keyframes app-version-pill-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* "Platform has rolled past the SHA this tab loaded against — reload to
+   pick up the new client code." Click to reload; styled as a button. */
+.app-version-pill--stale {
+  background: rgba(139, 92, 246, 0.12);
+  border-color: rgba(139, 92, 246, 0.45);
+  color: #a78bfa;
+  cursor: pointer;
+  font: inherit;
+}
+.app-version-pill--stale:hover {
+  background: rgba(139, 92, 246, 0.2);
+  border-color: rgba(139, 92, 246, 0.65);
+  color: #c4b5fd;
+}
+.app-version-pill--stale .app-version-pill-dot {
+  background: #a78bfa;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.22);
+  animation: app-version-pill-pulse 1.6s ease-in-out infinite;
+}
+@keyframes app-version-pill-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.5; }
+}

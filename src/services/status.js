@@ -1,43 +1,15 @@
 const { execFile } = require('child_process');
 const { promisify } = require('util');
-const fs = require('fs');
-const path = require('path');
 const { getPool } = require('../db/pool');
 const log = require('./logger');
 const workerProgress = require('./worker-progress');
+const deployStatus = require('./deploy-status');
 
 const execFileAsync = promisify(execFile);
 
 const WORKER_PREFIX = 'usernode-worker-';
 const APP_PREFIX = 'usernode-app-';
 const STAGING_PREFIX = 'usernode-staging-';
-
-// Where the deploy workflow drops `deploy-status.json` (bind-mounted from
-// the host). Set in docker-compose.yml. Unset in local dev → no banner.
-const RUNTIME_PATH = process.env.USERNODE_RUNTIME_PATH;
-// If the file claims a deploy started more than this long ago, ignore it.
-// Covers the case where the VPS rebooted mid-deploy and the workflow's
-// `if: always()` cleanup step never got to run.
-const DEPLOY_STALE_AFTER_MS = 30 * 60 * 1000;
-
-function readDeployStatus() {
-  if (!RUNTIME_PATH) return null;
-  try {
-    const raw = fs.readFileSync(path.join(RUNTIME_PATH, 'deploy-status.json'), 'utf8');
-    const data = JSON.parse(raw);
-    if (data.deploying && data.startedAt) {
-      const age = Date.now() - new Date(data.startedAt).getTime();
-      if (age > DEPLOY_STALE_AFTER_MS) {
-        return { deploying: false, stale: true, ...data };
-      }
-    }
-    return data;
-  } catch {
-    // File doesn't exist (no deploys yet) or is malformed — both look
-    // like "no deploy happening" from the dashboard's perspective.
-    return null;
-  }
-}
 
 // Match SPEC.md limits.
 const MAX_STAGING_GLOBAL = 25;
@@ -321,7 +293,7 @@ async function gather(config, { isAdmin = false } = {}) {
     now: new Date().toISOString(),
     version: process.env.GIT_SHA || 'dev',
     isAdmin,
-    deployProgress: readDeployStatus(),
+    deployProgress: deployStatus.read(),
     limits: {
       stagingGlobal: MAX_STAGING_GLOBAL,
       stagingPerUser: MAX_STAGING_PER_USER,

@@ -30,9 +30,16 @@
     <span class="flex-1"></span>
     <h1 id="header-title" class="text-lg font-bold">Usernode Social Vibecoding</h1>
     <span class="flex-1"></span>
+    <!-- Platform-version pill: which SHA of usernode itself is currently
+         live. Populated by Home.refreshPlatformVersionPill() (polled on
+         a timer so it flips to a yellow "deploying" state when a new
+         deploy is in flight, and to a "reload" hint when the running
+         platform has rolled past the SHA this page loaded against).
+         Always visible — the platform's version is universally relevant. -->
+    <span id="platform-version-pill-slot" class="inline-flex mr-3"></span>
     <!-- #21: deployed-version pill, populated by AppView.refreshVersionPill()
-         when an app is open. Sits at the start of the right-side button
-         group so it's close to the other app-context controls. -->
+         when an app is open. Sits next to the platform pill so the two
+         read left-to-right as "platform · app". -->
     <span id="app-version-pill-slot" class="inline-flex mr-3"></span>
     <button id="dev-console-btn" class="hidden relative text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Open developer console">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z"/></svg>
@@ -63,7 +70,6 @@
       <p class="text-lg mb-2">No apps yet</p>
       <p class="text-sm">Tap <span class="text-violet-400 font-bold">+</span> to create your first app</p>
     </div>
-    <div id="version-label" class="fixed bottom-2 right-3 text-xs font-mono text-zinc-700"></div>
   </main>
 
   <!-- App view (hidden by default) -->
