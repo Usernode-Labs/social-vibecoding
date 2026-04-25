@@ -134,13 +134,24 @@ const App = {
   },
 
   eventsWs: null,
+  // Set on the very first connect; on every subsequent (re)connect we
+  // resync state because the server's broadcast model is fire-and-forget
+  // — anything pushed during the disconnect window (a `vote_update
+  // merged:true` from a long-running merge, an `app_status` flip, etc.)
+  // would otherwise be silently lost. Resync = re-pull whatever the
+  // current view depends on; cheap, and it self-bounds to "exactly when
+  // we know we might have missed something" rather than a periodic poll.
+  _eventsWsHasConnected: false,
 
   connectEvents() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     App.eventsWs = new WebSocket(`${proto}//${location.host}/ws/events`);
 
     App.eventsWs.onopen = () => {
-      console.log('[ws] Global events connected');
+      const isReconnect = App._eventsWsHasConnected;
+      App._eventsWsHasConnected = true;
+      console.log(`[ws] Global events ${isReconnect ? 'reconnected' : 'connected'}`);
+      if (isReconnect) App.resyncCurrentView();
     };
 
     App.eventsWs.onerror = (err) => {
@@ -187,6 +198,30 @@ const App = {
     App.eventsWs.onclose = () => {
       setTimeout(() => App.connectEvents(), 3000);
     };
+  },
+
+  // Pull fresh state for whatever the user is currently looking at.
+  // Called on WS reconnect (and could also be wired to visibilitychange
+  // for tabs that come back from being backgrounded). Each branch maps
+  // to a corresponding `case` in onmessage — the rule is simply "if a
+  // WS event would have driven this view, refetch the same data here."
+  resyncCurrentView() {
+    if (window.Home && document.getElementById('home-screen') && !document.getElementById('home-screen').classList.contains('hidden')) {
+      Home.load();
+    }
+    if (window.Notifications) Notifications.refresh?.();
+    App.loadVersion();
+    if (App.currentApp && window.AppView && AppView.appData) {
+      AppView.refreshVersionPill();
+      // Re-fetch tab-specific state. We don't blow away the DOM —
+      // these helpers update in place — so scroll positions, drafts,
+      // etc. survive the resync.
+      if (App.currentTab === 'group-chat') {
+        AppView.loadVotePanel(AppView.appData.slug);
+      } else if (App.currentTab === 'app') {
+        AppView.refreshToken?.();
+      }
+    }
   },
 
   handleAppStatusUpdate(data) {

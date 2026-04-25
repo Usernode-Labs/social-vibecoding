@@ -227,32 +227,9 @@ const AppView = {
 
   panelOpen: true,
 
-  // Backup poll for "Merging…" rows. The server pushes a `vote_update`
-  // WS event when a merge finishes, which is the fast-path that flips the
-  // panel out of the spinner state. But a merge can take 30+ seconds
-  // (GitHub merge + prod rebuild + staging teardown), and over that window
-  // anything that drops the WS connection — a tab backgrounded by the OS,
-  // a server restart, a flaky network — will silently swallow the
-  // `merged:true` broadcast on reconnect (we don't replay events). When
-  // that happens the spinner spins forever until the user reloads. So
-  // whenever the panel renders any 'merging' row, we self-schedule a
-  // re-fetch every few seconds; the first response that no longer
-  // contains the row will naturally remove the spinner and stop the
-  // polling chain.
-  _mergingPollTimer: null,
-  _MERGING_POLL_INTERVAL_MS: 5000,
-
   async loadVotePanel(slug) {
     const panel = document.getElementById('gc-panel-content');
     if (!panel) return;
-
-    // Reset any in-flight backup poll. Either we're about to discover
-    // there's still a merge in progress (and re-arm it below), or the
-    // merge has completed and we don't need it anymore.
-    if (AppView._mergingPollTimer) {
-      clearTimeout(AppView._mergingPollTimer);
-      AppView._mergingPollTimer = null;
-    }
 
     try {
       const [promotedRes, issuesRes, mergedRes] = await Promise.all([
@@ -386,19 +363,6 @@ const AppView = {
         if (body) body.classList.toggle('hidden');
         if (arrow) arrow.innerHTML = AppView.panelOpen ? '&#9660;' : '&#9654;';
       });
-
-      // Re-arm the backup poll if any PR is still mid-merge. The
-      // `App.currentApp === slug && currentTab === 'group-chat'` guard
-      // in the callback ensures we stop polling automatically when the
-      // user navigates away.
-      if (promoted.some((pr) => pr.status === 'merging')) {
-        AppView._mergingPollTimer = setTimeout(() => {
-          AppView._mergingPollTimer = null;
-          if (window.App && App.currentApp === slug && App.currentTab === 'group-chat') {
-            AppView.loadVotePanel(slug);
-          }
-        }, AppView._MERGING_POLL_INTERVAL_MS);
-      }
     } catch {
       panel.innerHTML = '';
     }
