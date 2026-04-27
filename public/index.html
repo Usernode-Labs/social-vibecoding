@@ -17,6 +17,7 @@
       document.documentElement.classList.remove('dark');
     }
   </script>
+  <script src="https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs/qrcode.min.js"></script>
   <link rel="stylesheet" href="/css/app.css">
 </head>
 <body class="bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 flex flex-col" style="height:100dvh">
@@ -231,7 +232,11 @@
 
   <!-- #30: Settings modal (BYOK — user Anthropic API key) -->
   <div id="settings-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md mx-4 shadow-xl">
+    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md mx-4 shadow-xl relative">
+      <button id="settings-close" class="absolute top-4 right-4 text-zinc-400 hover:text-zinc-200 transition-colors" aria-label="Close settings">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+
       <h2 class="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">Settings</h2>
       <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-4">Bring your own Anthropic API key to bypass the shared daily budget. Usage bills directly to your Anthropic account.</p>
 
@@ -239,8 +244,12 @@
       <div id="settings-key-display" class="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-700 dark:text-zinc-300 mb-2">
         sk-ant-…<span id="settings-key-last4"></span>
       </div>
-      <input id="settings-api-key" type="password" placeholder="sk-ant-..." autocomplete="off" spellcheck="false"
-        class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono" />
+      <div class="flex gap-2">
+        <input id="settings-api-key" type="password" placeholder="sk-ant-..." autocomplete="off" spellcheck="false"
+          class="flex-1 min-w-0 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono" />
+        <button id="settings-save" class="shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Save</button>
+        <button id="settings-remove" class="hidden shrink-0 rounded-lg border border-red-400 dark:border-red-700 px-3 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors">Remove</button>
+      </div>
       <p class="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
         Encrypted at rest, verified against Anthropic before saving, never shown in full after save.
         The server decrypts it in memory to call Anthropic on your behalf &mdash; don't paste keys into services you don't trust with that level of access.
@@ -249,10 +258,33 @@
 
       <div id="settings-status" class="text-sm mt-3 hidden"></div>
 
-      <div class="flex gap-3 mt-5">
-        <button id="settings-cancel" class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
-        <button id="settings-remove" class="hidden rounded-lg border border-red-400 dark:border-red-700 px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors">Remove</button>
-        <button id="settings-save" class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Save</button>
+      <!-- Wallet linking section -->
+      <div id="wallet-section" class="hidden mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
+        <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Usernode Wallet</h3>
+        <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">Link your on-chain identity. Scan the QR code with the Usernode mobile app.</p>
+
+        <!-- Unlinked: show link button -->
+        <div id="wallet-unlinked" class="hidden">
+          <button id="wallet-link-btn" class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Link Usernode Wallet</button>
+        </div>
+
+        <!-- Linking: show QR -->
+        <div id="wallet-linking" class="hidden text-center">
+          <div id="wallet-qr-canvas" class="inline-block rounded-lg bg-white p-2"></div>
+          <p id="wallet-link-timer" class="text-xs text-zinc-500 mt-2"></p>
+          <button id="wallet-link-cancel" class="mt-2 text-xs text-zinc-500 hover:text-zinc-300 underline">Cancel</button>
+        </div>
+
+        <!-- Linked: show pubkey + unlink -->
+        <div id="wallet-linked" class="hidden">
+          <div class="flex items-center gap-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2">
+            <span class="text-xs text-emerald-500 font-bold">&#x2713;</span>
+            <span id="wallet-pubkey-display" class="text-sm font-mono text-zinc-700 dark:text-zinc-300 truncate flex-1"></span>
+          </div>
+          <button id="wallet-unlink-btn" class="mt-2 text-xs text-red-500 hover:text-red-400 underline">Unlink wallet</button>
+        </div>
+
+        <div id="wallet-status" class="text-sm mt-2 hidden"></div>
       </div>
     </div>
   </div>

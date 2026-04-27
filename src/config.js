@@ -35,6 +35,7 @@ function load() {
     // the cap; errored rows don't count (they hold ~no resources and users
     // can delete them to free a slot). See src/routes/apps.js.
     maxApps: parseInt(process.env.MAX_APPS || '20', 10),
+    usernodeAppPubkey: process.env.USERNODE_APP_PUBKEY || '',
   };
 
   console.log('[config] Loaded:');
@@ -44,6 +45,7 @@ function load() {
   console.log(`  ANTHROPIC_API_KEY=${mask(config.anthropicApiKey)}`);
   console.log(`  LOG_LEVEL=${config.logLevel}`);
   console.log(`  MAX_APPS=${config.maxApps}`);
+  console.log(`  USERNODE_APP_PUBKEY=${config.usernodeAppPubkey || '(not set — wallet linking disabled)'}`);
 
   return config;
 }

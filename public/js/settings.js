@@ -11,14 +11,24 @@
 
   const Settings = {
     modal: null,
-    state: { hasApiKey: false, keyLast4: null },
+    state: { hasApiKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false },
+    _walletPollTimer: null,
+    _walletExpiresAt: null,
+    _walletCountdownTimer: null,
 
     init() {
       this.modal = document.getElementById('settings-modal');
       document.getElementById('settings-btn').addEventListener('click', () => this.open());
-      document.getElementById('settings-cancel').addEventListener('click', () => this.close());
+      document.getElementById('settings-close').addEventListener('click', () => this.close());
       document.getElementById('settings-save').addEventListener('click', () => this.save());
       document.getElementById('settings-remove').addEventListener('click', () => this.remove());
+
+      const linkBtn = document.getElementById('wallet-link-btn');
+      if (linkBtn) linkBtn.addEventListener('click', () => this._startWalletLink());
+      const unlinkBtn = document.getElementById('wallet-unlink-btn');
+      if (unlinkBtn) unlinkBtn.addEventListener('click', () => this._unlinkWallet());
+      const cancelLink = document.getElementById('wallet-link-cancel');
+      if (cancelLink) cancelLink.addEventListener('click', () => this._cancelWalletLink());
 
       this.modal.addEventListener('click', (e) => {
         if (e.target === this.modal) this.close();
@@ -38,6 +48,8 @@
         const j = await r.json();
         this.state.hasApiKey = !!j.user?.hasApiKey;
         this.state.keyLast4 = j.user?.keyLast4 || null;
+        this.state.usernodePubkey = j.user?.usernodePubkey || null;
+        this.state.walletLinkEnabled = !!j.user?.walletLinkEnabled;
         this._renderIndicator();
       } catch {}
     },
@@ -54,11 +66,9 @@
 
     open() {
       this._renderBody();
+      this._renderWalletSection();
       this._clearStatus();
       this.modal.classList.remove('hidden');
-      // Only focus the input when there's nothing yet — when we're
-      // showing an existing key, the "Save" button is the more
-      // interesting target (user is probably here to remove/replace).
       if (!this.state.hasApiKey) {
         setTimeout(() => document.getElementById('settings-api-key').focus(), 0);
       }
@@ -67,6 +77,7 @@
     close() {
       this.modal.classList.add('hidden');
       document.getElementById('settings-api-key').value = '';
+      this._stopWalletPolling();
     },
 
     _renderBody() {
@@ -172,6 +183,149 @@
       } finally {
         removeBtn.disabled = false;
       }
+    },
+
+    // ── Wallet linking ───────────────────────────────────────────
+
+    _renderWalletSection() {
+      const section = document.getElementById('wallet-section');
+      if (!section) return;
+      if (!this.state.walletLinkEnabled) { section.classList.add('hidden'); return; }
+      section.classList.remove('hidden');
+
+      const unlinked = document.getElementById('wallet-unlinked');
+      const linking = document.getElementById('wallet-linking');
+      const linked = document.getElementById('wallet-linked');
+      unlinked.classList.add('hidden');
+      linking.classList.add('hidden');
+      linked.classList.add('hidden');
+
+      if (this.state.usernodePubkey) {
+        linked.classList.remove('hidden');
+        const display = document.getElementById('wallet-pubkey-display');
+        const pk = this.state.usernodePubkey;
+        display.textContent = pk.length > 20 ? pk.slice(0, 10) + '…' + pk.slice(-6) : pk;
+        display.title = pk;
+      } else if (this._walletPollTimer) {
+        linking.classList.remove('hidden');
+      } else {
+        unlinked.classList.remove('hidden');
+      }
+    },
+
+    async _startWalletLink() {
+      const btn = document.getElementById('wallet-link-btn');
+      btn.disabled = true;
+      try {
+        const r = await fetch('/api/me/wallet-link', {
+          method: 'POST', credentials: 'same-origin',
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          this._setWalletStatus(j.error || 'Failed to start linking.', 'error');
+          btn.disabled = false;
+          return;
+        }
+        const qrPayload = JSON.stringify(j.qr);
+        this._walletExpiresAt = new Date(j.expiresAt).getTime();
+
+        const container = document.getElementById('wallet-qr-canvas');
+        container.innerHTML = '';
+        if (window.QRCode) {
+          new QRCode(container, {
+            text: qrPayload,
+            width: 180,
+            height: 180,
+            colorDark: '#1a1a30',
+            colorLight: '#ffffff',
+            correctLevel: QRCode.CorrectLevel.L,
+          });
+        }
+
+        this._startWalletPolling();
+        this._startWalletCountdown();
+        this._renderWalletSection();
+      } catch (err) {
+        this._setWalletStatus('Network error: ' + err.message, 'error');
+        btn.disabled = false;
+      }
+    },
+
+    _startWalletPolling() {
+      this._stopWalletPolling();
+      const check = async () => {
+        try {
+          const r = await fetch('/api/me/wallet-link/status', { credentials: 'same-origin' });
+          const j = await r.json();
+          if (j.linked) {
+            this.state.usernodePubkey = j.pubkey;
+            this._stopWalletPolling();
+            this._renderWalletSection();
+            this._setWalletStatus('Wallet linked!', 'ok');
+          }
+        } catch {}
+      };
+      check();
+      this._walletPollTimer = setInterval(check, 2000);
+    },
+
+    _stopWalletPolling() {
+      if (this._walletPollTimer) { clearInterval(this._walletPollTimer); this._walletPollTimer = null; }
+      if (this._walletCountdownTimer) { clearInterval(this._walletCountdownTimer); this._walletCountdownTimer = null; }
+      this._walletExpiresAt = null;
+    },
+
+    _startWalletCountdown() {
+      if (this._walletCountdownTimer) clearInterval(this._walletCountdownTimer);
+      const label = document.getElementById('wallet-link-timer');
+      const tick = () => {
+        if (!this._walletExpiresAt) { label.textContent = ''; return; }
+        const remaining = Math.max(0, this._walletExpiresAt - Date.now());
+        if (remaining <= 0) {
+          this._cancelWalletLink();
+          this._setWalletStatus('QR code expired. Try again.', 'error');
+          return;
+        }
+        const m = Math.floor(remaining / 60000);
+        const s = Math.floor((remaining % 60000) / 1000);
+        label.textContent = 'Expires in ' + m + ':' + String(s).padStart(2, '0');
+      };
+      tick();
+      this._walletCountdownTimer = setInterval(tick, 1000);
+    },
+
+    _cancelWalletLink() {
+      this._stopWalletPolling();
+      const btn = document.getElementById('wallet-link-btn');
+      if (btn) btn.disabled = false;
+      this._renderWalletSection();
+    },
+
+    async _unlinkWallet() {
+      if (!confirm('Unlink your Usernode wallet?')) return;
+      try {
+        const r = await fetch('/api/me/wallet-link', { method: 'DELETE', credentials: 'same-origin' });
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}));
+          this._setWalletStatus(j.error || 'Failed to unlink.', 'error');
+          return;
+        }
+        this.state.usernodePubkey = null;
+        this._renderWalletSection();
+        this._setWalletStatus('Wallet unlinked.', 'ok');
+      } catch (err) {
+        this._setWalletStatus('Network error: ' + err.message, 'error');
+      }
+    },
+
+    _setWalletStatus(text, kind) {
+      const el = document.getElementById('wallet-status');
+      if (!el) return;
+      el.textContent = text;
+      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
+      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
+      el.classList.add(cls);
+      if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
     },
   };
 

@@ -1,0 +1,48 @@
+# Local development stack.
+#
+# Usage:
+#   docker compose -f docker-compose.dev.yml up --build
+#
+# Then visit http://localhost:3000
+
+services:
+  app:
+    build: .
+    container_name: vibecoding-dev
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://usernode:localdev@db:5432/usernode
+      LOG_LEVEL: DEBUG
+    command: node --watch --watch-path=server.js --watch-path=src server.js
+    volumes:
+      - ./public:/app/public
+      - ./src:/app/src
+      - ./server.js:/app/server.js
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:17-alpine
+    container_name: vibecoding-db-dev
+    restart: unless-stopped
+    ports:
+      - "5440:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: usernode
+      POSTGRES_USER: usernode
+      POSTGRES_PASSWORD: localdev
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U usernode"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  db-data:

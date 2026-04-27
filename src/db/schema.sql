@@ -13,6 +13,12 @@ CREATE TABLE IF NOT EXISTS users (
 ALTER TABLE users ADD COLUMN IF NOT EXISTS anthropic_key_enc    TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS anthropic_key_last4  VARCHAR(8);
 
+-- Usernode wallet linking: pubkey is the on-chain identity once linked;
+-- token + expiry gate the QR-based linking flow.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS usernode_pubkey          VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_link_token        VARCHAR(64);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_link_expires_at   TIMESTAMPTZ;
+
 CREATE TABLE IF NOT EXISTS sessions (
   token      VARCHAR(64) PRIMARY KEY,
   user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE,

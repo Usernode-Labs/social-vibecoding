@@ -145,15 +145,17 @@ function authRoutes(config) {
     // in plaintext for display purposes only.
     let hasApiKey = false;
     let keyLast4 = null;
+    let usernodePubkey = null;
     try {
       const { rows } = await pool.query(
-        'SELECT anthropic_key_enc, anthropic_key_last4 FROM users WHERE id = $1',
+        'SELECT anthropic_key_enc, anthropic_key_last4, usernode_pubkey FROM users WHERE id = $1',
         [req.user.id]
       );
       if (rows[0]?.anthropic_key_enc) {
         hasApiKey = true;
         keyLast4 = rows[0].anthropic_key_last4 || null;
       }
+      usernodePubkey = rows[0]?.usernode_pubkey || null;
     } catch {}
     res.json({
       user: {
@@ -162,6 +164,8 @@ function authRoutes(config) {
         isAdmin: req.user.isAdmin,
         hasApiKey,
         keyLast4,
+        usernodePubkey,
+        walletLinkEnabled: !!config.usernodeAppPubkey,
       },
     });
   });
@@ -223,6 +227,76 @@ function authRoutes(config) {
       res.json({ ok: true });
     } catch (err) {
       log.error('byok', 'Failed to remove key', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Wallet linking ───────────────────────────────────────────────
+  const LINK_TOKEN_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+  router.post('/api/me/wallet-link', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    if (!config.usernodeAppPubkey) {
+      return res.status(503).json({ error: 'Wallet linking not configured' });
+    }
+
+    const token = crypto.randomBytes(16).toString('hex');
+    const expiresAt = new Date(Date.now() + LINK_TOKEN_TTL_MS);
+
+    try {
+      await pool.query(
+        `UPDATE users SET wallet_link_token = $1, wallet_link_expires_at = $2 WHERE id = $3`,
+        [token, expiresAt, req.user.id]
+      );
+
+      const memo = JSON.stringify({
+        app: 'vibecode',
+        type: 'link_wallet',
+        token,
+      });
+
+      res.json({
+        qr: {
+          type: 'tx',
+          to: config.usernodeAppPubkey,
+          amount: 1,
+          memo,
+          confirmTitle: 'Link Wallet',
+          confirmSubtitle: 'Link your Usernode wallet to your Social Vibecoding account.',
+        },
+        expiresAt: expiresAt.toISOString(),
+      });
+    } catch (err) {
+      log.error('wallet', 'Failed to generate link token', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.get('/api/me/wallet-link/status', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+      const { rows } = await pool.query(
+        'SELECT usernode_pubkey FROM users WHERE id = $1',
+        [req.user.id]
+      );
+      const pubkey = rows[0]?.usernode_pubkey || null;
+      res.json({ linked: !!pubkey, pubkey });
+    } catch (err) {
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.delete('/api/me/wallet-link', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+      await pool.query(
+        `UPDATE users SET usernode_pubkey = NULL, wallet_link_token = NULL, wallet_link_expires_at = NULL WHERE id = $1`,
+        [req.user.id]
+      );
+      log.info('wallet', 'Wallet unlinked', { userId: req.user.id });
+      res.json({ ok: true });
+    } catch (err) {
+      log.error('wallet', 'Failed to unlink wallet', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
