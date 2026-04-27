@@ -6,6 +6,7 @@
 const https = require('https');
 const http = require('http');
 const log = require('./logger');
+const genesisAccounts = require('./genesis-accounts');
 
 const EXPLORER_UPSTREAM = process.env.EXPLORER_UPSTREAM || 'alpha2.usernodelabs.org';
 const EXPLORER_UPSTREAM_BASE = process.env.EXPLORER_UPSTREAM_BASE || '/api';
@@ -115,6 +116,11 @@ async function poll(appPubkey, pool) {
 
       const sender = tx.source || tx.from_pubkey || tx.from;
       if (!sender) continue;
+
+      if (!genesisAccounts.isGenesisAddress(sender)) {
+        log.info('chain-poller', 'Ignoring link from non-genesis address', { pubkey: sender.slice(0, 10) + '...' });
+        continue;
+      }
 
       try {
         const { rowCount } = await pool.query(

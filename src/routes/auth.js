@@ -1,9 +1,12 @@
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
+const https = require('https');
+const http = require('http');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { authLimiter } = require('../middleware/rate-limits');
+const genesisAccounts = require('../services/genesis-accounts');
 
 const SESSION_DAYS = 7;
 
@@ -297,6 +300,270 @@ function authRoutes(config) {
       res.json({ ok: true });
     } catch (err) {
       log.error('wallet', 'Failed to unlink wallet', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Wallet-based authentication ───────────────────────────────────
+  const CHALLENGE_TTL_MS = 2 * 60 * 1000;
+  const walletChallenges = new Map();
+
+  setInterval(() => {
+    const now = Date.now();
+    for (const [key, entry] of walletChallenges) {
+      if (now > entry.expiresAt) walletChallenges.delete(key);
+    }
+  }, 30_000);
+
+  function httpJson(method, urlStr, body) {
+    return new Promise((resolve, reject) => {
+      const url = new URL(urlStr);
+      const mod = url.protocol === 'https:' ? https : http;
+      const bodyBuf = body ? Buffer.from(JSON.stringify(body)) : null;
+      const req = mod.request(url, {
+        method,
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json',
+          ...(bodyBuf ? { 'content-length': bodyBuf.length } : {}),
+        },
+      }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          const text = Buffer.concat(chunks).toString();
+          if (res.statusCode < 200 || res.statusCode >= 300) {
+            return reject(new Error(`HTTP ${res.statusCode}: ${text.slice(0, 500) || '(empty body)'}`));
+          }
+          try { resolve(JSON.parse(text)); }
+          catch (e) { reject(new Error(`JSON parse: ${e.message} — raw: ${text.slice(0, 200)}`)); }
+        });
+      });
+      req.on('error', reject);
+      if (bodyBuf) req.write(bodyBuf);
+      req.end();
+    });
+  }
+
+  function createSessionCookie(res, token, expiresAt) {
+    res.cookie('session', token, {
+      httpOnly: true,
+      secure: SECURE_COOKIE,
+      sameSite: 'lax',
+      expires: expiresAt,
+    });
+  }
+
+  async function createSession(pool, userId) {
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
+    await pool.query(
+      'INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)',
+      [token, userId, expiresAt]
+    );
+    return { token, expiresAt };
+  }
+
+  router.post('/api/auth/wallet-check', authLimiter, async (req, res) => {
+    const { pubkey } = req.body || {};
+    if (!pubkey || typeof pubkey !== 'string') {
+      return res.status(400).json({ error: 'pubkey required' });
+    }
+
+    try {
+      const { rows } = await pool.query(
+        'SELECT id, username, is_admin FROM users WHERE usernode_pubkey = $1',
+        [pubkey.trim()]
+      );
+
+      const isGenesis = genesisAccounts.isGenesisAddress(pubkey.trim());
+
+      if (rows.length > 0) {
+        const challenge = crypto.randomBytes(32).toString('hex');
+        walletChallenges.set(challenge, {
+          pubkey: pubkey.trim(),
+          expiresAt: Date.now() + CHALLENGE_TTL_MS,
+        });
+        return res.json({ status: 'linked', challenge, isGenesis });
+      }
+
+      return res.json({ status: 'not_linked', isGenesis });
+    } catch (err) {
+      log.error('wallet-auth', 'wallet-check failed', { err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/auth/wallet-verify', authLimiter, async (req, res) => {
+    const { pubkey, publicKey, challenge, signature } = req.body || {};
+    if (!pubkey || !challenge || !signature) {
+      return res.status(400).json({ error: 'pubkey, challenge, and signature required' });
+    }
+
+    const entry = walletChallenges.get(challenge);
+    if (!entry || entry.pubkey !== pubkey.trim() || Date.now() > entry.expiresAt) {
+      return res.status(401).json({ error: 'Invalid or expired challenge' });
+    }
+    walletChallenges.delete(challenge);
+
+    const cryptoKey = (publicKey || pubkey).trim();
+    const verifyUrl = `${config.nodeRpcUrl}/misc/verify-signature`;
+    try {
+      const verifyBody = {
+        public_key: cryptoKey,
+        message: challenge,
+        signature,
+      };
+      log.info('wallet-auth', 'Calling verify-signature', {
+        url: verifyUrl,
+        public_key: cryptoKey.slice(0, 20) + '...',
+        message_len: challenge.length,
+        signature_prefix: String(signature).slice(0, 30) + '...',
+      });
+      const verifyResp = await httpJson('POST', verifyUrl, verifyBody);
+
+      if (!verifyResp || !verifyResp.valid) {
+        log.warn('wallet-auth', 'Signature invalid', { resp: verifyResp });
+        return res.status(401).json({ error: 'Signature verification failed' });
+      }
+
+      const { rows } = await pool.query(
+        'SELECT id, username, is_admin FROM users WHERE usernode_pubkey = $1',
+        [pubkey.trim()]
+      );
+      if (rows.length === 0) {
+        return res.status(401).json({ error: 'No account linked to this pubkey' });
+      }
+
+      const user = rows[0];
+      const { token, expiresAt } = await createSession(pool, user.id);
+      createSessionCookie(res, token, expiresAt);
+
+      log.info('wallet-auth', 'Signature login successful', { userId: user.id, username: user.username });
+      res.json({ user: { id: user.id, username: user.username, isAdmin: user.is_admin } });
+    } catch (err) {
+      log.error('wallet-auth', 'wallet-verify failed', { url: verifyUrl, err: err.message, code: err.code, stack: err.stack?.split('\n')[0] });
+      res.status(500).json({ error: 'Signature verification service unavailable' });
+    }
+  });
+
+  router.post('/api/auth/wallet-register', authLimiter, async (req, res) => {
+    const { username, password, pubkey } = req.body || {};
+    if (!username?.trim() || !password || !pubkey?.trim()) {
+      return res.status(400).json({ error: 'username, password, and pubkey required' });
+    }
+
+    if (!genesisAccounts.isGenesisAddress(pubkey.trim())) {
+      return res.status(403).json({ error: 'Only genesis ledger participants can register via wallet' });
+    }
+
+    try {
+      const hash = await bcrypt.hash(password, 12);
+
+      const linkToken = crypto.randomBytes(16).toString('hex');
+      const linkExpiresAt = new Date(Date.now() + LINK_TOKEN_TTL_MS);
+
+      const { rows } = await pool.query(
+        `INSERT INTO users (username, password, usernode_pubkey, wallet_link_token, wallet_link_expires_at)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+        [username.trim(), hash, pubkey.trim(), linkToken, linkExpiresAt]
+      );
+      const userId = rows[0].id;
+
+      const { token, expiresAt } = await createSession(pool, userId);
+      createSessionCookie(res, token, expiresAt);
+
+      const memo = JSON.stringify({
+        app: 'vibecode',
+        type: 'link_wallet',
+        token: linkToken,
+      });
+
+      log.info('wallet-auth', 'Wallet-gated registration', { userId, username: username.trim() });
+      res.json({
+        user: { id: userId, username: username.trim(), isAdmin: false },
+        walletLink: {
+          to: config.usernodeAppPubkey,
+          amount: 1,
+          memo,
+          expiresAt: linkExpiresAt.toISOString(),
+        },
+      });
+    } catch (err) {
+      if (err.code === '23505') {
+        return res.status(409).json({ error: 'Username already taken' });
+      }
+      log.error('wallet-auth', 'wallet-register failed', { err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/auth/wallet-link-login', authLimiter, async (req, res) => {
+    const { username, password, pubkey } = req.body || {};
+    if (!username?.trim() || !password || !pubkey?.trim()) {
+      return res.status(400).json({ error: 'username, password, and pubkey required' });
+    }
+
+    if (!genesisAccounts.isGenesisAddress(pubkey.trim())) {
+      return res.status(403).json({ error: 'Only genesis ledger participants can link a wallet' });
+    }
+
+    try {
+      const { rows } = await pool.query(
+        'SELECT id, password, is_admin, usernode_pubkey FROM users WHERE username = $1',
+        [username.trim()]
+      );
+
+      if (rows.length === 0) {
+        return res.status(401).json({ error: 'Invalid credentials' });
+      }
+
+      const user = rows[0];
+      const valid = await bcrypt.compare(password, user.password);
+      if (!valid) {
+        return res.status(401).json({ error: 'Invalid credentials' });
+      }
+
+      if (user.usernode_pubkey && user.usernode_pubkey !== pubkey.trim()) {
+        return res.status(409).json({ error: 'This account is already linked to a different wallet' });
+      }
+
+      const { token, expiresAt } = await createSession(pool, user.id);
+      createSessionCookie(res, token, expiresAt);
+
+      if (user.usernode_pubkey === pubkey.trim()) {
+        log.info('wallet-auth', 'Wallet link-login (already linked)', { userId: user.id });
+        return res.json({
+          user: { id: user.id, username: user.username, isAdmin: user.is_admin },
+        });
+      }
+
+      const linkToken = crypto.randomBytes(16).toString('hex');
+      const linkExpiresAt = new Date(Date.now() + LINK_TOKEN_TTL_MS);
+
+      await pool.query(
+        `UPDATE users SET wallet_link_token = $1, wallet_link_expires_at = $2 WHERE id = $3`,
+        [linkToken, linkExpiresAt, user.id]
+      );
+
+      const memo = JSON.stringify({
+        app: 'vibecode',
+        type: 'link_wallet',
+        token: linkToken,
+      });
+
+      log.info('wallet-auth', 'Wallet link-login initiated', { userId: user.id, username: user.username });
+      res.json({
+        user: { id: user.id, username: user.username, isAdmin: user.is_admin },
+        walletLink: {
+          to: config.usernodeAppPubkey,
+          amount: 1,
+          memo,
+          expiresAt: linkExpiresAt.toISOString(),
+        },
+      });
+    } catch (err) {
+      log.error('wallet-auth', 'wallet-link-login failed', { err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

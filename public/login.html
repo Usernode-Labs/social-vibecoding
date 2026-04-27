@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Usernode Social Vibecoding — Login</title>
+  <script src="/usernode-bridge.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>tailwind.config = {
     darkMode: 'class',
@@ -23,6 +24,86 @@
     <h1 class="text-2xl font-bold text-center mb-1">Usernode Social Vibecoding</h1>
     <p class="text-xs text-zinc-500 dark:text-zinc-400 text-center mb-8 italic">where the users are the developers are the users are the developers...</p>
 
+    <!-- Wallet auth status (shown when native bridge detected) -->
+    <div id="wallet-auth" class="hidden space-y-4">
+      <div id="wallet-status" class="text-center text-sm text-zinc-400"></div>
+      <div id="wallet-error" class="text-red-400 text-sm hidden"></div>
+
+      <!-- Sign in with wallet button (shown when pubkey is linked) -->
+      <div id="wallet-sign-in" class="hidden space-y-3">
+        <button id="btn-wallet-sign-in" class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white flex items-center justify-center gap-2">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z"/></svg>
+          Sign in with Wallet
+        </button>
+        <p class="text-xs text-center text-zinc-500">or use username &amp; password below</p>
+      </div>
+
+      <!-- Options when pubkey is not linked -->
+      <div id="wallet-options" class="hidden space-y-3">
+        <p class="text-sm text-center text-zinc-400">Your wallet is not linked to an account yet.</p>
+        <button id="btn-link-existing" class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white">
+          I have an account
+        </button>
+        <button id="btn-register-new" class="w-full rounded-lg border border-zinc-600 hover:border-zinc-500 px-4 py-2 font-medium transition-colors text-zinc-200">
+          Create new account
+        </button>
+      </div>
+
+      <!-- Link existing account form -->
+      <form id="wallet-link-form" class="hidden space-y-4">
+        <p class="text-sm text-zinc-400">Log in to link your wallet.</p>
+        <div>
+          <label class="block text-sm font-medium text-zinc-400 mb-1">Username</label>
+          <input name="username" type="text" required autocomplete="username"
+            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500"
+            placeholder="username">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-zinc-400 mb-1">Password</label>
+          <input name="password" type="password" required autocomplete="current-password"
+            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500"
+            placeholder="password">
+        </div>
+        <div id="wallet-link-error" class="text-red-400 text-sm hidden"></div>
+        <button type="submit" class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white">
+          Log in & link wallet
+        </button>
+        <button type="button" id="btn-link-back" class="w-full text-sm text-zinc-500 hover:text-zinc-300">Back</button>
+      </form>
+
+      <!-- Register new account form -->
+      <form id="wallet-register-form" class="hidden space-y-4">
+        <p class="text-sm text-zinc-400">Create an account linked to your wallet. No activation code needed.</p>
+        <div>
+          <label class="block text-sm font-medium text-zinc-400 mb-1">Username</label>
+          <input name="username" type="text" required autocomplete="username"
+            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500"
+            placeholder="choose a username">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-zinc-400 mb-1">Password</label>
+          <input name="password" type="password" required autocomplete="new-password"
+            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500"
+            placeholder="choose a password">
+        </div>
+        <div id="wallet-register-error" class="text-red-400 text-sm hidden"></div>
+        <button type="submit" class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white">
+          Register & link wallet
+        </button>
+        <button type="button" id="btn-register-back" class="w-full text-sm text-zinc-500 hover:text-zinc-300">Back</button>
+      </form>
+
+      <!-- Wallet linking progress -->
+      <div id="wallet-linking" class="hidden space-y-3 text-center">
+        <p class="text-sm text-zinc-400">Sending wallet link transaction...</p>
+        <div class="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+          <div id="wallet-link-progress" class="h-full bg-violet-500 rounded-full transition-all duration-500" style="width: 0%"></div>
+        </div>
+        <p id="wallet-link-progress-label" class="text-xs text-zinc-500">Sending...</p>
+      </div>
+    </div>
+
+    <!-- Normal login form (hidden when wallet auth is active) -->
     <form id="login-form" class="space-y-4">
       <div>
         <label for="username" class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Username</label>
@@ -60,43 +141,288 @@
       </button>
     </form>
 
-    <p class="text-center text-sm text-zinc-500 dark:text-zinc-400 mt-6">
+    <p id="register-link" class="text-center text-sm text-zinc-500 dark:text-zinc-400 mt-6">
       Have an activation code? <a href="/register.html" class="text-violet-400 hover:text-violet-300">Register</a>
     </p>
   </div>
 
   <script>
-    const form = document.getElementById('login-form');
+  (function () {
+    const loginForm = document.getElementById('login-form');
     const errorEl = document.getElementById('error');
+    const walletAuth = document.getElementById('wallet-auth');
+    const walletStatus = document.getElementById('wallet-status');
+    const walletError = document.getElementById('wallet-error');
+    const walletSignIn = document.getElementById('wallet-sign-in');
+    const walletOptions = document.getElementById('wallet-options');
+    const walletLinkForm = document.getElementById('wallet-link-form');
+    const walletRegisterForm = document.getElementById('wallet-register-form');
+    const walletLinking = document.getElementById('wallet-linking');
+    const registerLink = document.getElementById('register-link');
 
-    form.addEventListener('submit', async (e) => {
+    let walletPubkey = null;
+    let cachedChallenge = null;
+
+    function showError(el, msg) {
+      el.textContent = msg;
+      el.classList.remove('hidden');
+    }
+    function hideError(el) { el.classList.add('hidden'); }
+
+    function showOnly(section) {
+      walletSignIn.classList.add('hidden');
+      walletOptions.classList.add('hidden');
+      walletLinkForm.classList.add('hidden');
+      walletRegisterForm.classList.add('hidden');
+      walletLinking.classList.add('hidden');
+      hideError(walletError);
+      if (section) section.classList.remove('hidden');
+    }
+
+    // Normal login form handler
+    loginForm.addEventListener('submit', async (e) => {
       e.preventDefault();
-      errorEl.classList.add('hidden');
-
-      const username = form.username.value.trim();
-      const password = form.password.value;
-
+      hideError(errorEl);
+      const username = loginForm.username.value.trim();
+      const password = loginForm.password.value;
       try {
         const res = await fetch('/api/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username, password }),
         });
-
         const data = await res.json();
+        if (!res.ok) { showError(errorEl, data.error || 'Login failed'); return; }
+        window.location.href = '/';
+      } catch { showError(errorEl, 'Network error'); }
+    });
 
-        if (!res.ok) {
-          errorEl.textContent = data.error || 'Login failed';
-          errorEl.classList.remove('hidden');
+    // Detect native bridge
+    const isNative = window.usernode && window.usernode.isNative;
+    if (!isNative) return;
+
+    walletAuth.classList.remove('hidden');
+    walletStatus.textContent = 'Connecting to wallet...';
+
+    (async function walletDetect() {
+      try {
+        walletPubkey = await window.getNodeAddress();
+        if (!walletPubkey) {
+          walletStatus.textContent = '';
+          showError(walletError, 'Could not get wallet address');
           return;
         }
 
-        window.location.href = '/';
-      } catch {
-        errorEl.textContent = 'Network error';
-        errorEl.classList.remove('hidden');
+        walletStatus.textContent = 'Checking wallet...';
+        const checkRes = await fetch('/api/auth/wallet-check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pubkey: walletPubkey }),
+        });
+        const checkData = await checkRes.json();
+
+        walletStatus.textContent = '';
+
+        if (checkData.isGenesis === false) {
+          showError(walletError, 'Your wallet is not in the genesis ledger. Only genesis participants can use wallet authentication.');
+          loginForm.classList.remove('hidden');
+          registerLink.classList.remove('hidden');
+          return;
+        }
+
+        if (checkData.status === 'linked' && checkData.challenge) {
+          cachedChallenge = checkData.challenge;
+          showOnly(walletSignIn);
+          loginForm.classList.remove('hidden');
+          registerLink.classList.remove('hidden');
+        } else {
+          showOnly(walletOptions);
+        }
+      } catch (e) {
+        walletStatus.textContent = '';
+        showError(walletError, 'Wallet detection failed: ' + (e.message || e));
+      }
+    })();
+
+    // "Sign in with Wallet" button handler
+    document.getElementById('btn-wallet-sign-in').addEventListener('click', async () => {
+      hideError(walletError);
+      walletStatus.textContent = 'Verifying identity...';
+      showOnly(null);
+
+      try {
+        if (!cachedChallenge) {
+          const checkRes = await fetch('/api/auth/wallet-check', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pubkey: walletPubkey }),
+          });
+          const checkData = await checkRes.json();
+          cachedChallenge = checkData.challenge;
+        }
+
+        if (!cachedChallenge) {
+          walletStatus.textContent = '';
+          showError(walletError, 'Could not get challenge from server');
+          showOnly(walletSignIn);
+          return;
+        }
+
+        const sigResult = await window.signMessage(cachedChallenge);
+        const verifyRes = await fetch('/api/auth/wallet-verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            pubkey: walletPubkey,
+            publicKey: sigResult.publicKey,
+            challenge: cachedChallenge,
+            signature: sigResult.signature,
+          }),
+        });
+        const verifyData = await verifyRes.json();
+        cachedChallenge = null;
+
+        if (verifyRes.ok) {
+          walletStatus.textContent = 'Logged in! Redirecting...';
+          window.location.href = '/';
+          return;
+        }
+        walletStatus.textContent = '';
+        showError(walletError, verifyData.error || 'Verification failed');
+        showOnly(walletSignIn);
+      } catch (e) {
+        cachedChallenge = null;
+        walletStatus.textContent = '';
+        if (e.message && e.message.includes('denied')) {
+          showError(walletError, 'Signature request was denied.');
+        } else {
+          showError(walletError, 'Signature failed: ' + (e.message || e));
+        }
+        showOnly(walletSignIn);
       }
     });
+
+    // Option buttons
+    document.getElementById('btn-link-existing').addEventListener('click', () => showOnly(walletLinkForm));
+    document.getElementById('btn-register-new').addEventListener('click', () => showOnly(walletRegisterForm));
+    document.getElementById('btn-link-back').addEventListener('click', () => showOnly(walletOptions));
+    document.getElementById('btn-register-back').addEventListener('click', () => showOnly(walletOptions));
+
+    // Link existing account
+    walletLinkForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errEl = document.getElementById('wallet-link-error');
+      hideError(errEl);
+      const username = walletLinkForm.username.value.trim();
+      const password = walletLinkForm.password.value;
+      try {
+        const res = await fetch('/api/auth/wallet-link-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password, pubkey: walletPubkey }),
+        });
+        const data = await res.json();
+        if (!res.ok) { showError(errEl, data.error || 'Login failed'); return; }
+
+        if (data.walletLink) {
+          await sendLinkingTx(data.walletLink);
+        } else {
+          window.location.href = '/';
+        }
+      } catch (e) { showError(errEl, 'Network error: ' + (e.message || e)); }
+    });
+
+    // Register new account
+    walletRegisterForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errEl = document.getElementById('wallet-register-error');
+      hideError(errEl);
+      const username = walletRegisterForm.username.value.trim();
+      const password = walletRegisterForm.password.value;
+      try {
+        const res = await fetch('/api/auth/wallet-register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password, pubkey: walletPubkey }),
+        });
+        const data = await res.json();
+        if (!res.ok) { showError(errEl, data.error || 'Registration failed'); return; }
+
+        if (data.walletLink) {
+          await sendLinkingTx(data.walletLink);
+        } else {
+          window.location.href = '/';
+        }
+      } catch (e) { showError(errEl, 'Network error: ' + (e.message || e)); }
+    });
+
+    async function sendLinkingTx(walletLink) {
+      showOnly(walletLinking);
+      const progressBar = document.getElementById('wallet-link-progress');
+      const progressLabel = document.getElementById('wallet-link-progress-label');
+      const startTime = Date.now();
+
+      const tickInterval = setInterval(() => {
+        const elapsed = (Date.now() - startTime) / 1000;
+        let pct;
+        if (elapsed <= 30) {
+          const t = elapsed / 30;
+          pct = 95 * (1 - Math.pow(1 - t, 3));
+        } else {
+          pct = 95 + 5 * (1 - Math.exp(-(elapsed - 30) / 120));
+        }
+        progressBar.style.width = pct + '%';
+        if (elapsed >= 60) {
+          progressLabel.textContent = 'Taking longer than expected...';
+          progressLabel.className = 'text-xs text-yellow-400';
+        }
+      }, 400);
+
+      try {
+        await window.sendTransaction(walletLink.to, walletLink.amount, walletLink.memo, {
+          timeoutMs: 90000,
+          pollIntervalMs: 1500,
+          waitForInclusion: false,
+          confirmTitle: 'Link Wallet',
+          confirmSubtitle: 'Link your Usernode wallet to your Social Vibecoding account.',
+        });
+
+        progressBar.style.width = '100%';
+        progressBar.className = 'h-full bg-green-500 rounded-full transition-all duration-500';
+        progressLabel.textContent = 'Transaction sent! Waiting for confirmation...';
+        progressLabel.className = 'text-xs text-green-400';
+
+        let linked = false;
+        for (let i = 0; i < 30; i++) {
+          await new Promise(r => setTimeout(r, 3000));
+          try {
+            const statusRes = await fetch('/api/me/wallet-link/status');
+            const statusData = await statusRes.json();
+            if (statusData.linked) { linked = true; break; }
+          } catch {}
+        }
+
+        clearInterval(tickInterval);
+        if (linked) {
+          progressLabel.textContent = 'Wallet linked! Redirecting...';
+          window.location.href = '/';
+        } else {
+          progressLabel.textContent = 'Transaction sent. The link may take a moment to finalize. Redirecting...';
+          progressLabel.className = 'text-xs text-yellow-400';
+          setTimeout(() => { window.location.href = '/'; }, 2000);
+        }
+      } catch (e) {
+        clearInterval(tickInterval);
+        progressBar.style.width = '0%';
+        const msg = e.message && e.message.includes('denied')
+          ? 'Transaction was denied. Redirecting to app...'
+          : 'Transaction failed: ' + (e.message || e) + '. Redirecting...';
+        progressLabel.textContent = msg;
+        progressLabel.className = 'text-xs text-red-400';
+        setTimeout(() => { window.location.href = '/'; }, 3000);
+      }
+    }
+  })();
   </script>
 </body>
 </html>

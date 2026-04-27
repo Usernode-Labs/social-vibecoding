@@ -77,6 +77,7 @@ services:
       # services/status.js + .github/workflows/deploy.yml.
       USERNODE_RUNTIME_PATH: /var/lib/usernode/runtime
       DATABASE_URL: postgres://usernode:${USERNODE_DB_PASSWORD}@usernode-db:5432/usernode
+      NODE_RPC_URL: http://usernode-node:3000
     volumes:
       # Required: the platform spawns child-app containers via the
       # host Docker daemon. Standard Usernode pattern.
@@ -90,6 +91,8 @@ services:
     depends_on:
       usernode-db:
         condition: service_healthy
+      usernode-node:
+        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
       interval: 30s
@@ -124,6 +127,23 @@ services:
       resources:
         limits:
           memory: 512m
+          cpus: "1"
+    security_opt:
+      - no-new-privileges:true
+
+  usernode-node:
+    image: usernodelabs/usernode
+    container_name: usernode-node
+    restart: unless-stopped
+    networks:
+      - usernode-net
+    environment:
+      GENESIS_URL: ${GENESIS_URL:-https://static.usernodelabs.org/testnet/genesis.json}
+      SEEDLIST_URL: ${SEEDLIST_URL:-https://static.usernodelabs.org/testnet/seedlist.txt}
+    deploy:
+      resources:
+        limits:
+          memory: 1g
           cpus: "1"
     security_opt:
       - no-new-privileges:true

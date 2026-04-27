@@ -36,6 +36,7 @@ function load() {
     // can delete them to free a slot). See src/routes/apps.js.
     maxApps: parseInt(process.env.MAX_APPS || '20', 10),
     usernodeAppPubkey: process.env.USERNODE_APP_PUBKEY || '',
+    nodeRpcUrl: process.env.NODE_RPC_URL || 'https://alpha2.usernodelabs.org',
   };
 
   console.log('[config] Loaded:');
@@ -46,6 +47,7 @@ function load() {
   console.log(`  LOG_LEVEL=${config.logLevel}`);
   console.log(`  MAX_APPS=${config.maxApps}`);
   console.log(`  USERNODE_APP_PUBKEY=${config.usernodeAppPubkey || '(not set — wallet linking disabled)'}`);
+  console.log(`  NODE_RPC_URL=${config.nodeRpcUrl}`);
 
   return config;
 }

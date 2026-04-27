@@ -23,6 +23,7 @@ const ws = require('./src/services/ws');
 const log = require('./src/services/logger');
 const lifecycle = require('./src/services/lifecycle');
 const chainPoller = require('./src/services/chain-poller');
+const genesisAccounts = require('./src/services/genesis-accounts');
 const { getActiveWorkerCount } = require('./src/routes/sessions');
 const { sweepStuckCreatingApps } = require('./src/routes/apps');
 const { getPool } = require('./src/db/pool');
@@ -153,6 +154,7 @@ async function start() {
 
   ws.attach(server, config);
   chainPoller.start(config);
+  genesisAccounts.start();
 
   // Adopt any worker containers left over from a previous server run —
   // either still executing or already exited but un-finalized. These

@@ -17,6 +17,11 @@ services:
     environment:
       DATABASE_URL: postgres://usernode:localdev@db:5432/usernode
       LOG_LEVEL: DEBUG
+      # Sidecar node can't sync via WebRTC inside Docker Desktop for Mac.
+      # Run the node natively (e.g. `make node` from usernode-dapp-starter)
+      # and let the container reach it on the host. Use port 3001 to avoid
+      # conflict with this container's own host:3000 mapping.
+      NODE_RPC_URL: http://host.docker.internal:3001
     command: node --watch --watch-path=server.js --watch-path=src server.js
     volumes:
       - ./public:/app/public

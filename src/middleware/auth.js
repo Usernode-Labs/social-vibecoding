@@ -6,9 +6,14 @@ const PUBLIC_PATHS = [
   '/register.html',
   '/api/auth/login',
   '/api/auth/register',
+  '/api/auth/wallet-check',
+  '/api/auth/wallet-verify',
+  '/api/auth/wallet-register',
+  '/api/auth/wallet-link-login',
   '/health',
   '/css/',
   '/js/',
+  '/usernode-bridge.js',
 ];
 
 function authMiddleware(config) {
