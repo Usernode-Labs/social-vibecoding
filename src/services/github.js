@@ -353,6 +353,7 @@ module.exports = {
   init,
   isEnabled,
   getBotUsername,
+  getOctokit,
   getInstallationOctokit,
   getInstallationToken,
   createRepo,
