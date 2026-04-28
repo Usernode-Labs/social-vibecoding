@@ -6,11 +6,12 @@
 //
 // This module renders a modal listing the manifest-declared keys (read
 // from each dapp's `dapp.json`), plus any orphan keys the dapp no longer
-// declares. Admins set/clear values
-// directly via PUT/DELETE; non-admins POST a 'secret_change' issue that
-// other users can vote on. Either path triggers a fresh
-// rebuildProduction; the version pill in the header reflects deploy
-// progress via the existing app_redeploy_status WS broadcast.
+// declares. Admins can either set/clear values directly via PUT/DELETE
+// or open a 'secret_change' issue (when they want community buy-in for a
+// sensitive change). Non-admins only see the propose path. Either path
+// triggers a fresh rebuildProduction once applied; the version pill in
+// the header reflects deploy progress via the existing
+// app_redeploy_status WS broadcast.
 const Secrets = {
   currentSlug: null,
 
@@ -154,22 +155,25 @@ const Secrets = {
 
     const setVerb = s.hasValue ? 'replace' : 'set';
     const sensitiveAttr = s.sensitive ? '1' : '0';
-    let actions;
-    if (isAdmin) {
-      actions = `
-        <button data-action="set" data-key="${escapeAttr(s.key)}" data-sensitive="${sensitiveAttr}"
-          class="text-xs px-2 py-1 rounded bg-violet-600 hover:bg-violet-500 text-white">${setVerb}</button>
-        ${s.hasValue ? `<button data-action="clear" data-key="${escapeAttr(s.key)}"
-          class="text-xs px-2 py-1 rounded border border-red-400 text-red-600 hover:bg-red-50 dark:hover:bg-red-950">clear</button>` : ''}
-      `;
-    } else {
-      actions = `
-        <button data-action="propose-set" data-key="${escapeAttr(s.key)}" data-sensitive="${sensitiveAttr}"
-          class="text-xs px-2 py-1 rounded bg-violet-600 hover:bg-violet-500 text-white">propose ${setVerb}</button>
-        ${s.hasValue ? `<button data-action="propose-clear" data-key="${escapeAttr(s.key)}"
-          class="text-xs px-2 py-1 rounded border border-red-400 text-red-600 hover:bg-red-50 dark:hover:bg-red-950">propose clear</button>` : ''}
-      `;
-    }
+    // Direct path (admin only): filled violet for set/replace, red-outline
+    // for clear — these slam the change in via PUT/DELETE.
+    const directButtons = `
+      <button data-action="set" data-key="${escapeAttr(s.key)}" data-sensitive="${sensitiveAttr}"
+        class="text-xs px-2 py-1 rounded bg-violet-600 hover:bg-violet-500 text-white">${setVerb}</button>
+      ${s.hasValue ? `<button data-action="clear" data-key="${escapeAttr(s.key)}"
+        class="text-xs px-2 py-1 rounded border border-red-400 text-red-600 hover:bg-red-50 dark:hover:bg-red-950">clear</button>` : ''}
+    `;
+    // Vote path (everyone): muted outline styling so admins reach for
+    // direct first by default, but can opt into the vote flow per row.
+    const proposeButtons = `
+      <button data-action="propose-set" data-key="${escapeAttr(s.key)}" data-sensitive="${sensitiveAttr}"
+        class="text-xs px-2 py-1 rounded border border-violet-400 text-violet-600 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950">propose ${setVerb}</button>
+      ${s.hasValue ? `<button data-action="propose-clear" data-key="${escapeAttr(s.key)}"
+        class="text-xs px-2 py-1 rounded border border-red-300 text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950">propose clear</button>` : ''}
+    `;
+    const actions = isAdmin
+      ? `${directButtons}<span class="inline-block w-px h-4 bg-zinc-300 dark:bg-zinc-700 mx-1 self-center" aria-hidden="true"></span>${proposeButtons}`
+      : proposeButtons;
 
     return `
       <div class="py-3 border-b border-zinc-200 dark:border-zinc-800 last:border-b-0">
