@@ -51,6 +51,12 @@ Server-side the pattern (already present in the scaffold) is:
 ```js
 const JWT_SECRET = process.env.JWT_SECRET;
 const PUBLIC_API_PATHS = new Set(['/health']);
+// Public path prefixes that bypass the JWT gate. `/explorer-api/*`
+// is a transparent proxy to the public block explorer — gating it
+// blocks the bridge's POST /<chain_id>/transactions polling from
+// inside the iframe (which has no token to forward) and adds zero
+// security since anyone can hit the upstream directly.
+const PUBLIC_PREFIXES = ['/explorer-api/'];
 
 app.use((req, res, next) => {
   const token = req.query.token || req.headers['x-usernode-token'];
@@ -59,6 +65,7 @@ app.use((req, res, next) => {
   }
   if (req.method !== 'GET' || req.path.startsWith('/api/')) {
     if (PUBLIC_API_PATHS.has(req.path)) return next();
+    if (PUBLIC_PREFIXES.some((p) => req.path.startsWith(p))) return next();
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
   }
   next();
@@ -72,6 +79,10 @@ Key properties:
 - All non-GET requests + all `/api/*` requests are **deny-by-default**.
 - To intentionally expose an API route without auth, add its exact
   path to `PUBLIC_API_PATHS`. Do **not** remove the middleware.
+- `/explorer-api/*` is intentionally public (see `PUBLIC_PREFIXES`).
+  The bridge polls `POST /<chain_id>/transactions` after every send to
+  wait for inclusion, and that request is issued from the iframe's JS
+  with no platform token to forward.
 - The HTML shell is also auth-gated so direct visits to the staging
   subdomain don't reveal the app.
 
