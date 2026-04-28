@@ -67,7 +67,8 @@ app.use((req, res, next) => {
 
 Key properties:
 
-- `req.user` contains at minimum `{ id, username }` once authenticated.
+- `req.user` contains at minimum `{ id, username, usernode_pubkey }` once authenticated.
+  `usernode_pubkey` is the user's linked Usernode wallet address (`ut1...`) or `null` if not linked.
 - All non-GET requests + all `/api/*` requests are **deny-by-default**.
 - To intentionally expose an API route without auth, add its exact
   path to `PUBLIC_API_PATHS`. Do **not** remove the middleware.

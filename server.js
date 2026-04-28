@@ -103,10 +103,18 @@ app.use(adminRoutes(config));
 app.use(feedbackRoutes(config));
 app.use(notificationsRoutes(config));
 
-app.get('/api/iframe-token', (req, res) => {
+app.get('/api/iframe-token', async (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+  let usernodePubkey = null;
+  try {
+    const { rows } = await getPool(config).query(
+      'SELECT usernode_pubkey FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    usernodePubkey = rows[0]?.usernode_pubkey || null;
+  } catch {}
   const token = jwt.sign(
-    { id: req.user.id, username: req.user.username },
+    { id: req.user.id, username: req.user.username, usernode_pubkey: usernodePubkey },
     config.jwtSecret,
     { expiresIn: '1h' }
   );
