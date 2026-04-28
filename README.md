@@ -98,17 +98,33 @@ trigger in `.github/workflows/deploy.yml` to enable auto-deploy.
 
 Fill in `.env.example` → `.env`, set `USERNODE_LOCAL_DEV=1` in your
 local `.env` (so app/staging URLs fall back to `http://localhost:<port>`
-since Caddy can't issue real certs against `localhost`), then:
+since Caddy can't issue real certs against `localhost`).
+
+The local stack is two pieces because Docker Desktop on Mac can't run
+the `usernode-node` sidecar (its WebRTC P2P doesn't survive the VM's
+network stack), so the node runs natively on the host and the platform
+container talks to it via `host.docker.internal:3001`. Two terminals:
 
 ```bash
-docker compose up -d --build
+# Terminal 1 — native node on :3001 (one-time:
+#   cd ../usernode && cargo build --release -p usernode-cli)
+make node
+
+# Terminal 2 — platform + Postgres
+make up           # docker compose -f docker-compose.dev.yml up -d --build
+make logs         # tail
+make down         # stop
 ```
+
+Then visit `http://localhost:3000`.
 
 A few things won't work locally:
 
 - **GitHub App actions** (creating branches/PRs for user edits) need a
   real App installed against a real org — no great way to fake it
-  for local-dev yet.
+  for local-dev yet. The import-existing flow specifically needs
+  `GITHUB_BOT_TOKEN` set in `.env` to do anything more than return
+  the `no_token` error.
 - **Let's Encrypt TLS** — Caddy can't issue certs against `localhost`;
   expect self-signed / browser warnings.
 - **Wildcard DNS** — child-app subdomains won't resolve against
