@@ -248,11 +248,28 @@ Per-field rules:
   feature flags as non-sensitive.
 - `default` — applied at deploy time if no stored value exists (only
   meaningful when `required: false`). Use sparingly — it's documented
-  as "the platform's default", not "this dapp's default".
+  as "the platform's default", not "this dapp's default". For
+  platform-managed keys (see below) the manifest default is a
+  fallback for *standalone* deploys; in-platform deploys use the
+  platform's own env value instead.
 
 **Reserved keys** the platform owns and rejects from the manifest:
 `DATABASE_URL`, `JWT_SECRET`, `PORT`, `USERNODE_ENV`,
 `USERNODE_MISSING_SECRETS`. Don't list these.
+
+**Platform-managed keys** the platform supplies a default for at
+deploy time (overriding the manifest `default` but losing to a
+stored value):
+
+| Key | Source | Why |
+|---|---|---|
+| `NODE_RPC_URL` | platform's own `process.env.NODE_RPC_URL` | Points at `usernode-node` (in-network) in prod; `host.docker.internal:3001` in local-dev. Hardcoding either in the manifest breaks the other. |
+
+You may still declare these in `dapp.json` with a `default` — that
+becomes the fallback for standalone (non-platform) deploys. Just
+know that inside the platform the manifest default will be replaced
+with the platform's value automatically, unless a user explicitly
+stored an override.
 
 **When the Mayor / Claude Code adds a feature that needs a new env var**:
 

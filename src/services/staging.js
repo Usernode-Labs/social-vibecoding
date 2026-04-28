@@ -51,7 +51,9 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
     const stagingManifest = appManifest.read(cloneDir);
     const stagingPool = getPool(config);
     const stagingStored = await appSecrets.getRawValues(stagingPool, app.id, config.jwtSecret);
-    const stagingMerge = appSecrets.mergeForDeploy(stagingManifest, stagingStored);
+    const stagingMerge = appSecrets.mergeForDeploy(
+      stagingManifest, stagingStored, appSecrets.platformDefaultsFromEnv()
+    );
     if (stagingMerge.missingRequired.length) {
       await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
       throw new MissingSecretsError(stagingMerge.missingRequired);
@@ -192,7 +194,9 @@ async function rebuildProduction(config, app) {
       [JSON.stringify(manifest), app.id]
     );
     const stored = await appSecrets.getRawValues(prodPool, app.id, config.jwtSecret);
-    const merge = appSecrets.mergeForDeploy(manifest, stored);
+    const merge = appSecrets.mergeForDeploy(
+      manifest, stored, appSecrets.platformDefaultsFromEnv()
+    );
     if (merge.missingRequired.length) {
       await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
       throw new MissingSecretsError(merge.missingRequired);

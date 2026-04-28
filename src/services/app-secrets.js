@@ -162,25 +162,64 @@ function missingRequired(manifest, storedKeys) {
 
 /**
  * Build the env-var map the deploy paths pass to `docker.runContainer`.
- * Stored values win over manifest defaults; manifest defaults fill in
- * gaps for non-required entries that were left unset.
+ *
+ * Precedence (high → low):
+ *   1. Stored secret value     — explicit, user-set per app
+ *   2. Platform default        — infrastructure-controlled, supplied
+ *                                by the caller (e.g. `NODE_RPC_URL`
+ *                                from the platform's own process.env,
+ *                                which differs between local-dev and
+ *                                prod). Wins over the manifest default
+ *                                because the platform knows where its
+ *                                own sidecars actually live; a manifest
+ *                                hard-coding a prod hostname would
+ *                                otherwise break local-dev deploys.
+ *   3. Manifest default        — last-resort fallback for standalone
+ *                                deploys (the dapp running outside
+ *                                the platform).
  *
  * Returns { env, missingRequired } so the caller can short-circuit
  * deploys cleanly without a second pass through the manifest.
  */
-function mergeForDeploy(manifest, storedValues) {
+function mergeForDeploy(manifest, storedValues, platformDefaults) {
   const env = {};
   const storedKeys = Object.keys(storedValues || {});
   const missing = missingRequired(manifest, storedKeys);
+  const platform = platformDefaults || {};
 
   for (const s of manifest.secrets) {
     if (Object.prototype.hasOwnProperty.call(storedValues || {}, s.key)) {
       env[s.key] = storedValues[s.key];
+    } else if (Object.prototype.hasOwnProperty.call(platform, s.key) && platform[s.key] != null) {
+      env[s.key] = platform[s.key];
     } else if (s.default != null) {
       env[s.key] = s.default;
     }
   }
   return { env, missingRequired: missing };
+}
+
+/**
+ * The set of env-var keys the platform itself owns the default for —
+ * sourced from the platform's own `process.env` at deploy time so a
+ * spawned dapp inherits whatever node URL (etc.) the platform was
+ * configured against. Caller-facing because all three deploy paths
+ * (`app-creator.js`, `staging.buildAndDeployStaging`,
+ * `staging.rebuildProduction`) need exactly the same precedence.
+ *
+ * Add new keys here only when their correct value is environment-
+ * dependent and should never be hardcoded in a dapp's `dapp.json`.
+ * Currently:
+ *   - NODE_RPC_URL: in prod points at the `usernode-node` sidecar
+ *     (in-network); in local-dev points at the host-native node via
+ *     `host.docker.internal`. Hardcoding either in the manifest
+ *     breaks the other.
+ */
+function platformDefaultsFromEnv(env) {
+  const e = env || process.env;
+  const out = {};
+  if (e.NODE_RPC_URL) out.NODE_RPC_URL = e.NODE_RPC_URL;
+  return out;
 }
 
 module.exports = {
@@ -191,4 +230,5 @@ module.exports = {
   deleteValue,
   missingRequired,
   mergeForDeploy,
+  platformDefaultsFromEnv,
 };

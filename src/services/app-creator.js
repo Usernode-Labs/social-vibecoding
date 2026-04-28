@@ -124,7 +124,9 @@ async function createApp(config, appRow) {
     );
 
     const storedValues = await appSecrets.getRawValues(pool, appId, config.jwtSecret);
-    const merge = appSecrets.mergeForDeploy(manifest, storedValues);
+    const merge = appSecrets.mergeForDeploy(
+      manifest, storedValues, appSecrets.platformDefaultsFromEnv()
+    );
     if (merge.missingRequired.length) {
       log.info('app-creator', 'Required secrets unset; entering awaiting_secrets', {
         appId, slug, missing: merge.missingRequired,
