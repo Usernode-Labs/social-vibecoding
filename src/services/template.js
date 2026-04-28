@@ -184,7 +184,7 @@ node_modules
       // Reserved keys (DATABASE_URL, JWT_SECRET, PORT, USERNODE_ENV,
       // USERNODE_MISSING_SECRETS) are managed by the platform and
       // can't appear in this list.
-      path: 'social-vibecoding.json',
+      path: 'dapp.json',
       content: JSON.stringify({ secrets: [] }, null, 2),
     },
     {

@@ -110,9 +110,9 @@ async function createApp(config, appRow) {
       }
     }
 
-    // Read the dapp's `social-vibecoding.json` from the cloned working
-    // tree, then snapshot it onto the app row so the Secrets API can
-    // render the manifest-declared keys without re-cloning. Bail out
+    // Read the dapp's `dapp.json` from the cloned working tree, then
+    // snapshot it onto the app row so the Secrets API can render the
+    // manifest-declared keys without re-cloning. Bail out
     // (without building/running) if any required key is unset — the
     // UI will surface 'awaiting_secrets' so the creator (or app
     // majority) can fill them in, then call POST /api/apps/:slug/redeploy

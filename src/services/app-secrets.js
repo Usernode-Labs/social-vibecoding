@@ -92,7 +92,7 @@ async function getRedactedView(pool, appId, manifest) {
     if (declared.has(s.key)) continue;
     out.push({
       key: s.key,
-      description: '(no longer declared in social-vibecoding.json)',
+      description: '(no longer declared in dapp.json)',
       required: false,
       sensitive: true,
       default: null,

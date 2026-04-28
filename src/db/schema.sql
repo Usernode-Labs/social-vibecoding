@@ -53,11 +53,11 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0
 -- server boot for apps created before this migration.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_sha VARCHAR(40);
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_pr_number INTEGER;
--- Snapshot of `social-vibecoding.json` from the last successful clone
--- (createApp + rebuildProduction both write it). The Secrets UI reads
--- this so it can render the manifest-declared keys without re-cloning,
--- and the deploy block-on-missing-required check uses it as the source
--- of truth for "what does this dapp need".
+-- Snapshot of `dapp.json` from the last successful clone (createApp +
+-- rebuildProduction both write it). The Secrets UI reads this so it
+-- can render the manifest-declared keys without re-cloning, and the
+-- deploy block-on-missing-required check uses it as the source of
+-- truth for "what does this dapp need".
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS manifest_snapshot JSONB;
 
 -- Activity tracking (for home screen sort)
@@ -189,10 +189,10 @@ CREATE INDEX IF NOT EXISTS idx_notifications_user_recent
 -- src/services/secrets.js (keyed off jwtSecret), serialized as
 -- "v1:<iv>:<tag>:<ct>" — same scheme used for users.anthropic_key_enc.
 --
--- A dapp declares which keys it needs in `social-vibecoding.json` at its
--- repo root (see src/services/app-manifest.js). Stored values for any
--- `required` key listed there must be present at deploy time, otherwise
--- the deploy is blocked (createApp flips status to 'awaiting_secrets';
+-- A dapp declares which keys it needs in `dapp.json` at its repo root
+-- (see src/services/app-manifest.js). Stored values for any `required`
+-- key listed there must be present at deploy time, otherwise the
+-- deploy is blocked (createApp flips status to 'awaiting_secrets';
 -- rebuildProduction throws with `missingSecrets`).
 --
 -- value_last4 is a redacted preview the UI can show without a decrypt

@@ -1,8 +1,8 @@
 'use strict';
 
 /**
- * Reader for `social-vibecoding.json` — the per-dapp manifest declaring
- * which env vars the dapp needs at runtime.
+ * Reader for `dapp.json` — the per-dapp manifest declaring which env
+ * vars the dapp needs at runtime.
  *
  * Lives in the dapp repo root, alongside Dockerfile and package.json. The
  * platform reads it from the freshly-cloned working tree on every deploy
@@ -33,7 +33,7 @@ const fs = require('fs');
 const path = require('path');
 const log = require('./logger');
 
-const MANIFEST_FILENAME = 'social-vibecoding.json';
+const MANIFEST_FILENAME = 'dapp.json';
 
 // Reserved keys the platform owns. A manifest entry using one of these
 // is rejected on read so a dapp can't shadow / spoof the platform-injected

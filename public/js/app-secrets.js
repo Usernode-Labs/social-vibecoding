@@ -4,8 +4,9 @@
 // and src/routes/apps.js (REST endpoints). The vote-based proposal path
 // rides the existing issues machinery (kind='secret_change').
 //
-// This module renders a modal listing the manifest-declared keys, plus
-// any orphan keys the dapp no longer declares. Admins set/clear values
+// This module renders a modal listing the manifest-declared keys (read
+// from each dapp's `dapp.json`), plus any orphan keys the dapp no longer
+// declares. Admins set/clear values
 // directly via PUT/DELETE; non-admins POST a 'secret_change' issue that
 // other users can vote on. Either path triggers a fresh
 // rebuildProduction; the version pill in the header reflects deploy
@@ -105,7 +106,7 @@ const Secrets = {
     if (!data.secrets || !data.secrets.length) {
       list.innerHTML = `
         <p class="text-sm text-zinc-500">
-          This app's <code class="text-xs">social-vibecoding.json</code>
+          This app's <code class="text-xs">dapp.json</code>
           doesn't declare any secrets. Add a
           <code class="text-xs">secrets</code> array to start using this panel.
         </p>`;

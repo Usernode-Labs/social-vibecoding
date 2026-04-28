@@ -8,8 +8,7 @@ const appSecrets = require('./app-secrets');
 const { getPool } = require('../db/pool');
 
 // Custom error thrown by both staging + prod build paths when the cloned
-// repo's `social-vibecoding.json` declares required secrets that have no
-// stored value. Callers (votes.js merge path, drift poller, dev-chat
+// repo's `dapp.json` declares required secrets that have no stored value. Callers (votes.js merge path, drift poller, dev-chat
 // retries) inspect `.missingSecrets` to render a tailored "fix this"
 // toast instead of a generic "build failed".
 class MissingSecretsError extends Error {

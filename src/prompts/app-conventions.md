@@ -39,8 +39,8 @@ Required env vars at runtime (provided by the harness):
   production" below.
 
 Apps that need additional env vars (third-party API keys, on-chain
-addresses, etc.) declare them in `social-vibecoding.json` at the repo
-root — see "Per-app secrets" below.
+addresses, etc.) declare them in `dapp.json` at the repo root —
+see "Per-app secrets" below.
 
 ## Auth — iframe token injection
 
@@ -196,10 +196,10 @@ data (DMs, accounts, payments), it should note out loud in its
 plan that the relevant tables will be private and staging will seed
 fake rows. This sets user expectations before CC runs.
 
-## Per-app secrets — `social-vibecoding.json`
+## Per-app secrets — `dapp.json`
 
 Apps that need env vars beyond the four platform-injected ones declare
-them in a `social-vibecoding.json` manifest at the repo root. The
+them in a `dapp.json` manifest at the repo root. The
 platform reads this file on every deploy (initial creation, staging
 PR builds, production rebuilds) and:
 
@@ -256,8 +256,8 @@ Per-field rules:
 
 **When the Mayor / Claude Code adds a feature that needs a new env var**:
 
-1. Add the entry to `social-vibecoding.json` (create the file if
-   missing — the scaffold ships with `{ "secrets": [] }`).
+1. Add the entry to `dapp.json` (create the file if missing — the
+   scaffold ships with `{ "secrets": [] }`).
 2. In code, `process.env.MY_KEY` — if `required: true` you can rely
    on it being present (the deploy won't run otherwise).
 3. **Never put real values in code or commit them**. The platform's
