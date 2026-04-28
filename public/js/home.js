@@ -96,7 +96,22 @@ const Home = {
     }
     switch (data.status) {
       case 'no_drift':
-        alert('Already up to date.');
+        // The check-updates button is git-drift-only. When SHA hasn't
+        // moved but the operator still wants a rebuild (env vars
+        // changed, platform code changed, container needs reset),
+        // offer a one-click escape hatch into the unconditional
+        // /redeploy endpoint instead of dead-ending. The Secrets
+        // modal also exposes this same endpoint via "redeploy now",
+        // but most operators reach for the home-card ⟳ first.
+        if (data.slug && confirm(
+          'Latest commit is already running.\n\n' +
+          'Force a rebuild anyway? (Useful if env vars or platform code changed.)'
+        )) {
+          fetch(`/api/apps/${data.slug}/redeploy`, { method: 'POST' })
+            .then((r) => r.ok ? r.json() : r.json().then((j) => Promise.reject(new Error(j.error || `HTTP ${r.status}`))))
+            .then(() => alert('Rebuild started — watch the version pill.'))
+            .catch((err) => alert(`Rebuild kickoff failed: ${err.message}`));
+        }
         return;
       case 'redeployed':
         alert(`Redeployed to ${(data.to || '').slice(0, 7)}.`);
