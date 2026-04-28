@@ -48,6 +48,28 @@
   var _inIframe = false;
   try { _inIframe = window !== window.parent; } catch (_) { _inIframe = false; }
 
+  // Frame-tagged log prefix: see usernode-echo-dapp's bridge for the
+  // full rationale. Lets us tell parent-frame and iframe-frame logs
+  // apart in the merged Flutter console output.
+  var _BRIDGE_TAG = "[bridge " + (_inIframe ? "iframe" : "top") + " " +
+    (typeof location !== "undefined" ? location.host : "?") + "]";
+  console.log(_BRIDGE_TAG, "loaded; inIframe=" + _inIframe +
+    " hasNativeChannel=" + _hasNativeChannel +
+    " hasUsernode=" + (typeof window.Usernode));
+
+  // Android WebView injects `window.Usernode` into ALL frames, including
+  // cross-origin iframes. Outgoing `Usernode.postMessage` from an iframe
+  // works, but Flutter resolves promises via `runJavaScript`, which only
+  // evaluates in the top frame — so iframe-issued promises never resolve.
+  // Force iframes through the parent relay so request AND response both
+  // route through the top frame (which IS the parent).
+  if (_inIframe && _hasNativeChannel) {
+    console.log(_BRIDGE_TAG,
+      "ignoring iframe-injected Usernode (Flutter resolves only in top frame);" +
+      " routing through parent relay");
+    _hasNativeChannel = false;
+  }
+
   // Optimistic: only true once the parent has positively confirmed it has a
   // native channel for us to relay through.
   var _useIframeRelay = false;
@@ -86,6 +108,9 @@
     return new Promise(function (resolve, reject) {
       window.__usernodeBridge.pending[id] = { resolve: resolve, reject: reject };
       var payload = { method: method, id: id, args: args || {} };
+      console.log(_BRIDGE_TAG, "callNative", method, "id", id,
+        "useIframeRelay=" + _useIframeRelay,
+        "hasNativeChannel=" + _hasNativeChannel);
       if (_useIframeRelay) {
         var timer = setTimeout(function () {
           var entry = window.__usernodeBridge.pending[id];
@@ -104,7 +129,7 @@
           reject: function (e) { clearTimeout(timer); origEntry.reject(e); },
         };
         try {
-          console.log("[usernode-bridge] relay → parent:", method, "id", id);
+          console.log(_BRIDGE_TAG, "relay → parent:", method, "id", id);
           window.parent.postMessage(
             { __usernode_relay: "request", id: id, method: method, args: args || {} },
             "*"
@@ -117,9 +142,18 @@
         return;
       }
       if (_hasNativeChannel) {
-        window.Usernode.postMessage(JSON.stringify(payload));
+        try {
+          console.log(_BRIDGE_TAG, "→ Usernode.postMessage", method, "id", id);
+          window.Usernode.postMessage(JSON.stringify(payload));
+        } catch (err) {
+          console.warn(_BRIDGE_TAG, "Usernode.postMessage threw:", err && err.message);
+          delete window.__usernodeBridge.pending[id];
+          reject(err);
+        }
         return;
       }
+      console.warn(_BRIDGE_TAG, "no transport for", method,
+        "(useIframeRelay=false, hasNativeChannel=false) — rejecting");
       delete window.__usernodeBridge.pending[id];
       reject(new Error("Usernode native bridge not available"));
     });
@@ -146,19 +180,19 @@
       if (!data) return;
       if (data.__usernode_relay === "discover-ack") {
         if (!_useIframeRelay) {
-          console.log("[usernode-bridge] iframe relay activated (parent ack received)");
+          console.log(_BRIDGE_TAG, "iframe relay activated (parent ack received)");
           _useIframeRelay = true;
           window.usernode.isNative = true;
         }
         return;
       }
       if (data.__usernode_relay === "response") {
-        console.log("[usernode-bridge] relay ← parent response id", data.id);
+        console.log(_BRIDGE_TAG, "relay ← parent response id", data.id);
         window.__usernodeResolve(data.id, data.value, data.error);
       }
     });
     try {
-      console.log("[usernode-bridge] sending discover ping to parent");
+      console.log(_BRIDGE_TAG, "sending discover ping to parent");
       window.parent.postMessage({ __usernode_relay: "discover" }, "*");
     } catch (_) { /* parent unreachable, stay non-native */ }
   }
@@ -174,14 +208,14 @@
   // in its own origin. The parent only relays raw Usernode.postMessage
   // payloads, which keeps cross-origin behaviour predictable.
   if (_hasNativeChannel) {
-    console.log("[usernode-bridge] parent: native channel available, relay listener installed");
+    console.log(_BRIDGE_TAG, "native channel available, relay listener installed");
     window.addEventListener("message", function (e) {
       var data = e.data;
       if (!data || !e.source) return;
       var origin = e.origin || "*";
       var source = e.source;
       if (data.__usernode_relay === "discover") {
-        console.log("[usernode-bridge] parent ← discover from", origin, "→ acking");
+        console.log(_BRIDGE_TAG, "← discover from", origin, "→ acking");
         try {
           source.postMessage({ __usernode_relay: "discover-ack" }, origin);
         } catch (_) { /* iframe gone, ignore */ }
@@ -191,11 +225,8 @@
       var origId = data.id;
       var nativeId = "relay-" + String(Date.now()) + "-" +
         Math.random().toString(16).slice(2);
-      console.log(
-        "[usernode-bridge] parent ← relay request",
-        data.method,
-        "id", origId, "→ native id", nativeId
-      );
+      console.log(_BRIDGE_TAG, "← relay request",
+        data.method, "id", origId, "→ native id", nativeId);
       function reply(value, error) {
         try {
           source.postMessage(
@@ -206,11 +237,11 @@
       }
       window.__usernodeBridge.pending[nativeId] = {
         resolve: function (v) {
-          console.log("[usernode-bridge] parent native resolve →", nativeId);
+          console.log(_BRIDGE_TAG, "native resolve →", nativeId);
           reply(v, null);
         },
         reject: function (err) {
-          console.log("[usernode-bridge] parent native reject →", nativeId, err);
+          console.log(_BRIDGE_TAG, "native reject →", nativeId, err);
           reply(null, (err && err.message) || String(err));
         },
       };
@@ -3106,6 +3137,11 @@
 
     window.sendTransaction = function sendTransaction(destination_pubkey, amount, memo, opts) {
       return isMockEnabled().then(function (useMock) {
+        var branch = useMock ? "mock" :
+          (window.usernode.isNative ? "native" : "qr");
+        console.log(_BRIDGE_TAG, "sendTransaction → branch=" + branch,
+          "isNative=" + !!window.usernode.isNative,
+          "useMock=" + useMock);
         if (useMock) return mockSendTransaction(destination_pubkey, amount, memo, opts);
         if (window.usernode.isNative) return nativeSendTransaction(destination_pubkey, amount, memo, opts);
         return qrSendTransaction(destination_pubkey, amount, memo, opts);
