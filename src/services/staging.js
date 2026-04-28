@@ -111,6 +111,15 @@ async function rebuildProduction(config, app) {
 
   log.info('staging', 'Rebuilding production', { app: app.slug });
 
+  // Single chokepoint for "this app is being rebuilt right now": every
+  // caller (dev-chat merge, drift-poller, manual check-updates) ends up
+  // here, so wrapping the body once means the version-pill UI flips to
+  // its deploying state regardless of who triggered the rebuild.
+  const appDeployStatus = require('./app-deploy-status');
+  appDeployStatus.markStart(app.slug, { fromSha: app.main_sha || null });
+  let succeeded = false;
+  let resultSha = null;
+
   try {
     const [, owner, repo] = app.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
     if (!owner || !repo) throw new Error('Could not parse repo URL');
@@ -156,10 +165,14 @@ async function rebuildProduction(config, app) {
     await docker.waitForHealthy(containerName, 3000, '/health');
 
     log.info('staging', 'Production rebuilt', { app: app.slug, sha: mainSha });
+    succeeded = true;
+    resultSha = mainSha;
     return { containerId, sha: mainSha };
   } catch (err) {
     log.error('staging', 'Production rebuild failed', { app: app.slug, err: err.message });
     throw err;
+  } finally {
+    appDeployStatus.markEnd(app.slug, { toSha: resultSha, failed: !succeeded });
   }
 }
 

@@ -129,6 +129,23 @@ const Home = {
     const isRunning = app.status === 'running';
     const cursorClass = isRunning ? 'cursor-pointer' : 'cursor-not-allowed opacity-70';
 
+    // Same per-app pill renderer as the header (AppView), so the two
+    // surfaces stay visually identical and turn yellow + spin in
+    // lockstep when a redeploy is in flight. The home pill omits the
+    // PR-context tooltip — that's only meaningful in the app view.
+    // NOTE: classic-script `const AppView` from app-view.js is in the
+    // shared script-global lexical env but is NOT a property of window,
+    // so we reference it directly (a `window.AppView` guard would
+    // silently short-circuit to false and drop the pill).
+    const pillHtml = (typeof AppView !== 'undefined' && AppView.renderAppVersionPillHTML)
+      ? AppView.renderAppVersionPillHTML({
+          slug: app.slug,
+          version: app.version || null,
+          deployProgress: app.deployProgress || null,
+          includePrContext: false,
+        })
+      : '';
+
     return `
       <div class="app-card px-4 py-3 ${cursorClass} flex items-center gap-3" data-slug="${app.slug}" data-status="${app.status}">
         <div class="w-10 h-10 rounded-xl bg-violet-600/20 flex items-center justify-center text-violet-400 font-bold text-sm shrink-0">
@@ -142,6 +159,7 @@ const Home = {
           ${statusLabel ? `<p class="text-xs text-yellow-500">${statusLabel}</p>` : ''}
         </div>
         <div class="flex items-center gap-2 shrink-0">
+          ${pillHtml ? `<span class="app-version-pill-slot" data-slug="${app.slug}">${pillHtml}</span>` : `<span class="app-version-pill-slot" data-slug="${app.slug}"></span>`}
           ${!isError ? `<span class="text-xs text-zinc-500 dark:text-zinc-400">${formatActivity(activity)}</span>` : ''}
           ${isError && (App.user?.isAdmin || App.user?.id === app.created_by) ? `<button class="retry-btn text-xs text-emerald-400 hover:text-emerald-300 px-1" data-slug="${app.slug}">Retry</button>` : ''}
           ${App.user?.isAdmin && app.repo_url && isRunning ? `<button class="check-updates-btn text-xs text-zinc-400 hover:text-emerald-300 px-1" data-slug="${app.slug}" title="Check for updates and redeploy if changed">⟳</button>` : ''}
@@ -149,6 +167,23 @@ const Home = {
         </div>
       </div>
     `;
+  },
+
+  // Targeted pill update for a single app card. Called from the
+  // `app_redeploy_status` and `app_version_changed` WS handlers so
+  // the home screen flips into the deploying state (and back) without
+  // a full Home.load() re-render that would also blow away pending
+  // hover/scroll state on other cards.
+  updateAppCardPill(slug, opts) {
+    if (!slug) return;
+    const slot = document.querySelector(`.app-card[data-slug="${slug}"] .app-version-pill-slot`);
+    if (!slot || typeof AppView === 'undefined' || !AppView.renderAppVersionPillHTML) return;
+    slot.innerHTML = AppView.renderAppVersionPillHTML({
+      slug,
+      version: opts && opts.version ? opts.version : null,
+      deployProgress: opts && opts.deployProgress ? opts.deployProgress : null,
+      includePrContext: false,
+    });
   },
 };
 

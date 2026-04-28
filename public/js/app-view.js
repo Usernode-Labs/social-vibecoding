@@ -115,9 +115,10 @@ const AppView = {
   },
 
   // #21: fetch + render the "live on <sha> · PR #N" pill. Called on App
-  // tab render and again whenever an `app_version_changed` WS event
-  // fires for this app (so the pill updates live when a PR merges in
-  // another tab/session).
+  // tab render and again whenever an `app_version_changed` or
+  // `app_redeploy_status` WS event fires for this app (so the pill
+  // updates live when a PR merges in another tab/session, and turns
+  // yellow + spinning while the rebuild is in flight).
   async refreshVersionPill() {
     const slot = document.getElementById('app-version-pill-slot');
     if (!slot || !AppView.appData) return;
@@ -125,39 +126,111 @@ const AppView = {
       const res = await fetch(`/api/apps/${AppView.appData.slug}/version`);
       if (!res.ok) return;
       const info = await res.json();
-      if (!info.sha) {
-        slot.innerHTML = '';
-        return;
-      }
-      const href = info.prUrl || info.commitUrl || '#';
-      // Build the tooltip from whatever context we have. Prefer PR
-      // metadata (title + author + merge time); fall back to the
-      // commit hash alone for pre-merge / backfilled entries.
-      const parts = [];
-      if (info.prTitle) parts.push(info.prTitle);
-      if (info.mergedBy) parts.push(`by @${info.mergedBy}`);
-      if (info.mergedAt) parts.push(relTime(info.mergedAt));
-      const tip = parts.length ? parts.join(' · ') : `Commit ${info.shortSha}`;
-      // Lead with the app slug so this pill is unambiguously distinguishable
-      // from the platform-version pill (which lives in the same header and
-      // would otherwise be visually identical at a glance — both are just
-      // a green dot + a short SHA).
-      const slug = AppView.appData.slug;
-      const sha = info.prNumber
-        ? `${info.shortSha} · #${info.prNumber}`
-        : info.shortSha;
-      slot.innerHTML = `
-        <a href="${href}" target="_blank" rel="noopener" class="app-version-pill" title="${escapeAttr(tip)}">
-          <span class="app-version-pill-dot"></span>
-          <span class="app-version-pill-label">
-            <span class="app-version-pill-name">${escapeHtml(slug)}</span>
-            <span class="app-version-pill-sep">·</span>
-            ${escapeHtml(sha)}
-          </span>
-        </a>`;
+      slot.innerHTML = AppView.renderAppVersionPillHTML({
+        slug: AppView.appData.slug,
+        version: info.sha ? info : null,
+        deployProgress: info.deployProgress || null,
+        // Header pill gets the richer PR-context tooltip (title +
+        // author + merge time). The home-screen card uses the same
+        // helper without this and gets the plain commit-hash tip.
+        includePrContext: true,
+      });
     } catch {
       // Non-critical; if the fetch fails the pill just doesn't render.
     }
+  },
+
+  // Apply a deploy-progress update to the header pill without going
+  // back to the server. Called from the `app_redeploy_status` WS
+  // handler so the pill flips into its yellow/spinner state the
+  // instant the broadcast arrives, even before refreshVersionPill
+  // would re-fetch on the trailing `app_version_changed` event.
+  applyHeaderDeployProgress(deployProgress) {
+    const slot = document.getElementById('app-version-pill-slot');
+    if (!slot || !AppView.appData) return;
+    // Preserve whatever version data the previous render captured by
+    // re-querying the DOM — the slot stores all the fields we'd need
+    // via dataset. We don't need them, though: while deploying we
+    // render a stripped-down pill that doesn't show the prior SHA.
+    slot.innerHTML = AppView.renderAppVersionPillHTML({
+      slug: AppView.appData.slug,
+      version: null, // hidden during deploy; the next refresh fills it in
+      deployProgress,
+      includePrContext: true,
+    });
+  },
+
+  // Single source of truth for the per-app version pill. Used by both
+  // the header (AppView) and the home-screen cards (Home), so the two
+  // surfaces stay visually identical and stay in lockstep when new
+  // states (e.g. a future "rollback available" variant) are added.
+  //
+  // `version` shape: { sha, shortSha, prNumber, prUrl?, commitUrl?,
+  // prTitle?, mergedBy?, mergedAt? } — null means "no SHA yet".
+  // `deployProgress` shape: { deploying:true, startedAt, fromSha,
+  // toSha?, failed?, stale? } — null means "no in-flight deploy".
+  renderAppVersionPillHTML(opts) {
+    const slug = opts && opts.slug ? String(opts.slug) : '';
+    const version = opts && opts.version;
+    const deployProgress = opts && opts.deployProgress;
+    const includePrContext = !!(opts && opts.includePrContext);
+    if (!slug) return '';
+
+    const isDeploying = !!(deployProgress && deployProgress.deploying);
+    if (isDeploying) {
+      const elapsed = deployProgress.startedAt
+        ? Math.max(0, Math.floor((Date.now() - new Date(deployProgress.startedAt).getTime()) / 1000))
+        : null;
+      const tipParts = ['Redeploying'];
+      if (deployProgress.fromSha) tipParts.push(`from ${String(deployProgress.fromSha).slice(0, 7)}`);
+      if (elapsed != null) tipParts.push(`${elapsed}s elapsed`);
+      const tip = tipParts.join(' · ');
+      return `
+        <span class="app-version-pill app-version-pill--deploying" title="${escapeAttr(tip)}">
+          <span class="app-version-pill-spinner" aria-hidden="true"></span>
+          <span class="app-version-pill-label">
+            <span class="app-version-pill-name">${escapeHtml(slug)}</span>
+            <span class="app-version-pill-sep">·</span>
+            deploying
+          </span>
+        </span>`;
+    }
+
+    if (!version || !version.sha) {
+      // Mirror the platform-version pill's "dev" state: render a
+      // low-key chip so the slot is never empty (which can look like
+      // a layout bug or a JS failure to render). Reachable for apps
+      // still in `creating`, apps without a repo, or pre-#21 rows
+      // that haven't been backfilled yet.
+      return `
+        <span class="app-version-pill" title="No deployed version recorded yet">
+          <span class="app-version-pill-dot" style="background:#71717a;box-shadow:none"></span>
+          <span class="app-version-pill-label">
+            <span class="app-version-pill-name">${escapeHtml(slug)}</span>
+            <span class="app-version-pill-sep">·</span>
+            dev
+          </span>
+        </span>`;
+    }
+
+    const href = version.prUrl || version.commitUrl || '#';
+    const parts = [];
+    if (includePrContext && version.prTitle) parts.push(version.prTitle);
+    if (includePrContext && version.mergedBy) parts.push(`by @${version.mergedBy}`);
+    if (includePrContext && version.mergedAt) parts.push(relTime(version.mergedAt));
+    const tip = parts.length ? parts.join(' · ') : `Commit ${version.shortSha}`;
+    const sha = version.prNumber
+      ? `${version.shortSha} · #${version.prNumber}`
+      : version.shortSha;
+    return `
+      <a href="${href}" target="_blank" rel="noopener" class="app-version-pill" title="${escapeAttr(tip)}">
+        <span class="app-version-pill-dot"></span>
+        <span class="app-version-pill-label">
+          <span class="app-version-pill-name">${escapeHtml(slug)}</span>
+          <span class="app-version-pill-sep">·</span>
+          ${escapeHtml(sha)}
+        </span>
+      </a>`;
   },
 
   renderGroupChatTab() {

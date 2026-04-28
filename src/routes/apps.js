@@ -62,6 +62,7 @@ function appRoutes(config) {
 
   router.get('/api/apps', async (req, res) => {
     try {
+      const appDeployStatus = require('../services/app-deploy-status');
       const { rows } = await pool.query(`
         SELECT a.*,
           COALESCE(msg_counts.cnt, 0) AS message_count,
@@ -92,7 +93,31 @@ function appRoutes(config) {
           }
           if (!url) url = `https://${caddy.productionHostname(a.slug)}`;
         }
-        return { ...a, url };
+        // Minimal version info for the home-screen pill — derived
+        // entirely from columns we already pulled, no extra round
+        // trips. The richer per-app endpoint at
+        // /api/apps/:slug/version still does the chat_sessions join
+        // for PR title/author, which the home pill doesn't need.
+        const [, owner, repo] = (a.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+        const version = a.main_sha
+          ? {
+              sha: a.main_sha,
+              shortSha: a.main_sha.slice(0, 7),
+              prNumber: a.main_pr_number || null,
+              commitUrl: owner && repo
+                ? `https://github.com/${owner}/${repo}/commit/${a.main_sha}`
+                : null,
+              prUrl: a.main_pr_number && owner && repo
+                ? `https://github.com/${owner}/${repo}/pull/${a.main_pr_number}`
+                : null,
+            }
+          : null;
+        return {
+          ...a,
+          url,
+          version,
+          deployProgress: appDeployStatus.read(a.slug),
+        };
       }));
       res.json({ apps });
     } catch (err) {
@@ -255,12 +280,18 @@ function appRoutes(config) {
   // Deployed version pill (#21). Returns the SHA + PR context for the
   // commit currently running in prod. Null sha = pre-migration app
   // still in backfill queue, or a local-template build with no repo.
+  //
+  // Also folds in `deployProgress` so a freshly-loaded client whose
+  // app is currently being redeployed sees the pill in its yellow
+  // spinning state on first paint, rather than only after the next
+  // `app_redeploy_status` WS broadcast.
   router.get('/api/apps/:slug/version', async (req, res) => {
     try {
       const appVersion = require('../services/app-version');
+      const appDeployStatus = require('../services/app-deploy-status');
       const info = await appVersion.getAppVersion(pool, req.params.slug);
       if (!info) return res.status(404).json({ error: 'App not found' });
-      res.json(info);
+      res.json({ ...info, deployProgress: appDeployStatus.read(req.params.slug) });
     } catch (err) {
       log.error('apps', 'Failed to get app version', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

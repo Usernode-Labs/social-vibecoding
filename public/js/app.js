@@ -133,6 +133,55 @@ const App = {
     })[c]);
   },
 
+  // Per-app redeploy WS handler. Flips affected pills into / out of
+  // the yellow + spinner state. Reacts to BOTH the start broadcast
+  // (deploying:true → render the deploying pill) and the end
+  // broadcast (deploying:false → re-fetch the version so the new
+  // SHA shows up). The server emits these from staging.js around
+  // every rebuildProduction call, so all entry paths (dev-chat
+  // merge, drift poller, manual check-updates) are covered.
+  handleAppRedeployStatus(data) {
+    if (!data || !data.appSlug) return;
+    const slug = data.appSlug;
+    const deployProgress = data.deploying
+      ? { deploying: true, startedAt: data.startedAt, fromSha: data.fromSha || null }
+      : null;
+
+    // NOTE: `AppView` / `Home` are top-level `const` from classic
+    // <script>s — they live in the shared script-global lexical env
+    // but are NOT properties of `window`, so `window.AppView` would
+    // silently short-circuit to false. Use `typeof` instead.
+    if (typeof AppView !== 'undefined' && AppView.appData?.slug === slug) {
+      if (data.deploying) {
+        AppView.applyHeaderDeployProgress(deployProgress);
+      } else {
+        // Deploy ended — re-pull /api/apps/:slug/version to pick up
+        // the new SHA. The trailing `app_version_changed` broadcast
+        // (if a SHA actually changed) would also trigger this, but
+        // refetching here covers the failure case where the deploy
+        // ended without changing the SHA.
+        AppView.refreshVersionPill();
+      }
+    }
+
+    // Home-screen card pill (only if the home screen is visible).
+    const homeVisible = document.getElementById('home-screen')
+      && !document.getElementById('home-screen').classList.contains('hidden');
+    if (homeVisible && typeof Home !== 'undefined') {
+      if (data.deploying) {
+        // We don't have the row's `version` data on hand here, but
+        // the deploying pill hides the SHA anyway, so passing null
+        // is correct.
+        Home.updateAppCardPill(slug, { deployProgress, version: null });
+      } else {
+        // Deploy ended — full reload picks up the new version row
+        // from /api/apps. Cheap (one query) and avoids manually
+        // splicing the new SHA into a single card.
+        Home.load();
+      }
+    }
+  },
+
   eventsWs: null,
   // Set on the very first connect; on every subsequent (re)connect we
   // resync state because the server's broadcast model is fire-and-forget
@@ -187,9 +236,23 @@ const App = {
             // #21: a PR just merged and prod was rebuilt. If the user
             // is currently on this app's App tab, refresh the commit
             // pill in place so they see the new SHA without reloading.
-            if (window.AppView && AppView.appData?.slug === data.appSlug) {
+            if (typeof AppView !== 'undefined' && AppView.appData?.slug === data.appSlug) {
               AppView.refreshVersionPill();
             }
+            // Home screen: re-pull the apps list so the home-screen
+            // pill picks up the new SHA. Cheap; only fires on a real
+            // version change.
+            if (typeof Home !== 'undefined' && document.getElementById('home-screen')
+                && !document.getElementById('home-screen').classList.contains('hidden')) {
+              Home.load();
+            }
+            break;
+          case 'app_redeploy_status':
+            // Per-app rebuild started/ended. Flip both the header
+            // pill (if this app is open) and the home-screen card
+            // pill (if visible) into / out of the yellow + spinner
+            // state immediately, no extra server round-trip.
+            App.handleAppRedeployStatus(data);
             break;
         }
       } catch {}
@@ -206,12 +269,17 @@ const App = {
   // to a corresponding `case` in onmessage — the rule is simply "if a
   // WS event would have driven this view, refetch the same data here."
   resyncCurrentView() {
-    if (window.Home && document.getElementById('home-screen') && !document.getElementById('home-screen').classList.contains('hidden')) {
+    // `Home` and `AppView` are classic-script top-level `const` — they
+    // live in the script-global lexical env but are NOT on `window`,
+    // so `window.Home` / `window.AppView` would silently be undefined.
+    // `Notifications` is explicitly assigned to `window` in
+    // notifications.js, so that one is fine.
+    if (typeof Home !== 'undefined' && document.getElementById('home-screen') && !document.getElementById('home-screen').classList.contains('hidden')) {
       Home.load();
     }
     if (window.Notifications) Notifications.refresh?.();
     App.loadVersion();
-    if (App.currentApp && window.AppView && AppView.appData) {
+    if (App.currentApp && typeof AppView !== 'undefined' && AppView.appData) {
       AppView.refreshVersionPill();
       // Re-fetch tab-specific state. We don't blow away the DOM —
       // these helpers update in place — so scroll positions, drafts,
