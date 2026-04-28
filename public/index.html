@@ -63,6 +63,13 @@
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z"/></svg>
       <span id="dev-console-badge" class="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"></span>
     </button>
+    <!-- App secrets — visible only when an app is open. The red dot
+         lights up when the app is missing a required secret (the
+         home/header pill turns red in the same situation). -->
+    <button id="app-secrets-btn" class="hidden relative text-zinc-400 hover:text-zinc-200 mr-2" aria-label="App secrets">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 7a4 4 0 014 4m-4-4a4 4 0 00-4 4 4 4 0 004 4 4 4 0 004-4 4 4 0 00-4-4zm-9.5 12.5L11 13"/></svg>
+      <span id="app-secrets-badge" class="hidden absolute -top-1 -right-1 w-2 h-2 rounded-full bg-red-500" aria-hidden="true"></span>
+    </button>
     <a id="app-github-link" href="#" target="_blank" class="hidden text-zinc-400 hover:text-zinc-200 mr-2" aria-label="View on GitHub">
       <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
     </a>
@@ -332,6 +339,26 @@
     </div>
   </div>
 
+  <!-- App secrets modal (per-app env vars declared in
+       social-vibecoding.json). Opened from #app-secrets-btn in the
+       header when an app is open. Admins can set/clear values
+       directly; non-admins propose changes via the existing issues
+       vote machinery. -->
+  <div id="app-secrets-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-lg mx-4 shadow-xl relative max-h-[80vh] flex flex-col">
+      <button id="app-secrets-close" class="absolute top-4 right-4 text-zinc-400 hover:text-zinc-200 transition-colors" aria-label="Close">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+      <h2 class="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">App secrets</h2>
+      <p id="app-secrets-subtitle" class="text-sm text-zinc-600 dark:text-zinc-400 mb-4">Environment variables this app declares in <code class="text-xs">social-vibecoding.json</code>.</p>
+      <div id="app-secrets-list" class="flex-1 overflow-y-auto -mx-2 px-2"></div>
+      <div id="app-secrets-status" class="text-sm mt-3 hidden"></div>
+      <div id="app-secrets-footer" class="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500 hidden">
+        Changes apply on the next deploy. Admins can <button id="app-secrets-redeploy" class="text-violet-500 hover:text-violet-400 underline">redeploy now</button>.
+      </div>
+    </div>
+  </div>
+
   <script src="/js/dev-host.js"></script>
   <script src="/js/dev-console.js"></script>
   <script src="/js/notifications.js"></script>
@@ -339,6 +366,7 @@
   <script src="/js/group-chat.js"></script>
   <script src="/js/dev-chat.js"></script>
   <script src="/js/app-view.js"></script>
+  <script src="/js/app-secrets.js"></script>
   <script src="/js/home.js"></script>
   <script src="/js/app.js"></script>
 </body>

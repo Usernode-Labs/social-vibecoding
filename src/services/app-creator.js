@@ -3,6 +3,8 @@ const github = require('./github');
 const docker = require('./docker');
 const caddy = require('./caddy');
 const dbManager = require('./db-manager');
+const appManifest = require('./app-manifest');
+const appSecrets = require('./app-secrets');
 const { getTemplateFiles } = require('./template');
 const { getPool } = require('../db/pool');
 const { pushAppStatusUpdate } = require('./ws');
@@ -108,6 +110,37 @@ async function createApp(config, appRow) {
       }
     }
 
+    // Read the dapp's `social-vibecoding.json` from the cloned working
+    // tree, then snapshot it onto the app row so the Secrets API can
+    // render the manifest-declared keys without re-cloning. Bail out
+    // (without building/running) if any required key is unset — the
+    // UI will surface 'awaiting_secrets' so the creator (or app
+    // majority) can fill them in, then call POST /api/apps/:slug/redeploy
+    // to retry.
+    const manifest = appManifest.read(tempDir);
+    await pool.query(
+      `UPDATE apps SET manifest_snapshot = $1 WHERE id = $2`,
+      [JSON.stringify(manifest), appId]
+    );
+
+    const storedValues = await appSecrets.getRawValues(pool, appId, config.jwtSecret);
+    const merge = appSecrets.mergeForDeploy(manifest, storedValues);
+    if (merge.missingRequired.length) {
+      log.info('app-creator', 'Required secrets unset; entering awaiting_secrets', {
+        appId, slug, missing: merge.missingRequired,
+      });
+      await pool.query(
+        `UPDATE apps SET status = 'awaiting_secrets', repo_url = COALESCE($1, repo_url), main_sha = COALESCE($2, main_sha)
+         WHERE id = $3`,
+        [repoUrl || null, mainSha || null, appId]
+      );
+      await docker.execFileAsync('rm', ['-rf', tempDir]).catch(() => {});
+      pushAppStatusUpdate({
+        id: appId, slug, status: 'awaiting_secrets', missingSecrets: merge.missingRequired,
+      });
+      return;
+    }
+
     await docker.buildImage(tempDir, imageName);
     await docker.execFileAsync('rm', ['-rf', tempDir]).catch(() => {});
 
@@ -121,6 +154,8 @@ async function createApp(config, appRow) {
         DATABASE_URL: dbUrl,
         JWT_SECRET: config.jwtSecret,
         PORT: '3000',
+        USERNODE_ENV: 'production',
+        ...merge.env,
       },
       port: 3000,
     });

@@ -162,6 +162,32 @@ node_modules
 `,
     },
     {
+      // Per-app secrets manifest. Empty by default — apps that need
+      // env vars beyond the platform-injected DATABASE_URL/JWT_SECRET/
+      // PORT/USERNODE_ENV add entries here. The Usernode platform
+      // reads this on every deploy and refuses to start the container
+      // if a required key has no stored value (see
+      // src/services/app-secrets.js + app-manifest.js in the platform).
+      //
+      // Schema:
+      //   {
+      //     "secrets": [
+      //       {
+      //         "key": "MY_API_KEY",
+      //         "description": "Human help text shown in the Secrets UI",
+      //         "required": true,
+      //         "sensitive": true,
+      //         "default": "..."   // applied if no stored value
+      //       }
+      //     ]
+      //   }
+      // Reserved keys (DATABASE_URL, JWT_SECRET, PORT, USERNODE_ENV,
+      // USERNODE_MISSING_SECRETS) are managed by the platform and
+      // can't appear in this list.
+      path: 'social-vibecoding.json',
+      content: JSON.stringify({ secrets: [] }, null, 2),
+    },
+    {
       path: 'server.js',
       content: `const express = require('express');
 const path = require('path');

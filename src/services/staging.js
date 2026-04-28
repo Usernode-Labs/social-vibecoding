@@ -3,6 +3,22 @@ const docker = require('./docker');
 const caddy = require('./caddy');
 const dbManager = require('./db-manager');
 const github = require('./github');
+const appManifest = require('./app-manifest');
+const appSecrets = require('./app-secrets');
+const { getPool } = require('../db/pool');
+
+// Custom error thrown by both staging + prod build paths when the cloned
+// repo's `social-vibecoding.json` declares required secrets that have no
+// stored value. Callers (votes.js merge path, drift poller, dev-chat
+// retries) inspect `.missingSecrets` to render a tailored "fix this"
+// toast instead of a generic "build failed".
+class MissingSecretsError extends Error {
+  constructor(missingSecrets) {
+    super(`Cannot deploy: missing required secrets [${missingSecrets.join(', ')}]`);
+    this.name = 'MissingSecretsError';
+    this.missingSecrets = missingSecrets;
+  }
+}
 
 // Local-dev URLs are emitted with `localhost` as the host and rewritten to
 // whatever hostname the client is actually reaching the platform on. See
@@ -28,7 +44,21 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
       'clone', '--depth', '1', '--branch', session.branch_name, cloneUrl, cloneDir,
     ], { timeout: 60000 });
 
-    // 2. Build Docker image
+    // 2. Read the dapp's manifest from the PR branch and check that all
+    //    required secrets have stored values. Staging shares the prod
+    //    secrets store (one set of values per app, not per env), so a
+    //    PR introducing a new required key needs that key set in the
+    //    app's Settings → Secrets first — same gate prod uses below.
+    const stagingManifest = appManifest.read(cloneDir);
+    const stagingPool = getPool(config);
+    const stagingStored = await appSecrets.getRawValues(stagingPool, app.id, config.jwtSecret);
+    const stagingMerge = appSecrets.mergeForDeploy(stagingManifest, stagingStored);
+    if (stagingMerge.missingRequired.length) {
+      await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
+      throw new MissingSecretsError(stagingMerge.missingRequired);
+    }
+
+    // 3. Build Docker image
     await docker.buildImage(cloneDir, imageName);
     await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
 
@@ -50,6 +80,8 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
         DATABASE_URL: stagingDbUrl,
         JWT_SECRET: config.jwtSecret,
         PORT: '3000',
+        USERNODE_ENV: 'staging',
+        ...stagingMerge.env,
       },
       port: 3000,
     });
@@ -119,6 +151,7 @@ async function rebuildProduction(config, app) {
   appDeployStatus.markStart(app.slug, { fromSha: app.main_sha || null });
   let succeeded = false;
   let resultSha = null;
+  let missingSecretsFromErr = null;
 
   try {
     const [, owner, repo] = app.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
@@ -145,6 +178,27 @@ async function rebuildProduction(config, app) {
       log.warn('staging', 'Failed to capture main SHA', { app: app.slug, err: err.message });
     }
 
+    // Read manifest from the cloned working tree. Snapshot it onto
+    // the app row first so the Secrets UI knows about a brand-new
+    // required key the moment we observe it (even if the deploy then
+    // blocks because that key has no stored value). Then block before
+    // docker build if any required secret is unset — no point
+    // compiling an image we can't run. The thrown MissingSecretsError
+    // carries the list so callers (votes.js merge, drift poller,
+    // manual rebuild) can render an actionable error.
+    const manifest = appManifest.read(cloneDir);
+    const prodPool = getPool(config);
+    await prodPool.query(
+      `UPDATE apps SET manifest_snapshot = $1 WHERE id = $2`,
+      [JSON.stringify(manifest), app.id]
+    );
+    const stored = await appSecrets.getRawValues(prodPool, app.id, config.jwtSecret);
+    const merge = appSecrets.mergeForDeploy(manifest, stored);
+    if (merge.missingRequired.length) {
+      await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
+      throw new MissingSecretsError(merge.missingRequired);
+    }
+
     await docker.buildImage(cloneDir, imageName);
     await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
 
@@ -158,6 +212,8 @@ async function rebuildProduction(config, app) {
         DATABASE_URL: dbUrl,
         JWT_SECRET: config.jwtSecret,
         PORT: '3000',
+        USERNODE_ENV: 'production',
+        ...merge.env,
       },
       port: 3000,
     });
@@ -169,11 +225,27 @@ async function rebuildProduction(config, app) {
     resultSha = mainSha;
     return { containerId, sha: mainSha };
   } catch (err) {
-    log.error('staging', 'Production rebuild failed', { app: app.slug, err: err.message });
+    if (err instanceof MissingSecretsError) {
+      missingSecretsFromErr = err.missingSecrets;
+      log.warn('staging', 'Production rebuild blocked — missing required secrets', {
+        app: app.slug, missing: err.missingSecrets,
+      });
+    } else {
+      log.error('staging', 'Production rebuild failed', { app: app.slug, err: err.message });
+    }
     throw err;
   } finally {
-    appDeployStatus.markEnd(app.slug, { toSha: resultSha, failed: !succeeded });
+    appDeployStatus.markEnd(app.slug, {
+      toSha: resultSha,
+      failed: !succeeded,
+      missingSecrets: missingSecretsFromErr,
+    });
   }
 }
 
-module.exports = { buildAndDeployStaging, teardownStaging, rebuildProduction };
+module.exports = {
+  buildAndDeployStaging,
+  teardownStaging,
+  rebuildProduction,
+  MissingSecretsError,
+};

@@ -27,7 +27,7 @@ const Home = {
           // Disabled while spinning up / errored — there's no iframe or
           // chat history to render and the WS `app_status` handler will
           // re-bind the card as soon as the container goes live.
-          if (card.dataset.status !== 'running') return;
+          if (card.dataset.status !== 'running' && card.dataset.status !== 'awaiting_secrets') return;
           App.navigateToApp(card.dataset.slug);
         });
       });
@@ -122,12 +122,23 @@ const Home = {
   },
 
   renderAppCard(app) {
-    const statusClass = app.status === 'running' ? 'running' : app.status === 'creating' ? 'creating' : 'error';
-    const statusLabel = app.status === 'running' ? '' : app.status === 'creating' ? 'Spinning up...' : 'Error';
+    const isAwaiting = app.status === 'awaiting_secrets';
+    const statusClass = app.status === 'running' ? 'running'
+      : app.status === 'creating' ? 'creating'
+      : isAwaiting ? 'creating'
+      : 'error';
+    const statusLabel = app.status === 'running' ? ''
+      : app.status === 'creating' ? 'Spinning up...'
+      : isAwaiting ? 'Awaiting secrets'
+      : 'Error';
     const activity = parseInt(app.message_count || 0) + parseInt(app.total_seconds || 0);
     const isError = app.status === 'error';
     const isRunning = app.status === 'running';
-    const cursorClass = isRunning ? 'cursor-pointer' : 'cursor-not-allowed opacity-70';
+    const hasMissing = Array.isArray(app.missingSecrets) && app.missingSecrets.length;
+    // Awaiting-secrets cards stay clickable so the user can open the
+    // app view + Secrets modal to fill values; other non-running
+    // statuses show no app surface.
+    const cursorClass = (isRunning || isAwaiting) ? 'cursor-pointer' : 'cursor-not-allowed opacity-70';
 
     // Same per-app pill renderer as the header (AppView), so the two
     // surfaces stay visually identical and turn yellow + spin in
@@ -156,7 +167,9 @@ const Home = {
             <span class="font-medium truncate">${escapeHtml(app.name)}</span>
             <span class="status-dot ${statusClass}" title="${app.status}"></span>
           </div>
-          ${statusLabel ? `<p class="text-xs text-yellow-500">${statusLabel}</p>` : ''}
+          ${statusLabel ? `<p class="text-xs ${isAwaiting ? 'text-amber-500' : 'text-yellow-500'}">${statusLabel}${
+            isAwaiting && hasMissing ? `: ${escapeHtml(app.missingSecrets.join(', '))}` : ''
+          }</p>` : (hasMissing ? `<p class="text-xs text-red-500">Missing secrets: ${escapeHtml(app.missingSecrets.join(', '))}</p>` : '')}
         </div>
         <div class="flex items-center gap-2 shrink-0">
           ${pillHtml ? `<span class="app-version-pill-slot" data-slug="${app.slug}">${pillHtml}</span>` : `<span class="app-version-pill-slot" data-slug="${app.slug}"></span>`}

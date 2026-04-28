@@ -6,6 +6,9 @@ const caddy = require('../services/caddy');
 const docker = require('../services/docker');
 const github = require('../services/github');
 const driftPoller = require('../services/main-drift-poller');
+const appSecrets = require('../services/app-secrets');
+const appManifest = require('../services/app-manifest');
+const staging = require('../services/staging');
 const { drainGuard } = require('../services/lifecycle');
 const { appCreateLimiter } = require('../middleware/rate-limits');
 
@@ -84,6 +87,26 @@ function appRoutes(config) {
       `);
 
       const apps = await Promise.all(rows.map(async (a) => {
+        // Per-app missing-required-secrets list. Cheap (one extra query
+        // each) and lets the home tile show a "fix secrets" warning
+        // without each card making its own /secrets fetch on render.
+        let missingSecrets = null;
+        if (a.manifest_snapshot && typeof a.manifest_snapshot === 'object') {
+          const declared = Array.isArray(a.manifest_snapshot.secrets)
+            ? a.manifest_snapshot.secrets : [];
+          if (declared.some((s) => s && s.required)) {
+            const { rows: storedRows } = await pool.query(
+              'SELECT key FROM app_secrets WHERE app_id = $1',
+              [a.id]
+            );
+            const storedKeys = new Set(storedRows.map((r) => r.key));
+            missingSecrets = declared
+              .filter((s) => s && s.required && !storedKeys.has(s.key))
+              .map((s) => s.key);
+            if (!missingSecrets.length) missingSecrets = null;
+          }
+        }
+
         let url = null;
         if (a.status === 'running') {
           if (IS_LOCAL_DEV) {
@@ -117,6 +140,7 @@ function appRoutes(config) {
           url,
           version,
           deployProgress: appDeployStatus.read(a.slug),
+          missingSecrets,
         };
       }));
       res.json({ apps });
@@ -270,7 +294,28 @@ function appRoutes(config) {
         }
         if (!url) url = `https://${caddy.productionHostname(appRow.slug)}`;
       }
-      res.json({ app: { ...appRow, url } });
+
+      // Same missingSecrets computation as the /api/apps list — needed
+      // here so AppView.open() can paint the header badge and the
+      // 'awaiting_secrets' splash without a second round-trip.
+      let missingSecrets = null;
+      if (appRow.manifest_snapshot && typeof appRow.manifest_snapshot === 'object') {
+        const declared = Array.isArray(appRow.manifest_snapshot.secrets)
+          ? appRow.manifest_snapshot.secrets : [];
+        if (declared.some((s) => s && s.required)) {
+          const { rows: storedRows } = await pool.query(
+            'SELECT key FROM app_secrets WHERE app_id = $1',
+            [appRow.id]
+          );
+          const storedKeys = new Set(storedRows.map((r) => r.key));
+          missingSecrets = declared
+            .filter((s) => s && s.required && !storedKeys.has(s.key))
+            .map((s) => s.key);
+          if (!missingSecrets.length) missingSecrets = null;
+        }
+      }
+
+      res.json({ app: { ...appRow, url, missingSecrets } });
     } catch (err) {
       log.error('apps', 'Failed to get app', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -294,6 +339,139 @@ function appRoutes(config) {
       res.json({ ...info, deployProgress: appDeployStatus.read(req.params.slug) });
     } catch (err) {
       log.error('apps', 'Failed to get app version', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ────────────────────────────────────────────────────────────────────
+  // Per-app secrets (see services/app-secrets.js + app-manifest.js).
+  //
+  // GET   /api/apps/:slug/secrets         — combined manifest+stored view
+  //                                         (everyone with app access)
+  // PUT   /api/apps/:slug/secrets/:key    — admin-only direct set
+  // DELETE /api/apps/:slug/secrets/:key   — admin-only direct delete
+  // POST  /api/apps/:slug/redeploy        — admin-only manual redeploy
+  //                                         (used after fixing missing
+  //                                         secrets; also reachable from
+  //                                         the secret_change vote-apply
+  //                                         path in routes/issues.js)
+  //
+  // Non-admins propose a secret change via POST /api/apps/:slug/issues
+  // with kind='secret_change' (handled in routes/issues.js).
+  // ────────────────────────────────────────────────────────────────────
+
+  router.get('/api/apps/:slug/secrets', async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        'SELECT id, slug, manifest_snapshot FROM apps WHERE slug = $1',
+        [req.params.slug]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'App not found' });
+      const app = rows[0];
+      const manifest = app.manifest_snapshot && typeof app.manifest_snapshot === 'object'
+        ? app.manifest_snapshot
+        : { secrets: [] };
+      const view = await appSecrets.getRedactedView(pool, app.id, manifest);
+      res.json({ secrets: view, manifestKnown: !!app.manifest_snapshot });
+    } catch (err) {
+      log.error('apps', 'Failed to list secrets', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/apps/:slug/secrets/:key', drainGuard, async (req, res) => {
+    if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin access required' });
+    const value = req.body && typeof req.body.value === 'string' ? req.body.value : '';
+    if (!value.length) return res.status(400).json({ error: 'value is required' });
+
+    try {
+      const { rows } = await pool.query(
+        'SELECT id, manifest_snapshot FROM apps WHERE slug = $1',
+        [req.params.slug]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'App not found' });
+      const app = rows[0];
+      const manifest = app.manifest_snapshot && typeof app.manifest_snapshot === 'object'
+        ? app.manifest_snapshot
+        : { secrets: [] };
+
+      const declared = (manifest.secrets || []).find((s) => s.key === req.params.key);
+      // Allow setting non-declared keys too (orphan cleanup / pre-declaration
+      // bootstrapping) but enforce the same key shape. The deploy paths
+      // only ever inject declared keys, so an orphan stays unused unless
+      // the manifest grows to include it later.
+      if (!declared && !appManifest.KEY_RE.test(req.params.key)) {
+        return res.status(400).json({ error: 'Invalid key format' });
+      }
+      if (!declared && appManifest.RESERVED_KEYS.has(req.params.key)) {
+        return res.status(400).json({ error: 'This key is reserved by the platform' });
+      }
+
+      await appSecrets.setValue(pool, app.id, req.params.key, value, {
+        sensitive: !!declared?.sensitive,
+        userId: req.user.id,
+        jwtSecret: config.jwtSecret,
+      });
+      log.info('apps', 'Secret set (admin direct)', {
+        slug: req.params.slug, key: req.params.key, userId: req.user.id,
+      });
+      res.json({ ok: true });
+    } catch (err) {
+      log.error('apps', 'Failed to set secret', {
+        slug: req.params.slug, key: req.params.key, message: err.message,
+      });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.delete('/api/apps/:slug/secrets/:key', drainGuard, async (req, res) => {
+    if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin access required' });
+    try {
+      const { rows } = await pool.query('SELECT id FROM apps WHERE slug = $1', [req.params.slug]);
+      if (!rows.length) return res.status(404).json({ error: 'App not found' });
+      await appSecrets.deleteValue(pool, rows[0].id, req.params.key);
+      log.info('apps', 'Secret deleted (admin direct)', {
+        slug: req.params.slug, key: req.params.key, userId: req.user.id,
+      });
+      res.json({ ok: true });
+    } catch (err) {
+      log.error('apps', 'Failed to delete secret', {
+        slug: req.params.slug, key: req.params.key, message: err.message,
+      });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Trigger a fresh `rebuildProduction`. Used after admins fix missing
+  // secrets to retry a deploy from `awaiting_secrets`/`error` (also used
+  // by the secret_change vote-apply path). Returns immediately; the
+  // rebuild streams progress via the existing `app_redeploy_status` WS
+  // event so the UI's version pill flips to its yellow spinning state.
+  router.post('/api/apps/:slug/redeploy', drainGuard, async (req, res) => {
+    if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin access required' });
+    try {
+      const { rows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
+      if (!rows.length) return res.status(404).json({ error: 'App not found' });
+      const app = rows[0];
+      if (!app.repo_url) {
+        return res.status(400).json({ error: 'This app is not backed by a GitHub repo' });
+      }
+      // Fire-and-forget: same fan-out as the drift-poller and dev-chat
+      // merge paths use. Errors land on the deploy-status broadcast.
+      staging.rebuildProduction(config, app)
+        .then(async ({ containerId, sha }) => {
+          await pool.query(
+            `UPDATE apps SET container_id = $1, main_sha = $2, status = 'running'
+             WHERE id = $3`,
+            [containerId, sha || null, app.id]
+          );
+        })
+        .catch((err) => {
+          log.warn('apps', 'Manual redeploy failed', { slug: app.slug, err: err.message });
+        });
+      res.json({ ok: true });
+    } catch (err) {
+      log.error('apps', 'Redeploy kickoff failed', { slug: req.params.slug, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

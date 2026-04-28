@@ -53,6 +53,12 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0
 -- server boot for apps created before this migration.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_sha VARCHAR(40);
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_pr_number INTEGER;
+-- Snapshot of `social-vibecoding.json` from the last successful clone
+-- (createApp + rebuildProduction both write it). The Secrets UI reads
+-- this so it can render the manifest-declared keys without re-cloning,
+-- and the deploy block-on-missing-required check uses it as the source
+-- of truth for "what does this dapp need".
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS manifest_snapshot JSONB;
 
 -- Activity tracking (for home screen sort)
 CREATE TABLE IF NOT EXISTS app_activity (
@@ -178,3 +184,26 @@ CREATE INDEX IF NOT EXISTS idx_notifications_user_unread
   WHERE read_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_notifications_user_recent
   ON notifications (user_id, created_at DESC);
+
+-- Per-app environment secrets. Values are AES-256-GCM encrypted via
+-- src/services/secrets.js (keyed off jwtSecret), serialized as
+-- "v1:<iv>:<tag>:<ct>" — same scheme used for users.anthropic_key_enc.
+--
+-- A dapp declares which keys it needs in `social-vibecoding.json` at its
+-- repo root (see src/services/app-manifest.js). Stored values for any
+-- `required` key listed there must be present at deploy time, otherwise
+-- the deploy is blocked (createApp flips status to 'awaiting_secrets';
+-- rebuildProduction throws with `missingSecrets`).
+--
+-- value_last4 is a redacted preview the UI can show without a decrypt
+-- round-trip (e.g. "ut1…abcd"). Sensitive values store NULL here so the
+-- UI never shows even a fragment.
+CREATE TABLE IF NOT EXISTS app_secrets (
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  key         VARCHAR(128) NOT NULL,
+  value_enc   TEXT NOT NULL,
+  value_last4 VARCHAR(8),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  PRIMARY KEY (app_id, key)
+);

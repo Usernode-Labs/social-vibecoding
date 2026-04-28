@@ -75,6 +75,10 @@ function markEnd(slug, opts) {
   const prev = _state.get(slug);
   _state.delete(slug);
   if (!prev) return;
+  // `missingSecrets` is forwarded so the frontend can render a
+  // tailored "set ECHO_APP_SECRET_KEY to deploy" toast instead of a
+  // generic "build failed" — staging.js sets it from the caught
+  // MissingSecretsError.
   broadcast({
     type: 'app_redeploy_status',
     appSlug: slug,
@@ -83,6 +87,7 @@ function markEnd(slug, opts) {
     fromSha: prev.fromSha,
     toSha: opts && opts.toSha ? String(opts.toSha) : null,
     failed: !!(opts && opts.failed),
+    missingSecrets: Array.isArray(opts && opts.missingSecrets) ? opts.missingSecrets : null,
   });
 }
 

@@ -38,6 +38,10 @@ Required env vars at runtime (provided by the harness):
 - `USERNODE_ENV` — either `production` or `staging`. See "Staging vs
   production" below.
 
+Apps that need additional env vars (third-party API keys, on-chain
+addresses, etc.) declare them in `social-vibecoding.json` at the repo
+root — see "Per-app secrets" below.
+
 ## Auth — iframe token injection
 
 Apps run inside an iframe on the Usernode shell. The shell mints a
@@ -191,6 +195,81 @@ When the Mayor is planning a feature that clearly involves sensitive
 data (DMs, accounts, payments), it should note out loud in its
 plan that the relevant tables will be private and staging will seed
 fake rows. This sets user expectations before CC runs.
+
+## Per-app secrets — `social-vibecoding.json`
+
+Apps that need env vars beyond the four platform-injected ones declare
+them in a `social-vibecoding.json` manifest at the repo root. The
+platform reads this file on every deploy (initial creation, staging
+PR builds, production rebuilds) and:
+
+- Injects stored values into the container's environment.
+- **Blocks the deploy** if any `required: true` key has no stored
+  value. New apps land in `awaiting_secrets` status; production
+  rebuilds throw with a `missingSecrets` list and the version pill
+  goes red until values are filled.
+- Surfaces the manifest entries in the Secrets modal (header key icon
+  in the app view) where admins set values directly and non-admins
+  open a vote-based proposal.
+
+Manifest shape:
+
+```json
+{
+  "secrets": [
+    {
+      "key": "STRIPE_SECRET_KEY",
+      "description": "Live Stripe secret for charging cards",
+      "required": true,
+      "sensitive": true
+    },
+    {
+      "key": "DEFAULT_LOCALE",
+      "description": "Fallback locale when no Accept-Language header is set",
+      "required": false,
+      "default": "en-US"
+    }
+  ]
+}
+```
+
+Per-field rules:
+
+- `key` — `UPPER_SNAKE_CASE`. The literal name `process.env.<KEY>` will be.
+- `description` — required for the UI. Be specific: name what the
+  value is and where to obtain it.
+- `required` — `true` if the app cannot run without it. Defaults to
+  `false`. **Required-but-unset blocks deploys** — only mark a key
+  required if that's truly the contract.
+- `sensitive` — `true` if the value must never be readable from any API.
+  The platform stores it AES-256-GCM at rest and the Secrets UI shows
+  only "set" / "not set". Defaults to `false`. Mark API keys, secret
+  signing keys, etc. as sensitive; mark public addresses, URLs,
+  feature flags as non-sensitive.
+- `default` — applied at deploy time if no stored value exists (only
+  meaningful when `required: false`). Use sparingly — it's documented
+  as "the platform's default", not "this dapp's default".
+
+**Reserved keys** the platform owns and rejects from the manifest:
+`DATABASE_URL`, `JWT_SECRET`, `PORT`, `USERNODE_ENV`,
+`USERNODE_MISSING_SECRETS`. Don't list these.
+
+**When the Mayor / Claude Code adds a feature that needs a new env var**:
+
+1. Add the entry to `social-vibecoding.json` (create the file if
+   missing — the scaffold ships with `{ "secrets": [] }`).
+2. In code, `process.env.MY_KEY` — if `required: true` you can rely
+   on it being present (the deploy won't run otherwise).
+3. **Never put real values in code or commit them**. The platform's
+   Secrets UI is where users provide them, either directly (admins)
+   or via a vote (non-admins).
+4. Mention the new key in the dev-chat reply: "Added
+   `STRIPE_SECRET_KEY` to the manifest — it's required, so set it in
+   Settings → Secrets before this PR deploys."
+
+When generating dapps from scratch, it's fine for the manifest to be
+empty (`{ "secrets": [] }`) — only add entries when a feature actually
+needs a value the platform should store.
 
 ## Don't `git push` yourself
 

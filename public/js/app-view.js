@@ -24,6 +24,10 @@ const AppView = {
     // shared header so it's visible across tabs (App / group-chat /
     // dev-chat) for the duration this app is open; close() clears it.
     AppView.refreshVersionPill();
+    if (window.Secrets) {
+      Secrets.show();
+      Secrets.applyMissingBadge(appData.missingSecrets || null);
+    }
   },
 
   close() {
@@ -41,6 +45,7 @@ const AppView = {
       DevConsole.hide();
       DevConsole.setCurrentApp(null);
     }
+    if (window.Secrets) Secrets.hide();
     const slot = document.getElementById('app-version-pill-slot');
     if (slot) slot.innerHTML = '';
   },
@@ -81,15 +86,39 @@ const AppView = {
     const appData = AppView.appData;
 
     if (!appData || appData.status !== 'running' || !appData.url) {
+      let inner;
+      if (appData?.status === 'creating') {
+        inner = '<div class="status-dot creating"></div><p class="text-sm">App is spinning up...</p>';
+      } else if (appData?.status === 'awaiting_secrets') {
+        const missing = Array.isArray(appData.missingSecrets) && appData.missingSecrets.length
+          ? appData.missingSecrets : (appData.missingSecrets || []);
+        const missingList = missing.length
+          ? `<p class="text-xs font-mono text-red-500">${missing.map(escapeHtml).join(', ')}</p>` : '';
+        inner = `
+          <div class="status-dot creating"></div>
+          <p class="text-sm">Awaiting required secrets — deploy is blocked.</p>
+          ${missingList}
+          <button id="awaiting-open-secrets"
+            class="mt-3 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white">
+            Configure secrets
+          </button>
+        `;
+      } else if (appData?.status === 'error') {
+        inner = '<div class="status-dot error"></div><p class="text-sm">App failed to start</p>';
+      } else {
+        inner = '<p class="text-sm">App not available</p>';
+      }
       content.innerHTML = `
-        <div class="flex flex-col items-center justify-center h-full text-zinc-500 dark:text-zinc-400 gap-2">
-          ${appData?.status === 'creating'
-            ? '<div class="status-dot creating"></div><p class="text-sm">App is spinning up...</p>'
-            : appData?.status === 'error'
-              ? '<div class="status-dot error"></div><p class="text-sm">App failed to start</p>'
-              : '<p class="text-sm">App not available</p>'
-          }
+        <div class="flex flex-col items-center justify-center h-full text-zinc-500 dark:text-zinc-400 gap-2 p-4 text-center">
+          ${inner}
         </div>`;
+      // The "Configure secrets" button is wired here rather than via a
+      // delegated handler because this branch re-renders on every
+      // status change and the listener would otherwise re-attach.
+      const openBtn = document.getElementById('awaiting-open-secrets');
+      if (openBtn && window.Secrets && appData?.slug) {
+        openBtn.addEventListener('click', () => Secrets.open(appData.slug));
+      }
       // Status updates pushed via WebSocket — no polling needed
       return;
     }
