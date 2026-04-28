@@ -379,34 +379,30 @@ const App = {
       pill.addEventListener('click', () => App.setCreateMode(pill.dataset.modePill));
     });
 
-    // Debounced repo prefill: when the user pastes a github URL, hit the
-    // public-repo-info endpoint and prefill #app-name if it's still empty.
-    // 400ms is enough that a fast-pasting user doesn't get hit on every
-    // keystroke but slow enough that the prefill feels instant after they
-    // stop typing. Failures are silent on purpose — private repos hit 404
-    // here and verification later will give the actionable message.
+    // Import flow: explicit "Check" button.
+    //
+    //   idle ─┬─ Check click ─→ checking ─┬─ ok    (name field reveals,
+    //         │                           │        prefilled, Import enables)
+    //         │                           └─ error (inline message, retry)
+    //         └─ user edits URL after a successful check → back to idle
+    //
+    // Why explicit Check and not debounced auto-check? Two reasons:
+    // (1) "I just invited the bot, click here" is a clear action that
+    //     pairs with the inline error text from the server, vs. a
+    //     debounced surprise; (2) verifyBotAccess can mutate state by
+    //     accepting a pending invitation, and we don't want that firing
+    //     on every keystroke.
+    const checkBtn = document.getElementById('import-check');
     const importInput = document.getElementById('import-url');
+    if (checkBtn) checkBtn.addEventListener('click', App.handleImportCheck);
     if (importInput) {
-      let prefillTimer = null;
-      let prefillSeq = 0;
       importInput.addEventListener('input', () => {
-        clearTimeout(prefillTimer);
-        const url = importInput.value.trim();
-        if (!url) return;
-        prefillTimer = setTimeout(async () => {
-          const seq = ++prefillSeq;
-          try {
-            const r = await fetch(`/api/github/repo-info?url=${encodeURIComponent(url)}`);
-            if (!r.ok || seq !== prefillSeq) return;
-            const data = await r.json();
-            const nameEl = document.getElementById('app-name');
-            if (nameEl && !nameEl.value.trim() && data.name) {
-              nameEl.value = data.description
-                ? `${data.name} — ${data.description}`.slice(0, 80)
-                : data.name;
-            }
-          } catch (_) { /* silent — submit-time verify gives the real error */ }
-        }, 400);
+        // Any edit invalidates the previous check; the user must click
+        // again. Without this, the user could verify repo A, edit the
+        // URL to point at repo B, then submit — the route's own
+        // pre-flight catches it, but the UI shouldn't claim "verified"
+        // for a URL that hasn't been verified.
+        if (App._setImportState) App._setImportState('idle');
       });
     }
     document.getElementById('back-btn').addEventListener('click', App.navigateHome);
@@ -555,23 +551,114 @@ const App = {
     document.getElementById('create-form').reset();
     document.getElementById('create-error').classList.add('hidden');
     App.setCreateMode('new');
+    App._setImportState('idle');
   },
 
   // Single source of truth for "which mode is the create modal in". CSS
-  // styles the active pill via #create-modal[data-mode="..."]; this helper
-  // also flips the submit-button label, title, and URL-block visibility so
-  // every entry point (open, cancel, pill click) stays in sync.
+  // shows/hides the URL block + name field via the data-mode attribute;
+  // this helper also flips the title and submit-button label so every
+  // entry point (open, cancel, pill click) stays in sync.
   setCreateMode(mode) {
     const m = mode === 'import' ? 'import' : 'new';
     const modal = document.getElementById('create-modal');
     if (!modal) return;
     modal.dataset.mode = m;
-    document.getElementById('create-import-block').classList.toggle('hidden', m !== 'import');
     document.getElementById('create-title').textContent =
       m === 'import' ? 'Import existing app' : 'Create a new app';
     document.getElementById('create-submit').textContent =
       m === 'import' ? 'Import' : 'Create';
     document.getElementById('create-error').classList.add('hidden');
+    // Switching back to "new" shouldn't leave a stale check banner
+    // around; switching into "import" lands on idle either way.
+    App._setImportState('idle');
+    // Make the name field required only in "new" mode. In "import" the
+    // server-side pre-flight is what gates submission — the name field
+    // doesn't even exist in the DOM tree until the check passes.
+    const nameEl = document.getElementById('app-name');
+    if (nameEl) nameEl.required = (m === 'new');
+  },
+
+  // Drive the import sub-state. CSS reveals the name field and submit
+  // button only at state="ok"; everything else hides them. Called from
+  // every transition so the DOM never gets stuck in a halfway state.
+  _setImportState(state) {
+    const modal = document.getElementById('create-modal');
+    if (!modal) return;
+    const s = ['idle', 'checking', 'ok', 'error'].includes(state) ? state : 'idle';
+    modal.dataset.importState = s;
+    const checkBtn = document.getElementById('import-check');
+    const status = document.getElementById('import-status');
+    if (checkBtn) {
+      checkBtn.disabled = (s === 'checking');
+      checkBtn.textContent = s === 'ok' ? 'Re-check' : 'Check';
+    }
+    if (status) {
+      if (s === 'idle') {
+        status.textContent = '';
+        status.className = 'text-sm mt-2';
+      } else if (s === 'checking') {
+        status.innerHTML = '<span class="import-spinner"></span>Checking bot access…';
+        status.className = 'text-sm mt-2';
+      }
+      // 'ok' and 'error' branches set their own text in handleImportCheck
+      // so the message can include repo name / server error text.
+    }
+  },
+
+  async handleImportCheck() {
+    const url = (document.getElementById('import-url')?.value || '').trim();
+    const status = document.getElementById('import-status');
+    if (!url) {
+      App._setImportState('error');
+      if (status) {
+        status.textContent = 'Paste a GitHub repo URL first.';
+        status.className = 'text-sm mt-2 import-status--err';
+      }
+      return;
+    }
+
+    App._setImportState('checking');
+    let res;
+    try {
+      res = await fetch(`/api/github/verify-access?url=${encodeURIComponent(url)}`);
+    } catch {
+      App._setImportState('error');
+      if (status) {
+        status.textContent = 'Network error — try again.';
+        status.className = 'text-sm mt-2 import-status--err';
+      }
+      return;
+    }
+
+    let data = {};
+    try { data = await res.json(); } catch (_) {}
+
+    if (!res.ok) {
+      App._setImportState('error');
+      if (status) {
+        status.textContent = data.error || `Check failed (HTTP ${res.status}).`;
+        status.className = 'text-sm mt-2 import-status--err';
+      }
+      return;
+    }
+
+    App._setImportState('ok');
+    if (status) {
+      const fullName = data.fullName || `${data.owner}/${data.repo}`;
+      status.textContent = `✓ usernode-bot has Write access to ${fullName}.`;
+      status.className = 'text-sm mt-2 import-status--ok';
+    }
+    // Prefill name field — repo name + optional description, capped so
+    // we don't blow past the input's visible width. Only fill if the
+    // user hasn't already typed something (so re-checks don't clobber
+    // a manual edit).
+    const nameEl = document.getElementById('app-name');
+    if (nameEl && !nameEl.value.trim() && data.name) {
+      nameEl.value = data.description
+        ? `${data.name} — ${data.description}`.slice(0, 80)
+        : data.name;
+    }
+    if (nameEl) nameEl.focus();
   },
 
   async handleCreateApp(e) {
@@ -584,10 +671,18 @@ const App = {
     errorEl.classList.add('hidden');
 
     if (!name) return;
-    if (mode === 'import' && !repoUrl) {
-      errorEl.textContent = 'GitHub repo URL is required to import.';
-      errorEl.classList.remove('hidden');
-      return;
+
+    // Guard: in import mode, submit is gated behind a successful check.
+    // CSS hides the submit button when state !== 'ok', but a determined
+    // user could still submit by hitting Enter, so belt-and-braces here.
+    // The server runs the pre-flight again on POST anyway.
+    if (mode === 'import') {
+      if (!repoUrl) return;
+      if (modal.dataset.importState !== 'ok') {
+        errorEl.textContent = 'Click "Check" to verify bot access first.';
+        errorEl.classList.remove('hidden');
+        return;
+      }
     }
 
     const body = mode === 'import' ? { name, repoUrl } : { name };

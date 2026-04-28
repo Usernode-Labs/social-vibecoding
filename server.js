@@ -163,6 +163,10 @@ async function start() {
   ws.attach(server, config);
   chainPoller.start(config);
   genesisAccounts.start();
+  // Periodically check imported / bot-owned repos for new commits on
+  // `main` we didn't make ourselves and redeploy via the same path
+  // that the dev-chat merge flow uses. See main-drift-poller.js.
+  require('./src/services/main-drift-poller').start(config);
 
   // Adopt any worker containers left over from a previous server run —
   // either still executing or already exited but un-finalized. These

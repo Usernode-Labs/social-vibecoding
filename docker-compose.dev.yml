@@ -1,9 +1,16 @@
 # Local development stack.
 #
-# Usage:
+# Usage (or `make up` from the repo root):
 #   docker compose -f docker-compose.dev.yml up --build
 #
-# Then visit http://localhost:3000
+# Then visit http://localhost:3000.
+#
+# This mirrors the production compose's child-app spawning model:
+# the platform shells out to the host's Docker daemon (mounted
+# /var/run/docker.sock) and places child apps on the named network
+# below so it can reach them by container name. In dev each child
+# app also publishes to a random localhost port — that's what the
+# user clicks when USERNODE_LOCAL_DEV=1 is set in .env.
 
 services:
   app:
@@ -22,11 +29,26 @@ services:
       # repo handles the build + the right port (3001, picked to avoid
       # conflict with this container's own host:3000 mapping).
       NODE_RPC_URL: http://host.docker.internal:3001
+      # Tell the platform which Docker network to attach child app
+      # containers to. Must match the network this service is on so
+      # `docker exec <child> wget …` works for healthchecks. Same name
+      # as the prod compose so behavior matches.
+      DOCKER_NETWORK: usernode-net
+      # Container name `db-manager.js` `docker exec`'s into to spawn
+      # per-app databases.
+      DB_CONTAINER: vibecoding-db-dev
     command: node --watch --watch-path=server.js --watch-path=src server.js
     volumes:
       - ./public:/app/public
       - ./src:/app/src
       - ./server.js:/app/server.js
+      # Required: the platform spawns child-app containers via the
+      # host Docker daemon. Without this the container hits
+      # "spawn docker ENOENT" / connection refused on every
+      # docker.execFile call.
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - usernode-net
     depends_on:
       db:
         condition: service_healthy
@@ -43,11 +65,21 @@ services:
       POSTGRES_DB: usernode
       POSTGRES_USER: usernode
       POSTGRES_PASSWORD: localdev
+    networks:
+      - usernode-net
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U usernode"]
       interval: 5s
       timeout: 3s
       retries: 10
+
+networks:
+  # Same name as production so the DOCKER_NETWORK env var matches and
+  # behavior is consistent. Child apps will be added here at runtime
+  # by the platform via `docker run --network usernode-net`.
+  usernode-net:
+    name: usernode-net
+    driver: bridge
 
 volumes:
   db-data:

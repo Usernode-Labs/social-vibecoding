@@ -19,7 +19,11 @@ const Home = {
 
       listEl.querySelectorAll('.app-card').forEach((card) => {
         card.addEventListener('click', (e) => {
-          if (e.target.closest('.retry-btn') || e.target.closest('.delete-btn')) return;
+          if (
+            e.target.closest('.retry-btn') ||
+            e.target.closest('.delete-btn') ||
+            e.target.closest('.check-updates-btn')
+          ) return;
           // Disabled while spinning up / errored — there's no iframe or
           // chat history to render and the WS `app_status` handler will
           // re-bind the card as soon as the container goes live.
@@ -49,8 +53,71 @@ const Home = {
           await Home.load();
         });
       });
+
+      listEl.querySelectorAll('.check-updates-btn').forEach((btn) => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          // Disable + spinner while the request is in flight. The
+          // server-side check can take 30-90s if drift is detected
+          // (rebuild + healthcheck), so the visual feedback matters.
+          const original = btn.innerHTML;
+          btn.disabled = true;
+          btn.innerHTML = '⟳';
+          btn.classList.add('animate-spin');
+          try {
+            const res = await fetch(`/api/apps/${btn.dataset.slug}/check-updates`, { method: 'POST' });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              alert(data.error || `Check failed (HTTP ${res.status})`);
+            } else {
+              Home.reportCheckResult(data);
+            }
+          } catch (err) {
+            alert(`Check failed: ${err.message}`);
+          } finally {
+            btn.disabled = false;
+            btn.classList.remove('animate-spin');
+            btn.innerHTML = original;
+            await Home.load();
+          }
+        });
+      });
     } catch (err) {
       listEl.innerHTML = `<div class="p-4 text-red-400 text-sm">Failed to load apps</div>`;
+    }
+  },
+
+  // Map structured drift-check result → a short, user-readable
+  // message. Mirrors the status enum in main-drift-poller.js.
+  reportCheckResult(data) {
+    if (!data || !data.status) {
+      alert('Check finished (no details returned).');
+      return;
+    }
+    switch (data.status) {
+      case 'no_drift':
+        alert('Already up to date.');
+        return;
+      case 'redeployed':
+        alert(`Redeployed to ${(data.to || '').slice(0, 7)}.`);
+        return;
+      case 'in_flight':
+        alert('A redeploy is already in progress for this app.');
+        return;
+      case 'first_seen':
+        alert(`Recorded current SHA (${(data.sha || '').slice(0, 7)}). Future drift will trigger a redeploy.`);
+        return;
+      case 'fetch_failed':
+        alert(`Couldn't reach GitHub: ${data.error || 'unknown error'}`);
+        return;
+      case 'invalid_repo':
+        alert('This app has an invalid repo URL.');
+        return;
+      case 'rebuild_failed':
+        alert(`Drift detected (${(data.from || '').slice(0, 7)} → ${(data.attempted || '').slice(0, 7)}) but redeploy failed: ${data.error || 'unknown error'}`);
+        return;
+      default:
+        alert(`Check finished: ${data.status}`);
     }
   },
 
@@ -77,6 +144,7 @@ const Home = {
         <div class="flex items-center gap-2 shrink-0">
           ${!isError ? `<span class="text-xs text-zinc-500 dark:text-zinc-400">${formatActivity(activity)}</span>` : ''}
           ${isError && (App.user?.isAdmin || App.user?.id === app.created_by) ? `<button class="retry-btn text-xs text-emerald-400 hover:text-emerald-300 px-1" data-slug="${app.slug}">Retry</button>` : ''}
+          ${App.user?.isAdmin && app.repo_url && isRunning ? `<button class="check-updates-btn text-xs text-zinc-400 hover:text-emerald-300 px-1" data-slug="${app.slug}" title="Check for updates and redeploy if changed">⟳</button>` : ''}
           ${App.user?.isAdmin ? `<button class="delete-btn text-xs text-red-400 hover:text-red-300 px-1" data-slug="${app.slug}">&times;</button>` : ''}
         </div>
       </div>

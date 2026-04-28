@@ -162,43 +162,60 @@
     <iframe id="staging-iframe" class="flex-1 border-0" style="background:#08080f"></iframe>
   </div>
 
-  <!-- Create app modal -->
-  <div id="create-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60" data-mode="new">
+  <!-- Create app modal.
+       data-mode controls "new" vs "import"; data-import-state controls
+       the import sub-states (idle / checking / ok / error). CSS in
+       app.css keys off both attributes to show/hide inputs and the
+       submit button. JS only needs to flip attributes, never juggle
+       classes per element. -->
+  <div id="create-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60" data-mode="new" data-import-state="idle">
     <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm mx-4 shadow-xl">
       <h2 id="create-title" class="text-lg font-bold mb-4">Create a new app</h2>
 
-      <!-- Mode toggle: Create new | Import existing.
-           The data-mode attribute on #create-modal drives which inputs are visible
-           and which submit path runs (see public/js/app.js). -->
       <div class="flex p-1 mb-4 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
         <button type="button" data-mode-pill="new"    class="create-mode-pill flex-1 rounded-md px-3 py-1.5 transition-colors">Create new</button>
         <button type="button" data-mode-pill="import" class="create-mode-pill flex-1 rounded-md px-3 py-1.5 transition-colors">Import existing</button>
       </div>
 
       <form id="create-form" class="space-y-4">
-        <!-- Import-only: GitHub repo URL. Hidden in "new" mode. -->
-        <div id="create-import-block" class="hidden">
+        <!-- Import-only: GitHub repo URL + Check button. The Check
+             button runs the bot-access pre-flight; on success the
+             #app-name field below appears, prefilled with the repo
+             name. CSS hides this whole block in "new" mode. -->
+        <div id="create-import-block" class="create-import-block">
           <label for="import-url" class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">GitHub repo URL</label>
-          <input
-            id="import-url"
-            name="repoUrl"
-            type="url"
-            autocomplete="off"
-            spellcheck="false"
-            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent font-mono text-sm"
-            placeholder="https://github.com/owner/repo"
-          >
+          <div class="flex gap-2">
+            <input
+              id="import-url"
+              name="repoUrl"
+              type="url"
+              autocomplete="off"
+              spellcheck="false"
+              class="flex-1 min-w-0 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent font-mono text-sm"
+              placeholder="https://github.com/owner/repo"
+            >
+            <button type="button" id="import-check"
+                    class="rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-white transition-colors whitespace-nowrap">
+              Check
+            </button>
+          </div>
           <p class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
             Invite <code class="font-mono text-xs">usernode-bot</code> as a collaborator with Write access.
           </p>
+          <!-- Inline status row: spinner while checking, green check on
+               ok, red error text on failure. Hidden in idle. -->
+          <div id="import-status" class="text-sm mt-2"></div>
         </div>
-        <div>
+
+        <!-- Name field. Always visible in "new" mode; gated behind a
+             successful access check in "import" mode (CSS hides it
+             until #create-modal[data-import-state="ok"]). -->
+        <div id="create-name-block">
           <label for="app-name" class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">App name</label>
           <input
             id="app-name"
             name="name"
             type="text"
-            required
             autocomplete="off"
             class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
             placeholder="my cool app"

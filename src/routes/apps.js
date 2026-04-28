@@ -5,6 +5,7 @@ const { createApp } = require('../services/app-creator');
 const caddy = require('../services/caddy');
 const docker = require('../services/docker');
 const github = require('../services/github');
+const driftPoller = require('../services/main-drift-poller');
 const { drainGuard } = require('../services/lifecycle');
 const { appCreateLimiter } = require('../middleware/rate-limits');
 
@@ -100,15 +101,38 @@ function appRoutes(config) {
     }
   });
 
-  // Repo-info prefill for the import-existing modal. Public-only on
-  // purpose (see fetchPublicRepoInfo) — for private repos this 404s and
-  // the user just types the name themselves.
+  // Public-only repo info. Kept as a low-privilege fallback; not used by
+  // the import modal anymore (verify-access below is strictly better
+  // because it works for private repos the bot can read).
   router.get('/api/github/repo-info', async (req, res) => {
     const parsed = github.parseGithubUrl(req.query.url || '');
     if (!parsed) return res.status(400).json({ error: 'Invalid GitHub URL' });
     const info = await github.fetchPublicRepoInfo(parsed.owner, parsed.repo);
     if (!info) return res.status(404).json({ error: 'Repo not found or private' });
     res.json({ name: info.name, description: info.description });
+  });
+
+  // The "Check access" button in the import-existing modal hits this.
+  // It's the same pre-flight POST /api/apps runs on submit (so the
+  // server stays the source of truth even if a client skips the check),
+  // surfaced as its own endpoint so the UI can:
+  //   1. accept any pending bot invitation for this exact repo
+  //   2. confirm Write access
+  //   3. return name/description so the form can prefill the app-name
+  //      field with a sensible default
+  router.get('/api/github/verify-access', async (req, res) => {
+    const parsed = github.parseGithubUrl(req.query.url || '');
+    if (!parsed) return res.status(400).json({ error: 'Repo URL must look like https://github.com/<owner>/<repo>' });
+    const verify = await github.verifyBotAccess(parsed.owner, parsed.repo);
+    if (!verify.ok) return res.status(verify.status).json({ error: verify.message, code: verify.code });
+    res.json({
+      ok: true,
+      owner: parsed.owner,
+      repo: parsed.repo,
+      name: verify.name,
+      description: verify.description,
+      fullName: verify.fullName,
+    });
   });
 
   router.post('/api/apps', drainGuard, appCreateLimiter, async (req, res) => {
@@ -240,6 +264,31 @@ function appRoutes(config) {
     } catch (err) {
       log.error('apps', 'Failed to get app version', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Admin-only "Check for updates" button. Runs the same per-app drift
+  // check the periodic poller does, but on demand. Returns a structured
+  // result so the UI can show a useful toast (no_drift / redeployed /
+  // rebuild_failed / fetch_failed). Only meaningful for repo-backed
+  // apps; rejects with 400 otherwise.
+  router.post('/api/apps/:slug/check-updates', drainGuard, async (req, res) => {
+    if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin access required' });
+    try {
+      const { rows } = await pool.query(
+        'SELECT id, slug, repo_url, main_sha FROM apps WHERE slug = $1',
+        [req.params.slug]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'App not found' });
+      const app = rows[0];
+      if (!app.repo_url) {
+        return res.status(400).json({ error: 'This app is not backed by a GitHub repo' });
+      }
+      const result = await driftPoller.checkAndRedeployOne(config, pool, app);
+      res.json(result);
+    } catch (err) {
+      log.error('apps', 'Manual drift check failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: err.message || 'Internal server error' });
     }
   });
 

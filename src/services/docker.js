@@ -79,18 +79,48 @@ async function containerExists(nameOrId) {
 
 async function waitForHealthy(name, port, healthPath, maxRetries = 30) {
   log.info('docker', 'Waiting for healthcheck', { name, path: healthPath });
+  let lastErr = null;
   for (let i = 0; i < maxRetries; i++) {
     try {
+      // 127.0.0.1, not localhost: in Alpine containers `/etc/hosts`
+      // lists `::1 localhost` before `127.0.0.1 localhost`, BusyBox's
+      // resolver returns the v6 entry first, and Node's
+      // app.listen(PORT, '0.0.0.0') binds IPv4 only — so a localhost
+      // wget gets "connection refused" against ::1:port. Hitting the
+      // numeric v4 loopback dodges the resolver entirely.
       await execFileAsync('docker', [
         'exec', name, 'wget', '-qO-', '--timeout=2',
-        `http://localhost:${port}${healthPath}`,
+        `http://127.0.0.1:${port}${healthPath}`,
       ], { timeout: 5000 });
       log.info('docker', 'Healthcheck passed', { name, attempt: i + 1 });
       return;
-    } catch {
+    } catch (err) {
+      lastErr = err;
       await sleep(2000);
     }
   }
+  // Capture container logs + status before giving up. Without this the
+  // platform reports "Healthcheck failed after 30 attempts" with no clue
+  // whether the process crashed at startup, the port is wrong, or wget
+  // itself is misbehaving — every failure mode looks identical.
+  let containerLogs = '';
+  let containerStatus = '';
+  try {
+    const { stdout, stderr } = await execFileAsync('docker', ['logs', '--tail', '50', name], { timeout: 5000 });
+    containerLogs = (stdout + stderr).trim();
+  } catch (_) { /* ignore — best effort */ }
+  try {
+    const { stdout } = await execFileAsync('docker', [
+      'inspect', '--format', '{{.State.Status}} (exit={{.State.ExitCode}})', name,
+    ], { timeout: 3000 });
+    containerStatus = stdout.trim();
+  } catch (_) { /* ignore */ }
+  log.error('docker', 'Healthcheck never passed — collecting container state', {
+    name,
+    containerStatus,
+    lastWgetErr: lastErr ? (lastErr.stderr || lastErr.message || String(lastErr)).slice(0, 500) : null,
+    containerLogs: containerLogs.slice(-2000), // last 2kB is plenty for a stack trace
+  });
   throw new Error(`Healthcheck failed after ${maxRetries} attempts: ${name}`);
 }
 

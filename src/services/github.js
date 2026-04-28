@@ -318,7 +318,16 @@ async function verifyBotAccess(owner, repo) {
       message: `\`usernode-bot\` has read-only access to ${owner}/${repo}. Grant Write/Maintain and resubmit.`,
     };
   }
-  return { ok: true };
+  // Hand back the repo metadata so the modal's "Check" button can use
+  // the authenticated response to prefill the name/description — works
+  // even for private repos, where the unauthenticated public-info path
+  // would 404.
+  return {
+    ok: true,
+    name: resp.data.name || repo,
+    description: resp.data.description || null,
+    fullName: resp.data.full_name || `${owner}/${repo}`,
+  };
 }
 
 // Unauthenticated GET that powers the name-prefill in the modal. We

@@ -660,3 +660,36 @@ html, body {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
   cursor: default;
 }
+
+/* Import-mode visibility gating.
+   The flow is: paste URL → click Check → on success, the name field +
+   submit button reveal so the user can confirm/edit and click Import.
+   data-import-state on #create-modal drives the reveal so app.js only
+   needs to flip an attribute, never toggle .hidden on each child. */
+#create-modal[data-mode="new"] .create-import-block { display: none; }
+
+#create-modal[data-mode="import"] #create-name-block,
+#create-modal[data-mode="import"] #create-submit {
+  display: none;
+}
+#create-modal[data-mode="import"][data-import-state="ok"] #create-name-block { display: block; }
+#create-modal[data-mode="import"][data-import-state="ok"] #create-submit     { display: block; }
+
+/* Import status row — spinner on checking, green check on success,
+   red text on failure. JS sets the text + adds an --ok / --err
+   modifier on #import-status. */
+#import-status:empty { display: none; }
+#import-status.import-status--ok  { color: #10b981; }
+#import-status.import-status--err { color: #f87171; }
+#import-status .import-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  border-radius: 50%;
+  border: 2px solid rgba(124, 58, 237, 0.25);
+  border-top-color: var(--accent);
+  animation: import-spin 0.8s linear infinite;
+  vertical-align: -2px;
+}
+@keyframes import-spin { to { transform: rotate(360deg); } }
