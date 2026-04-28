@@ -371,6 +371,44 @@ const App = {
       if (e.target === e.currentTarget) App.hideCreateModal();
     });
     document.getElementById('create-form').addEventListener('submit', App.handleCreateApp);
+
+    // Create / Import mode pills. The active mode lives on
+    // #create-modal[data-mode="..."] (CSS keys off it for styling); these
+    // handlers also flip the submit-button label and the URL block.
+    document.querySelectorAll('.create-mode-pill').forEach((pill) => {
+      pill.addEventListener('click', () => App.setCreateMode(pill.dataset.modePill));
+    });
+
+    // Debounced repo prefill: when the user pastes a github URL, hit the
+    // public-repo-info endpoint and prefill #app-name if it's still empty.
+    // 400ms is enough that a fast-pasting user doesn't get hit on every
+    // keystroke but slow enough that the prefill feels instant after they
+    // stop typing. Failures are silent on purpose — private repos hit 404
+    // here and verification later will give the actionable message.
+    const importInput = document.getElementById('import-url');
+    if (importInput) {
+      let prefillTimer = null;
+      let prefillSeq = 0;
+      importInput.addEventListener('input', () => {
+        clearTimeout(prefillTimer);
+        const url = importInput.value.trim();
+        if (!url) return;
+        prefillTimer = setTimeout(async () => {
+          const seq = ++prefillSeq;
+          try {
+            const r = await fetch(`/api/github/repo-info?url=${encodeURIComponent(url)}`);
+            if (!r.ok || seq !== prefillSeq) return;
+            const data = await r.json();
+            const nameEl = document.getElementById('app-name');
+            if (nameEl && !nameEl.value.trim() && data.name) {
+              nameEl.value = data.description
+                ? `${data.name} — ${data.description}`.slice(0, 80)
+                : data.name;
+            }
+          } catch (_) { /* silent — submit-time verify gives the real error */ }
+        }, 400);
+      });
+    }
     document.getElementById('back-btn').addEventListener('click', App.navigateHome);
 
     // Rename modal
@@ -507,6 +545,7 @@ const App = {
   },
 
   showCreateModal() {
+    App.setCreateMode('new');
     document.getElementById('create-modal').classList.remove('hidden');
     document.getElementById('app-name').focus();
   },
@@ -515,21 +554,49 @@ const App = {
     document.getElementById('create-modal').classList.add('hidden');
     document.getElementById('create-form').reset();
     document.getElementById('create-error').classList.add('hidden');
+    App.setCreateMode('new');
+  },
+
+  // Single source of truth for "which mode is the create modal in". CSS
+  // styles the active pill via #create-modal[data-mode="..."]; this helper
+  // also flips the submit-button label, title, and URL-block visibility so
+  // every entry point (open, cancel, pill click) stays in sync.
+  setCreateMode(mode) {
+    const m = mode === 'import' ? 'import' : 'new';
+    const modal = document.getElementById('create-modal');
+    if (!modal) return;
+    modal.dataset.mode = m;
+    document.getElementById('create-import-block').classList.toggle('hidden', m !== 'import');
+    document.getElementById('create-title').textContent =
+      m === 'import' ? 'Import existing app' : 'Create a new app';
+    document.getElementById('create-submit').textContent =
+      m === 'import' ? 'Import' : 'Create';
+    document.getElementById('create-error').classList.add('hidden');
   },
 
   async handleCreateApp(e) {
     e.preventDefault();
+    const modal = document.getElementById('create-modal');
+    const mode = modal?.dataset.mode === 'import' ? 'import' : 'new';
     const name = document.getElementById('app-name').value.trim();
+    const repoUrl = document.getElementById('import-url')?.value.trim() || '';
     const errorEl = document.getElementById('create-error');
     errorEl.classList.add('hidden');
 
     if (!name) return;
+    if (mode === 'import' && !repoUrl) {
+      errorEl.textContent = 'GitHub repo URL is required to import.';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+
+    const body = mode === 'import' ? { name, repoUrl } : { name };
 
     try {
       const res = await fetch('/api/apps', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify(body),
       });
 
       const data = await res.json();

@@ -641,3 +641,22 @@ html, body {
   0%, 100% { opacity: 1; }
   50%      { opacity: 0.5; }
 }
+
+/* Create-app modal: segmented "Create new | Import existing" toggle.
+   The active state is keyed off the parent #create-modal[data-mode="..."]
+   attribute so app.js only has to flip a single attribute to change modes
+   (no per-button class juggling, no race with the form-reset path). */
+#create-modal .create-mode-pill {
+  color: var(--text-muted);
+  cursor: pointer;
+}
+#create-modal .create-mode-pill:hover {
+  color: var(--text-secondary);
+}
+#create-modal[data-mode="new"]    .create-mode-pill[data-mode-pill="new"],
+#create-modal[data-mode="import"] .create-mode-pill[data-mode-pill="import"] {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  cursor: default;
+}

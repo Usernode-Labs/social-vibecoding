@@ -4,6 +4,7 @@ const log = require('../services/logger');
 const { createApp } = require('../services/app-creator');
 const caddy = require('../services/caddy');
 const docker = require('../services/docker');
+const github = require('../services/github');
 const { drainGuard } = require('../services/lifecycle');
 const { appCreateLimiter } = require('../middleware/rate-limits');
 
@@ -99,11 +100,39 @@ function appRoutes(config) {
     }
   });
 
+  // Repo-info prefill for the import-existing modal. Public-only on
+  // purpose (see fetchPublicRepoInfo) — for private repos this 404s and
+  // the user just types the name themselves.
+  router.get('/api/github/repo-info', async (req, res) => {
+    const parsed = github.parseGithubUrl(req.query.url || '');
+    if (!parsed) return res.status(400).json({ error: 'Invalid GitHub URL' });
+    const info = await github.fetchPublicRepoInfo(parsed.owner, parsed.repo);
+    if (!info) return res.status(404).json({ error: 'Repo not found or private' });
+    res.json({ name: info.name, description: info.description });
+  });
+
   router.post('/api/apps', drainGuard, appCreateLimiter, async (req, res) => {
-    const { name } = req.body;
+    const { name, repoUrl } = req.body;
 
     if (!name?.trim()) {
       return res.status(400).json({ error: 'App name is required' });
+    }
+
+    // Import-existing pre-flight: parse URL, accept any pending invite
+    // for this exact repo, then verify Write access. Anything other
+    // than `ok` is forwarded to the client with the actionable hint
+    // assembled in github.verifyBotAccess.
+    let repoUrlNormalized = null;
+    if (repoUrl) {
+      const parsed = github.parseGithubUrl(repoUrl);
+      if (!parsed) {
+        return res.status(400).json({ error: 'Repo URL must look like https://github.com/<owner>/<repo>' });
+      }
+      const verify = await github.verifyBotAccess(parsed.owner, parsed.repo);
+      if (!verify.ok) {
+        return res.status(verify.status).json({ error: verify.message });
+      }
+      repoUrlNormalized = `https://github.com/${parsed.owner}/${parsed.repo}`;
     }
 
     const crypto = require('crypto');
@@ -135,14 +164,18 @@ function appRoutes(config) {
       }
 
       const { rows } = await pool.query(
-        `INSERT INTO apps (name, slug, created_by, status)
-         VALUES ($1, $2, $3, 'creating')
+        `INSERT INTO apps (name, slug, repo_url, created_by, status)
+         VALUES ($1, $2, $3, $4, 'creating')
          RETURNING *`,
-        [name.trim(), slug, req.user.id]
+        [name.trim(), slug, repoUrlNormalized, req.user.id]
       );
 
       const appRow = rows[0];
-      log.info('apps', 'App created (pending)', { appId: appRow.id, slug });
+      log.info('apps', repoUrlNormalized ? 'App imported (pending)' : 'App created (pending)', {
+        appId: appRow.id,
+        slug,
+        ...(repoUrlNormalized ? { repoUrl: repoUrlNormalized } : {}),
+      });
 
       // Kick off async creation — don't await. If it throws, flip to error.
       createApp(config, appRow).catch(async (err) => {

@@ -21,10 +21,16 @@ async function createApp(config, appRow) {
     await dbManager.createDatabase(dbName);
     const dbUrl = await dbManager.connectionUrl(dbName);
 
-    // 2. Create GitHub repo (if GitHub is configured)
-    let repoUrl = null;
-    let useGitHub = false;
-    if (github.isEnabled()) {
+    // 2. GitHub repo handling
+    //    - Import-existing path: appRow.repo_url is preset by the route
+    //      after pre-flighting bot access. Skip create+push and just
+    //      record useGitHub=true so the clone block below runs.
+    //    - New-app path: create a fresh repo under the bot's account and
+    //      seed it with the template (existing behavior).
+    let repoUrl = appRow.repo_url || null;
+    let useGitHub = !!repoUrl;
+
+    if (!repoUrl && github.isEnabled()) {
       try {
         const botUsername = await github.getBotUsername();
         const repo = await github.createRepo(botUsername, slug, {
@@ -42,6 +48,8 @@ async function createApp(config, appRow) {
       } catch (err) {
         log.warn('app-creator', 'GitHub repo creation failed, falling back to local build', { err: err.message });
       }
+    } else if (repoUrl) {
+      log.info('app-creator', 'Importing existing repo (skipping create+push)', { appId, slug, repoUrl });
     }
 
     // 3. Build Docker image
@@ -54,8 +62,22 @@ async function createApp(config, appRow) {
     await docker.execFileAsync('rm', ['-rf', tempDir]).catch(() => {});
 
     if (useGitHub) {
-      const botUsername = await github.getBotUsername();
-      const cloneUrl = await github.getCloneUrl(botUsername, slug);
+      // For new-app builds the repo lives at <botUsername>/<slug> (the
+      // create+push block above just made it). For import-existing the
+      // repo lives at whatever owner/name the user pasted, so we parse
+      // owner+repo back out of repo_url. parseGithubUrl handles all the
+      // URL shapes we accept on the way in, so this round-trip is safe.
+      const parsed = github.parseGithubUrl(repoUrl);
+      let cloneOwner;
+      let cloneRepo;
+      if (parsed) {
+        cloneOwner = parsed.owner;
+        cloneRepo = parsed.repo;
+      } else {
+        cloneOwner = await github.getBotUsername();
+        cloneRepo = slug;
+      }
+      const cloneUrl = await github.getCloneUrl(cloneOwner, cloneRepo);
       await docker.execFileAsync('git', ['clone', '--depth', '1', cloneUrl, tempDir], {
         timeout: 60000,
       });

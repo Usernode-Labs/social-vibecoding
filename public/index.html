@@ -163,10 +163,35 @@
   </div>
 
   <!-- Create app modal -->
-  <div id="create-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+  <div id="create-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60" data-mode="new">
     <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm mx-4 shadow-xl">
-      <h2 class="text-lg font-bold mb-4">Create a new app</h2>
+      <h2 id="create-title" class="text-lg font-bold mb-4">Create a new app</h2>
+
+      <!-- Mode toggle: Create new | Import existing.
+           The data-mode attribute on #create-modal drives which inputs are visible
+           and which submit path runs (see public/js/app.js). -->
+      <div class="flex p-1 mb-4 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
+        <button type="button" data-mode-pill="new"    class="create-mode-pill flex-1 rounded-md px-3 py-1.5 transition-colors">Create new</button>
+        <button type="button" data-mode-pill="import" class="create-mode-pill flex-1 rounded-md px-3 py-1.5 transition-colors">Import existing</button>
+      </div>
+
       <form id="create-form" class="space-y-4">
+        <!-- Import-only: GitHub repo URL. Hidden in "new" mode. -->
+        <div id="create-import-block" class="hidden">
+          <label for="import-url" class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">GitHub repo URL</label>
+          <input
+            id="import-url"
+            name="repoUrl"
+            type="url"
+            autocomplete="off"
+            spellcheck="false"
+            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent font-mono text-sm"
+            placeholder="https://github.com/owner/repo"
+          >
+          <p class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+            Invite <code class="font-mono text-xs">usernode-bot</code> as a collaborator with Write access.
+          </p>
+        </div>
         <div>
           <label for="app-name" class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">App name</label>
           <input
@@ -182,7 +207,7 @@
         <div id="create-error" class="text-red-400 text-sm hidden"></div>
         <div class="flex gap-3">
           <button type="button" id="create-cancel" class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
-          <button type="submit" class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Create</button>
+          <button type="submit" id="create-submit" class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Create</button>
         </div>
       </form>
     </div>

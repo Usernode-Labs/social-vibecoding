@@ -209,6 +209,137 @@ async function getCloneUrl(owner, repo) {
   return `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
 }
 
+// ---------------------------------------------------------------------------
+// "Import existing repo" helpers.
+//
+// These power the new flow where a user pastes a GitHub URL into the
+// create-app modal. None of them are part of the bot-owns-the-repo path —
+// existing apps go through createRepo/pushFiles unchanged.
+// ---------------------------------------------------------------------------
+
+// Parse the variants we want to accept from the user. Returns
+// { owner, repo } or null. We deliberately don't accept arbitrary git
+// hosts: this is GitHub-specific to match the rest of the platform.
+function parseGithubUrl(input) {
+  if (typeof input !== 'string') return null;
+  const s = input.trim();
+  if (!s) return null;
+
+  // Strip an optional .git suffix and any trailing slash so all four URL
+  // shapes (https, https/, https.git, ssh) collapse to "owner/repo".
+  const cleaned = s.replace(/\.git$/i, '').replace(/\/+$/, '');
+
+  // https://github.com/owner/repo
+  let m = cleaned.match(/^https?:\/\/(?:www\.)?github\.com\/([^/]+)\/([^/]+)(?:\/.*)?$/i);
+  if (!m) {
+    // git@github.com:owner/repo
+    m = cleaned.match(/^git@github\.com:([^/]+)\/([^/]+)$/i);
+  }
+  if (!m) return null;
+  const owner = m[1];
+  const repo = m[2];
+  // Guard against query strings or fragments leaking into the repo name.
+  if (!/^[\w.\-]+$/.test(owner) || !/^[\w.\-]+$/.test(repo)) return null;
+  return { owner, repo };
+}
+
+// Find a pending invitation for *this exact repo* and accept it. Used
+// only as a side-effect of the import-flow pre-flight, never as a
+// background poller — that's the user-confirmed scoping rule.
+//
+// Returns true if an invitation was found+accepted, false otherwise.
+// Errors are swallowed by the caller (verifyBotAccess) so a transient
+// invitation-list failure doesn't mask the real problem on the get-repo
+// call that follows.
+async function acceptInvitationFor(owner, repo) {
+  const pat = process.env.GITHUB_BOT_TOKEN;
+  if (!pat) return false;
+  const { Octokit } = await import('@octokit/rest');
+  const octokit = new Octokit({ auth: pat });
+  const invites = await octokit.rest.repos.listInvitationsForAuthenticatedUser();
+  const match = invites.data.find(
+    (i) => i.repository.owner.login.toLowerCase() === owner.toLowerCase()
+        && i.repository.name.toLowerCase() === repo.toLowerCase()
+  );
+  if (!match) return false;
+  await octokit.rest.repos.acceptInvitationForAuthenticatedUser({ invitation_id: match.id });
+  log.info('github', 'Accepted repo invitation', { repo: `${owner}/${repo}`, id: match.id });
+  return true;
+}
+
+// The pre-flight that gates POST /api/apps when repoUrl is set. The
+// shape of the return value is deliberately wire-friendly: the route
+// just forwards `{ status, error: message }` to the client when ok is
+// false, so the modal can show an actionable hint and stay open.
+async function verifyBotAccess(owner, repo) {
+  const pat = process.env.GITHUB_BOT_TOKEN;
+  if (!pat) {
+    return {
+      ok: false, status: 500, code: 'no_token',
+      message: 'GitHub bot token not configured on the platform.',
+    };
+  }
+  const { Octokit } = await import('@octokit/rest');
+  const octokit = new Octokit({ auth: pat });
+
+  // Greedy first pass: if the user just invited the bot moments before
+  // clicking submit, the invitation accept turns this into a one-step
+  // flow. Failures here are non-fatal — the get-repo call below will
+  // still produce the correct 404/403 if there's a real access problem.
+  await acceptInvitationFor(owner, repo).catch((err) => {
+    log.warn('github', 'acceptInvitationFor failed (non-fatal)', { repo: `${owner}/${repo}`, err: err.message });
+  });
+
+  let resp;
+  try {
+    resp = await octokit.rest.repos.get({ owner, repo });
+  } catch (err) {
+    if (err.status === 404) {
+      return {
+        ok: false, status: 404, code: 'not_found',
+        message: `Couldn't see ${owner}/${repo}. If it's private, invite \`usernode-bot\` as a collaborator with Write access and resubmit.`,
+      };
+    }
+    if (err.status === 401) {
+      return {
+        ok: false, status: 500, code: 'unauthorized',
+        message: 'Platform GitHub credentials are invalid — contact an admin.',
+      };
+    }
+    return { ok: false, status: 502, code: 'github_error', message: `GitHub error: ${err.message}` };
+  }
+
+  // permissions.push covers everyone the bot would actually be able to
+  // commit through (Write, Maintain, Admin all set push:true).
+  const perms = resp.data.permissions || {};
+  if (!perms.push) {
+    return {
+      ok: false, status: 403, code: 'no_push',
+      message: `\`usernode-bot\` has read-only access to ${owner}/${repo}. Grant Write/Maintain and resubmit.`,
+    };
+  }
+  return { ok: true };
+}
+
+// Unauthenticated GET that powers the name-prefill in the modal. We
+// deliberately do NOT use the bot token here: the prefill is a
+// convenience, not an oracle, and keeping it unauth means a private
+// repo silently 404s without leaking name/description info that the
+// caller wouldn't otherwise be able to see. Verification on submit
+// (verifyBotAccess) is what actually gates access.
+async function fetchPublicRepoInfo(owner, repo) {
+  try {
+    const resp = await fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, {
+      headers: { 'Accept': 'application/vnd.github+json' },
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return { name: data.name || null, description: data.description || null };
+  } catch (_) {
+    return null;
+  }
+}
+
 module.exports = {
   init,
   isEnabled,
@@ -224,4 +355,8 @@ module.exports = {
   createIssue,
   getCloneUrl,
   safeMention,
+  parseGithubUrl,
+  acceptInvitationFor,
+  verifyBotAccess,
+  fetchPublicRepoInfo,
 };
