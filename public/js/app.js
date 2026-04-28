@@ -481,14 +481,19 @@ const App = {
         if (App._setImportState) App._setImportState('idle');
       });
     }
-    // The header back arrow walks the BROWSER history one step back —
-    // not straight to home — so the in-app back stack matches the
-    // user's expectation: home → app → group-chat, back goes to app,
-    // back again goes to home, back again exits the dapp. The same
-    // history is what `WebViewController.canGoBack()` reads on the
-    // Flutter side, so the device/system back button gets the same
-    // behavior for free.
-    document.getElementById('back-btn').addEventListener('click', () => history.back());
+    // The header button shows a HOUSE icon and that's what users read
+    // it as: "go to home", not "go back one step". So clicking it
+    // navigates straight to the home screen, skipping any
+    // intermediate tabs/sessions in the history stack.
+    //
+    // Step-by-step back is still available — it lives on the
+    // device/system back button (Flutter delegates to
+    // `WebViewController.canGoBack()`, which reads the same browser
+    // history this app pushes via updateHash()) and on the browser
+    // back arrow on desktop. Both route through the popstate handler
+    // installed in init(), which calls restoreFromHash() to rebuild
+    // state from the previous URL.
+    document.getElementById('back-btn').addEventListener('click', () => App.navigateHome());
 
     // Rename modal
     const renameModal = document.getElementById('rename-modal');
