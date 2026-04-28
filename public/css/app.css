@@ -642,6 +642,37 @@ html, body {
   50%      { opacity: 0.5; }
 }
 
+/* ── Mobile pill collapse ─────────────────────────────────
+   On narrow viewports the header's two pill slots (platform +
+   per-app) and the per-card pills on Home eat into the space
+   that the absolutely-centered <h1> title and app-name need,
+   producing visible overlap. Hide them by default and only
+   reveal a compact yellow spinner while a deploy is in flight,
+   so users still see "the platform / this app is updating right
+   now" feedback next to the name. */
+@media (max-width: 640px) {
+  /* Collapse the slot itself (not just its inner pill) so the
+     mr-3 on header slots and the gap-2 on home-card rows go
+     away too — otherwise the title would still be shoved over
+     by the now-empty slot's margin. */
+  #platform-version-pill-slot:not(:has(.app-version-pill--deploying)),
+  #app-version-pill-slot:not(:has(.app-version-pill--deploying)),
+  .app-version-pill-slot:not(:has(.app-version-pill--deploying)) {
+    display: none;
+  }
+  /* When a pill IS rendered (deploying state), shed the chrome
+     and the SHA label so only the yellow spinner remains —
+     that lone glyph is the redeploying indicator. */
+  .app-version-pill--deploying {
+    padding: 0;
+    border: none;
+    background: transparent;
+  }
+  .app-version-pill--deploying .app-version-pill-label {
+    display: none;
+  }
+}
+
 /* Create-app modal: segmented "Create new | Import existing" toggle.
    The active state is keyed off the parent #create-modal[data-mode="..."]
    attribute so app.js only has to flip a single attribute to change modes

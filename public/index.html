@@ -41,8 +41,17 @@
       <svg id="back-icon-arrow" class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
     </button>
 
+    <!-- On mobile (<640px) the title sits in flex flow as a flex-1 item
+         right after the back button, taking all remaining horizontal
+         space up to the right-side group. This recovers the room the
+         old `max-w-[40%]` was burning and stops the centered title from
+         overlapping the right-side chrome on narrow viewports. At sm+
+         we revert to absolute-centered, which keeps left/right groups
+         independent on wider screens (see comment above). -->
     <h1 id="header-title"
-        class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-lg font-bold pointer-events-none truncate max-w-[40%] text-center">Usernode Social Vibecoding</h1>
+        class="flex-1 min-w-0 ml-2 text-left text-lg font-bold pointer-events-none truncate
+               sm:absolute sm:left-1/2 sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2
+               sm:flex-none sm:ml-0 sm:max-w-[40%] sm:text-center">Usernode Social Vibecoding</h1>
 
     <!-- Right-side group. `ml-auto` shoves it to the right edge; back-btn
          (or its empty space when hidden) stays at the left edge. The
