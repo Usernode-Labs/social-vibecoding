@@ -3,6 +3,14 @@ const App = {
   currentApp: null,
   currentTab: 'app',
 
+  // Set to true while restoreFromHash() is applying a URL (e.g. on
+  // popstate/hashchange) so that the navigation helpers it calls
+  // (navigateToApp, switchTab, navigateHome) don't push a NEW history
+  // entry on top of the one the browser just popped to. Without this
+  // guard, "back" would push a forward entry and the user could never
+  // actually leave the page.
+  _isRestoring: false,
+
   async init() {
     try {
       const res = await fetch('/api/auth/me');
@@ -473,7 +481,14 @@ const App = {
         if (App._setImportState) App._setImportState('idle');
       });
     }
-    document.getElementById('back-btn').addEventListener('click', App.navigateHome);
+    // The header back arrow walks the BROWSER history one step back —
+    // not straight to home — so the in-app back stack matches the
+    // user's expectation: home → app → group-chat, back goes to app,
+    // back again goes to home, back again exits the dapp. The same
+    // history is what `WebViewController.canGoBack()` reads on the
+    // Flutter side, so the device/system back button gets the same
+    // behavior for free.
+    document.getElementById('back-btn').addEventListener('click', () => history.back());
 
     // Rename modal
     const renameModal = document.getElementById('rename-modal');
@@ -566,45 +581,78 @@ const App = {
       btn.addEventListener('click', () => App.switchTab(btn.dataset.tab));
     });
 
+    // popstate fires on browser/device back when the new history
+    // entry was created with pushState; hashchange fires when only the
+    // fragment changes (initial load with a deep link, manual edits to
+    // the URL bar). Both routes converge on restoreFromHash, which is
+    // idempotent — re-applying the same hash is a no-op via the
+    // currentApp/currentTab guards inside it.
+    window.addEventListener('popstate', () => App.restoreFromHash());
     window.addEventListener('hashchange', () => App.restoreFromHash());
   },
 
   restoreFromHash() {
-    const hash = location.hash.replace('#', '');
-    if (!hash) {
-      if (App.currentApp) App.navigateHome();
-      else Home.load();
-      return;
-    }
-
-    const parts = hash.split('/');
-    if (parts[0] === 'app' && parts[1]) {
-      const slug = parts[1];
-      const tab = parts[2] || 'app';
-      const sessionId = parts[3] ? parseInt(parts[3]) : null;
-      if (App.currentApp !== slug) {
-        App.navigateToApp(slug, tab, sessionId);
-      } else if (App.currentTab !== tab) {
-        App.switchTab(tab, sessionId);
+    App._isRestoring = true;
+    try {
+      const hash = location.hash.replace('#', '');
+      if (!hash) {
+        if (App.currentApp) App.navigateHome();
+        else Home.load();
+        return;
       }
-    } else {
-      Home.load();
+
+      const parts = hash.split('/');
+      if (parts[0] === 'app' && parts[1]) {
+        const slug = parts[1];
+        const tab = parts[2] || 'app';
+        const sessionId = parts[3] ? parseInt(parts[3]) : null;
+        if (App.currentApp !== slug) {
+          App.navigateToApp(slug, tab, sessionId);
+        } else if (App.currentTab !== tab) {
+          App.switchTab(tab, sessionId);
+        }
+      } else {
+        Home.load();
+      }
+    } finally {
+      App._isRestoring = false;
     }
   },
 
+  // Push a new history entry on real screen transitions (entering an
+  // app, switching tabs, going home) so the WebView builds a real
+  // back stack; replace in-place when only secondary state changes
+  // within the same screen (e.g. selecting a different dev-chat
+  // session inside the individual-chat tab) — otherwise every session
+  // click would add an entry the user has to back through.
+  //
+  // "Screen" here = `#app/<slug>/<tab>` prefix; the optional 4th
+  // segment (session id) is intentionally NOT part of the screen id.
   updateHash() {
+    if (App._isRestoring) return;
+
+    let newHash;
     if (App.currentApp) {
-      let newHash = `#app/${App.currentApp}/${App.currentTab}`;
+      newHash = `#app/${App.currentApp}/${App.currentTab}`;
       if (App.currentTab === 'individual-chat' && DevChat.currentSession) {
         newHash += `/${DevChat.currentSession.id}`;
       }
-      if (location.hash !== newHash) {
-        history.replaceState(null, '', newHash);
-      }
     } else {
-      if (location.hash) {
-        history.replaceState(null, '', location.pathname);
-      }
+      newHash = location.pathname; // home: drop the fragment entirely
+    }
+
+    const currentFull = location.hash || '';
+    const targetFull = newHash.startsWith('#') ? newHash : '';
+    if (currentFull === targetFull) return;
+
+    const screenIdOf = (h) =>
+      String(h || '').replace(/^#/, '').split('/').slice(0, 3).join('/');
+    const sameScreen = screenIdOf(currentFull) === screenIdOf(targetFull);
+
+    if (sameScreen) {
+      history.replaceState(null, '', newHash);
+    } else {
+      history.pushState(null, '', newHash);
     }
   },
 
