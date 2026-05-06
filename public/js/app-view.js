@@ -535,6 +535,60 @@ const AppView = {
     if (err) { err.classList.add('hidden'); err.textContent = ''; }
   },
 
+  // Share modal — exposes the app's bare subdomain URL so users can pass
+  // it around outside the platform. The URL itself never carries auth;
+  // child apps that gate visitors handle that at their own login page,
+  // public apps (e.g. echo) render directly. resolveDevHost rewrites
+  // localhost-shaped URLs to whatever hostname the browser is actually on,
+  // so the link is reachable from a phone on the same LAN as the dev box.
+  openShareModal() {
+    const url = AppView.appData?.url ? resolveDevHost(AppView.appData.url) : '';
+    const modal = document.getElementById('share-modal');
+    const input = document.getElementById('share-url-input');
+    const link = document.getElementById('share-open-link');
+    const copyBtn = document.getElementById('share-copy-btn');
+    if (input) input.value = url;
+    if (link) link.href = url || '#';
+    if (copyBtn) copyBtn.textContent = 'Copy';
+    if (modal) modal.classList.remove('hidden');
+    setTimeout(() => { if (input) { input.focus(); input.select(); } }, 0);
+  },
+
+  closeShareModal() {
+    const modal = document.getElementById('share-modal');
+    if (modal) modal.classList.add('hidden');
+  },
+
+  // Copy the share URL to the clipboard and flash "Copied!" on the button.
+  // Falls back to selecting the input + execCommand for browsers/contexts
+  // where navigator.clipboard isn't available (e.g. http: localhost in
+  // some browsers).
+  async copyShareUrl() {
+    const input = document.getElementById('share-url-input');
+    const btn = document.getElementById('share-copy-btn');
+    const url = input?.value || '';
+    if (!url) return;
+    let ok = false;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+        ok = true;
+      }
+    } catch {}
+    if (!ok && input) {
+      try {
+        input.focus();
+        input.select();
+        ok = document.execCommand('copy');
+      } catch {}
+    }
+    if (btn) {
+      const original = btn.textContent;
+      btn.textContent = ok ? 'Copied!' : 'Copy failed';
+      setTimeout(() => { btn.textContent = original; }, 1500);
+    }
+  },
+
   async submitRename(e) {
     if (e) e.preventDefault();
     if (!AppView.appData) return;

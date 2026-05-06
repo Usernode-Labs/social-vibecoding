@@ -140,6 +140,11 @@ services:
     environment:
       GENESIS_URL: ${GENESIS_URL:-https://static.usernodelabs.org/testnet/genesis.json}
       SEEDLIST_URL: ${SEEDLIST_URL:-https://static.usernodelabs.org/testnet/seedlist.txt}
+      # Enable the recent-tx-by-recipient RPC + SSE stream so dapps that
+      # opt into bridge.serverCacheUrl get pushed inclusion notifications
+      # instead of polling the explorer once per send. Read by clap via
+      # cli/commands/node.rs `enable_recent_tx_stream`.
+      USERNODE_ENABLE_RECENT_TX_STREAM: "true"
     deploy:
       resources:
         limits:

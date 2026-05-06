@@ -35,7 +35,8 @@ node:
 	$(USERNODE_BIN) node \
 		--genesis-url $(GENESIS_URL) \
 		--peer-list-url $(SEEDLIST_URL) \
-		--port $(NODE_PORT)
+		--port $(NODE_PORT) \
+		--enable-recent-tx-stream
 
 # ---------------------------------------------------------------------------
 # Dev stack: platform + Postgres only (no sidecar — see `node` above).

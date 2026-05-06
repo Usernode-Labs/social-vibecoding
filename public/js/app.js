@@ -318,6 +318,10 @@ const App = {
       if (data.status === 'running' && AppView.appData) {
         AppView.appData.status = 'running';
         AppView.appData.url = data.url;
+        // The Share button was hidden in openApp() because the app wasn't
+        // running yet. Now that we have a URL, surface it.
+        const shareBtn = document.getElementById('app-share-btn');
+        if (shareBtn) shareBtn.classList.remove('hidden');
         AppView.refreshToken().then(() => {
           // Re-check the tab — the user may have switched to group/dev
           // chat while refreshToken() was in flight. Without this guard
@@ -581,6 +585,21 @@ const App = {
         submitFeedback();
       }
     });
+
+    // Share modal — opens AppView's share dialog with the bare subdomain
+    // URL. The button's hidden state is managed in openApp / navigateHome
+    // (and in handleAppStatus for the creating→running flip), so we only
+    // wire the click-to-open + dismiss handlers here.
+    const shareBtn = document.getElementById('app-share-btn');
+    if (shareBtn) shareBtn.addEventListener('click', () => AppView.openShareModal());
+    const shareClose = document.getElementById('share-close');
+    if (shareClose) shareClose.addEventListener('click', () => AppView.closeShareModal());
+    const shareModal = document.getElementById('share-modal');
+    if (shareModal) shareModal.addEventListener('click', (e) => {
+      if (e.target === e.currentTarget) AppView.closeShareModal();
+    });
+    const shareCopy = document.getElementById('share-copy-btn');
+    if (shareCopy) shareCopy.addEventListener('click', () => AppView.copyShareUrl());
 
     document.querySelectorAll('.app-tab').forEach((btn) => {
       btn.addEventListener('click', () => App.switchTab(btn.dataset.tab));
@@ -859,6 +878,13 @@ const App = {
       ghLink.href = AppView.appData.repo_url;
       ghLink.classList.remove('hidden');
     }
+    // Show Share button only for apps that have a real running URL.
+    // Apps in `creating`/`error`/`awaiting_secrets` have no URL to share;
+    // the SSE handler below re-shows the button when they flip to `running`.
+    const shareBtn = document.getElementById('app-share-btn');
+    if (shareBtn && AppView.appData?.status === 'running' && AppView.appData?.url) {
+      shareBtn.classList.remove('hidden');
+    }
     App.switchTab(tab || 'app', sessionId);
   },
 
@@ -870,6 +896,7 @@ const App = {
     document.getElementById('back-btn').classList.add('hidden');
     document.getElementById('create-app-btn').classList.remove('hidden');
     document.getElementById('app-github-link').classList.add('hidden');
+    document.getElementById('app-share-btn').classList.add('hidden');
     document.getElementById('header-title').textContent = 'Usernode Social Vibecoding';
     document.getElementById('app-content').innerHTML = '';
     App.updateHash();
