@@ -4,6 +4,7 @@ const { getPool } = require('../db/pool');
 const log = require('./logger');
 const workerProgress = require('./worker-progress');
 const deployStatus = require('./deploy-status');
+const nodeStatus = require('./node-status');
 
 const execFileAsync = promisify(execFile);
 
@@ -289,11 +290,18 @@ async function gather(config, { isAdmin = false } = {}) {
     summary.globalSpendCap = GLOBAL_DAILY_LIMIT_CENTS;
   }
 
+  // Node sidecar snapshot (cached by services/node-status.js — no extra
+  // sidecar request per dashboard tab). Always present in the payload so
+  // the renderer doesn't have to feature-detect; `status: "unknown"` is
+  // returned when NODE_RPC_URL isn't configured.
+  const node = nodeStatus.get();
+
   const payload = {
     now: new Date().toISOString(),
     version: process.env.GIT_SHA || 'dev',
     isAdmin,
     deployProgress: deployStatus.read(),
+    node,
     limits: {
       stagingGlobal: MAX_STAGING_GLOBAL,
       stagingPerUser: MAX_STAGING_PER_USER,

@@ -24,6 +24,7 @@ const log = require('./src/services/logger');
 const lifecycle = require('./src/services/lifecycle');
 const chainPoller = require('./src/services/chain-poller');
 const genesisAccounts = require('./src/services/genesis-accounts');
+const nodeStatus = require('./src/services/node-status');
 const { getActiveWorkerCount } = require('./src/routes/sessions');
 const { sweepStuckCreatingApps } = require('./src/routes/apps');
 const { getPool } = require('./src/db/pool');
@@ -86,6 +87,16 @@ app.get('/claude.md', (_req, res) => {
     log.error('conventions', 'Failed to serve /claude.md', { err: err.message });
     res.status(500).type('text/plain').send('conventions unavailable');
   }
+});
+
+// Public sidecar-status endpoint. Reads the cached snapshot maintained by
+// `services/node-status.js` (one poll per process, regardless of how many
+// clients are watching). Mounted before authMiddleware so anonymous
+// visitors and embedded child-app pages can both read it. All on-chain
+// info is already public, so no progressive disclosure here.
+app.get('/api/node-status', (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(nodeStatus.get());
 });
 
 // Status routes are public (with progressive disclosure for admins) —
@@ -163,6 +174,7 @@ async function start() {
   ws.attach(server, config);
   chainPoller.start(config);
   genesisAccounts.start();
+  nodeStatus.start({ nodeRpcUrl: process.env.NODE_RPC_URL });
   // Periodically check imported / bot-owned repos for new commits on
   // `main` we didn't make ourselves and redeploy via the same path
   // that the dev-chat merge flow uses. See main-drift-poller.js.
