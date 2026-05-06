@@ -139,6 +139,24 @@ jobs:
                 -v "$ARCHIVE_VOLUME:/archive" alpine \
                 sh -c 'rm -rf /archive/* /archive/.[!.]* /archive/..?* 2>/dev/null; tar -xzf - -C /archive && echo "==> Volume populated: $(du -sh /archive | cut -f1)"'
               rm -rf "$STAGING_DIR"
+              # Fresh snapshot landed in the volume — but compose only
+              # recreates containers when their *definition* changes, not
+              # when their *volume contents* change. Without an explicit
+              # recreate the running usernode-node would keep going on
+              # whatever in-memory state it loaded at its last boot, and
+              # the brand-new archive on disk would sit unused. Force a
+              # recreate so the sidecar reboots from the fresh snapshot
+              # (height ≈ network tip) — that's how we avoid the
+              # `Replace`-triggered partial-ledger trap.
+              #
+              # `--no-deps` keeps the recreate scoped to this one service
+              # (don't restart caddy / db / dapp containers as a side
+              # effect — those don't care about the archive contents).
+              # The flag is set here on the success path *only*; on the
+              # fallback path we deliberately leave the running node
+              # alone since its existing archive is still valid.
+              echo "==> Recreating usernode-node so it picks up the fresh archive..."
+              docker compose up -d --no-deps --force-recreate usernode-node
             else
               # Fetch failed. The sidecar's --archive flag will self-
               # write new snapshots over time, so a non-empty existing
