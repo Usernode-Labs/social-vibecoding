@@ -80,8 +80,16 @@ async function createApp(config, appRow) {
         cloneRepo = slug;
       }
       const cloneUrl = await github.getCloneUrl(cloneOwner, cloneRepo);
-      await docker.execFileAsync('git', ['clone', '--depth', '1', cloneUrl, tempDir], {
-        timeout: 60000,
+      // --recurse-submodules + --shallow-submodules so dapps that vendor
+      // upstream sources via submodules (e.g. falling-sands → sandspiel)
+      // get a complete tree at build time. No-op for dapps without
+      // submodules. Timeout bumped to absorb worst-case submodule fetch.
+      await docker.execFileAsync('git', [
+        'clone', '--depth', '1',
+        '--recurse-submodules', '--shallow-submodules',
+        cloneUrl, tempDir,
+      ], {
+        timeout: 120000,
       });
     } else {
       fs.mkdirSync(tempDir, { recursive: true });
