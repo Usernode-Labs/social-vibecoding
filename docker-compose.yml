@@ -149,15 +149,41 @@ services:
       # operator override the upstream defaults from the host env / .env.
       USERNODE_GENESIS_URL: ${GENESIS_URL:-https://static.usernodelabs.org/testnet/genesis.json}
       PEER_LIST_URL: ${SEEDLIST_URL:-https://static.usernodelabs.org/testnet/seedlist.txt}
-      # Enable the recent-tx-by-recipient RPC + SSE stream so dapps that
-      # opt into bridge.serverCacheUrl get pushed inclusion notifications
-      # instead of polling the explorer once per send. Read by clap via
-      # cli/commands/node.rs `enable_recent_tx_stream`.
-      USERNODE_ENABLE_RECENT_TX_STREAM: "true"
+      RUST_LOG: info
+    # `--archive --archive-path /archive` makes the sidecar a true
+    # full-ledger node (fixes PARTIAL_LEDGER_RECENT_TX_SOURCE_BUG —
+    # RecentTxEntry.source goes null for ~half the incoming txs because
+    # the partial UTXO tree can't resolve commitments belonging to
+    # non-tracked owners). Child apps register their own pubkeys at
+    # runtime via `POST /wallet/tracked_owner/add`, which trips the
+    # wallet-seed shortcut into partial-ledger overlay mode by default;
+    # the archive flag overrides that and keeps the node in full mode.
+    #
+    # The deploy workflow seeds the `usernode-node-archive` volume with
+    # a fresh snapshot from a seed node before bringing the stack up;
+    # from then on the node both LOADS that snapshot at boot AND WRITES
+    # new ones at the snapshot interval, so subsequent restarts (and
+    # even deploys that skip the fetch) recover from whatever's on disk.
+    #
+    # `--enable-recent-tx-stream` is the CLI form of the older
+    # USERNODE_ENABLE_RECENT_TX_STREAM env var; both work, the flag is
+    # what dapp-starter uses so we match.
+    command:
+      - "--work-dir"
+      - "/var/lib/usernode"
+      - "--archive"
+      - "--archive-path"
+      - "/archive"
+      - "--port"
+      - "3000"
+      - "--enable-recent-tx-stream"
+    volumes:
+      - usernode-node-data:/var/lib/usernode
+      - usernode-node-archive:/archive
     deploy:
       resources:
         limits:
-          memory: 1g
+          memory: 2g
           cpus: "1"
     security_opt:
       - no-new-privileges:true
@@ -172,3 +198,11 @@ volumes:
   caddy-data:
   caddy-config:
   usernode-db-data:
+  # Sidecar node working directory (chain-scoped wallet cache, etc.) and
+  # archive root (manifest + snapshot binprots + block tail). Both must
+  # be persistent — without persistence every restart re-syncs from
+  # genesis (~15 min on testnet) and every deploy loses the archive
+  # snapshot, dropping the node back to partial-ledger mode for the
+  # duration. See the usernode-node service comment.
+  usernode-node-data:
+  usernode-node-archive:
