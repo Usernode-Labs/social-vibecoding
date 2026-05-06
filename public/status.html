@@ -68,9 +68,15 @@
   <!-- Usernode sidecar status. Populated by renderNode(); the cached snapshot
        is updated server-side every 500ms-2s by services/node-status.js, so
        this card stays fresh without each tab independently polling /status
-       on the sidecar. -->
+       on the sidecar. The "→ full status" link opens the dedicated
+       /node-status viewer (modeled on dapp-server.js's /status page). -->
   <section class="mb-6">
-    <h2 class="text-sm font-semibold text-zinc-400 uppercase tracking-wide mb-2">Usernode node</h2>
+    <div class="flex items-baseline justify-between mb-2">
+      <h2 class="text-sm font-semibold text-zinc-400 uppercase tracking-wide">Usernode node</h2>
+      <a href="/node-status" target="_blank" rel="noopener" class="text-xs text-violet-400 hover:text-violet-300">
+        → full status
+      </a>
+    </div>
     <div id="node" class="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 text-sm"></div>
   </section>
 

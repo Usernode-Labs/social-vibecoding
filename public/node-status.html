@@ -1,0 +1,353 @@
+<!doctype html>
+<!--
+  Full Usernode node + explorer status viewer for the social-vibecoding
+  platform. Modeled on the dapp-server.js STATUS_PAGE_HTML
+  (usernode-dapp-starter/examples/lib/dapp-server.js) — same look + same
+  sections (Node, Explorer), trimmed to what social-vibecoding actually has:
+  no per-app caches, no bridge SSE waiters, no recent-tx listing. Adds a
+  "Services" card for the wallet-linker chain-poller and genesis-accounts
+  loader since those are the platform's chain-dependent jobs.
+
+  Polls /api/node-status/full every 2s. Self-contained (no external deps);
+  the main /status page links here in a new tab.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Usernode — Node Status</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #0b0f16; --fg: #e7edf7; --muted: #a8b3c7;
+      --card: #141b26; --border: rgba(255,255,255,0.12);
+      --accent: #6ea8fe; --danger: #ff6b6b; --ok: #5dd39e; --warn: #e6a817;
+      --soft: rgba(255,255,255,0.04);
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f7f8fb; --fg: #0b1220; --muted: #4b5568;
+        --card: #ffffff; --border: rgba(15,23,42,0.12);
+        --accent: #2563eb; --danger: #c81e1e; --ok: #0f766e; --warn: #b45309;
+        --soft: rgba(15,23,42,0.03);
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+      background: var(--bg); color: var(--fg);
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 24px 20px 48px; }
+    .header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
+    h1 { font-size: 20px; margin: 0; font-weight: 600; }
+    .conn { font-size: 11px; color: var(--muted); }
+    .conn .led { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 5px; vertical-align: middle; }
+    .conn.live .led { background: var(--ok); }
+    .conn.dead .led { background: var(--danger); }
+    .header-pill { font-size: 13px; color: var(--muted); margin-bottom: 24px; }
+    .header-link { color: var(--accent); text-decoration: none; font-size: 13px; }
+    .header-link:hover { text-decoration: underline; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin: 14px 0; }
+    .card h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 12px; font-weight: 600; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 1.6; vertical-align: middle; }
+    .badge.ok { background: rgba(93,211,158,0.15); color: var(--ok); }
+    .badge.warn { background: rgba(230,168,23,0.15); color: var(--warn); }
+    .badge.err { background: rgba(255,107,107,0.18); color: var(--danger); }
+    .badge.muted { background: var(--soft); color: var(--muted); }
+    .badge.accent { background: rgba(110,168,254,0.18); color: var(--accent); }
+    .kv { display: grid; grid-template-columns: 160px 1fr; gap: 4px 12px; font-size: 13px; }
+    .kv .label { color: var(--muted); }
+    .kv .val { word-break: break-all; }
+    .mono, code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
+    .sync-bar { width: 100%; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin: 8px 0 4px; }
+    .sync-fill { height: 100%; background: var(--accent); transition: width 0.4s ease; }
+    .sync-fill.full { background: var(--ok); }
+    details { background: var(--soft); border-radius: 8px; padding: 6px 12px; margin: 8px 0; }
+    details[open] { padding-bottom: 12px; }
+    summary { cursor: pointer; font-size: 13px; padding: 4px 0; font-weight: 500; user-select: none; }
+    summary::marker { color: var(--muted); }
+    .err-text { color: var(--danger); font-size: 12px; margin: 8px 0; }
+    .warn-text { color: var(--warn); font-size: 12px; margin: 8px 0; }
+    .small { font-size: 11px; color: var(--muted); }
+    .empty { color: var(--muted); font-size: 12px; padding: 6px 0; font-style: italic; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="header">
+      <div>
+        <h1 id="serverName">Loading…</h1>
+        <div class="header-pill" id="serverMeta"></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <a class="header-link" href="/status">← back to /status</a>
+        <div class="conn" id="conn"><span class="led"></span><span id="connText">connecting…</span></div>
+      </div>
+    </div>
+
+    <div class="card" id="nodeCard">
+      <h2>Node</h2>
+      <div id="nodeBody" class="empty">Loading…</div>
+    </div>
+
+    <div class="card" id="explorerCard">
+      <h2>Explorer</h2>
+      <div id="explorerBody" class="empty">Loading…</div>
+    </div>
+
+    <div class="card" id="servicesCard">
+      <h2>Chain-dependent services</h2>
+      <div id="servicesBody" class="empty">Loading…</div>
+    </div>
+
+    <div class="small" style="text-align:center;margin-top:18px">
+      Updated <span id="lastUpdated">—</span> · polling
+      <code>/api/node-status/full</code> every 2s ·
+      JSON snapshot at <a href="/api/node-status/full" style="color:var(--accent)">/api/node-status/full</a>
+    </div>
+  </div>
+
+  <script>
+  (function () {
+    "use strict";
+
+    var $ = function (id) { return document.getElementById(id); };
+
+    function esc(s) {
+      if (s == null) return "";
+      return String(s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+    function fmtAge(ms) {
+      if (ms == null || !isFinite(ms)) return "—";
+      var s = Math.floor(ms / 1000);
+      if (s < 60) return s + "s";
+      var m = Math.floor(s / 60); s = s % 60;
+      if (m < 60) return m + "m " + s + "s";
+      var h = Math.floor(m / 60); m = m % 60;
+      if (h < 24) return h + "h " + m + "m";
+      var d = Math.floor(h / 24); h = h % 24;
+      return d + "d " + h + "h";
+    }
+    function fmtNum(n) {
+      if (n == null) return "—";
+      return Number(n).toLocaleString();
+    }
+    function fmtTime(ms) {
+      if (!ms) return "—";
+      try { return new Date(ms).toLocaleTimeString(); } catch (_) { return "—"; }
+    }
+
+    function statusBadge(status) {
+      var s = String(status || "unknown");
+      var cls = "muted";
+      if (s === "Synced" || s === "ok") cls = "ok";
+      else if (s === "Syncing" || s === "Connected") cls = "accent";
+      else if (s === "Connecting" || s === "bad_response" || s === "degraded") cls = "warn";
+      else if (s === "unreachable") cls = "err";
+      else if (s === "mock") cls = "muted";
+      return '<span class="badge ' + cls + '">' + esc(s) + '</span>';
+    }
+
+    function renderHeader(snap) {
+      var srv = snap.server || {};
+      $("serverName").textContent = srv.name || "usernode-social-vibecoding";
+      var bits = [];
+      bits.push(srv.mode || "?");
+      bits.push("up " + fmtAge(srv.uptimeMs));
+      if (srv.version && srv.version !== "dev") {
+        bits.push("build " + esc(String(srv.version).slice(0, 7)));
+      } else if (srv.version) {
+        bits.push(esc(srv.version));
+      }
+      if (srv.nodeRpcUrl) bits.push("sidecar " + esc(srv.nodeRpcUrl));
+      if (srv.explorerHost) bits.push("explorer " + esc(srv.explorerHost));
+      $("serverMeta").textContent = bits.join(" · ");
+      $("lastUpdated").textContent = fmtTime(snap.at);
+    }
+
+    function renderNode(snap) {
+      var n = snap.node;
+      var body = $("nodeBody");
+      if (!n) {
+        body.className = "empty";
+        body.textContent = "No node probe data.";
+        return;
+      }
+      body.className = "";
+      var rows = [];
+      rows.push('<div class="kv">');
+      rows.push('<div class="label">Status</div><div class="val">' + statusBadge(n.status) +
+        (n.error ? ' <span class="err-text">' + esc(n.error) + '</span>' : '') + '</div>');
+      rows.push('<div class="label">Peers</div><div class="val">' + fmtNum(n.peers) + '</div>');
+      rows.push('<div class="label">Best tip</div><div class="val">' +
+        (n.bestTipHeight != null ? fmtNum(n.bestTipHeight) : "—") +
+        (n.peerBestTipHeight != null ? ' / ' + fmtNum(n.peerBestTipHeight) + ' (peers)' : '') + '</div>');
+      var pct = null;
+      if (n.bestTipHeight != null && n.peerBestTipHeight != null && n.peerBestTipHeight > 0) {
+        pct = Math.max(0, Math.min(100, (n.bestTipHeight / n.peerBestTipHeight) * 100));
+      }
+      if (pct != null) {
+        rows.push('<div class="label">Sync</div><div class="val">' + pct.toFixed(1) + '%' +
+          '<div class="sync-bar"><div class="sync-fill' + (pct >= 99.9 ? ' full' : '') + '" style="width:' + pct + '%"></div></div>' +
+          '</div>');
+      }
+      rows.push('<div class="label">First-synced?</div><div class="val">' +
+        (n.hasBeenSynced ? '<span class="badge ok">yes</span>' : '<span class="badge warn">not yet</span>') + '</div>');
+      if (n.hasFullUtxoDb === false) {
+        // Verbatim from dapp-server.js — same explanation, same FIXME link.
+        // Future readers: keep these two strings in sync if either changes.
+        rows.push('<div class="label">UTXO mode</div><div class="val">' +
+          '<span class="badge err">PARTIAL</span> ' +
+          '<span class="warn-text">sidecar lacks HAS_FULL_UTXO_DB — incoming txs from non-tracked senders may be silently dropped</span>' +
+          '<details style="margin-top:6px"><summary class="small">Why? (likely cause)</summary>' +
+          '<div class="small" style="margin-top:6px;line-height:1.5">' +
+          'Most often this is a silent <code>BlockchainSyncAction::Replace</code>: the candidate verifier picks a target chain that doesn&rsquo;t share enough ancestor with the current best chain, ' +
+          '<code>replace()</code> clears <code>trees.utxo_root</code>, and from that point every block applies in <code>partial</code> mode because the worker has no full UTXO tree at the new parent root. ' +
+          '(Replace actions log at <code>DEBUG</code> by default, so they don&rsquo;t appear in <code>RUST_LOG=info</code>.)' +
+          '<br><br>' +
+          'A related contributing path is the <code>BlocksApplyWithoutCandidateVerification</code> warning &mdash; peer-fetched blocks reaching the apply pipeline before candidate verification has signed off. ' +
+          'Upstream <code>FIXME</code> at ' +
+          '<a href="https://github.com/Usernode-Labs/usernode/blob/main/crates/node/src/blockchain/sync/blockchain_sync_reducer.rs#L468" target="_blank" rel="noopener" style="color:var(--accent)">' +
+          'crates/node/src/blockchain/sync/blockchain_sync_reducer.rs:468</a>:' +
+          '<br><em>&ldquo;ensure peer-origin intermediate sync blocks are ingested through candidate verification before they can enter the apply pipeline.&rdquo;</em>' +
+          '<br><br>' +
+          'Workaround: restart the sidecar with a fresh archive snapshot to get a fresh full-mode window. ' +
+          'Confirm with <code>RUST_LOG=&#x27;info,usernode_node::blockchain=debug&#x27;</code> to see <code>BlockchainSyncReplace</code> events directly.' +
+          '</div></details>' +
+          '</div>');
+      } else if (n.hasFullUtxoDb === true) {
+        rows.push('<div class="label">UTXO mode</div><div class="val"><span class="badge ok">full</span></div>');
+      }
+      rows.push('<div class="label">Last refresh</div><div class="val">' + fmtTime(n.at) +
+        ' <span class="small">(' + fmtAge(Date.now() - (n.at || Date.now())) + ' ago)</span></div>');
+      rows.push('</div>');
+      body.innerHTML = rows.join('');
+    }
+
+    function renderExplorer(snap) {
+      var ex = snap.explorer;
+      var body = $("explorerBody");
+      if (!ex) {
+        body.className = "empty";
+        body.textContent = "No explorer probe data.";
+        return;
+      }
+      body.className = "";
+      var rows = [];
+      rows.push('<div class="kv">');
+      rows.push('<div class="label">Status</div><div class="val">' + statusBadge(ex.status) +
+        (ex.error ? ' <span class="err-text">' + esc(ex.error) + '</span>' : '') + '</div>');
+      rows.push('<div class="label">Host</div><div class="val mono">' + esc(ex.host || "—") + '</div>');
+      rows.push('<div class="label">Chain id</div><div class="val mono">' + esc(ex.chainId || "—") + '</div>');
+      rows.push('<div class="label">Latency</div><div class="val">' +
+        (ex.latencyMs != null ? esc(String(ex.latencyMs)) + ' ms' : '—') + '</div>');
+      rows.push('<div class="label">First-ok?</div><div class="val">' +
+        (ex.hasBeenOk ? '<span class="badge ok">yes</span>' : '<span class="badge warn">not yet</span>') + '</div>');
+      rows.push('<div class="label">Last refresh</div><div class="val">' + fmtTime(ex.at) +
+        ' <span class="small">(' + fmtAge(Date.now() - (ex.at || Date.now())) + ' ago)</span></div>');
+      rows.push('</div>');
+      body.innerHTML = rows.join('');
+    }
+
+    // Social-vibecoding-specific section: surfaces the two services that
+    // depend on the chain (chain-poller for wallet linking, genesis-
+    // accounts for the gating list). Equivalent of the per-cache table
+    // in dapp-server.js's full viewer.
+    function renderServices(snap) {
+      var svc = snap.services || {};
+      var body = $("servicesBody");
+      var rows = [];
+
+      // Chain-poller (wallet-linking).
+      var cp = svc.chainPoller;
+      if (cp) {
+        rows.push('<details open><summary>Chain-poller (wallet linker) ' +
+          '<span class="small">' + (cp.enabled ? '<span class="badge ok">enabled</span>' : '<span class="badge warn">disabled</span>') + '</span></summary>');
+        rows.push('<div class="kv" style="margin-top:8px">');
+        rows.push('<div class="label">Chain id</div><div class="val mono">' + esc(cp.chainId || "—") + '</div>');
+        rows.push('<div class="label">Last block height</div><div class="val">' + fmtNum(cp.lastBlockHeight) + '</div>');
+        rows.push('<div class="label">Tx ids seen</div><div class="val">' + fmtNum(cp.seenTxCount) + '</div>');
+        rows.push('<div class="label">Wallet links applied</div><div class="val">' + fmtNum(cp.walletLinkCount) + '</div>');
+        rows.push('<div class="label">Last polled</div><div class="val">' +
+          (cp.lastPolledAt
+            ? fmtTime(cp.lastPolledAt) + ' <span class="small">(' + fmtAge(Date.now() - cp.lastPolledAt) + ' ago)</span>'
+            : '—') + '</div>');
+        if (cp.lastError) {
+          rows.push('<div class="label">Last error</div><div class="val"><span class="err-text">' + esc(cp.lastError) + '</span></div>');
+        }
+        rows.push('</div></details>');
+      }
+
+      // Genesis-accounts loader.
+      var ga = svc.genesisAccounts;
+      if (ga) {
+        rows.push('<details open><summary>Genesis-accounts ' +
+          '<span class="small">' +
+          (ga.loaded ? '<span class="badge ok">loaded</span>' : '<span class="badge warn">loading</span>') +
+          '</span></summary>');
+        rows.push('<div class="kv" style="margin-top:8px">');
+        rows.push('<div class="label">Loaded?</div><div class="val">' +
+          (ga.loaded ? '<span class="badge ok">yes</span>' : '<span class="badge warn">not yet</span>') + '</div>');
+        rows.push('<div class="label">Account count</div><div class="val">' + fmtNum(ga.count) + '</div>');
+        rows.push('</div></details>');
+      }
+
+      if (!rows.length) {
+        body.className = "empty";
+        body.textContent = "No services registered.";
+        return;
+      }
+      body.className = "";
+      body.innerHTML = rows.join('');
+    }
+
+    function render(snap) {
+      try {
+        renderHeader(snap);
+        renderNode(snap);
+        renderExplorer(snap);
+        renderServices(snap);
+      } catch (e) {
+        console.error("[node-status] render failed:", e);
+      }
+    }
+
+    function setConn(state) {
+      var el = $("conn");
+      var t = $("connText");
+      el.className = "conn " + state;
+      if (state === "live") t.textContent = "live (2s poll)";
+      else if (state === "dead") t.textContent = "disconnected";
+      else t.textContent = "connecting…";
+    }
+
+    var POLL_MS = 2000;
+
+    function fetchOnce() {
+      fetch("/api/node-status/full", { cache: "no-store" })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (snap) {
+          if (snap) {
+            setConn("live");
+            render(snap);
+          } else {
+            setConn("dead");
+          }
+        })
+        .catch(function (err) {
+          setConn("dead");
+          console.warn("[node-status] poll failed:", err && err.message ? err.message : err);
+        });
+    }
+
+    fetchOnce();
+    setInterval(fetchOnce, POLL_MS);
+  })();
+  </script>
+</body>
+</html>

@@ -89,14 +89,48 @@ app.get('/claude.md', (_req, res) => {
   }
 });
 
-// Public sidecar-status endpoint. Reads the cached snapshot maintained by
-// `services/node-status.js` (one poll per process, regardless of how many
-// clients are watching). Mounted before authMiddleware so anonymous
-// visitors and embedded child-app pages can both read it. All on-chain
+// Public sidecar-status endpoints. All read the cached snapshot maintained
+// by `services/node-status.js` (one poll per process, regardless of how
+// many clients are watching). Mounted before authMiddleware so anonymous
+// visitors and embedded child-app pages can both read them. All on-chain
 // info is already public, so no progressive disclosure here.
+//
+// Three surfaces:
+//   - /api/node-status        : compact node snapshot (powers the summary
+//                                card on the main /status page)
+//   - /api/node-status/full   : full snapshot (server + node + explorer +
+//                                chain-dependent services). Powers the
+//                                /node-status viewer page.
+//   - /node-status            : the standalone HTML viewer (modeled on
+//                                dapp-server.js's /status page)
 app.get('/api/node-status', (_req, res) => {
   res.set('Cache-Control', 'no-store');
   res.json(nodeStatus.get());
+});
+
+app.get('/api/node-status/full', (_req, res) => {
+  // Lazy require here (rather than top of file) keeps the import graph
+  // straight: chain-poller and genesis-accounts are leaf modules; node-
+  // status doesn't import them. The callback shape is what wires them
+  // together at request time.
+  const chainPollerSvc = require('./src/services/chain-poller');
+  const genesisAccountsSvc = require('./src/services/genesis-accounts');
+  res.set('Cache-Control', 'no-store');
+  res.json(nodeStatus.getFull({
+    name: 'usernode-social-vibecoding',
+    mode: process.env.USERNODE_LOCAL_DEV ? 'local-dev' : 'production',
+    services: () => ({
+      chainPoller: chainPollerSvc.getStatus(),
+      genesisAccounts: {
+        loaded: genesisAccountsSvc.isLoaded(),
+        count: genesisAccountsSvc.count(),
+      },
+    }),
+  }));
+});
+
+app.get('/node-status', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'node-status.html'));
 });
 
 // Status routes are public (with progressive disclosure for admins) —

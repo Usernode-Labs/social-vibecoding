@@ -19,6 +19,11 @@ let chainId = null;
 let seenTxIds = new Set();
 let lastBlockHeight = 0;
 let intervalHandle = null;
+// Surfaced on /node-status (the dapp-server-style full viewer) so operators
+// can confirm the wallet-linker is actually keeping up with the chain.
+let lastPolledAt = null;
+let lastError = null;
+let walletLinkCount = 0;
 
 function httpJson(method, urlStr, body) {
   return new Promise((resolve, reject) => {
@@ -74,8 +79,10 @@ function boundSeenSet() {
 }
 
 async function poll(appPubkey, pool) {
+  lastPolledAt = Date.now();
   if (!chainId) {
     try { await discoverChainId(); } catch (e) {
+      lastError = e.message;
       log.warn('chain-poller', 'chain ID discovery failed', { err: e.message });
       return;
     }
@@ -93,9 +100,11 @@ async function poll(appPubkey, pool) {
     let data;
     try { data = await httpJson('POST', txUrl, body); }
     catch (e) {
+      lastError = e.message;
       log.warn('chain-poller', 'poll failed', { err: e.message });
       return;
     }
+    lastError = null;
 
     const items = data.items || [];
     if (!items.length) break;
@@ -133,6 +142,7 @@ async function poll(appPubkey, pool) {
           [sender, memo.token]
         );
         if (rowCount > 0) {
+          walletLinkCount += 1;
           log.info('chain-poller', 'Wallet linked', { pubkey: sender, token: memo.token.slice(0, 8) + '...' });
         }
       } catch (e) {
@@ -169,4 +179,16 @@ function stop() {
   }
 }
 
-module.exports = { start, stop };
+function getStatus() {
+  return {
+    chainId,
+    lastBlockHeight,
+    seenTxCount: seenTxIds.size,
+    walletLinkCount,
+    lastPolledAt,
+    lastError,
+    enabled: intervalHandle != null,
+  };
+}
+
+module.exports = { start, stop, getStatus };
