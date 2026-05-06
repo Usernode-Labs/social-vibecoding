@@ -223,6 +223,24 @@ async function rebuildProduction(config, app) {
 
     await docker.waitForHealthy(containerName, 3000, '/health');
 
+    // Ensure the Caddy route exists. The from-scratch path
+    // (`app-creator.js`) registers it after waitForHealthy, but rebuilds
+    // hit a different code path: imported repos that go through
+    // `awaiting_secrets` reach production exclusively via this function,
+    // which historically never registered the route — so the container
+    // came up healthy but no public hostname pointed at it, producing a
+    // "Secure Connection Failed" SSL error on the iframe load. Calling
+    // registerRoute here is idempotent (caddy.js short-circuits if the
+    // hostname is already in /etc/caddy/runtime/usernode.conf), so reruns
+    // from the drift poller, manual redeploys, and merges are safe; the
+    // first rebuild that observes a missing block self-heals it.
+    const hostname = caddy.productionHostname(app.slug);
+    await caddy.registerRoute(hostname, containerName, 3000).catch((err) => {
+      log.warn('staging', 'Caddy route registration failed (ok in local dev)', {
+        app: app.slug, err: err.message,
+      });
+    });
+
     log.info('staging', 'Production rebuilt', { app: app.slug, sha: mainSha });
     succeeded = true;
     resultSha = mainSha;
