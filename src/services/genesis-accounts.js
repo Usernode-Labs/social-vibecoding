@@ -2,7 +2,7 @@ const https = require('https');
 const http = require('http');
 const log = require('./logger');
 
-const EXPLORER_UPSTREAM = process.env.EXPLORER_UPSTREAM || 'alpha2.usernodelabs.org';
+const EXPLORER_UPSTREAM = process.env.EXPLORER_UPSTREAM || 'testnet-explorer.usernodelabs.org';
 const EXPLORER_UPSTREAM_BASE = process.env.EXPLORER_UPSTREAM_BASE || '/api';
 
 let genesisAddresses = new Set();

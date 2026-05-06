@@ -36,7 +36,14 @@ function load() {
     // can delete them to free a slot). See src/routes/apps.js.
     maxApps: parseInt(process.env.MAX_APPS || '20', 10),
     usernodeAppPubkey: process.env.USERNODE_APP_PUBKEY || '',
-    nodeRpcUrl: process.env.NODE_RPC_URL || 'https://alpha2.usernodelabs.org',
+    // Default points at the sidecar usernode container that
+    // docker-compose.yml runs alongside the platform (service name
+    // `usernode-node`). Production injects NODE_RPC_URL explicitly so
+    // this default only matters for local dev and ad-hoc runs; pointing
+    // it at the sidecar pattern (rather than a public host that may
+    // come and go) keeps the failure mode obvious — "no node reachable
+    // at <name>" is clearly a setup issue, not a transient outage.
+    nodeRpcUrl: process.env.NODE_RPC_URL || 'http://usernode-node:3000',
   };
 
   console.log('[config] Loaded:');

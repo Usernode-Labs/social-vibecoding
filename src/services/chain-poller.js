@@ -8,7 +8,7 @@ const http = require('http');
 const log = require('./logger');
 const genesisAccounts = require('./genesis-accounts');
 
-const EXPLORER_UPSTREAM = process.env.EXPLORER_UPSTREAM || 'alpha2.usernodelabs.org';
+const EXPLORER_UPSTREAM = process.env.EXPLORER_UPSTREAM || 'testnet-explorer.usernodelabs.org';
 const EXPLORER_UPSTREAM_BASE = process.env.EXPLORER_UPSTREAM_BASE || '/api';
 
 const POLL_INTERVAL_MS = 4000;
