@@ -39,9 +39,15 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
     const cloneDir = `/tmp/usernode-staging-${session.id}`;
 
     await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
+    // --recurse-submodules + --shallow-submodules so dapps that vendor
+    // upstream sources via submodules (e.g. falling-sands → sandspiel)
+    // get a complete tree at build time. No-op for dapps without
+    // submodules. Timeout bumped to absorb worst-case submodule fetch.
     await docker.execFileAsync('git', [
-      'clone', '--depth', '1', '--branch', session.branch_name, cloneUrl, cloneDir,
-    ], { timeout: 60000 });
+      'clone', '--depth', '1',
+      '--recurse-submodules', '--shallow-submodules',
+      '--branch', session.branch_name, cloneUrl, cloneDir,
+    ], { timeout: 120000 });
 
     // 2. Read the dapp's manifest from the PR branch and check that all
     //    required secrets have stored values. Staging shares the prod
@@ -162,9 +168,15 @@ async function rebuildProduction(config, app) {
     const cloneDir = `/tmp/usernode-rebuild-${app.slug}`;
 
     await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
+    // --recurse-submodules + --shallow-submodules so dapps that vendor
+    // upstream sources via submodules (e.g. falling-sands → sandspiel)
+    // get a complete tree at build time. No-op for dapps without
+    // submodules. Timeout bumped to absorb worst-case submodule fetch.
     await docker.execFileAsync('git', [
-      'clone', '--depth', '1', cloneUrl, cloneDir,
-    ], { timeout: 60000 });
+      'clone', '--depth', '1',
+      '--recurse-submodules', '--shallow-submodules',
+      cloneUrl, cloneDir,
+    ], { timeout: 120000 });
 
     // Capture the exact SHA this build is pinned to so the UI can show
     // what commit is running in production (#21). The shallow clone's
