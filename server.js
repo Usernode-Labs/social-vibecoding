@@ -25,6 +25,7 @@ const lifecycle = require('./src/services/lifecycle');
 const chainPoller = require('./src/services/chain-poller');
 const genesisAccounts = require('./src/services/genesis-accounts');
 const nodeStatus = require('./src/services/node-status');
+const statusService = require('./src/services/status');
 const { getActiveWorkerCount } = require('./src/routes/sessions');
 const { sweepStuckCreatingApps } = require('./src/routes/apps');
 const { getPool } = require('./src/db/pool');
@@ -209,6 +210,10 @@ async function start() {
   chainPoller.start(config);
   genesisAccounts.start();
   nodeStatus.start({ nodeRpcUrl: process.env.NODE_RPC_URL });
+  // Warm the /api/status cache so the first dashboard load doesn't have
+  // to wait 1-2s on `docker stats`. Subsequent loads are served from
+  // cache via stale-while-revalidate (see services/status.js).
+  statusService.start(config);
   // Periodically check imported / bot-owned repos for new commits on
   // `main` we didn't make ourselves and redeploy via the same path
   // that the dev-chat merge flow uses. See main-drift-poller.js.

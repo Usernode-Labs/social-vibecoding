@@ -138,8 +138,17 @@ services:
     networks:
       - usernode-net
     environment:
-      GENESIS_URL: ${GENESIS_URL:-https://static.usernodelabs.org/testnet/genesis.json}
-      SEEDLIST_URL: ${SEEDLIST_URL:-https://static.usernodelabs.org/testnet/seedlist.txt}
+      # Names must match what the `usernode node` clap parser reads:
+      # `--genesis-url` / `USERNODE_GENESIS_URL` and `--peer-list-url` /
+      # `PEER_LIST_URL` (see crates/cli/src/commands/node.rs in usernode).
+      # If these don't match, the binary silently falls back to its
+      # built-in defaults (which include a stale baked-in seedlist
+      # pointing at long-gone peers), so the node sits in `Connecting`
+      # forever and every dapp shows the loading overlay indefinitely.
+      # The outer `${GENESIS_URL:-...}` / `${SEEDLIST_URL:-...}` lets an
+      # operator override the upstream defaults from the host env / .env.
+      USERNODE_GENESIS_URL: ${GENESIS_URL:-https://static.usernodelabs.org/testnet/genesis.json}
+      PEER_LIST_URL: ${SEEDLIST_URL:-https://static.usernodelabs.org/testnet/seedlist.txt}
       # Enable the recent-tx-by-recipient RPC + SSE stream so dapps that
       # opt into bridge.serverCacheUrl get pushed inclusion notifications
       # instead of polling the explorer once per send. Read by clap via

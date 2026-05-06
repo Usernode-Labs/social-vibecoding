@@ -78,8 +78,17 @@ function uptimeSeconds(iso) {
   return Math.max(0, Math.floor((Date.now() - t) / 1000));
 }
 
-async function gather(config, { isAdmin = false } = {}) {
+// gatherFull: always builds the *admin* version of the payload (with all
+// fields). Caching layer below stores this and the per-request `gather()`
+// strips admin-only fields for non-admin viewers via `redact()`.
+//
+// This is the slow path — three DB queries plus `docker ps -a`,
+// `docker stats --no-stream`, and a `docker inspect` per container.
+// Total wall time is dominated by `docker stats` (~1-2s on a small
+// host). Don't call directly from a request handler; use `gather()`.
+async function gatherFull(config) {
   const pool = getPool(config);
+  const isAdmin = true; // Always build the full payload; redact at serve time.
 
   const [appsQ, sessionsQ, llmQ, containers, stats] = await Promise.all([
     pool.query(
@@ -260,21 +269,9 @@ async function gather(config, { isAdmin = false } = {}) {
     }
   }
 
-  // Strip admin-only fields from worker objects when not admin.
-  // Kept private: live Claude Code progress text, model name, exact timestamps.
-  const redactWorker = (w) => {
-    if (!w) return w;
-    if (isAdmin) return w;
-    const { lastProgress, lastProgressAt, model, ...rest } = w;
-    return rest;
-  };
-
-  const publicWorkers = workers.map(redactWorker);
-  const publicApps = appTree.map((a) => ({
-    ...a,
-    sessions: a.sessions.map((s) => ({ ...s, worker: redactWorker(s.worker) })),
-  }));
-
+  // Build the FULL (admin) payload. `redact()` below strips admin-only
+  // fields for non-admin viewers at serve time so the cache is shared
+  // across both audiences.
   const summary = {
     apps: apps.length,
     prodRunning: appTree.filter((a) => a.prod?.state === 'running').length,
@@ -284,45 +281,134 @@ async function gather(config, { isAdmin = false } = {}) {
     workersRunning: workers.filter((w) => w.state === 'running').length,
     workersOrphaned: workers.filter((w) => w.orphan).length,
     stuckSessions: stuckSessions.length,
+    globalSpendCents,
+    globalSpendCap: GLOBAL_DAILY_LIMIT_CENTS,
   };
-  if (isAdmin) {
-    summary.globalSpendCents = globalSpendCents;
-    summary.globalSpendCap = GLOBAL_DAILY_LIMIT_CENTS;
-  }
 
-  // Node sidecar snapshot (cached by services/node-status.js — no extra
-  // sidecar request per dashboard tab). Always present in the payload so
-  // the renderer doesn't have to feature-detect; `status: "unknown"` is
-  // returned when NODE_RPC_URL isn't configured.
-  const node = nodeStatus.get();
-
-  const payload = {
+  return {
+    // `now` is replaced at serve time so cached payloads don't show stale
+    // "as of" timestamps. Recorded here only so the un-replaced timestamp
+    // is available for debugging the cache.
     now: new Date().toISOString(),
     version: process.env.GIT_SHA || 'dev',
-    isAdmin,
+    isAdmin: true, // overridden in redact() based on requester
     deployProgress: deployStatus.read(),
-    node,
+    node: nodeStatus.get(),
     limits: {
       stagingGlobal: MAX_STAGING_GLOBAL,
       stagingPerUser: MAX_STAGING_PER_USER,
-      userDailyCents: isAdmin ? USER_DAILY_LIMIT_CENTS : undefined,
-      globalDailyCents: isAdmin ? GLOBAL_DAILY_LIMIT_CENTS : undefined,
+      userDailyCents: USER_DAILY_LIMIT_CENTS,
+      globalDailyCents: GLOBAL_DAILY_LIMIT_CENTS,
       workerOrphanThresholdMs: WORKER_ORPHAN_THRESHOLD_MS,
     },
     summary,
-    apps: publicApps,
-    workers: publicWorkers,
+    apps: appTree,
+    workers,
     stuckSessions,
     stagingPerUser,
     driftContainers,
+    llmUsage,
+    events: log.tail(50),
   };
-
-  if (isAdmin) {
-    payload.llmUsage = llmUsage;
-    payload.events = log.tail(50);
-  }
-
-  return payload;
 }
 
-module.exports = { gather };
+// Strip admin-only fields from a cached full payload. Hot path — runs on
+// every request — so it stays cheap (shallow clones, no deep copies of
+// arrays we don't touch).
+function redact(full, { isAdmin }) {
+  if (isAdmin) {
+    return {
+      ...full,
+      isAdmin: true,
+      now: new Date().toISOString(),
+      // node snapshot is read fresh per request so the "as of Xs ago"
+      // line in the dashboard stays honest even when the rest of the
+      // payload is served from cache.
+      node: nodeStatus.get(),
+    };
+  }
+  // Non-admin: strip live Claude Code progress text, model name, and
+  // exact timestamps from worker objects; drop llmUsage + events; drop
+  // the admin-only spend / dollar limits from summary.
+  const stripWorker = (w) => {
+    if (!w) return w;
+    const { lastProgress, lastProgressAt, model, ...rest } = w;
+    return rest;
+  };
+  const { llmUsage, events, summary, limits, apps, workers, ...rest } = full;
+  const { globalSpendCents, globalSpendCap, ...publicSummary } = summary || {};
+  const { userDailyCents, globalDailyCents, ...publicLimits } = limits || {};
+  return {
+    ...rest,
+    isAdmin: false,
+    now: new Date().toISOString(),
+    node: nodeStatus.get(),
+    summary: publicSummary,
+    limits: publicLimits,
+    apps: (apps || []).map((a) => ({
+      ...a,
+      sessions: (a.sessions || []).map((s) => ({ ...s, worker: stripWorker(s.worker) })),
+    })),
+    workers: (workers || []).map(stripWorker),
+  };
+}
+
+// ── Stale-while-revalidate cache ───────────────────────────────────────────
+//
+// The dashboard polls /api/status every 5s, and a single page load fires
+// the first request before the JS has rendered anything. Without this
+// cache, every refresh waited 1-2s for `docker stats` to come back, so
+// the page felt blank for that whole window.
+//
+// SWR semantics:
+//   - cache age < FRESH (3s)  → serve cached, do nothing
+//   - cache age < STALE (15s) → serve cached, kick background refresh
+//   - cache age >= STALE      → block on a fresh gather (or first call ever)
+//
+// `start()` warms the cache at server boot so the very first user request
+// also gets the instant path. Background refreshes never throw — failures
+// just leave the cache as-is, so a transient docker-daemon hiccup keeps
+// serving stale data instead of 500ing.
+const CACHE_FRESH_MS = 3000;
+const CACHE_STALE_MS = 15000;
+
+let cachedFull = null;
+let cachedAt = 0;
+let inflightGather = null;
+
+function refreshCache(config) {
+  if (inflightGather) return inflightGather;
+  inflightGather = gatherFull(config)
+    .then((payload) => {
+      cachedFull = payload;
+      cachedAt = Date.now();
+      return payload;
+    })
+    .finally(() => { inflightGather = null; });
+  return inflightGather;
+}
+
+async function gather(config, { isAdmin = false } = {}) {
+  const age = Date.now() - cachedAt;
+  if (!cachedFull || age >= CACHE_STALE_MS) {
+    // Cold start or cache is too old to trust — must wait.
+    await refreshCache(config);
+  } else if (age >= CACHE_FRESH_MS) {
+    // Warm but not fresh: serve cached now, refresh asynchronously.
+    refreshCache(config).catch((err) => {
+      log.warn('status', 'background refresh failed', { err: err.message });
+    });
+  }
+  return redact(cachedFull, { isAdmin });
+}
+
+// Warm the cache at server boot so the very first user request is instant.
+// Failure here is non-fatal — the next request will retry (and block on
+// the slow path that one time).
+function start(config) {
+  refreshCache(config).catch((err) => {
+    log.warn('status', 'initial cache warm failed', { err: err.message });
+  });
+}
+
+module.exports = { gather, start };
