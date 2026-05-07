@@ -12,10 +12,14 @@ set -euo pipefail
 # Staging clones (app_*_staging_*) are intentionally skipped — they're
 # ephemeral and get recreated on next chat turn.
 
-REMOTE_HOST="${DEPLOY_HOST:-204.168.207.166}"
+REMOTE_HOST="${DEPLOY_HOST:-social-vibecoding.usernodelabs.org}"
 REMOTE_USER="${DEPLOY_USER:-deploy}"
-REMOTE_CONTAINER="project-usernode-db"
-LOCAL_CONTAINER="usernode-db-dev"
+# Container names match the `container_name:` fields in the compose
+# files: docker-compose.yml's `usernode-db` service for prod, and
+# docker-compose.dev.yml's `vibecoding-db-dev` for local. Override
+# via env if you've renamed either.
+REMOTE_CONTAINER="${REMOTE_DB_CONTAINER:-usernode-db}"
+LOCAL_CONTAINER="${LOCAL_DB_CONTAINER:-vibecoding-db-dev}"
 DB_USER="usernode"
 
 ssh_exec() { ssh "${REMOTE_USER}@${REMOTE_HOST}" "$@"; }
