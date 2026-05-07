@@ -5,7 +5,7 @@ const github = require('../services/github');
 const staging = require('../services/staging');
 const { checkAndResolveConflicts } = require('../services/conflict-resolver');
 const { sendSystemMessage } = require('../services/ws');
-const { getActiveUserStats } = require('../services/active-users');
+const { getActiveUserStats, isUserActive } = require('../services/active-users');
 
 function voteRoutes(config) {
   const router = Router();
@@ -204,8 +204,14 @@ function voteRoutes(config) {
       );
 
       const { active: activeUsers, majority } = await getActiveUserStats(pool, appRows[0].id);
+      // Whether the viewer themself counts as active for this app —
+      // surfaced on the group-chat dashboard so they can see their
+      // own status and (if not counted) understand what to do about
+      // it. Cheap query (two EXISTS lookups), runs alongside the
+      // existing active-stats query.
+      const viewerActive = await isUserActive(pool, appRows[0].id, userId);
 
-      res.json({ promoted: rows, activeUsers, majority });
+      res.json({ promoted: rows, activeUsers, majority, viewerActive });
     } catch (err) {
       log.error('votes', 'Failed to list promoted', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

@@ -329,7 +329,13 @@ const AppView = {
     }
   },
 
-  panelOpen: true,
+  // The dropdown started life as an "activity feed" (open PRs, merged
+  // work, etc.) and is gradually growing into an app-info dashboard
+  // (engaged-user count first, more tiles to follow). It's collapsed
+  // by default now so the chat itself is what users land on; the pill
+  // header summarises any current activity inline so opening it is
+  // optional, not required.
+  panelOpen: false,
 
   async loadVotePanel(slug) {
     const panel = document.getElementById('gc-panel-content');
@@ -346,20 +352,48 @@ const AppView = {
       const promoted = promotedData.promoted;
       const activeUsers = promotedData.activeUsers || 1;
       const majority = promotedData.majority || 1;
+      // Whether the current viewer is in the active set for this app
+      // (per src/services/active-users.js). Surfaced as a one-line
+      // status on the Users dashboard tile.
+      const viewerActive = !!promotedData.viewerActive;
       const issuesData = issuesRes.ok ? await issuesRes.json() : { issues: [] };
       const allIssues = issuesData.issues || [];
       const renameProposals = allIssues.filter((i) => i.kind === 'rename');
       const issues = allIssues.filter((i) => i.kind !== 'rename');
       const merged = mergedRes.ok ? (await mergedRes.json()).merged : [];
 
+      // Activity-only summary (excludes the Users tile, which is
+      // always present and isn't really "activity"). Empty when
+      // nothing's happening so the pill stays clean.
       const counts = [
         promoted.length && `${promoted.length} open PR${promoted.length > 1 ? 's' : ''}`,
         renameProposals.length && `${renameProposals.length} rename proposal${renameProposals.length > 1 ? 's' : ''}`,
         issues.length && `${issues.length} issue${issues.length > 1 ? 's' : ''}`,
         merged.length && `${merged.length} merged`,
-      ].filter(Boolean).join(' · ') || 'No activity';
+      ].filter(Boolean).join(' · ');
 
       let bodyHtml = '';
+
+      // Users tile — first piece of the new dashboard. activeUsers is
+      // the same metric the platform uses for vote-majority thresholds
+      // (sticky qualification: >=60s on a single day ever + visit in
+      // the last 10 days, see src/services/active-users.js). Always
+      // rendered, even when there's no other activity, so the panel
+      // always has something worth opening for. The viewer-status
+      // sub-line tells the current user whether they're counted and,
+      // if not, how to qualify.
+      const viewerStatusHtml = viewerActive
+        ? `<div class="text-xs mt-1 text-emerald-600 dark:text-emerald-400">&check; You're counted as an active user.</div>`
+        : `<div class="text-xs mt-1 text-zinc-500 dark:text-zinc-400">Spend at least 1 minute on the App tab to be counted.</div>`;
+      bodyHtml += `
+        <div class="mb-3">
+          <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 font-medium">Users</div>
+          <div class="text-sm text-zinc-700 dark:text-zinc-300">
+            <span class="font-semibold text-zinc-900 dark:text-zinc-100">${activeUsers}</span>
+            active in the last 10 days
+          </div>
+          ${viewerStatusHtml}
+        </div>`;
 
       if (promoted.length) {
         bodyHtml += `<div class="mb-2"><div class="text-xs text-zinc-500 mb-1 font-medium">Open PRs <span class="text-zinc-600 font-normal">(need ${majority}/${activeUsers} votes to merge)</span></div>`;
@@ -452,10 +486,18 @@ const AppView = {
         bodyHtml += '</div>';
       }
 
+      // Pill: fixed title on the left ("App information and activity")
+      // + an optional activity summary on the right. The summary keeps
+      // the at-a-glance utility the old pill had ("2 open PRs · ..."),
+      // but only when there's actually something — when nothing's
+      // open, the right side stays empty and the pill is just a clean
+      // affordance for opening the dashboard.
       panel.innerHTML = `
         <button id="gc-panel-toggle" class="flex items-center gap-2 w-full text-left">
-          <span class="text-xs text-zinc-400">${AppView.panelOpen ? '&#9660;' : '&#9654;'}</span>
-          <span class="text-xs text-zinc-400 flex-1">${counts}</span>
+          <span class="text-xs text-zinc-500 dark:text-zinc-400">${AppView.panelOpen ? '&#9660;' : '&#9654;'}</span>
+          <span class="text-xs font-medium text-zinc-700 dark:text-zinc-300">App information and activity</span>
+          <span class="flex-1"></span>
+          ${counts ? `<span class="text-xs text-zinc-500 dark:text-zinc-400 truncate">${counts}</span>` : ''}
         </button>
         <div id="gc-panel-body" class="${AppView.panelOpen ? '' : 'hidden'} mt-2">${bodyHtml}</div>`;
 

@@ -86,7 +86,7 @@ The template is a stripped-down recipe-bot: Node.js/Express + single HTML page +
 
 1. Anyone can **suggest issues** or **vote** on existing ones — each is reflected as a **GitHub Issue** on the repo
 2. Anyone can **vote to merge** a promoted PR
-3. **Merge threshold**: majority of **active users**, where active = used the app for >1 minute in the last 72 hours
+3. **Merge threshold**: majority of **active users**. A user becomes _qualified_ once they've spent at least 1 minute on the App tab on a single day (sticky — once earned, stays earned). They're then counted as _active_ as long as they have at least one visit (any duration) within the last 10 days; 10 days with no visits drops them out of the count, but a return visit re-counts them. See `src/services/active-users.js` for the canonical query.
 4. When the vote passes, the PR is merged into main and **auto-deployed** (deploy script runs migrations on startup)
 5. Anyone can **propose a rename** (display name only; slug/container/URLs unchanged) from the group-chat panel; it behaves as a structured issue (`kind = 'rename'`). When a majority of active users up-vote it, the rename applies atomically and the new name is broadcast to all clients via a WebSocket `app_update` event.
 
