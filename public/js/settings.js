@@ -30,6 +30,20 @@
       const cancelLink = document.getElementById('wallet-link-cancel');
       if (cancelLink) cancelLink.addEventListener('click', () => this._cancelWalletLink());
 
+      // Dev console "always show" toggle. State lives in DevConsole +
+      // localStorage; we just mirror it here. Wire change immediately
+      // so the icon appears/disappears without needing to close the
+      // modal.
+      const devConsoleToggle = document.getElementById('dev-console-always-show');
+      if (devConsoleToggle) {
+        devConsoleToggle.addEventListener('change', (e) => {
+          if (!window.DevConsole) return;
+          DevConsole.setMode(e.target.checked
+            ? DevConsole.MODE_ALWAYS
+            : DevConsole.MODE_ERRORS_ONLY);
+        });
+      }
+
       this.modal.addEventListener('click', (e) => {
         if (e.target === this.modal) this.close();
       });
@@ -67,11 +81,19 @@
     open() {
       this._renderBody();
       this._renderWalletSection();
+      this._renderDevConsoleSection();
       this._clearStatus();
       this.modal.classList.remove('hidden');
       if (!this.state.hasApiKey) {
         setTimeout(() => document.getElementById('settings-api-key').focus(), 0);
       }
+    },
+
+    _renderDevConsoleSection() {
+      const toggle = document.getElementById('dev-console-always-show');
+      if (!toggle) return;
+      const mode = window.DevConsole ? DevConsole.getMode() : 'errors-only';
+      toggle.checked = mode === 'always';
     },
 
     close() {

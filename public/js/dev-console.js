@@ -7,21 +7,41 @@
 //
 // Messages from frames served by other pages/iframes (ads, third-party
 // widgets, etc.) are ignored via the sentinel check.
+//
+// Header-icon visibility: by default the icon is hidden until the
+// current app actually logs an error, so the header stays clean for
+// the common case where a working app produces no errors. Users who
+// want it visible all the time can flip the "always show" toggle in
+// Settings — that's persisted in localStorage as a UI preference.
 
 const DevConsole = {
   SENTINEL: '__usernodeDevConsole',
   MAX_ENTRIES: 500,
+
+  // Visibility mode. Persisted across reloads via localStorage so users
+  // don't have to re-set it every session. Only flipped by the toggle
+  // in Settings (Settings.js) — there's no other UI for it.
+  MODE_KEY: 'usernode:devConsoleMode',
+  MODE_ERRORS_ONLY: 'errors-only',
+  MODE_ALWAYS: 'always',
 
   entries: [],
   unseenErrors: 0,
   panelOpen: false,
   filter: 'all',
   currentAppSlug: null,
+  // Tracks whether an app iframe is currently mounted (production App
+  // tab or staging overlay). Set by setButtonVisible() — see comment on
+  // that method for why the public name lies a little.
+  iframeVisible: false,
+  mode: 'errors-only',
 
   // Store per-app so switching between apps preserves each app's log.
   byApp: new Map(),
 
   init() {
+    DevConsole.mode = DevConsole._loadMode();
+
     window.addEventListener('message', DevConsole._onMessage);
 
     const btn = document.getElementById('dev-console-btn');
@@ -47,6 +67,36 @@ const DevConsole = {
         DevConsole._rerenderLog();
       });
     }
+
+    // Apply the initial mode to both buttons in case markup ships with
+    // them visible (e.g. the staging twin has no `hidden` class).
+    DevConsole._refreshButtonVisibility();
+  },
+
+  _loadMode() {
+    try {
+      return window.localStorage.getItem(DevConsole.MODE_KEY) === DevConsole.MODE_ALWAYS
+        ? DevConsole.MODE_ALWAYS
+        : DevConsole.MODE_ERRORS_ONLY;
+    } catch {
+      return DevConsole.MODE_ERRORS_ONLY;
+    }
+  },
+
+  // Public API for Settings. Pass MODE_ERRORS_ONLY (default) or
+  // MODE_ALWAYS. Anything else is normalised to errors-only — guards
+  // against truthy-string bugs from older callers.
+  setMode(mode) {
+    const next = mode === DevConsole.MODE_ALWAYS
+      ? DevConsole.MODE_ALWAYS
+      : DevConsole.MODE_ERRORS_ONLY;
+    DevConsole.mode = next;
+    try { window.localStorage.setItem(DevConsole.MODE_KEY, next); } catch {}
+    DevConsole._refreshButtonVisibility();
+  },
+
+  getMode() {
+    return DevConsole.mode;
   },
 
   _onMessage(event) {
@@ -70,6 +120,10 @@ const DevConsole = {
       DevConsole.unseenErrors++;
     }
     DevConsole._updateBadge();
+    // An incoming error in errors-only mode may need to flip the icon
+    // from hidden to visible. Cheap to re-evaluate on every message;
+    // the underlying classList.toggle is idempotent.
+    if (entry.level === 'error') DevConsole._refreshButtonVisibility();
 
     if (DevConsole.panelOpen) DevConsole._appendLogEntry(entry);
   },
@@ -88,10 +142,9 @@ const DevConsole = {
     DevConsole.entries = list;
   },
 
-  // Swap active buffer when user navigates between apps. Note: this no
-  // longer toggles the header button — visibility is driven separately by
-  // setButtonVisible() so the icon only appears on views that actually
-  // mount the app/staging iframe (not on group/dev chat tabs).
+  // Swap active buffer when user navigates between apps. The header
+  // icon's visibility is driven by setButtonVisible() (iframe context)
+  // and the resolved mode/error state — see _refreshButtonVisibility().
   setCurrentApp(slug) {
     if (DevConsole.currentAppSlug === slug) return;
     DevConsole.currentAppSlug = slug || null;
@@ -99,17 +152,46 @@ const DevConsole = {
     DevConsole.unseenErrors = 0;
     DevConsole._updateBadge();
     if (DevConsole.panelOpen) DevConsole._rerenderLog();
-    if (!slug) DevConsole.setButtonVisible(false);
+    if (!slug) {
+      DevConsole.setButtonVisible(false);
+    } else {
+      // Different app's error buffer -> recompute visibility. A user
+      // switching from an error-laden app to a clean one should see
+      // the icon disappear (in errors-only mode).
+      DevConsole._refreshButtonVisibility();
+    }
   },
 
-  // Header icon visibility. Only meaningful when there's an iframe on
-  // screen — i.e. the App tab (production preview) or the staging
-  // overlay. Group chat / dev chat tabs hide it.
+  // Signal that an app iframe is/isn't on screen. The name is a little
+  // misleading — it doesn't directly toggle the button, just records
+  // the iframe context. The actual icon visibility falls out of mode +
+  // error state via _refreshButtonVisibility(). Public name kept for
+  // backward compat with existing callers in app.js / app-view.js.
   setButtonVisible(visible) {
+    DevConsole.iframeVisible = !!visible;
+    DevConsole._refreshButtonVisibility();
+  },
+
+  // Resolve final visibility from all inputs. Cheap (a couple of class
+  // toggles + a small linear scan over the current app's buffer); safe
+  // to call from any state-changing method.
+  _refreshButtonVisibility() {
+    const inIframeContext = DevConsole.iframeVisible && !!DevConsole.currentAppSlug;
+    // Errors-only mode hides the icon until the current app's buffer
+    // contains at least one error. We also keep it visible while the
+    // panel itself is open so the user has a stable focus point even
+    // after Clear empties the buffer.
+    const hasErrors = DevConsole.entries.some(e => e.level === 'error');
+    const show = inIframeContext
+      && (DevConsole.mode === DevConsole.MODE_ALWAYS
+          || hasErrors
+          || DevConsole.panelOpen);
+
     const btn = document.getElementById('dev-console-btn');
-    if (!btn) return;
-    const show = !!visible && !!DevConsole.currentAppSlug;
-    btn.classList.toggle('hidden', !show);
+    const stagingBtn = document.getElementById('staging-dev-console-btn');
+    if (btn) btn.classList.toggle('hidden', !show);
+    if (stagingBtn) stagingBtn.classList.toggle('hidden', !show);
+
     if (!show && DevConsole.panelOpen) DevConsole.hide();
   },
 
@@ -126,12 +208,16 @@ const DevConsole = {
     DevConsole.unseenErrors = 0;
     DevConsole._updateBadge();
     DevConsole._rerenderLog();
+    DevConsole._refreshButtonVisibility();
   },
 
   hide() {
     const panel = document.getElementById('dev-console-panel');
     if (panel) panel.classList.add('hidden');
     DevConsole.panelOpen = false;
+    // Closing the panel may take us back to the "no errors, errors-only
+    // mode" state — re-evaluate so the icon disappears if appropriate.
+    DevConsole._refreshButtonVisibility();
   },
 
   clear() {
@@ -141,6 +227,7 @@ const DevConsole = {
     DevConsole.unseenErrors = 0;
     DevConsole._updateBadge();
     DevConsole._rerenderLog();
+    DevConsole._refreshButtonVisibility();
   },
 
   _updateBadge() {
