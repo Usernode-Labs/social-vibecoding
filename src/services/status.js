@@ -5,6 +5,9 @@ const log = require('./logger');
 const workerProgress = require('./worker-progress');
 const deployStatus = require('./deploy-status');
 const nodeStatus = require('./node-status');
+// Aliased to avoid colliding with the per-session `worker` local later
+// in this file (where `worker = workers.find(...)` rebinds the name).
+const workerSvc = require('./worker');
 
 const execFileAsync = promisify(execFile);
 
@@ -132,7 +135,16 @@ async function gatherFull(config) {
 
   const byName = Object.fromEntries(containers.map((c) => [c.name, c]));
 
-  // Workers (ephemeral, per chat turn).
+  // Workers are now long-lived per session: warm-idle while waiting for
+  // the next dispatch, in-flight while a docker exec is running. The
+  // warm registry is the source of truth for which session each
+  // container belongs to and whether it's currently executing; container
+  // state on its own is "running" in both cases.
+  const warmByName = new Map();
+  for (const meta of workerSvc.warmRegistrySnapshot()) {
+    warmByName.set(meta.containerName, meta);
+  }
+
   const workerContainers = containers.filter((c) => c.name.startsWith(WORKER_PREFIX));
   const workers = await Promise.all(workerContainers.map(async (c) => {
     const startedAt = await inspectStarted(c.name);
@@ -140,6 +152,24 @@ async function gatherFull(config) {
     const sess = sessions.find((s) => s.id === sessionId);
     const prog = workerProgress.get(sessionId);
     const uptime = uptimeSeconds(startedAt);
+    const warm = warmByName.get(c.name);
+    // workerMode classifies what the worker is doing right now:
+    //   - 'in-flight'  : a `docker exec` is running run-cc.sh
+    //   - 'warm-idle'  : sleep wrapper is alive, waiting for the next
+    //                    dispatch. Costs ~256MB until the idle sweeper
+    //                    evicts it.
+    //   - 'bootstrapping' : ensureWorker is racing through clone +
+    //                       checkout + warm-ready
+    //   - 'unregistered'  : container exists but isn't in the warm
+    //                       registry. Likely an orphan from a prior
+    //                       process; recovery should sweep it.
+    let workerMode = 'unregistered';
+    if (warm) {
+      if (warm.bootstrapping) workerMode = 'bootstrapping';
+      else if (warm.inFlight) workerMode = 'in-flight';
+      else workerMode = 'warm-idle';
+    }
+    const idleMs = warm && !warm.inFlight ? Date.now() - warm.lastUsedMs : null;
     return {
       name: c.name,
       id: c.id,
@@ -151,12 +181,19 @@ async function gatherFull(config) {
       sessionArchived: sessionId != null && !sess,
       startedAt,
       uptimeSeconds: uptime,
-      orphan: (uptime !== null && uptime * 1000 > WORKER_ORPHAN_THRESHOLD_MS) ||
-              (sessionId != null && !sess),
+      // Long-lived workers can stay warm-idle indefinitely while a
+      // session is open; uptime alone isn't an orphan signal anymore.
+      // Only flag if the session is gone — the idle eviction sweeper
+      // owns the time-based teardown.
+      orphan: (sessionId != null && !sess) || workerMode === 'unregistered',
       lastProgress: prog?.text || null,
       lastProgressAt: prog?.at || null,
       model: prog?.model || null,
       stats: stats[c.name] || null,
+      // Long-lived worker telemetry
+      workerMode,
+      idleMs,
+      adopted: !!warm?.adopted,
     };
   }));
 
@@ -199,6 +236,12 @@ async function gatherFull(config) {
             lastProgressAt: worker.lastProgressAt,
             model: worker.model,
             orphan: worker.orphan,
+            // Long-lived worker mode: in-flight / warm-idle /
+            // bootstrapping / unregistered. Lets the dashboard show
+            // why a container exists without needing to reconcile
+            // activeWorkers + warm registry on the client.
+            workerMode: worker.workerMode,
+            idleMs: worker.idleMs,
           } : null,
         };
       });
@@ -272,6 +315,12 @@ async function gatherFull(config) {
   // Build the FULL (admin) payload. `redact()` below strips admin-only
   // fields for non-admin viewers at serve time so the cache is shared
   // across both audiences.
+  // Long-lived worker breakdown. Memory budget tuning lives downstream
+  // of these numbers — operators dial WORKER_IDLE_EVICTION_MS based on
+  // typical warmIdle counts vs. memory headroom.
+  const workersInFlight = workers.filter((w) => w.workerMode === 'in-flight').length;
+  const workersWarmIdle = workers.filter((w) => w.workerMode === 'warm-idle').length;
+  const workersBootstrapping = workers.filter((w) => w.workerMode === 'bootstrapping').length;
   const summary = {
     apps: apps.length,
     prodRunning: appTree.filter((a) => a.prod?.state === 'running').length,
@@ -279,6 +328,9 @@ async function gatherFull(config) {
     stagingRunning,
     stagingCap: MAX_STAGING_GLOBAL,
     workersRunning: workers.filter((w) => w.state === 'running').length,
+    workersInFlight,
+    workersWarmIdle,
+    workersBootstrapping,
     workersOrphaned: workers.filter((w) => w.orphan).length,
     stuckSessions: stuckSessions.length,
     globalSpendCents,
@@ -300,6 +352,13 @@ async function gatherFull(config) {
       userDailyCents: USER_DAILY_LIMIT_CENTS,
       globalDailyCents: GLOBAL_DAILY_LIMIT_CENTS,
       workerOrphanThresholdMs: WORKER_ORPHAN_THRESHOLD_MS,
+      // Tunable knob for how long warm-idle workers persist before
+      // eviction. Surfaced so the dashboard can show the budget the
+      // sweeper is operating against.
+      workerIdleEvictionMs: parseInt(
+        process.env.WORKER_IDLE_EVICTION_MS || (10 * 60 * 1000),
+        10
+      ),
     },
     summary,
     apps: appTree,

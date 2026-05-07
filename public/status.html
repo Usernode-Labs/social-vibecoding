@@ -177,11 +177,23 @@ function renderSummary(s, node) {
   const nodeMeta = nodeStatusMeta(node);
   const nodeValue = `${nodeMeta.label}${node && typeof node.peers === 'number' ? ` <span class="text-zinc-500 text-xs">${node.peers}p</span>` : ''}`;
 
+  // Long-lived worker breakdown: "in-flight" is what used to be the
+  // only meaningful workersRunning figure; warm-idle is the new
+  // background memory cost the operator pays for fast subsequent
+  // dispatches. Showing them inline keeps the card narrow without
+  // hiding the new state.
+  const inFlight = s.workersInFlight ?? s.workersRunning ?? 0;
+  const warmIdle = s.workersWarmIdle ?? 0;
+  const workerExtras = [];
+  if (warmIdle > 0) workerExtras.push(`<span class="text-zinc-500 text-xs">+${warmIdle} warm</span>`);
+  if (s.workersOrphaned > 0) workerExtras.push(`<span class="text-red-400 text-xs">+${s.workersOrphaned} orphan</span>`);
+  const workerValue = `${inFlight}${workerExtras.length ? ' ' + workerExtras.join(' ') : ''}`;
+
   const cards = [
     summaryCard('Node', nodeValue, nodeMeta.tone),
     summaryCard('Apps', `${s.prodRunning}/${s.apps}`, prodTone),
     summaryCard('Staging', `${s.stagingRunning}/${s.stagingCap}`),
-    summaryCard('Workers', `${s.workersRunning}${s.workersOrphaned ? ` <span class="text-red-400 text-xs">+${s.workersOrphaned} orphan</span>` : ''}`, workerTone),
+    summaryCard('Workers', workerValue, workerTone),
     summaryCard('Stuck', `${s.stuckSessions}`, stuckTone),
     summaryCard('Prod missing', `${s.prodMissing}`, s.prodMissing > 0 ? 'red' : 'zinc'),
   ];
@@ -361,17 +373,39 @@ function renderApps(apps) {
   }).join('');
 }
 
+function workerModePill(mode) {
+  // Visual taxonomy for long-lived workers:
+  //   in-flight    : currently running a docker exec — busy with a turn
+  //   warm-idle    : waiting for the next dispatch (memory cost only)
+  //   bootstrapping: clone + checkout + warm-ready in flight
+  //   unregistered : container exists but isn't in the warm registry
+  //                  (orphan from a prior process, or stale)
+  if (!mode) return '';
+  const cls = {
+    'in-flight': 'pill-running',
+    'warm-idle': 'pill-creating',
+    bootstrapping: 'pill-creating',
+    unregistered: 'pill-stopped',
+  }[mode] || 'pill-stopped';
+  return `<span class="pill ${cls}"><span class="dot"></span>${h(mode)}</span>`;
+}
+
 function renderWorkers(workers) {
   if (!workers.length) return '<div class="text-zinc-500">No workers running.</div>';
   return workers.map((w) => {
     const orphan = w.orphan ? '<span class="text-red-400 ml-1">orphan</span>' : '';
+    const idleLabel = w.workerMode === 'warm-idle' && w.idleMs != null
+      ? `idle ${fmtDuration(Math.floor(w.idleMs / 1000))}`
+      : '';
     return `
       <div class="rounded border ${w.orphan ? 'border-red-700/40' : 'border-zinc-800'} bg-zinc-900/40 p-2">
         <div class="flex items-center gap-2 flex-wrap">
           ${statePill(w.state, w.state)}
+          ${workerModePill(w.workerMode)}
           <span class="text-xs text-zinc-400">session #${w.sessionId}</span>
           ${w.appSlug ? `<span class="mono text-xs text-zinc-500">${h(w.appSlug)}</span>` : ''}
           ${w.username ? `<span class="text-xs">@${h(w.username)}</span>` : ''}
+          ${idleLabel ? `<span class="text-xs text-zinc-500">${idleLabel}</span>` : ''}
           <span class="text-xs text-zinc-500 ml-auto">${fmtDuration(w.uptimeSeconds)}${orphan}</span>
         </div>
         ${w.lastProgress ? `<div class="mt-1 mono text-xs text-zinc-400 truncate">▸ ${h(w.lastProgress)}</div>` : ''}

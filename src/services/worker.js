@@ -8,6 +8,7 @@ const github = require('./github');
 const WORKER_IMAGE = 'usernode-worker:latest';
 const WORKER_MEMORY = '2g';
 const WORKER_CPUS = '2';
+const WARM_READY_TIMEOUT_MS = 5 * 60 * 1000;
 
 // ──────────────────────────────────────────────────────────────────────
 // Stream-json / marker parsing
@@ -17,12 +18,18 @@ const WORKER_CPUS = '2';
 // stream-json --verbose`). The worker entrypoint additionally emits a
 // handful of sentinel lines the host relies on:
 //
-//   __USERNODE_PHASE__  <phase>                        status transitions
-//   __USERNODE_RESULT__ cc_exit=N ahead=N sha=… push_ok=N   final summary
-//   __USERNODE_WARN__   <msg>                          non-fatal issue
-//   __USERNODE_ERROR__  <msg>                          fatal, bail out
+//   __USERNODE_PHASE__  <phase>                            status transitions
+//   __USERNODE_RESULT__ cc_exit=N ahead=N sha=… push_ok=N      final summary
+//   __USERNODE_WARN__   <msg>                              non-fatal issue
+//   __USERNODE_ERROR__  <msg>                              fatal, bail out
 //
 // Everything else is treated as a plain progress line (git output, etc.).
+//
+// Two transports drive this parser:
+//   1) `docker logs -f <container>` — used for legacy single-shot
+//      workers and for the warm-ready wait during bootstrap.
+//   2) `docker exec <container> /usr/local/bin/run-cc.sh` — per-turn
+//      streaming for the long-lived worker path. Same stdout format.
 
 function parseClaudeResponse(stdout) {
   // Keep for back-compat with callers that still pass a full stdout blob.
@@ -202,71 +209,142 @@ function newWatchState() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// Image + spawn
+// Image build
 // ──────────────────────────────────────────────────────────────────────
 
 async function ensureWorkerImage() {
   // Always build; Docker's layer cache makes this fast when nothing's
-  // changed, and crucially picks up edits to worker-run.sh without
-  // requiring a manual `docker rmi`.
+  // changed, and crucially picks up edits to worker-run.sh / run-cc.sh
+  // without requiring a manual `docker rmi`.
   const path = require('path');
   const workerDir = path.join(__dirname, '../../worker');
   log.info('worker', 'Building worker image', { dir: workerDir });
   await docker.buildImage(workerDir, WORKER_IMAGE);
 }
 
-// Spawns a worker container that autonomously runs the full dev-session
-// pipeline (clone → claude → commit → push). Returns the container name.
-// The caller is expected to follow up with `watchWorker` to stream
-// progress and collect the final result.
-// Docker-volume name used to persist Claude Code's on-disk session memory
-// (~/.claude) for a given chat session. Reused across every turn of the
+// Docker-volume name used to persist Claude Code's on-disk session
+// memory (~/.claude) for a given chat session. Reused across every
+// turn — and across container churn (eviction + re-warm) — of the
 // same chat so `--resume <cc_session_id>` can replay context from disk.
 function ccVolumeName(sessionId) {
   return `usernode-cc-${sessionId}`;
 }
 
-async function spawnWorker(sessionId, {
-  repoOwner,
-  repoName,
-  branchName,
-  anthropicApiKey,
-  prompt,
-  model,
-  commitMsg,
-  resumeSessionId,
-  // 'build' (default) runs the existing CC + commit + push pipeline.
-  // 'scout' runs CC in --permission-mode plan with no commit/push, used
-  // by the spec-stage scout dispatch to draft a grounded markdown spec.
-  mode = 'build',
-}) {
-  const containerName = `usernode-worker-${sessionId}`;
+function workerContainerName(sessionId) {
+  return `usernode-worker-${sessionId}`;
+}
 
-  // If a previous run left a container behind, wipe it first. Recovery
-  // should have handled cleanup already, but be defensive.
+// ──────────────────────────────────────────────────────────────────────
+// Warm-worker registry
+// ──────────────────────────────────────────────────────────────────────
+//
+// Long-lived per-session worker containers are tracked here so the host
+// knows which sessions have a warm container ready to take execs, when
+// each was last used (for idle eviction), and whether one is currently
+// running a `docker exec` (for stop semantics + drain).
+//
+// Shape: Map<sessionId:number, {
+//   containerName: string,
+//   lastUsedMs:    number,    // updated when an exec completes / on adopt
+//   inFlight:      boolean,   // true while a docker-exec child is running
+//   bootstrap:     Promise|null,   // present while ensureWorker is racing
+//   adopted:       boolean,   // true if registered via adoptWarmWorker
+// }>
+//
+// Lifecycle:
+//   - ensureWorker()    → creates entry on first use, awaits bootstrap.
+//   - execInWorker()    → toggles inFlight + bumps lastUsedMs on finish.
+//   - evictWorker()     → docker stop+rm, deletes entry. Volume kept.
+//   - destroyWorker()   → also deletes the entry (compat path used by
+//                         legacy adoption + session archive).
+//   - adoptWarmWorker() → server restart picked up an existing warm
+//                         container; register it so the next exec
+//                         doesn't try to re-bootstrap on top.
+const _warmRegistry = new Map();
+
+function _registryGet(sessionId) {
+  return _warmRegistry.get(sessionId) || null;
+}
+
+function _registryUpsert(sessionId, patch) {
+  const prev = _warmRegistry.get(sessionId) || {
+    containerName: workerContainerName(sessionId),
+    lastUsedMs: Date.now(),
+    inFlight: false,
+    bootstrap: null,
+    adopted: false,
+  };
+  const next = { ...prev, ...patch };
+  _warmRegistry.set(sessionId, next);
+  return next;
+}
+
+// Read-only snapshot of the warm registry. Safe to expose to the idle-
+// eviction sweeper and the /api/status admin page.
+function warmRegistrySnapshot() {
+  const out = [];
+  for (const [sessionId, meta] of _warmRegistry.entries()) {
+    out.push({
+      sessionId,
+      containerName: meta.containerName,
+      lastUsedMs: meta.lastUsedMs,
+      inFlight: meta.inFlight,
+      bootstrapping: !!meta.bootstrap,
+      adopted: !!meta.adopted,
+    });
+  }
+  return out;
+}
+
+// Register a warm container that already exists (either spawned by us
+// earlier in this process, or adopted from a previous server run).
+function adoptWarmWorker(sessionId, containerName = null) {
+  _registryUpsert(sessionId, {
+    containerName: containerName || workerContainerName(sessionId),
+    lastUsedMs: Date.now(),
+    inFlight: false,
+    bootstrap: null,
+    adopted: true,
+  });
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Bootstrap (cold start) + warm-ready wait
+// ──────────────────────────────────────────────────────────────────────
+
+// Spawn a brand-new warm worker container. Internal to this module —
+// callers should use `ensureWorker` which handles the "already warm"
+// case and concurrency.
+async function _bootstrapWarmContainer(sessionId, {
+  repoOwner, repoName, branchName, anthropicApiKey, onProgress,
+}) {
+  const containerName = workerContainerName(sessionId);
+
+  // Defensive: scrub any leftover container at this name. ensureWorker
+  // already checks for `running` and returns early; anything else (exited,
+  // restarting, dead) gets reaped here so `docker run --name` can succeed.
   await docker.stopAndRemove(containerName).catch(() => {});
 
   const cloneUrl = await github.getCloneUrl(repoOwner, repoName);
   const pat = process.env.GITHUB_BOT_TOKEN || '';
 
-  // Make sure the persistent CC volume exists; worker-run.sh will mount
-  // it at /home/node/.claude so `claude --resume <id>` sees prior state.
+  // CC volume persists across container churn so `claude --resume <id>`
+  // can replay prior conversation state on every re-warm.
   const ccVolume = ccVolumeName(sessionId);
   await docker.ensureVolume(ccVolume);
 
   // BYOK safety (#30): we split container env into two groups.
   //
-  // `SECRET_ENV` are secrets that must NEVER appear in the docker CLI
+  // `secretEnv` are secrets that must NEVER appear in the docker CLI
   // argv — doing so would expose them in `ps` on the host (briefly)
   // and, far worse, in `err.cmd`/`err.message` on every `execFile`
   // failure, which `log.warn` then writes to the log file. Instead we
   // reference them with bare `-e KEY` (no `=value`) so Docker reads
   // the values from its own process env, and we set that env on the
-  // `execFile` child only. Values end up in /proc/<docker-pid>/environ
+  // child only. Values end up in /proc/<docker-pid>/environ
   // (root/same-user readable, not argv-visible).
   //
-  // `safeEnv` holds the non-secret args that stay inline — they're
-  // logged and visible in ps, which is fine.
+  // `safeEnv` holds the non-secret args that stay inline.
   const secretEnv = {
     ANTHROPIC_API_KEY: anthropicApiKey || '',
     PAT: pat,
@@ -278,24 +356,18 @@ async function spawnWorker(sessionId, {
     GIT_COMMITTER_NAME: 'usernode-bot',
     GIT_COMMITTER_EMAIL: 'usernode-bot@users.noreply.github.com',
     BRANCH: branchName,
-    PROMPT: prompt,
-    MODEL: model || 'claude-sonnet-4-6',
-    COMMIT_MSG: commitMsg || 'Changes via Usernode',
-    // Empty means "fresh session, let CC mint a new id"; non-empty means
-    // pass through --resume to CC and reuse the on-disk conversation.
-    CLAUDE_RESUME_SESSION_ID: resumeSessionId || '',
-    // 'build' or 'scout' — read by worker-run.sh to choose between the
-    // edit + commit + push pipeline and the read-only plan-mode path.
-    MODE: mode,
+    // MODE=warm tells worker-run.sh to clone + checkout + sleep
+    // infinity, so subsequent `docker exec` calls drive per-turn work.
+    MODE: 'warm',
   };
   const secretEnvArgs = Object.keys(secretEnv).flatMap((k) => ['-e', k]);
   const safeEnvArgs = Object.entries(safeEnv).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
 
   const network = process.env.DOCKER_NETWORK || 'shared-web';
 
-  // NOTE: no --rm — we want the container to stick around after exit so
-  // that on a server restart we can still read its logs and determine
-  // whether it finished successfully.
+  // No --rm — we want the container to stick around so the host can
+  // re-attach to it on restart (orphan adoption) and so eviction is
+  // an explicit policy decision, not a side effect of the wrapper exiting.
   const args = [
     'run', '-d',
     '--name', containerName,
@@ -316,35 +388,265 @@ async function spawnWorker(sessionId, {
     // pick them up without them ever appearing in argv.
     env: { ...process.env, ...secretEnv },
   });
-  log.info('worker', 'Worker spawned (autonomous)', {
-    containerName,
-    ccVolume,
-    resume: Boolean(resumeSessionId),
-  });
+  log.info('worker', 'Warm worker spawned', { containerName, ccVolume });
+
+  // Wait for the wrapper to reach `__USERNODE_PHASE__ warm-ready`.
+  // Bootstrap progress (clone/checkout) flows through onProgress so the
+  // dev-chat UI sees [clone] / [checkout] phase ticks just like the
+  // legacy single-shot path used to surface them.
+  await _awaitWarmReady(containerName, { onProgress });
+
   return containerName;
 }
 
-// Remove the named CC volume for a given chat session. Called when the
-// session is archived (permanent teardown). Safe to call even if the
-// volume was never created.
-async function destroyCcVolume(sessionId) {
-  await docker.removeVolume(ccVolumeName(sessionId));
+// Tail `docker logs -f` until the warm-ready phase marker shows up, or
+// the container dies, or we hit a timeout. SIGKILL the tail before
+// returning so we don't leak children.
+async function _awaitWarmReady(containerName, { onProgress, timeoutMs = WARM_READY_TIMEOUT_MS } = {}) {
+  const progress = typeof onProgress === 'function' ? onProgress : () => {};
+  return await new Promise((resolve, reject) => {
+    const proc = spawn('docker', ['logs', '-f', containerName]);
+    let buf = '';
+    let done = false;
+    const finish = (err) => {
+      if (done) return;
+      done = true;
+      try { proc.kill('SIGKILL'); } catch {}
+      clearTimeout(timer);
+      if (err) reject(err);
+      else resolve();
+    };
+    const timer = setTimeout(
+      () => finish(new Error(`warm-ready timeout for ${containerName}`)),
+      timeoutMs
+    );
+    proc.stdout.on('data', (chunk) => {
+      buf += chunk.toString('utf8');
+      const lines = buf.split('\n');
+      buf = lines.pop() || '';
+      for (const line of lines) {
+        if (!line) continue;
+        if (line.startsWith('__USERNODE_ERROR__')) {
+          return finish(new Error(line.replace('__USERNODE_ERROR__', '').trim()));
+        }
+        if (line.startsWith('__USERNODE_PHASE__')) {
+          const phase = line.replace('__USERNODE_PHASE__', '').trim();
+          progress(`[${phase}]`);
+          if (phase === 'warm-ready') return finish();
+          continue;
+        }
+        if (line.length < 500) progress(line);
+      }
+    });
+    proc.stderr.on('data', (chunk) => {
+      const text = chunk.toString('utf8');
+      for (const line of text.split('\n')) {
+        if (line.trim() && line.length < 500) progress(line);
+      }
+    });
+    proc.on('close', (code) => {
+      // The warm wrapper does `exec sleep infinity`, so logs -f only
+      // exits if the container died (or we SIGKILLed the tail). If we
+      // hit close before warm-ready, bootstrap failed mid-flight.
+      finish(new Error(`warm wrapper exited before warm-ready (code=${code})`));
+    });
+    proc.on('error', (err) => finish(err));
+  });
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// Log watching
+// Public API: ensureWorker, execInWorker, evictWorker
+// ──────────────────────────────────────────────────────────────────────
+
+// Idempotently get a warm worker container ready for `execInWorker`.
+//
+// Cold path: spins up the container (~5-10s docker run + clone +
+// checkout + warm-ready ~5-30s). Warm path: cheap no-op once the
+// container is running, even across multiple concurrent callers (the
+// in-flight bootstrap promise is shared via `_warmRegistry[i].bootstrap`).
+//
+// Returns the container name. Throws if bootstrap fails — in which case
+// the registry entry is cleared so the next caller retries from scratch.
+async function ensureWorker(sessionId, {
+  repoOwner, repoName, branchName,
+  anthropicApiKey,
+  onProgress,
+} = {}) {
+  const containerName = workerContainerName(sessionId);
+
+  // Coalesce concurrent ensures — if one's already racing, await it.
+  const existing = _registryGet(sessionId);
+  if (existing?.bootstrap) {
+    await existing.bootstrap;
+    return containerName;
+  }
+
+  // Already warm? Confirm with Docker before trusting the registry —
+  // an external `docker rm` would otherwise leave stale state.
+  const status = await docker.getContainerStatus(containerName);
+  if (status === 'running') {
+    if (!existing) {
+      _registryUpsert(sessionId, { lastUsedMs: Date.now(), inFlight: false });
+    }
+    return containerName;
+  }
+
+  // Anything else (exited, dead, restarting, or not_found): re-bootstrap.
+  // _bootstrapWarmContainer reaps any stale container before docker run.
+  const bootstrap = (async () => {
+    try {
+      await _bootstrapWarmContainer(sessionId, {
+        repoOwner, repoName, branchName, anthropicApiKey, onProgress,
+      });
+      _registryUpsert(sessionId, {
+        bootstrap: null,
+        lastUsedMs: Date.now(),
+        inFlight: false,
+        adopted: false,
+      });
+    } catch (err) {
+      _warmRegistry.delete(sessionId);
+      throw err;
+    }
+  })();
+  _registryUpsert(sessionId, { bootstrap });
+  await bootstrap;
+  return containerName;
+}
+
+// Run one CC turn inside an already-warm container. Streams stdout/stderr
+// the same way watchWorker does (via the shared `parseLine` state
+// machine) so the dev-chat UI sees identical progress markers regardless
+// of which transport delivered them.
+//
+// Returns the same shape watchWorker produces, so route callers can swap
+// `spawnWorker + watchWorker` for `ensureWorker + execInWorker` without
+// touching the post-processing logic (PR creation, staging build, etc.).
+async function execInWorker(sessionId, {
+  mode = 'build',
+  prompt,
+  model,
+  commitMsg,
+  resumeSessionId,
+  branchName,
+  anthropicApiKey,
+  onProgress,
+  // Optional callback that receives the host-side `docker exec` child
+  // process. Lets the route handler stash the child on stopRegistry so
+  // a stop signal can SIGTERM just this exec without killing the warm
+  // container.
+  onChild,
+} = {}) {
+  const meta = _registryGet(sessionId);
+  if (!meta) {
+    throw new Error(`execInWorker: no warm worker registered for session ${sessionId}`);
+  }
+  if (meta.inFlight) {
+    throw new Error(`execInWorker: a turn is already in flight for session ${sessionId}`);
+  }
+  if (!prompt) {
+    throw new Error('execInWorker: prompt required');
+  }
+  const containerName = meta.containerName;
+
+  const secretEnv = {
+    ANTHROPIC_API_KEY: anthropicApiKey || process.env.ANTHROPIC_API_KEY || '',
+    PAT: process.env.GITHUB_BOT_TOKEN || '',
+  };
+  const safeEnv = {
+    PROMPT: prompt,
+    MODE: mode,
+    MODEL: model || 'claude-sonnet-4-6',
+    COMMIT_MSG: commitMsg || 'Changes via Usernode',
+    CLAUDE_RESUME_SESSION_ID: resumeSessionId || '',
+    // run-cc.sh defensively re-asserts BRANCH (in case the wrapper's
+    // checkpoint moves) and gates the pre-exec git reset on it.
+    BRANCH: branchName || '',
+  };
+  const secretEnvArgs = Object.keys(secretEnv).flatMap((k) => ['-e', k]);
+  const safeEnvArgs = Object.entries(safeEnv).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
+
+  const args = [
+    'exec',
+    ...secretEnvArgs,
+    ...safeEnvArgs,
+    containerName,
+    '/usr/local/bin/run-cc.sh',
+  ];
+
+  _registryUpsert(sessionId, { inFlight: true });
+
+  try {
+    return await new Promise((resolve, reject) => {
+      const proc = spawn('docker', args, {
+        // Same secret-env trick as bootstrap: secrets travel via the
+        // child's env, never argv.
+        env: { ...process.env, ...secretEnv },
+      });
+      if (typeof onChild === 'function') {
+        try { onChild(proc); } catch {}
+      }
+
+      const state = newWatchState();
+      const progress = typeof onProgress === 'function' ? onProgress : () => {};
+
+      let stdoutBuf = '';
+      proc.stdout.on('data', (chunk) => {
+        const text = chunk.toString('utf8');
+        state.rawStdout += text;
+        stdoutBuf += text;
+        const lines = stdoutBuf.split('\n');
+        stdoutBuf = lines.pop() || '';
+        for (const line of lines) parseLine(line, progress, state);
+      });
+
+      let stderrBuf = '';
+      proc.stderr.on('data', (chunk) => {
+        const text = chunk.toString('utf8');
+        state.rawStderr += text;
+        stderrBuf += text;
+        const lines = stderrBuf.split('\n');
+        stderrBuf = lines.pop() || '';
+        for (const line of lines) {
+          if (line.trim() && line.length < 500) progress(line);
+        }
+      });
+
+      proc.on('close', (code) => {
+        if (stdoutBuf.trim()) parseLine(stdoutBuf, progress, state);
+        // Match watchWorker semantics: state.exitCode mirrors the
+        // child's exit code, falling back to -1 on signal.
+        state.exitCode = code == null ? -1 : code;
+        resolve(state);
+      });
+      proc.on('error', (err) => reject(err));
+    });
+  } finally {
+    _registryUpsert(sessionId, { inFlight: false, lastUsedMs: Date.now() });
+  }
+}
+
+// Tear down a warm worker container (eviction). Volume is preserved so
+// the next `ensureWorker` re-warms with CC's session memory intact.
+async function evictWorker(sessionId) {
+  const meta = _registryGet(sessionId);
+  const containerName = meta?.containerName || workerContainerName(sessionId);
+  await docker.stopAndRemove(containerName).catch(() => {});
+  _warmRegistry.delete(sessionId);
+  log.info('worker', 'Worker evicted (volume preserved)', { containerName });
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Legacy single-shot helpers (kept for orphan adoption + back-compat)
 // ──────────────────────────────────────────────────────────────────────
 
 // Tail a worker container's logs until the container exits, parsing
 // stream-json + USERNODE markers along the way. Resolves with the
 // accumulated state when the container is gone.
 //
-// `fromStart`:
-//   true  (default): emit/parse from the beginning of the log. Used by
-//                    fresh spawns so we don't miss the opening phases.
-//   false:           only follow new output (useful on recovery if the
-//                    caller doesn't want to re-replay progress they've
-//                    already seen — though currently we always replay).
+// Used today only by the orphan-adoption recovery path
+// (recoverActiveWorkers in server.js). The live per-turn path uses
+// execInWorker which streams the docker-exec child's stdout directly.
 async function watchWorker(containerName, { onProgress, fromStart = true } = {}) {
   const state = newWatchState();
   const progress = typeof onProgress === 'function' ? onProgress : () => {};
@@ -402,8 +704,12 @@ async function watchWorker(containerName, { onProgress, fromStart = true } = {})
 }
 
 // Return metadata for every container matching `usernode-worker-*`.
-// Used on server startup to adopt any workers that were running (or
-// have since finished) while the previous server instance was down.
+// Used on server startup to adopt any workers left over from a previous
+// process. The state field comes straight from `docker ps`:
+//   - "running"  : either a warm-idle wrapper (sleep infinity) or a
+//                  legacy single-shot still in flight.
+//   - "exited"   : single-shot finished; needs log scrape + cleanup.
+//   - "created"/"restarting"/etc.: rare, treat as broken → reap.
 async function listOrphanWorkers() {
   try {
     const { stdout } = await docker.execFileAsync('docker', [
@@ -423,17 +729,65 @@ async function listOrphanWorkers() {
   }
 }
 
+// Best-effort check of whether a running warm container has an in-flight
+// per-turn exec. We look for a `claude` process inside the container —
+// the sleep wrapper is always there, but `claude` is only present
+// during a docker exec of run-cc.sh.
+//
+// Returns:
+//   true   — claude (or its parent run-cc.sh) is currently executing
+//   false  — only the sleep wrapper is alive
+//   null   — couldn't determine (container not running, exec failed, etc.)
+async function isWorkerExecuting(containerName) {
+  try {
+    const { stdout } = await docker.execFileAsync('docker', [
+      'exec', containerName, 'sh', '-c',
+      'pgrep -f "(^|/)(claude|run-cc.sh)(\\s|$)" >/dev/null && echo busy || echo idle',
+    ], { timeout: 5000 });
+    const out = stdout.trim();
+    if (out === 'busy') return true;
+    if (out === 'idle') return false;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// Hard teardown of a worker container. Used for session archive, error
+// recovery, and the orphan-adoption legacy path. Removes the registry
+// entry too so a follow-up ensureWorker doesn't trust stale state.
+//
+// For ordinary idle eviction during a session, use `evictWorker`
+// instead — same effect, but the function name signals intent better.
 async function destroyWorker(containerName) {
   await docker.stopAndRemove(containerName).catch(() => {});
+  const m = containerName.match(/^usernode-worker-(\d+)$/);
+  if (m) _warmRegistry.delete(parseInt(m[1], 10));
   log.info('worker', 'Worker destroyed', { containerName });
+}
+
+// Remove the named CC volume for a given chat session. Called when the
+// session is archived (permanent teardown). Safe to call even if the
+// volume was never created.
+async function destroyCcVolume(sessionId) {
+  await docker.removeVolume(ccVolumeName(sessionId));
 }
 
 module.exports = {
   ensureWorkerImage,
-  spawnWorker,
+  // long-lived API
+  ensureWorker,
+  execInWorker,
+  evictWorker,
+  warmRegistrySnapshot,
+  adoptWarmWorker,
+  isWorkerExecuting,
+  // legacy / shared helpers
   watchWorker,
   listOrphanWorkers,
   destroyWorker,
   destroyCcVolume,
   parseClaudeResponse,
+  // exposed for the routes' container-name lookups
+  workerContainerName,
 };

@@ -228,6 +228,16 @@ async function start() {
     log.warn('server', 'Worker adoption failed', { err: err.message });
   });
 
+  // Idle-eviction sweeper. Warm workers cost ~256MB resident; eviction
+  // reclaims that memory after a tunable idle period. The CC volume
+  // (cc-volume-<sessionId>) is preserved so the next dispatch's
+  // re-warm replays prior conversation state via `claude --resume`.
+  //
+  // WORKER_IDLE_EVICTION_MS is the only knob (default 10min). Lower it
+  // if memory headroom shrinks; raise it if we're seeing frequent
+  // re-warms in production logs.
+  startIdleEvictionSweeper();
+
   // If the previous server died mid-merge, some sessions may be stuck
   // in the 'merging' claim state. There's no way to know from here
   // whether the GitHub merge + prod rebuild actually completed — but
@@ -419,7 +429,7 @@ async function recoverActiveWorkers(config) {
 }
 
 async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcastGlobal }) {
-  const { name: containerName, sessionId } = orphan;
+  const { name: containerName, sessionId, state: containerState } = orphan;
 
   const { rows } = await pool.query(
     `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, u.username
@@ -441,6 +451,66 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     // Session archived while we were down — drop the container.
     await worker.destroyWorker(containerName);
     return;
+  }
+
+  // Long-lived worker reality check: a *running* container could be
+  //   (a) a warm-idle wrapper sitting in `sleep infinity` — clean adopt,
+  //       no log scrape needed.
+  //   (b) a legacy single-shot still in flight — only possible during
+  //       rollout from the old worker contract; tail logs as before.
+  //   (c) a warm wrapper that was mid-exec when our process died. The
+  //       host-side `docker exec` child was killed with us; the in-
+  //       container claude/run-cc.sh keeps running but its stdout went
+  //       to a disconnected client and is unrecoverable. Killing it
+  //       avoids racing the next dispatch's exec against a phantom.
+  //
+  // `pgrep claude || pgrep run-cc.sh` inside the container distinguishes
+  // case (a) from (b)+(c).
+  if (containerState === 'running') {
+    const busy = await worker.isWorkerExecuting(containerName);
+    if (busy === false) {
+      log.info('server', 'Adopting warm-idle worker (no in-flight exec)', {
+        containerName, sessionId,
+      });
+      worker.adoptWarmWorker(sessionId, containerName);
+      return;
+    }
+    if (busy === true && session.cc_session_id) {
+      // V1 conservative recovery for case (c): the prior in-flight turn
+      // is unrecoverable from the host. Kill the orphan exec to free
+      // the warm container for fresh dispatches, then post a system
+      // message so the user knows to retry. We DON'T try to scrape
+      // logs — `docker exec` output went to our dead parent, not the
+      // wrapper's stdout, so `docker logs -f` would only ever show
+      // bootstrap + warm-ready. Better to fail fast than hang forever.
+      log.info('server', 'Adopting mid-exec worker — killing orphan exec', {
+        containerName, sessionId,
+      });
+      const docker = require('./src/services/docker');
+      await docker.execFileAsync('docker', [
+        'exec', containerName, 'pkill', '-f', '(^|/)(claude|run-cc.sh)( |$)',
+      ], { timeout: 5000 }).catch(() => {});
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'system', $2, $3)`,
+        [
+          sessionId,
+          'Lost connection mid-turn after restart — please retry your request.',
+          JSON.stringify({}),
+        ]
+      ).catch(() => {});
+      broadcastGlobal({
+        type: 'session_event', sessionId, event: 'status',
+        text: 'Lost connection mid-turn after restart — please retry your request.',
+      });
+      worker.adoptWarmWorker(sessionId, containerName);
+      return;
+    }
+    // busy === null (couldn't probe) or true with no cc_session_id
+    // (legacy single-shot rollout): fall through to the legacy
+    // watchWorker scrape. Safe on already-exited containers; for a
+    // hung warm wrapper it'd block, but the idle sweeper plus session
+    // archive cap the worst case.
   }
 
   const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
@@ -536,16 +606,74 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   }
 }
 
+// Idle-eviction sweeper for warm worker containers.
+//
+// Runs every SWEEP_INTERVAL_MS. For each session in the warm registry,
+// if there's no in-flight exec AND the container hasn't been used in
+// WORKER_IDLE_EVICTION_MS, we `docker stop && docker rm` it. The
+// per-session CC volume is preserved so the next dispatch can re-warm
+// with `claude --resume <id>` and replay conversation state.
+//
+// Tuning: WORKER_IDLE_EVICTION_MS (default 10min). The sweeper itself
+// is cheap — a `Map` walk + at most a couple of execs per cycle — so
+// the interval is fixed at 30s.
+const WORKER_IDLE_EVICTION_MS = parseInt(
+  process.env.WORKER_IDLE_EVICTION_MS || (10 * 60 * 1000),
+  10
+);
+const SWEEP_INTERVAL_MS = 30 * 1000;
+
+let sweeperHandle = null;
+
+function startIdleEvictionSweeper() {
+  if (sweeperHandle) return;
+  log.info('server', 'Worker idle-eviction sweeper started', {
+    idleEvictionMs: WORKER_IDLE_EVICTION_MS,
+    sweepIntervalMs: SWEEP_INTERVAL_MS,
+  });
+  sweeperHandle = setInterval(async () => {
+    if (lifecycle.isShuttingDown()) return;
+    const now = Date.now();
+    const snapshot = worker.warmRegistrySnapshot();
+    for (const meta of snapshot) {
+      if (meta.inFlight) continue;
+      if (meta.bootstrapping) continue;
+      if (now - meta.lastUsedMs < WORKER_IDLE_EVICTION_MS) continue;
+      try {
+        await worker.evictWorker(meta.sessionId);
+        log.info('server', 'Idle warm worker evicted', {
+          sessionId: meta.sessionId,
+          containerName: meta.containerName,
+          idleMs: now - meta.lastUsedMs,
+        });
+      } catch (err) {
+        log.warn('server', 'Idle eviction failed', {
+          sessionId: meta.sessionId, err: err.message,
+        });
+      }
+    }
+  }, SWEEP_INTERVAL_MS).unref();
+  // .unref() so the sweeper doesn't hold the event loop open if everything
+  // else has shut down. We still clearInterval explicitly in cleanup() to
+  // race-free stop the sweeper before exit.
+}
+
 // Graceful shutdown: mark drain state so new chats/app-creates/builds get
 // 503'd, wait up to DRAIN_TIMEOUT_MS for in-flight HTTP handlers to
 // finish flushing DB writes, then exit.
 //
 // IMPORTANT: we deliberately do NOT force-remove worker containers here.
-// Workers run their whole pipeline as the container's entrypoint, so
-// they're independent of the host server. Killing them on shutdown
-// would undo the whole point of the autonomous-worker refactor — the
-// server would drop a CC session mid-execution every time the dev
-// watcher restarts. On next boot, recoverActiveWorkers() picks them up.
+// Two reasons in the long-lived worker world:
+//   - In-flight execs (workers in `activeWorkers`): killing them would
+//     drop the user's turn mid-CC. Better to drain naturally; if the
+//     drain times out the host-side `docker exec` child dies with us
+//     and recoverActiveWorkers handles the orphan on restart.
+//   - Warm-idle workers (NOT in `activeWorkers`): these are siblings
+//     on the host Docker daemon, so they survive a `docker compose up`
+//     redeploy of the server. Next boot's recoverActiveWorkers adopts
+//     them as warm-idle, so the next dispatch is fast even across
+//     production redeploys. The idle sweeper reclaims their memory in
+//     steady state.
 const DRAIN_TIMEOUT_MS = 60000;
 let cleanupStarted = false;
 
@@ -553,6 +681,10 @@ async function cleanup() {
   if (cleanupStarted) return;
   cleanupStarted = true;
   lifecycle.setShuttingDown();
+  if (sweeperHandle) {
+    clearInterval(sweeperHandle);
+    sweeperHandle = null;
+  }
 
   const startingCount = getActiveWorkerCount();
   log.info('server', 'Shutdown initiated, draining handlers', {

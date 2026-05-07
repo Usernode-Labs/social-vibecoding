@@ -184,14 +184,17 @@ function sessionRoutes(config) {
         }
       }
 
-      // Kill running worker if any
+      // Tear down the worker container. With long-lived workers, the
+      // container can exist even when nothing is in flight (warm-idle
+      // waiting for the next dispatch), so we always try destroyWorker
+      // — it's a no-op if the container is already gone. activeWorkers
+      // is only the in-flight set, not the warm-container set.
       const sessionId = parseInt(req.params.id);
       if (activeWorkers.has(sessionId)) {
         activeWorkers.delete(sessionId);
         workerProgress.clear(sessionId);
-        await worker.destroyWorker(`usernode-worker-${sessionId}`).catch(() => {});
-        log.info('sessions', 'Killed active worker on archive', { sessionId });
       }
+      await worker.destroyWorker(`usernode-worker-${sessionId}`).catch(() => {});
 
       // Drop the persistent CC session volume — the chat is gone, so its
       // conversation memory shouldn't linger on disk.
@@ -305,7 +308,15 @@ function sessionRoutes(config) {
       // cleared it, but an unclean shutdown could leave a stale entry.
       const stopHandle = {
         abort: new AbortController(),
+        // Diagnostic only with long-lived workers — the warm container
+        // is preserved across stop. Real signal travels through
+        // execChild below.
         workerName: null,
+        // Set by execInWorker.onChild to the host-side `docker exec`
+        // child process. POST /stop SIGTERMs this so just the in-flight
+        // turn dies, leaving the warm container ready for the next
+        // dispatch. Cleared on exec completion.
+        execChild: null,
         phase: 'mayor1',
         stopped: false,
         stoppedBy: null,
@@ -910,7 +921,10 @@ function sessionRoutes(config) {
 
       const stopHandle = {
         abort: new AbortController(),
+        // Diagnostic only — see the Mayor-turn stopHandle for the full
+        // explanation of how stop signals reach the in-flight exec.
         workerName: null,
+        execChild: null,
         phase: 'cc',
         stopped: false,
         stoppedBy: null,
@@ -1162,15 +1176,26 @@ function sessionRoutes(config) {
     handle.stopped = true;
     handle.stoppedBy = req.user.username;
     log.info('sessions', 'Stop requested', {
-      sessionId, phase: handle.phase, by: req.user.username, hasWorker: !!handle.workerName,
+      sessionId,
+      phase: handle.phase,
+      by: req.user.username,
+      hasExec: !!handle.execChild,
+      hasWorker: !!handle.workerName,
     });
 
-    if (handle.workerName) {
-      // SIGTERM the worker container. `docker stop` gives it ~10s
-      // before SIGKILL, which is more than enough for CC to flush any
-      // in-progress session checkpoint to its named volume. watchWorker
-      // is tailing logs -f and will resolve once the container exits,
-      // letting runClaudeCodeTool's early-return branch fire.
+    if (handle.execChild) {
+      // Long-lived worker path: SIGTERM the host-side `docker exec`
+      // child. Docker forwards the signal into the in-container
+      // run-cc.sh + claude processes, which exit; the warm wrapper
+      // (sleep infinity) keeps running so the next dispatch is fast.
+      // The host-side execInWorker promise resolves when the child
+      // closes, letting runClaudeCodeTool's early-return branch fire.
+      try { handle.execChild.kill('SIGTERM'); } catch {}
+    } else if (handle.workerName) {
+      // Legacy single-shot fallback: no exec child to signal, so we
+      // SIGTERM the whole container. `docker stop` gives it ~10s
+      // before SIGKILL — fine for the legacy path because the wrapper
+      // IS the per-turn workload there.
       docker.execFileAsync('docker', ['stop', handle.workerName], { timeout: 15000 })
         .catch((err) => log.warn('sessions', 'docker stop failed', { err: err.message }));
     }
@@ -1539,18 +1564,25 @@ Your job is to investigate this repo and produce a MARKDOWN SPEC for the change.
 
 Your final assistant message must be ONLY the markdown spec — no preamble, no "I'll investigate...", no "Here's the spec:". The host captures that final message verbatim and stores it as the session's spec doc.`;
 
-  const containerName = await worker.spawnWorker(session.id, {
+  // Ensure the long-lived worker is warm before exec'ing run-cc.sh inside
+  // it. Cold-start cost (clone + checkout + sleep wrapper) is paid here on
+  // the first dispatch of a session; subsequent ensures are sub-second.
+  // Bootstrap progress (clone/checkout/warm-ready) flows through onProgress
+  // to the dev-chat UI just like the legacy single-shot path used to.
+  const containerName = await worker.ensureWorker(session.id, {
     repoOwner,
     repoName,
     branchName: session.branch_name,
     anthropicApiKey: userApiKey || config.anthropicApiKey,
-    prompt: scoutPrompt,
-    model: selectedModel,
-    commitMsg: '', // unused in scout mode
-    resumeSessionId: session.cc_session_id || null,
-    mode: 'scout',
+    onProgress: (text) => {
+      send('cc_progress', { text });
+      workerProgress.set(session.id, text, { model: selectedModel });
+    },
   });
 
+  // Surface the warm container name for diagnostics. The actual stop
+  // signal travels through stopHandle.execChild (set below) so the
+  // warm container survives stop and the next dispatch is fast.
   if (stopHandle) stopHandle.workerName = containerName;
 
   let isError = false;
@@ -1565,10 +1597,20 @@ Your final assistant message must be ONLY the markdown spec — no preamble, no 
 
     let result;
     try {
-      result = await worker.watchWorker(containerName, {
+      result = await worker.execInWorker(session.id, {
+        mode: 'scout',
+        prompt: scoutPrompt,
+        model: selectedModel,
+        commitMsg: '',
+        resumeSessionId: session.cc_session_id || null,
+        branchName: session.branch_name,
+        anthropicApiKey: userApiKey || config.anthropicApiKey,
         onProgress: (text) => {
           send('cc_progress', { text });
           workerProgress.set(session.id, text, { model: selectedModel });
+        },
+        onChild: (child) => {
+          if (stopHandle) stopHandle.execChild = child;
         },
       });
     } finally {
@@ -1648,7 +1690,10 @@ Your final assistant message must be ONLY the markdown spec — no preamble, no 
   } finally {
     activeWorkers.delete(session.id);
     workerProgress.clear(session.id);
-    await worker.destroyWorker(containerName);
+    if (stopHandle) stopHandle.execChild = null;
+    // No destroyWorker here — the warm container stays so the next
+    // dispatch (build or another scout) can reuse it. Idle eviction
+    // and session archive both own teardown.
   }
 
   return {
@@ -1725,23 +1770,26 @@ INSTRUCTIONS:
 
   const commitMsg = github.safeMention(`Changes: ${userMessage.substring(0, 50)}`);
 
-  const containerName = await worker.spawnWorker(session.id, {
+  // BYOK (#30): the warm container takes the user's key (if provided)
+  // at bootstrap time. On subsequent ensures the container is already
+  // warm, so a per-turn key change wouldn't refresh the env — but
+  // execInWorker re-asserts ANTHROPIC_API_KEY as a per-exec secret env
+  // var, so each turn picks up the active key without needing a re-warm.
+  const containerName = await worker.ensureWorker(session.id, {
     repoOwner,
     repoName,
     branchName: session.branch_name,
-    // BYOK (#30): the worker container uses the user's key directly if
-    // they've provided one, otherwise falls back to the shared admin
-    // key. Worker containers are ephemeral per-turn so the key is
-    // passed via env and vanishes when the container is destroyed.
     anthropicApiKey: userApiKey || config.anthropicApiKey,
-    prompt: claudePrompt,
-    model: selectedModel,
-    commitMsg,
-    resumeSessionId: session.cc_session_id || null,
+    onProgress: (text) => {
+      send('cc_progress', { text });
+      workerProgress.set(session.id, text, { model: selectedModel });
+    },
   });
 
-  // Publish the container name to the stop handle so /api/sessions/:id/stop
-  // can `docker stop` the right worker without racing spawnWorker's naming.
+  // Surface the container name for diagnostics + admin tooling. The
+  // actual stop signal flows through stopHandle.execChild (set below)
+  // so the warm container is preserved across stop — eviction is the
+  // only path that destroys it.
   if (stopHandle) stopHandle.workerName = containerName;
 
   let ccLog = null;
@@ -1772,7 +1820,14 @@ INSTRUCTIONS:
 
     let result;
     try {
-      result = await worker.watchWorker(containerName, {
+      result = await worker.execInWorker(session.id, {
+        mode: 'build',
+        prompt: claudePrompt,
+        model: selectedModel,
+        commitMsg,
+        resumeSessionId: session.cc_session_id || null,
+        branchName: session.branch_name,
+        anthropicApiKey: userApiKey || config.anthropicApiKey,
         onProgress: (text) => {
           send('cc_progress', { text });
           workerProgress.set(session.id, text, { model: selectedModel });
@@ -1783,6 +1838,12 @@ INSTRUCTIONS:
             ) WHERE id = $2`,
             [JSON.stringify([text]), progressMsgId]
           ).catch(() => {});
+        },
+        onChild: (child) => {
+          // Stash the host-side docker-exec child on stopHandle so
+          // POST /api/sessions/:id/stop can SIGTERM just this exec
+          // without taking down the warm container.
+          if (stopHandle) stopHandle.execChild = child;
         },
       });
     } finally {
@@ -1946,7 +2007,10 @@ INSTRUCTIONS:
   } finally {
     activeWorkers.delete(session.id);
     workerProgress.clear(session.id);
-    await worker.destroyWorker(containerName);
+    if (stopHandle) stopHandle.execChild = null;
+    // Warm container intentionally NOT destroyed — the next dispatch
+    // (build or scout) reuses it. Idle eviction (worker.evictWorker via
+    // the sweeper in server.js) and session archive own teardown.
   }
 
   const toolResultText = summaryParts.join('\n\n').slice(0, 4000)
