@@ -205,9 +205,15 @@ const AppView = {
     const version = opts && opts.version;
     const deployProgress = opts && opts.deployProgress;
     const includePrContext = !!(opts && opts.includePrContext);
+    // `quiet` callers want a border-only chip with no state modifiers
+    // even when a deploy is in flight — the home-tile pills use it so
+    // the tile's status dot is the single visual signal for "this app
+    // is redeploying" (yellow pulse). Without quiet the pill would
+    // double-signal the same event next to the status dot.
+    const quiet = !!(opts && opts.quiet);
     if (!slug) return '';
 
-    const isDeploying = !!(deployProgress && deployProgress.deploying);
+    const isDeploying = !quiet && !!(deployProgress && deployProgress.deploying);
     if (isDeploying) {
       const elapsed = deployProgress.startedAt
         ? Math.max(0, Math.floor((Date.now() - new Date(deployProgress.startedAt).getTime()) / 1000))
@@ -232,10 +238,12 @@ const AppView = {
       // low-key chip so the slot is never empty (which can look like
       // a layout bug or a JS failure to render). Reachable for apps
       // still in `creating`, apps without a repo, or pre-#21 rows
-      // that haven't been backfilled yet.
+      // that haven't been backfilled yet. The leading status dot is
+      // dropped in quiet mode (home tiles) — the tile already has its
+      // own status dot at the top.
       return `
         <span class="app-version-pill" title="No deployed version recorded yet">
-          <span class="app-version-pill-dot" style="background:#71717a;box-shadow:none"></span>
+          ${quiet ? '' : '<span class="app-version-pill-dot" style="background:#71717a;box-shadow:none"></span>'}
           <span class="app-version-pill-label">
             <span class="app-version-pill-name">${escapeHtml(slug)}</span>
             <span class="app-version-pill-sep">·</span>
@@ -253,9 +261,14 @@ const AppView = {
     const sha = version.prNumber
       ? `${version.shortSha} · #${version.prNumber}`
       : version.shortSha;
+    // Drop the green status dot inside the pill in quiet mode for the
+    // same reason as the dev branch above — the home tile's outer
+    // status dot already covers "this app's lifecycle state", and the
+    // user doesn't need a second tiny dot duplicating it inside the
+    // commit chip.
     return `
       <a href="${href}" target="_blank" rel="noopener" class="app-version-pill" title="${escapeAttr(tip)}">
-        <span class="app-version-pill-dot"></span>
+        ${quiet ? '' : '<span class="app-version-pill-dot"></span>'}
         <span class="app-version-pill-label">
           <span class="app-version-pill-name">${escapeHtml(slug)}</span>
           <span class="app-version-pill-sep">·</span>

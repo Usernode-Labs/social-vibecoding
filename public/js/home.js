@@ -19,18 +19,16 @@ const Home = {
       }
 
       emptyEl.classList.add('hidden');
-      // Render the apps, then append a "Create new app" pill below
-      // them. Lives at the bottom of the divided list so it follows
-      // the natural reading flow ("here are your apps... and here's
-      // how you'd add another"). Replaces the old header "+" pill.
+      // Render the app tiles, then append the "create new app" tile
+      // as a regular grid item. Living inside the grid (rather than
+      // as a col-span-full footer row) keeps it the same width &
+      // height as the surrounding tiles via grid auto-stretch, and
+      // makes the affordance feel like a peer of the existing apps
+      // ("here are your apps, and here's an empty slot for the next
+      // one") instead of a separate CTA banner.
       listEl.innerHTML =
         apps.map(Home.renderAppCard).join('') +
-        `<div class="flex justify-center px-4 py-6">
-          <button class="home-create-btn inline-flex items-center gap-2 rounded-full border border-violet-500 dark:border-violet-400 px-5 py-2.5 text-sm font-medium text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950 transition-colors">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
-            Create new app
-          </button>
-        </div>`;
+        Home.renderCreateTile();
       Home.wireCreateButtons();
 
       listEl.querySelectorAll('.app-card').forEach((card) => {
@@ -154,7 +152,16 @@ const Home = {
 
   renderAppCard(app) {
     const isAwaiting = app.status === 'awaiting_secrets';
-    const statusClass = app.status === 'running' ? 'running'
+    // The status dot is the home tile's single signal for "this app
+    // is doing something right now" — so an in-flight redeploy on an
+    // already-running app flips the dot back to its pulsing-yellow
+    // state, even though `app.status` is still 'running'. This is
+    // what makes it safe to render the per-app pill in `quiet` mode
+    // below (it skips the yellow `--deploying` modifier and stays a
+    // border-only chip; the dot carries the signal instead).
+    const isInFlightDeploy = !!(app.deployProgress && app.deployProgress.deploying);
+    const statusClass = isInFlightDeploy ? 'creating'
+      : app.status === 'running' ? 'running'
       : app.status === 'creating' ? 'creating'
       : isAwaiting ? 'creating'
       : 'error';
@@ -165,22 +172,18 @@ const Home = {
     const isError = app.status === 'error';
     const isRunning = app.status === 'running';
     const hasMissing = Array.isArray(app.missingSecrets) && app.missingSecrets.length;
-    // Three at-a-glance signals shown beneath the app name. activeUsers
-    // uses the same sticky 10-day rule as the group-chat dashboard tile
-    // (see src/services/active-users.js), so the home card and the
-    // dashboard agree on the count. createdRel falls back to created_at
-    // unconditionally; updatedRel falls back to created_at when
-    // last_deploy_at is null (pre-migration apps that haven't redeployed
-    // yet — backfill in schema.sql sets last_deploy_at = created_at, so
-    // this path is mostly defensive).
+    // Three at-a-glance signals rendered as stacked rows in the tile
+    // body (see statRows below). activeUsers uses the same sticky
+    // 10-day rule as the group-chat dashboard tile (see
+    // src/services/active-users.js), so the home card and the
+    // dashboard agree on the count. createdRel comes straight from
+    // created_at; updatedRel falls back to created_at when
+    // last_deploy_at is null (pre-migration apps that haven't
+    // redeployed — backfill in schema.sql sets last_deploy_at =
+    // created_at, so this path is mostly defensive).
     const activeUsers = parseInt(app.active_users || 0);
     const createdRel = formatRelativeTime(app.created_at);
     const updatedRel = formatRelativeTime(app.last_deploy_at || app.created_at);
-    const metaParts = [];
-    if (activeUsers > 0) metaParts.push(`${activeUsers} active`);
-    if (createdRel) metaParts.push(`created ${createdRel}`);
-    if (updatedRel && updatedRel !== createdRel) metaParts.push(`updated ${updatedRel}`);
-    const metaLine = metaParts.join(' · ');
     // Awaiting-secrets cards stay clickable so the user can open the
     // app view + Secrets modal to fill values; other non-running
     // statuses show no app surface.
@@ -200,43 +203,142 @@ const Home = {
           version: app.version || null,
           deployProgress: app.deployProgress || null,
           includePrContext: false,
+          // Quiet on home tiles — the status dot up top covers the
+          // "redeploying" signal, so this pill only ever shows the
+          // idle border-only chip.
+          quiet: true,
         })
       : '';
 
+    // Per-tile sections, computed up front so the template stays
+    // readable. Anything that may be empty is collapsed to '' so the
+    // tile self-trims without leaving stray padding. Stat rows are
+    // each on their own line so they read cleanly inside the
+    // constrained tile width — at 3 columns the dot-separated single-
+    // line variant we use elsewhere wraps awkwardly.
+    const warningHtml = statusLabel
+      ? `<p class="text-xs mt-0.5 ${isAwaiting ? 'text-amber-500' : 'text-yellow-500'}">${statusLabel}${
+          isAwaiting && hasMissing ? `: ${escapeHtml(app.missingSecrets.join(', '))}` : ''
+        }</p>`
+      : (hasMissing
+        ? `<p class="text-xs mt-0.5 text-red-500">Missing secrets: ${escapeHtml(app.missingSecrets.join(', '))}</p>`
+        : '');
+
+    const statRows = [];
+    if (activeUsers > 0) {
+      statRows.push(`<div><span class="font-semibold text-zinc-700 dark:text-zinc-300">${activeUsers}</span> active user${activeUsers === 1 ? '' : 's'}</div>`);
+    } else {
+      statRows.push(`<div class="text-zinc-400 dark:text-zinc-500">No active users yet</div>`);
+    }
+    if (createdRel) statRows.push(`<div>Created ${createdRel}</div>`);
+    if (updatedRel && updatedRel !== createdRel) statRows.push(`<div>Updated ${updatedRel}</div>`);
+    // `min-w-0` on the stats column lets it shrink under the pill on
+    // narrow tiles instead of forcing the pill off the right edge.
+    const statsHtml = `<div class="text-xs text-zinc-500 dark:text-zinc-400 space-y-0.5 min-w-0">${statRows.join('')}</div>`;
+
+    // Admin / creator buttons — all corner-pinned at the top-right of
+    // the tile so the bottom of the card is reserved for the muted
+    // commit pill alone. Retry is creator-or-admin (only on errored
+    // apps); check-updates and delete are admin-only. The corner div
+    // is rendered conditionally so we don't reserve right padding on
+    // tiles that have no buttons there at all.
+    const showRetry = isError && (App.user?.isAdmin || App.user?.id === app.created_by);
+    const showCheck = App.user?.isAdmin && app.repo_url && isRunning;
+    const showDelete = !!App.user?.isAdmin;
+    const hasCornerBtns = showRetry || showCheck || showDelete;
+    // `Retry` is text rather than a glyph so we widen the title-row's
+    // right padding when it's present; otherwise pr-14 is enough for
+    // the two icon buttons + gap.
+    const titlePadClass = showRetry ? 'pr-20' : (hasCornerBtns ? 'pr-14' : '');
+    const cornerBtnsHtml = hasCornerBtns ? `
+      <div class="absolute top-2 right-2 flex items-center gap-1">
+        ${showRetry ? `<button class="retry-btn text-xs text-emerald-500 hover:text-emerald-400 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors" data-slug="${app.slug}">Retry</button>` : ''}
+        ${showCheck ? `<button class="check-updates-btn w-6 h-6 flex items-center justify-center rounded-md text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors text-sm leading-none" data-slug="${app.slug}" title="Check for updates and redeploy if changed" aria-label="Check for updates">⟳</button>` : ''}
+        ${showDelete ? `<button class="delete-btn w-6 h-6 flex items-center justify-center rounded-md text-zinc-400 hover:text-red-500 hover:bg-red-500/10 transition-colors text-base leading-none" data-slug="${app.slug}" title="Delete app" aria-label="Delete app">&times;</button>` : ''}
+      </div>` : '';
+
+    // Stats column (left) + commit pill (right) share one flex row at
+    // the bottom of the tile. `items-end` baselines the pill against
+    // the last stat row ("Updated Yt ago") so the two read across
+    // horizontally; `mt-auto` pushes the whole block to the foot of
+    // the card so tiles in the same grid row line up nicely. The pill
+    // slot is always rendered (the renderer emits a "<slug> · dev"
+    // placeholder when there's no SHA) so .app-version-pill-slot is
+    // reachable by Home.updateAppCardPill on WS deploy events.
+    const statsAndPillHtml = `
+      <div class="flex items-end justify-between gap-3 pt-1 mt-auto">
+        ${statsHtml}
+        <span class="app-version-pill-slot min-w-0 truncate text-right shrink-0" data-slug="${app.slug}">${pillHtml}</span>
+      </div>`;
+
     return `
-      <div class="app-card px-4 py-3 ${cursorClass} flex items-center gap-3" data-slug="${app.slug}" data-status="${app.status}">
-        <div class="w-10 h-10 rounded-xl bg-violet-600/20 flex items-center justify-center text-violet-400 font-bold text-sm shrink-0">
-          ${app.name.charAt(0).toUpperCase()}
-        </div>
-        <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2">
-            <span class="font-medium truncate">${escapeHtml(app.name)}</span>
-            <span class="status-dot ${statusClass}" title="${app.status}"></span>
+      <div class="app-card relative rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 hover:border-violet-300 dark:hover:border-violet-700 transition-colors p-4 flex flex-col gap-3 ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}">
+        ${cornerBtnsHtml}
+        <div class="flex items-start gap-3 ${titlePadClass}">
+          <div class="w-11 h-11 rounded-xl bg-violet-600/20 flex items-center justify-center text-violet-400 font-bold text-base shrink-0">
+            ${app.name.charAt(0).toUpperCase()}
           </div>
-          ${statusLabel ? `<p class="text-xs ${isAwaiting ? 'text-amber-500' : 'text-yellow-500'}">${statusLabel}${
-            isAwaiting && hasMissing ? `: ${escapeHtml(app.missingSecrets.join(', '))}` : ''
-          }</p>` : (hasMissing ? `<p class="text-xs text-red-500">Missing secrets: ${escapeHtml(app.missingSecrets.join(', '))}</p>` : '')}
-          ${metaLine ? `<p class="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">${metaLine}</p>` : ''}
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <span class="font-medium truncate">${escapeHtml(app.name)}</span>
+              <span class="status-dot ${statusClass}" title="${app.status}"></span>
+            </div>
+            ${warningHtml}
+          </div>
         </div>
-        <div class="flex items-center gap-2 shrink-0">
-          ${pillHtml ? `<span class="app-version-pill-slot" data-slug="${app.slug}">${pillHtml}</span>` : `<span class="app-version-pill-slot" data-slug="${app.slug}"></span>`}
-          ${isError && (App.user?.isAdmin || App.user?.id === app.created_by) ? `<button class="retry-btn text-xs text-emerald-400 hover:text-emerald-300 px-1" data-slug="${app.slug}">Retry</button>` : ''}
-          ${App.user?.isAdmin && app.repo_url && isRunning ? `<button class="check-updates-btn text-xs text-zinc-400 hover:text-emerald-300 px-1" data-slug="${app.slug}" title="Check for updates and redeploy if changed">⟳</button>` : ''}
-          ${App.user?.isAdmin ? `<button class="delete-btn text-xs text-red-400 hover:text-red-300 px-1" data-slug="${app.slug}">&times;</button>` : ''}
-        </div>
+        ${statsAndPillHtml}
       </div>
     `;
   },
 
+  // "Your app here" placeholder rendered as the last tile in the
+  // grid. Layout mirrors a real tile (thumbnail + title row, pill
+  // stacked on the left) but with a dashed violet border + violet
+  // thumbnail to telegraph "this slot is empty, tap to fill it".
+  // The click target is just the inner pill (.home-create-btn,
+  // wired in Home.wireCreateButtons) — clicking the surrounding
+  // tile chrome is intentionally inert so the tile reads as
+  // "decorative frame around a button" rather than "button-shaped
+  // hover surface". Hover/active styles live on the pill itself.
+  renderCreateTile() {
+    return `
+      <div class="home-create-tile rounded-xl border border-transparent bg-violet-500/[0.02] dark:bg-violet-500/[0.04] p-4 flex flex-col gap-3">
+        <div class="flex items-center gap-3">
+          <div class="w-11 h-11 rounded-xl bg-violet-600/20 flex items-center justify-center text-violet-400 font-bold text-base shrink-0">
+            Y
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="italic text-zinc-500 dark:text-zinc-400 truncate">Your app here</div>
+          </div>
+        </div>
+        <button type="button" class="home-create-btn self-start inline-flex items-center gap-2 rounded-full border border-violet-500 dark:border-violet-400 px-4 py-2 text-sm font-medium text-violet-600 dark:text-violet-400 bg-white dark:bg-zinc-900 hover:bg-violet-50 dark:hover:bg-violet-950 transition-colors">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+          Create new app
+        </button>
+      </div>`;
+  },
+
   // Idempotent click-wiring for every `.home-create-btn` currently
-  // mounted (the empty-state CTA + the in-list pill). Listeners are
-  // re-bound on every Home.load(); cloneNode swap clears any stale
-  // ones from a prior render so the modal doesn't open twice.
+  // mounted (the empty-state CTA, the per-tile placeholder pill,
+  // etc.). Listeners are re-bound on every Home.load(); cloneNode
+  // swap clears any stale ones from a prior render so the modal
+  // doesn't open twice. The non-<button> branch is a defensive
+  // fallback — both current call sites use real <button> elements
+  // and get Enter/Space activation for free — but kept so future
+  // div-based variants don't silently lose keyboard support.
   wireCreateButtons() {
     document.querySelectorAll('.home-create-btn').forEach((btn) => {
       const fresh = btn.cloneNode(true);
       btn.parentNode.replaceChild(fresh, btn);
       fresh.addEventListener('click', () => App.showCreateModal());
+      if (fresh.tagName !== 'BUTTON') {
+        fresh.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            App.showCreateModal();
+          }
+        });
+      }
     });
   },
 
@@ -245,15 +347,38 @@ const Home = {
   // the home screen flips into the deploying state (and back) without
   // a full Home.load() re-render that would also blow away pending
   // hover/scroll state on other cards.
+  //
+  // Also re-classes the card's status dot, since the home tile uses
+  // the dot (not the pill's `--deploying` modifier) as the visible
+  // "this app is redeploying" signal. Without this, a redeploy that
+  // arrives over WS on an already-running card wouldn't change any
+  // visible state — the pill stays quiet (we ask for it that way) and
+  // the dot would remain green until a full Home.load().
   updateAppCardPill(slug, opts) {
     if (!slug) return;
-    const slot = document.querySelector(`.app-card[data-slug="${slug}"] .app-version-pill-slot`);
+    const card = document.querySelector(`.app-card[data-slug="${slug}"]`);
+    if (!card) return;
+    const isInFlightDeploy = !!(opts && opts.deployProgress && opts.deployProgress.deploying);
+    const dot = card.querySelector('.status-dot');
+    if (dot) {
+      const baseStatus = card.dataset.status;
+      const next = isInFlightDeploy ? 'creating'
+        : baseStatus === 'running' ? 'running'
+        : (baseStatus === 'creating' || baseStatus === 'awaiting_secrets') ? 'creating'
+        : 'error';
+      dot.classList.remove('running', 'creating', 'error');
+      dot.classList.add(next);
+    }
+    const slot = card.querySelector('.app-version-pill-slot');
     if (!slot || typeof AppView === 'undefined' || !AppView.renderAppVersionPillHTML) return;
     slot.innerHTML = AppView.renderAppVersionPillHTML({
       slug,
       version: opts && opts.version ? opts.version : null,
       deployProgress: opts && opts.deployProgress ? opts.deployProgress : null,
       includePrContext: false,
+      // Same quiet rule as renderAppCard above — this pill never shows
+      // the yellow deploying state on home tiles; the status dot does.
+      quiet: true,
     });
   },
 };

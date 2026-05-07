@@ -55,6 +55,31 @@ html, body {
 .app-card { transition: background-color 150ms; }
 .app-card:hover { background-color: var(--bg-card); }
 
+/* "Your app here" placeholder tile. Native `border-style: dashed`
+   has no way to set dash length — at 1px border-width browsers
+   draw very short dashes that read like a row of dots. We paint
+   the outline as an SVG background-image instead, so we can pick
+   `stroke-dasharray` directly. `stroke-width=2` is doubled because
+   the rect sits flush with the SVG edges and half the stroke is
+   clipped off-screen, leaving a visible ~1px line that matches
+   the regular tile's `border` width. rx=12 = Tailwind rounded-xl.
+   Four bg-image rules cover light/dark + hover; data-URL SVGs
+   don't inherit `currentColor` so we can't collapse to a single
+   variable-driven version cleanly. */
+.home-create-tile {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23a78bfa' stroke-opacity='0.55' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+}
+.home-create-tile:hover {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23a78bfa' stroke-opacity='0.85' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+}
+.dark .home-create-tile {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%238b5cf6' stroke-opacity='0.5' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+}
+.dark .home-create-tile:hover {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%238b5cf6' stroke-opacity='0.75' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+}
+
 /* ── Status dots ───────────────────────────────────────── */
 
 .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
@@ -545,15 +570,17 @@ html, body {
 
 /* Sits in the shared header next to the app title. Low-emphasis chip
    showing which commit is currently deployed to prod; clicks open the
-   associated PR on GitHub. Theme-aware so it blends into the header
-   in both light and dark modes. */
+   associated PR on GitHub. Idle state is transparent + border-only so
+   it sits quietly next to the app name instead of competing with it
+   for visual weight; the --deploying / --stale modifiers below
+   override `background` so their tinted states still draw the eye. */
 .app-version-pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 3px 9px;
   border-radius: 999px;
-  background: var(--bg-secondary);
+  background: transparent;
   color: var(--text-secondary);
   font-size: 11px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -563,9 +590,38 @@ html, body {
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 .app-version-pill:hover {
-  background: var(--bg-tertiary);
+  /* Hover stays background-free; we promote the border + text to
+     full strength so it still feels clickable without filling. */
   color: var(--text-primary);
   border-color: var(--border);
+}
+
+/* Home-tile per-app pill: stripped down to a barely-there caption
+   in the bottom-right of the card. No border, no padding, no
+   background, no internal status dot (the renderer's `quiet` flag
+   already drops that — see AppView.renderAppVersionPillHTML). The
+   tile's own status dot at the top covers the lifecycle signal, so
+   this just whispers "<slug> · <sha>" in muted gray. Scoped via
+   .app-card so the AppView header pill and platform pill keep their
+   full chrome. */
+.app-card .app-version-pill,
+.app-card .app-version-pill:hover {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--text-muted);
+}
+.app-card .app-version-pill:hover {
+  /* Tiny lift on hover so the link target is still discoverable
+     without re-introducing the heavier idle chrome. */
+  color: var(--text-secondary);
+}
+.app-card .app-version-pill-name {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+.app-card .app-version-pill-sep {
+  color: var(--text-faint);
 }
 .app-version-pill-dot {
   width: 6px;
