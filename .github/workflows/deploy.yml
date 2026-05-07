@@ -13,7 +13,12 @@ name: Deploy
 on:
   push:
     branches: [main]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      force_archive_refresh:
+        description: "Force archive snapshot refresh + sidecar recreate (default: only when node-related files or upstream image changed)"
+        type: boolean
+        default: false
 
 concurrency:
   group: deploy-${{ github.ref }}
@@ -46,6 +51,23 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      # Detect whether anything in this commit affects the usernode-node
+      # sidecar's archive seeding or service definition. When false (and
+      # there's no manual override / upstream image bump), the deploy
+      # script skips the archive-fetch + force-recreate step. Pure
+      # platform-code deploys then never touch the running sidecar —
+      # child-app SSE streams stay open, the deploy is ~1 min faster,
+      # and users don't see the loading overlay flash on every push.
+      - uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            node:
+              - 'docker-compose.yml'
+              - '.github/workflows/deploy.yml'
+              - 'scripts/fetch-archive-snapshot.sh'
+              - 'scripts/package-archive-snapshot.sh'
+
       - name: Sync repo to VPS
         uses: easingthemes/ssh-deploy@v5.1.0
         with:
@@ -63,10 +85,22 @@ jobs:
 
       - name: Write .env and run docker compose
         uses: appleboy/ssh-action@v1
+        env:
+          # Path-filter result for files that affect the sidecar. Empty
+          # string on workflow_dispatch when paths-filter doesn't run a
+          # diff; treated as "false" by the script below.
+          NODE_FILES_CHANGED: ${{ steps.changes.outputs.node }}
+          # workflow_dispatch escape hatch. Unset on push events, in
+          # which case `inputs.force_archive_refresh` evaluates to ''.
+          FORCE_ARCHIVE_REFRESH: ${{ inputs.force_archive_refresh || 'false' }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: deploy
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          # Forward the gating flags into the remote shell — appleboy
+          # /ssh-action only exports vars listed here, not the whole
+          # job env.
+          envs: NODE_FILES_CHANGED,FORCE_ARCHIVE_REFRESH
           # Archive fetch can take several minutes on a fresh seed; bump
           # the action's default 10m ceiling so it doesn't kill the deploy
           # mid-tar.
@@ -98,90 +132,151 @@ jobs:
             chmod 600 .env
 
             # ----------------------------------------------------------
-            # Archive snapshot: fetch from testnet-seed1 directly from
-            # prod (reuses prod's existing seed SSH access — no GH-runner
-            # -side key needed). Why: PARTIAL_LEDGER_RECENT_TX_SOURCE_BUG
-            # — the sidecar's runtime `tracked_owner/add` calls (every
-            # child app fires one at boot) trip the wallet-seed shortcut
-            # into partial-ledger overlay by default. Booting from a
-            # full archive snapshot fixes it: node loads the full tree
-            # at startup and applies every subsequent block in full
-            # mode, so RecentTxEntry.source is authoritative and dapps
-            # actually see incoming txs on the SSE stream.
+            # Pull non-buildable images first so we can detect upstream
+            # node image bumps. `--ignore-buildable` skips services with
+            # a build context (the platform `usernode` image), so this
+            # only pulls caddy / postgres / usernode-node. The platform
+            # image is rebuilt below by `up -d --build`.
             #
-            # Prereq on this VPS: ~deploy/.ssh/config must define
-            # `testnet-seed1` and the deploy user must have an
-            # authorized_keys entry on that seed. Verify with:
-            #   ssh -o BatchMode=yes -o ConnectTimeout=5 testnet-seed1 echo ok
-            # If that prints `ok` the fetch will succeed.
+            # We capture usernodelabs/usernode's image ID before+after
+            # so the gating block below can treat an upstream bump as
+            # equivalent to a node-affecting change — a new sidecar
+            # binary may have new archive-format expectations or bug
+            # fixes we want paired with a known-good archive.
             # ----------------------------------------------------------
-            STAGING_DIR="/tmp/usernode-archive-staging-$$"
-            ARCHIVE_VOLUME="usernode_usernode-node-archive"
-            FETCH_OK=0
+            BEFORE_NODE_IMG=$(docker image inspect usernodelabs/usernode:latest --format '{{.Id}}' 2>/dev/null || echo "none")
+            docker compose pull --ignore-buildable
+            AFTER_NODE_IMG=$(docker image inspect usernodelabs/usernode:latest --format '{{.Id}}' 2>/dev/null || echo "none")
 
-            echo "==> Fetching fresh archive snapshot from testnet-seed1..."
-            mkdir -p "$STAGING_DIR"
-            if ./scripts/fetch-archive-snapshot.sh testnet-seed1 "$STAGING_DIR" --replace; then
-              FETCH_OK=1
-              echo "==> Staged archive size:"
-              du -sh "$STAGING_DIR"
-            else
-              echo "==> WARNING: archive fetch from testnet-seed1 failed."
+            # ----------------------------------------------------------
+            # Decide whether to refresh the sidecar's archive snapshot
+            # and force-recreate the usernode-node container. Refresh is
+            # triggered when ANY of:
+            #   1. NODE_FILES_CHANGED=true: this commit modifies the
+            #      sidecar's compose definition or the archive-fetch
+            #      scripts (set by the dorny/paths-filter step).
+            #   2. FORCE_ARCHIVE_REFRESH=true: operator passed the
+            #      workflow_dispatch input as an explicit override.
+            #   3. The pulled usernodelabs/usernode:latest digest
+            #      differs from what was on disk before the pull.
+            #
+            # Otherwise (the common path: pure platform-code change),
+            # we leave the running sidecar alone. Its --archive flag
+            # self-maintains the on-disk snapshot at the configured
+            # interval, so the existing volume stays valid across
+            # arbitrarily many code-only deploys. Skipping the refresh
+            # avoids dropping every child-app's SSE stream on every
+            # push and saves ~1 min of cold-boot.
+            # ----------------------------------------------------------
+            SHOULD_REFRESH_NODE=0
+            if [ "${NODE_FILES_CHANGED:-false}" = "true" ]; then
+              SHOULD_REFRESH_NODE=1
+              echo "==> Node-related files changed in this commit; will refresh archive."
+            fi
+            if [ "${FORCE_ARCHIVE_REFRESH:-false}" = "true" ]; then
+              SHOULD_REFRESH_NODE=1
+              echo "==> Archive refresh forced via workflow_dispatch input."
+            fi
+            if [ "$BEFORE_NODE_IMG" != "$AFTER_NODE_IMG" ]; then
+              SHOULD_REFRESH_NODE=1
+              echo "==> Upstream usernodelabs/usernode image changed:"
+              echo "      before: $BEFORE_NODE_IMG"
+              echo "      after:  $AFTER_NODE_IMG"
+              echo "    Will refresh archive."
             fi
 
-            if [ "$FETCH_OK" = "1" ]; then
-              echo "==> Streaming staged snapshot into docker volume $ARCHIVE_VOLUME..."
-              # One-shot alpine container that wipes the existing volume
-              # contents and unpacks the fresh snapshot in place. Volume
-              # is created lazily by docker run if it doesn't exist yet
-              # (first deploy after this workflow lands).
-              tar -czf - -C "$STAGING_DIR" . | docker run --rm -i \
-                -v "$ARCHIVE_VOLUME:/archive" alpine \
-                sh -c 'rm -rf /archive/* /archive/.[!.]* /archive/..?* 2>/dev/null; tar -xzf - -C /archive && echo "==> Volume populated: $(du -sh /archive | cut -f1)"'
-              rm -rf "$STAGING_DIR"
-              # Fresh snapshot landed in the volume — but compose only
-              # recreates containers when their *definition* changes, not
-              # when their *volume contents* change. Without an explicit
-              # recreate the running usernode-node would keep going on
-              # whatever in-memory state it loaded at its last boot, and
-              # the brand-new archive on disk would sit unused. Force a
-              # recreate so the sidecar reboots from the fresh snapshot
-              # (height ≈ network tip) — that's how we avoid the
-              # `Replace`-triggered partial-ledger trap.
+            if [ "$SHOULD_REFRESH_NODE" = "1" ]; then
+              # ----------------------------------------------------------
+              # Archive snapshot: fetch from testnet-seed1 directly from
+              # prod (reuses prod's existing seed SSH access — no
+              # GH-runner-side key needed). Why:
+              # PARTIAL_LEDGER_RECENT_TX_SOURCE_BUG — the sidecar's
+              # runtime `tracked_owner/add` calls (every child app fires
+              # one at boot) trip the wallet-seed shortcut into
+              # partial-ledger overlay by default. Booting from a full
+              # archive snapshot fixes it: node loads the full tree at
+              # startup and applies every subsequent block in full mode,
+              # so RecentTxEntry.source is authoritative and dapps
+              # actually see incoming txs on the SSE stream.
               #
-              # `--no-deps` keeps the recreate scoped to this one service
-              # (don't restart caddy / db / dapp containers as a side
-              # effect — those don't care about the archive contents).
-              # The flag is set here on the success path *only*; on the
-              # fallback path we deliberately leave the running node
-              # alone since its existing archive is still valid.
-              echo "==> Recreating usernode-node so it picks up the fresh archive..."
-              docker compose up -d --no-deps --force-recreate usernode-node
-            else
-              # Fetch failed. The sidecar's --archive flag will self-
-              # write new snapshots over time, so a non-empty existing
-              # volume is fine to reuse. But an EMPTY volume means the
-              # sidecar boots without an archive → wallet-seed shortcut
-              # → partial-ledger mode → silent dapp breakage. Fail
-              # loudly instead.
-              echo "==> Probing existing archive volume..."
-              ARCHIVE_SIZE=$(docker run --rm -v "$ARCHIVE_VOLUME:/archive" alpine du -sb /archive 2>/dev/null | cut -f1 || echo 0)
-              echo "==> Existing archive size: ${ARCHIVE_SIZE:-0} bytes"
-              # A live archive (chain_id + checkpoint binprots + blocks
-              # dir) is tens to hundreds of MB. Anything under 1 MB is
-              # effectively empty (likely just a stale chain_id stub).
-              if [ "${ARCHIVE_SIZE:-0}" -lt 1000000 ]; then
-                echo "::error::Archive fetch from testnet-seed1 FAILED and prod has no usable existing archive (${ARCHIVE_SIZE:-0} bytes). Refusing to deploy a partial-ledger sidecar — that would silently break every dapp via PARTIAL_LEDGER_RECENT_TX_SOURCE_BUG. Fix prod's SSH access to testnet-seed1 (~deploy/.ssh/config) or pre-seed the volume manually, then re-run."
-                rm -rf "$STAGING_DIR"
-                exit 1
+              # Prereq on this VPS: ~deploy/.ssh/config must define
+              # `testnet-seed1` and the deploy user must have an
+              # authorized_keys entry on that seed. Verify with:
+              #   ssh -o BatchMode=yes -o ConnectTimeout=5 testnet-seed1 echo ok
+              # If that prints `ok` the fetch will succeed.
+              # ----------------------------------------------------------
+              STAGING_DIR="/tmp/usernode-archive-staging-$$"
+              ARCHIVE_VOLUME="usernode_usernode-node-archive"
+              FETCH_OK=0
+
+              echo "==> Fetching fresh archive snapshot from testnet-seed1..."
+              mkdir -p "$STAGING_DIR"
+              if ./scripts/fetch-archive-snapshot.sh testnet-seed1 "$STAGING_DIR" --replace; then
+                FETCH_OK=1
+                echo "==> Staged archive size:"
+                du -sh "$STAGING_DIR"
+              else
+                echo "==> WARNING: archive fetch from testnet-seed1 failed."
               fi
-              echo "::warning::Archive fetch failed but prod has an existing archive (${ARCHIVE_SIZE} bytes from a previous deploy or self-write). Continuing with that snapshot — sidecar will boot in full mode."
+
+              if [ "$FETCH_OK" = "1" ]; then
+                echo "==> Streaming staged snapshot into docker volume $ARCHIVE_VOLUME..."
+                # One-shot alpine container that wipes the existing
+                # volume contents and unpacks the fresh snapshot in
+                # place. Volume is created lazily by docker run if it
+                # doesn't exist yet (first deploy after this workflow
+                # lands).
+                tar -czf - -C "$STAGING_DIR" . | docker run --rm -i \
+                  -v "$ARCHIVE_VOLUME:/archive" alpine \
+                  sh -c 'rm -rf /archive/* /archive/.[!.]* /archive/..?* 2>/dev/null; tar -xzf - -C /archive && echo "==> Volume populated: $(du -sh /archive | cut -f1)"'
+                rm -rf "$STAGING_DIR"
+                # Fresh snapshot landed in the volume — but compose only
+                # recreates containers when their *definition* changes,
+                # not when their *volume contents* change. Without an
+                # explicit recreate the running usernode-node would keep
+                # going on whatever in-memory state it loaded at its
+                # last boot, and the brand-new archive on disk would
+                # sit unused. Force a recreate so the sidecar reboots
+                # from the fresh snapshot.
+                #
+                # `--no-deps` keeps the recreate scoped to this one
+                # service (don't restart caddy / db / dapp containers
+                # as a side effect). The flag is set here on the
+                # success path *only*; on the fallback path we
+                # deliberately leave the running node alone since its
+                # existing archive is still valid.
+                echo "==> Recreating usernode-node so it picks up the fresh archive..."
+                docker compose up -d --no-deps --force-recreate usernode-node
+              else
+                # Fetch failed. The sidecar's --archive flag will self-
+                # write new snapshots over time, so a non-empty existing
+                # volume is fine to reuse. But an EMPTY volume means the
+                # sidecar boots without an archive → wallet-seed
+                # shortcut → partial-ledger mode → silent dapp breakage.
+                # Fail loudly instead.
+                echo "==> Probing existing archive volume..."
+                ARCHIVE_SIZE=$(docker run --rm -v "$ARCHIVE_VOLUME:/archive" alpine du -sb /archive 2>/dev/null | cut -f1 || echo 0)
+                echo "==> Existing archive size: ${ARCHIVE_SIZE:-0} bytes"
+                # A live archive (chain_id + checkpoint binprots + blocks
+                # dir) is tens to hundreds of MB. Anything under 1 MB is
+                # effectively empty (likely just a stale chain_id stub).
+                if [ "${ARCHIVE_SIZE:-0}" -lt 1000000 ]; then
+                  echo "::error::Archive fetch from testnet-seed1 FAILED and prod has no usable existing archive (${ARCHIVE_SIZE:-0} bytes). Refusing to deploy a partial-ledger sidecar — that would silently break every dapp via PARTIAL_LEDGER_RECENT_TX_SOURCE_BUG. Fix prod's SSH access to testnet-seed1 (~deploy/.ssh/config) or pre-seed the volume manually, then re-run."
+                  rm -rf "$STAGING_DIR"
+                  exit 1
+                fi
+                echo "::warning::Archive fetch failed but prod has an existing archive (${ARCHIVE_SIZE} bytes from a previous deploy or self-write). Continuing with that snapshot — sidecar will boot in full mode."
+              fi
+            else
+              echo "==> No node-affecting changes (compose / scripts / upstream image / manual override); skipping archive refresh."
+              echo "==> Sidecar keeps running with its existing self-maintained archive."
             fi
 
             # Bring everything up. Build is required on every deploy —
-            # the usernode image bakes in `COPY . .` so a rebuild is
-            # how new code gets in.
-            docker compose pull --ignore-buildable
+            # the platform usernode image bakes in `COPY . .` so a
+            # rebuild is how new code gets in. If the conditional
+            # archive-refresh branch above already force-recreated
+            # usernode-node, this `up -d` is a no-op for that service.
             docker compose up -d --build --remove-orphans
 
             # Caddyfile is a read-only mount, so a rebuild of usernode
