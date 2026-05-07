@@ -126,6 +126,8 @@ jobs:
             GITHUB_PRIVATE_KEY='${{ secrets.USERNODE_GITHUB_PRIVATE_KEY }}'
             GITHUB_BOT_TOKEN=${{ secrets.USERNODE_GITHUB_BOT_TOKEN }}
             ANTHROPIC_API_KEY=${{ secrets.USERNODE_ANTHROPIC_API_KEY }}
+            USERNODE_APP_PUBKEY=${{ secrets.USERNODE_APP_PUBKEY }}
+            USERNODE_APP_SECRET_KEY=${{ secrets.USERNODE_APP_SECRET_KEY }}
             LOG_LEVEL=INFO
             GIT_SHA=${{ github.sha }}
             ENVEOF
