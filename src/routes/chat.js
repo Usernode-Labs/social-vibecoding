@@ -24,7 +24,7 @@ function chatRoutes(config) {
 
       if (before) {
         query = `
-          SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.created_at
+          SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.metadata, m.created_at
           FROM chat_messages m
           LEFT JOIN users u ON m.user_id = u.id
           WHERE m.app_id = $1 AND m.id < $2
@@ -33,7 +33,7 @@ function chatRoutes(config) {
         params = [appId, before, limit];
       } else {
         query = `
-          SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.created_at
+          SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.metadata, m.created_at
           FROM chat_messages m
           LEFT JOIN users u ON m.user_id = u.id
           WHERE m.app_id = $1

@@ -400,6 +400,20 @@ const App = {
         DevChat._finishStreaming();
         DevChat.renderMessages();
         break;
+      case 'spec_updated':
+        // Mayor's write_spec / dispatch_scout / build-spec backfill, or
+        // a hand-edit from another tab on the same session. Refetch the
+        // canonical doc + version list. _handleSpecUpdated also handles
+        // the unread-badge logic when the user is on the Chat tab.
+        if (typeof DevChat._handleSpecUpdated === 'function') {
+          DevChat._handleSpecUpdated(data);
+        }
+        break;
+      case 'build_spec_complete':
+        if (typeof DevChat._loadSpec === 'function') {
+          DevChat._loadSpec({ force: true });
+        }
+        break;
     }
   },
 

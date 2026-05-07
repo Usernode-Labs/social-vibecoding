@@ -378,7 +378,13 @@ function sessionRoutes(config) {
         // tool_use block. We run the tool, feed the result back as a
         // `tool_result`, and re-enter the model for a short wrap-up
         // turn.
-        const tools = isWorkerBusy ? [] : [DISPATCH_TOOL];
+        // The Mayor sees three tools when no worker is busy. Their
+        // priority ordering and the rule against combining write_spec
+        // with dispatch_claude_code in one turn are enforced both by
+        // the system prompt AND by the resolution code below — models
+        // sometimes ignore prose constraints, so we belt-and-suspenders
+        // it server-side.
+        const tools = isWorkerBusy ? [] : [DISPATCH_TOOL, DISPATCH_SCOUT_TOOL, WRITE_SPEC_TOOL];
 
         setPhase('mayor1');
         let mayor1;
@@ -471,68 +477,121 @@ function sessionRoutes(config) {
           send('usage', { costCents: costCents1, model: selectedModel, byok: !!userApiKey });
         }
 
+        // Pick which tool the Mayor invoked, with server-side priority
+        // enforcement: write_spec / dispatch_scout > dispatch_claude_code.
+        // If the Mayor (mis)used multiple in one turn, we honor the
+        // planning tool and quietly drop the dispatch — same rule the
+        // tool descriptions state, but enforced here so a model regression
+        // can't cause a surprise build mid-spec-discussion.
+        const writeSpecCall = mayor1.toolUses.find((t) => t.name === 'write_spec');
+        const scoutCall = mayor1.toolUses.find((t) => t.name === 'dispatch_scout');
         const dispatchCall = mayor1.toolUses.find((t) => t.name === 'dispatch_claude_code');
-        if (!dispatchCall) {
-          // Pure chat turn — no CC dispatch needed.
+
+        let activeToolCall = null;
+        let toolKind = null; // 'write_spec' | 'scout' | 'build'
+        if (writeSpecCall) { activeToolCall = writeSpecCall; toolKind = 'write_spec'; }
+        else if (scoutCall) { activeToolCall = scoutCall; toolKind = 'scout'; }
+        else if (dispatchCall) { activeToolCall = dispatchCall; toolKind = 'build'; }
+
+        if (!activeToolCall) {
+          // Pure chat turn — no tool call needed.
           send('done', {});
           res.end();
           setTimeout(() => sessionBus.clearSession(session.id), 30000);
           return;
         }
 
-        // Race check: another request may have started a worker between
-        // the isWorkerBusy check above and now.
-        const existingWorkerState = await docker.getContainerStatus(`usernode-worker-${session.id}`);
-        if (activeWorkers.has(session.id) || existingWorkerState === 'running') {
-          await sendStatus('Claude Code is already running for this session. Please wait for it to finish.');
-          send('done', {});
-          res.end();
-          return;
+        // Race check: scout and build both spawn a per-session worker
+        // container, so they share the same gate. write_spec is just a
+        // DB UPDATE and bypasses the gate entirely.
+        if (toolKind === 'scout' || toolKind === 'build') {
+          const existingWorkerState = await docker.getContainerStatus(`usernode-worker-${session.id}`);
+          if (activeWorkers.has(session.id) || existingWorkerState === 'running') {
+            await sendStatus('Claude Code is already running for this session. Please wait for it to finish.');
+            send('done', {});
+            res.end();
+            return;
+          }
         }
 
         // Seal the phase-1 assistant bubble so the phase-2 wrap-up
         // lands in a fresh bubble below the CC status/progress events.
         send('assistant_message_end', {});
 
-        // --- Run Claude Code as a tool ---
-        const toolPromptArg = typeof dispatchCall.input?.prompt === 'string' && dispatchCall.input.prompt.trim()
-          ? dispatchCall.input.prompt.trim()
-          : message.trim();
+        // --- Run the chosen tool ---
+        let toolResult;
+        if (toolKind === 'write_spec') {
+          setPhase('spec');
+          toolResult = await runWriteSpecTool({
+            pool, session, send, sendStatus,
+            toolInput: activeToolCall.input,
+          });
+        } else if (toolKind === 'scout') {
+          const toolPromptArg = typeof activeToolCall.input?.prompt === 'string' && activeToolCall.input.prompt.trim()
+            ? activeToolCall.input.prompt.trim()
+            : message.trim();
 
-        setPhase('cc');
-        const ccResult = await runClaudeCodeTool({
-          pool, config, req, res, session, selectedModel,
-          userMessage: message.trim(),
-          toolPromptArg,
-          repoOwner, repoName,
-          send, sendStatus,
-          stopHandle,
-          userApiKey,
-        });
+          setPhase('cc');
+          toolResult = await runScoutTool({
+            pool, config, req, res, session, selectedModel,
+            userMessage: message.trim(),
+            toolPromptArg,
+            repoOwner, repoName,
+            send, sendStatus,
+            stopHandle,
+            userApiKey,
+          });
 
-        if (stopHandle.stopped) {
-          // User stopped during the CC run. The worker's finally already
-          // tore it down; we skip the Mayor wrap-up entirely because the
-          // Mayor has nothing coherent to summarize (no push, no PR, no
-          // staging). The next dispatch resumes CC via --resume so its
-          // own session memory is preserved.
-          send('stopped', { phase: 'cc', by: stopHandle.stoppedBy });
-          send('done', {});
-          res.end();
-          if (stopRegistry.get(session.id) === stopHandle) stopRegistry.delete(session.id);
-          setTimeout(() => sessionBus.clearSession(session.id), 30000);
-          return;
+          if (stopHandle.stopped) {
+            // Same shape as the build stop path: skip the Mayor wrap-up
+            // because there's nothing coherent to summarize.
+            send('stopped', { phase: 'cc', by: stopHandle.stoppedBy });
+            send('done', {});
+            res.end();
+            if (stopRegistry.get(session.id) === stopHandle) stopRegistry.delete(session.id);
+            setTimeout(() => sessionBus.clearSession(session.id), 30000);
+            return;
+          }
+        } else {
+          const toolPromptArg = typeof activeToolCall.input?.prompt === 'string' && activeToolCall.input.prompt.trim()
+            ? activeToolCall.input.prompt.trim()
+            : message.trim();
+
+          setPhase('cc');
+          toolResult = await runClaudeCodeTool({
+            pool, config, req, res, session, selectedModel,
+            userMessage: message.trim(),
+            toolPromptArg,
+            repoOwner, repoName,
+            send, sendStatus,
+            stopHandle,
+            userApiKey,
+          });
+
+          if (stopHandle.stopped) {
+            // User stopped during the CC run. The worker's finally already
+            // tore it down; we skip the Mayor wrap-up entirely because the
+            // Mayor has nothing coherent to summarize (no push, no PR, no
+            // staging). The next dispatch resumes CC via --resume so its
+            // own session memory is preserved.
+            send('stopped', { phase: 'cc', by: stopHandle.stoppedBy });
+            send('done', {});
+            res.end();
+            if (stopRegistry.get(session.id) === stopHandle) stopRegistry.delete(session.id);
+            setTimeout(() => sessionBus.clearSession(session.id), 30000);
+            return;
+          }
+
+          ccLog = toolResult.ccLog;
+          stagingUrl = toolResult.stagingUrl;
         }
-
-        ccLog = ccResult.ccLog;
-        stagingUrl = ccResult.stagingUrl;
 
         // --- Phase 2: Mayor wrap-up turn ---
         //
         // Feed the tool_use → tool_result round-trip back into the model
         // so it can summarize what actually happened. `tool_choice: none`
-        // prevents it from dispatching a second time (which would also
-        // hit the `activeWorkers` race check and fail loudly).
+        // prevents it from calling another tool (which would also hit
+        // the `activeWorkers` race check or accidentally re-dispatch).
         const followUpMessages = [
           ...messages,
           // Anthropic requires the assistant turn to be the VERBATIM
@@ -543,9 +602,9 @@ function sessionRoutes(config) {
             role: 'user',
             content: [{
               type: 'tool_result',
-              tool_use_id: dispatchCall.id,
-              content: ccResult.toolResultText,
-              ...(ccResult.isError ? { is_error: true } : {}),
+              tool_use_id: activeToolCall.id,
+              content: toolResult.toolResultText,
+              ...(toolResult.isError ? { is_error: true } : {}),
             }],
           },
         ];
@@ -574,10 +633,17 @@ function sessionRoutes(config) {
           preview: mayorText2.substring(0, 200),
         });
         if (!mayorText2.trim()) {
-          // Cheap guard: we still want to show *something* after CC.
-          mayorText2 = ccResult.isError
-            ? "_The coding agent didn't complete successfully — see the status messages above._"
-            : '_Done._';
+          // Cheap guard: we still want to show *something* after the
+          // tool runs, even if the Mayor produces no wrap-up text.
+          if (toolResult.isError) {
+            mayorText2 = toolKind === 'write_spec'
+              ? "_The spec edit didn't go through — see the status above._"
+              : toolKind === 'scout'
+                ? "_The scout didn't finish successfully — see the status above._"
+                : "_The coding agent didn't complete successfully — see the status messages above._";
+          } else {
+            mayorText2 = '_Done._';
+          }
           send('token', { text: mayorText2 });
         }
         send('mayor_reasoning', { text: mayorText2 });
@@ -622,6 +688,412 @@ function sessionRoutes(config) {
       if (!res.headersSent) {
         res.status(500).json({ error: 'Internal server error' });
       }
+    }
+  });
+
+  // ===== Spec stage endpoints =====
+  //
+  // The session has a live spec_md draft (overwritten by Mayor's
+  // write_spec, by dispatch_scout, or by hand via PUT /spec) and an
+  // append-only history in chat_session_specs (rows are frozen each
+  // time the user clicks "Build from spec").
+  //
+  // Read-only fetch of the live draft. Returns metadata for past
+  // versions so the dev-chat can populate its version selector without
+  // a second round-trip; full content of past versions comes from
+  // GET /specs/:version below.
+  router.get('/api/sessions/:id/spec', async (req, res) => {
+    try {
+      const { rows: sessionRows } = await pool.query(
+        `SELECT cs.id, cs.spec_md
+         FROM chat_sessions cs
+         WHERE cs.id = $1 AND cs.user_id = $2`,
+        [req.params.id, req.user.id]
+      );
+      if (!sessionRows.length) return res.status(404).json({ error: 'Session not found' });
+
+      const { rows: versions } = await pool.query(
+        `SELECT version, built_at, commit_sha, pr_number, shared_to_group_at,
+                LENGTH(content) AS char_count
+         FROM chat_session_specs
+         WHERE session_id = $1
+         ORDER BY version DESC`,
+        [req.params.id]
+      );
+
+      res.json({
+        spec: sessionRows[0].spec_md || '',
+        versions,
+      });
+    } catch (err) {
+      log.error('sessions', 'Failed to get spec', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Hand-edit the live draft. Used when the user types directly into
+  // the Spec tab editor. We don't snapshot to history here — only
+  // "Build from spec" freezes a version. We DO emit `spec_updated` so
+  // any other tab/connected client (rare but possible) re-renders.
+  router.put('/api/sessions/:id/spec', async (req, res) => {
+    const { content } = req.body || {};
+    if (typeof content !== 'string') {
+      return res.status(400).json({ error: 'content (string) required' });
+    }
+    try {
+      const { rows } = await pool.query(
+        `UPDATE chat_sessions SET spec_md = $1
+         WHERE id = $2 AND user_id = $3
+         RETURNING id`,
+        [content, req.params.id, req.user.id]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Session not found' });
+
+      const { broadcastGlobal } = require('../services/ws');
+      broadcastGlobal({
+        type: 'session_event',
+        sessionId: parseInt(req.params.id, 10),
+        event: 'spec_updated',
+        length: content.length,
+        lines: content.split('\n').length,
+        source: 'user',
+      });
+
+      res.json({ ok: true, length: content.length });
+    } catch (err) {
+      log.error('sessions', 'Failed to save spec', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Fetch a frozen historical version verbatim. The Spec tab uses this
+  // when the user picks an older version from the dropdown.
+  router.get('/api/sessions/:id/specs/:version', async (req, res) => {
+    const sessionId = parseInt(req.params.id, 10);
+    const version = parseInt(req.params.version, 10);
+    if (Number.isNaN(sessionId) || Number.isNaN(version)) {
+      return res.status(400).json({ error: 'Bad id/version' });
+    }
+    try {
+      // Auth via session ownership join.
+      const { rows } = await pool.query(
+        `SELECT s.version, s.content, s.built_at, s.commit_sha, s.pr_number, s.shared_to_group_at
+         FROM chat_session_specs s
+         JOIN chat_sessions cs ON cs.id = s.session_id
+         WHERE s.session_id = $1 AND s.version = $2 AND cs.user_id = $3`,
+        [sessionId, version, req.user.id]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Spec version not found' });
+      res.json({ spec: rows[0] });
+    } catch (err) {
+      log.error('sessions', 'Failed to get spec version', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Build from spec — the user-driven dispatch. Snapshots the current
+  // spec_md to chat_session_specs (next version), persists a synthetic
+  // user message in the dev-chat, and runs the standard CC pipeline
+  // with the spec as the brief. After CC pushes, we backfill the
+  // snapshot row with commit_sha + pr_number so the Spec tab can link
+  // each frozen version to the PR it produced.
+  //
+  // Streams the same SSE event shapes as POST /chat so the dev-chat
+  // client can drive the existing CC progress UI without forking.
+  router.post('/api/sessions/:id/build-spec', drainGuard, async (req, res) => {
+    const { model } = req.body || {};
+
+    try {
+      const { rows: sessionRows } = await pool.query(
+        `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
+         FROM chat_sessions cs
+         JOIN apps a ON cs.app_id = a.id
+         WHERE cs.id = $1 AND cs.user_id = $2
+           AND cs.status IN ('active', 'promoted')`,
+        [req.params.id, req.user.id]
+      );
+      if (!sessionRows.length) return res.status(404).json({ error: 'Active session not found' });
+      const session = sessionRows[0];
+
+      const specMd = (session.spec_md || '').trim();
+      if (!specMd) {
+        return res.status(400).json({ error: 'Spec is empty — nothing to build.' });
+      }
+
+      // BYOK + budget check — same shape as /chat.
+      let userApiKey = null;
+      try {
+        const { rows: keyRows } = await pool.query(
+          'SELECT anthropic_key_enc FROM users WHERE id = $1',
+          [req.user.id]
+        );
+        if (keyRows[0]?.anthropic_key_enc) {
+          const secrets = require('../services/secrets');
+          userApiKey = secrets.decrypt(keyRows[0].anthropic_key_enc, config.jwtSecret);
+        }
+      } catch (err) {
+        log.warn('sessions', 'Failed to load user API key', { userId: req.user.id, err: err.message });
+      }
+      if (!userApiKey) {
+        const budgetCheck = await checkBudget(pool, req.user.id);
+        if (budgetCheck.error) return res.status(429).json({ error: budgetCheck.error });
+      }
+
+      // Worker-busy check up front so we can return a clean 409 instead
+      // of opening an SSE stream just to immediately fail.
+      const containerState = await docker.getContainerStatus(`usernode-worker-${session.id}`);
+      if (activeWorkers.has(session.id) || containerState === 'running') {
+        return res.status(409).json({ error: 'Coding agent is already running for this session.' });
+      }
+
+      const selectedModel = model || 'claude-sonnet-4-6';
+
+      // Snapshot the spec into history. The version number is the next
+      // integer after the current MAX; doing this in one INSERT … SELECT
+      // keeps a concurrent build from minting the same version (we'd
+      // hit the UNIQUE(session_id, version) constraint and 500, which
+      // is the right failure mode — better than two rows pointing at
+      // different commits with the same version).
+      const { rows: snapRows } = await pool.query(
+        `INSERT INTO chat_session_specs (session_id, version, content)
+         SELECT $1, COALESCE(MAX(version), 0) + 1, $2
+         FROM chat_session_specs WHERE session_id = $1
+         RETURNING id, version, built_at`,
+        [session.id, specMd]
+      );
+      const snap = snapRows[0];
+      log.info('sessions', 'Spec snapshot created', {
+        sessionId: session.id,
+        snapId: snap.id,
+        version: snap.version,
+        chars: specMd.length,
+      });
+
+      // Persist a synthetic "user" message so the timeline shows the
+      // user-initiated build action, exactly like a typed chat message.
+      const userMessage = `Build the current spec (v${snap.version}).`;
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'user', $2, $3)`,
+        [session.id, userMessage, JSON.stringify({ specBuild: { version: snap.version } })]
+      );
+
+      // SSE response (same headers + helpers as /chat).
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      });
+
+      const { broadcastGlobal } = require('../services/ws');
+      const seqPrefix = Date.now().toString(36);
+      let eventSeq = 0;
+      const SSE_ONLY = new Set(['token', 'usage', 'error', 'mayor_reasoning']);
+      const send = (type, data) => {
+        const seq = `${seqPrefix}-${++eventSeq}`;
+        const event = { type, _seq: seq, ...data };
+        try { res.write(`data: ${JSON.stringify(event)}\n\n`); } catch {}
+        if (!SSE_ONLY.has(type)) {
+          broadcastGlobal({ type: 'session_event', sessionId: session.id, event: type, ...event });
+        }
+        sessionBus.publish(session.id, event);
+      };
+
+      const sendStatus = async (text, metadata) => {
+        send('status', { text, ...(metadata || {}) });
+        await pool.query(
+          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+           VALUES ($1, 'system', $2, $3)`,
+          [session.id, text, JSON.stringify(metadata || {})]
+        ).catch(() => {});
+      };
+
+      const stopHandle = {
+        abort: new AbortController(),
+        workerName: null,
+        phase: 'cc',
+        stopped: false,
+        stoppedBy: null,
+      };
+      const prior = stopRegistry.get(session.id);
+      if (prior && prior !== stopHandle) {
+        try { prior.abort.abort(); } catch {}
+      }
+      stopRegistry.set(session.id, stopHandle);
+      const setPhase = (phase) => {
+        stopHandle.phase = phase;
+        send('phase', { phase });
+      };
+
+      try {
+        const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+        if (!repoOwner || !repoName) {
+          send('error', { error: 'No GitHub repo configured for this app' });
+          send('done', {});
+          res.end();
+          return;
+        }
+
+        await sendStatus(`Building from spec v${snap.version}...`, { specVersion: snap.version });
+
+        // Build prompt: we deliberately put the FULL spec into the
+        // tool prompt so CC has the same source-of-truth artifact the
+        // user reviewed, not a summary or paraphrase. The Mayor is
+        // bypassed entirely — the user already decided to build.
+        const toolPromptArg =
+          `Implement the following spec. Edit the necessary files, then commit and push.\n\n`
+          + `=== SPEC v${snap.version} ===\n${specMd}\n=== END SPEC ===`;
+
+        setPhase('cc');
+        const ccResult = await runClaudeCodeTool({
+          pool, config, req, res, session, selectedModel,
+          userMessage,
+          toolPromptArg,
+          repoOwner, repoName,
+          send, sendStatus,
+          stopHandle,
+          userApiKey,
+        });
+
+        if (stopHandle.stopped) {
+          send('stopped', { phase: 'cc', by: stopHandle.stoppedBy });
+          send('done', {});
+          res.end();
+          if (stopRegistry.get(session.id) === stopHandle) stopRegistry.delete(session.id);
+          setTimeout(() => sessionBus.clearSession(session.id), 30000);
+          return;
+        }
+
+        // Backfill commit_sha + pr_number on the snapshot row so the
+        // Spec tab can link each frozen version to the PR it produced.
+        // Re-read the session because runClaudeCodeTool may have
+        // mutated pr_number in the chat_sessions row.
+        const { rows: postRows } = await pool.query(
+          'SELECT pr_number FROM chat_sessions WHERE id = $1',
+          [session.id]
+        );
+        await pool.query(
+          `UPDATE chat_session_specs
+           SET commit_sha = $1, pr_number = $2
+           WHERE id = $3`,
+          [ccResult.commitSha || null, postRows[0]?.pr_number || null, snap.id]
+        );
+
+        // Skip the Mayor wrap-up: runClaudeCodeTool already emitted a
+        // [CODING AGENT COMPLETED] system status with the natural-
+        // language summary, which is enough for the timeline. Saves a
+        // model call per build.
+        send('build_spec_complete', {
+          specVersion: snap.version,
+          commitSha: ccResult.commitSha || null,
+          prNumber: postRows[0]?.pr_number || null,
+        });
+      } catch (err) {
+        activeWorkers.delete(session.id);
+        workerProgress.clear(session.id);
+        log.error('sessions', 'Build-from-spec error', { message: err.message, stack: err.stack });
+        send('error', { error: err.message });
+      } finally {
+        if (stopRegistry.get(session.id) === stopHandle) {
+          stopRegistry.delete(session.id);
+        }
+      }
+
+      send('done', {});
+      res.end();
+      setTimeout(() => sessionBus.clearSession(session.id), 30000);
+    } catch (err) {
+      log.error('sessions', 'Build-from-spec setup error', { message: err.message });
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    }
+  });
+
+  // Share a frozen spec snapshot into the app's group chat. The group
+  // chat renders the message as a "spec card" with a snippet + view-
+  // full-spec affordance; the underlying chat_messages row carries
+  // metadata.specShare so the renderer knows to upgrade it from a
+  // plain system line.
+  router.post('/api/sessions/:id/specs/:version/share', async (req, res) => {
+    const sessionId = parseInt(req.params.id, 10);
+    const version = parseInt(req.params.version, 10);
+    if (Number.isNaN(sessionId) || Number.isNaN(version)) {
+      return res.status(400).json({ error: 'Bad id/version' });
+    }
+
+    try {
+      const { rows: sessionRows } = await pool.query(
+        `SELECT cs.id, cs.app_id, a.slug as app_slug
+         FROM chat_sessions cs
+         JOIN apps a ON cs.app_id = a.id
+         WHERE cs.id = $1 AND cs.user_id = $2`,
+        [sessionId, req.user.id]
+      );
+      if (!sessionRows.length) return res.status(404).json({ error: 'Session not found' });
+      const { app_id: appId, app_slug: appSlug } = sessionRows[0];
+
+      const { rows: specRows } = await pool.query(
+        `SELECT version, content, built_at, commit_sha, pr_number
+         FROM chat_session_specs
+         WHERE session_id = $1 AND version = $2`,
+        [sessionId, version]
+      );
+      if (!specRows.length) return res.status(404).json({ error: 'Spec version not found' });
+      const spec = specRows[0];
+
+      // Snippet for the card body — the renderer can show full spec on
+      // demand. Keep this short; the full content lives in
+      // chat_session_specs and is fetched lazily.
+      const snippet = (spec.content || '').slice(0, 280);
+
+      const shareMeta = {
+        specShare: {
+          sessionId,
+          version: spec.version,
+          builtAt: spec.built_at,
+          commitSha: spec.commit_sha || null,
+          prNumber: spec.pr_number || null,
+          snippet,
+          totalChars: (spec.content || '').length,
+          sharedBy: { id: req.user.id, username: req.user.username },
+        },
+      };
+      const summaryLine = `📋 ${req.user.username || 'Someone'} shared spec v${spec.version} from a dev session.`;
+
+      const { rows: msgRows } = await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata)
+         VALUES ($1, $2, $3, 'spec_share', $4)
+         RETURNING id, created_at`,
+        [appId, req.user.id, summaryLine, JSON.stringify(shareMeta)]
+      );
+
+      await pool.query(
+        `UPDATE chat_session_specs SET shared_to_group_at = NOW()
+         WHERE session_id = $1 AND version = $2 AND shared_to_group_at IS NULL`,
+        [sessionId, version]
+      );
+
+      // Broadcast to room subscribers using the same envelope the WS
+      // group-chat handler emits, so the existing renderMessageHtml
+      // path picks it up. We also fan out the metadata so the card has
+      // everything it needs without a follow-up fetch.
+      const { broadcast } = require('../services/ws');
+      broadcast(appId, {
+        type: 'chat',
+        id: msgRows[0].id,
+        userId: req.user.id,
+        username: req.user.username,
+        content: summaryLine,
+        msgType: 'spec_share',
+        metadata: shareMeta,
+        createdAt: msgRows[0].created_at,
+      });
+
+      res.json({ ok: true, appSlug, messageId: msgRows[0].id });
+    } catch (err) {
+      log.error('sessions', 'Share spec failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
     }
   });
 
@@ -862,10 +1334,13 @@ async function checkBudget(pool, userId) {
   return { ok: true, userRemaining: USER_DAILY_LIMIT_CENTS - userSpent, globalRemaining: GLOBAL_DAILY_LIMIT_CENTS - globalSpent };
 }
 
-// The single tool we expose to the Mayor. Keeping the input schema
-// intentionally minimal — `prompt: string` is all CC needs. Adding
-// structured hints (scope, files, etc.) would just give the model
-// more ways to lie to itself; the prose prompt is rich enough.
+// Tools the Mayor can call. Each user message produces at most one
+// tool_use (we serialize per-session to one CC dispatch at a time). The
+// Mayor's system prompt teaches the priority order between these.
+//
+// Build the app for real: clones the repo, edits files, commits, and
+// pushes to the dev branch. Staging auto-rebuilds. This is the
+// expensive path — a Docker container per call.
 const DISPATCH_TOOL = {
   name: 'dispatch_claude_code',
   description:
@@ -885,6 +1360,60 @@ const DISPATCH_TOOL = {
       },
     },
     required: ['prompt'],
+  },
+};
+
+// Spec stage — read-only investigation. Runs CC in --permission-mode
+// plan: it reads files, but cannot edit/commit/push. Output is captured
+// as the session's spec_md doc, which the user can then review on the
+// Spec tab and Build from. Slow (~30-60s container spinup) but
+// authoritative — it's the only way for the Mayor to ground a spec in
+// real file evidence rather than guess.
+const DISPATCH_SCOUT_TOOL = {
+  name: 'dispatch_scout',
+  description:
+    'Dispatch the coding agent in read-only PLAN MODE to investigate the repo and draft a grounded markdown spec. '
+    + 'Use for the FIRST substantive spec work in a session, when you need to know what files exist or how things are currently built. '
+    + "The agent reads files and writes prose; it CANNOT edit, commit, or push. Output replaces the session's spec doc. "
+    + 'Slow (~30-60s) — do not call for small revisions; use write_spec instead. At most one call per user message.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      prompt: {
+        type: 'string',
+        description:
+          'Instructions for the scout. Should describe what to investigate and what shape the resulting spec should take '
+          + '(e.g. "Read the relevant files for the leaderboard and draft a markdown spec covering screens, data model, '
+          + 'and edge cases for adding realtime updates"). 1-3 sentences.',
+      },
+    },
+    required: ['prompt'],
+  },
+};
+
+// Spec stage — cheap, in-process spec edit. No container, no model
+// round-trip beyond the Mayor's own turn. Use this for revisions once a
+// spec exists (you wrote it yourself, or scout drafted it). Forbidden
+// to combine with dispatch_claude_code in the same turn — the user
+// dispatches the build themselves via the "Build from spec" button.
+const WRITE_SPEC_TOOL = {
+  name: 'write_spec',
+  description:
+    'Overwrite the current draft spec for this session with the given markdown content. '
+    + 'Use for cheap revisions when you already understand the change — adding sections, tightening wording, incorporating user feedback. '
+    + 'Cannot read the repo; if you need real file evidence, use dispatch_scout first. '
+    + 'Do not call dispatch_claude_code in the same turn as write_spec.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      content: {
+        type: 'string',
+        description:
+          'The full new contents of the spec doc. This OVERWRITES the existing spec. '
+          + 'Markdown formatted; pick sections that fit the task (Goal, Screens, Data Model, Edge Cases, etc.).',
+      },
+    },
+    required: ['content'],
   },
 };
 
@@ -928,6 +1457,205 @@ function buildMayorMessages(history) {
     }
   }
   return messages;
+}
+
+// Cheap, in-process spec edit triggered by the Mayor's write_spec tool.
+// No worker container, no model round-trip beyond the Mayor's own turn —
+// we just UPDATE chat_sessions.spec_md, fire a system status event so
+// the dev-chat timeline shows the change, and emit `spec_updated` so any
+// open Spec panel re-renders live. Returns a tool_result summary the
+// phase-2 wrap-up will narrate to the user.
+async function runWriteSpecTool({ pool, session, send, sendStatus, toolInput }) {
+  const content = typeof toolInput?.content === 'string' ? toolInput.content : '';
+  if (!content.trim()) {
+    await sendStatus('write_spec was called with empty content; the spec was not updated.');
+    return {
+      toolResultText: 'write_spec was called without content. The spec doc is unchanged.',
+      isError: true,
+    };
+  }
+
+  await pool.query(
+    'UPDATE chat_sessions SET spec_md = $1 WHERE id = $2',
+    [content, session.id]
+  );
+
+  const lineCount = content.split('\n').length;
+  const charCount = content.length;
+  const preview = content.length > 400 ? `${content.substring(0, 400)}…` : content;
+
+  await sendStatus(
+    `Spec updated (${lineCount} lines).`,
+    { specPreview: preview, specLines: lineCount }
+  );
+  send('spec_updated', { length: charCount, lines: lineCount });
+
+  return {
+    toolResultText:
+      `The session's spec doc was overwritten with new content (${lineCount} lines, ${charCount} chars). `
+      + `It's visible on the user's Spec tab; they can review, hand-edit, and click "Build from spec" when ready.`,
+    isError: false,
+  };
+}
+
+// Runs Claude Code in read-only PLAN MODE (the spec-stage scout). CC
+// reads the repo and produces a markdown spec as its final result text;
+// we capture that into chat_sessions.spec_md. No commit, no push, no
+// staging rebuild — by design, scout is structurally forbidden from
+// editing anything. Mirrors runClaudeCodeTool's stop / progress / cost-
+// tracking shape so the existing client SSE handlers don't have to
+// special-case scout vs. build.
+async function runScoutTool({
+  pool, config, req, res, session, selectedModel,
+  userMessage, toolPromptArg,
+  repoOwner, repoName,
+  send, sendStatus,
+  stopHandle,
+  userApiKey,
+}) {
+  activeWorkers.add(session.id);
+  const modelLabel = prettyModelLabel(selectedModel);
+  await sendStatus(`Scouting the repo for context (${modelLabel})...`);
+
+  await worker.ensureWorkerImage();
+
+  // Scout-specific prompt. Deliberately omits the platform-conventions
+  // block and commit/push instructions used in the build prompt — scout
+  // never edits anything. The "final message is the spec" contract is
+  // load-bearing: we extract `result.lastResultText` verbatim and store
+  // it as spec_md, so any preamble would leak into the user's spec.
+  const scoutPrompt = `SCOUT TASK (from the Mayor):
+${toolPromptArg}
+
+USER REQUEST: "${userMessage}"
+
+You are running in PLAN MODE: you can read files (Read, Glob, Grep) but you cannot edit, commit, or push anything. Do not attempt to.
+
+Your job is to investigate this repo and produce a MARKDOWN SPEC for the change. The spec should be:
+- A complete, self-contained markdown document the user can review on its own.
+- Grounded in real file evidence — reference actual file paths and current behaviour, not guesses.
+- Structured with sensible headings (e.g. Goal, Affected Screens, Data Model, Edge Cases, Open Questions). Pick whatever sections fit the task; one size does not fit all.
+- Specific enough that a coding agent could implement it without re-doing your investigation, but NOT a literal diff or code block.
+
+Your final assistant message must be ONLY the markdown spec — no preamble, no "I'll investigate...", no "Here's the spec:". The host captures that final message verbatim and stores it as the session's spec doc.`;
+
+  const containerName = await worker.spawnWorker(session.id, {
+    repoOwner,
+    repoName,
+    branchName: session.branch_name,
+    anthropicApiKey: userApiKey || config.anthropicApiKey,
+    prompt: scoutPrompt,
+    model: selectedModel,
+    commitMsg: '', // unused in scout mode
+    resumeSessionId: session.cc_session_id || null,
+    mode: 'scout',
+  });
+
+  if (stopHandle) stopHandle.workerName = containerName;
+
+  let isError = false;
+  const summaryParts = [];
+
+  try {
+    await sendStatus('Scout reading the codebase...');
+
+    const heartbeat = setInterval(() => {
+      try { res.write(`:heartbeat\n\n`); } catch {}
+    }, 5000);
+
+    let result;
+    try {
+      result = await worker.watchWorker(containerName, {
+        onProgress: (text) => {
+          send('cc_progress', { text });
+          workerProgress.set(session.id, text, { model: selectedModel });
+        },
+      });
+    } finally {
+      clearInterval(heartbeat);
+    }
+
+    // Same cc_session_id thread-through as runClaudeCodeTool — a scout
+    // call early in the session is remembered when the user later
+    // dispatches a real build, which keeps the spec ↔ implementation
+    // mapping coherent and avoids paying full repo-read cost twice.
+    const newCcId = result.sessionId || result.initSessionId || null;
+    if (newCcId && newCcId !== session.cc_session_id) {
+      await pool.query(
+        'UPDATE chat_sessions SET cc_session_id = $1 WHERE id = $2',
+        [newCcId, session.id]
+      ).catch(() => {});
+      session.cc_session_id = newCcId;
+    }
+
+    if (stopHandle && stopHandle.stopped) {
+      isError = true;
+      const byStr = stopHandle.stoppedBy ? ` by @${stopHandle.stoppedBy}` : '';
+      await sendStatus(`Scout stopped${byStr}.`);
+      summaryParts.push(`The scout was stopped${byStr} before it finished. The spec doc was not updated.`);
+      return { toolResultText: summaryParts.join('\n\n') || 'Stopped.', isError: true };
+    }
+
+    const ccText = (result.lastResultText || '').trim();
+
+    if (result.fatalError) {
+      isError = true;
+      const msg = `Scout error: ${result.fatalError.substring(0, 200)}`;
+      await sendStatus(msg);
+      summaryParts.push(msg);
+    } else if (result.ccIsError && !ccText) {
+      isError = true;
+      const msg = `Scout error: ${(ccText || 'unknown').substring(0, 200)}`;
+      await sendStatus(msg);
+      summaryParts.push(msg);
+    } else if (!ccText) {
+      isError = true;
+      const msg = 'Scout finished but produced no spec text.';
+      await sendStatus(msg);
+      summaryParts.push(msg);
+    } else {
+      await pool.query(
+        'UPDATE chat_sessions SET spec_md = $1 WHERE id = $2',
+        [ccText, session.id]
+      );
+
+      const lineCount = ccText.split('\n').length;
+      const preview = ccText.length > 400 ? `${ccText.substring(0, 400)}…` : ccText;
+      await sendStatus(
+        `Scout drafted a ${lineCount}-line spec from the codebase.`,
+        { specPreview: preview, specLines: lineCount, scoutOutput: ccText }
+      );
+      send('spec_updated', { length: ccText.length, lines: lineCount });
+      summaryParts.push(
+        `The scout investigated the repo and drafted a ${lineCount}-line markdown spec. `
+        + `It now lives in the session's spec doc; the user should review it on the Spec tab and click "Build from spec" when ready.`
+      );
+    }
+
+    if (result.costUsd) {
+      const ccCostCents = Math.round(result.costUsd * 100);
+      // Scout costs land in the same llm_usage table as build dispatches —
+      // they're real Anthropic spend on the same daily budget.
+      if (!userApiKey) {
+        await pool.query(
+          `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
+           ON CONFLICT (user_id, date) DO UPDATE SET total_cost_cents = llm_usage.total_cost_cents + EXCLUDED.total_cost_cents`,
+          [req.user.id, ccCostCents]
+        );
+      }
+      send('usage', { costCents: ccCostCents, model: `scout/${selectedModel}`, byok: !!userApiKey });
+    }
+  } finally {
+    activeWorkers.delete(session.id);
+    workerProgress.clear(session.id);
+    await worker.destroyWorker(containerName);
+  }
+
+  return {
+    toolResultText: summaryParts.join('\n\n').slice(0, 4000)
+      || (isError ? 'Scout did not complete successfully.' : 'Scout finished with no summary.'),
+    isError,
+  };
 }
 
 // Runs the full Claude Code pipeline for one tool invocation and returns
@@ -1018,6 +1746,10 @@ INSTRUCTIONS:
 
   let ccLog = null;
   let stagingUrl = null;
+  // Hoisted to function scope so the post-finally return can expose it
+  // to /build-spec, which backfills chat_session_specs.commit_sha for
+  // the snapshot row tied to this build.
+  let commitHash = null;
   // Accumulates a human-readable summary of what happened that we feed
   // back to the Mayor as tool_result content. Populated in the same
   // branches that emit status events so the two stay in sync.
@@ -1096,7 +1828,7 @@ INSTRUCTIONS:
     }
 
     const ccText = result.lastResultText || '';
-    const commitHash = result.sha;
+    commitHash = result.sha;
     const hasChanges = result.ahead > 0 && !!commitHash;
 
     if (result.fatalError) {
@@ -1219,13 +1951,16 @@ INSTRUCTIONS:
 
   const toolResultText = summaryParts.join('\n\n').slice(0, 4000)
     || (isError ? 'Claude Code did not complete successfully.' : 'Claude Code finished with no summary.');
-  return { toolResultText, ccLog, stagingUrl, isError };
+  // commitSha is exposed (in addition to ccLog/stagingUrl) so the
+  // /build-spec endpoint can backfill chat_session_specs.commit_sha
+  // for the version it just snapshotted. Null if CC made no changes.
+  return { toolResultText, ccLog, stagingUrl, isError, commitSha: commitHash || null };
 }
 
 function getMayorSystemPrompt(appName, isWorkerBusy) {
   const toolNote = isWorkerBusy
-    ? `\n\nSTATUS: A coding agent IS currently running for this session — the dispatch_claude_code tool is NOT available right now. Just chat with the user; tell them the agent is still working and they can follow up once it finishes.`
-    : `\n\nSTATUS: No coding agent is running. You MAY use the dispatch_claude_code tool if — and only if — the user's latest message is a clear, concrete request for code changes. Otherwise just reply in text and do not call any tools.`;
+    ? `\n\nSTATUS: A coding agent IS currently running for this session — the dispatch_claude_code, dispatch_scout, and write_spec tools are NOT available right now. Just chat with the user; tell them the agent is still working and they can follow up once it finishes.`
+    : `\n\nSTATUS: No coding agent is running. You MAY use dispatch_claude_code, dispatch_scout, or write_spec when appropriate (see the rules below). Otherwise just reply in text and do not call any tools.`;
 
   // Platform conventions are authoritative; app-specific guidance in a
   // repo CLAUDE.md takes precedence for app-specific matters only. See
@@ -1248,21 +1983,40 @@ to expect on the staging preview.`;
   return `You are the Mayor — a friendly project manager for the app "${appName}" on Usernode Social Vibecoding.
 
 YOUR ROLE:
-You talk to the user in plain English and decide whether their latest message needs the coding agent (Claude Code) to actually edit the repo. You are NOT a developer — never write code, file contents, diffs, or implementation details. Keep replies to 1-4 sentences.
+You talk to the user in plain English and decide whether their latest message needs the coding agent (Claude Code) to actually edit the repo, OR needs spec-stage planning before any code is written. You are NOT a developer — never write code, file contents, diffs, or implementation details. Keep replies to 1-4 sentences.
 
-TOOL: dispatch_claude_code(prompt)
-- Calls an autonomous coding agent that will clone the repo, make changes, commit, and push. You get a summary of what it did afterwards.
-- ONLY call this tool when the user has made an actionable request for new code, a fix, or a concrete change. Before calling it, say one sentence describing what you're going to have the agent build (e.g. "I'll add a leaderboard page sorted by score.") — then call the tool.
-- DO NOT call this tool when the user is:
+THE SPEC DOC:
+Every session has a markdown SPEC DOC that the user can see on the Spec tab and edit by hand. It is your collaborative working surface for planning before code is written. The user may have you draft, refine, edit, or replace it — and the user has a "Build from spec" button to dispatch the coding agent for real once they're happy. You don't need to call dispatch_claude_code just because the spec is done; the user owns that decision.
+
+THREE TOOLS, in priority order:
+
+1) dispatch_scout(prompt) — read-only repo investigation, slow (~30-60s)
+   Use for the FIRST substantive spec work in a session, when you need to know how the app is currently built. The scout is the coding agent in read-only mode: it reads files (Read/Glob/Grep), writes prose, and is structurally forbidden from editing or committing. Output replaces the session's spec doc.
+   Heuristic: if your reply would be "I'd need to look at the code to answer that", that's a dispatch_scout signal — not an excuse to guess.
+   Do NOT use for small revisions. It's slow and expensive.
+
+2) write_spec(content) — cheap in-process spec edit, ms-fast
+   Use for revisions once a spec exists (you wrote it, scout drafted it, or the user typed it). No repo access — purely a markdown edit. Pass the FULL new spec content; this OVERWRITES the existing doc.
+   Cannot fact-check itself against the repo, so don't use it for changes where you need to confirm what the code currently does — use dispatch_scout for that.
+
+3) dispatch_claude_code(prompt) — full coding agent, slow + writes code
+   Calls the coding agent to clone, edit files, commit, and push to the dev branch. Staging auto-rebuilds. Only call when:
+   * The user has made a clear, concrete change request, AND
+   * No spec stage is needed first (small/obvious change), OR the user has asked you to "just build it" or similar.
+   Before calling, say one sentence describing what you're going to have the agent build (e.g. "I'll add a leaderboard page sorted by score.") — then call the tool.
+
+GENERAL RULES (apply to all tools):
+- DO NOT call any tool when the user is:
   * asking what happened in a past turn, how something works, or why you did something
-  * chatting, brainstorming, or clarifying scope
+  * chatting, brainstorming, or just acknowledging
   * giving feedback that isn't a concrete change request ("this looks bad" alone — ask what they want instead)
   * asking for something that looks like a brand-new, standalone app unrelated to "${appName}" (e.g. they're chatting here but describe building a totally different product). In that case, DO NOT dispatch — instead, gently point them to the home page to create a new app, e.g. "That sounds like a separate app from ${appName}. You can head back to the home screen and spin up a new app for it." Only dispatch if they confirm they want it added to this app.
-- If the request is vague, ask a clarifying question INSTEAD of calling the tool. Never dispatch while also asking for clarification.
-- Call the tool at most ONCE per user message.
+- If the request is vague, ask a clarifying question INSTEAD of calling any tool. Never dispatch while also asking for clarification.
+- At most ONE tool call per user message.
+- Never call write_spec and dispatch_claude_code in the same turn. The user dispatches the build themselves.
 
-AFTER THE TOOL RETURNS:
-You'll get a short summary of what the agent built. Write a 1-3 sentence reply to the user summarizing what was done in plain English, referencing any staging URL or PR if present. If the agent failed, explain briefly and suggest next steps.
+AFTER A TOOL RETURNS:
+You'll get a short summary of what happened. Write a 1-3 sentence reply to the user in plain English, referencing the spec doc / staging URL / PR if present. For dispatch_scout: tell them the spec was drafted and is on the Spec tab for review. For write_spec: tell them what you changed in the spec. For dispatch_claude_code: summarize what was built. If anything failed, explain briefly and suggest next steps.
 
 HISTORY CONTEXT:
 Some assistant turns in this conversation contain "[CODING AGENT COMPLETED]:" — that is a summary from a PAST coding-agent run, written by the system, not by you. You may reference it when the user asks an INFORMATIONAL question about a past turn (e.g. "what did you do?", "why did you change X?", "what files were touched?") — quote or paraphrase to answer.

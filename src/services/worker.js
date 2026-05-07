@@ -235,6 +235,10 @@ async function spawnWorker(sessionId, {
   model,
   commitMsg,
   resumeSessionId,
+  // 'build' (default) runs the existing CC + commit + push pipeline.
+  // 'scout' runs CC in --permission-mode plan with no commit/push, used
+  // by the spec-stage scout dispatch to draft a grounded markdown spec.
+  mode = 'build',
 }) {
   const containerName = `usernode-worker-${sessionId}`;
 
@@ -280,6 +284,9 @@ async function spawnWorker(sessionId, {
     // Empty means "fresh session, let CC mint a new id"; non-empty means
     // pass through --resume to CC and reuse the on-disk conversation.
     CLAUDE_RESUME_SESSION_ID: resumeSessionId || '',
+    // 'build' or 'scout' — read by worker-run.sh to choose between the
+    // edit + commit + push pipeline and the read-only plan-mode path.
+    MODE: mode,
   };
   const secretEnvArgs = Object.keys(secretEnv).flatMap((k) => ['-e', k]);
   const safeEnvArgs = Object.entries(safeEnv).flatMap(([k, v]) => ['-e', `${k}=${v}`]);

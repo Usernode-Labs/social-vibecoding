@@ -37,6 +37,17 @@ die() {
 : "${COMMIT_MSG:=Changes via Usernode}"
 : "${PAT:=}"
 : "${CLAUDE_RESUME_SESSION_ID:=}"
+# MODE selects what the worker is here to do:
+#   build (default) - the original CC pipeline; CC may edit files, then we
+#                     git add + commit + push, and emit ahead/sha so the
+#                     host can rebuild staging.
+#   scout           - read-only investigation. CC runs in --permission-mode
+#                     plan (Read/Glob/Grep only, no edits, no commits). The
+#                     spec stage uses this to draft a grounded markdown spec
+#                     without touching the repo. We skip commit/push/ahead
+#                     entirely; the host scrapes CC's final result text out
+#                     of stream-json to populate chat_sessions.spec_md.
+: "${MODE:=build}"
 
 cd /home/node/workspace || die "no /home/node/workspace"
 
@@ -86,22 +97,47 @@ echo "__USERNODE_PHASE__ claude"
 # by a named Docker volume). If the resume fails (e.g. the session file
 # was wiped) we retry once without --resume so the user still gets a
 # response; the host will clear the stale id from the DB afterwards.
+#
+# In scout mode we replace --dangerously-skip-permissions with
+# --permission-mode plan, which restricts CC to read-only tools (Read,
+# Glob, Grep). This is the spec-stage's "scout" call: CC investigates
+# the repo and writes prose, and is structurally prevented from editing
+# anything. The mode is part of the same stream-json invocation so the
+# existing log-parsing pipeline doesn't change.
+if [ "$MODE" = "scout" ]; then
+  PERMISSION_FLAGS="--permission-mode plan"
+else
+  PERMISSION_FLAGS="--dangerously-skip-permissions"
+fi
+
 if [ -n "$CLAUDE_RESUME_SESSION_ID" ]; then
-  echo "__USERNODE_PHASE__ claude (resume $CLAUDE_RESUME_SESSION_ID)"
-  claude --print --dangerously-skip-permissions --verbose \
+  echo "__USERNODE_PHASE__ claude (resume $CLAUDE_RESUME_SESSION_ID, mode $MODE)"
+  claude --print $PERMISSION_FLAGS --verbose \
     --resume "$CLAUDE_RESUME_SESSION_ID" \
     --model "$MODEL" --output-format stream-json -p "$PROMPT"
   CC_EXIT=$?
   if [ "$CC_EXIT" -ne 0 ]; then
     echo "__USERNODE_WARN__ resume failed (exit $CC_EXIT); retrying fresh"
-    claude --print --dangerously-skip-permissions --verbose \
+    claude --print $PERMISSION_FLAGS --verbose \
       --model "$MODEL" --output-format stream-json -p "$PROMPT"
     CC_EXIT=$?
   fi
 else
-  claude --print --dangerously-skip-permissions --verbose \
+  echo "__USERNODE_PHASE__ claude (mode $MODE)"
+  claude --print $PERMISSION_FLAGS --verbose \
     --model "$MODEL" --output-format stream-json -p "$PROMPT"
   CC_EXIT=$?
+fi
+
+if [ "$MODE" = "scout" ]; then
+  # Read-only run: CC was forbidden from editing, so we deliberately
+  # don't try to commit or push. The host pulls scout output out of
+  # stream-json's final `result` event and writes it into spec_md.
+  # Emit a result line in the same format the build path uses so the
+  # existing parser doesn't have to special-case anything; ahead=0 +
+  # sha="" + push_ok=0 keep the build-side branches inert.
+  echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 sha= push_ok=0 mode=scout"
+  exit "$CC_EXIT"
 fi
 
 echo "__USERNODE_PHASE__ commit"
@@ -127,5 +163,5 @@ git fetch origin main --quiet 2>/dev/null || true
 AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
 SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
 
-echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD sha=$SHA push_ok=$PUSH_OK"
+echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD sha=$SHA push_ok=$PUSH_OK mode=build"
 exit "$CC_EXIT"

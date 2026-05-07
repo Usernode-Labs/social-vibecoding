@@ -183,7 +183,20 @@ const GroupChat = {
     const username = msg.username || 'System';
     const isSystem = msg.msgType === 'system' || msg.msg_type === 'system';
     const isVote = msg.msgType === 'vote' || msg.msg_type === 'vote';
+    const isSpecShare = msg.msgType === 'spec_share' || msg.msg_type === 'spec_share';
     const isSelf = msg.userId === App.user?.id || msg.user_id === App.user?.id;
+
+    if (isSpecShare) {
+      // Server attaches the full snapshot context in `metadata.specShare`.
+      // Older browsers (or older servers) might miss the metadata —
+      // fall back to a plain system line in that case so the row still
+      // renders rather than vanishing.
+      const meta = (msg.metadata || msg.meta || {}).specShare;
+      if (!meta) {
+        return `<div class="gc-msg-system">${escapeHtml(msg.content)}</div>`;
+      }
+      return GroupChat.renderSpecShareCard(msg, meta, time);
+    }
 
     if (isSystem || isVote) {
       return `<div class="gc-msg-system ${isVote ? 'gc-msg-vote' : ''}">${escapeHtml(msg.content)}</div>`;
@@ -197,6 +210,105 @@ const GroupChat = {
         </div>
         <div class="gc-msg-content">${renderWithMentions(msg.content)}</div>
       </div>`;
+  },
+
+  renderSpecShareCard(msg, meta, time) {
+    const sharedBy = meta.sharedBy?.username || msg.username || 'Someone';
+    const built = meta.builtAt ? new Date(meta.builtAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+    const prLink = meta.prNumber
+      ? `<a class="gc-spec-pr" href="#" data-pr="${meta.prNumber}">PR #${meta.prNumber}</a>`
+      : '';
+    const snippet = meta.snippet ? `${escapeHtml(meta.snippet)}${meta.totalChars > meta.snippet.length ? '…' : ''}` : '';
+    return `
+      <div class="gc-spec-card" data-msg-id="${msg.id || ''}">
+        <div class="gc-spec-card-header">
+          <span class="gc-spec-card-icon">📋</span>
+          <span class="gc-spec-card-title">${escapeHtml(sharedBy)} shared <strong>spec v${meta.version}</strong></span>
+          <span class="gc-msg-time">${time}</span>
+        </div>
+        <div class="gc-spec-card-meta">
+          ${built ? `<span>Built ${escapeHtml(built)}</span>` : ''}
+          ${prLink}
+          ${meta.totalChars ? `<span>${meta.totalChars} chars</span>` : ''}
+        </div>
+        ${snippet ? `<div class="gc-spec-card-snippet">${snippet}</div>` : ''}
+        <div class="gc-spec-card-actions">
+          <button class="gc-spec-card-view" data-session-id="${meta.sessionId}" data-version="${meta.version}">View full spec</button>
+        </div>
+      </div>`;
+  },
+
+  // Click delegate: View full spec → modal with the frozen content.
+  // Bound once to the messages container in attachScrollHandlers; idempotent.
+  _attachSpecCardHandlers(container) {
+    if (container._gcSpecHandlersBound) return;
+    container._gcSpecHandlersBound = true;
+    container.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.gc-spec-card-view');
+      if (!btn) return;
+      e.preventDefault();
+      const sessionId = btn.dataset.sessionId;
+      const version = btn.dataset.version;
+      if (!sessionId || !version) return;
+      btn.disabled = true;
+      btn.textContent = 'Loading…';
+      try {
+        const resp = await fetch(`/api/sessions/${sessionId}/specs/${version}`);
+        // 404 expected for users who don't own the originating session
+        // (sessions are private; specs aren't reshared with the group
+        // beyond the snippet). Show a clear message instead of failing
+        // silently — they can ask the sharer for more detail.
+        if (!resp.ok) {
+          GroupChat._showSpecModal({
+            title: `Spec v${version}`,
+            content: resp.status === 404
+              ? 'You can only view the full spec of sessions you own. Ask the sharer for more detail or open the linked PR.'
+              : `Failed to load spec (HTTP ${resp.status}).`,
+          });
+          return;
+        }
+        const data = await resp.json();
+        GroupChat._showSpecModal({
+          title: `Spec v${version}`,
+          content: data.spec.content || '(empty spec)',
+          builtAt: data.spec.built_at,
+          prNumber: data.spec.pr_number,
+        });
+      } catch (err) {
+        GroupChat._showSpecModal({ title: `Spec v${version}`, content: `Error: ${err.message}` });
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'View full spec';
+      }
+    });
+  },
+
+  _showSpecModal({ title, content, builtAt, prNumber }) {
+    // Reuse a single overlay element — cheap, and dismiss-on-backdrop
+    // is straightforward.
+    let overlay = document.getElementById('gc-spec-modal');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'gc-spec-modal';
+      overlay.className = 'gc-spec-modal-overlay';
+      document.body.appendChild(overlay);
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) overlay.remove();
+      });
+    }
+    const builtStr = builtAt ? new Date(builtAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+    overlay.innerHTML = `
+      <div class="gc-spec-modal">
+        <div class="gc-spec-modal-header">
+          <span class="gc-spec-modal-title">${escapeHtml(title)}</span>
+          ${prNumber ? `<span class="gc-spec-modal-meta">PR #${prNumber}</span>` : ''}
+          ${builtStr ? `<span class="gc-spec-modal-meta">${escapeHtml(builtStr)}</span>` : ''}
+          <span class="flex-1"></span>
+          <button class="gc-spec-modal-close" aria-label="Close">×</button>
+        </div>
+        <pre class="gc-spec-modal-body">${escapeHtml(content)}</pre>
+      </div>`;
+    overlay.querySelector('.gc-spec-modal-close').addEventListener('click', () => overlay.remove());
   },
 
   renderTyping() {
@@ -233,7 +345,9 @@ const GroupChat = {
   //      "land slightly above the bottom" every time they come back.
   attachScrollHandlers() {
     const container = document.getElementById('gc-messages');
-    if (!container || container._gcScrollBound) return;
+    if (!container) return;
+    GroupChat._attachSpecCardHandlers(container);
+    if (container._gcScrollBound) return;
     container._gcScrollBound = true;
     container.addEventListener('scroll', () => {
       if (container.scrollTop === 0 && GroupChat.hasMore) {

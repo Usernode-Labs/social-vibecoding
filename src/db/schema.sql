@@ -130,6 +130,35 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS cc_session_id VARCHA
 -- auto-title feature and just fall back to showing "by <user>".
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS pr_title VARCHAR(256);
 
+-- Spec-stage: per-session live markdown spec doc + version history.
+-- spec_md is the live draft (edited by the Mayor's write_spec tool, by
+-- a scout dispatch, or by the user via PUT /api/sessions/:id/spec).
+-- chat_session_specs holds frozen snapshots: each "Build from spec"
+-- inserts a row with the next version number, and the dev chat can
+-- show every past version verbatim. shared_to_group_at is set when
+-- the user posts a snapshot into the app's group chat.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS spec_md TEXT NOT NULL DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS chat_session_specs (
+  id                  SERIAL PRIMARY KEY,
+  session_id          INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  version             INTEGER NOT NULL,
+  content             TEXT    NOT NULL,
+  built_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  commit_sha          VARCHAR(40),
+  pr_number           INTEGER,
+  shared_to_group_at  TIMESTAMPTZ,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(session_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_chat_session_specs_session
+  ON chat_session_specs (session_id, version DESC);
+
+-- Allow group-chat messages to carry structured payloads (spec_share
+-- card metadata today; future: PR previews, system-link metadata, etc.)
+-- without overloading the free-form `content` field.
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
+
 -- Issues (mirrored to GitHub Issues). `kind` discriminates general issues from
 -- structured proposals like 'rename' (see src/routes/issues.js). `payload`
 -- carries the proposal-specific data (e.g. { newName }).
