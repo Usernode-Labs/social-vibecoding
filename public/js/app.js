@@ -445,7 +445,9 @@ const App = {
   },
 
   bindEvents() {
-    document.getElementById('create-app-btn').addEventListener('click', App.showCreateModal);
+    // Note: the "Create new app" entry point lives in the home feed
+    // now (see Home.wireCreateButtons) — no static header button to
+    // bind here anymore.
     document.getElementById('create-cancel').addEventListener('click', App.hideCreateModal);
     document.getElementById('create-modal').addEventListener('click', (e) => {
       if (e.target === e.currentTarget) App.hideCreateModal();
@@ -862,7 +864,6 @@ const App = {
     document.getElementById('home-screen').classList.add('hidden');
     document.getElementById('app-view').classList.remove('hidden');
     document.getElementById('back-btn').classList.remove('hidden');
-    document.getElementById('create-app-btn').classList.add('hidden');
     document.getElementById('header-title').textContent = slug;
 
     await AppView.open(slug);
@@ -894,7 +895,6 @@ const App = {
     document.getElementById('app-view').classList.add('hidden');
     document.getElementById('home-screen').classList.remove('hidden');
     document.getElementById('back-btn').classList.add('hidden');
-    document.getElementById('create-app-btn').classList.remove('hidden');
     document.getElementById('app-github-link').classList.add('hidden');
     document.getElementById('app-share-btn').classList.add('hidden');
     document.getElementById('header-title').textContent = 'Usernode Social Vibecoding';

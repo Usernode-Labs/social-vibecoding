@@ -11,11 +11,27 @@ const Home = {
       if (apps.length === 0) {
         listEl.innerHTML = '';
         emptyEl.classList.remove('hidden');
+        // Wire the empty-state's create button (rendered statically in
+        // index.html). Same `.home-create-btn` class as the in-list
+        // variant below so a single querySelectorAll covers both.
+        Home.wireCreateButtons();
         return;
       }
 
       emptyEl.classList.add('hidden');
-      listEl.innerHTML = apps.map(Home.renderAppCard).join('');
+      // Render the apps, then append a "Create new app" pill below
+      // them. Lives at the bottom of the divided list so it follows
+      // the natural reading flow ("here are your apps... and here's
+      // how you'd add another"). Replaces the old header "+" pill.
+      listEl.innerHTML =
+        apps.map(Home.renderAppCard).join('') +
+        `<div class="flex justify-center px-4 py-6">
+          <button class="home-create-btn inline-flex items-center gap-2 rounded-full border border-violet-500 dark:border-violet-400 px-5 py-2.5 text-sm font-medium text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950 transition-colors">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+            Create new app
+          </button>
+        </div>`;
+      Home.wireCreateButtons();
 
       listEl.querySelectorAll('.app-card').forEach((card) => {
         card.addEventListener('click', (e) => {
@@ -195,6 +211,18 @@ const Home = {
         </div>
       </div>
     `;
+  },
+
+  // Idempotent click-wiring for every `.home-create-btn` currently
+  // mounted (the empty-state CTA + the in-list pill). Listeners are
+  // re-bound on every Home.load(); cloneNode swap clears any stale
+  // ones from a prior render so the modal doesn't open twice.
+  wireCreateButtons() {
+    document.querySelectorAll('.home-create-btn').forEach((btn) => {
+      const fresh = btn.cloneNode(true);
+      btn.parentNode.replaceChild(fresh, btn);
+      fresh.addEventListener('click', () => App.showCreateModal());
+    });
   },
 
   // Targeted pill update for a single app card. Called from the

@@ -97,7 +97,10 @@
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
       <span id="notifications-badge" class="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"></span>
     </button>
-    <button id="create-app-btn" class="w-8 h-8 flex items-center justify-center rounded-full bg-violet-600 hover:bg-violet-500 text-white text-xl leading-none" aria-label="Create new app">+</button>
+    <!-- The "Create new app" entry point used to live here in the header
+         as a "+" pill; it's been moved into the home-screen feed itself,
+         rendered below the app list (and as the empty-state CTA when no
+         apps exist). See public/js/home.js. -->
     </div>
   </header>
 
@@ -105,8 +108,11 @@
   <main id="home-screen" class="flex-1 overflow-y-auto" style="position:relative">
     <div id="app-list" class="divide-y divide-zinc-200 dark:divide-zinc-800"></div>
     <div id="empty-state" class="hidden flex flex-col items-center justify-center h-full text-zinc-500 dark:text-zinc-400 p-8">
-      <p class="text-lg mb-2">No apps yet</p>
-      <p class="text-sm">Tap <span class="text-violet-400 font-bold">+</span> to create your first app</p>
+      <p class="text-lg mb-4">No apps yet</p>
+      <button class="home-create-btn inline-flex items-center gap-2 rounded-full border border-violet-500 dark:border-violet-400 px-5 py-2.5 text-sm font-medium text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950 transition-colors">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+        Create your first app
+      </button>
     </div>
   </main>
 
