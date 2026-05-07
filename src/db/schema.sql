@@ -53,6 +53,16 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0
 -- server boot for apps created before this migration.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_sha VARCHAR(40);
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_pr_number INTEGER;
+-- Surface "when the app was last code-updated" on the home cards
+-- alongside created_at. Bumped to NOW() at every successful prod-
+-- container rebuild — the four sites in app-creator.js (initial
+-- deploy), routes/apps.js (/redeploy), routes/votes.js (vote-merge),
+-- and routes/issues.js (secret-change driven rebuild). Backfilled to
+-- created_at for existing rows on first boot so the home tile reads
+-- "updated <created_at>" instead of "never" for pre-migration apps;
+-- the IS NULL guard makes the backfill a one-shot.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS last_deploy_at TIMESTAMPTZ;
+UPDATE apps SET last_deploy_at = created_at WHERE last_deploy_at IS NULL;
 -- Snapshot of `dapp.json` from the last successful clone (createApp +
 -- rebuildProduction both write it). The Secrets UI reads this so it
 -- can render the manifest-declared keys without re-cloning, and the

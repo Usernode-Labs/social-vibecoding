@@ -306,7 +306,9 @@ async function checkAndMerge(config, pool, session) {
       // show "live on <sha> · PR #<n>" (#21). pr_number comes from the
       // session we just merged; sha is what `rebuildProduction` cloned.
       await pool.query(
-        `UPDATE apps SET container_id = $1, main_sha = $2, main_pr_number = $3 WHERE id = $4`,
+        `UPDATE apps SET container_id = $1, main_sha = $2, main_pr_number = $3,
+                         last_deploy_at = NOW()
+         WHERE id = $4`,
         [containerId, sha || null, session.pr_number || null, app.id]
       );
       // Let every tab watching this app refresh its commit pill without

@@ -541,7 +541,8 @@ async function maybeApplySecretChangeProposal(config, pool, issue) {
       .then(async (result) => {
         if (!result) return;
         await pool.query(
-          `UPDATE apps SET container_id = $1, main_sha = $2, status = 'running'
+          `UPDATE apps SET container_id = $1, main_sha = $2, status = 'running',
+                           last_deploy_at = NOW()
            WHERE id = $3`,
           [result.containerId, result.sha || null, issue.app_id]
         );

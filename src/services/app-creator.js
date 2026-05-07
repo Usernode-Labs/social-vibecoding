@@ -188,9 +188,12 @@ async function createApp(config, appRow) {
       if (hostPort) appUrl = `http://localhost:${hostPort}`;
     }
 
-    // 9. Update app status
+    // 9. Update app status. last_deploy_at is bumped here so the home-
+    // card "updated Xt ago" reflects the moment the prod container
+    // first went live, not the (slightly earlier) row creation time.
     await pool.query(
-      'UPDATE apps SET status = $1, container_id = $2, main_sha = $3 WHERE id = $4',
+      `UPDATE apps SET status = $1, container_id = $2, main_sha = $3, last_deploy_at = NOW()
+       WHERE id = $4`,
       ['running', containerId, mainSha || null, appId]
     );
 

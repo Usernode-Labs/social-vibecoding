@@ -66,10 +66,17 @@ function appRoutes(config) {
   router.get('/api/apps', async (req, res) => {
     try {
       const appDeployStatus = require('../services/app-deploy-status');
+      // The active_users join mirrors src/services/active-users.js's
+      // sticky 10-day rule: a user counts iff they ever spent >= 60s
+      // on this app on a single day AND have visited within the last
+      // 10 days. Computed in one batched query (one row per app) to
+      // avoid the obvious O(N apps) per-app round trip from the
+      // group-chat dashboard tile path.
       const { rows } = await pool.query(`
         SELECT a.*,
           COALESCE(msg_counts.cnt, 0) AS message_count,
-          COALESCE(activity.total_seconds, 0) AS total_seconds
+          COALESCE(activity.total_seconds, 0) AS total_seconds,
+          COALESCE(au.cnt, 0) AS active_users
         FROM apps a
         LEFT JOIN (
           SELECT app_id, COUNT(*) AS cnt
@@ -83,6 +90,18 @@ function appRoutes(config) {
           WHERE date > CURRENT_DATE - 7
           GROUP BY app_id
         ) activity ON activity.app_id = a.id
+        LEFT JOIN (
+          SELECT a1.app_id, COUNT(DISTINCT a1.user_id) AS cnt
+          FROM app_activity a1
+          WHERE a1.date >= CURRENT_DATE - 10
+            AND EXISTS (
+              SELECT 1 FROM app_activity a2
+              WHERE a2.app_id = a1.app_id
+                AND a2.user_id = a1.user_id
+                AND a2.seconds_spent >= 60
+            )
+          GROUP BY a1.app_id
+        ) au ON au.app_id = a.id
         ORDER BY (COALESCE(msg_counts.cnt, 0) + COALESCE(activity.total_seconds, 0)) DESC, a.created_at DESC
       `);
 
@@ -461,7 +480,8 @@ function appRoutes(config) {
       staging.rebuildProduction(config, app)
         .then(async ({ containerId, sha }) => {
           await pool.query(
-            `UPDATE apps SET container_id = $1, main_sha = $2, status = 'running'
+            `UPDATE apps SET container_id = $1, main_sha = $2, status = 'running',
+                             last_deploy_at = NOW()
              WHERE id = $3`,
             [containerId, sha || null, app.id]
           );

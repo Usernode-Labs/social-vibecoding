@@ -162,10 +162,25 @@ const Home = {
       : app.status === 'creating' ? 'Spinning up...'
       : isAwaiting ? 'Awaiting secrets'
       : 'Error';
-    const activity = parseInt(app.message_count || 0) + parseInt(app.total_seconds || 0);
     const isError = app.status === 'error';
     const isRunning = app.status === 'running';
     const hasMissing = Array.isArray(app.missingSecrets) && app.missingSecrets.length;
+    // Three at-a-glance signals shown beneath the app name. activeUsers
+    // uses the same sticky 10-day rule as the group-chat dashboard tile
+    // (see src/services/active-users.js), so the home card and the
+    // dashboard agree on the count. createdRel falls back to created_at
+    // unconditionally; updatedRel falls back to created_at when
+    // last_deploy_at is null (pre-migration apps that haven't redeployed
+    // yet — backfill in schema.sql sets last_deploy_at = created_at, so
+    // this path is mostly defensive).
+    const activeUsers = parseInt(app.active_users || 0);
+    const createdRel = formatRelativeTime(app.created_at);
+    const updatedRel = formatRelativeTime(app.last_deploy_at || app.created_at);
+    const metaParts = [];
+    if (activeUsers > 0) metaParts.push(`${activeUsers} active`);
+    if (createdRel) metaParts.push(`created ${createdRel}`);
+    if (updatedRel && updatedRel !== createdRel) metaParts.push(`updated ${updatedRel}`);
+    const metaLine = metaParts.join(' · ');
     // Awaiting-secrets cards stay clickable so the user can open the
     // app view + Secrets modal to fill values; other non-running
     // statuses show no app surface.
@@ -201,10 +216,10 @@ const Home = {
           ${statusLabel ? `<p class="text-xs ${isAwaiting ? 'text-amber-500' : 'text-yellow-500'}">${statusLabel}${
             isAwaiting && hasMissing ? `: ${escapeHtml(app.missingSecrets.join(', '))}` : ''
           }</p>` : (hasMissing ? `<p class="text-xs text-red-500">Missing secrets: ${escapeHtml(app.missingSecrets.join(', '))}</p>` : '')}
+          ${metaLine ? `<p class="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">${metaLine}</p>` : ''}
         </div>
         <div class="flex items-center gap-2 shrink-0">
           ${pillHtml ? `<span class="app-version-pill-slot" data-slug="${app.slug}">${pillHtml}</span>` : `<span class="app-version-pill-slot" data-slug="${app.slug}"></span>`}
-          ${!isError ? `<span class="text-xs text-zinc-500 dark:text-zinc-400">${formatActivity(activity)}</span>` : ''}
           ${isError && (App.user?.isAdmin || App.user?.id === app.created_by) ? `<button class="retry-btn text-xs text-emerald-400 hover:text-emerald-300 px-1" data-slug="${app.slug}">Retry</button>` : ''}
           ${App.user?.isAdmin && app.repo_url && isRunning ? `<button class="check-updates-btn text-xs text-zinc-400 hover:text-emerald-300 px-1" data-slug="${app.slug}" title="Check for updates and redeploy if changed">⟳</button>` : ''}
           ${App.user?.isAdmin ? `<button class="delete-btn text-xs text-red-400 hover:text-red-300 px-1" data-slug="${app.slug}">&times;</button>` : ''}
@@ -249,9 +264,20 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-function formatActivity(score) {
-  if (score === 0) return 'new';
-  if (score < 60) return `${score}s`;
-  if (score < 3600) return `${Math.floor(score / 60)}m`;
-  return `${Math.floor(score / 3600)}h`;
+// Compact "Nx ago" formatter shared by the home-card meta line. Kept
+// locally instead of pulling in a date library — the granularity here
+// only needs to be readable at a glance, not exact to the second.
+// Returns null for unparseable input so callers can drop the segment
+// rather than render "NaN ago".
+function formatRelativeTime(input) {
+  if (!input) return null;
+  const t = new Date(input);
+  if (Number.isNaN(t.getTime())) return null;
+  const seconds = Math.floor((Date.now() - t.getTime()) / 1000);
+  if (seconds < 60) return 'just now';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  if (seconds < 86400 * 30) return `${Math.floor(seconds / 86400)}d ago`;
+  if (seconds < 86400 * 365) return `${Math.floor(seconds / (86400 * 30))}mo ago`;
+  return `${Math.floor(seconds / (86400 * 365))}y ago`;
 }
