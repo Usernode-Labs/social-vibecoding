@@ -24,8 +24,10 @@ const AppView = {
     // shared header so it's visible across tabs (App / group-chat /
     // dev-chat) for the duration this app is open; close() clears it.
     AppView.refreshVersionPill();
+    // Missing-secrets badge lives inside the dev-chat tab now and is
+    // re-applied by renderDevChatTab() on every mount, so the call here
+    // is just a primer for the case where the tab is already rendered.
     if (window.Secrets) {
-      Secrets.show();
       Secrets.applyMissingBadge(appData.missingSecrets || null);
     }
   },
@@ -429,10 +431,9 @@ const AppView = {
         bodyHtml += '</div>';
       }
 
-      bodyHtml += `
-        <div class="pt-1 border-t border-zinc-200 dark:border-zinc-800">
-          <button class="gc-vote-btn" onclick="AppView.promptRename()">Propose rename</button>
-        </div>`;
+      // Note: the "Propose rename" trigger lives in the dev-chat tab's
+      // Edit section now (see renderDevChatTab) — keeping the group
+      // chat panel focused on visible PRs / issues / merged work.
 
       if (merged.length) {
         bodyHtml += '<div><div class="text-xs text-zinc-500 mb-1 font-medium">Merged</div>';
@@ -642,14 +643,61 @@ const AppView = {
 
   async renderDevChatTab(restoreSessionId) {
     const content = document.getElementById('app-content');
+    // Layout: a meta block (#dc-meta) holds two stacked sections — the
+    // app-edit shortcuts and the sessions header — sitting above the
+    // session list / chat surface (#dc-view). DevChat.renderChatView
+    // toggles `hidden` on #dc-meta when a session opens so the chat
+    // gets the full tab; backing out via #dc-back unhides it.
+    // Layout note: each row is styled like an iOS settings cell — icon,
+    // label, current value preview, chevron — so a glance at the panel
+    // tells you the app's secret-fill status and current display name
+    // without opening either modal. The right-side preview text is
+    // populated below: display name comes straight from appData; the
+    // secrets summary is fetched async via refreshDevChatSecretsState
+    // so this render path stays synchronous.
+    const currentName = escapeHtml(AppView.appData?.name || '');
     content.innerHTML = `
       <div style="display:flex;flex-direction:column;height:100%;min-height:0">
-        <div class="flex items-center justify-between px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-          <span class="text-sm font-medium text-zinc-300">Dev Sessions</span>
-          <button id="dc-new-session" class="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-3 py-1 text-xs font-medium text-white transition-colors">+ New Session</button>
+        <div id="dc-meta" class="shrink-0">
+          <!-- Edit section: app-level controls that previously lived in
+               the global header (App secrets) or the group-chat vote
+               panel (Propose rename). Both still pop the same modals;
+               only the entry point moved. -->
+          <div class="px-3 pt-3 pb-3 border-b border-zinc-200 dark:border-zinc-800 space-y-2">
+            <div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-1">Edit</div>
+            <button id="dc-edit-secrets"
+              class="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 transition-colors text-left">
+              <svg class="w-4 h-4 text-zinc-500 dark:text-zinc-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 7a4 4 0 014 4m-4-4a4 4 0 00-4 4 4 4 0 004 4 4 4 0 004-4 4 4 0 00-4-4zm-9.5 12.5L11 13"/></svg>
+              <span class="flex-1 text-zinc-800 dark:text-zinc-200">App secrets</span>
+              <span id="dc-secrets-state" class="text-xs text-zinc-400 dark:text-zinc-500">Loading…</span>
+              <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+            </button>
+            <button id="dc-edit-rename"
+              class="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 transition-colors text-left">
+              <svg class="w-4 h-4 text-zinc-500 dark:text-zinc-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+              <span class="flex-1 text-zinc-800 dark:text-zinc-200">Display name</span>
+              <span class="text-xs text-zinc-400 dark:text-zinc-500 truncate max-w-[40%]" title="${currentName}">${currentName}</span>
+              <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+            </button>
+          </div>
+
+          <!-- Sessions section header: matches the Edit label's small
+               uppercase treatment so the two sections feel like a
+               single panel rather than two unrelated rows. -->
+          <div class="flex items-center justify-between px-3 pt-3 pb-2 border-b border-zinc-200 dark:border-zinc-800">
+            <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider">Dev Sessions</span>
+            <button id="dc-new-session" class="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-3 py-1 text-xs font-medium text-white transition-colors">+ New Session</button>
+          </div>
         </div>
+
         <div id="dc-view" style="flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden"></div>
       </div>`;
+
+    // Populate the secrets-state preview. Fire-and-forget — the row
+    // shows "Loading…" until the fetch lands. AppView.refreshDevChatSecretsState
+    // is also called by Secrets after a successful direct edit so the
+    // row stays in sync without a manual reload.
+    AppView.refreshDevChatSecretsState();
 
     if (AppView.appData) {
       // Ground-truth guard: if the in-memory session belongs to a
@@ -686,6 +734,61 @@ const AppView = {
         App.updateHash();
       }
     });
+
+    // Edit section wiring. Both buttons just open the existing modals
+    // — no behavior change vs the old header / group-chat triggers.
+    document.getElementById('dc-edit-secrets').addEventListener('click', () => {
+      if (window.Secrets) Secrets.openForCurrentApp();
+    });
+    document.getElementById('dc-edit-rename').addEventListener('click', () => {
+      AppView.promptRename();
+    });
+  },
+
+  // Fetch the current secrets summary and paint the preview slot in
+  // the dev-chat Edit row. Called on tab mount and again from
+  // Secrets.handleSet/handleClear so direct admin edits reflect
+  // immediately without a tab reload. Silently no-ops when the row
+  // isn't mounted (e.g. user is on a different tab).
+  async refreshDevChatSecretsState() {
+    const stateEl = document.getElementById('dc-secrets-state');
+    if (!stateEl || !AppView.appData) return;
+
+    const setLabel = (text, tone) => {
+      stateEl.textContent = text;
+      stateEl.className = 'text-xs ' + (tone === 'err'
+        ? 'font-medium text-red-500 dark:text-red-400'
+        : 'text-zinc-400 dark:text-zinc-500');
+    };
+
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/secrets`);
+      if (!res.ok) {
+        setLabel('', 'neutral');
+        return;
+      }
+      const data = await res.json();
+      if (!data.manifestKnown) {
+        // Pre-first-deploy hint — distinct from "everything's fine"
+        // because the manifest just hasn't been ingested yet.
+        setLabel('No manifest yet', 'neutral');
+        return;
+      }
+      // Only `required && !hasValue` is actionable: it blocks deploys.
+      // Optional-but-unset keys (including ones that fall back to a
+      // default declared in dapp.json) are fine, so they shouldn't
+      // light anything up. When nothing is broken we leave the slot
+      // blank — the chevron alone says "tap to manage".
+      const list = Array.isArray(data.secrets) ? data.secrets : [];
+      const missing = list.filter((s) => s.required && !s.hasValue).length;
+      if (missing > 0) {
+        setLabel(`${missing} required missing`, 'err');
+      } else {
+        setLabel('', 'neutral');
+      }
+    } catch {
+      setLabel('', 'neutral');
+    }
   },
 
   async pollStatus() {

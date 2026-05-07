@@ -16,17 +16,14 @@ const Secrets = {
   currentSlug: null,
 
   init() {
-    const btn = document.getElementById('app-secrets-btn');
     const close = document.getElementById('app-secrets-close');
     const modal = document.getElementById('app-secrets-modal');
     const redeploy = document.getElementById('app-secrets-redeploy');
-    if (!btn || !close || !modal) return;
+    // Modal is the only piece this module hard-requires now. The entry-
+    // point button moved to the dev-chat tab; AppView wires its click
+    // to Secrets.openForCurrentApp() when that tab renders.
+    if (!close || !modal) return;
 
-    btn.addEventListener('click', () => {
-      const slug = AppView.appData?.slug;
-      if (!slug) return;
-      Secrets.open(slug);
-    });
     close.addEventListener('click', () => Secrets.close());
     modal.addEventListener('click', (e) => {
       if (e.target === modal) Secrets.close();
@@ -47,22 +44,34 @@ const Secrets = {
     });
   },
 
-  // Toggle the header button's red badge based on the current app's
-  // missingSecrets list. Called from app.js whenever app data refreshes.
-  applyMissingBadge(missingSecrets) {
-    const badge = document.getElementById('app-secrets-badge');
-    if (!badge) return;
-    badge.classList.toggle('hidden', !(Array.isArray(missingSecrets) && missingSecrets.length));
+  // Convenience for callers (currently the dev-chat Edit panel) that
+  // know "the current app" but don't track its slug locally.
+  openForCurrentApp() {
+    const slug = AppView.appData?.slug;
+    if (slug) Secrets.open(slug);
   },
 
-  // Show the header button (called by AppView.open)
-  show() {
-    document.getElementById('app-secrets-btn')?.classList.remove('hidden');
-  },
-  // Hide the header button + close any open modal (called by AppView.close)
+  // Legacy header-badge hook. The standalone red dot is gone — the
+  // dev-chat tab's "App secrets" row now shows "N missing" inline
+  // (see AppView.refreshDevChatSecretsState). Kept as a no-op so older
+  // call-sites don't break; safe to delete once nothing references it.
+  applyMissingBadge() { /* no-op */ },
+
+  // Kept as a noop-ish hook so AppView.close() can keep calling it
+  // unchanged; it just makes sure any open modal is dismissed when the
+  // user navigates away from the app.
   hide() {
-    document.getElementById('app-secrets-btn')?.classList.add('hidden');
     Secrets.close();
+  },
+
+  // Re-render the dev-chat secrets row after a successful direct edit
+  // so "N missing" / "N of M set" reflects the new state without
+  // forcing a tab reload. Best-effort: if the dev-chat tab isn't
+  // mounted (user is on App / Group Chat) the helper itself no-ops.
+  notifyDevChatRefresh() {
+    if (window.AppView && typeof AppView.refreshDevChatSecretsState === 'function') {
+      AppView.refreshDevChatSecretsState();
+    }
   },
 
   async open(slug) {
@@ -207,6 +216,7 @@ const Secrets = {
         throw new Error(error || `HTTP ${res.status}`);
       }
       Secrets.setStatus(`Saved ${key}.`, 'ok');
+      Secrets.notifyDevChatRefresh();
       await Secrets.open(Secrets.currentSlug);
     } catch (err) {
       Secrets.setStatus(`Failed to set ${key}: ${err.message}`, 'err');
@@ -223,6 +233,7 @@ const Secrets = {
         throw new Error(error || `HTTP ${res.status}`);
       }
       Secrets.setStatus(`Cleared ${key}.`, 'ok');
+      Secrets.notifyDevChatRefresh();
       await Secrets.open(Secrets.currentSlug);
     } catch (err) {
       Secrets.setStatus(`Failed to clear ${key}: ${err.message}`, 'err');

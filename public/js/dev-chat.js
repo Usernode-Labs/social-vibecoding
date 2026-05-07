@@ -1136,7 +1136,14 @@ const DevChat = {
     if (!container) return;
 
     if (DevChat.sessions.length === 0) {
-      container.innerHTML = '<div class="text-center text-zinc-500 text-sm py-4">No sessions yet</div>';
+      container.innerHTML = `
+        <div class="text-center px-6 py-12">
+          <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-1">No dev sessions yet.</p>
+          <p class="text-xs text-zinc-500 dark:text-zinc-500">
+            Hit <span class="font-medium text-emerald-600 dark:text-emerald-400">+ New Session</span>
+            above to ask Claude to make changes.
+          </p>
+        </div>`;
       return;
     }
 
@@ -1180,12 +1187,22 @@ const DevChat = {
     const content = document.getElementById('dc-view');
     if (!content) return;
 
+    // The dev-chat tab's meta strip (Edit shortcuts + sessions header)
+    // takes up vertical space we want to reclaim once the user is
+    // inside a chat. Hide it on session open; show it again on back.
+    // Lookup is best-effort because some test harnesses mount
+    // renderChatView without the surrounding tab shell.
+    const meta = document.getElementById('dc-meta');
+
     if (!DevChat.currentSession) {
+      if (meta) meta.classList.remove('hidden');
       content.innerHTML = `
         <div id="dc-session-list" class="divide-y divide-zinc-800" style="flex:1;overflow-y:auto;min-height:0"></div>`;
       DevChat.renderSessionList();
       return;
     }
+
+    if (meta) meta.classList.add('hidden');
 
     const modelOptions = Object.entries(DevChat.MODELS)
       .map(([id, label]) => `<option value="${id}" ${id === DevChat.selectedModel ? 'selected' : ''}>${label}</option>`)
