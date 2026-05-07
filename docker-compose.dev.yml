@@ -23,6 +23,17 @@ services:
       - .env
     environment:
       DATABASE_URL: postgres://usernode:localdev@db:5432/usernode
+      # Used by db-manager.connectionUrl() to build per-app child
+      # DATABASE_URLs. The local postgres container is bootstrapped
+      # with POSTGRES_PASSWORD=localdev (see `db.environment` below)
+      # and that's the only password it accepts. We pin this here
+      # rather than reading it from .env so the child URLs always
+      # match the local DB even when .env carries a prod-flavored
+      # value (e.g. the file was copied from a deploy or generated
+      # fresh by `make secrets`). Without this override, child apps
+      # crashloop on `28P01 password authentication failed` and the
+      # rebuild aborts after 30 healthcheck attempts.
+      USERNODE_DB_PASSWORD: localdev
       LOG_LEVEL: DEBUG
       # Sidecar node can't sync via WebRTC inside Docker Desktop for Mac.
       # Run the node natively in another terminal — `make node` in this
