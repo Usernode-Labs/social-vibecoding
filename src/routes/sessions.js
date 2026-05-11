@@ -79,6 +79,51 @@ function sessionRoutes(config) {
   const router = Router();
   const pool = getPool(config);
 
+  // GET /api/me/active-sessions
+  //   Cross-app view of the current user's non-archived sessions,
+  //   each annotated with whether a CC turn is in flight right now.
+  //   Used by the dev-chat tab's "Active Sessions (x/y)" panel so a
+  //   user can see all their in-progress AI work at a glance — even
+  //   from other projects — without flipping through apps.
+  //
+  //   "busy" comes from the same in-process state the per-session
+  //   /status endpoint uses: activeWorkers (chat handler's in-flight
+  //   window) OR worker.isInFlight (warm-registry exec flag). The
+  //   container-status fallback is intentionally NOT used here, for
+  //   the same warm-CC reason described in /api/sessions/:id/status.
+  //
+  //   "totals" lets the caller render the (x/y) header without a
+  //   second pass through the array. `busy` is the count we want to
+  //   draw attention to (sessions actively running CC); `total` is
+  //   the user's total non-archived session count, useful as the
+  //   denominator in the header.
+  router.get('/api/me/active-sessions', async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT cs.id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
+                cs.status, cs.created_at,
+                a.slug AS app_slug, a.name AS app_name
+         FROM chat_sessions cs
+         JOIN apps a ON cs.app_id = a.id
+         WHERE cs.user_id = $1 AND cs.status IN ('active', 'promoted')
+         ORDER BY cs.created_at DESC`,
+        [req.user.id]
+      );
+      const sessions = rows.map((s) => ({
+        ...s,
+        busy: activeWorkers.has(s.id) || worker.isInFlight(s.id),
+      }));
+      const busyCount = sessions.reduce((n, s) => n + (s.busy ? 1 : 0), 0);
+      res.json({
+        sessions,
+        totals: { busy: busyCount, total: sessions.length },
+      });
+    } catch (err) {
+      log.error('sessions', 'Failed to list active sessions', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // List sessions for an app (user's own)
   router.get('/api/apps/:slug/sessions', async (req, res) => {
     try {

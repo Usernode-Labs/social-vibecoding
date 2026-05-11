@@ -31,6 +31,23 @@ const DevChat = {
 
   budget: null,
 
+  // ----- Cross-app active sessions panel state -----
+  // Powers the "Active Sessions (x/y)" section at the top of the
+  // dev-chat tab. Lists every non-archived session the user owns
+  // across all apps, with a `busy` flag for the ones where Claude
+  // is actively running a turn right now. The point is "see all
+  // your in-progress AI work at a glance, even from other apps"
+  // so the user can hop between them without losing context.
+  //
+  // Refresh model: poll every 5s while the dev-chat tab is the
+  // mounted tab; stop polling when the tab is unmounted (the
+  // `_activePollTimer` guard cleans up). 5s is a compromise — fast
+  // enough that the busy indicator feels live, slow enough that we
+  // don't hammer the cross-app endpoint just because the user is
+  // sitting on the dev-chat tab.
+  activeSessions: { sessions: [], totals: { busy: 0, total: 0 } },
+  _activePollTimer: null,
+
   // ----- Spec viewer state -----
   // Read-only viewer for the current session's spec doc + frozen
   // version history. Opened from inline preview cards rendered in the
@@ -78,6 +95,7 @@ const DevChat = {
     DevChat._staleTimer = null;
     DevChat._lastSeenSeq = null;
     DevChat._resetSpecViewer();
+    DevChat.stopActiveSessionsPoll();
     if (DevChat._abortController) {
       try { DevChat._abortController.abort(); } catch {}
       DevChat._abortController = null;
@@ -136,6 +154,148 @@ const DevChat = {
       const { sessions } = await res.json();
       DevChat.sessions = sessions;
     } catch {}
+  },
+
+  // ── Cross-app active sessions ─────────────────────────────
+  //
+  // Pulls the user's full set of non-archived sessions across every
+  // app they own and re-renders the "Active Sessions (x/y)" panel
+  // on the dev-chat tab. Tolerates network blips (the panel just
+  // shows the previous snapshot until the next poll lands).
+
+  async loadActiveSessions() {
+    try {
+      const res = await fetch('/api/me/active-sessions');
+      if (!res.ok) return;
+      const data = await res.json();
+      DevChat.activeSessions = {
+        sessions: Array.isArray(data.sessions) ? data.sessions : [],
+        totals: data.totals || { busy: 0, total: 0 },
+      };
+      DevChat.renderActiveSessions();
+    } catch {}
+  },
+
+  // Start the 5s poll that drives the active-sessions panel. Safe
+  // to call multiple times — it tears down any previous timer
+  // before installing a new one, which keeps double-mounts (e.g.
+  // restoreFromHash → renderDevChatTab during navigation) from
+  // stacking.
+  startActiveSessionsPoll() {
+    DevChat.stopActiveSessionsPoll();
+    DevChat.loadActiveSessions();
+    DevChat._activePollTimer = setInterval(() => {
+      DevChat.loadActiveSessions();
+    }, 5000);
+  },
+
+  stopActiveSessionsPoll() {
+    if (DevChat._activePollTimer) {
+      clearInterval(DevChat._activePollTimer);
+      DevChat._activePollTimer = null;
+    }
+  },
+
+  renderActiveSessions() {
+    const container = document.getElementById('dc-active-list');
+    const counter = document.getElementById('dc-active-counter');
+    if (!container || !counter) return;
+
+    const { sessions, totals } = DevChat.activeSessions;
+    counter.textContent = `(${totals.busy}/${totals.total})`;
+
+    // List every non-archived session the user owns — across all
+    // their apps — so they get one place to see and jump to any
+    // open dev session. Busy rows (CC mid-turn) get the pulsing
+    // emerald dot; idle rows get a dim static dot. The header's
+    // (busy/total) counter is the at-a-glance "how much is
+    // actively running" indicator.
+    if (totals.total === 0) {
+      container.innerHTML = `
+        <div class="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400">
+          No open dev sessions yet.
+        </div>`;
+      return;
+    }
+
+    // Sort busy first, then most-recent-first within each group, so
+    // active work surfaces at the top.
+    const sorted = sessions.slice().sort((a, b) => {
+      if (!!a.busy !== !!b.busy) return a.busy ? -1 : 1;
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
+
+    const currentSlug = (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug) || '';
+
+    container.innerHTML = sorted.map((s) => {
+      const title = escapeHtml(s.pr_title || s.branch_name || 'Session');
+      const appName = escapeHtml(s.app_name || s.app_slug || '');
+      const isOtherApp = s.app_slug && s.app_slug !== currentSlug;
+      // Dot color follows the existing per-app list convention:
+      // emerald for 'active' (open), violet for 'promoted' (merged).
+      // The pulse animation is layered on top via the .busy modifier
+      // so the dot stays color-coded by lifecycle status while still
+      // signaling CC-mid-turn.
+      const statusClass = s.status === 'promoted' ? 'dc-active-dot-promoted' : 'dc-active-dot-active';
+      const busyClass = s.busy ? ' dc-active-dot-busy' : '';
+      const dotTitle = s.busy ? 'Claude is running' : (s.status === 'promoted' ? 'Promoted (merged)' : 'Active');
+      return `
+        <div class="dc-active-item" data-id="${s.id}" data-slug="${escapeHtml(s.app_slug || '')}">
+          <span class="dc-active-dot ${statusClass}${busyClass}" title="${dotTitle}"></span>
+          <span class="dc-active-title" title="${title}">${title}</span>
+          ${isOtherApp ? `<span class="dc-active-app" title="${appName}">${appName}</span>` : ''}
+          <button class="dc-active-archive" data-id="${s.id}" title="Archive this session">Archive</button>
+          <svg class="dc-active-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+        </div>`;
+    }).join('');
+
+    container.querySelectorAll('.dc-active-item').forEach((el) => {
+      el.addEventListener('click', () => {
+        const id = parseInt(el.dataset.id, 10);
+        const slug = el.dataset.slug;
+        if (!Number.isFinite(id) || !slug) return;
+        // Same-app click: keep the in-memory state warm by routing
+        // through openSession + renderChatView, then sync the URL.
+        // Cross-app click: just set the hash and let restoreFromHash
+        // handle the full app+tab+session restore — that path also
+        // closes the previous app cleanly via App.openApp.
+        if (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug === slug) {
+          DevChat.openSession(id).then(() => {
+            DevChat.renderChatView();
+            if (typeof App !== 'undefined' && App.updateHash) App.updateHash();
+          });
+        } else {
+          location.hash = `#app/${slug}/individual-chat/${id}`;
+        }
+      });
+    });
+
+    // Archive button. Stop propagation so the row click doesn't
+    // navigate into a session we're trying to archive. After the
+    // POST lands we refresh both the cross-app panel and (when
+    // we're currently viewing the same app the session belongs to)
+    // the per-app session list so the archived row disappears
+    // from both surfaces in one tick.
+    container.querySelectorAll('.dc-active-archive').forEach((btn) => {
+      btn.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        btn.textContent = '...';
+        btn.disabled = true;
+        const id = parseInt(btn.dataset.id, 10);
+        try {
+          await fetch(`/api/sessions/${id}/archive`, { method: 'POST' });
+        } catch {}
+        await DevChat.loadActiveSessions();
+        if (
+          typeof AppView !== 'undefined' &&
+          AppView.appData &&
+          AppView.appData.slug
+        ) {
+          await DevChat.loadSessions(AppView.appData.slug);
+          DevChat.renderSessionList();
+        }
+      });
+    });
   },
 
   async createSession(appSlug) {

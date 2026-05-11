@@ -918,6 +918,14 @@ const App = {
       btn.classList.toggle('active', btn.dataset.tab === tab);
     });
 
+    // Tear down the cross-app active-sessions poll when leaving the
+    // dev-chat tab. renderDevChatTab will spin it back up on re-entry.
+    // Without this the poll keeps firing on the group-chat / app tabs
+    // even though there's no UI to update.
+    if (tab !== 'individual-chat' && typeof DevChat !== 'undefined' && DevChat.stopActiveSessionsPoll) {
+      DevChat.stopActiveSessionsPoll();
+    }
+
     switch (tab) {
       case 'app':
         AppView.renderAppTab();

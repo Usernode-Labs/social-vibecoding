@@ -528,6 +528,133 @@ html, body {
 
 .dc-textarea { max-height: 120px; overflow-y: auto; line-height: 1.5; }
 
+/* ── Cross-app active sessions panel ───────────────────── */
+/*
+ * Sits at the very top of the dev-chat tab's meta block. Shows
+ * every session that's currently running CC, even from other
+ * apps the user owns. Same iOS-cell visual language as the
+ * per-app session list below it: row layout, hover surface,
+ * chevron at the end. The pulsing emerald dot is the live
+ * indicator — it intentionally mirrors the "active" status
+ * color used in the per-app list, so a glance ties the two
+ * views together.
+ */
+
+.dc-active-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.dc-active-item:hover,
+.dc-active-item:focus-visible {
+  background: var(--bg-card);
+  outline: none;
+}
+
+/* Dot color follows the existing per-app list convention:
+ *   - .dc-active-dot-active   → emerald (status='active')
+ *   - .dc-active-dot-promoted → violet  (status='promoted')
+ * The .dc-active-dot-busy modifier layers a pulse animation on top
+ * to flag "CC is mid-turn right now" without changing the base
+ * lifecycle color. That way an open session is always green —
+ * pulsing if running, solid if idle — and a merged session is
+ * always violet.
+ */
+.dc-active-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.dc-active-dot-active {
+  background: rgb(16 185 129); /* emerald-500 */
+}
+.dc-active-dot-promoted {
+  background: rgb(139 92 246); /* violet-500 */
+}
+
+.dc-active-dot-busy.dc-active-dot-active {
+  animation: dc-active-pulse-emerald 1.6s ease-out infinite;
+}
+.dc-active-dot-busy.dc-active-dot-promoted {
+  animation: dc-active-pulse-violet 1.6s ease-out infinite;
+}
+
+@keyframes dc-active-pulse-emerald {
+  0%   { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.45); }
+  70%  { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+@keyframes dc-active-pulse-violet {
+  0%   { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.45); }
+  70%  { box-shadow: 0 0 0 6px rgba(139, 92, 246, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0); }
+}
+
+/* Archive control. Inline ghost button — quiet by default, red on
+ * hover so the destructive action surfaces only when the user
+ * actually goes near it. Click handler stops propagation so the
+ * row's navigate-to-session click doesn't fire. */
+.dc-active-archive {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-faint);
+  background: transparent;
+  border: none;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease;
+}
+.dc-active-archive:hover,
+.dc-active-archive:focus-visible {
+  color: rgb(239 68 68); /* red-500 */
+  background: rgba(239, 68, 68, 0.08);
+  outline: none;
+}
+.dc-active-archive:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.dc-active-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Pill that names the originating app, only shown when the row
+ * belongs to a different app than the one the user is currently
+ * viewing. Same-app rows skip it to reduce visual noise. */
+.dc-active-app {
+  flex: 0 0 auto;
+  max-width: 40%;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dc-active-chevron {
+  width: 14px;
+  height: 14px;
+  color: var(--text-faint);
+  flex: 0 0 auto;
+}
+
 /* ── Inline spec preview card (in chat timeline) ──────── */
 
 .dc-spec-preview-card {

@@ -742,6 +742,23 @@ const AppView = {
     content.innerHTML = `
       <div style="display:flex;flex-direction:column;height:100%;min-height:0">
         <div id="dc-meta" class="shrink-0">
+          <!-- Active Sessions panel: cross-app view of every
+               non-archived session the user owns, with the busy ones
+               (CC actively running) listed and an (x/y) indicator in
+               the header. Lives in the meta block so it's visible
+               whenever the user is in the session list (and hides
+               with the rest of #dc-meta on session open, where the
+               focused chat takes over). DevChat.startActiveSessionsPoll
+               fills #dc-active-list and updates #dc-active-counter on
+               a 5s tick. -->
+          <div class="px-3 pt-3 pb-3 border-b border-zinc-200 dark:border-zinc-800">
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider">Active Sessions</span>
+              <span id="dc-active-counter" class="text-xs text-zinc-400 dark:text-zinc-500 font-mono">(0/0)</span>
+            </div>
+            <div id="dc-active-list" class="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50 divide-y divide-zinc-200 dark:divide-zinc-700" style="max-height:200px;overflow-y:auto"></div>
+          </div>
+
           <!-- Edit section: app-level controls that previously lived in
                the global header (App secrets) or the group-chat vote
                panel (Propose rename). Both still pop the same modals;
@@ -781,6 +798,11 @@ const AppView = {
     // is also called by Secrets after a successful direct edit so the
     // row stays in sync without a manual reload.
     AppView.refreshDevChatSecretsState();
+
+    // Kick off the cross-app active-sessions poll. startActiveSessionsPoll
+    // tears down any previous timer first, so re-rendering the tab
+    // (e.g. on hash restore or app switch) doesn't stack pollers.
+    DevChat.startActiveSessionsPoll();
 
     if (AppView.appData) {
       // Ground-truth guard: if the in-memory session belongs to a
