@@ -159,6 +159,22 @@ const DevChat = {
       if (!res.ok) return;
       const { session, messages } = await res.json();
       DevChat.currentSession = session;
+      // Restore the spec viewer's open/closed state from localStorage
+      // before the caller's renderChatView fires, so a refresh on a
+      // session that had the viewer open paints with the panel
+      // already mounted. The data fetch is kicked off in the
+      // background by _loadSpecViewer; the empty side-panel renders
+      // immediately and fills in once the spec_md round-trip lands.
+      if (DevChat._readSpecViewerOpen(sessionId)) {
+        DevChat.specViewer.open = true;
+        DevChat.specViewer.sessionId = sessionId;
+        DevChat.specViewer.viewVersion = 'draft';
+        DevChat.specViewer.viewVersionContent = null;
+        // Don't await — caller's renderChatView shouldn't block on
+        // the fetch. _loadSpecViewer calls _renderSpecViewer when it
+        // resolves, which patches the body in place.
+        DevChat._loadSpecViewer({ force: true });
+      }
       DevChat.messages = messages.map((m) => {
         if (m.metadata) {
           if (m.metadata.stagingUrl) m.stagingUrl = m.metadata.stagingUrl;
@@ -957,7 +973,7 @@ const DevChat = {
                 <span class="dc-spec-preview-title">${escapeHtml(headerLabel)}</span>
                 <span class="dc-spec-preview-cta">View full spec →</span>
               </div>
-              <pre class="dc-spec-preview-snippet">${escapeHtml(snippet)}</pre>
+              <div class="dc-spec-preview-snippet">${DevChat.renderMarkdown(snippet)}</div>
             </div>`;
         }
         if (msg.ccLog) {
@@ -1315,6 +1331,13 @@ const DevChat = {
       .join('');
 
     const viewerOpen = !!DevChat.specViewer.open;
+    // Saved viewer width from a previous drag. Applied as inline style
+    // on the side panel; CSS clamps to a min/max so a stale value
+    // can't make the chat unusably narrow.
+    const savedWidth = DevChat._readSpecViewerWidth();
+    const viewerStyle = viewerOpen && savedWidth
+      ? ` style="width:${savedWidth}px"`
+      : '';
 
     content.innerHTML = `
       <div class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
@@ -1351,7 +1374,8 @@ const DevChat = {
             </div>
           </div>
         </div>
-        <div id="dc-spec-viewer" class="dc-spec-viewer ${viewerOpen ? 'dc-spec-viewer-open' : ''}"></div>
+        <div id="dc-spec-resizer" class="dc-spec-resizer ${viewerOpen ? 'dc-spec-resizer-open' : ''}" role="separator" aria-orientation="vertical" aria-label="Resize spec viewer"></div>
+        <div id="dc-spec-viewer" class="dc-spec-viewer ${viewerOpen ? 'dc-spec-viewer-open' : ''}"${viewerStyle}></div>
       </div>`;
 
     DevChat.renderMessages();
@@ -1411,6 +1435,11 @@ const DevChat = {
     if (DevChat.specViewer.open) {
       DevChat._renderSpecViewer();
     }
+
+    // Wire up the draggable divider between chat pane and viewer. Idempotent —
+    // we re-bind on every renderChatView since the resizer element gets
+    // recreated whenever the session view re-renders.
+    DevChat._initSpecResizer();
   },
 
   _submitFromInput() {
@@ -1477,6 +1506,105 @@ const DevChat = {
     });
   },
 
+  // ===== Spec viewer resizer (draggable divider) =====
+  //
+  // The chat pane / spec viewer split is fixed at 480px by default but
+  // users want to widen the viewer when reading a long spec or shrink
+  // it back. CSS handles the side-panel-vs-modal layout switch (CSS
+  // wins above 1024px); this just lets the user drag the boundary on
+  // wide viewports.
+  //
+  // Width is persisted to localStorage so it sticks across reloads.
+  // The CSS rule `min-width: 280px; max-width: calc(100vw - 320px)`
+  // clamps stale or hostile values so the chat pane is always usable.
+
+  _SPEC_VIEWER_WIDTH_KEY: 'dc-spec-viewer-width-v1',
+  // The viewer's open/closed state is persisted per-session, not
+  // global — a new session that has no spec yet shouldn't auto-open
+  // an empty viewer just because the user had it open in a prior
+  // session. Width is global (one consistent layout preference);
+  // open/closed is per-session.
+  _SPEC_VIEWER_OPEN_KEY_PREFIX: 'dc-spec-viewer-open-v1:',
+
+  _readSpecViewerWidth() {
+    try {
+      const v = parseInt(localStorage.getItem(DevChat._SPEC_VIEWER_WIDTH_KEY) || '', 10);
+      return Number.isFinite(v) && v > 0 ? v : null;
+    } catch { return null; }
+  },
+
+  _writeSpecViewerWidth(px) {
+    try { localStorage.setItem(DevChat._SPEC_VIEWER_WIDTH_KEY, String(Math.round(px))); }
+    catch {}
+  },
+
+  _readSpecViewerOpen(sessionId) {
+    if (!sessionId) return false;
+    try { return localStorage.getItem(DevChat._SPEC_VIEWER_OPEN_KEY_PREFIX + sessionId) === '1'; }
+    catch { return false; }
+  },
+
+  _writeSpecViewerOpen(sessionId, isOpen) {
+    if (!sessionId) return;
+    try { localStorage.setItem(DevChat._SPEC_VIEWER_OPEN_KEY_PREFIX + sessionId, isOpen ? '1' : '0'); }
+    catch {}
+  },
+
+  _initSpecResizer() {
+    const handle = document.getElementById('dc-spec-resizer');
+    const viewer = document.getElementById('dc-spec-viewer');
+    if (!handle || !viewer) return;
+
+    handle.addEventListener('pointerdown', (e) => {
+      // Only start dragging when the resizer is actually visible (the
+      // viewer is open AND we're in side-panel layout — CSS handles
+      // the latter via the dc-spec-resizer-open visibility rule). On
+      // narrow viewports the modal layout takes over and this handler
+      // is harmless because the resizer itself is `display: none`.
+      if (!DevChat.specViewer.open) return;
+      e.preventDefault();
+
+      const sessionBody = handle.parentElement;
+      const startX = e.clientX;
+      const startWidth = viewer.getBoundingClientRect().width;
+      const bodyRect = sessionBody.getBoundingClientRect();
+      const minWidth = 280;
+      const maxWidth = Math.max(minWidth + 1, bodyRect.width - 320);
+
+      // Capture pointer so we keep getting move events even if the
+      // cursor strays out of the 4px-wide handle.
+      handle.setPointerCapture(e.pointerId);
+      handle.classList.add('dc-spec-resizer-active');
+      // Disable text selection during the drag — selecting random
+      // chat / spec text while resizing is just visual noise.
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'col-resize';
+
+      const onMove = (ev) => {
+        // Dragging right shrinks the viewer (its left edge moves right).
+        const delta = ev.clientX - startX;
+        const next = Math.max(minWidth, Math.min(maxWidth, startWidth - delta));
+        viewer.style.width = `${next}px`;
+      };
+
+      const onUp = () => {
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', onUp);
+        handle.removeEventListener('pointercancel', onUp);
+        try { handle.releasePointerCapture(e.pointerId); } catch {}
+        handle.classList.remove('dc-spec-resizer-active');
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+        const finalWidth = viewer.getBoundingClientRect().width;
+        DevChat._writeSpecViewerWidth(finalWidth);
+      };
+
+      handle.addEventListener('pointermove', onMove);
+      handle.addEventListener('pointerup', onUp);
+      handle.addEventListener('pointercancel', onUp);
+    });
+  },
+
   // ===== Spec viewer helpers =====
   //
   // Read-only viewer that opens when the user clicks an inline spec
@@ -1497,12 +1625,15 @@ const DevChat = {
     DevChat.specViewer.sessionId = sid;
     DevChat.specViewer.viewVersion = (version === 'draft' || version == null) ? 'draft' : version;
     DevChat.specViewer.viewVersionContent = null;
+    DevChat._writeSpecViewerOpen(sid, true);
     DevChat.renderChatView();
     DevChat._loadSpecViewer({ force: true });
   },
 
   closeSpecViewer() {
+    const sid = DevChat.currentSession ? DevChat.currentSession.id : null;
     DevChat.specViewer.open = false;
+    DevChat._writeSpecViewerOpen(sid, false);
     DevChat.renderChatView();
   },
 
@@ -1569,7 +1700,7 @@ const DevChat = {
     const bodyHtml = DevChat.specViewer.isLoading && !displayContent
       ? `<div class="p-4 text-sm text-zinc-500">Loading spec…</div>`
       : displayContent
-        ? `<pre class="dc-spec-viewer-body">${escapeHtml(displayContent)}</pre>`
+        ? `<div class="dc-spec-viewer-body">${DevChat.renderMarkdown(displayContent)}</div>`
         : `<div class="p-4 text-sm text-zinc-500">No spec yet. Ask the AI to draft one.</div>`;
 
     pane.innerHTML = `

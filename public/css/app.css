@@ -568,19 +568,46 @@ html, body {
 }
 
 .dc-spec-preview-snippet {
-  margin: 0;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 12px;
   line-height: 1.45;
   color: var(--text-secondary, #a1a1aa);
-  white-space: pre-wrap;
-  word-break: break-word;
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
   max-height: 6em;
+  overflow: hidden;
+  position: relative;
+  word-break: break-word;
 }
+
+/* Soft fade at the bottom so the truncation reads as "more below"
+   instead of an abrupt slice through a sentence. The gradient
+   matches the card background; on hover the card tint kicks in
+   underneath, which is fine — the fade still reads as a fade. */
+.dc-spec-preview-snippet::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1.5em;
+  background: linear-gradient(to bottom, transparent, var(--bg-secondary, #18181b));
+  pointer-events: none;
+}
+
+/* Tighten markdown spacing inside the snippet — renderMarkdown's
+   default margins (geared toward chat bubbles) are too loose for a
+   4-line clipped preview. */
+.dc-spec-preview-snippet > :first-child { margin-top: 0; }
+.dc-spec-preview-snippet > :last-child  { margin-bottom: 0; }
+.dc-spec-preview-snippet .dc-h3,
+.dc-spec-preview-snippet .dc-h4,
+.dc-spec-preview-snippet .dc-p,
+.dc-spec-preview-snippet .dc-ul,
+.dc-spec-preview-snippet .dc-ol {
+  margin: 2px 0;
+}
+.dc-spec-preview-snippet .dc-h3 { font-size: 13px; }
+.dc-spec-preview-snippet .dc-h4 { font-size: 12px; }
+.dc-spec-preview-snippet .dc-code-block,
+.dc-spec-preview-snippet .dc-code-header { display: none; }
 
 /* ── Spec viewer (read-only, side panel / modal) ──────── */
 
@@ -599,22 +626,50 @@ html, body {
   color: var(--text-primary, #e4e4e7);
 }
 
-/* Wide viewports: side panel beside the chat. */
+/* Wide viewports: side panel beside the chat. The width is set
+   inline by JS (persisted from the previous drag) but clamped here
+   so any stale localStorage value can't strand the chat at < 320px
+   wide. */
 .dc-spec-viewer.dc-spec-viewer-open {
   display: flex;
   width: 480px;
-  border-left: 1px solid var(--border, rgba(255,255,255,0.12));
+  min-width: 280px;
+  max-width: calc(100vw - 320px);
+  flex-shrink: 0;
 }
 
-/* Narrow viewports: fullscreen modal that floats over the chat. */
+/* Narrow viewports: fullscreen modal that floats over the chat. The
+   inline `width` set by JS from the previous side-panel drag is
+   overridden by `width: auto` so the modal still fills the screen. */
 @media (max-width: 1023px) {
   .dc-spec-viewer.dc-spec-viewer-open {
     position: fixed;
     inset: 0;
-    width: auto;
-    border-left: none;
+    width: auto !important;
+    max-width: none;
     z-index: 50;
   }
+}
+
+/* Draggable divider between chat and viewer. Hidden by default,
+   only visible on wide viewports when the viewer is open. */
+.dc-spec-resizer {
+  display: none;
+  width: 4px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: var(--border, rgba(255,255,255,0.12));
+  transition: background 120ms ease;
+  touch-action: none;
+}
+
+.dc-spec-resizer:hover,
+.dc-spec-resizer-active {
+  background: rgb(139 92 246);
+}
+
+@media (min-width: 1024px) {
+  .dc-spec-resizer-open { display: block; }
 }
 
 .dc-spec-viewer-header {
@@ -651,13 +706,24 @@ html, body {
 }
 
 .dc-spec-viewer-body {
-  margin: 0;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 13px;
-  line-height: 1.5;
-  white-space: pre-wrap;
+  line-height: 1.55;
   word-break: break-word;
   color: var(--text-primary, #e4e4e7);
+}
+
+.dc-spec-viewer-body > :first-child { margin-top: 0; }
+.dc-spec-viewer-body > :last-child  { margin-bottom: 0; }
+.dc-spec-viewer-body .dc-h3 { margin: 16px 0 6px; }
+.dc-spec-viewer-body .dc-h4 { margin: 12px 0 4px; }
+.dc-spec-viewer-body .dc-p,
+.dc-spec-viewer-body .dc-ul,
+.dc-spec-viewer-body .dc-ol { margin: 6px 0; }
+.dc-spec-viewer-body .dc-blockquote {
+  margin: 8px 0;
+  padding: 4px 10px;
+  border-left: 3px solid var(--border, rgba(255,255,255,0.18));
+  color: var(--text-secondary, #a1a1aa);
 }
 
 .dc-spec-viewer-footer {
