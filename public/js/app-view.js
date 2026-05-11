@@ -279,32 +279,60 @@ const AppView = {
 
   renderGroupChatTab() {
     const content = document.getElementById('app-content');
+    // Layout mirrors dev-chat's session view: a vertical column for
+    // the cross-cutting strips (vote panel here / session header
+    // there), then a flex-row body that holds the chat pane on the
+    // left and a slot for the spec side-panel on the right. The slot
+    // is empty + display:none until "View full spec" is clicked, so
+    // the chat occupies 100% width by default. CSS toggles the
+    // side-panel layout vs. fullscreen-modal layout based on
+    // viewport width.
     content.innerHTML = `
       <div class="flex flex-col h-full">
-        <!-- Vote/issue panel -->
+        <!-- Vote/issue panel (spans full width above the body row) -->
         <div id="gc-panel" class="shrink-0 border-b border-zinc-200 dark:border-zinc-800">
           <div id="gc-panel-content" class="px-3 py-2"></div>
         </div>
 
-        <!-- Messages -->
-        <div id="gc-messages" class="flex-1 overflow-y-auto py-2 space-y-0.5"></div>
+        <div class="gc-tab-body flex-1 flex min-h-0">
+          <div class="gc-chat-pane flex-1 flex flex-col min-h-0">
+            <!-- Messages -->
+            <div id="gc-messages" class="flex-1 overflow-y-auto py-2 space-y-0.5"></div>
 
-        <!-- Typing indicator -->
-        <div id="gc-typing" class="px-3 text-xs text-zinc-500 h-5 shrink-0"></div>
+            <!-- Typing indicator -->
+            <div id="gc-typing" class="px-3 text-xs text-zinc-500 h-5 shrink-0"></div>
 
-        <!-- Input -->
-        <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2">
-          <form id="gc-form" class="flex gap-2">
-            <input
-              id="gc-input"
-              type="text"
-              maxlength="2000"
-              placeholder="Type a message..."
-              autocomplete="off"
-              class="flex-1 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-            >
-            <button type="submit" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors shrink-0">Send</button>
-          </form>
+            <!-- Input -->
+            <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2">
+              <form id="gc-form" class="flex gap-2">
+                <input
+                  id="gc-input"
+                  type="text"
+                  maxlength="2000"
+                  placeholder="Type a message..."
+                  autocomplete="off"
+                  class="flex-1 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                >
+                <button type="submit" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors shrink-0">Send</button>
+              </form>
+            </div>
+          </div>
+
+          <!-- Draggable divider between chat pane and spec panel.
+               CSS keeps it display:none until both
+                 (a) .gc-spec-resizer-open is added (panel is open), and
+                 (b) viewport >= 1024px (side-panel layout, not modal).
+               GroupChat._initSpecPanelResizer wires a pointer-event
+               drag handler that updates the panel inline width and
+               persists the final value to localStorage. -->
+          <div id="gc-spec-resizer" class="gc-spec-resizer" role="separator" aria-orientation="vertical" aria-label="Resize spec panel"></div>
+
+          <!-- Spec side-panel slot. Lives empty in the DOM so a
+               re-render of this tab doesn't tear down a panel the
+               user has open. _showSpecPanel populates + toggles
+               .gc-spec-side-panel-open; CSS handles the responsive
+               side-panel-vs-fullscreen-modal switch at 1024px. -->
+          <div id="gc-spec-side-panel" class="gc-spec-side-panel"></div>
         </div>
       </div>`;
 

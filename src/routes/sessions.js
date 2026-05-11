@@ -36,6 +36,45 @@ function getActiveWorkerCount() {
 const USER_DAILY_LIMIT_CENTS = 2500;
 const GLOBAL_DAILY_LIMIT_CENTS = 20000;
 
+// Pull the first ATX-style H1 from a spec's markdown content. Used by
+// the spec-share endpoint so the group-chat card can show "Title"
+// instead of just "spec v3". Returns null if no H1 is found in the
+// first ~30 lines (good enough for AI-generated specs, which always
+// start with a heading near the top). Capped at 120 chars so a
+// pathologically long heading can't blow up card layouts.
+function extractSpecTitle(content) {
+  if (!content) return null;
+  const lines = content.split('\n');
+  for (let i = 0; i < Math.min(lines.length, 30); i++) {
+    const line = lines[i].trim();
+    if (line.startsWith('# ') && !line.startsWith('## ')) {
+      const t = line.slice(2).trim();
+      if (t) return t.slice(0, 120);
+    }
+  }
+  return null;
+}
+
+// Card snippet (body preview), with the title line stripped so the
+// title doesn't render twice (once as the card heading, once at the
+// top of the rendered-markdown snippet). 280 chars is enough for ~4
+// lines of preview after the markdown renderer is done with it.
+function extractSpecSnippet(content, title) {
+  if (!content) return '';
+  if (!title) return content.slice(0, 280);
+  const lines = content.split('\n');
+  let start = 0;
+  for (let i = 0; i < Math.min(lines.length, 30); i++) {
+    if (lines[i].trim() === '') continue;
+    if (lines[i].trim().startsWith('# ') && !lines[i].trim().startsWith('## ')) {
+      start = i + 1;
+    }
+    break;
+  }
+  while (start < lines.length && lines[start].trim() === '') start++;
+  return lines.slice(start).join('\n').slice(0, 280);
+}
+
 function sessionRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -782,11 +821,81 @@ function sessionRoutes(config) {
     }
   });
 
-  // (POST /api/sessions/:id/build-spec was removed — the user-driven
-  // "Build from spec" button no longer exists. The Mayor's
-  // dispatch_claude_code is the only build path now; it freezes a new
-  // chat_session_specs row server-side as part of the normal turn flow
-  // when applicable, but never via this route.)
+  // POST /api/sessions/:id/specs
+  //   Save the current chat_sessions.spec_md draft as a new immutable
+  //   row in chat_session_specs. Triggered by the user clicking
+  //   "Save version" in the spec viewer — the only writer of new rows
+  //   in this table now (the legacy /build-spec route was removed in
+  //   favor of letting the Mayor handle dispatches from chat).
+  //
+  //   Idempotent against rapid double-click: if the immediately-
+  //   preceding version's content is byte-identical to the current
+  //   draft, returns that existing row instead of inserting a
+  //   duplicate. We compare ONLY against the most recent version, not
+  //   the entire history, so the legitimate "AI rewrote, I reverted,
+  //   I save again" flow still produces a fresh row at vN+1 carrying
+  //   the same bytes as some earlier vK.
+  //
+  //   commit_sha and pr_number stay NULL — manually-saved rows aren't
+  //   pinned to a git commit. Old rows from the legacy /build-spec
+  //   route still carry their populated values; co-existence is fine
+  //   and the UI degrades gracefully (PR link omitted when null).
+  router.post('/api/sessions/:id/specs', async (req, res) => {
+    const sessionId = parseInt(req.params.id, 10);
+    if (Number.isNaN(sessionId)) return res.status(400).json({ error: 'Bad session id' });
+
+    try {
+      const { rows: sessionRows } = await pool.query(
+        `SELECT cs.id, cs.spec_md
+         FROM chat_sessions cs
+         WHERE cs.id = $1 AND cs.user_id = $2`,
+        [sessionId, req.user.id]
+      );
+      if (!sessionRows.length) return res.status(404).json({ error: 'Session not found' });
+
+      const content = sessionRows[0].spec_md || '';
+      if (!content.trim()) {
+        return res.status(400).json({ error: 'Cannot save an empty draft' });
+      }
+
+      const { rows: latestRows } = await pool.query(
+        `SELECT version, content, built_at, shared_to_group_at
+         FROM chat_session_specs
+         WHERE session_id = $1
+         ORDER BY version DESC
+         LIMIT 1`,
+        [sessionId]
+      );
+      if (latestRows.length && latestRows[0].content === content) {
+        return res.json({
+          version: latestRows[0].version,
+          built_at: latestRows[0].built_at,
+          char_count: content.length,
+          shared_to_group_at: latestRows[0].shared_to_group_at,
+          deduped: true,
+        });
+      }
+
+      const nextVersion = latestRows.length ? latestRows[0].version + 1 : 1;
+      const { rows: insertedRows } = await pool.query(
+        `INSERT INTO chat_session_specs (session_id, version, content)
+         VALUES ($1, $2, $3)
+         RETURNING version, built_at`,
+        [sessionId, nextVersion, content]
+      );
+
+      res.json({
+        version: insertedRows[0].version,
+        built_at: insertedRows[0].built_at,
+        char_count: content.length,
+        shared_to_group_at: null,
+        deduped: false,
+      });
+    } catch (err) {
+      log.error('sessions', 'Failed to save spec version', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
 
   // Share a frozen spec snapshot into the app's group chat. The group
   // chat renders the message as a "spec card" with a snippet + view-
@@ -820,10 +929,16 @@ function sessionRoutes(config) {
       if (!specRows.length) return res.status(404).json({ error: 'Spec version not found' });
       const spec = specRows[0];
 
-      // Snippet for the card body — the renderer can show full spec on
-      // demand. Keep this short; the full content lives in
-      // chat_session_specs and is fetched lazily.
-      const snippet = (spec.content || '').slice(0, 280);
+      // Title + snippet for the card. The title is the first H1
+      // (`# Heading`) in the spec, used as the card's primary heading
+      // so users see what the spec is *about* instead of just "v3".
+      // The snippet is the body content with the title line stripped
+      // (otherwise it'd appear twice — once in the card header, once
+      // at the top of the snippet body). Old shares predate this
+      // payload shape and have no title; the renderer falls back to
+      // "Spec vN" in that case.
+      const title = extractSpecTitle(spec.content);
+      const snippet = extractSpecSnippet(spec.content, title);
 
       const shareMeta = {
         specShare: {
@@ -832,12 +947,15 @@ function sessionRoutes(config) {
           builtAt: spec.built_at,
           commitSha: spec.commit_sha || null,
           prNumber: spec.pr_number || null,
+          title,
           snippet,
           totalChars: (spec.content || '').length,
           sharedBy: { id: req.user.id, username: req.user.username },
         },
       };
-      const summaryLine = `📋 ${req.user.username || 'Someone'} shared spec v${spec.version} from a dev session.`;
+      const summaryLine = title
+        ? `📋 ${req.user.username || 'Someone'} shared "${title}" (spec v${spec.version}).`
+        : `📋 ${req.user.username || 'Someone'} shared spec v${spec.version} from a dev session.`;
 
       const { rows: msgRows } = await pool.query(
         `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata)

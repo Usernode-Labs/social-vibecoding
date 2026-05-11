@@ -726,15 +726,6 @@ html, body {
   color: var(--text-secondary, #a1a1aa);
 }
 
-.dc-spec-viewer-footer {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-top: 1px solid var(--border, rgba(255,255,255,0.12));
-  flex-shrink: 0;
-}
-
 .dc-spec-action-btn {
   font-size: 12px;
   padding: 6px 12px;
@@ -758,6 +749,11 @@ html, body {
 /* ── Group-chat spec_share card ────────────────────────── */
 
 .gc-spec-card {
+  /* Capped width so the card looks like an attachment, not a wall.
+     560px is roughly the natural reading width for the title +
+     attribution + ~4 lines of preview. The card stays full-width on
+     narrow viewports because of the min(). */
+  max-width: min(560px, 100%);
   margin: 6px 0;
   padding: 10px 12px;
   border: 1px solid var(--border, rgba(255,255,255,0.12));
@@ -770,36 +766,64 @@ html, body {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 600;
   margin-bottom: 4px;
 }
 
 .gc-spec-card-icon { font-size: 14px; }
 
-.gc-spec-card-title { color: var(--text-primary, #e4e4e7); flex: 1; }
+.gc-spec-card-title {
+  color: var(--text-primary, #e4e4e7);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
-.gc-spec-card-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+.gc-spec-card-attribution {
   font-size: 11px;
   color: var(--text-secondary, #a1a1aa);
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 
 .gc-spec-card-snippet {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  /* Snippet sits flush in the card (no inset background) so rendered
+     markdown — headings, lists, paragraphs — looks like document
+     preview content rather than a code block. The bottom fade hides
+     the truncation seam against the card's own background. */
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-secondary, #a1a1aa);
-  background: rgba(0,0,0,0.2);
-  border-radius: 4px;
-  padding: 6px 8px;
   margin-bottom: 8px;
-  white-space: pre-wrap;
   word-break: break-word;
-  max-height: 8em;
+  max-height: 7em;
   overflow: hidden;
+  position: relative;
+}
+
+/* Tighten markdown spacing inside the snippet (the renderMarkdown
+   helper adds margins geared toward chat bubbles). */
+.gc-spec-card-snippet > :first-child { margin-top: 0; }
+.gc-spec-card-snippet > :last-child  { margin-bottom: 0; }
+.gc-spec-card-snippet .dc-h3,
+.gc-spec-card-snippet .dc-h4 { font-size: 12px; margin: 2px 0; }
+.gc-spec-card-snippet .dc-p,
+.gc-spec-card-snippet .dc-ul,
+.gc-spec-card-snippet .dc-ol { margin: 2px 0; }
+.gc-spec-card-snippet .dc-code-block,
+.gc-spec-card-snippet .dc-code-header { display: none; }
+
+.gc-spec-card-snippet::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1.4em;
+  background: linear-gradient(to bottom, transparent, var(--bg-secondary, #18181b));
+  pointer-events: none;
 }
 
 .gc-spec-card-actions { display: flex; gap: 6px; }
@@ -825,40 +849,110 @@ html, body {
 }
 .gc-spec-pr:hover { text-decoration: underline; }
 
-/* Spec modal (View full spec) */
-.gc-spec-modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
+/* Group-chat spec side-panel. Mirrors the dev-chat spec viewer
+   (.dc-spec-viewer): the slot is rendered as a sibling of the chat
+   pane inside the gc-tab-body flex row, so it occupies space within
+   the chat tab — never covering the app header or the vote/issue
+   panel that sits above the row.
 
-.gc-spec-modal {
-  width: min(720px, 90vw);
-  max-height: 80vh;
-  display: flex;
+   Two layouts driven by viewport width:
+     ≥ 1024px → inline side panel beside the chat pane (flex-shrink:0,
+                width = min(560px, 50vw)). Composer + typing
+                indicator stay fully usable on the left.
+     < 1024px → fullscreen overlay covering only the gc-tab-body
+                area (`position: absolute; inset: 0`). The vote/issue
+                panel + tab bar above stay visible; the chat
+                composer is hidden underneath the panel until close.
+
+   The slot itself is `display: none` until .gc-spec-side-panel-open
+   is added, so an empty slot doesn't reserve any layout space. */
+.gc-spec-side-panel {
+  display: none;
   flex-direction: column;
   background: var(--bg-primary, #0a0a0a);
-  border: 1px solid var(--border, rgba(255,255,255,0.12));
-  border-radius: 8px;
-  overflow: hidden;
+  color: var(--text-primary, #e4e4e7);
 }
 
-.gc-spec-modal-header {
+/* Wide viewports: side panel beside the chat. Width can be inline-
+   styled by the drag handler (persisted to localStorage); CSS clamps
+   so a stale value can't strand the chat too narrow. */
+.gc-spec-side-panel.gc-spec-side-panel-open {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border, rgba(255,255,255,0.12));
+  width: min(560px, 50vw);
+  min-width: 280px;
+  max-width: calc(100vw - 320px);
+  flex-shrink: 0;
+  border-left: 1px solid var(--border, rgba(255,255,255,0.12));
 }
 
-.gc-spec-modal-title { font-weight: 600; color: var(--text-primary, #e4e4e7); }
-.gc-spec-modal-meta { font-size: 11px; color: var(--text-secondary, #a1a1aa); }
+@media (max-width: 1023px) {
+  /* Need a positioning context on the body row so absolute can pin
+     to it instead of escaping to the viewport. Keeps the app header
+     + vote panel visible above. */
+  .gc-tab-body { position: relative; }
 
-.gc-spec-modal-close {
+  /* Modal mode: the inline width set by JS from a previous side-
+     panel drag is overridden so the modal still fills the available
+     area. */
+  .gc-spec-side-panel.gc-spec-side-panel-open {
+    position: absolute;
+    inset: 0;
+    width: auto !important;
+    min-width: 0;
+    max-width: none;
+    border-left: none;
+    z-index: 50;
+  }
+}
+
+/* Draggable divider between chat pane and spec panel. Hidden by
+   default, only visible when the panel is open AND the viewport is
+   wide enough for side-panel layout. Same shape as the dev-chat
+   spec-resizer for visual consistency. */
+.gc-spec-resizer {
+  display: none;
+  width: 4px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: var(--border, rgba(255,255,255,0.12));
+  transition: background 120ms ease;
+  touch-action: none;
+}
+
+.gc-spec-resizer:hover,
+.gc-spec-resizer-active {
+  background: rgb(139 92 246);
+}
+
+@media (min-width: 1024px) {
+  .gc-spec-resizer-open { display: block; }
+}
+
+.gc-spec-panel-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,0.12));
+  flex-shrink: 0;
+}
+
+.gc-spec-panel-titlewrap { flex: 1; min-width: 0; }
+.gc-spec-panel-title {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text-primary, #e4e4e7);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gc-spec-panel-subtitle {
+  font-size: 11px;
+  color: var(--text-secondary, #a1a1aa);
+  margin-top: 2px;
+}
+
+.gc-spec-panel-close {
   background: transparent;
   border: none;
   color: var(--text-secondary, #a1a1aa);
@@ -866,19 +960,40 @@ html, body {
   line-height: 1;
   cursor: pointer;
   padding: 0 6px;
+  flex-shrink: 0;
 }
-.gc-spec-modal-close:hover { color: var(--text-primary, #e4e4e7); }
+.gc-spec-panel-close:hover { color: var(--text-primary, #e4e4e7); }
 
-.gc-spec-modal-body {
-  margin: 0;
+.gc-spec-panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
   padding: 14px 16px;
   overflow-y: auto;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 13px;
   line-height: 1.6;
-  white-space: pre-wrap;
   word-break: break-word;
   color: var(--text-primary, #e4e4e7);
+}
+
+/* Markdown styling — same spacing as the dev-chat spec viewer. */
+.gc-spec-panel-body > :first-child { margin-top: 0; }
+.gc-spec-panel-body > :last-child  { margin-bottom: 0; }
+.gc-spec-panel-body .dc-h3 { margin: 16px 0 6px; }
+.gc-spec-panel-body .dc-h4 { margin: 12px 0 4px; }
+.gc-spec-panel-body .dc-p,
+.gc-spec-panel-body .dc-ul,
+.gc-spec-panel-body .dc-ol { margin: 6px 0; }
+.gc-spec-panel-body .dc-blockquote {
+  margin: 8px 0;
+  padding: 4px 10px;
+  border-left: 3px solid var(--border, rgba(255,255,255,0.18));
+  color: var(--text-secondary, #a1a1aa);
+}
+
+.gc-spec-panel-error {
+  font-size: 13px;
+  color: var(--text-secondary, #a1a1aa);
+  font-style: italic;
 }
 
 /* ── Keyboard shortcut hints ───────────────────────────── */
