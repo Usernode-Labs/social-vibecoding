@@ -94,6 +94,46 @@ first HTTPS request.
 Once the first run is green end-to-end, uncomment the `push`-on-main
 trigger in `.github/workflows/deploy.yml` to enable auto-deploy.
 
+### Recovery (rollback to a known-good SHA)
+
+If a deploy lands a broken commit and the platform UI is down or
+misbehaving, the kill-switch is `/opt/usernode-tools/rollback.sh`
+on the VPS. It deliberately lives outside `/opt/usernode/` so a
+broken deploy can't clobber it, and it re-clones the repo from
+GitHub at the target SHA — so it works even when local state is
+corrupted.
+
+Find a known-good SHA at
+`https://github.com/Usernode-Labs/social-vibecoding/commits/main`,
+then SSH in and run:
+
+```bash
+ssh deploy@<DEPLOY_HOST>
+# Optional sanity checks first:
+grep ^GIT_SHA= /opt/usernode/.env       # what's running now
+docker logs usernode --tail 50          # what's broken
+
+/opt/usernode-tools/rollback.sh <sha>
+```
+
+The script clones the target SHA into `/tmp`, rsyncs over
+`/opt/usernode/` (preserving `.env`, `runtime/`, `data/`), updates
+`GIT_SHA` in `.env`, and runs `docker compose up -d --build`.
+Named volumes (Postgres data, Caddy state, sidecar archive)
+persist across rollback.
+
+The script is auto-deployed by the Deploy workflow — every deploy
+copies the latest version of `scripts/rollback.sh` into
+`/opt/usernode-tools/`. So the script itself stays current with
+the repo, but the directory it lives in survives `rsync --delete`.
+
+**Rehearse it once before you need it.** Push a no-op commit (a
+README typo fix is fine), wait for the deploy to finish, then run
+`rollback.sh <prev_sha>` — confirm the harness comes back on the
+previous SHA, the version pill in the UI shows it, and child apps
+are unaffected. Schema migrations are forward-only, so don't
+rehearse across a migration boundary.
+
 ## Running locally
 
 Fill in `.env.example` → `.env`, set `USERNODE_LOCAL_DEV=1` in your

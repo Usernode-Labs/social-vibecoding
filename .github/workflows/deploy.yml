@@ -274,6 +274,18 @@ jobs:
               echo "==> Sidecar keeps running with its existing self-maintained archive."
             fi
 
+            # Mirror scripts/rollback.sh into /opt/usernode-tools/ so the
+            # kill-switch is always at a stable path that survives
+            # rsync --delete (which scopes to /opt/usernode/ only). The
+            # rollback script must work even when the harness is on
+            # fire, so it lives outside the deploy tree intentionally —
+            # see scripts/rollback.sh and SELF-HOSTING-PLAN.md Phase 1.
+            # `install -d -o deploy -g deploy` is idempotent and uses
+            # sudo only on first run (deploy has passwordless sudo per
+            # scripts/server-bootstrap.sh).
+            sudo install -d -o deploy -g deploy -m 755 /opt/usernode-tools
+            install -m 755 scripts/rollback.sh /opt/usernode-tools/rollback.sh
+
             # Bring everything up. Build is required on every deploy —
             # the platform usernode image bakes in `COPY . .` so a
             # rebuild is how new code gets in. If the conditional
