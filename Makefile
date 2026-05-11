@@ -120,8 +120,33 @@ build:
 up:
 	$(DEV_COMPOSE) up -d --build
 
+# Full local teardown:
+#   1. Take down the compose-managed services (platform + Postgres).
+#   2. Force-remove every container the running platform spawned via raw
+#      `docker run` calls in src/services/{app-creator,staging,worker}.js.
+#      Those live outside compose, so a plain `docker compose down` leaves
+#      them running (or stopped-but-piling-up) forever — see the
+#      "usernode-app-*", "usernode-staging-*", and "usernode-worker-*"
+#      containers that accumulate over weeks of dev.
+#
+# Volumes are intentionally NOT touched here. The CC session volumes
+# (usernode-cc-session-<id>) hold Claude's on-disk conversation memory
+# and the Postgres volume holds every chat history; both should survive
+# a `make down` / `make up` cycle so resuming a session works the way
+# pause/resume promises. To wipe those too, run `docker volume prune`
+# (or `make nuke` if/when we add it).
 down:
 	$(DEV_COMPOSE) down
+	@echo "==> Tearing down platform-spawned containers (apps/staging/workers)..."
+	@for prefix in usernode-app- usernode-staging- usernode-worker-; do \
+		ids=$$(docker ps -aq --filter "name=$$prefix" 2>/dev/null); \
+		if [ -n "$$ids" ]; then \
+			n=$$(echo $$ids | wc -w | tr -d ' '); \
+			echo "  - removing $$n $${prefix}* container(s)"; \
+			docker rm -f $$ids >/dev/null; \
+		fi; \
+	done
+	@echo "==> Done."
 
 restart:
 	$(DEV_COMPOSE) restart
