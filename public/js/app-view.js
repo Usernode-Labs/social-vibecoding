@@ -753,8 +753,8 @@ const AppView = {
                a 5s tick. -->
           <div class="px-3 pt-3 pb-3 border-b border-zinc-200 dark:border-zinc-800">
             <div class="flex items-center justify-between mb-2">
-              <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider">Active Sessions</span>
-              <span id="dc-active-counter" class="text-xs text-zinc-400 dark:text-zinc-500 font-mono">(0/0)</span>
+              <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider">Sessions</span>
+              <span id="dc-active-counter" class="text-xs text-zinc-400 dark:text-zinc-500 font-mono">(0/3)</span>
             </div>
             <div id="dc-active-list" class="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50 divide-y divide-zinc-200 dark:divide-zinc-700" style="max-height:200px;overflow-y:auto"></div>
           </div>

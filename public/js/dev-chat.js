@@ -45,7 +45,7 @@ const DevChat = {
   // enough that the busy indicator feels live, slow enough that we
   // don't hammer the cross-app endpoint just because the user is
   // sitting on the dev-chat tab.
-  activeSessions: { sessions: [], totals: { busy: 0, total: 0 } },
+  activeSessions: { sessions: [], totals: { active: 0, paused: 0, busy: 0, total: 0 } },
   _activePollTimer: null,
 
   // ----- Spec viewer state -----
@@ -170,7 +170,7 @@ const DevChat = {
       const data = await res.json();
       DevChat.activeSessions = {
         sessions: Array.isArray(data.sessions) ? data.sessions : [],
-        totals: data.totals || { busy: 0, total: 0 },
+        totals: data.totals || { active: 0, paused: 0, busy: 0, total: 0 },
       };
       DevChat.renderActiveSessions();
     } catch {}
@@ -202,14 +202,18 @@ const DevChat = {
     if (!container || !counter) return;
 
     const { sessions, totals } = DevChat.activeSessions;
-    counter.textContent = `(${totals.busy}/${totals.total})`;
+    // Counter shows running-vs-cap on the left and the paused
+    // backlog on the right. The "/3" denominator is the per-user
+    // active-session cap enforced by /api/apps/:slug/sessions and
+    // /api/sessions/:id/resume. Paused sessions are unlimited so
+    // they're surfaced separately rather than rolled into the
+    // denominator. The trailing " · N paused" is omitted when zero
+    // to keep the common case clean.
+    const ACTIVE_CAP = 3;
+    counter.textContent = totals.paused > 0
+      ? `(${totals.active}/${ACTIVE_CAP}) · ${totals.paused} paused`
+      : `(${totals.active}/${ACTIVE_CAP})`;
 
-    // List every non-archived session the user owns — across all
-    // their apps — so they get one place to see and jump to any
-    // open dev session. Busy rows (CC mid-turn) get the pulsing
-    // emerald dot; idle rows get a dim static dot. The header's
-    // (busy/total) counter is the at-a-glance "how much is
-    // actively running" indicator.
     if (totals.total === 0) {
       container.innerHTML = `
         <div class="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400">
@@ -218,10 +222,14 @@ const DevChat = {
       return;
     }
 
-    // Sort busy first, then most-recent-first within each group, so
-    // active work surfaces at the top.
+    // Sort: busy → other active → paused, then most-recent within
+    // each bucket. Surfaces in-flight work first, paused at the
+    // bottom where it's still visible but doesn't compete with the
+    // sessions the user is actively working on.
+    const rank = (s) => (s.busy ? 0 : s.status === 'paused' ? 2 : 1);
     const sorted = sessions.slice().sort((a, b) => {
-      if (!!a.busy !== !!b.busy) return a.busy ? -1 : 1;
+      const dr = rank(a) - rank(b);
+      if (dr !== 0) return dr;
       return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     });
 
@@ -231,20 +239,31 @@ const DevChat = {
       const title = escapeHtml(s.pr_title || s.branch_name || 'Session');
       const appName = escapeHtml(s.app_name || s.app_slug || '');
       const isOtherApp = s.app_slug && s.app_slug !== currentSlug;
-      // Dot color follows the existing per-app list convention:
-      // emerald for 'active' (open), violet for 'promoted' (merged).
-      // The pulse animation is layered on top via the .busy modifier
-      // so the dot stays color-coded by lifecycle status while still
-      // signaling CC-mid-turn.
-      const statusClass = s.status === 'promoted' ? 'dc-active-dot-promoted' : 'dc-active-dot-active';
+      // Dot color tracks lifecycle:
+      //   active   → emerald
+      //   promoted → violet
+      //   paused   → zinc/gray (no warm container)
+      // Busy modifier adds a pulse ring on top, only meaningful
+      // for active/promoted (paused sessions can't be busy).
+      let statusClass;
+      let dotTitle;
+      if (s.status === 'paused') { statusClass = 'dc-active-dot-paused'; dotTitle = 'Paused'; }
+      else if (s.status === 'promoted') { statusClass = 'dc-active-dot-promoted'; dotTitle = s.busy ? 'Claude is running (promoted)' : 'Promoted (merged)'; }
+      else { statusClass = 'dc-active-dot-active'; dotTitle = s.busy ? 'Claude is running' : 'Active'; }
       const busyClass = s.busy ? ' dc-active-dot-busy' : '';
-      const dotTitle = s.busy ? 'Claude is running' : (s.status === 'promoted' ? 'Promoted (merged)' : 'Active');
+      const isPaused = s.status === 'paused';
+      // Primary action toggles between Pause and Resume. Archive is
+      // a secondary, quieter affordance for the "really delete this"
+      // case. data-action lets the click handler dispatch.
+      const primaryAction = isPaused ? 'resume' : 'pause';
+      const primaryLabel = isPaused ? 'Resume' : 'Pause';
       return `
         <div class="dc-active-item" data-id="${s.id}" data-slug="${escapeHtml(s.app_slug || '')}">
           <span class="dc-active-dot ${statusClass}${busyClass}" title="${dotTitle}"></span>
           <span class="dc-active-title" title="${title}">${title}</span>
           ${isOtherApp ? `<span class="dc-active-app" title="${appName}">${appName}</span>` : ''}
-          <button class="dc-active-archive" data-id="${s.id}" title="Archive this session">Archive</button>
+          <button class="dc-active-action ${isPaused ? 'dc-active-action-resume' : 'dc-active-action-pause'}" data-id="${s.id}" data-action="${primaryAction}">${primaryLabel}</button>
+          <button class="dc-active-archive" data-id="${s.id}" title="Archive (drops Claude's memory & closes PR)">Archive</button>
           <svg class="dc-active-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
         </div>`;
     }).join('');
@@ -270,12 +289,39 @@ const DevChat = {
       });
     });
 
-    // Archive button. Stop propagation so the row click doesn't
-    // navigate into a session we're trying to archive. After the
-    // POST lands we refresh both the cross-app panel and (when
-    // we're currently viewing the same app the session belongs to)
-    // the per-app session list so the archived row disappears
-    // from both surfaces in one tick.
+    // Pause / Resume primary action. Stop propagation so the row's
+    // navigate-to-session click doesn't fire alongside the toggle.
+    container.querySelectorAll('.dc-active-action').forEach((btn) => {
+      btn.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        const id = parseInt(btn.dataset.id, 10);
+        const action = btn.dataset.action;
+        const original = btn.textContent;
+        btn.textContent = action === 'pause' ? 'Pausing…' : 'Resuming…';
+        btn.disabled = true;
+        try {
+          const resp = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
+          if (!resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            alert(data.error || `Failed to ${action} session`);
+            btn.textContent = original;
+            btn.disabled = false;
+            return;
+          }
+        } catch {
+          btn.textContent = original;
+          btn.disabled = false;
+          return;
+        }
+        await DevChat._refreshSessionListsAfterMutation();
+      });
+    });
+
+    // Archive (destructive). Same propagation stop + same refresh
+    // wiring as the pause/resume button. We don't bother confirming
+    // — the per-app list has used this same affordance without a
+    // confirm and people use it routinely; the wording in the
+    // tooltip is the warning surface.
     container.querySelectorAll('.dc-active-archive').forEach((btn) => {
       btn.addEventListener('click', async (ev) => {
         ev.stopPropagation();
@@ -285,17 +331,25 @@ const DevChat = {
         try {
           await fetch(`/api/sessions/${id}/archive`, { method: 'POST' });
         } catch {}
-        await DevChat.loadActiveSessions();
-        if (
-          typeof AppView !== 'undefined' &&
-          AppView.appData &&
-          AppView.appData.slug
-        ) {
-          await DevChat.loadSessions(AppView.appData.slug);
-          DevChat.renderSessionList();
-        }
+        await DevChat._refreshSessionListsAfterMutation();
       });
     });
+  },
+
+  // Shared post-mutation refresh for pause/resume/archive: pull the
+  // cross-app panel data, and if we're currently viewing the same
+  // app the session belongs to, refresh the per-app list too so
+  // both surfaces stay in sync in a single tick.
+  async _refreshSessionListsAfterMutation() {
+    await DevChat.loadActiveSessions();
+    if (
+      typeof AppView !== 'undefined' &&
+      AppView.appData &&
+      AppView.appData.slug
+    ) {
+      await DevChat.loadSessions(AppView.appData.slug);
+      DevChat.renderSessionList();
+    }
   },
 
   async createSession(appSlug) {
@@ -1431,15 +1485,23 @@ const DevChat = {
     }
 
     container.innerHTML = DevChat.sessions.map((s) => {
-      const statusColor = s.status === 'active' ? 'text-emerald-400' : s.status === 'promoted' ? 'text-violet-400' : 'text-zinc-500';
-      const isActive = s.status === 'active' || s.status === 'promoted';
+      const statusColor =
+        s.status === 'active' ? 'text-emerald-400' :
+        s.status === 'promoted' ? 'text-violet-400' :
+        s.status === 'paused' ? 'text-zinc-400' :
+        'text-zinc-500';
+      const isPausable = s.status === 'active' || s.status === 'promoted';
+      const isPaused = s.status === 'paused';
+      const isActionable = isPausable || isPaused;
       const date = new Date(s.created_at).toLocaleDateString();
       return `
         <div class="dc-session-item px-3 py-2 cursor-pointer hover:bg-zinc-800/50 flex items-center gap-2" data-id="${s.id}">
           <span class="text-xs ${statusColor} font-mono">${s.status}</span>
           <span class="text-sm text-zinc-300 flex-1 truncate" title="${escapeHtml(s.branch_name || '')}">${escapeHtml(s.pr_title || s.branch_name || 'Session')}</span>
           ${s.pr_url ? `<a href="${s.pr_url}" target="_blank" class="text-xs text-violet-400 hover:text-violet-300" onclick="event.stopPropagation()">PR#${s.pr_number}</a>` : ''}
-          ${isActive ? `<button class="dc-archive-btn text-xs text-zinc-500 hover:text-red-400" data-id="${s.id}" onclick="event.stopPropagation()">Archive</button>` : ''}
+          ${isPausable ? `<button class="dc-pause-btn text-xs text-zinc-400 hover:text-emerald-400" data-id="${s.id}" data-action="pause" onclick="event.stopPropagation()">Pause</button>` : ''}
+          ${isPaused ? `<button class="dc-pause-btn text-xs text-emerald-400 hover:text-emerald-300" data-id="${s.id}" data-action="resume" onclick="event.stopPropagation()">Resume</button>` : ''}
+          ${isActionable ? `<button class="dc-archive-btn text-xs text-zinc-500 hover:text-red-400" data-id="${s.id}" title="Archive (drops Claude's memory & closes PR)" onclick="event.stopPropagation()">Archive</button>` : ''}
           <span class="text-xs text-zinc-600">${date}</span>
         </div>`;
     }).join('');
@@ -1452,6 +1514,39 @@ const DevChat = {
       });
     });
 
+    // Pause / Resume buttons. Both share the .dc-pause-btn class
+    // and dispatch via data-action so we don't have two near-identical
+    // handlers. On 4xx (e.g. cap reached on resume), surface the
+    // server's error message rather than silently failing.
+    container.querySelectorAll('.dc-pause-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.id;
+        const action = btn.dataset.action;
+        const original = btn.textContent;
+        btn.textContent = action === 'pause' ? 'Pausing…' : 'Resuming…';
+        btn.disabled = true;
+        try {
+          const resp = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
+          if (!resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            alert(data.error || `Failed to ${action} session`);
+            btn.textContent = original;
+            btn.disabled = false;
+            return;
+          }
+        } catch {
+          btn.textContent = original;
+          btn.disabled = false;
+          return;
+        }
+        if (AppView.appData) {
+          await DevChat.loadSessions(AppView.appData.slug);
+          DevChat.renderSessionList();
+        }
+        await DevChat.loadActiveSessions();
+      });
+    });
+
     container.querySelectorAll('.dc-archive-btn').forEach((btn) => {
       btn.addEventListener('click', async () => {
         btn.textContent = '...';
@@ -1460,6 +1555,7 @@ const DevChat = {
           await DevChat.loadSessions(AppView.appData.slug);
           DevChat.renderSessionList();
         }
+        await DevChat.loadActiveSessions();
       });
     });
   },

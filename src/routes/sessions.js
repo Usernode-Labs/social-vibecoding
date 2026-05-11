@@ -92,11 +92,17 @@ function sessionRoutes(config) {
   //   container-status fallback is intentionally NOT used here, for
   //   the same warm-CC reason described in /api/sessions/:id/status.
   //
+  //   The result includes paused sessions too — the panel's job is
+  //   "see all your dev work across apps and resume any of it", and
+  //   paused rows are exactly what makes that useful.
+  //
   //   "totals" lets the caller render the (x/y) header without a
-  //   second pass through the array. `busy` is the count we want to
-  //   draw attention to (sessions actively running CC); `total` is
-  //   the user's total non-archived session count, useful as the
-  //   denominator in the header.
+  //   second pass through the array:
+  //     - active = active + promoted (the sessions counting against
+  //                the 3-slot cap; visually green/violet in the UI)
+  //     - paused = paused-status sessions (no warm worker)
+  //     - busy   = subset of `active` where CC is mid-turn right now
+  //     - total  = active + paused (i.e. every non-archived row we returned)
   router.get('/api/me/active-sessions', async (req, res) => {
     try {
       const { rows } = await pool.query(
@@ -105,7 +111,7 @@ function sessionRoutes(config) {
                 a.slug AS app_slug, a.name AS app_name
          FROM chat_sessions cs
          JOIN apps a ON cs.app_id = a.id
-         WHERE cs.user_id = $1 AND cs.status IN ('active', 'promoted')
+         WHERE cs.user_id = $1 AND cs.status IN ('active', 'promoted', 'paused')
          ORDER BY cs.created_at DESC`,
         [req.user.id]
       );
@@ -113,11 +119,17 @@ function sessionRoutes(config) {
         ...s,
         busy: activeWorkers.has(s.id) || worker.isInFlight(s.id),
       }));
-      const busyCount = sessions.reduce((n, s) => n + (s.busy ? 1 : 0), 0);
-      res.json({
-        sessions,
-        totals: { busy: busyCount, total: sessions.length },
-      });
+      const totals = sessions.reduce(
+        (acc, s) => {
+          if (s.status === 'paused') acc.paused += 1;
+          else acc.active += 1; // 'active' or 'promoted'
+          if (s.busy) acc.busy += 1;
+          return acc;
+        },
+        { active: 0, paused: 0, busy: 0 }
+      );
+      totals.total = sessions.length;
+      res.json({ sessions, totals });
     } catch (err) {
       log.error('sessions', 'Failed to list active sessions', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -158,7 +170,7 @@ function sessionRoutes(config) {
         [req.user.id]
       );
       if (parseInt(countRows[0].cnt) >= 3) {
-        return res.status(429).json({ error: 'You already have 3 active sessions. Archive or merge one first.' });
+        return res.status(429).json({ error: 'You already have 3 active sessions. Pause, archive, or merge one first.' });
       }
 
       const { rows: globalRows } = await pool.query(
@@ -229,7 +241,7 @@ function sessionRoutes(config) {
     try {
       const { rows } = await pool.query(
         `UPDATE chat_sessions SET status = 'archived'
-         WHERE id = $1 AND user_id = $2 AND status IN ('active', 'promoted')
+         WHERE id = $1 AND user_id = $2 AND status IN ('active', 'promoted', 'paused')
          RETURNING id`,
         [req.params.id, req.user.id]
       );
@@ -290,6 +302,123 @@ function sessionRoutes(config) {
       res.json({ ok: true });
     } catch (err) {
       log.error('sessions', 'Archive failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // POST /api/sessions/:id/pause
+  //   Reversible counterpart to /archive. The point is to free the
+  //   3-active-session slot without throwing away anything the user
+  //   would want back on /resume:
+  //     - Worker container: destroyed (frees the slot).
+  //     - Staging container: torn down (cheap to recreate from the
+  //       branch on resume).
+  //     - CC session volume: PRESERVED. This is the bit that lets
+  //       --resume <cc_session_id> still work after a resume.
+  //     - PR: LEFT OPEN. Closing+reopening PRs gets messy on GitHub
+  //       (auto-closed PRs can only be reopened by the closer; some
+  //       installations refuse it entirely), so pause is purely a
+  //       worker/container thing as far as GitHub is concerned.
+  //     - Branch: untouched.
+  //   Idempotent on the status side — re-pausing a paused session is
+  //   a no-op rather than an error, since the state we'd land in is
+  //   the same.
+  router.post('/api/sessions/:id/pause', async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `UPDATE chat_sessions SET status = 'paused'
+         WHERE id = $1 AND user_id = $2 AND status IN ('active', 'promoted')
+         RETURNING id, app_id`,
+        [req.params.id, req.user.id]
+      );
+      if (!rows.length) {
+        // Either it doesn't exist, isn't ours, or is already paused/archived.
+        // Surface a soft 200 if it's already paused so the UI can no-op the
+        // button click; treat anything else as not found.
+        const { rows: check } = await pool.query(
+          `SELECT id, status FROM chat_sessions WHERE id = $1 AND user_id = $2`,
+          [req.params.id, req.user.id]
+        );
+        if (check[0] && check[0].status === 'paused') return res.json({ ok: true, alreadyPaused: true });
+        return res.status(404).json({ error: 'Session not found or cannot be paused' });
+      }
+
+      const sessionId = parseInt(req.params.id, 10);
+      const { rows: sessionRows } = await pool.query(
+        `SELECT cs.*, a.slug as app_slug
+         FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
+         WHERE cs.id = $1`,
+        [sessionId]
+      );
+      const session = sessionRows[0];
+
+      if (session?.staging_container_id) {
+        await staging.teardownStaging(session, { slug: session.app_slug }).catch(() => {});
+      }
+
+      // Drop in-flight bookkeeping so a paused session's old turn
+      // doesn't hold the activeWorkers slot. destroyWorker is a no-op
+      // if the container is already gone.
+      if (activeWorkers.has(sessionId)) {
+        activeWorkers.delete(sessionId);
+        workerProgress.clear(sessionId);
+      }
+      await worker.destroyWorker(`usernode-worker-${sessionId}`).catch(() => {});
+
+      const { pushSessionUpdate } = require('../services/ws');
+      pushSessionUpdate({ action: 'paused', sessionId, appSlug: session?.app_slug });
+      log.info('sessions', 'Session paused', { sessionId });
+      res.json({ ok: true });
+    } catch (err) {
+      log.error('sessions', 'Pause failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // POST /api/sessions/:id/resume
+  //   Inverse of /pause. Flips status back to 'active' so the next
+  //   chat turn can lazily spawn a worker (CC volume is still on
+  //   disk, so --resume <cc_session_id> picks up where we left off).
+  //   Enforces the same per-user 3-active-session cap as session
+  //   creation — if the user is already at the cap, we 429 with a
+  //   pointer to "pause something else first" rather than silently
+  //   exceeding the cap. We deliberately do NOT pre-spawn the worker
+  //   here; first-turn lazy boot is what every other path uses, so
+  //   resume staying lazy keeps the behavior consistent.
+  router.post('/api/sessions/:id/resume', async (req, res) => {
+    try {
+      const { rows: countRows } = await pool.query(
+        `SELECT COUNT(*) as cnt FROM chat_sessions
+         WHERE user_id = $1 AND status IN ('active', 'promoted')`,
+        [req.user.id]
+      );
+      if (parseInt(countRows[0].cnt) >= 3) {
+        return res.status(429).json({ error: 'You already have 3 active sessions. Pause one first to free a slot.' });
+      }
+
+      const { rows } = await pool.query(
+        `UPDATE chat_sessions SET status = 'active'
+         WHERE id = $1 AND user_id = $2 AND status = 'paused'
+         RETURNING id, app_id`,
+        [req.params.id, req.user.id]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Session not found or not paused' });
+
+      const sessionId = parseInt(req.params.id, 10);
+      const { rows: sessionRows } = await pool.query(
+        `SELECT a.slug as app_slug
+         FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
+         WHERE cs.id = $1`,
+        [sessionId]
+      );
+      const appSlug = sessionRows[0]?.app_slug;
+
+      const { pushSessionUpdate } = require('../services/ws');
+      pushSessionUpdate({ action: 'resumed', sessionId, appSlug });
+      log.info('sessions', 'Session resumed', { sessionId });
+      res.json({ ok: true });
+    } catch (err) {
+      log.error('sessions', 'Resume failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

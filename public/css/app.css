@@ -579,6 +579,10 @@ html, body {
 .dc-active-dot-promoted {
   background: rgb(139 92 246); /* violet-500 */
 }
+.dc-active-dot-paused {
+  background: var(--text-faint); /* zinc-400-ish */
+  opacity: 0.7;
+}
 
 .dc-active-dot-busy.dc-active-dot-active {
   animation: dc-active-pulse-emerald 1.6s ease-out infinite;
@@ -598,10 +602,47 @@ html, body {
   100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0); }
 }
 
-/* Archive control. Inline ghost button — quiet by default, red on
- * hover so the destructive action surfaces only when the user
- * actually goes near it. Click handler stops propagation so the
- * row's navigate-to-session click doesn't fire. */
+/* Primary action button (Pause/Resume). Tinted by intent —
+ * Pause is a quiet zinc fade (it's the common case so it doesn't
+ * need to shout), Resume is emerald (matches the active-dot color
+ * the user is restoring it back to). */
+.dc-active-action {
+  flex: 0 0 auto;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+.dc-active-action-pause {
+  color: var(--text-secondary);
+  border-color: var(--border-light);
+}
+.dc-active-action-pause:hover,
+.dc-active-action-pause:focus-visible {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  outline: none;
+}
+.dc-active-action-resume {
+  color: rgb(16 185 129); /* emerald-500 */
+  border-color: rgba(16, 185, 129, 0.4);
+}
+.dc-active-action-resume:hover,
+.dc-active-action-resume:focus-visible {
+  background: rgba(16, 185, 129, 0.1);
+  outline: none;
+}
+.dc-active-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Archive control — same ghost-button pattern, deliberately
+ * quieter than Pause/Resume so the destructive action sits in the
+ * background unless the user actively reaches for it. */
 .dc-active-archive {
   flex: 0 0 auto;
   font-size: 11px;
