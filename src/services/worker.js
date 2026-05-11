@@ -279,6 +279,22 @@ function _registryUpsert(sessionId, patch) {
   return next;
 }
 
+// Cheap "is this session's worker actively running CC right now?" check.
+// Mirrors the in-process `inFlight` flag set by execInWorker. A warm-but-
+// idle container (sleep wrapper alive, no `docker exec` running)  → false.
+// Returns false when no warm registry entry exists at all (no worker
+// ever started, or the entry was evicted).
+//
+// Use this — NOT `containerStatus === 'running'` — anywhere you need to
+// gate logic on "a CC turn is in progress for this session". The
+// container-status check predates `keep cc warm between calls` and now
+// over-reports busy for the entire warm-idle window (~10 min until the
+// sweeper evicts), which strands the dev-chat UI in stop-sign mode if
+// the POST SSE drops before delivering its `done` event.
+function isInFlight(sessionId) {
+  return _warmRegistry.get(sessionId)?.inFlight === true;
+}
+
 // Read-only snapshot of the warm registry. Safe to expose to the idle-
 // eviction sweeper and the /api/status admin page.
 function warmRegistrySnapshot() {
@@ -781,6 +797,7 @@ module.exports = {
   evictWorker,
   warmRegistrySnapshot,
   adoptWarmWorker,
+  isInFlight,
   isWorkerExecuting,
   // legacy / shared helpers
   watchWorker,

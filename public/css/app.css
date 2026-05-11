@@ -528,77 +528,145 @@ html, body {
 
 .dc-textarea { max-height: 120px; overflow-y: auto; line-height: 1.5; }
 
-/* ── Dev-chat sub-tabs (Chat | Spec) ───────────────────── */
+/* ── Inline spec preview card (in chat timeline) ──────── */
 
-.dc-tabs { gap: 0; }
-
-.dc-tab {
-  position: relative;
-  font-size: 12px;
-  padding: 6px 12px;
-  color: var(--text-secondary, #a1a1aa);
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  cursor: pointer;
-  transition: color 120ms ease, border-color 120ms ease;
-}
-
-.dc-tab:hover { color: var(--text-primary, #e4e4e7); }
-
-.dc-tab-active {
-  color: var(--text-primary, #e4e4e7);
-  border-bottom-color: rgb(139 92 246); /* violet-500 */
-}
-
-.dc-tab-dot {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-left: 4px;
-  border-radius: 50%;
-  background: rgb(139 92 246);
-  vertical-align: middle;
-}
-
-/* ── Spec pane ─────────────────────────────────────────── */
-
-.dc-spec-editor-wrap { display: flex; flex-direction: column; }
-
-.dc-spec-editor {
-  width: 100%;
-  height: 100%;
-  min-height: 240px;
-  resize: none;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  font-size: 13px;
-  line-height: 1.5;
-  padding: 8px 10px;
-  border-radius: 6px;
+.dc-spec-preview-card {
+  margin: 4px 12px 8px;
+  padding: 10px 12px;
   border: 1px solid var(--border, rgba(255,255,255,0.12));
+  border-left: 3px solid rgb(139 92 246); /* violet-500 */
+  border-radius: 6px;
   background: var(--bg-secondary, #18181b);
-  color: var(--text-primary, #e4e4e7);
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.dc-spec-preview-card:hover,
+.dc-spec-preview-card:focus-visible {
+  border-color: rgb(139 92 246);
+  background: rgba(139, 92, 246, 0.06);
   outline: none;
 }
 
-.dc-spec-editor:focus {
-  border-color: rgb(139 92 246);
-  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.25);
+.dc-spec-preview-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
 }
 
-.dc-spec-frozen {
-  width: 100%;
+.dc-spec-preview-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary, #e4e4e7);
+}
+
+.dc-spec-preview-cta {
+  margin-left: auto;
+  font-size: 11px;
+  color: rgb(139 92 246);
+}
+
+.dc-spec-preview-snippet {
+  margin: 0;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary, #a1a1aa);
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  max-height: 6em;
+}
+
+/* ── Spec viewer (read-only, side panel / modal) ──────── */
+
+.dc-session-body { /* row layout for chat + viewer */
+  flex-direction: row;
+}
+
+.dc-chat-pane {
+  min-width: 0; /* allow flex shrink so the chat pane truncates rather than overflows when the viewer is open */
+}
+
+.dc-spec-viewer {
+  display: none;
+  flex-direction: column;
+  background: var(--bg-primary, #0b0b0e);
+  color: var(--text-primary, #e4e4e7);
+}
+
+/* Wide viewports: side panel beside the chat. */
+.dc-spec-viewer.dc-spec-viewer-open {
+  display: flex;
+  width: 480px;
+  border-left: 1px solid var(--border, rgba(255,255,255,0.12));
+}
+
+/* Narrow viewports: fullscreen modal that floats over the chat. */
+@media (max-width: 1023px) {
+  .dc-spec-viewer.dc-spec-viewer-open {
+    position: fixed;
+    inset: 0;
+    width: auto;
+    border-left: none;
+    z-index: 50;
+  }
+}
+
+.dc-spec-viewer-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,0.12));
+  flex-shrink: 0;
+}
+
+.dc-spec-viewer-close {
+  font-size: 20px;
+  line-height: 1;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary, #a1a1aa);
+  cursor: pointer;
+}
+
+.dc-spec-viewer-close:hover {
+  color: var(--text-primary, #e4e4e7);
+  background: var(--bg-secondary, #18181b);
+}
+
+.dc-spec-viewer-body-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.dc-spec-viewer-body {
+  margin: 0;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 13px;
   line-height: 1.5;
-  padding: 8px 10px;
-  border-radius: 6px;
-  border: 1px solid var(--border, rgba(255,255,255,0.12));
-  background: var(--bg-secondary, #18181b);
-  color: var(--text-primary, #e4e4e7);
   white-space: pre-wrap;
   word-break: break-word;
-  margin: 0;
+  color: var(--text-primary, #e4e4e7);
+}
+
+.dc-spec-viewer-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border, rgba(255,255,255,0.12));
+  flex-shrink: 0;
 }
 
 .dc-spec-action-btn {
@@ -619,17 +687,6 @@ html, body {
 .dc-spec-action-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.dc-spec-build {
-  background: rgb(16 185 129); /* emerald-500 */
-  border-color: rgb(16 185 129);
-  color: #fff;
-}
-
-.dc-spec-build:hover:not(:disabled) {
-  background: rgb(5 150 105); /* emerald-600 */
-  border-color: rgb(5 150 105);
 }
 
 /* ── Group-chat spec_share card ────────────────────────── */

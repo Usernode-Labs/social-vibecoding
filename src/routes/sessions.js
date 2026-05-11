@@ -368,7 +368,13 @@ function sessionRoutes(config) {
           [session.id]
         );
 
-        const isWorkerBusy = activeWorkers.has(session.id) || (await docker.getContainerStatus(`usernode-worker-${session.id}`)) === 'running';
+        // Same "in-flight only — warm-idle ≠ busy" rationale as the
+        // /status endpoint above. Pre-warm-CC, "container running"
+        // meant "claude actively running"; now it just means "wrapper
+        // alive". Treating warm-idle as busy here would falsely lock
+        // the Mayor out of dispatch_scout / dispatch_claude_code for
+        // the entire idle-eviction window of a previous turn.
+        const isWorkerBusy = activeWorkers.has(session.id) || worker.isInFlight(session.id);
         const mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy);
         const messages = buildMayorMessages(history);
 
@@ -512,12 +518,16 @@ function sessionRoutes(config) {
           return;
         }
 
-        // Race check: scout and build both spawn a per-session worker
+        // Race check: scout and build both share a per-session worker
         // container, so they share the same gate. write_spec is just a
         // DB UPDATE and bypasses the gate entirely.
+        //
+        // Same warm-CC caveat as /status and isWorkerBusy above —
+        // gating on container-status would reject every scout/build
+        // for ~10 min after the first dispatch finishes (warm idle is
+        // not busy).
         if (toolKind === 'scout' || toolKind === 'build') {
-          const existingWorkerState = await docker.getContainerStatus(`usernode-worker-${session.id}`);
-          if (activeWorkers.has(session.id) || existingWorkerState === 'running') {
+          if (activeWorkers.has(session.id) || worker.isInFlight(session.id)) {
             await sendStatus('Claude Code is already running for this session. Please wait for it to finish.');
             send('done', {});
             res.end();
@@ -742,43 +752,13 @@ function sessionRoutes(config) {
     }
   });
 
-  // Hand-edit the live draft. Used when the user types directly into
-  // the Spec tab editor. We don't snapshot to history here — only
-  // "Build from spec" freezes a version. We DO emit `spec_updated` so
-  // any other tab/connected client (rare but possible) re-renders.
-  router.put('/api/sessions/:id/spec', async (req, res) => {
-    const { content } = req.body || {};
-    if (typeof content !== 'string') {
-      return res.status(400).json({ error: 'content (string) required' });
-    }
-    try {
-      const { rows } = await pool.query(
-        `UPDATE chat_sessions SET spec_md = $1
-         WHERE id = $2 AND user_id = $3
-         RETURNING id`,
-        [content, req.params.id, req.user.id]
-      );
-      if (!rows.length) return res.status(404).json({ error: 'Session not found' });
-
-      const { broadcastGlobal } = require('../services/ws');
-      broadcastGlobal({
-        type: 'session_event',
-        sessionId: parseInt(req.params.id, 10),
-        event: 'spec_updated',
-        length: content.length,
-        lines: content.split('\n').length,
-        source: 'user',
-      });
-
-      res.json({ ok: true, length: content.length });
-    } catch (err) {
-      log.error('sessions', 'Failed to save spec', { message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // Fetch a frozen historical version verbatim. The Spec tab uses this
-  // when the user picks an older version from the dropdown.
+  // Fetch a frozen historical version verbatim. The spec viewer uses
+  // this when the user picks an older version from the dropdown.
+  // (User hand-edits via PUT /spec were dropped — the Mayor /
+  // dispatch_scout writes the live draft and the user only ever views
+  // the result. Old sessions that already have frozen versions in
+  // chat_session_specs keep their browseable history through this
+  // endpoint and the share endpoint below.)
   router.get('/api/sessions/:id/specs/:version', async (req, res) => {
     const sessionId = parseInt(req.params.id, 10);
     const version = parseInt(req.params.version, 10);
@@ -802,227 +782,11 @@ function sessionRoutes(config) {
     }
   });
 
-  // Build from spec — the user-driven dispatch. Snapshots the current
-  // spec_md to chat_session_specs (next version), persists a synthetic
-  // user message in the dev-chat, and runs the standard CC pipeline
-  // with the spec as the brief. After CC pushes, we backfill the
-  // snapshot row with commit_sha + pr_number so the Spec tab can link
-  // each frozen version to the PR it produced.
-  //
-  // Streams the same SSE event shapes as POST /chat so the dev-chat
-  // client can drive the existing CC progress UI without forking.
-  router.post('/api/sessions/:id/build-spec', drainGuard, async (req, res) => {
-    const { model } = req.body || {};
-
-    try {
-      const { rows: sessionRows } = await pool.query(
-        `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
-         FROM chat_sessions cs
-         JOIN apps a ON cs.app_id = a.id
-         WHERE cs.id = $1 AND cs.user_id = $2
-           AND cs.status IN ('active', 'promoted')`,
-        [req.params.id, req.user.id]
-      );
-      if (!sessionRows.length) return res.status(404).json({ error: 'Active session not found' });
-      const session = sessionRows[0];
-
-      const specMd = (session.spec_md || '').trim();
-      if (!specMd) {
-        return res.status(400).json({ error: 'Spec is empty — nothing to build.' });
-      }
-
-      // BYOK + budget check — same shape as /chat.
-      let userApiKey = null;
-      try {
-        const { rows: keyRows } = await pool.query(
-          'SELECT anthropic_key_enc FROM users WHERE id = $1',
-          [req.user.id]
-        );
-        if (keyRows[0]?.anthropic_key_enc) {
-          const secrets = require('../services/secrets');
-          userApiKey = secrets.decrypt(keyRows[0].anthropic_key_enc, config.jwtSecret);
-        }
-      } catch (err) {
-        log.warn('sessions', 'Failed to load user API key', { userId: req.user.id, err: err.message });
-      }
-      if (!userApiKey) {
-        const budgetCheck = await checkBudget(pool, req.user.id);
-        if (budgetCheck.error) return res.status(429).json({ error: budgetCheck.error });
-      }
-
-      // Worker-busy check up front so we can return a clean 409 instead
-      // of opening an SSE stream just to immediately fail.
-      const containerState = await docker.getContainerStatus(`usernode-worker-${session.id}`);
-      if (activeWorkers.has(session.id) || containerState === 'running') {
-        return res.status(409).json({ error: 'Coding agent is already running for this session.' });
-      }
-
-      const selectedModel = model || 'claude-sonnet-4-6';
-
-      // Snapshot the spec into history. The version number is the next
-      // integer after the current MAX; doing this in one INSERT … SELECT
-      // keeps a concurrent build from minting the same version (we'd
-      // hit the UNIQUE(session_id, version) constraint and 500, which
-      // is the right failure mode — better than two rows pointing at
-      // different commits with the same version).
-      const { rows: snapRows } = await pool.query(
-        `INSERT INTO chat_session_specs (session_id, version, content)
-         SELECT $1, COALESCE(MAX(version), 0) + 1, $2
-         FROM chat_session_specs WHERE session_id = $1
-         RETURNING id, version, built_at`,
-        [session.id, specMd]
-      );
-      const snap = snapRows[0];
-      log.info('sessions', 'Spec snapshot created', {
-        sessionId: session.id,
-        snapId: snap.id,
-        version: snap.version,
-        chars: specMd.length,
-      });
-
-      // Persist a synthetic "user" message so the timeline shows the
-      // user-initiated build action, exactly like a typed chat message.
-      const userMessage = `Build the current spec (v${snap.version}).`;
-      await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-         VALUES ($1, 'user', $2, $3)`,
-        [session.id, userMessage, JSON.stringify({ specBuild: { version: snap.version } })]
-      );
-
-      // SSE response (same headers + helpers as /chat).
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-      });
-
-      const { broadcastGlobal } = require('../services/ws');
-      const seqPrefix = Date.now().toString(36);
-      let eventSeq = 0;
-      const SSE_ONLY = new Set(['token', 'usage', 'error', 'mayor_reasoning']);
-      const send = (type, data) => {
-        const seq = `${seqPrefix}-${++eventSeq}`;
-        const event = { type, _seq: seq, ...data };
-        try { res.write(`data: ${JSON.stringify(event)}\n\n`); } catch {}
-        if (!SSE_ONLY.has(type)) {
-          broadcastGlobal({ type: 'session_event', sessionId: session.id, event: type, ...event });
-        }
-        sessionBus.publish(session.id, event);
-      };
-
-      const sendStatus = async (text, metadata) => {
-        send('status', { text, ...(metadata || {}) });
-        await pool.query(
-          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-           VALUES ($1, 'system', $2, $3)`,
-          [session.id, text, JSON.stringify(metadata || {})]
-        ).catch(() => {});
-      };
-
-      const stopHandle = {
-        abort: new AbortController(),
-        // Diagnostic only — see the Mayor-turn stopHandle for the full
-        // explanation of how stop signals reach the in-flight exec.
-        workerName: null,
-        execChild: null,
-        phase: 'cc',
-        stopped: false,
-        stoppedBy: null,
-      };
-      const prior = stopRegistry.get(session.id);
-      if (prior && prior !== stopHandle) {
-        try { prior.abort.abort(); } catch {}
-      }
-      stopRegistry.set(session.id, stopHandle);
-      const setPhase = (phase) => {
-        stopHandle.phase = phase;
-        send('phase', { phase });
-      };
-
-      try {
-        const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-        if (!repoOwner || !repoName) {
-          send('error', { error: 'No GitHub repo configured for this app' });
-          send('done', {});
-          res.end();
-          return;
-        }
-
-        await sendStatus(`Building from spec v${snap.version}...`, { specVersion: snap.version });
-
-        // Build prompt: we deliberately put the FULL spec into the
-        // tool prompt so CC has the same source-of-truth artifact the
-        // user reviewed, not a summary or paraphrase. The Mayor is
-        // bypassed entirely — the user already decided to build.
-        const toolPromptArg =
-          `Implement the following spec. Edit the necessary files, then commit and push.\n\n`
-          + `=== SPEC v${snap.version} ===\n${specMd}\n=== END SPEC ===`;
-
-        setPhase('cc');
-        const ccResult = await runClaudeCodeTool({
-          pool, config, req, res, session, selectedModel,
-          userMessage,
-          toolPromptArg,
-          repoOwner, repoName,
-          send, sendStatus,
-          stopHandle,
-          userApiKey,
-        });
-
-        if (stopHandle.stopped) {
-          send('stopped', { phase: 'cc', by: stopHandle.stoppedBy });
-          send('done', {});
-          res.end();
-          if (stopRegistry.get(session.id) === stopHandle) stopRegistry.delete(session.id);
-          setTimeout(() => sessionBus.clearSession(session.id), 30000);
-          return;
-        }
-
-        // Backfill commit_sha + pr_number on the snapshot row so the
-        // Spec tab can link each frozen version to the PR it produced.
-        // Re-read the session because runClaudeCodeTool may have
-        // mutated pr_number in the chat_sessions row.
-        const { rows: postRows } = await pool.query(
-          'SELECT pr_number FROM chat_sessions WHERE id = $1',
-          [session.id]
-        );
-        await pool.query(
-          `UPDATE chat_session_specs
-           SET commit_sha = $1, pr_number = $2
-           WHERE id = $3`,
-          [ccResult.commitSha || null, postRows[0]?.pr_number || null, snap.id]
-        );
-
-        // Skip the Mayor wrap-up: runClaudeCodeTool already emitted a
-        // [CODING AGENT COMPLETED] system status with the natural-
-        // language summary, which is enough for the timeline. Saves a
-        // model call per build.
-        send('build_spec_complete', {
-          specVersion: snap.version,
-          commitSha: ccResult.commitSha || null,
-          prNumber: postRows[0]?.pr_number || null,
-        });
-      } catch (err) {
-        activeWorkers.delete(session.id);
-        workerProgress.clear(session.id);
-        log.error('sessions', 'Build-from-spec error', { message: err.message, stack: err.stack });
-        send('error', { error: err.message });
-      } finally {
-        if (stopRegistry.get(session.id) === stopHandle) {
-          stopRegistry.delete(session.id);
-        }
-      }
-
-      send('done', {});
-      res.end();
-      setTimeout(() => sessionBus.clearSession(session.id), 30000);
-    } catch (err) {
-      log.error('sessions', 'Build-from-spec setup error', { message: err.message });
-      if (!res.headersSent) {
-        res.status(500).json({ error: 'Internal server error' });
-      }
-    }
-  });
+  // (POST /api/sessions/:id/build-spec was removed — the user-driven
+  // "Build from spec" button no longer exists. The Mayor's
+  // dispatch_claude_code is the only build path now; it freezes a new
+  // chat_session_specs row server-side as part of the normal turn flow
+  // when applicable, but never via this route.)
 
   // Share a frozen spec snapshot into the app's group chat. The group
   // chat renders the message as a "spec card" with a snippet + view-
@@ -1114,12 +878,25 @@ function sessionRoutes(config) {
   // Check if a session has an active worker + get latest progress
   router.get('/api/sessions/:id/status', async (req, res) => {
     const sessionId = parseInt(req.params.id);
-    // Prefer the authoritative source of truth: the worker container.
-    // `activeWorkers` is updated by the chat handler and can skew on
-    // crash; the container status reflects reality whether the worker
-    // was started by this process or adopted from a previous one.
-    const containerStatus = await docker.getContainerStatus(`usernode-worker-${sessionId}`);
-    const busy = containerStatus === 'running' || activeWorkers.has(sessionId);
+    // "busy" = a CC/scout dispatch is actively running for this
+    // session right now. We deliberately do NOT key on
+    // `containerStatus === 'running'` here — since the warm-CC commit
+    // (eb62570 "keep cc warm between calls") the worker container
+    // stays running between dispatches, so a running container only
+    // means "the wrapper is sleep-looping", not "claude is busy".
+    // Using container-status as the busy signal would strand the
+    // dev-chat polling fallback in `busy: true` for the full ~10-min
+    // idle-eviction window whenever the POST SSE drops before
+    // delivering `done`.
+    //
+    // `activeWorkers` covers the in-flight window from the chat
+    // handler's POV (added before ensureWorker, deleted in
+    // run(Scout|ClaudeCode)Tool's finally). `worker.isInFlight`
+    // covers the inner exec window (set by execInWorker around the
+    // actual `docker exec`) — redundant in normal flow, but a useful
+    // safety net for adopted workers and the brief period between
+    // adding to activeWorkers and registering with the warm registry.
+    const busy = activeWorkers.has(sessionId) || worker.isInFlight(sessionId);
 
     let progress = [];
     try {
@@ -1794,9 +1571,10 @@ INSTRUCTIONS:
 
   let ccLog = null;
   let stagingUrl = null;
-  // Hoisted to function scope so the post-finally return can expose it
-  // to /build-spec, which backfills chat_session_specs.commit_sha for
-  // the snapshot row tied to this build.
+  // Hoisted to function scope so the post-finally return can expose
+  // commitHash to callers (currently used to drive PR-card metadata in
+  // the timeline; previously also fed the now-removed /build-spec
+  // backfill of chat_session_specs.commit_sha).
   let commitHash = null;
   // Accumulates a human-readable summary of what happened that we feed
   // back to the Mayor as tool_result content. Populated in the same
@@ -2015,9 +1793,9 @@ INSTRUCTIONS:
 
   const toolResultText = summaryParts.join('\n\n').slice(0, 4000)
     || (isError ? 'Claude Code did not complete successfully.' : 'Claude Code finished with no summary.');
-  // commitSha is exposed (in addition to ccLog/stagingUrl) so the
-  // /build-spec endpoint can backfill chat_session_specs.commit_sha
-  // for the version it just snapshotted. Null if CC made no changes.
+  // commitSha is exposed (in addition to ccLog/stagingUrl) for the
+  // caller's bookkeeping (PR card metadata, etc.). Null if CC made no
+  // changes.
   return { toolResultText, ccLog, stagingUrl, isError, commitSha: commitHash || null };
 }
 

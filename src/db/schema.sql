@@ -131,11 +131,12 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS cc_session_id VARCHA
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS pr_title VARCHAR(256);
 
 -- Spec-stage: per-session live markdown spec doc + version history.
--- spec_md is the live draft (edited by the Mayor's write_spec tool, by
--- a scout dispatch, or by the user via PUT /api/sessions/:id/spec).
--- chat_session_specs holds frozen snapshots: each "Build from spec"
--- inserts a row with the next version number, and the dev chat can
--- show every past version verbatim. shared_to_group_at is set when
+-- spec_md is the live draft (written by the Mayor's write_spec tool or
+-- by a scout dispatch — user hand-edits via PUT /spec were dropped).
+-- chat_session_specs holds frozen snapshots from older sessions whose
+-- builds went through the now-removed /build-spec route; new sessions
+-- never insert here, but the read-only spec viewer + share-to-group
+-- routes still expose existing rows. shared_to_group_at is set when
 -- the user posts a snapshot into the app's group chat.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS spec_md TEXT NOT NULL DEFAULT '';
 

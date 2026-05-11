@@ -103,12 +103,24 @@ since Caddy can't issue real certs against `localhost`).
 The local stack is two pieces because Docker Desktop on Mac can't run
 the `usernode-node` sidecar (its WebRTC P2P doesn't survive the VM's
 network stack), so the node runs natively on the host and the platform
-container talks to it via `host.docker.internal:3001`. Two terminals:
+container talks to it via `host.docker.internal:3001`.
+
+Prereq: `make node-full` fetches a fresh archive snapshot via SSH from
+`testnet-seed1` so the node boots in full-ledger mode (without it,
+runtime `tracked_owner/add` calls trip the wallet-seed shortcut into
+partial-overlay mode and the platform's `/__node-status` panel shows
+the "Partial ledger mode" warning — see
+`PARTIAL_LEDGER_RECENT_TX_SOURCE_BUG`). Add a `~/.ssh/config` entry for
+`testnet-seed1` with the right `IdentityFile` (the same one used by
+`usernode-dapp-starter`'s `make node-full`).
+
+Two terminals:
 
 ```bash
 # Terminal 1 — native node on :3001 (one-time:
 #   cd ../usernode && cargo build --release -p usernode-cli)
-make node
+make node-full              # fetch fresh archive, then boot in full mode
+# make node-full-no-fetch   # offline iteration: reuse ~/.usernode/archive
 
 # Terminal 2 — platform + Postgres
 make up           # docker compose -f docker-compose.dev.yml up -d --build

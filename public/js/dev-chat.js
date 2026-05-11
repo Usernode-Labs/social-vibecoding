@@ -31,30 +31,22 @@ const DevChat = {
 
   budget: null,
 
-  // ----- Spec stage state -----
-  // Sub-tab within the chat view: 'chat' (default) or 'spec'. Toggled
-  // by the tab buttons in renderChatView. Per-session because it's UX-
-  // local; we don't persist across sessions.
-  currentTab: 'chat',
-  // Live spec doc + version metadata for the current session. Refreshed
-  // on session open and after each spec_updated SSE event. The editor
-  // stores in-flight user edits in `draftContent` (debounced PUT to
-  // /api/sessions/:id/spec) so we can detect "user is currently
-  // typing" and not clobber unsaved keystrokes when a server-side
-  // spec_updated event lands.
-  spec: {
+  // ----- Spec viewer state -----
+  // Read-only viewer for the current session's spec doc + frozen
+  // version history. Opened from inline preview cards rendered in the
+  // chat timeline (see renderMessages). On wide viewports the viewer
+  // mounts beside the chat as a side panel; on narrow viewports it
+  // takes over the screen as a full-screen modal — handled by CSS, not
+  // JS. State here only tracks open/closed + which version the user is
+  // looking at.
+  specViewer: {
+    open: false,
     sessionId: null,           // session this state belongs to (guards stale loads)
-    content: '',               // saved spec_md from server
-    versions: [],              // [{ version, built_at, commit_sha, pr_number, ... }]
-    loaded: false,
-    isLoading: false,
-    isSaving: false,
-    isBuilding: false,
-    saveTimer: null,           // debounce handle for hand-edits → PUT /spec
-    saveQueued: false,         // true if a save is currently in flight and the editor changed again
-    viewVersion: 'draft',      // 'draft' or a number — drives the version selector
+    draftContent: '',          // current spec_md from GET /api/sessions/:id/spec
+    versions: [],              // [{ version, built_at, commit_sha, pr_number, shared_to_group_at, ... }]
+    viewVersion: 'draft',      // 'draft' or a number
     viewVersionContent: null,  // cached content for a non-draft selection
-    unread: false,             // shows a dot on the Spec tab when changes arrive while user is on Chat
+    isLoading: false,
   },
 
   MODELS: {
@@ -85,8 +77,7 @@ const DevChat = {
     DevChat.isStreaming = false;
     DevChat._staleTimer = null;
     DevChat._lastSeenSeq = null;
-    DevChat.currentTab = 'chat';
-    DevChat._resetSpecState();
+    DevChat._resetSpecViewer();
     if (DevChat._abortController) {
       try { DevChat._abortController.abort(); } catch {}
       DevChat._abortController = null;
@@ -97,23 +88,15 @@ const DevChat = {
     }
   },
 
-  _resetSpecState() {
-    if (DevChat.spec.saveTimer) {
-      clearTimeout(DevChat.spec.saveTimer);
-    }
-    DevChat.spec = {
+  _resetSpecViewer() {
+    DevChat.specViewer = {
+      open: false,
       sessionId: null,
-      content: '',
+      draftContent: '',
       versions: [],
-      loaded: false,
-      isLoading: false,
-      isSaving: false,
-      isBuilding: false,
-      saveTimer: null,
-      saveQueued: false,
       viewVersion: 'draft',
       viewVersionContent: null,
-      unread: false,
+      isLoading: false,
     };
   },
 
@@ -183,6 +166,12 @@ const DevChat = {
           if (m.metadata.ccOutput) m.ccOutput = m.metadata.ccOutput;
           if (m.metadata.ccSummary) m.ccSummary = m.metadata.ccSummary;
           if (m.metadata.progressLog) m.progressLog = m.metadata.progressLog;
+          // Spec preview cards: write_spec / scout persist these on the
+          // status row so a refresh re-renders the same inline card the
+          // user saw mid-stream. See runWriteSpecTool / runScoutTool.
+          if (m.metadata.specPreview) m.specPreview = m.metadata.specPreview;
+          if (m.metadata.specLines) m.specLines = m.metadata.specLines;
+          if (m.metadata.specVersion != null) m.specVersion = m.metadata.specVersion;
         }
         return m;
       });
@@ -368,7 +357,7 @@ const DevChat = {
               case 'status':
                 DevChat._removeSpinner();
                 DevChat._deactivateLastStatus();
-                DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
+                DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
                 DevChat.renderMessages();
                 DevChat.scrollToBottom();
                 break;
@@ -447,18 +436,12 @@ const DevChat = {
                 DevChat.refreshBudget();
                 break;
               case 'spec_updated':
-                // The Mayor's write_spec or scout-dispatch (or a parallel
-                // user editing the same session in another tab) updated
-                // the live draft. Refetch the canonical doc + version
-                // list, and badge the Spec tab if the user is on Chat.
+                // Mayor write_spec / scout drafted (or refreshed) the
+                // live spec_md. The accompanying status event already
+                // pushed an inline preview card into the timeline — we
+                // just keep the open viewer in sync if the user
+                // happens to have it open on the live draft.
                 DevChat._handleSpecUpdated(data);
-                break;
-              case 'build_spec_complete':
-                // The user-driven Build-from-spec finished CC. The new
-                // version's commit_sha + pr_number have been backfilled
-                // server-side; refresh the metadata so the dropdown can
-                // show them.
-                DevChat._loadSpec({ force: true });
                 break;
             }
           } catch {}
@@ -629,7 +612,7 @@ const DevChat = {
       case 'status':
         DevChat._removeSpinner();
         DevChat._deactivateLastStatus();
-        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
+        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;
@@ -676,23 +659,18 @@ const DevChat = {
       case 'spec_updated':
         DevChat._handleSpecUpdated(data);
         break;
-      case 'build_spec_complete':
-        DevChat._loadSpec({ force: true });
-        break;
     }
   },
 
   _handleSpecUpdated(data) {
-    // Always refresh — server is the source of truth for spec_md.
-    // We badge the Spec tab if the user is currently on Chat so the
-    // change isn't invisible. If they're already on the Spec tab the
-    // pane re-renders with the new content directly.
-    if (DevChat.currentTab !== 'spec') {
-      DevChat.spec.unread = true;
-      // Re-render the tab bar so the dot shows up immediately. Cheap.
-      DevChat.renderChatView();
+    // The status event for this same write already pushed an inline
+    // preview card into the timeline (see the case 'status' arms),
+    // which is the user-facing surface. The only thing left to do
+    // here is keep the side viewer in sync if the user happens to
+    // have it open on the live draft.
+    if (DevChat.specViewer.open && DevChat.specViewer.viewVersion === 'draft') {
+      DevChat._loadSpecViewer({ force: true });
     }
-    DevChat._loadSpec({ force: true });
   },
 
   // Phase-aware button state (#28):
@@ -955,6 +933,33 @@ const DevChat = {
     container.innerHTML = DevChat.messages.map((msg) => {
       // System messages — each is a single immutable status line
       if (msg.role === 'system') {
+        // Inline spec preview card. The Mayor's write_spec / scout
+        // emits this metadata alongside the status line; clicking the
+        // card opens the read-only spec viewer (side panel on wide
+        // viewports, fullscreen modal on narrow). We clip the snippet
+        // server-side (~400 chars) and again here client-side so the
+        // card stays compact in the timeline.
+        if (msg.specPreview) {
+          const sTs = msg.created_at ? new Date(msg.created_at).getTime() : '';
+          const sId = msg.id || msg._slug || '';
+          const lineCount = msg.specLines || (msg.specPreview.split('\n').length);
+          const snippet = msg.specPreview.length > 200
+            ? msg.specPreview.slice(0, 200) + '…'
+            : msg.specPreview;
+          const versionAttr = msg.specVersion != null ? msg.specVersion : 'draft';
+          const headerLabel = msg.specVersion != null
+            ? `Spec v${msg.specVersion} · ${lineCount} lines`
+            : `Spec drafted · ${lineCount} lines`;
+          return `
+            <div class="dc-status-line"><span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span> ${msg.content} <span style="font-size:9px;opacity:0.4;margin-left:auto">${sId} ${sTs}</span></div>
+            <div class="dc-spec-preview-card" data-spec-version="${versionAttr}" role="button" tabindex="0" aria-label="Open spec viewer">
+              <div class="dc-spec-preview-header">
+                <span class="dc-spec-preview-title">${escapeHtml(headerLabel)}</span>
+                <span class="dc-spec-preview-cta">View full spec →</span>
+              </div>
+              <pre class="dc-spec-preview-snippet">${escapeHtml(snippet)}</pre>
+            </div>`;
+        }
         if (msg.ccLog) {
           const pid = DevChat._detailsId(msg, 'cclog');
           return `<details class="dc-cc-log" data-persist-id="${pid}"><summary class="dc-cc-log-toggle">Claude Code log</summary><pre class="dc-cc-log-content">${msg.ccLog.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre></details>`;
@@ -1157,6 +1162,26 @@ const DevChat = {
   initScrollTracking() {
     const container = document.getElementById('dc-messages');
     if (!container) return;
+
+    // Click delegation for inline spec preview cards. We rebind on
+    // every renderChatView re-render (since #dc-messages itself is
+    // recreated when the user navigates between sessions), so a single
+    // listener here is enough — innerHTML rewrites inside renderMessages
+    // don't break it.
+    container.addEventListener('click', (e) => {
+      const card = e.target.closest('.dc-spec-preview-card');
+      if (!card) return;
+      const version = card.dataset.specVersion;
+      DevChat.openSpecViewer(version);
+    });
+    container.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const card = e.target.closest('.dc-spec-preview-card');
+      if (!card) return;
+      e.preventDefault();
+      DevChat.openSpecViewer(card.dataset.specVersion);
+    });
+
     container.addEventListener('scroll', () => {
       const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
       DevChat._lockedToBottom = atBottom;
@@ -1289,10 +1314,7 @@ const DevChat = {
       .map(([id, label]) => `<option value="${id}" ${id === DevChat.selectedModel ? 'selected' : ''}>${label}</option>`)
       .join('');
 
-    const tab = DevChat.currentTab === 'spec' ? 'spec' : 'chat';
-    const specUnreadDot = DevChat.spec.unread && tab !== 'spec'
-      ? '<span class="dc-tab-dot" aria-label="updated"></span>'
-      : '';
+    const viewerOpen = !!DevChat.specViewer.open;
 
     content.innerHTML = `
       <div class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
@@ -1300,39 +1322,37 @@ const DevChat = {
         <span class="text-xs text-zinc-400 truncate flex-1" title="${escapeHtml(DevChat.currentSession.branch_name || '')}">${escapeHtml(DevChat.currentSession.pr_title || DevChat.currentSession.branch_name || 'Session')}</span>
         ${DevChat.currentSession.pr_number ? `<button id="dc-pr-header-link" class="text-xs text-violet-400 hover:text-violet-300">PR #${DevChat.currentSession.pr_number}</button>` : ''}
       </div>
-      <div class="flex items-center gap-1 px-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0 dc-tabs">
-        <button data-tab="chat" class="dc-tab ${tab === 'chat' ? 'dc-tab-active' : ''}">Chat</button>
-        <button data-tab="spec" class="dc-tab ${tab === 'spec' ? 'dc-tab-active' : ''}">Spec${specUnreadDot}</button>
-      </div>
-      <div id="dc-tab-chat" class="${tab === 'chat' ? '' : 'hidden'} flex-1 flex flex-col min-h-0">
-        <div id="dc-messages" class="dc-messages-container flex-1 overflow-y-auto py-2"></div>
-        <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2">
-          <div class="flex items-center gap-2 mb-2">
-            <label class="text-xs text-zinc-500">Model:</label>
-            <select id="dc-model-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">
-              ${modelOptions}
-            </select>
-            <span class="flex-1"></span>
-            <span id="dc-budget" class="text-xs font-mono"></span>
-          </div>
-          <form id="dc-form" class="flex gap-2 items-end">
-            <textarea
-              id="dc-input"
-              rows="1"
-              placeholder="Ask the AI to make changes..."
-              autocomplete="off"
-              class="dc-textarea flex-1 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent resize-none"
-            ></textarea>
-            <button type="submit" id="dc-send-btn" class="dc-send-btn rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium text-white transition-colors shrink-0">
-              Send
-            </button>
-          </form>
-          <div class="text-xs text-zinc-600 mt-1 text-right" id="dc-shortcut-hint">
-            <kbd class="dc-kbd">Ctrl</kbd>+<kbd class="dc-kbd">Enter</kbd> to send
+      <div class="dc-session-body flex-1 flex min-h-0">
+        <div id="dc-tab-chat" class="dc-chat-pane flex-1 flex flex-col min-h-0">
+          <div id="dc-messages" class="dc-messages-container flex-1 overflow-y-auto py-2"></div>
+          <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2">
+            <div class="flex items-center gap-2 mb-2">
+              <label class="text-xs text-zinc-500">Model:</label>
+              <select id="dc-model-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">
+                ${modelOptions}
+              </select>
+              <span class="flex-1"></span>
+              <span id="dc-budget" class="text-xs font-mono"></span>
+            </div>
+            <form id="dc-form" class="flex gap-2 items-end">
+              <textarea
+                id="dc-input"
+                rows="1"
+                placeholder="Ask the AI to make changes..."
+                autocomplete="off"
+                class="dc-textarea flex-1 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent resize-none"
+              ></textarea>
+              <button type="submit" id="dc-send-btn" class="dc-send-btn rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium text-white transition-colors shrink-0">
+                Send
+              </button>
+            </form>
+            <div class="text-xs text-zinc-600 mt-1 text-right" id="dc-shortcut-hint">
+              <kbd class="dc-kbd">Ctrl</kbd>+<kbd class="dc-kbd">Enter</kbd> to send
+            </div>
           </div>
         </div>
-      </div>
-      <div id="dc-tab-spec" class="${tab === 'spec' ? '' : 'hidden'} flex-1 flex flex-col min-h-0"></div>`;
+        <div id="dc-spec-viewer" class="dc-spec-viewer ${viewerOpen ? 'dc-spec-viewer-open' : ''}"></div>
+      </div>`;
 
     DevChat.renderMessages();
     DevChat.refreshBudget();
@@ -1385,27 +1405,11 @@ const DevChat = {
       DevChat._submitFromInput();
     });
 
-    // Tab switching. Renders the Spec pane lazily on first activation,
-    // re-renders on subsequent activations (cheap; the DOM is small).
-    content.querySelectorAll('.dc-tabs .dc-tab').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const target = btn.dataset.tab === 'spec' ? 'spec' : 'chat';
-        if (DevChat.currentTab === target) return;
-        DevChat.currentTab = target;
-        if (target === 'spec') {
-          DevChat.spec.unread = false;
-        }
-        DevChat.renderChatView();
-      });
-    });
-
-    // Lazy-load the spec doc on first open of the tab (or whenever we
-    // re-enter a session whose state was reset). If we're showing the
-    // Spec tab right now, also render it.
-    if (DevChat.spec.sessionId !== DevChat.currentSession.id) {
-      DevChat._loadSpec();
-    } else if (DevChat.currentTab === 'spec') {
-      DevChat._renderSpecPane();
+    // Render the spec viewer if it was open before this re-render
+    // (toggling layout, version selection, etc. all re-enter via
+    // renderChatView).
+    if (DevChat.specViewer.open) {
+      DevChat._renderSpecViewer();
     }
   },
 
@@ -1473,218 +1477,142 @@ const DevChat = {
     });
   },
 
-  // ===== Spec stage helpers =====
+  // ===== Spec viewer helpers =====
   //
-  // Fetch the live draft + version metadata in one round trip. Called
-  // on session open and whenever a spec_updated SSE event arrives — we
-  // don't trust just the length carried on the event because hand-edits
-  // PUT the full content separately and we want the canonical doc.
-  async _loadSpec(opts = {}) {
+  // Read-only viewer that opens when the user clicks an inline spec
+  // preview card in the chat timeline. Mounts as a side panel beside
+  // the chat on wide viewports and as a fullscreen modal on narrow
+  // ones — the layout switch is pure CSS (see app.css), the JS just
+  // toggles state + re-renders.
+
+  // Open the viewer for a specific version ('draft' for the live
+  // spec_md, or a numeric version string/number for a frozen snapshot).
+  // Triggers a network fetch for the live draft + version metadata,
+  // and a second fetch for the selected frozen version's content if
+  // needed. Safe to call when already open (just reloads).
+  openSpecViewer(version) {
+    if (!DevChat.currentSession) return;
+    const sid = DevChat.currentSession.id;
+    DevChat.specViewer.open = true;
+    DevChat.specViewer.sessionId = sid;
+    DevChat.specViewer.viewVersion = (version === 'draft' || version == null) ? 'draft' : version;
+    DevChat.specViewer.viewVersionContent = null;
+    DevChat.renderChatView();
+    DevChat._loadSpecViewer({ force: true });
+  },
+
+  closeSpecViewer() {
+    DevChat.specViewer.open = false;
+    DevChat.renderChatView();
+  },
+
+  // Fetch the current spec_md draft + frozen-version metadata. Called
+  // when the viewer opens and whenever a spec_updated SSE event lands
+  // while the viewer is showing the live draft.
+  async _loadSpecViewer(opts = {}) {
     const session = DevChat.currentSession;
     if (!session) return;
     const sid = session.id;
+    if (DevChat.specViewer.isLoading && !opts.force) return;
 
-    // Don't clobber an in-flight save with a stale GET — the user is
-    // ahead of the server. _scheduleSpecSave will refresh after PUT.
-    if (DevChat.spec.isSaving && !opts.force) return;
-
-    DevChat.spec.isLoading = true;
-    if (DevChat.currentTab === 'spec') DevChat._renderSpecPane();
+    DevChat.specViewer.isLoading = true;
+    DevChat._renderSpecViewer();
 
     try {
       const resp = await fetch(`/api/sessions/${sid}/spec`);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
-      // Late-arriving fetch for a session we already navigated away from.
       if (!DevChat.currentSession || DevChat.currentSession.id !== sid) return;
 
-      // If the user has been typing in the editor, prefer their in-DOM
-      // value over the server response — the saveTimer will flush it.
-      const editorEl = document.getElementById('dc-spec-editor');
-      const userTypedValue = editorEl && DevChat.spec.viewVersion === 'draft' && DevChat.spec.saveTimer
-        ? editorEl.value
-        : null;
-
-      DevChat.spec.sessionId = sid;
-      DevChat.spec.content = userTypedValue !== null ? userTypedValue : (data.spec || '');
-      DevChat.spec.versions = data.versions || [];
-      DevChat.spec.loaded = true;
+      DevChat.specViewer.sessionId = sid;
+      DevChat.specViewer.draftContent = data.spec || '';
+      DevChat.specViewer.versions = data.versions || [];
     } catch (err) {
-      DevChat.spec.loaded = true;
-      // Leave existing content as-is; show a transient error in the pane
-      // header rather than wiping a draft the user might have typed.
-      console.warn('loadSpec failed:', err);
+      console.warn('loadSpecViewer failed:', err);
     } finally {
-      DevChat.spec.isLoading = false;
-      if (DevChat.currentTab === 'spec') DevChat._renderSpecPane();
+      DevChat.specViewer.isLoading = false;
+      DevChat._renderSpecViewer();
     }
   },
 
-  _renderSpecPane() {
-    const pane = document.getElementById('dc-tab-spec');
+  _renderSpecViewer() {
+    const pane = document.getElementById('dc-spec-viewer');
     if (!pane || !DevChat.currentSession) return;
+    if (!DevChat.specViewer.open) return;
 
-    if (!DevChat.spec.loaded && DevChat.spec.isLoading) {
-      pane.innerHTML = `<div class="p-4 text-sm text-zinc-500">Loading spec…</div>`;
-      return;
-    }
+    const versions = DevChat.specViewer.versions;
+    const isDraft = DevChat.specViewer.viewVersion === 'draft';
+    const displayContent = isDraft
+      ? DevChat.specViewer.draftContent
+      : (DevChat.specViewer.viewVersionContent || '');
+    const charCount = displayContent.length;
+    const lineCount = displayContent ? displayContent.split('\n').length : 0;
 
-    const versions = DevChat.spec.versions;
     const versionOptions = [
-      `<option value="draft" ${DevChat.spec.viewVersion === 'draft' ? 'selected' : ''}>Draft (live)</option>`,
+      `<option value="draft" ${isDraft ? 'selected' : ''}>Draft (live)</option>`,
       ...versions.map((v) => {
         const built = v.built_at ? new Date(v.built_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-        const sel = String(DevChat.spec.viewVersion) === String(v.version) ? 'selected' : '';
+        const sel = !isDraft && String(DevChat.specViewer.viewVersion) === String(v.version) ? 'selected' : '';
         return `<option value="${v.version}" ${sel}>v${v.version}${built ? ` · ${built}` : ''}${v.pr_number ? ` · PR #${v.pr_number}` : ''}</option>`;
       }),
     ].join('');
 
-    const isDraft = DevChat.spec.viewVersion === 'draft';
-    const displayContent = isDraft
-      ? DevChat.spec.content
-      : (DevChat.spec.viewVersionContent || '');
-
-    const isEmpty = !displayContent.trim();
-    const hasSpec = !isEmpty;
-    const charCount = displayContent.length;
-
-    const saveStatus = DevChat.spec.isSaving
-      ? '<span class="text-xs text-zinc-500">Saving…</span>'
-      : DevChat.spec.saveTimer
-        ? '<span class="text-xs text-zinc-500">Unsaved changes</span>'
-        : DevChat.spec.loaded
-          ? '<span class="text-xs text-emerald-500">Saved</span>'
-          : '';
-
-    const buildBtnDisabled = !hasSpec || DevChat.spec.isBuilding || DevChat.isStreaming || !isDraft;
-    const buildBtn = `<button id="dc-spec-build" class="dc-spec-action-btn dc-spec-build" ${buildBtnDisabled ? 'disabled' : ''} title="Run the coding agent against the current draft">${DevChat.spec.isBuilding ? 'Building…' : 'Build from spec'}</button>`;
-
-    // Share button only meaningful for built versions (snapshots have a
-    // canonical URL/PR association we can summarize in the group chat).
+    // Share button only meaningful for built (frozen) versions.
     const selectedVersion = isDraft
       ? null
-      : versions.find((v) => String(v.version) === String(DevChat.spec.viewVersion));
+      : versions.find((v) => String(v.version) === String(DevChat.specViewer.viewVersion));
     const alreadyShared = !!(selectedVersion && selectedVersion.shared_to_group_at);
-    const shareBtn = isDraft
+    const shareBtnHtml = isDraft
       ? ''
-      : `<button id="dc-spec-share" class="dc-spec-action-btn dc-spec-share" ${alreadyShared ? 'disabled' : ''} title="${alreadyShared ? 'Already shared to group chat' : 'Post a card linking to this spec in the group chat'}">${alreadyShared ? 'Shared' : 'Share to group'}</button>`;
+      : `<button id="dc-spec-viewer-share" class="dc-spec-action-btn" ${alreadyShared ? 'disabled' : ''} title="${alreadyShared ? 'Already shared to group chat' : 'Post a card linking to this spec in the group chat'}">${alreadyShared ? 'Shared' : 'Share to group'}</button>`;
+
+    const bodyHtml = DevChat.specViewer.isLoading && !displayContent
+      ? `<div class="p-4 text-sm text-zinc-500">Loading spec…</div>`
+      : displayContent
+        ? `<pre class="dc-spec-viewer-body">${escapeHtml(displayContent)}</pre>`
+        : `<div class="p-4 text-sm text-zinc-500">No spec yet. Ask the AI to draft one.</div>`;
 
     pane.innerHTML = `
-      <div class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0 dc-spec-toolbar">
-        <select id="dc-spec-version" class="text-xs rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1">
+      <div class="dc-spec-viewer-header">
+        <select id="dc-spec-viewer-version" class="text-xs rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1">
           ${versionOptions}
         </select>
         <span class="flex-1"></span>
-        ${saveStatus}
+        <button id="dc-spec-viewer-close" class="dc-spec-viewer-close" aria-label="Close spec viewer">×</button>
       </div>
-      <div class="flex-1 min-h-0 p-3 overflow-y-auto dc-spec-editor-wrap">
-        ${isDraft
-          ? `<textarea id="dc-spec-editor" class="dc-spec-editor" placeholder="No spec yet. Tell the Mayor what to build and it'll draft one — or type one here directly.">${escapeHtml(displayContent)}</textarea>`
-          : `<pre class="dc-spec-frozen">${escapeHtml(displayContent || 'Loading…')}</pre>`}
+      <div class="dc-spec-viewer-body-wrap">
+        ${bodyHtml}
       </div>
-      <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2 flex items-center gap-2">
-        <span class="text-xs text-zinc-500">${charCount} chars · ${displayContent.split('\n').length} lines</span>
+      <div class="dc-spec-viewer-footer">
+        <span class="text-xs text-zinc-500">${charCount} chars · ${lineCount} lines</span>
         <span class="flex-1"></span>
-        ${shareBtn}
-        ${buildBtn}
+        ${shareBtnHtml}
       </div>`;
 
-    // Handlers for this render-pass.
-    const versionSel = pane.querySelector('#dc-spec-version');
+    const versionSel = pane.querySelector('#dc-spec-viewer-version');
     if (versionSel) {
       versionSel.addEventListener('change', (e) => {
-        const val = e.target.value;
-        DevChat._switchSpecVersion(val);
+        DevChat._switchSpecViewerVersion(e.target.value);
       });
     }
 
-    const editor = pane.querySelector('#dc-spec-editor');
-    if (editor) {
-      editor.addEventListener('input', (e) => {
-        DevChat.spec.content = e.target.value;
-        DevChat._scheduleSpecSave();
-        // Cheap re-render is too expensive on every keystroke (would
-        // wipe selection). Just patch the saveStatus text in place.
-        DevChat._refreshSpecToolbar();
-      });
-    }
+    const closeBtn = pane.querySelector('#dc-spec-viewer-close');
+    if (closeBtn) closeBtn.addEventListener('click', () => DevChat.closeSpecViewer());
 
-    const buildEl = pane.querySelector('#dc-spec-build');
-    if (buildEl) buildEl.addEventListener('click', () => DevChat._buildFromSpec());
-
-    const shareEl = pane.querySelector('#dc-spec-share');
-    if (shareEl) shareEl.addEventListener('click', () => DevChat._shareSpecVersion(DevChat.spec.viewVersion));
+    const shareBtn = pane.querySelector('#dc-spec-viewer-share');
+    if (shareBtn) shareBtn.addEventListener('click', () => DevChat._shareSpecVersion(DevChat.specViewer.viewVersion));
 
     // Lazy-fetch frozen content when a non-draft version is selected
     // and we don't have it cached.
-    if (!isDraft && !DevChat.spec.viewVersionContent) {
-      DevChat._loadSpecVersion(DevChat.spec.viewVersion).catch(() => {});
+    if (!isDraft && !DevChat.specViewer.viewVersionContent) {
+      DevChat._loadSpecVersion(DevChat.specViewer.viewVersion).catch(() => {});
     }
   },
 
-  // Patch only the saving/saved indicator after each keystroke so the
-  // textarea selection survives. _renderSpecPane would clobber it.
-  _refreshSpecToolbar() {
-    const toolbar = document.querySelector('#dc-tab-spec .dc-spec-toolbar');
-    if (!toolbar) return;
-    const ind = toolbar.querySelector('.dc-spec-toolbar-status') || (() => {
-      const el = document.createElement('span');
-      el.className = 'dc-spec-toolbar-status';
-      toolbar.appendChild(el);
-      return el;
-    })();
-    ind.outerHTML = (DevChat.spec.isSaving
-      ? '<span class="text-xs text-zinc-500 dc-spec-toolbar-status">Saving…</span>'
-      : DevChat.spec.saveTimer
-        ? '<span class="text-xs text-zinc-500 dc-spec-toolbar-status">Unsaved changes</span>'
-        : '<span class="text-xs text-emerald-500 dc-spec-toolbar-status">Saved</span>');
-  },
-
-  // Debounced save: 750ms after the last keystroke, PUT the editor
-  // content. Coalesces rapid edits so a fast typer triggers one PUT
-  // per pause, not one per character.
-  _scheduleSpecSave() {
-    if (DevChat.spec.saveTimer) clearTimeout(DevChat.spec.saveTimer);
-    DevChat.spec.saveTimer = setTimeout(() => {
-      DevChat.spec.saveTimer = null;
-      DevChat._flushSpecSave();
-    }, 750);
-  },
-
-  async _flushSpecSave() {
-    const session = DevChat.currentSession;
-    if (!session) return;
-    if (DevChat.spec.isSaving) {
-      DevChat.spec.saveQueued = true;
-      return;
-    }
-    DevChat.spec.isSaving = true;
-    DevChat._refreshSpecToolbar();
-    const sid = session.id;
-    const body = JSON.stringify({ content: DevChat.spec.content });
-    try {
-      await fetch(`/api/sessions/${sid}/spec`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body,
-      });
-    } catch (err) {
-      console.warn('saveSpec failed:', err);
-    } finally {
-      DevChat.spec.isSaving = false;
-      if (DevChat.spec.saveQueued) {
-        DevChat.spec.saveQueued = false;
-        DevChat._scheduleSpecSave();
-      } else {
-        DevChat._refreshSpecToolbar();
-      }
-    }
-  },
-
-  _switchSpecVersion(value) {
-    DevChat.spec.viewVersion = value === 'draft' ? 'draft' : value;
-    DevChat.spec.viewVersionContent = null;
-    DevChat._renderSpecPane();
+  _switchSpecViewerVersion(value) {
+    DevChat.specViewer.viewVersion = value === 'draft' ? 'draft' : value;
+    DevChat.specViewer.viewVersionContent = null;
+    DevChat._renderSpecViewer();
   },
 
   async _loadSpecVersion(version) {
@@ -1695,106 +1623,12 @@ const DevChat = {
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
       if (!DevChat.currentSession || DevChat.currentSession.id !== sid) return;
-      // Bail if the user clicked another version while we were fetching.
-      if (String(DevChat.spec.viewVersion) !== String(version)) return;
-      DevChat.spec.viewVersionContent = data.spec.content || '';
-      if (DevChat.currentTab === 'spec') DevChat._renderSpecPane();
+      // Bail if the user picked another version while we were fetching.
+      if (String(DevChat.specViewer.viewVersion) !== String(version)) return;
+      DevChat.specViewer.viewVersionContent = data.spec.content || '';
+      DevChat._renderSpecViewer();
     } catch (err) {
       console.warn('loadSpecVersion failed:', err);
-    }
-  },
-
-  // Run the coding agent against the current draft. Reuses the existing
-  // SSE handler used by /chat — _connectSpecBuildStream parses the
-  // same events but treats this as an "implicit user message" turn.
-  async _buildFromSpec() {
-    if (!DevChat.currentSession || DevChat.spec.isBuilding || DevChat.isStreaming) return;
-    if (!(DevChat.spec.content || '').trim()) return;
-
-    // Flush any pending hand-edits first so the spec we just snapshotted
-    // matches what the user is looking at on screen.
-    if (DevChat.spec.saveTimer) {
-      clearTimeout(DevChat.spec.saveTimer);
-      DevChat.spec.saveTimer = null;
-      await DevChat._flushSpecSave();
-    }
-
-    DevChat.spec.isBuilding = true;
-    DevChat._renderSpecPane();
-
-    // Switch to Chat tab so the user sees CC progress / status events
-    // as they would for a normal dispatch — the timeline IS the build
-    // log here.
-    DevChat.currentTab = 'chat';
-    DevChat.renderChatView();
-    DevChat._setStreamingUI(true, 'cc');
-    DevChat.isStreaming = true;
-
-    try {
-      const sid = DevChat.currentSession.id;
-      const resp = await fetch(`/api/sessions/${sid}/build-spec`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: DevChat.selectedModel }),
-      });
-
-      if (!resp.ok) {
-        const errText = await resp.text().catch(() => '');
-        throw new Error(`Build failed: ${resp.status} ${errText.slice(0, 200)}`);
-      }
-
-      // Append the synthetic user message client-side immediately so
-      // the timeline doesn't briefly look empty between "click Build"
-      // and the first SSE status. Server persisted the same row.
-      DevChat.messages.push({
-        role: 'user',
-        content: 'Build the current spec.',
-        created_at: new Date().toISOString(),
-        _slug: Math.random().toString(36).slice(2, 8),
-      });
-      DevChat.renderMessages();
-      DevChat.scrollToBottom();
-
-      // Reuse the same SSE parser the chat path uses. Replicate its
-      // body-stream loop here rather than calling sendMessage so we
-      // don't accidentally inject a second user-typed message.
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n\n');
-        buffer = lines.pop() || '';
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const data = JSON.parse(line.slice(6));
-            if (data._seq && DevChat._seenSeqs?.has(data._seq)) continue;
-            if (data._seq) { DevChat._seenSeqs?.add(data._seq); DevChat._lastSeenSeq = data._seq; }
-            // Hand off to the same dispatcher used by the resumable
-            // EventSource path — it already covers every event we emit
-            // (status, cc_progress, staging_ready, pr_*, error, done…)
-            // plus the new spec_updated / build_spec_complete that we
-            // added handlers for below.
-            DevChat._handleResumableEvent(data);
-          } catch {}
-        }
-      }
-    } catch (err) {
-      DevChat.messages.push({
-        role: 'system',
-        content: `Build failed: ${err.message}`,
-        created_at: new Date().toISOString(),
-        _slug: Math.random().toString(36).slice(2, 8),
-      });
-      DevChat.renderMessages();
-    } finally {
-      DevChat.spec.isBuilding = false;
-      DevChat._finishStreaming();
-      // Reload spec metadata so the new version appears in the dropdown.
-      DevChat._loadSpec({ force: true });
     }
   },
 
@@ -1809,9 +1643,9 @@ const DevChat = {
       // Mark the version as shared locally so the button flips without
       // a full reload — the server's broadcast already handled the
       // group chat side.
-      const v = DevChat.spec.versions.find((x) => x.version === Number(version));
+      const v = DevChat.specViewer.versions.find((x) => x.version === Number(version));
       if (v) v.shared_to_group_at = new Date().toISOString();
-      DevChat._renderSpecPane();
+      DevChat._renderSpecViewer();
     } catch (err) {
       console.warn('shareSpecVersion failed:', err);
     }

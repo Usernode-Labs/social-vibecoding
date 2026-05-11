@@ -401,17 +401,12 @@ const App = {
         DevChat.renderMessages();
         break;
       case 'spec_updated':
-        // Mayor's write_spec / dispatch_scout / build-spec backfill, or
-        // a hand-edit from another tab on the same session. Refetch the
-        // canonical doc + version list. _handleSpecUpdated also handles
-        // the unread-badge logic when the user is on the Chat tab.
+        // Mayor's write_spec / dispatch_scout updated the live draft.
+        // The accompanying status event already pushed an inline preview
+        // card into the chat timeline; we just keep an open spec viewer
+        // in sync if the user happens to be looking at the live draft.
         if (typeof DevChat._handleSpecUpdated === 'function') {
           DevChat._handleSpecUpdated(data);
-        }
-        break;
-      case 'build_spec_complete':
-        if (typeof DevChat._loadSpec === 'function') {
-          DevChat._loadSpec({ force: true });
         }
         break;
     }
