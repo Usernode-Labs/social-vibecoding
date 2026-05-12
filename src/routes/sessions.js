@@ -1484,15 +1484,19 @@ const DISPATCH_TOOL = {
     'Dispatch an autonomous coding agent (Claude Code) to make the requested changes to the app repo. '
     + 'The agent will clone the repo, edit files, commit, and push to the dev branch — staging will auto-rebuild. '
     + 'Use ONLY when the user has asked for a concrete, actionable code change. Do not call when the user is '
-    + 'just chatting, brainstorming, asking about past work, or giving vague feedback. At most one call per user message.',
+    + 'just chatting, brainstorming, asking about past work, or giving vague feedback. At most one call per user message. '
+    + 'NOTE: the current spec doc (CURRENT SPEC DOC in your context) is auto-injected into the agent\'s prompt — '
+    + 'do NOT re-summarize the spec in the prompt arg; describe only WHICH SLICE to build now.',
   input_schema: {
     type: 'object',
     properties: {
       prompt: {
         type: 'string',
         description:
-          'A clear, self-contained description of what the coding agent should build or fix. '
-          + 'Should read like a task brief: what to change, where, and the expected user-visible behavior. '
+          'A clear, self-contained description of what the coding agent should build or fix RIGHT NOW. '
+          + 'The session\'s spec doc is auto-injected into the agent\'s context — do NOT restate the spec here. '
+          + 'Instead, describe which slice of the spec (or which user request, if no spec exists) to implement '
+          + 'in this dispatch: what to change, where, and the expected user-visible behavior. '
           + 'Do NOT include code. Roughly 1-4 sentences.',
       },
     },
@@ -1987,6 +1991,32 @@ async function runClaudeCodeTool({
   // Claude Code from the repo directly and take precedence for
   // app-specific matters only — the "authoritative" platform rules
   // below override any conflicting instruction in CLAUDE.md.
+  //
+  // The session's live spec doc (chat_sessions.spec_md) is also
+  // injected when non-empty. The Mayor and the user have likely been
+  // refining it over multiple turns; without it, CC would only see the
+  // Mayor's compressed 1-4 sentence prompt arg and re-derive intent
+  // from scratch. The platform-conventions block still overrides if
+  // anything in the spec contradicts a platform-wide rule.
+  const currentSpec = await loadSessionSpec(pool, session.id);
+  const specBlock = currentSpec.trim()
+    ? `
+
+==== SPEC DOC (planning context, authoritative for what to build) ====
+
+${currentSpec}
+
+==== END SPEC DOC ====
+
+The SPEC DOC above is the user's planning record for this session,
+refined collaboratively with the Mayor. Treat it as the authoritative
+description of WHAT to build and HOW IT SHOULD BEHAVE. The "CODING
+TASK (from the Mayor)" line above tells you which slice to implement
+in this dispatch — it is NOT a substitute for the spec, and you should
+not re-derive intent from it when the spec covers the same ground.
+Platform conventions still override the spec on any platform-wide
+rule (auth, public/private tables, etc.).`
+    : '';
   const claudePrompt = `USER REQUEST: "${userMessage}"
 
 CODING TASK (from the Mayor):
@@ -1997,6 +2027,7 @@ ${toolPromptArg}
 ${getAppConventions()}
 
 ==== END PLATFORM CONVENTIONS ====
+${specBlock}
 
 A \`CLAUDE.md\` at the repo root, if present, contains **app-specific**
 guidance: product intent, domain terms, opt-in policies, style. Follow
