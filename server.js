@@ -65,6 +65,13 @@ app.get('/api/version', (_req, res) => {
     name: process.env.USERNODE_PROJECT_NAME || 'usernode',
     repoUrl: process.env.USERNODE_REPO_URL || 'https://github.com/Usernode-Labs/social-vibecoding',
     deployProgress: deployStatus.read(),
+    // SELF-HOSTING-PLAN.md Phase 2f / Phase 3: the platform's own slug
+    // in the apps table. Clients use this to recognize self-app
+    // surfaces (e.g. the "Platform updating…" banner cross-checks
+    // sessionStorage state against the live self-app slug). Cheap to
+    // include — already available in config; saves the client a second
+    // round-trip for any code path that needs it.
+    selfAppSlug: config.selfAppSlug,
   });
 });
 

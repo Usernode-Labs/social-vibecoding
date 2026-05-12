@@ -12,6 +12,12 @@ const App = {
   _isRestoring: false,
 
   async init() {
+    // Install fetch wrap and (if we were mid-restart on a previous load)
+    // restore the platform-updating banner state BEFORE any other init
+    // step that might fire a write. See PlatformUpdating below.
+    App.PlatformUpdating.installFetchWrap();
+    App.PlatformUpdating.restoreFromSessionStorage();
+
     try {
       const res = await fetch('/api/auth/me');
       if (!res.ok) {
@@ -34,6 +40,12 @@ const App = {
     // its "deploying" state within seconds of the deploy workflow signaling
     // start, and back to "current" (or "stale") when it finishes. Cheap
     // endpoint — just reads one tiny file off disk on the server.
+    //
+    // While the Phase 3 platform-updating banner is active we kick the
+    // cadence up to 2s (see PlatformUpdating.startFastPolling) so the
+    // banner clears within ~2s of the new container coming up. The slow
+    // interval is the steady-state baseline and remains scheduled
+    // unconditionally.
     setInterval(App.loadVersion, 10_000);
   },
 
@@ -51,6 +63,12 @@ const App = {
       if (!App.loadedPlatformSha && info.sha && info.sha !== 'dev') {
         App.loadedPlatformSha = info.sha;
       }
+      // Phase 3: if we're in the platform-updating window, dismiss the
+      // banner the moment /api/version reports a SHA different from the
+      // one we recorded at trigger time. Independent of WebSocket health
+      // — this is exactly the path that recovers the tab after the WS
+      // dropped during the GHA rolling restart.
+      App.PlatformUpdating.observeVersion(info);
       App.renderPlatformVersionPill(info);
     } catch {}
   },
@@ -139,6 +157,204 @@ const App = {
     return String(s).replace(/[&<>"']/g, (c) => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
     })[c]);
+  },
+
+  // ─────────────────────────────────────────────────────────────────
+  // SELF-HOSTING-PLAN.md Phase 3: "Platform updating…" banner.
+  //
+  // Lifecycle:
+  //   1. server broadcasts vote_update { merging:true, selfHosted:true }
+  //      when a self-app PR transitions promoted → merging.
+  //   2. handleVoteUpdate calls PlatformUpdating.begin(...).
+  //   3. begin() persists { fromSha, since } to sessionStorage, shows
+  //      the banner, kicks the version poll up to 2s, and arms a 5min
+  //      "stuck" timer that swaps the banner to its red+Reload variant.
+  //   4. App.loadVersion calls observeVersion(info) on every poll. As
+  //      soon as info.sha differs from fromSha (and isn't 'dev'),
+  //      end() clears state, hides the banner, and reloads the page —
+  //      the new server may ship new client code, so a hard reload
+  //      avoids version-skew bugs.
+  //   5. The wrapped fetch (installFetchWrap) rejects all non-GET
+  //      requests while the banner is up — this is the actual write
+  //      block; the banner is just the signal. GETs flow through so
+  //      the version poll, auth check, etc. still work.
+  //
+  // Page-load recovery: restoreFromSessionStorage() runs early in
+  // init() so a tab that loaded mid-restart (or was reloaded by the
+  // user) re-renders the banner immediately and re-arms the poll.
+  // ─────────────────────────────────────────────────────────────────
+  PlatformUpdating: {
+    SS_KEY: 'usernode:platform_updating',
+    POLL_FAST_MS: 2000,
+    STUCK_AFTER_MS: 5 * 60 * 1000,
+
+    // Mutable runtime state. Persisted shape (in sessionStorage) is
+    // just { fromSha, since } — the timer ids and DOM refs are
+    // ephemeral and must be re-derived on page load.
+    fromSha: null,
+    since: null,
+    fastPollTimer: null,
+    stuckTimer: null,
+    fetchWrapInstalled: false,
+
+    isActive() {
+      return !!this.fromSha;
+    },
+
+    begin({ appSlug, sessionId } = {}) {
+      // Idempotent: a second begin() (e.g. server resends the merging
+      // event) is a no-op. The fromSha must be captured at first entry
+      // — re-capturing on a duplicate call would defeat the SHA-flip
+      // dismissal if the new container had already booted in between.
+      if (this.isActive()) return;
+      const fromSha = App.loadedPlatformSha || null;
+      this.fromSha = fromSha;
+      this.since = Date.now();
+      try {
+        sessionStorage.setItem(this.SS_KEY, JSON.stringify({
+          fromSha, since: this.since, appSlug: appSlug || null, sessionId: sessionId || null,
+        }));
+      } catch {}
+      this.show(/* stuck */ false);
+      this.startFastPolling();
+      this.armStuckTimer();
+      console.log('[platform-updating] banner armed', { fromSha, appSlug });
+    },
+
+    restoreFromSessionStorage() {
+      let raw = null;
+      try { raw = sessionStorage.getItem(this.SS_KEY); } catch {}
+      if (!raw) return;
+      let parsed = null;
+      try { parsed = JSON.parse(raw); } catch {}
+      if (!parsed || typeof parsed !== 'object') {
+        try { sessionStorage.removeItem(this.SS_KEY); } catch {}
+        return;
+      }
+      this.fromSha = parsed.fromSha || null;
+      this.since = parsed.since || Date.now();
+      const elapsed = Date.now() - this.since;
+      this.show(elapsed >= this.STUCK_AFTER_MS);
+      this.startFastPolling();
+      this.armStuckTimer();
+      console.log('[platform-updating] banner restored from session', { elapsedMs: elapsed });
+    },
+
+    observeVersion(info) {
+      if (!this.isActive()) return;
+      const sha = info && info.sha;
+      // Wait for a real, deploy-pinned SHA different from the one we
+      // captured. 'dev' means GIT_SHA wasn't set on the responding
+      // container — almost certainly a misconfigured rebuild rather
+      // than the legitimate post-restart steady state, so don't
+      // dismiss off it.
+      if (!sha || sha === 'dev' || sha === this.fromSha) return;
+      this.end({ newSha: sha });
+    },
+
+    end({ newSha } = {}) {
+      console.log('[platform-updating] dismissing', { fromSha: this.fromSha, newSha });
+      try { sessionStorage.removeItem(this.SS_KEY); } catch {}
+      this.fromSha = null;
+      this.since = null;
+      this.stopFastPolling();
+      this.disarmStuckTimer();
+      this.hide();
+      // Hard reload: the new server may ship new client code, so
+      // reusing the in-memory App / AppView / Home from the pre-restart
+      // SHA against a freshly-deployed backend is exactly the version-
+      // skew minefield the rest of this codebase tries to avoid (see
+      // the 'stale' pill in renderPlatformVersionPill — same design,
+      // different trigger). loadedPlatformSha is updated by the next
+      // load anyway, so a soft refresh + version-pill flip would also
+      // work, but reload is simpler and unambiguous.
+      try { location.reload(); } catch {}
+    },
+
+    show(stuck) {
+      const el = document.getElementById('platform-updating-banner');
+      if (!el) return;
+      el.classList.remove('hidden');
+      const reload = document.getElementById('platform-updating-reload');
+      const text = document.getElementById('platform-updating-text');
+      const spinner = document.getElementById('platform-updating-spinner');
+      if (stuck) {
+        // Swap to the red "stuck" variant. We swap classes rather than
+        // re-rendering so the animation is uninterrupted if we flip
+        // mid-flight (e.g. on session-storage restore for a tab that's
+        // been backgrounded for >5 min).
+        el.classList.remove('bg-amber-100', 'text-amber-900', 'border-amber-300',
+          'dark:bg-amber-900/40', 'dark:text-amber-100', 'dark:border-amber-800/60');
+        el.classList.add('bg-red-100', 'text-red-900', 'border-red-300',
+          'dark:bg-red-900/40', 'dark:text-red-100', 'dark:border-red-800/60');
+        if (text) text.textContent = 'Platform update is taking longer than expected. You can reload manually.';
+        if (spinner) spinner.classList.add('hidden');
+        if (reload) reload.classList.remove('hidden');
+      } else {
+        el.classList.add('bg-amber-100', 'text-amber-900', 'border-amber-300',
+          'dark:bg-amber-900/40', 'dark:text-amber-100', 'dark:border-amber-800/60');
+        el.classList.remove('bg-red-100', 'text-red-900', 'border-red-300',
+          'dark:bg-red-900/40', 'dark:text-red-100', 'dark:border-red-800/60');
+        if (text) text.textContent = 'Platform updating… sit tight, write actions are paused.';
+        if (spinner) spinner.classList.remove('hidden');
+        if (reload) reload.classList.add('hidden');
+      }
+    },
+
+    hide() {
+      const el = document.getElementById('platform-updating-banner');
+      if (el) el.classList.add('hidden');
+    },
+
+    startFastPolling() {
+      if (this.fastPollTimer != null) return;
+      this.fastPollTimer = setInterval(() => App.loadVersion(), this.POLL_FAST_MS);
+    },
+
+    stopFastPolling() {
+      if (this.fastPollTimer != null) {
+        clearInterval(this.fastPollTimer);
+        this.fastPollTimer = null;
+      }
+    },
+
+    armStuckTimer() {
+      this.disarmStuckTimer();
+      const remaining = Math.max(0, this.STUCK_AFTER_MS - (Date.now() - this.since));
+      this.stuckTimer = setTimeout(() => {
+        if (this.isActive()) this.show(/* stuck */ true);
+      }, remaining);
+    },
+
+    disarmStuckTimer() {
+      if (this.stuckTimer != null) {
+        clearTimeout(this.stuckTimer);
+        this.stuckTimer = null;
+      }
+    },
+
+    // Wraps window.fetch to reject any non-GET (write) request while
+    // the banner is up. This is the actual block — the banner itself
+    // is purely a signal. GETs flow through unchanged so /api/version
+    // polling, the global events WS reconnect path, and any other
+    // read-only chrome can keep running.
+    //
+    // Idempotent: only installs once even if init() runs twice
+    // (defensive — DOMContentLoaded should fire exactly once but we
+    // don't want to double-wrap if a future flow triggers re-init).
+    installFetchWrap() {
+      if (this.fetchWrapInstalled) return;
+      this.fetchWrapInstalled = true;
+      const orig = window.fetch.bind(window);
+      const self = this;
+      window.fetch = function (resource, init) {
+        const method = (init && init.method ? String(init.method) : 'GET').toUpperCase();
+        if (self.isActive() && method !== 'GET' && method !== 'HEAD') {
+          return Promise.reject(new Error('Platform is updating — write actions paused. Try again in a few seconds.'));
+        }
+        return orig(resource, init);
+      };
+    },
   },
 
   // Per-app redeploy WS handler. Flips affected pills into / out of
@@ -440,6 +656,17 @@ const App = {
   },
 
   handleVoteUpdate(data) {
+    // Phase 3 trigger: when a self-hosted PR transitions promoted →
+    // merging, latch the "Platform updating…" banner. The dismissal
+    // (SHA flip on /api/version) happens via App.loadVersion's poll
+    // loop. Fires before the panel refresh so all open tabs (including
+    // ones not currently looking at this app) latch into the state.
+    if (data.merging && data.selfHosted) {
+      App.PlatformUpdating.begin({
+        appSlug: data.appSlug,
+        sessionId: data.sessionId,
+      });
+    }
     // Refresh vote panel if we're on group chat for this app
     if (App.currentApp === data.appSlug && App.currentTab === 'group-chat') {
       AppView.loadVotePanel(data.appSlug);

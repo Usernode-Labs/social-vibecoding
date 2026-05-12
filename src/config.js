@@ -71,6 +71,22 @@ function load() {
     platformRepoUrl: (process.env.USERNODE_PLATFORM_REPO || 'https://github.com/Usernode-Labs/social-vibecoding').replace(/\/$/, ''),
     selfAppSlug: SELF_APP_SLUG,
     selfAppDbName: SELF_APP_DB_NAME,
+    // SELF-HOSTING-PLAN.md Phase 4: in-app vote-to-merge for the self-
+    // app. OFF by default — today only admins can see and vote on the
+    // platform's own PRs (the Phase 2j visibility filter), and the
+    // human admin merges on GitHub. Flipping this to true relaxes
+    // *only* the visibility gate — non-admins can then see the self-
+    // app row, list its promoted PRs, and cast votes via the existing
+    // PR voting UI (which has no admin gate). All the other self-
+    // hosting protections (2g rebuild skip, 2h secrets read-only-write-
+    // protection, 2i Mayor refuse-list, 2k import block) stay in
+    // place; this flag is purely about audience.
+    //
+    // Intentionally not wired through deploy.yml's heredoc yet —
+    // landing this disabled lets the code ship and bake while shadow
+    // mode runs. To enable later: append `SELF_APP_PUBLIC_VOTING=true`
+    // to .env (or to the deploy heredoc) and redeploy.
+    selfAppPublicVoting: process.env.SELF_APP_PUBLIC_VOTING === 'true',
   };
 
   console.log('[config] Loaded:');
@@ -84,6 +100,7 @@ function load() {
   console.log(`  NODE_RPC_URL=${config.nodeRpcUrl}`);
   console.log(`  USERNODE_PLATFORM_REPO=${config.platformRepoUrl}`);
   console.log(`  SELF_APP_SLUG=${config.selfAppSlug} (db=${config.selfAppDbName})`);
+  console.log(`  SELF_APP_PUBLIC_VOTING=${config.selfAppPublicVoting} (Phase 4: ${config.selfAppPublicVoting ? 'enabled — non-admins can see + vote on self-app PRs' : 'disabled — self-app is admin-only'})`);
 
   return config;
 }

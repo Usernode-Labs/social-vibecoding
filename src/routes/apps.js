@@ -103,7 +103,11 @@ function appRoutes(config) {
       // to GET /api/apps/:slug below — a non-admin requesting the slug
       // directly gets a 404, not a 403, so the row's existence isn't
       // disclosed.
-      const showSelfHosted = !!req.user?.isAdmin;
+      //
+      // Phase 4 (SELF_APP_PUBLIC_VOTING): when the flag is on, non-
+      // admins also see the self-app row so they can vote on its PRs
+      // through the existing voting UI. Off by default; flip via env.
+      const showSelfHosted = !!req.user?.isAdmin || !!config.selfAppPublicVoting;
       // The active_users join mirrors src/services/active-users.js's
       // sticky 10-day rule: a user counts iff they ever spent >= 60s
       // on this app on a single day AND have visited within the last
@@ -362,7 +366,10 @@ function appRoutes(config) {
       const appRow = rows[0];
       // SELF-HOSTING-PLAN.md sub-step 2j: 404 self-hosted rows for
       // non-admins (don't disclose existence via the slug path either).
-      if (appRow.self_hosted && !req.user?.isAdmin) {
+      // Phase 4: SELF_APP_PUBLIC_VOTING relaxes this for non-admin
+      // viewing/voting; falls back to admin-only when the flag is off
+      // (today's default).
+      if (appRow.self_hosted && !req.user?.isAdmin && !config.selfAppPublicVoting) {
         return res.status(404).json({ error: 'App not found' });
       }
       let url = null;
@@ -451,7 +458,17 @@ function appRoutes(config) {
       // SELF-HOSTING-PLAN.md sub-step 2j: 404 self-hosted secrets to
       // non-admins as well; otherwise the listing reveals declared
       // secret keys for the platform itself.
-      if (app.self_hosted && !req.user?.isAdmin) {
+      //
+      // Phase 4 (SELF_APP_PUBLIC_VOTING): when the flag is on, expose
+      // the read-only secrets view to all users. Only the metadata
+      // (key, description, required, hasValue) is returned — actual
+      // values are never read from app_secrets for the self-app
+      // (process.env is the source of truth, see below) and
+      // valueLast4 stays null in this branch, so this is metadata-
+      // only disclosure consistent with "open-source-by-live-dev-
+      // chat" transparency. The write protection (refuseIfSelfHosted
+      // on POST/PUT/DELETE) is unchanged.
+      if (app.self_hosted && !req.user?.isAdmin && !config.selfAppPublicVoting) {
         return res.status(404).json({ error: 'App not found' });
       }
       const manifest = app.manifest_snapshot && typeof app.manifest_snapshot === 'object'

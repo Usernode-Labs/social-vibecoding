@@ -577,11 +577,7 @@ Same guard on the `verify-access` route at
 case) into the import modal produces the explanatory error in
 both the Check and Submit paths.
 
-## Phase 3 — Platform-updating banner (optional; observe first)
-
-After Phase 2 lands and one or two real self-app deploys have
-happened, decide whether the no-banner UX is actually painful.
-Probably is. If yes:
+## Phase 3 — Platform-updating banner (shipped)
 
 **Goal:** clients display "Platform updating…" during a
 self-app rolling restart instead of seeing dropped WebSockets and
@@ -592,34 +588,86 @@ a blank screen.
 `app_version_changed` may never reach the original tab — the new
 server raises it but the tab has reconnected past it.
 
-**Implementation:** client persists "expecting platform restart"
-in `sessionStorage` when it sees the *pre-merge*
-`vote_update { merging: true }` event ([votes.js#L286](./src/routes/votes.js))
-for the self-app. Drops the banner only after `/api/version`
-returns a different SHA than it last saw.
+**Implementation:** the *pre-merge* `vote_update` broadcast in
+[votes.js](./src/routes/votes.js) now carries
+`{ merging: true, selfHosted: <bool> }`. When the client sees
+`merging:true && selfHosted:true` it persists
+`{ fromSha, since }` to `sessionStorage` and renders the banner.
+[public/js/app.js](./public/js/app.js) `App.PlatformUpdating`
+owns the state machine:
+- bumps `/api/version` polling to 2s while the banner is up
+- wraps `window.fetch` to reject all non-`GET`/`HEAD` requests
+  while active (the banner is the signal; this is the actual
+  write block — block-writes-only per the choice in this plan's
+  earlier draft)
+- swaps to a red "stuck — manual reload" variant after 5 min
+- on every poll, dismisses + hard-reloads as soon as
+  `/api/version` returns a SHA different from `fromSha` (and not
+  `'dev'`)
+- `restoreFromSessionStorage()` runs early in `init()` so a
+  page load mid-restart re-renders the banner immediately —
+  the WS-drop case the wrinkle calls out
 
-`/api/version` already exists (see
-[src/services/app-version.js](./src/services/app-version.js))
-and reads from `apps.main_sha`. The seed in 2f keeps that in
-sync with the running build.
+`/api/version` also now exposes `selfAppSlug` for any future UI
+surface that needs to recognize the platform's own row without
+guessing. The banner lifecycle itself uses the WS payload's
+`selfHosted` boolean rather than slug-matching.
 
-**Acceptance:** during a self-app deploy, all open tabs render
-a banner from the moment the merge completes through the moment
-`/api/version` reports the new SHA, with input fields disabled
-in between.
+**Acceptance (verified at deploy):** during a self-app PR merge,
+all open tabs render the amber banner from the moment the merge
+starts through the new container becoming reachable; non-`GET`
+fetches are rejected with a friendly error in between; tabs
+reloaded mid-restart re-render the banner from `sessionStorage`.
 
-**Cost:** ~50 lines client-side, no server changes.
+**Cost (actual):** ~190 lines client-side
+(`public/js/app.js`), 1 line server-side
+(`src/routes/votes.js`), 1 field on `/api/version`, 1 banner
+element in `public/index.html`.
 
-## Phase 4 — In-app vote-to-merge for the self-app (deferred)
+## Phase 4 — In-app vote-to-merge for the self-app (code shipped, gated off)
 
-Out of scope for shadow-mode MVP. Today, admin manually merges
-the self-app PR on GitHub.
+Today, admin manually merges the self-app PR on GitHub. The
+"who can vote on the platform's own PRs" question is gated by a
+single config flag:
 
-When ready: lift the admin-merge requirement, allow the existing
-PR voting UI on the self-app row. This requires a real
-permission model (the SELF-HOSTING.md doc's "open-source-by-
-live-dev-chat (future)" gate). Defer until shadow mode has run
-for a few weeks without incident.
+`SELF_APP_PUBLIC_VOTING` (env) → `config.selfAppPublicVoting`
+in [src/config.js](./src/config.js). **Default: `false`**.
+
+When `false` (today): the Phase 2j visibility filter applies —
+non-admins don't see the self-app row in `/api/apps`, get 404 on
+`/api/apps/<self-slug>` and `/api/apps/<self-slug>/secrets`.
+
+When `true`: the visibility filter is relaxed at all three
+sites. Non-admins can:
+- see the self-app row in the home grid
+- load its app view, group chat, dev chat
+- list its promoted PRs and cast votes via the existing PR
+  voting UI (which has no admin gate, so once visibility is
+  granted, voting works)
+- view the read-only secrets metadata (key + description +
+  required + `hasValue`; values are never returned, write
+  protection unchanged via `refuseIfSelfHosted`)
+
+What stays locked even when the flag is on (intentional — this
+flag is purely about audience, not about disabling self-hosting
+guards):
+- 2g — `createApp` / `rebuildProduction` skip; GHA still drives
+  the deploy
+- 2h — secrets writes refused (read-only metadata only)
+- 2i — Mayor refuse-list still appended to self-app sessions
+- 2k — `USERNODE_PLATFORM_REPO` import still blocked
+
+**To enable:** append `SELF_APP_PUBLIC_VOTING=true` to `.env`
+(or to the deploy heredoc in [.github/workflows/deploy.yml](./.github/workflows/deploy.yml))
+and redeploy. No code change needed.
+
+**Recommended sequence before flipping on:** run shadow mode for
+a few weeks, confirm Phase 3 banner UX holds up across multiple
+real self-app deploys, then flip the flag. The
+SELF-HOSTING.md doc's "open-source-by-live-dev-chat (future)"
+gate is the broader permission-model question — flipping this
+flag is the mechanical knob; "should we" is the deeper
+question that this plan doesn't answer.
 
 ## Sequencing summary
 

@@ -104,6 +104,30 @@
     </div>
   </header>
 
+  <!-- SELF-HOSTING-PLAN.md Phase 3: "Platform updating…" banner.
+       Hidden by default; shown by App.beginPlatformUpdating() when a
+       vote_update with `merging:true` + `selfHosted:true` arrives over
+       WS, and dismissed by App.endPlatformUpdating() once /api/version
+       reports a SHA different from the one we recorded at start.
+
+       Two visual states: in-flight (default amber) and stuck (red) —
+       the latter swaps in after PLATFORM_UPDATE_TIMEOUT_MS so a botched
+       deploy doesn't trap the tab forever.
+
+       The banner only signals; the actual write-blocking happens in
+       App's wrapped fetch() (rejects non-GET while the flag is up).
+       Read-only browsing keeps working. -->
+  <div id="platform-updating-banner" class="hidden shrink-0 px-4 py-2 text-sm font-medium border-b
+              bg-amber-100 text-amber-900 border-amber-300
+              dark:bg-amber-900/40 dark:text-amber-100 dark:border-amber-800/60
+              flex items-center justify-center gap-3" role="status" aria-live="polite">
+    <span id="platform-updating-spinner" class="inline-block w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin" aria-hidden="true"></span>
+    <span id="platform-updating-text">Platform updating&hellip; sit tight, write actions are paused.</span>
+    <button id="platform-updating-reload" type="button"
+            class="hidden ml-2 px-2 py-0.5 rounded border border-current text-xs font-semibold hover:bg-current/10"
+            onclick="location.reload()">Reload</button>
+  </div>
+
   <!-- Home screen: app list. Rendered as a responsive grid of tiles
        — see Home.renderAppCard. The "Create new app" container that
        Home.load() appends after the tiles uses `col-span-full` so it

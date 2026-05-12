@@ -81,7 +81,8 @@ function voteRoutes(config) {
       // only *do* anything with the vote (chat message, merge check) if
       // it actually changed; see below.
       const { rows: sessionRows } = await pool.query(
-        `SELECT cs.*, a.slug as app_slug, a.id as app_id, a.repo_url
+        `SELECT cs.*, a.slug as app_slug, a.id as app_id, a.repo_url,
+                a.self_hosted as app_self_hosted
          FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
          WHERE cs.id = $1 AND cs.status IN ('promoted', 'merging')`,
         [req.params.id]
@@ -282,8 +283,23 @@ async function checkAndMerge(config, pool, session) {
   // state (30s+ on the majority path). `merged:false` here means "still
   // in flight"; the final `merged:true` broadcast fires below after the
   // GitHub merge + prod rebuild + staging teardown finish.
+  //
+  // SELF-HOSTING-PLAN.md Phase 3: `selfHosted` rides along so clients
+  // can latch into the "platform updating…" banner state at the moment
+  // the merge starts. We can't rely on the post-merge
+  // `app_version_changed` event for self-hosted apps because the GHA
+  // rolling restart that follows drops the WebSocket — clients persist
+  // the banner in sessionStorage on this event and dismiss it once
+  // /api/version reports a different SHA. See public/js/app.js
+  // (handleVoteUpdate / beginPlatformUpdating).
   const { pushVoteUpdate } = require('../services/ws');
-  pushVoteUpdate({ sessionId: session.id, appSlug: session.app_slug, merged: false, merging: true });
+  pushVoteUpdate({
+    sessionId: session.id,
+    appSlug: session.app_slug,
+    merged: false,
+    merging: true,
+    selfHosted: !!session.app_self_hosted,
+  });
 
   log.info('votes', 'Majority reached, merging', { sessionId: session.id, yesCount, needed: majority });
 
