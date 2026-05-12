@@ -13,6 +13,17 @@ async function createApp(config, appRow) {
   const pool = getPool(config);
   const { id: appId, name, slug } = appRow;
 
+  // SELF-HOSTING-PLAN.md sub-step 2g (Guard A): the platform's own app
+  // row is seeded at boot with status='running' pointing at the harness
+  // container. There's nothing to create — no DB to spin up, no repo to
+  // clone, no container to start. Returning early avoids the rest of
+  // this function trying to clobber state that's already correct.
+  if (appRow.self_hosted) {
+    log.info('app-creator', 'Skipping create for self-hosted app',
+             { appId, slug });
+    return;
+  }
+
   try {
     log.info('app-creator', 'Starting app creation', { appId, slug });
 

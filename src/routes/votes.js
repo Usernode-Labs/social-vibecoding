@@ -301,20 +301,37 @@ async function checkAndMerge(config, pool, session) {
     const app = appRows[0];
 
     if (app) {
-      const { containerId, sha } = await staging.rebuildProduction(config, app);
-      // Also record the SHA + originating PR so the main app view can
-      // show "live on <sha> · PR #<n>" (#21). pr_number comes from the
-      // session we just merged; sha is what `rebuildProduction` cloned.
-      await pool.query(
-        `UPDATE apps SET container_id = $1, main_sha = $2, main_pr_number = $3,
-                         last_deploy_at = NOW()
-         WHERE id = $4`,
-        [containerId, sha || null, session.pr_number || null, app.id]
-      );
+      let sha = null;
+      // SELF-HOSTING-PLAN.md sub-step 2g (Guard B): for the self-app,
+      // there's no platform-managed prod container to rebuild — the
+      // GitHub Actions deploy workflow rolls the harness when the merge
+      // lands on main. Skip rebuildProduction entirely, but keep the
+      // app_version_changed broadcast firing so Phase 3's banner has its
+      // hook. main_sha is refreshed by seedSelfApp() on the next boot,
+      // which clients pick up via /api/version.
+      if (!app.self_hosted) {
+        const result = await staging.rebuildProduction(config, app);
+        sha = result.sha;
+        // Also record the SHA + originating PR so the main app view can
+        // show "live on <sha> · PR #<n>" (#21). pr_number comes from the
+        // session we just merged; sha is what `rebuildProduction` cloned.
+        await pool.query(
+          `UPDATE apps SET container_id = $1, main_sha = $2, main_pr_number = $3,
+                           last_deploy_at = NOW()
+           WHERE id = $4`,
+          [result.containerId, sha || null, session.pr_number || null, app.id]
+        );
+      } else {
+        log.info('votes', 'Self-app PR merged; GitHub Actions auto-deploy will roll', {
+          appId: app.id, prNumber: session.pr_number,
+        });
+      }
       // Let every tab watching this app refresh its commit pill without
       // polling. The existing vote_update event already fires on merge
       // but is scoped to vote panel refreshes; a dedicated event keeps
-      // the concerns separated and avoids over-broadcasting.
+      // the concerns separated and avoids over-broadcasting. Fires for
+      // self-hosted too (sha=null) so the future banner can detect
+      // "platform updating" without a sha to anchor to.
       try {
         const { broadcastGlobal } = require('../services/ws');
         broadcastGlobal({

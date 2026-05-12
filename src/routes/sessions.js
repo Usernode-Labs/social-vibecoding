@@ -13,7 +13,7 @@ const worker = require('../services/worker');
 const workerProgress = require('../services/worker-progress');
 const sessionBus = require('../services/session-bus');
 const { drainGuard } = require('../services/lifecycle');
-const { getAppConventions } = require('../services/prompts');
+const { getAppConventions, getSelfHostedRefuseList } = require('../services/prompts');
 
 // Track sessions with active Claude Code workers
 const activeWorkers = new Set();
@@ -444,7 +444,8 @@ function sessionRoutes(config) {
 
     try {
       const { rows: sessionRows } = await pool.query(
-        `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
+        `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url,
+                a.self_hosted as app_self_hosted
          FROM chat_sessions cs
          JOIN apps a ON cs.app_id = a.id
          WHERE cs.id = $1 AND cs.user_id = $2
@@ -604,7 +605,7 @@ function sessionRoutes(config) {
         // regenerating from scratch. Re-read before phase-2 below in
         // case the tool we're about to run mutated it.
         let currentSpec = await loadSessionSpec(pool, session.id);
-        let mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec);
+        let mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted);
         const messages = buildMayorMessages(history);
 
         if (!llm.isEnabled()) {
@@ -888,7 +889,7 @@ function sessionRoutes(config) {
         // wrap-up turn should describe the doc as it is now (not as it
         // was at the start of phase-1).
         currentSpec = await loadSessionSpec(pool, session.id);
-        mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec);
+        mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted);
         const mayor2 = await llm.streamChat({
           messages: followUpMessages,
           systemPrompt: mayorPrompt,
@@ -2304,7 +2305,7 @@ INSTRUCTIONS:
   return { toolResultText, ccLog, stagingUrl, isError, commitSha: commitHash || null };
 }
 
-function getMayorSystemPrompt(appName, isWorkerBusy, currentSpec) {
+function getMayorSystemPrompt(appName, isWorkerBusy, currentSpec, selfHosted) {
   // The spec-edit tool name shown to the model depends on whether a
   // spec already exists: write_spec when the doc is empty (no anchor
   // to edit against), edit_spec once it has content (anchored
@@ -2402,7 +2403,7 @@ Some assistant turns in this conversation contain "[CODING AGENT COMPLETED]:" �
 
 You MUST NOT, under any circumstances:
 - Write the literal string "[CODING AGENT COMPLETED]" in your reply. That marker is reserved for the harness; emitting it yourself fakes a coding-agent run that never happened.
-- Paraphrase a past summary as a substitute for dispatching a new run. If the user reports a bug, regression, or "still not quite right" — even if a previous run targeted the same area — that is a NEW change request and you MUST call dispatch_claude_code (assuming the tool is available per STATUS). Past summaries are read-only history; they cannot fix new bugs.${toolNote}${conventionsBlock}${specBlock}`;
+- Paraphrase a past summary as a substitute for dispatching a new run. If the user reports a bug, regression, or "still not quite right" — even if a previous run targeted the same area — that is a NEW change request and you MUST call dispatch_claude_code (assuming the tool is available per STATUS). Past summaries are read-only history; they cannot fix new bugs.${toolNote}${conventionsBlock}${selfHosted ? getSelfHostedRefuseList() : ''}${specBlock}`;
 }
 
 async function getFilesFromContainer(appSlug) {

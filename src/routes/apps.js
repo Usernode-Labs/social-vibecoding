@@ -20,6 +20,37 @@ const { appCreateLimiter } = require('../middleware/rate-limits');
 // USERNODE_LOCAL_DEV=1 in your local .env to get the localhost fallback.
 const IS_LOCAL_DEV = process.env.NODE_ENV === 'development' || process.env.USERNODE_LOCAL_DEV === '1';
 
+// SELF-HOSTING-PLAN.md sub-step 2k: helper for the import-flow guards.
+// Compares a parsed {owner, repo} against config.platformRepoUrl,
+// case-insensitively. Returns false on any malformed input — the caller
+// has already validated the parse, so this only fires the guard for
+// genuine platform-repo URLs.
+function isPlatformRepo(parsed, config) {
+  if (!parsed || !parsed.owner || !parsed.repo) return false;
+  if (!config.platformRepoUrl) return false;
+  const platform = github.parseGithubUrl(config.platformRepoUrl);
+  if (!platform) return false;
+  return parsed.owner.toLowerCase() === platform.owner.toLowerCase()
+      && parsed.repo.toLowerCase() === platform.repo.toLowerCase();
+}
+
+// SELF-HOSTING-PLAN.md sub-step 2h: the platform reads its own env from
+// .env (written by deploy.yml from GitHub Actions secrets), not from
+// app_secrets. A POST/PUT/DELETE here would persist into the table but
+// have zero runtime effect, which is silent-broken UX. Refuse them with
+// an explanatory 403 so the only visible path matches reality. Same
+// rationale applies to /redeploy and /check-updates: the platform's
+// deploy is GHA-driven, not staging.rebuildProduction-driven.
+function refuseIfSelfHosted(app, res, action) {
+  if (!app || !app.self_hosted) return false;
+  res.status(403).json({
+    error: action === 'secret'
+      ? 'The Usernode platform reads its env from .env written by GitHub Actions; storing values here would have no effect. Edit secrets via the repository\'s Actions secrets settings.'
+      : 'The Usernode platform deploys via GitHub Actions; this action does not apply to the self-app row.',
+  });
+  return true;
+}
+
 // If app creation hasn't reached `running` within this window, a watchdog
 // flips the row to `error` so the home screen stops showing "Spinning up..."
 // and the creator can retry.
@@ -66,6 +97,13 @@ function appRoutes(config) {
   router.get('/api/apps', async (req, res) => {
     try {
       const appDeployStatus = require('../services/app-deploy-status');
+      // SELF-HOSTING-PLAN.md sub-step 2j: hide self_hosted rows from
+      // non-admin listings. Admins see them so they can reach the
+      // self-app's settings, dev-chat, etc. The same filter is applied
+      // to GET /api/apps/:slug below — a non-admin requesting the slug
+      // directly gets a 404, not a 403, so the row's existence isn't
+      // disclosed.
+      const showSelfHosted = !!req.user?.isAdmin;
       // The active_users join mirrors src/services/active-users.js's
       // sticky 10-day rule: a user counts iff they ever spent >= 60s
       // on this app on a single day AND have visited within the last
@@ -102,8 +140,9 @@ function appRoutes(config) {
             )
           GROUP BY a1.app_id
         ) au ON au.app_id = a.id
+        WHERE NOT a.self_hosted OR $1::boolean
         ORDER BY (COALESCE(msg_counts.cnt, 0) + COALESCE(activity.total_seconds, 0)) DESC, a.created_at DESC
-      `);
+      `, [showSelfHosted]);
 
       const apps = await Promise.all(rows.map(async (a) => {
         // Per-app missing-required-secrets list. Cheap (one extra query
@@ -191,6 +230,15 @@ function appRoutes(config) {
   router.get('/api/github/verify-access', async (req, res) => {
     const parsed = github.parseGithubUrl(req.query.url || '');
     if (!parsed) return res.status(400).json({ error: 'Repo URL must look like https://github.com/<owner>/<repo>' });
+    // SELF-HOSTING-PLAN.md sub-step 2k: refuse to import the platform's
+    // own repo as a child app. The self-app row already exists; importing
+    // a sibling would just produce a confused / broken app row sharing
+    // the same code.
+    if (isPlatformRepo(parsed, config)) {
+      return res.status(409).json({
+        error: 'This is the platform repo. The self-app already exists; importing it as a child would create a sibling instance.',
+      });
+    }
     const verify = await github.verifyBotAccess(parsed.owner, parsed.repo);
     if (!verify.ok) return res.status(verify.status).json({ error: verify.message, code: verify.code });
     res.json({
@@ -219,6 +267,14 @@ function appRoutes(config) {
       const parsed = github.parseGithubUrl(repoUrl);
       if (!parsed) {
         return res.status(400).json({ error: 'Repo URL must look like https://github.com/<owner>/<repo>' });
+      }
+      // SELF-HOSTING-PLAN.md sub-step 2k: same guard as
+      // /api/github/verify-access, but on the submit path so a client
+      // that skipped Check (or a script POSTing directly) can't bypass.
+      if (isPlatformRepo(parsed, config)) {
+        return res.status(409).json({
+          error: 'This is the platform repo. The self-app already exists; importing it as a child would create a sibling instance.',
+        });
       }
       const verify = await github.verifyBotAccess(parsed.owner, parsed.repo);
       if (!verify.ok) {
@@ -304,6 +360,11 @@ function appRoutes(config) {
       }
 
       const appRow = rows[0];
+      // SELF-HOSTING-PLAN.md sub-step 2j: 404 self-hosted rows for
+      // non-admins (don't disclose existence via the slug path either).
+      if (appRow.self_hosted && !req.user?.isAdmin) {
+        return res.status(404).json({ error: 'App not found' });
+      }
       let url = null;
       if (appRow.status === 'running') {
         if (IS_LOCAL_DEV) {
@@ -382,16 +443,47 @@ function appRoutes(config) {
   router.get('/api/apps/:slug/secrets', async (req, res) => {
     try {
       const { rows } = await pool.query(
-        'SELECT id, slug, manifest_snapshot FROM apps WHERE slug = $1',
+        'SELECT id, slug, manifest_snapshot, self_hosted FROM apps WHERE slug = $1',
         [req.params.slug]
       );
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
       const app = rows[0];
+      // SELF-HOSTING-PLAN.md sub-step 2j: 404 self-hosted secrets to
+      // non-admins as well; otherwise the listing reveals declared
+      // secret keys for the platform itself.
+      if (app.self_hosted && !req.user?.isAdmin) {
+        return res.status(404).json({ error: 'App not found' });
+      }
       const manifest = app.manifest_snapshot && typeof app.manifest_snapshot === 'object'
         ? app.manifest_snapshot
         : { secrets: [] };
-      const view = await appSecrets.getRedactedView(pool, app.id, manifest);
-      res.json({ secrets: view, manifestKnown: !!app.manifest_snapshot });
+      // SELF-HOSTING-PLAN.md sub-step 2h: for the self-app, hasValue
+      // mirrors the GitHub-Actions-configured reality (process.env)
+      // rather than app_secrets, since the platform never reads
+      // app_secrets for its own keys. Orphans don't apply (nothing is
+      // ever stored). valueLast4 is null because the platform process
+      // can't safely surface its own env values via an API.
+      let view;
+      if (app.self_hosted) {
+        view = manifest.secrets.map((entry) => ({
+          key: entry.key,
+          description: entry.description,
+          required: entry.required,
+          sensitive: entry.sensitive,
+          default: entry.default,
+          hasValue: !!process.env[entry.key],
+          valueLast4: null,
+          updatedAt: null,
+          orphan: false,
+        }));
+      } else {
+        view = await appSecrets.getRedactedView(pool, app.id, manifest);
+      }
+      res.json({
+        secrets: view,
+        manifestKnown: !!app.manifest_snapshot,
+        readOnly: !!app.self_hosted,
+      });
     } catch (err) {
       log.error('apps', 'Failed to list secrets', { slug: req.params.slug, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -405,11 +497,12 @@ function appRoutes(config) {
 
     try {
       const { rows } = await pool.query(
-        'SELECT id, manifest_snapshot FROM apps WHERE slug = $1',
+        'SELECT id, manifest_snapshot, self_hosted FROM apps WHERE slug = $1',
         [req.params.slug]
       );
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
       const app = rows[0];
+      if (refuseIfSelfHosted(app, res, 'secret')) return;
       const manifest = app.manifest_snapshot && typeof app.manifest_snapshot === 'object'
         ? app.manifest_snapshot
         : { secrets: [] };
@@ -446,8 +539,9 @@ function appRoutes(config) {
   router.delete('/api/apps/:slug/secrets/:key', drainGuard, async (req, res) => {
     if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin access required' });
     try {
-      const { rows } = await pool.query('SELECT id FROM apps WHERE slug = $1', [req.params.slug]);
+      const { rows } = await pool.query('SELECT id, self_hosted FROM apps WHERE slug = $1', [req.params.slug]);
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
+      if (refuseIfSelfHosted(rows[0], res, 'secret')) return;
       await appSecrets.deleteValue(pool, rows[0].id, req.params.key);
       log.info('apps', 'Secret deleted (admin direct)', {
         slug: req.params.slug, key: req.params.key, userId: req.user.id,
@@ -472,6 +566,7 @@ function appRoutes(config) {
       const { rows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
       const app = rows[0];
+      if (refuseIfSelfHosted(app, res, 'rebuild')) return;
       if (!app.repo_url) {
         return res.status(400).json({ error: 'This app is not backed by a GitHub repo' });
       }
@@ -505,11 +600,12 @@ function appRoutes(config) {
     if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin access required' });
     try {
       const { rows } = await pool.query(
-        'SELECT id, slug, repo_url, main_sha FROM apps WHERE slug = $1',
+        'SELECT id, slug, repo_url, main_sha, self_hosted FROM apps WHERE slug = $1',
         [req.params.slug]
       );
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
       const app = rows[0];
+      if (refuseIfSelfHosted(app, res, 'rebuild')) return;
       if (!app.repo_url) {
         return res.status(400).json({ error: 'This app is not backed by a GitHub repo' });
       }
