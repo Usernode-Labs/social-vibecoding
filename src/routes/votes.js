@@ -284,7 +284,7 @@ async function checkAndMerge(config, pool, session) {
   // in flight"; the final `merged:true` broadcast fires below after the
   // GitHub merge + prod rebuild + staging teardown finish.
   //
-  // SELF-HOSTING-PLAN.md Phase 3: `selfHosted` rides along so clients
+  // SELF-HOSTING.md Phase 3: `selfHosted` rides along so clients
   // can latch into the "platform updating…" banner state at the moment
   // the merge starts. We can't rely on the post-merge
   // `app_version_changed` event for self-hosted apps because the GHA
@@ -318,7 +318,7 @@ async function checkAndMerge(config, pool, session) {
 
     if (app) {
       let sha = null;
-      // SELF-HOSTING-PLAN.md sub-step 2g (Guard B): for the self-app,
+      // SELF-HOSTING.md sub-step 2g (Guard B): for the self-app,
       // there's no platform-managed prod container to rebuild — the
       // GitHub Actions deploy workflow rolls the harness when the merge
       // lands on main. Skip rebuildProduction entirely, but keep the

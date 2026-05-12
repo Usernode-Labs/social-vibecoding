@@ -33,6 +33,35 @@
       "required": true,
       "sensitive": true,
       "description": "Bootstrap admin password. Hashed at first boot — rotating only takes effect on a fresh DB or via direct SQL update."
+    },
+    {
+      "key": "JWT_SECRET",
+      "required": true,
+      "sensitive": true,
+      "description": "Signing key for session JWTs and the iframe-issued tokens child apps verify (see app-conventions.md). Required at boot — config.js refuses to start without it. Rotating invalidates every active session."
+    },
+    {
+      "key": "SESSION_SECRET",
+      "required": true,
+      "sensitive": true,
+      "description": "Cookie-signing secret for express-session. Required at boot. Rotating invalidates every active session cookie."
+    },
+    {
+      "key": "USERNODE_DB_PASSWORD",
+      "required": true,
+      "sensitive": true,
+      "description": "Postgres superuser password the platform connects with. Used by docker-compose.yml to seed the postgres container, by db-manager.js to spawn per-app databases, and baked into DATABASE_URL for the platform itself. Rotating means rolling the postgres container too."
+    },
+    {
+      "key": "USERNODE_APP_PUBKEY",
+      "required": false,
+      "description": "Platform's on-chain wallet public key for the Usernode social-vibecoding linking flow (chain-poller + auth wallet-link in routes/auth.js). When unset, wallet-linking is gracefully disabled — the platform still works without it."
+    },
+    {
+      "key": "USERNODE_APP_SECRET_KEY",
+      "required": false,
+      "sensitive": true,
+      "description": "Private counterpart to USERNODE_APP_PUBKEY. Pre-staged in deploy.yml so any future platform-originated wallet-send flow can use it without a redeploy — currently no runtime consumer reads it. Always set together with USERNODE_APP_PUBKEY."
     }
   ]
 }

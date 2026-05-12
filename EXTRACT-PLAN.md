@@ -210,8 +210,9 @@ the loop.
 
 ## Cross-reference
 
-The `SELF-HOSTING.md` document describes registering Usernode as an
-app inside itself. That depends on this extraction being done through
-at least Phase 2 (ideally Phase 4), because "edit this app" means
-"edit a GitHub repo," and today's repo contains three other unrelated
-projects.
+The [SELF-HOSTING.md](./SELF-HOSTING.md) document is the operational
+reference for the now-shipped self-app — Usernode registered as an
+app inside itself. That work depended on this extraction being done
+through at least Phase 2 (ideally Phase 4), because "edit this app"
+means "edit a GitHub repo," and the original monorepo contained
+three other unrelated projects.

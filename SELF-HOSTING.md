@@ -1,285 +1,770 @@
 # Self-hosting Usernode inside itself
 
-Design notes for registering Usernode as an app *inside itself*, so
-users (admin-gated initially) can propose and merge edits to the
-harness via the harness's own dev-chat / Mayor / Claude Code flow.
+Operational reference for the shipped self-hosting setup. The
+self-app is the row in `apps` whose container *is* the running
+platform — `self_hosted = TRUE`, slug `usernode-2d5619`, database
+`app_usernode_2d5619`, deploys via GitHub Actions rather than the
+in-platform rebuild path.
 
-This depends on `EXTRACT-PLAN.md` being executed first — at minimum
-Phase 1–2. "Edit this app" means "edit a GitHub repo," and the repo
-needs to be Usernode-only before Usernode can meaningfully point at
-itself.
+This document is the canonical index for *why* each piece exists
+and *how* to operate it (rollback, DB rename, flag flips). Code
+comments throughout the platform cite specific phase numbers
+(e.g. `SELF-HOSTING.md sub-step 2j`) — those breadcrumbs point
+back here. The runbooks below are the ones the code itself can't
+capture.
 
-## Why this is worth doing
+History: this file started as `SELF-HOSTING-PLAN.md`, the
+forward-looking execution plan. Each phase below has been
+shipped; the structure is preserved so the breadcrumbs in code
+comments still resolve.
 
-- **Dogfooding of the most aggressive kind** — every sharp edge of the
-  platform gets felt immediately.
-- **Tight feedback loop** — user hits the feedback button (issue filed
-  in the Usernode repo) → opens the Usernode app inside Usernode →
-  "@mayor pick up #42" → PR → merge → harness rolls → the UI they're
-  looking at now has their fix.
-- **Validates the platform by construction** — if Usernode can safely
-  edit itself, it's probably coherent.
-- **`/claude.md` stays live by construction** — editing
-  `app-conventions.md` through the self-app and merging makes the new
-  conventions immediately served at the hosted URL.
+## Design principle
 
-## Basic shape
+The original design framed self-hosting as "add a `self_hosted`
+flag and special-case three handlers." The cleaner framing
+turned out to be the inverse:
 
-In the `apps` table, each row has: name, repo, main_sha, container,
-owner. The self-app is just one more row with a `self_hosted: true`
-flag, whose repo is `Usernode-Labs/social-vibecoding` and whose
-"container" is *this process*.
+> **Make the platform conform to its own conventions for itself.
+> Let the only special-casing live at the two points where the
+> platform genuinely *is* its container.**
 
-Dev-chat works identically: Mayor plans, Claude Code checks out the
-repo in a sibling Docker container, produces a PR. What diverges is
-what happens when the PR merges.
+Three semantic systems unify cleanly: per-app database name,
+public/private table convention, and `dapp.json` env-var manifest.
+Two points genuinely cannot unify: container creation
+(the parent container already exists) and PR-merge rebuild (the
+parent cannot stop and restart itself the way child apps do).
 
-- **Normal app:** merge → rebuild that app's container → swap in.
-- **Self-app:** merge → the harness itself has to roll.
+```mermaid
+flowchart TD
+    subgraph unified [Unifies cleanly]
+        DB["Per-app database<br/>'usernode' &rarr; 'app_usernode_xxxxxx'"]
+        Tables["Public/private tables<br/>add staging:private COMMENTs to schema"]
+        Manifest["Env vars / dapp.json<br/>declare platform secrets in root manifest"]
+    end
 
-## Deploy path
+    subgraph special [Genuine special-casing]
+        Create["createApp(): if self_hosted, no-op<br/>(container already exists, it's the parent)"]
+        Merge["votes.js merge: if self_hosted, skip<br/>rebuildProduction; trust auto-deploy"]
+    end
 
-Two levels of ambition:
-
-### MVP (recommended first)
-
-Short downtime. PR merge triggers the standalone deploy workflow;
-`docker-compose pull && up -d` restarts the harness; 20–60s of 503s.
-A "platform rolling — reconnecting…" banner in the UI + SSE
-auto-reconnect makes this feel acceptable.
-
-Reuse the existing `app_version_changed` WebSocket event (already
-shipped for issue #21) to drive the banner. Client polls
-`/api/version`, re-opens SSE when the new SHA is live.
-
-### Eventually: blue-green
-
-Two harness containers behind Caddy; new image starts healthy before
-old drains; active SSE streams reconnect. Substantial engineering
-project; ship only once MVP downtime actually annoys someone.
-
-## Staging for the self-app
-
-Two hard questions specific to this app: (1) how do public/private
-tables work for the harness's own DB? (2) how does the staging
-harness manage *its own* Docker containers without stomping on prod?
-
-### DB: private/public tagging for harness tables
-
-Same `staging:private` comment mechanism every other app uses. In
-practice the harness's tables are overwhelmingly private:
-
-| Table             | Default    | Why                                         |
-| ----------------- | ---------- | ------------------------------------------- |
-| `users`           | private    | password hashes, encrypted API keys         |
-| `chat_messages`   | private    | verbatim user messages                      |
-| `notifications`   | private    | who-said-what-to-whom                       |
-| `llm_usage`       | private    | per-user spend history                      |
-| `feedback`        | private    | can contain private gripes                  |
-| `votes`           | private    | links to user_id                            |
-| `apps`            | public     | names + repos + main_sha already visible    |
-| `issues` (if any) | public     | mirrors GitHub                              |
-
-Wrinkle: `apps.creating_user_id` FKs to `users.id`. Options:
-
-- **Don't copy `apps` either** — seed 1–2 test apps at boot. Cleanest.
-- Copy `apps` but remap `creating_user_id` to a seeded test-user id.
-
-Recommendation: don't copy. Staging being empty is a feature — you're
-testing platform behavior, not production data, and an empty platform
-stresses first-time UX better anyway.
-
-**Seeded fake users required.** On boot in `USERNODE_ENV=staging`,
-run a seed script:
-
-```
-admin-staging / admin  (admin role)
-test-user-1   / test
-test-user-2   / test
+    DB --> SeedRow[Seed apps row<br/>slug='usernode', container_id='usernode',<br/>status='running', self_hosted=true]
+    Tables --> Enforce[Phase 0: implement TRUNCATE-private<br/>in cloneDatabase]
+    Manifest --> SeedRow
+    Enforce --> SeedRow
+    SeedRow --> Create
+    SeedRow --> Merge
 ```
 
-Documented in a login banner on staging. No real user data, no real
-secrets, still usable.
+## Status going in
 
-This is also the strongest *proof that the convention works for the
-worst case* — the harness is the most privacy-sensitive app on the
-platform, and the same rules fit it without modification.
+- **EXTRACT-PLAN.md Phase 1 (extract repo)** — done.
+- **EXTRACT-PLAN.md Phase 3 (standalone deploy)** — done.
+  [docker-compose.yml](./docker-compose.yml) is self-contained,
+  [.github/workflows/deploy.yml](.github/workflows/deploy.yml)
+  auto-deploys on push to `main`.
+- **The hidden gap:** `staging:private` is documented at
+  [src/prompts/app-conventions.md](./src/prompts/app-conventions.md)
+  and recommended to child apps, but
+  [src/services/db-manager.js](./src/services/db-manager.js)'s
+  `cloneDatabase` is wholesale `CREATE DATABASE … TEMPLATE …`. So
+  every child app's `staging:private` annotation is doing nothing
+  today. Self-hosting forces this gap shut, which retroactively
+  makes every existing child app's privacy claim true.
 
-### Docker isolation: staging must not share a daemon with prod
+## Phase 0 — Enforce `staging:private` in `cloneDatabase`
 
-Prod harness mounts `/var/run/docker.sock` and uses the host daemon.
-If the staging harness does the same on the same host:
+Independent prerequisite. Useful in its own right; must land before
+self-app staging is ever enabled.
 
-- Staging and prod see each other's containers.
-- A bad `docker rm` in staging can nuke prod app containers.
-- Container name collisions are possible.
+**Goal:** child apps' `COMMENT ON TABLE foo IS 'staging:private'`
+annotations actually keep rows out of staging clones, and column-level
+`COMMENT ON COLUMN foo.bar IS 'staging:private'` annotations scrub the
+named columns while leaving the surrounding row intact (the latter is
+the canonical pattern for `users`, where row identity is needed in
+staging for FK attribution but a few columns carry secrets).
 
-**The rule: staging never shares a Docker daemon with prod.** Three
-realistic isolation strategies, cheapest to most faithful:
+**Steps:**
 
-**A. Mock Docker in staging.** Replace the `docker` service with a
-stub that logs intended calls (`would run: docker run ...`) and
-returns plausible success values. Nothing gets spawned.
+1. Add a post-clone TRUNCATE pass to
+   [src/services/db-manager.js](./src/services/db-manager.js)
+   `cloneDatabase`, or to the call site in
+   [src/services/staging.js](./src/services/staging.js) right after
+   `cloneDatabase` returns. Implementation sketch:
 
-- Cheap, fast, perfectly safe.
-- Tests dev-chat flow, Mayor planning, CC *dispatch UI*, DB writes,
-  WebSockets, UI.
-- Can't verify "CC actually ran and produced a commit" end-to-end.
-- Right choice for ~80% of self-app PRs (UI, prompts, chat-system,
-  schema changes).
+   ```sql
+   -- Discover private tables in the freshly-cloned DB.
+   SELECT n.nspname || '.' || c.relname AS qualified
+     FROM pg_class c
+     JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE obj_description(c.oid, 'pg_class') = 'staging:private'
+      AND c.relkind = 'r'
+      AND n.nspname NOT IN ('pg_catalog', 'information_schema');
 
-**B. Docker-in-Docker (DinD) sidecar per staging instance.** The
-staging harness gets a dedicated DinD container next to it; its
-socket is mounted from the sidecar, not the host. Containers it
-spawns live inside that DinD daemon, invisible to prod.
+   -- Then for each:
+   TRUNCATE <qualified> RESTART IDENTITY CASCADE;
+   ```
 
-- ~1 GB extra RAM per staging instance, requires `--privileged`.
-- Full fidelity — spawned CC workers and app containers really run.
-- Safe from prod: even
-  `docker rm $(docker ps -q)` only kills things inside its DinD
-  universe.
-- Opt-in and time-boxed: admin clicks "preview with DinD" on a PR,
-  lives 2 hours, auto-destroyed. One active at a time initially.
+2. Run inside the cloned DB, not the meta-DB. `db-manager.execInDb`
+   currently always targets `usernode`; need a sibling `execInTarget(dbName, sql)`
+   that does `psql -d <dbName>`. ~10 lines.
+3. Wrap in a try-finally so a TRUNCATE failure on one private
+   table doesn't block the others (log + continue), but a total
+   discovery failure is fatal (we'd rather refuse to spawn staging
+   than ship a leaky one).
 
-**C. Real host daemon with strict namespace prefixing.** All staging
-containers named `staging-<sha>-*`, every `docker ps` / `docker stop`
-filtered. **Rejected** — leaks to prod the moment a bug slips the
-prefix discipline, and the whole point of staging is that the code
-might be wrong.
+**Acceptance criteria:**
 
-### Staging-mode matrix
+- A child app with `COMMENT ON TABLE foo IS 'staging:private'`,
+  triggered through dev-chat to spawn a staging container, observes
+  `foo` schema-only in the staging DB.
+- The same app's *public* tables still come over fully populated.
+- A unit/integration test in
+  [test/](./) — pick a folder convention from existing tests —
+  exercises clone + TRUNCATE on a fixture DB.
 
-| Staging mode                   | DB               | Docker   | Use case                                  |
-| ------------------------------ | ---------------- | -------- | ----------------------------------------- |
-| Default auto-preview every PR  | empty + seeded   | mock (A) | UI, prompt, chat-system, schema changes   |
-| Deep-preview (admin opt-in)    | empty + seeded   | DinD (B) | Mayor/CC interaction, container template  |
+**Risk:** low. The change is additive (TRUNCATEs only what's
+explicitly opted in via comment) and only affects staging clones.
+Production deploys don't go through `cloneDatabase`.
 
-### Staging env wiring
+**Rollback:** revert the commit. Pre-Phase-0 staging behavior
+(wholesale copy) returns; nothing else changes.
 
-The staging harness boots with:
+**Cost:** ~30–50 lines of code + one test.
 
-- `USERNODE_ENV=staging`
-- `DATABASE_URL` pointing at a fresh ephemeral Postgres
-- A seed script run at startup
-- `GITHUB_APP_ID` / `GITHUB_PRIVATE_KEY` **unset** (any CC dispatch
-  fails cleanly with "feature disabled in staging") or pointing at a
-  test-only GitHub App with access only to a sandbox repo
-- `ANTHROPIC_API_KEY` = admin BYOK or a billing-capped test key
-- Docker socket: **not mounted** (mock mode) or **from DinD sidecar**
-  (deep-preview)
-- Lifetime capped at 2 hours, visible in a preview-URL banner
-- Caddy routes `usernode-preview-<sha>.evanshapiro.dev` to the
-  staging harness port
+## Phase 1 — Write and rehearse `rollback.sh`
 
-### Clever twist for CC-integration testing
+Independent prerequisite. Original design rule: "Write and test
+this before enabling the self-app, not after."
 
-Even with DinD, staging shouldn't push to *real* repos — its GitHub
-App key should be blank or sandbox. But if we want end-to-end
-verification that a CC dispatch produces a coherent commit under the
-new harness code, point staging at a designated **test repo**
-(`es92/usernode-test-sandbox`). The staging harness has commit access
-there and nowhere else. A CC run writes real commits to this test
-repo; we inspect them; no real user apps are touched.
+**Goal:** a kill-switch that does not depend on the harness being
+healthy.
 
-Full-fidelity end-to-end testing for the high-risk category
-(Mayor/CC changes) without any possibility of damaging production.
+**Steps:**
 
-## Safety rails
+1. Add `scripts/rollback.sh` (in-repo). Contents (sketch):
 
-**Manual review gate on self-app PRs.** Claude Code produces the
-branch and opens the PR, but does **not** auto-merge for the self-app.
-Admin clicks merge.
+   ```bash
+   #!/usr/bin/env bash
+   set -euo pipefail
+   cd /opt/usernode
+   PREV_SHA="$(git rev-parse HEAD~1)"
+   echo "Rolling back to $PREV_SHA"
+   git checkout "$PREV_SHA"
+   docker compose up -d --build
+   echo "Rollback complete. Current SHA: $(git rev-parse --short HEAD)"
+   ```
 
-**Kill-switch / rollback path that doesn't go through the harness.**
-A small shell script on the VPS — `/opt/usernode/rollback.sh` — that
-does `git checkout <prev_sha> && docker compose up -d`. Ssh in and
-run it if the harness is on fire. **Write and test this before
-enabling the self-app**, not after.
+2. In [.github/workflows/deploy.yml](./.github/workflows/deploy.yml),
+   add a step to copy `scripts/rollback.sh` to
+   `/opt/usernode-tools/rollback.sh` (separate dir, never rsync'd
+   over by the deploy itself, so a broken deploy can't clobber the
+   recovery script). `chmod +x` after copy.
+3. SSH in and rehearse it once: roll forward to a no-op commit,
+   run rollback, verify the harness comes back on the previous SHA.
+   Document the SSH-in steps in [README.md](./README.md) under a
+   new **Recovery** subsection.
 
-**Admin-only gate** on the self-app's dev-chat. Every registered
-user can file issues against the self-app (via the feedback button),
-but initially only admins can initiate dev-chat turns against it.
-Permission model can relax later.
+**Acceptance criteria:**
 
-**Mayor refuse-list for high-risk paths.** Bake into the self-app's
-injected Mayor system prompt: refuse to plan edits to certain file
-globs without an explicit `allow_risky: true` confirmation. Candidates:
+- `/opt/usernode-tools/rollback.sh` exists on the VPS and is
+  executable.
+- One successful end-to-end rehearsal logged in the README or a
+  commit message.
 
-- `server.js` bootstrap path
-- `src/middleware/auth.js`
-- Anything touching `JWT_SECRET` or `secrets.js`
-- `src/db/migrate.js` for anything beyond append-only DDL
-- Files configuring `/var/run/docker.sock` mounting
+**Risk:** zero — the script is purely opt-in and runs only when
+manually invoked.
 
-**State hazards to document explicitly:**
+**Cost:** ~20 lines of shell + one rehearsal.
 
-- Changing `JWT_SECRET` invalidates all sessions AND renders every
-  stored BYOK key undecryptable.
-- Schema migrations run against the live shared DB at boot. Append-
-  only DDL is fine; anything that rewrites user data is dangerous.
-- The harness DB is *entirely private* in the public/private sense;
-  staging always starts empty.
+## Phase 2 — Platform conforms to its own conventions
 
-## Edit-type risk bucketing
+The meat. Each sub-step is small and independently safe to land;
+together they make the self-app row mechanically identical to a
+normal app row, with the two unavoidable guards layered in.
 
-| Edit type                              | Risk       | Gating                                         |
-| -------------------------------------- | ---------- | ---------------------------------------------- |
-| UI of main app                         | Low        | Staging preview nice-to-have, else merge       |
-| Group chat system                      | Low–med    | Staging preview; PR review required            |
-| New features in app-container template | Low        | Staging preview; PR review required            |
-| Mayor/CC interaction                   | Medium     | Deep-preview (DinD) mandatory; admin-only      |
-| Auth / JWT / encryption / migrations   | High       | Refuse-list; explicit `allow_risky` flag       |
-| `server.js` bootstrap, docker socket   | Very high  | Require `ALLOW_BOOT_EDITS=1` just to propose   |
+Land sub-steps in the order below. Each is independently testable.
 
-The Mayor's system prompt for the self-app grows one extra paragraph
-listing refuse-list globs.
+### 2a. Add `self_hosted` column
 
-## UX details that matter
+[src/db/schema.sql](./src/db/schema.sql):
 
-**"Platform updating…" banner during rolling restart.** When a
-self-app PR merges, the client knows via WebSocket
-`app_version_changed`. Show a banner, disable the send button, poll
-`/api/version`, reconnect SSE when the new SHA is live.
+```sql
+ALTER TABLE apps
+  ADD COLUMN IF NOT EXISTS self_hosted BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS idx_apps_self_hosted
+  ON apps (self_hosted) WHERE self_hosted = TRUE;
+```
 
-**"You're editing the platform" marker** in the self-app view so
-users understand why the UI may shift under them during deploy. A
-purple pill or the word "meta" near the header is enough.
+The partial index is there because the seed-and-startup paths
+filter on `self_hosted = TRUE` and there's only ever one such row.
 
-**Budget accounting is unchanged.** Self-app edits consume Anthropic
-tokens like any dev-chat turn. BYOK works identically. No special-
-casing needed.
+**Acceptance:** schema migration is idempotent, existing rows
+default to `FALSE`.
 
-## MVP scope — one week of work after extraction is done
+### 2b. Move platform repo URL into config
 
-1. **Seed the `apps` table** with a `usernode` row, `self_hosted:
-   true`, admin-only visibility.
-2. **Special-case PR-merge** in `routes/sessions.js`: if
-   `self_hosted`, call a different deploy handler that triggers the
-   standalone workflow (or an SSH command) instead of rebuilding an
-   app container. Don't auto-merge — open the PR in draft, notify
-   admins.
-3. **Write `rollback.sh`** on the VPS, test it once, leave it there.
-4. **Inject self-app safety rules** into Mayor's system prompt
-   (refuse-list globs; staging-preview requirement).
-5. **Add the "platform updating" banner** using the existing
-   `app_version_changed` event.
-6. **Ship in shadow first** — self-app visible to admins only, no
-   staging yet, just to dogfood the happy path.
+Today
+[src/routes/feedback.js](./src/routes/feedback.js)
+hardcodes `Usernode-Labs/social-vibecoding`. Pull it into
+[src/config.js](./src/config.js) as `USERNODE_PLATFORM_REPO`
+(default
+`https://github.com/Usernode-Labs/social-vibecoding`). Both
+`feedback.js` and the seed read from there. Document in
+[.env.example](./.env.example) for completeness.
 
-Add per-PR staging previews (mock mode) once we've seen the shape of
-real self-app edits. Add DinD deep-preview once we actually need to
-verify a CC run through the new code.
+**Acceptance:** feedback button still files issues correctly;
+unset `USERNODE_PLATFORM_REPO` falls back to the default.
 
-## What this unlocks
+### 2c. Add `staging:private` comments to platform schema
 
-- **Self-hosting feedback loop:** feedback button → issue → Mayor
-  picks up → PR → merge → rolling restart. Zero external tooling for
-  platform evolution.
-- **The platform's evolution is legible to users** — its commit log
-  is visible, its proposed changes land as PRs anyone can read.
-- **`/claude.md` stays synced by construction** — editing
-  `app-conventions.md` through the self-app updates the hosted URL
-  on next deploy.
-- **Open-source-by-live-dev-chat (future)** — drop the admin-only
-  gate, let any user propose changes, admins approve merges. A
-  genuinely novel collaboration model.
+Purely additive. Append to [src/db/schema.sql](./src/db/schema.sql).
+
+**Table-level (8 tables — full TRUNCATE in staging):**
+
+```sql
+COMMENT ON TABLE sessions               IS 'staging:private';
+COMMENT ON TABLE activation_codes       IS 'staging:private';
+COMMENT ON TABLE chat_sessions          IS 'staging:private';
+COMMENT ON TABLE chat_session_messages  IS 'staging:private';
+COMMENT ON TABLE chat_session_specs     IS 'staging:private';
+COMMENT ON TABLE llm_usage              IS 'staging:private';
+COMMENT ON TABLE notifications          IS 'staging:private';
+COMMENT ON TABLE app_secrets            IS 'staging:private';
+```
+
+**Column-level on `users` (5 columns scrubbed, row identity preserved):**
+
+```sql
+COMMENT ON COLUMN users.password               IS 'staging:private';
+COMMENT ON COLUMN users.anthropic_key_enc      IS 'staging:private';
+COMMENT ON COLUMN users.anthropic_key_last4    IS 'staging:private';
+COMMENT ON COLUMN users.wallet_link_token      IS 'staging:private';
+COMMENT ON COLUMN users.wallet_link_expires_at IS 'staging:private';
+```
+
+`users` rows survive cloning so FK attribution
+(`chat_messages.user_id`, `apps.created_by`, `notifications.source_user_id`,
+…) keeps working in self-app staging — without this, every dev-chat
+message in a staging clone would render as "(deleted user)".
+`usernode_pubkey` is intentionally NOT scrubbed: it's an on-chain public
+identity, and a self-app dev wants to see it to test wallet-linking
+flows. `password` is scrubbed to a sentinel
+(`__staging_redacted__`); the future iframe-auth scheme (parent prod
+issues identity assertions to staging via postMessage) means staging
+won't need local `users.password` at all.
+
+**Public by omission (no comment):** `apps`, `app_activity`, `issues`,
+`users` (the table itself — only specific columns are scrubbed),
+`chat_messages`, `issue_votes`, `pr_votes`. These carry no per-row
+secrets and the aggregates are already visible in the prod UI to the
+audience that would clone the platform.
+
+**Acceptance:** `obj_description((schemaname || '.' || tablename)::regclass, 'pg_class')` returns
+`'staging:private'` for the 8 listed tables; `col_description` returns
+`'staging:private'` for the 5 listed columns of `users`. With Phase 0
+in place, a hypothetical staging clone of the platform DB would have
+schema-only copies of those tables and scrubbed columns of `users`.
+
+### 2d. Rename platform DB to follow `app_<slug>` convention
+
+Slug: **`usernode-2d5619`** → DB name: **`app_usernode_2d5619`**.
+The `usernode-` prefix matches the container name and the user-facing
+brand; the `2d5619` hex suffix (generated once via
+`crypto.randomBytes(3).toString('hex')`, frozen at this commit) avoids
+a collision with a hypothetical child app whose user-chosen slug
+happens to be `usernode`.
+
+Pinned as `SELF_APP_SLUG` and `SELF_APP_DB_NAME` constants in
+[src/config.js](./src/config.js). Never read from env, never
+overridable — the hex is now part of the platform's identity.
+
+**One-time migration is automated by the deploy workflow.**
+
+[.github/workflows/deploy.yml](./.github/workflows/deploy.yml)
+contains an idempotent migration block that runs on every deploy:
+
+1. Skip if `app_usernode_2d5619` already exists and is healthy
+   (sanity-checks `users` is non-empty).
+2. Otherwise: stop the harness, `pg_dump usernode`, `createdb`
+   the new DB, restore the dump with `ON_ERROR_STOP=1`, verify
+   row counts match for `users` / `apps` / `chat_messages`, and
+   then proceed to `docker compose up -d --build`. Any failure
+   drops the partial target DB so the next attempt starts clean.
+
+Code-side, only one place flips:
+
+- [docker-compose.yml](./docker-compose.yml) — change
+  `DATABASE_URL: postgres://usernode:${USERNODE_DB_PASSWORD}@usernode-db:5432/usernode`
+  to `…/app_usernode_2d5619`.
+
+`deploy.yml` doesn't write `DATABASE_URL` into the runtime `.env`;
+the inline `environment:` block in `docker-compose.yml` is the
+source of truth, with `${USERNODE_DB_PASSWORD}` substituted from
+`.env`. The workflow change is the migration block, which becomes
+a 1-line "already exists" no-op once the migration has run.
+
+The bare `usernode` database **stays around** as the
+postgres-bookkeeping target that
+[src/services/db-manager.js](./src/services/db-manager.js)
+`psql -d usernode` issues `CREATE DATABASE` from. Its purpose
+is now genuinely just "the meta DB," not "the platform's data."
+
+**Order of operations** (do once, off-hours):
+
+1. Land the docker-compose + deploy.yml changes in `main`.
+2. The deploy run executes the migration block. ~2–5 min of
+   platform downtime during the dump/restore; child apps and the
+   sidecar are unaffected.
+3. Watch the deploy logs for `==> Migration complete; counts match`.
+4. Verify `/health` and the app UI come up.
+5. Leave the original `usernode` DB in place permanently — it's
+   the meta-DB target `db-manager.js` connects to. (And during the
+   first ~1 week it doubles as a rollback target — flip the
+   `DATABASE_URL` back to `…/usernode` and redeploy.)
+
+See [README.md](./README.md) §"Migrating the platform DB to its
+app_-prefixed name (Phase 2d)" for the manual fallback runbook,
+in case the auto-migration ever needs to be done by hand.
+
+**Acceptance:** platform comes back, `\l` shows both `usernode`
+and `app_usernode_2d5619` databases, and all app-creator /
+votes / dev-chat flows still work.
+
+**Risk:** moderate. This is the most invasive single step. A
+botched dump/restore loses recent data. Mitigations: the auto-
+migration aborts on any failure (drops the partial target DB so
+the next attempt starts clean); the harness only restarts after
+the row-count check passes; the original `usernode` DB stays
+around as a rollback target; rehearse once against a local-dev
+clone first by setting up `usernode` with sample data and
+re-running the workflow's migration block by hand.
+
+**Rollback:** flip `DATABASE_URL` back to `usernode`,
+`docker compose up -d`. Any writes that landed in
+`app_usernode_2d5619` after the cutover are not in the old DB
+and would need re-replay — usually you'd just take the loss for
+the cutover-to-rollback window.
+
+### 2e. Add `dapp.json` at the repo root
+
+Per [src/services/app-manifest.js](./src/services/app-manifest.js):
+
+```json
+{
+  "secrets": [
+    {
+      "key": "GITHUB_APP_ID",
+      "required": true,
+      "description": "GitHub App ID for the bot account that owns app repos"
+    },
+    {
+      "key": "GITHUB_PRIVATE_KEY",
+      "required": true,
+      "sensitive": true,
+      "description": "PEM private key for the GitHub App"
+    },
+    {
+      "key": "GITHUB_BOT_TOKEN",
+      "required": true,
+      "sensitive": true,
+      "description": "Classic PAT for repo creation, branch pushes, PR creation"
+    },
+    {
+      "key": "ANTHROPIC_API_KEY",
+      "required": false,
+      "sensitive": true,
+      "description": "Platform-wide fallback Claude key; users can BYOK"
+    },
+    {
+      "key": "ADMIN_USERNAME",
+      "required": true,
+      "description": "Bootstrap admin username"
+    },
+    {
+      "key": "ADMIN_PASSWORD",
+      "required": true,
+      "sensitive": true,
+      "description": "Bootstrap admin password"
+    }
+  ]
+}
+```
+
+Note: `JWT_SECRET`, `DATABASE_URL`, `PORT`, `USERNODE_ENV` are
+on the manifest's reserved list (see
+[src/services/app-manifest.js#L41-L47](./src/services/app-manifest.js))
+and don't go in here. `JWT_SECRET` is genuinely the platform's
+own and not a manifest secret either way; it's set via the
+deploy workflow.
+
+**Acceptance:** the file parses through `appManifest.read()`,
+all listed keys appear in the Settings → Secrets UI for the
+self-app row once it exists.
+
+### 2f. Boot-time seed for the self-app row
+
+Add a function `seedSelfApp(pool, config)` invoked from
+[server.js](./server.js) after `migrate()` (or wherever the
+boot sequence lives). Idempotent:
+
+```js
+async function seedSelfApp(pool, config) {
+  const { rows } = await pool.query(
+    'SELECT id FROM apps WHERE self_hosted = TRUE LIMIT 1'
+  );
+  if (rows.length) return;
+  await pool.query(`
+    INSERT INTO apps
+      (name, slug, repo_url, container_id, status, self_hosted,
+       main_sha, last_deploy_at)
+    VALUES
+      ('Usernode', $1, $2, 'usernode', 'running', TRUE, $3, NOW())
+  `, [
+    config.selfAppSlug,         // 'usernode-2d5619'
+    config.platformRepoUrl,     // USERNODE_PLATFORM_REPO
+    process.env.GIT_SHA || null,
+  ]);
+}
+```
+
+`GIT_SHA` is already plumbed through the build via
+[docker-compose.yml#L52-L53](./docker-compose.yml) (`args:
+GIT_SHA: ${GIT_SHA:-dev}`). The boot seed reads it directly so
+the self-app row's "live on" pill is correct from first boot.
+
+The seed should also write into the manifest snapshot column
+([src/db/schema.sql#L71](./src/db/schema.sql)
+`manifest_snapshot`) by reading the local `dapp.json` from
+`__dirname/..` — saves a clone-and-snapshot roundtrip the
+self-app would never need.
+
+**Acceptance:** fresh DB, server boots, `apps` table has
+exactly one row with `self_hosted = TRUE`,
+`container_id = 'usernode'`, `status = 'running'`, and a
+non-null `main_sha` matching the build's `GIT_SHA`.
+
+### 2g. Container-ownership guards (the only genuine special cases)
+
+Two `if (app.self_hosted)` guards. Total ~10 lines.
+
+**Guard A** — top of
+[src/services/app-creator.js](./src/services/app-creator.js)
+`createApp`:
+
+```js
+async function createApp(config, appRow) {
+  if (appRow.self_hosted) {
+    log.info('app-creator', 'Skipping create for self-hosted app',
+             { appId: appRow.id, slug: appRow.slug });
+    return;
+  }
+  // …existing body
+}
+```
+
+**Guard B** — in
+[src/routes/votes.js#L290-L327](./src/routes/votes.js)' merge
+handler, wrap the `rebuildProduction` block:
+
+```js
+if (!app.self_hosted) {
+  const { containerId, sha } = await staging.rebuildProduction(
+    config, app
+  );
+  // …existing UPDATE apps SET container_id, main_sha, …
+} else {
+  log.info('votes', 'Self-app PR merged; auto-deploy will roll',
+           { appId: app.id, prNumber: session.pr_number });
+  // app.main_sha is updated post-deploy by the seed re-running
+  // on next boot. Or, if you want it sooner: leave the existing
+  // app_version_changed broadcast firing; clients call
+  // /api/version which re-derives from GIT_SHA on next boot.
+}
+```
+
+The `app_version_changed` broadcast at
+[votes.js#L320-L325](./src/routes/votes.js) keeps firing in
+both branches; that's the hook the banner in Phase 3 reads.
+
+**Acceptance:**
+
+- Calling `createApp(config, selfAppRow)` is a no-op log line.
+- A merged PR against the self-app does not call
+  `staging.rebuildProduction`.
+- A merged PR against any normal app behaves identically to
+  before.
+
+### 2h. Self-app secrets UI: read-only
+
+Per
+[the assessment](.cursor/plans/self-hosting_assessment_c649755e.plan.md):
+saving a new value via the Settings → Secrets UI for the
+self-app row would persist into `app_secrets` (encrypted with
+`JWT_SECRET`), but the platform's own process env is loaded from
+`.env` written by GitHub Actions — it doesn't read `app_secrets`.
+A "Save" click would be a silent no-op.
+
+Solution: in the secrets UI route (look in
+[src/routes/admin.js](./src/routes/admin.js) or wherever the
+`POST /api/apps/:slug/secrets` handler lives), branch on
+`app.self_hosted` and return 403 with a body explaining
+"Edit via GitHub Actions secrets — saving here would not be
+effective for the platform itself." The client-side UI shows the
+fields but disables the Save button with a tooltip pointing at
+the GitHub Actions secrets page.
+
+**Acceptance:** GETs return the manifest-merged view with
+`hasValue` reflecting the GitHub-Actions-configured reality;
+POST/PUT/DELETE return 403 with the explanatory message.
+
+### 2i. Mayor refuse-list paragraph (self-app-only)
+
+[src/services/prompts.js](./src/services/prompts.js) is where
+Mayor's system prompt is assembled. When the chat session's app
+has `self_hosted = TRUE`, append a paragraph (after the existing
+`getAppConventions()` block):
+
+> **You are editing the Usernode platform itself.** Refuse to
+> propose edits to any of the following without an explicit
+> `allow_risky: true` confirmation from the user in the same
+> message: `server.js` bootstrap path; `src/middleware/auth.js`;
+> any code that reads or writes `JWT_SECRET` or anything in
+> `src/services/secrets.js`; `src/db/migrate.js` for anything
+> beyond append-only DDL; files configuring
+> `/var/run/docker.sock` mounting; `docker-compose.yml`;
+> `.github/workflows/deploy.yml`. If the user asks you to touch
+> these, surface the risk first and require explicit
+> confirmation; do not silently include such edits in a broader
+> change.
+
+The list combines the doc's globs plus two added by the
+assessment: `docker-compose.yml` (sidecar-volume hazard) and
+`.github/workflows/deploy.yml` (`JWT_SECRET` rotation hazard).
+
+**Acceptance:** dev-chat against the self-app, with Mayor asked
+to "edit `JWT_SECRET` to a new value," produces a refusal +
+explanation; with `allow_risky: true`, produces the proposed
+change. Other apps' Mayor planning is unchanged.
+
+### 2j. Admin-only filter on `/api/apps`
+
+Filter the listing in
+[src/routes/apps.js](./src/routes/apps.js) so non-admins don't
+see the self-app row:
+
+```js
+const { rows } = await pool.query(`
+  SELECT * FROM apps
+   WHERE NOT self_hosted OR $1::boolean
+   ORDER BY …
+`, [!!req.user?.isAdmin]);
+```
+
+Same filter applies to the `GET /api/apps/:slug` handler:
+return 404 for non-admins requesting the self-app slug.
+
+**Acceptance:** non-admin users see no `self_hosted` rows in
+the home screen or via direct slug access; admins see them.
+
+### 2k. Block self-repo URL in the import flow
+
+[src/routes/apps.js#L206-L228](./src/routes/apps.js) — in the
+`POST /api/apps` pre-flight, after parsing the URL, refuse if it
+points at `USERNODE_PLATFORM_REPO`:
+
+```js
+if (repoUrlNormalized &&
+    repoUrlNormalized.toLowerCase() ===
+    config.platformRepoUrl.toLowerCase()) {
+  return res.status(409).json({
+    error: 'This is the platform repo. The self-app already exists; ' +
+           'importing it as a child would create a sibling instance.'
+  });
+}
+```
+
+Same guard on the `verify-access` route at
+[apps.js#L191-L204](./src/routes/apps.js), so the modal's
+"Check" button surfaces the error before submit.
+
+**Acceptance:** pasting `Usernode-Labs/social-vibecoding` (any
+case) into the import modal produces the explanatory error in
+both the Check and Submit paths.
+
+## Phase 3 — Platform-updating banner (shipped)
+
+**Goal:** clients display "Platform updating…" during a
+self-app rolling restart instead of seeing dropped WebSockets and
+a blank screen.
+
+**Wrinkle:** during a self-app rolling restart, the WebSocket
+*itself* drops because the server is restarting. The post-merge
+`app_version_changed` may never reach the original tab — the new
+server raises it but the tab has reconnected past it.
+
+**Implementation:** the *pre-merge* `vote_update` broadcast in
+[votes.js](./src/routes/votes.js) now carries
+`{ merging: true, selfHosted: <bool> }`. When the client sees
+`merging:true && selfHosted:true` it persists
+`{ fromSha, since }` to `sessionStorage` and renders the banner.
+[public/js/app.js](./public/js/app.js) `App.PlatformUpdating`
+owns the state machine:
+- bumps `/api/version` polling to 2s while the banner is up
+- wraps `window.fetch` to reject all non-`GET`/`HEAD` requests
+  while active (the banner is the signal; this is the actual
+  write block — block-writes-only by design)
+- swaps to a red "stuck — manual reload" variant after 5 min
+- on every poll, dismisses + hard-reloads as soon as
+  `/api/version` returns a SHA different from `fromSha` (and not
+  `'dev'`)
+- `restoreFromSessionStorage()` runs early in `init()` so a
+  page load mid-restart re-renders the banner immediately —
+  the WS-drop case the wrinkle calls out
+
+`/api/version` also now exposes `selfAppSlug` for any future UI
+surface that needs to recognize the platform's own row without
+guessing. The banner lifecycle itself uses the WS payload's
+`selfHosted` boolean rather than slug-matching.
+
+**Acceptance (verified at deploy):** during a self-app PR merge,
+all open tabs render the amber banner from the moment the merge
+starts through the new container becoming reachable; non-`GET`
+fetches are rejected with a friendly error in between; tabs
+reloaded mid-restart re-render the banner from `sessionStorage`.
+
+**Cost (actual):** ~190 lines client-side
+(`public/js/app.js`), 1 line server-side
+(`src/routes/votes.js`), 1 field on `/api/version`, 1 banner
+element in `public/index.html`.
+
+## Phase 4 — In-app vote-to-merge for the self-app (code shipped, gated off)
+
+Today, admin manually merges the self-app PR on GitHub. The
+"who can vote on the platform's own PRs" question is gated by a
+single config flag:
+
+`SELF_APP_PUBLIC_VOTING` (env) → `config.selfAppPublicVoting`
+in [src/config.js](./src/config.js). **Default: `false`**.
+
+When `false` (today): the Phase 2j visibility filter applies —
+non-admins don't see the self-app row in `/api/apps`, get 404 on
+`/api/apps/<self-slug>` and `/api/apps/<self-slug>/secrets`.
+
+When `true`: the visibility filter is relaxed at all three
+sites. Non-admins can:
+- see the self-app row in the home grid
+- load its app view, group chat, dev chat
+- list its promoted PRs and cast votes via the existing PR
+  voting UI (which has no admin gate, so once visibility is
+  granted, voting works)
+- view the read-only secrets metadata (key + description +
+  required + `hasValue`; values are never returned, write
+  protection unchanged via `refuseIfSelfHosted`)
+
+What stays locked even when the flag is on (intentional — this
+flag is purely about audience, not about disabling self-hosting
+guards):
+- 2g — `createApp` / `rebuildProduction` skip; GHA still drives
+  the deploy
+- 2h — secrets writes refused (read-only metadata only)
+- 2i — Mayor refuse-list still appended to self-app sessions
+- 2k — `USERNODE_PLATFORM_REPO` import still blocked
+
+**To enable:** append `SELF_APP_PUBLIC_VOTING=true` to `.env`
+(or to the deploy heredoc in [.github/workflows/deploy.yml](./.github/workflows/deploy.yml))
+and redeploy. No code change needed.
+
+**Recommended sequence before flipping on:** run shadow mode for
+a few weeks, confirm Phase 3 banner UX holds up across multiple
+real self-app deploys, then flip the flag. The original design
+called this the "open-source-by-live-dev-chat (future)" gate —
+the broader permission-model question. Flipping the flag is just
+the mechanical knob; *should we* is the deeper question this
+document doesn't answer.
+
+## Sequencing summary
+
+```mermaid
+flowchart LR
+    P0[Phase 0: staging:private<br/>enforcement]
+    P1[Phase 1: rollback.sh<br/>+ rehearsal]
+    P2a[2a: self_hosted column]
+    P2b[2b: USERNODE_PLATFORM_REPO]
+    P2c[2c: schema comments]
+    P2d[2d: DB rename]
+    P2e[2e: dapp.json]
+    P2f[2f: boot-time seed]
+    P2g[2g: ownership guards]
+    P2h[2h: secrets UI read-only]
+    P2i[2i: Mayor refuse-list]
+    P2j[2j: admin-only filter]
+    P2k[2k: import-flow guard]
+    P3[Phase 3: banner<br/>if needed]
+    P4[Phase 4: in-app merge<br/>deferred]
+
+    P0 --> P2c
+    P1 --> P2f
+    P2a --> P2c
+    P2a --> P2f
+    P2b --> P2f
+    P2b --> P2k
+    P2c --> P2d
+    P2d --> P2f
+    P2e --> P2f
+    P2f --> P2g
+    P2f --> P2h
+    P2f --> P2i
+    P2f --> P2j
+    P2f --> P2k
+    P2g --> P3
+    P3 --> P4
+```
+
+Phase 0 and Phase 1 are independent and can land in either order.
+Both must precede Phase 2. Within Phase 2, sub-steps land in the
+order listed (each is a small commit). Phase 3 ships only after
+observation; Phase 4 is deferred indefinitely.
+
+## Risks and mitigations
+
+| Risk | Phase | Mitigation |
+|------|-------|------------|
+| Botched DB rename loses data | 2d | Keep original `usernode` DB for ~1 week; rehearse on local-dev first. |
+| Phase 0 TRUNCATE kills production data accidentally | 0 | TRUNCATE runs on the cloned DB only, never on the source; staging.js call site is the only invocation. |
+| Self-app PR breaks prompts.js, removing the refuse-list | 2i | rollback.sh restores the previous SHA. The refuse-list is built into the prompt at runtime, so it can't fail-open silently — a bug that breaks prompts.js takes the whole platform down loudly. |
+| `JWT_SECRET` rotation via deploy.yml edit | 2i | Refuse-list explicitly covers `.github/workflows/deploy.yml`. |
+| Sidecar `usernode-node` archive cache lost in rolling restart | 2i | Refuse-list covers `docker-compose.yml`; archive volume is named and persistent so even an accidental recreate-recovers ([docker-compose.yml#L153-L166](./docker-compose.yml)). |
+| Admin accidentally merges a hostile self-app PR | All | Manual review in shadow mode; rollback.sh as backstop. |
+
+## Open questions
+
+- **Who's an "admin" for self-app dev-chat?** `users.is_admin`
+  exists; the bar is "set by the bootstrap admin user." Fine for
+  shadow mode (1–2 people) but the doc's "open-source-by-live-
+  dev-chat (future)" gate needs a real permission model before
+  Phase 4.
+- **Self-app slug in URLs.** `usernode-2d5619` is the frozen
+  pick, and it'll appear in URLs as `usernode-2d5619--<user>--<sha>.<USERNODE_DOMAIN>`
+  if/when staging is enabled. Mildly ugly. Acceptable.
+- **`main_sha` updates on self-app deploy.** The seed reads
+  `GIT_SHA` at boot. After a self-app PR merges and the workflow
+  rolls the harness, the new container's seed runs again and
+  updates `main_sha`. Between merge and successful boot, the row
+  shows the old SHA — that's fine; the banner in Phase 3 is what
+  surfaces the in-flight state.
+- **Should `app_secrets` for the self-app row be hidden entirely,
+  or just read-only?** The shipped behavior is read-only (so
+  admins can audit what the platform is configured with). If
+  audit visibility is undesired, hide them entirely with another
+  branch on `app.self_hosted`.
+
+## Cross-references
+
+- [EXTRACT-PLAN.md](./EXTRACT-PLAN.md) — the standalone-deploy
+  prerequisite, now done.
+- [src/prompts/app-conventions.md](./src/prompts/app-conventions.md)
+  — defines `staging:private` and `dapp.json`; Phase 0 and 2c/2e
+  bring the platform into compliance with rules it already
+  prescribes for child apps.
+- [scripts/rollback.sh](./scripts/rollback.sh) — Phase 1
+  kill-switch; rehearsed quarterly per the safety rails.

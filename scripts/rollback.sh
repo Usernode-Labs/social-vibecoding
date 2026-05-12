@@ -6,7 +6,7 @@
 #
 #   /opt/usernode-tools/rollback.sh <sha>
 #
-# This script is the kill-switch for self-hosting (see SELF-HOSTING-PLAN.md).
+# This script is the kill-switch for self-hosting (see SELF-HOSTING.md).
 # It must work when the harness is broken — when the platform process is
 # crashing, when a recent migration corrupted state, when a self-app PR
 # took the UI down. So it deliberately does NOT depend on:

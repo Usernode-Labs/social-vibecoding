@@ -160,7 +160,7 @@ const App = {
   },
 
   // ─────────────────────────────────────────────────────────────────
-  // SELF-HOSTING-PLAN.md Phase 3: "Platform updating…" banner.
+  // SELF-HOSTING.md Phase 3: "Platform updating…" banner.
   //
   // Lifecycle:
   //   1. server broadcasts vote_update { merging:true, selfHosted:true }

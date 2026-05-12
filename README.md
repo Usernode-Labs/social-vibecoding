@@ -12,9 +12,10 @@ Mayor / Claude Code pipeline that produces real PRs.
   layout, URL conventions.
 - **[EXTRACT-PLAN.md](./EXTRACT-PLAN.md)** — phased plan for moving
   this repo from a monorepo subdirectory to a standalone deploy.
-- **[SELF-HOSTING.md](./SELF-HOSTING.md)** — design for registering
-  Usernode as an app inside itself, including the staging /
-  Docker-isolation model.
+- **[SELF-HOSTING.md](./SELF-HOSTING.md)** — operational reference
+  for the shipped self-app: DB rename runbook, rollback procedure,
+  flag-flip recipes, why each phase exists. The phase numbers here
+  are cited from comments throughout the codebase.
 - **[src/prompts/app-conventions.md](./src/prompts/app-conventions.md)**
   — authoritative platform conventions injected into Mayor and
   Claude Code prompts. Also served live at `/claude.md` on every

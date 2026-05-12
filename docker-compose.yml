@@ -76,7 +76,7 @@ services:
       # /status page can render an in-progress banner. See
       # services/status.js + .github/workflows/deploy.yml.
       USERNODE_RUNTIME_PATH: /var/lib/usernode/runtime
-      # Per Phase 2d (SELF-HOSTING-PLAN.md), the platform's own data
+      # Per Phase 2d (SELF-HOSTING.md), the platform's own data
       # lives in `app_usernode_<hex>` instead of the bare `usernode`
       # database. Same `app_<slug>` convention every child app
       # follows, with the hex suffix avoiding a collision with a

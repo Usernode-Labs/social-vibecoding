@@ -279,7 +279,7 @@ jobs:
             # rsync --delete (which scopes to /opt/usernode/ only). The
             # rollback script must work even when the harness is on
             # fire, so it lives outside the deploy tree intentionally —
-            # see scripts/rollback.sh and SELF-HOSTING-PLAN.md Phase 1.
+            # see scripts/rollback.sh and SELF-HOSTING.md Phase 1.
             # `install -d -o deploy -g deploy` is idempotent and uses
             # sudo only on first run (deploy has passwordless sudo per
             # scripts/server-bootstrap.sh).
@@ -287,7 +287,7 @@ jobs:
             install -m 755 scripts/rollback.sh /opt/usernode-tools/rollback.sh
 
             # ----------------------------------------------------------
-            # One-time platform DB rename (SELF-HOSTING-PLAN.md sub-step
+            # One-time platform DB rename (SELF-HOSTING.md sub-step
             # 2d). The platform's own data moves from the bare `usernode`
             # database to `app_usernode_2d5619`, matching the `app_<slug>`
             # convention every child app follows.

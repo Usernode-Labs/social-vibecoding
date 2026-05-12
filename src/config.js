@@ -21,7 +21,7 @@ const REQUIRED = [
 // generated once via `crypto.randomBytes(3).toString('hex')` and is
 // committed to history; never read from env, never overridable.
 //
-// See SELF-HOSTING-PLAN.md sub-step 2d for the rename procedure.
+// See SELF-HOSTING.md sub-step 2d for the rename procedure.
 const SELF_APP_SLUG = 'usernode-2d5619';
 const SELF_APP_DB_NAME = 'app_usernode_2d5619';
 
@@ -71,7 +71,7 @@ function load() {
     platformRepoUrl: (process.env.USERNODE_PLATFORM_REPO || 'https://github.com/Usernode-Labs/social-vibecoding').replace(/\/$/, ''),
     selfAppSlug: SELF_APP_SLUG,
     selfAppDbName: SELF_APP_DB_NAME,
-    // SELF-HOSTING-PLAN.md Phase 4: in-app vote-to-merge for the self-
+    // SELF-HOSTING.md Phase 4: in-app vote-to-merge for the self-
     // app. OFF by default — today only admins can see and vote on the
     // platform's own PRs (the Phase 2j visibility filter), and the
     // human admin merges on GitHub. Flipping this to true relaxes

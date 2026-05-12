@@ -23,10 +23,11 @@ function getAppConventions() {
   return cached;
 }
 
-// SELF-HOSTING-PLAN.md sub-step 2i: appended to the Mayor system prompt
-// only when the chat session's app is self_hosted=TRUE. The list combines
-// the SELF-HOSTING.md doc's sensitive globs with two added by the
-// assessment (`docker-compose.yml` for the sidecar-volume hazard;
+// SELF-HOSTING.md sub-step 2i: appended to the Mayor system prompt
+// only when the chat session's app is self_hosted=TRUE. The list
+// is the source of truth (originally derived from the design-phase
+// "sensitive globs" plus two added by the security assessment:
+// `docker-compose.yml` for the sidecar-volume hazard and
 // `.github/workflows/deploy.yml` for the JWT_SECRET rotation hazard).
 //
 // "Refuse without explicit allow_risky" means: surface the risk first,

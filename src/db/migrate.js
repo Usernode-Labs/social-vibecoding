@@ -39,7 +39,7 @@ async function seedAdmin(pool, config) {
   }
 }
 
-// SELF-HOSTING-PLAN.md sub-step 2f: ensure a single row in `apps` exists
+// SELF-HOSTING.md sub-step 2f: ensure a single row in `apps` exists
 // for the platform itself, with self_hosted=TRUE. Idempotent — runs every
 // boot. Two roles:
 //

@@ -264,7 +264,7 @@ CREATE TABLE IF NOT EXISTS app_secrets (
 -- Self-hosting: the platform itself appears as one row in `apps` with
 -- self_hosted=TRUE. The seed at boot inserts/refreshes this row; two
 -- guards in app-creator and votes (Phase 2g) skip container-management
--- side effects for it. See SELF-HOSTING-PLAN.md.
+-- side effects for it. See SELF-HOSTING.md.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS self_hosted BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_apps_self_hosted
   ON apps (self_hosted) WHERE self_hosted = TRUE;

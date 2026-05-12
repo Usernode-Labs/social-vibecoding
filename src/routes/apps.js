@@ -20,7 +20,7 @@ const { appCreateLimiter } = require('../middleware/rate-limits');
 // USERNODE_LOCAL_DEV=1 in your local .env to get the localhost fallback.
 const IS_LOCAL_DEV = process.env.NODE_ENV === 'development' || process.env.USERNODE_LOCAL_DEV === '1';
 
-// SELF-HOSTING-PLAN.md sub-step 2k: helper for the import-flow guards.
+// SELF-HOSTING.md sub-step 2k: helper for the import-flow guards.
 // Compares a parsed {owner, repo} against config.platformRepoUrl,
 // case-insensitively. Returns false on any malformed input — the caller
 // has already validated the parse, so this only fires the guard for
@@ -34,7 +34,7 @@ function isPlatformRepo(parsed, config) {
       && parsed.repo.toLowerCase() === platform.repo.toLowerCase();
 }
 
-// SELF-HOSTING-PLAN.md sub-step 2h: the platform reads its own env from
+// SELF-HOSTING.md sub-step 2h: the platform reads its own env from
 // .env (written by deploy.yml from GitHub Actions secrets), not from
 // app_secrets. A POST/PUT/DELETE here would persist into the table but
 // have zero runtime effect, which is silent-broken UX. Refuse them with
@@ -97,7 +97,7 @@ function appRoutes(config) {
   router.get('/api/apps', async (req, res) => {
     try {
       const appDeployStatus = require('../services/app-deploy-status');
-      // SELF-HOSTING-PLAN.md sub-step 2j: hide self_hosted rows from
+      // SELF-HOSTING.md sub-step 2j: hide self_hosted rows from
       // non-admin listings. Admins see them so they can reach the
       // self-app's settings, dev-chat, etc. The same filter is applied
       // to GET /api/apps/:slug below — a non-admin requesting the slug
@@ -234,7 +234,7 @@ function appRoutes(config) {
   router.get('/api/github/verify-access', async (req, res) => {
     const parsed = github.parseGithubUrl(req.query.url || '');
     if (!parsed) return res.status(400).json({ error: 'Repo URL must look like https://github.com/<owner>/<repo>' });
-    // SELF-HOSTING-PLAN.md sub-step 2k: refuse to import the platform's
+    // SELF-HOSTING.md sub-step 2k: refuse to import the platform's
     // own repo as a child app. The self-app row already exists; importing
     // a sibling would just produce a confused / broken app row sharing
     // the same code.
@@ -272,7 +272,7 @@ function appRoutes(config) {
       if (!parsed) {
         return res.status(400).json({ error: 'Repo URL must look like https://github.com/<owner>/<repo>' });
       }
-      // SELF-HOSTING-PLAN.md sub-step 2k: same guard as
+      // SELF-HOSTING.md sub-step 2k: same guard as
       // /api/github/verify-access, but on the submit path so a client
       // that skipped Check (or a script POSTing directly) can't bypass.
       if (isPlatformRepo(parsed, config)) {
@@ -364,7 +364,7 @@ function appRoutes(config) {
       }
 
       const appRow = rows[0];
-      // SELF-HOSTING-PLAN.md sub-step 2j: 404 self-hosted rows for
+      // SELF-HOSTING.md sub-step 2j: 404 self-hosted rows for
       // non-admins (don't disclose existence via the slug path either).
       // Phase 4: SELF_APP_PUBLIC_VOTING relaxes this for non-admin
       // viewing/voting; falls back to admin-only when the flag is off
@@ -455,7 +455,7 @@ function appRoutes(config) {
       );
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
       const app = rows[0];
-      // SELF-HOSTING-PLAN.md sub-step 2j: 404 self-hosted secrets to
+      // SELF-HOSTING.md sub-step 2j: 404 self-hosted secrets to
       // non-admins as well; otherwise the listing reveals declared
       // secret keys for the platform itself.
       //
@@ -474,7 +474,7 @@ function appRoutes(config) {
       const manifest = app.manifest_snapshot && typeof app.manifest_snapshot === 'object'
         ? app.manifest_snapshot
         : { secrets: [] };
-      // SELF-HOSTING-PLAN.md sub-step 2h: for the self-app, hasValue
+      // SELF-HOSTING.md sub-step 2h: for the self-app, hasValue
       // mirrors the GitHub-Actions-configured reality (process.env)
       // rather than app_secrets, since the platform never reads
       // app_secrets for its own keys. Orphans don't apply (nothing is
