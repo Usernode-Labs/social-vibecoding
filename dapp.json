@@ -1,0 +1,38 @@
+{
+  "secrets": [
+    {
+      "key": "GITHUB_APP_ID",
+      "required": true,
+      "description": "GitHub App ID for the bot account that owns app repos. Without this, app creation fails and no PRs can be opened."
+    },
+    {
+      "key": "GITHUB_PRIVATE_KEY",
+      "required": true,
+      "sensitive": true,
+      "description": "PEM private key for the GitHub App. Single-line with literal \\n escape sequences; the loader un-escapes at startup."
+    },
+    {
+      "key": "GITHUB_BOT_TOKEN",
+      "required": true,
+      "sensitive": true,
+      "description": "Classic PAT with `repo` scope for the bot user. Powers repo creation, branch pushes, PR creation, and the in-app feedback flow (Issues:write on USERNODE_PLATFORM_REPO)."
+    },
+    {
+      "key": "ANTHROPIC_API_KEY",
+      "required": false,
+      "sensitive": true,
+      "description": "Platform-wide fallback Claude key. Users can override with their own via BYOK; if neither is set, Mayor-driven flows are unavailable."
+    },
+    {
+      "key": "ADMIN_USERNAME",
+      "required": true,
+      "description": "Bootstrap admin username. The first row in `users` is created with this name and is_admin=true on first boot."
+    },
+    {
+      "key": "ADMIN_PASSWORD",
+      "required": true,
+      "sensitive": true,
+      "description": "Bootstrap admin password. Hashed at first boot — rotating only takes effect on a fresh DB or via direct SQL update."
+    }
+  ]
+}

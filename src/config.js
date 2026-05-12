@@ -44,6 +44,12 @@ function load() {
     // come and go) keeps the failure mode obvious — "no node reachable
     // at <name>" is clearly a setup issue, not a transient outage.
     nodeRpcUrl: process.env.NODE_RPC_URL || 'http://usernode-node:3000',
+    // GitHub URL of the platform's own repo. Read by feedback (file
+    // issues here), the import-flow guard (refuse to import the self-
+    // repo as a child app), and the self-app boot seed (Phase 2f).
+    // Default targets the canonical Usernode-Labs repo; forks self-
+    // hosting under their own org just need to override this in .env.
+    platformRepoUrl: (process.env.USERNODE_PLATFORM_REPO || 'https://github.com/Usernode-Labs/social-vibecoding').replace(/\/$/, ''),
   };
 
   console.log('[config] Loaded:');
@@ -55,6 +61,7 @@ function load() {
   console.log(`  MAX_APPS=${config.maxApps}`);
   console.log(`  USERNODE_APP_PUBKEY=${config.usernodeAppPubkey || '(not set — wallet linking disabled)'}`);
   console.log(`  NODE_RPC_URL=${config.nodeRpcUrl}`);
+  console.log(`  USERNODE_PLATFORM_REPO=${config.platformRepoUrl}`);
 
   return config;
 }

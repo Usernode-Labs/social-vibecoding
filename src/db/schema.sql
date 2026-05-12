@@ -260,3 +260,44 @@ CREATE TABLE IF NOT EXISTS app_secrets (
   updated_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
   PRIMARY KEY (app_id, key)
 );
+
+-- Self-hosting: the platform itself appears as one row in `apps` with
+-- self_hosted=TRUE. The seed at boot inserts/refreshes this row; two
+-- guards in app-creator and votes (Phase 2g) skip container-management
+-- side effects for it. See SELF-HOSTING-PLAN.md.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS self_hosted BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS idx_apps_self_hosted
+  ON apps (self_hosted) WHERE self_hosted = TRUE;
+
+-- Staging privacy convention. Tables tagged `staging:private` are
+-- TRUNCATEd by db-manager.js's cloneDatabase when spawning a staging
+-- clone; columns tagged `staging:private` are UPDATE'd to NULL (or a
+-- sentinel for NOT NULL columns) so the surrounding row survives.
+-- See src/prompts/app-conventions.md for the convention doc.
+--
+-- Table-level: every row is sensitive in its entirety.
+COMMENT ON TABLE sessions               IS 'staging:private';
+COMMENT ON TABLE activation_codes       IS 'staging:private';
+COMMENT ON TABLE chat_sessions          IS 'staging:private';
+COMMENT ON TABLE chat_session_messages  IS 'staging:private';
+COMMENT ON TABLE chat_session_specs     IS 'staging:private';
+COMMENT ON TABLE llm_usage              IS 'staging:private';
+COMMENT ON TABLE notifications          IS 'staging:private';
+COMMENT ON TABLE app_secrets            IS 'staging:private';
+
+-- Column-level on `users`: rows survive cloning so FK-targeted
+-- attribution (chat_messages.user_id, apps.created_by, …) keeps
+-- working in staging. Only the auth-sensitive columns get scrubbed.
+-- usernode_pubkey is intentionally NOT scrubbed: it's an on-chain
+-- public identity, no different from username for privacy purposes,
+-- and a self-app dev wants to see it to test wallet-link flows.
+COMMENT ON COLUMN users.password               IS 'staging:private';
+COMMENT ON COLUMN users.anthropic_key_enc      IS 'staging:private';
+COMMENT ON COLUMN users.anthropic_key_last4    IS 'staging:private';
+COMMENT ON COLUMN users.wallet_link_token      IS 'staging:private';
+COMMENT ON COLUMN users.wallet_link_expires_at IS 'staging:private';
+
+-- Public by omission (no comment): apps, app_activity, issues, the
+-- users table itself, chat_messages, issue_votes, pr_votes. These
+-- carry no per-row secrets and the aggregates are already visible
+-- to anyone the staging clone would be spun up for.

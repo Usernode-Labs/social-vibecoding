@@ -52,15 +52,31 @@ async function cloneDatabase(sourceDb, targetDb) {
 
   await execInDb(`CREATE DATABASE ${targetDb} TEMPLATE ${sourceDb}`);
 
-  // Enforce the public/private table convention documented in
-  // src/prompts/app-conventions.md: any table tagged
-  // `COMMENT ON TABLE foo IS 'staging:private'` is copied schema-only.
-  // The TEMPLATE clone above brings schema + rows wholesale; this pass
-  // empties private tables so staging clients get the structure but
-  // none of the production rows. Failures are fatal — refusing to spawn
-  // a staging container is strictly safer than spawning one that leaks
-  // private data.
+  // Enforce the public/private convention documented in
+  // src/prompts/app-conventions.md. The TEMPLATE clone above brings
+  // schema + rows wholesale; the two passes below redact prod rows so
+  // staging clients see the structure but none of the production data.
+  //
+  // Pass 1 — table-level: any table tagged
+  //   COMMENT ON TABLE foo IS 'staging:private'
+  // is TRUNCATEd. Use this for tables whose every row is sensitive
+  // (sessions, app_secrets, llm_usage, …).
+  //
+  // Pass 2 — column-level: any column tagged
+  //   COMMENT ON COLUMN foo.bar IS 'staging:private'
+  // is UPDATE'd to NULL (or a sentinel for NOT NULL columns), with the
+  // surrounding row left intact. Use this for tables where the row
+  // identity is useful in staging (FK targets for attribution) but a
+  // few columns carry secrets — the canonical case is `users`, where
+  // username + id + pubkey survive but password / API keys / wallet
+  // tokens get redacted.
+  //
+  // Failures in either pass are fatal — refusing to spawn a staging
+  // container is strictly safer than spawning one that leaks. Tables
+  // truncated in pass 1 are no-ops for pass 2 (UPDATE on empty), so
+  // tagging both levels on the same table is harmless.
   await truncatePrivateTables(targetDb);
+  await scrubPrivateColumns(targetDb);
 
   log.info('db-manager', 'Database cloned', { sourceDb, targetDb });
 }
@@ -98,6 +114,16 @@ async function execInTarget(dbName, sql, opts = {}) {
 // shell/SQL — rejecting unusual names costs us nothing since no real
 // app uses them.
 const SAFE_QUALIFIED_IDENT = /^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/i;
+const SAFE_IDENT = /^[a-z_][a-z0-9_]*$/i;
+
+// Sentinel for NOT NULL columns scrubbed by `staging:private`. Chosen
+// to be obviously non-functional in any auth or token-comparison path:
+// bcrypt-style hashes start with `$2{a,b,y}$`, so bcrypt.compare
+// against this string returns false for every input. Same shape works
+// for any opaque-token column (wallet links, API keys); the auth path
+// would need to special-case the literal to ever accept it, and we
+// don't.
+const STAGING_REDACTED_SENTINEL = '__staging_redacted__';
 
 async function truncatePrivateTables(targetDb) {
   // Discovery query. obj_description on pg_class returns the comment
@@ -177,6 +203,99 @@ SELECT n.nspname || '.' || c.relname
   return { truncated };
 }
 
+async function scrubPrivateColumns(targetDb) {
+  // Discovery query mirrors truncatePrivateTables but at the column
+  // level. col_description is the column-comment counterpart of
+  // obj_description. attnum > 0 filters out system columns; attisdropped
+  // skips logically-removed columns that pg keeps as zombies. Output is
+  // pipe-separated triples: <schema.table>|<column>|<not_null t/f>.
+  const discoverySql = `
+SELECT n.nspname || '.' || c.relname,
+       a.attname,
+       a.attnotnull
+  FROM pg_attribute a
+  JOIN pg_class    c ON c.oid = a.attrelid
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+ WHERE col_description(a.attrelid, a.attnum) = 'staging:private'
+   AND c.relkind = 'r'
+   AND a.attnum > 0
+   AND NOT a.attisdropped
+   AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+ ORDER BY 1, 2`.trim();
+
+  let stdout;
+  try {
+    stdout = await execInTarget(targetDb, discoverySql, { tuplesOnly: true });
+  } catch (err) {
+    log.error('db-manager', 'staging:private column discovery failed', {
+      targetDb, err: err.message,
+    });
+    throw new Error(
+      `Failed to discover staging:private columns in ${targetDb}: ${err.message}`
+    );
+  }
+
+  const targets = (stdout || '')
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((line) => {
+      // psql -At with the default field separator '|'. Three fields
+      // and the third is exactly 't' or 'f' from a bool column.
+      const [qualified, column, notNullRaw] = line.split('|');
+      return { qualified, column, notNull: notNullRaw === 't' };
+    });
+
+  if (targets.length === 0) {
+    log.info('db-manager', 'No staging:private columns to scrub', { targetDb });
+    return { scrubbed: [] };
+  }
+
+  log.info('db-manager', 'Scrubbing staging:private columns', {
+    targetDb,
+    count: targets.length,
+    columns: targets.map((t) => `${t.qualified}.${t.column}`),
+  });
+
+  const failures = [];
+  const scrubbed = [];
+  for (const { qualified, column, notNull } of targets) {
+    if (!SAFE_QUALIFIED_IDENT.test(qualified) || !SAFE_IDENT.test(column)) {
+      log.warn('db-manager', 'Refusing to UPDATE non-standard identifier', {
+        targetDb, qualified, column,
+      });
+      failures.push({ target: `${qualified}.${column}`, error: 'unsafe identifier' });
+      continue;
+    }
+    // NOT NULL columns can't accept NULL; substitute a sentinel that's
+    // safe to store and obviously non-functional. Auth code should
+    // never accept this literal in any code path — bcrypt.compare
+    // against it returns false for every plaintext, which is the only
+    // place today that meaningfully reads users.password.
+    const value = notNull
+      ? `'${STAGING_REDACTED_SENTINEL}'`
+      : 'NULL';
+    try {
+      await execInTarget(targetDb, `UPDATE ${qualified} SET ${column} = ${value}`);
+      scrubbed.push(`${qualified}.${column}`);
+    } catch (err) {
+      log.error('db-manager', 'staging:private column UPDATE failed', {
+        targetDb, qualified, column, err: err.message,
+      });
+      failures.push({ target: `${qualified}.${column}`, error: err.message });
+    }
+  }
+
+  if (failures.length > 0) {
+    throw new Error(
+      `Failed to scrub ${failures.length} staging:private column(s) in ${targetDb}: ` +
+      failures.map((f) => `${f.target} (${f.error})`).join('; ')
+    );
+  }
+
+  return { scrubbed };
+}
+
 module.exports = {
   appDbName,
   stagingDbName,
@@ -185,4 +304,5 @@ module.exports = {
   cloneDatabase,
   connectionUrl,
   truncatePrivateTables,
+  scrubPrivateColumns,
 };

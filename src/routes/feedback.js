@@ -1,8 +1,25 @@
 const { Router } = require('express');
 const log = require('../services/logger');
 
+// Derive `owner/repo` from a github.com URL. We do this at module
+// load (well, at route-factory load) so a malformed
+// USERNODE_PLATFORM_REPO fails the platform fast at startup rather
+// than 500-ing the first time a user clicks "Send feedback".
+function parseGitHubRepo(url) {
+  const u = new URL(url);
+  if (u.hostname !== 'github.com' && u.hostname !== 'www.github.com') {
+    throw new Error(`Expected github.com URL, got: ${url}`);
+  }
+  const parts = u.pathname.replace(/\.git$/, '').split('/').filter(Boolean);
+  if (parts.length < 2) {
+    throw new Error(`Expected /<owner>/<repo> path, got: ${url}`);
+  }
+  return { owner: parts[0], repo: parts[1] };
+}
+
 function feedbackRoutes(config) {
   const router = Router();
+  const { owner: feedbackOwner, repo: feedbackRepo } = parseGitHubRepo(config.platformRepoUrl);
 
   router.post('/api/feedback', async (req, res) => {
     const { description } = req.body;
@@ -49,7 +66,7 @@ function feedbackRoutes(config) {
         } catch {}
       }
 
-      const ghRes = await fetch('https://api.github.com/repos/Usernode-Labs/social-vibecoding/issues', {
+      const ghRes = await fetch(`https://api.github.com/repos/${feedbackOwner}/${feedbackRepo}/issues`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
