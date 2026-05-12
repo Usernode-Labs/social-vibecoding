@@ -286,11 +286,140 @@ jobs:
             sudo install -d -o deploy -g deploy -m 755 /opt/usernode-tools
             install -m 755 scripts/rollback.sh /opt/usernode-tools/rollback.sh
 
+            # ----------------------------------------------------------
+            # One-time platform DB rename (SELF-HOSTING-PLAN.md sub-step
+            # 2d). The platform's own data moves from the bare `usernode`
+            # database to `app_usernode_2d5619`, matching the `app_<slug>`
+            # convention every child app follows.
+            #
+            # This step is idempotent: if the target DB already exists
+            # AND its row counts match the source, we skip silently. If
+            # the target DB doesn't exist, we stop the harness, dump
+            # `usernode`, create the target, restore into it, verify
+            # counts, then proceed. Any failure drops the partial target
+            # DB and aborts so the next attempt starts clean.
+            #
+            # The bare `usernode` DB stays in place permanently as the
+            # postgres-bookkeeping target db-manager.js issues
+            # `CREATE DATABASE` from when spawning child-app DBs.
+            #
+            # After the migration runs successfully once, this block
+            # becomes a 1-line "already exists" no-op for every future
+            # deploy. Removing it after a confidence window is safe but
+            # not required.
+            # ----------------------------------------------------------
+            SRC_DB="usernode"
+            NEW_DB="app_usernode_2d5619"
+            # Tables we expect to exist after schema.sql has run. We
+            # only require `users` to have at least one row (the seeded
+            # admin) — `apps` and `chat_messages` are legitimately
+            # empty on a fresh install and we don't want to false-fail
+            # there. The other tables are existence-only sanity checks.
+            DB_CHECK_TABLES=(users apps chat_messages)
+            DB_NONEMPTY_TABLE="users"
+
+            # `psql -lqt` lists databases; `cut -d\| -f1` extracts names.
+            # `grep -qw` is whole-word match so e.g. `app_usernode_2d5619_test`
+            # wouldn't satisfy this check.
+            if docker exec usernode-db psql -U usernode -lqt 2>/dev/null \
+                 | cut -d'|' -f1 | tr -d ' ' | grep -qx "$NEW_DB"; then
+              # Steady-state path. We don't compare against SRC_DB
+              # here because once the harness has been running on
+              # NEW_DB, SRC_DB is stale by definition (new writes only
+              # go to NEW_DB). Just sanity-check that NEW_DB has
+              # data — if it's empty, something went wrong on a prior
+              # run and the operator needs to look.
+              echo "==> $NEW_DB already exists; sanity-checking"
+              MIGRATED_OK=1
+              for tbl in "${DB_CHECK_TABLES[@]}"; do
+                TGT=$(docker exec usernode-db psql -U usernode -d "$NEW_DB" -tAc "SELECT count(*) FROM $tbl" 2>/dev/null || echo "missing")
+                if [ "$TGT" = "missing" ]; then
+                  echo "::error::table $tbl is missing in $NEW_DB"
+                  MIGRATED_OK=0
+                  break
+                fi
+                if [ "$tbl" = "$DB_NONEMPTY_TABLE" ] && [ "$TGT" -lt 1 ] 2>/dev/null; then
+                  echo "::error::$tbl in $NEW_DB is empty (count=$TGT)"
+                  MIGRATED_OK=0
+                  break
+                fi
+              done
+              if [ "$MIGRATED_OK" -ne 1 ]; then
+                echo "::error::$NEW_DB exists but appears unhealthy. Refusing to proceed."
+                echo "::error::Manual intervention required: drop $NEW_DB and re-run, or investigate."
+                exit 1
+              fi
+              echo "==> $NEW_DB looks healthy; skipping migration"
+            else
+              echo "==> One-time migration: $SRC_DB -> $NEW_DB"
+
+              # Pre-flight: source DB must exist with non-empty data,
+              # otherwise we have nothing to migrate from. (A truly
+              # green-field deploy where neither DB exists is also
+              # supported — schema.sql will populate the empty NEW_DB on
+              # first harness boot — but that's not the rename path.)
+              if ! docker exec usernode-db psql -U usernode -lqt 2>/dev/null \
+                   | cut -d'|' -f1 | tr -d ' ' | grep -qx "$SRC_DB"; then
+                echo "==> Source DB $SRC_DB does not exist either. Treating as fresh install:"
+                echo "==> creating empty $NEW_DB so schema.sql can populate it on first boot."
+                docker exec -u postgres usernode-db createdb \
+                  -U usernode -O usernode "$NEW_DB"
+              else
+                # Stop the harness so no concurrent writes can land in
+                # SRC_DB between the dump and the cutover. Caddy will
+                # 502 the platform vhost during this window; child apps
+                # are unaffected (they don't traverse the harness).
+                docker compose stop usernode
+
+                TS=$(date -u +%Y%m%dT%H%M%SZ)
+                DUMP_PATH="/tmp/usernode-pre-rename-$TS.sql"
+                echo "==> Dumping $SRC_DB to $DUMP_PATH"
+                if ! docker exec -i usernode-db pg_dump -U usernode "$SRC_DB" > "$DUMP_PATH"; then
+                  echo "::error::pg_dump failed; aborting before any DB-state changes"
+                  exit 1
+                fi
+                echo "==> Dump size: $(du -h "$DUMP_PATH" | cut -f1)"
+
+                echo "==> Creating $NEW_DB"
+                if ! docker exec -u postgres usernode-db createdb \
+                       -U usernode -O usernode "$NEW_DB"; then
+                  echo "::error::createdb failed; $NEW_DB may exist in a partial state"
+                  exit 1
+                fi
+
+                echo "==> Restoring dump into $NEW_DB"
+                if ! docker exec -i usernode-db psql -U usernode -d "$NEW_DB" -v ON_ERROR_STOP=1 < "$DUMP_PATH"; then
+                  echo "::error::Restore failed; dropping $NEW_DB so next attempt starts clean"
+                  docker exec -u postgres usernode-db dropdb -U usernode "$NEW_DB" || true
+                  exit 1
+                fi
+
+                echo "==> Verifying row counts match"
+                MISMATCH=0
+                for tbl in "${DB_CHECK_TABLES[@]}"; do
+                  SRC=$(docker exec usernode-db psql -U usernode -d "$SRC_DB" -tAc "SELECT count(*) FROM $tbl")
+                  TGT=$(docker exec usernode-db psql -U usernode -d "$NEW_DB" -tAc "SELECT count(*) FROM $tbl")
+                  echo "    $tbl: $SRC_DB=$SRC, $NEW_DB=$TGT"
+                  if [ "$SRC" != "$TGT" ]; then
+                    MISMATCH=1
+                  fi
+                done
+                if [ "$MISMATCH" -eq 1 ]; then
+                  echo "::error::Row counts do not match. Dropping $NEW_DB; aborting."
+                  docker exec -u postgres usernode-db dropdb -U usernode "$NEW_DB" || true
+                  exit 1
+                fi
+                echo "==> Migration complete; counts match"
+              fi
+            fi
+
             # Bring everything up. Build is required on every deploy —
             # the platform usernode image bakes in `COPY . .` so a
             # rebuild is how new code gets in. If the conditional
             # archive-refresh branch above already force-recreated
             # usernode-node, this `up -d` is a no-op for that service.
+            # If the migration block above stopped usernode, this
+            # restarts it pointed at the new DB.
             docker compose up -d --build --remove-orphans
 
             # Caddyfile is a read-only mount, so a rebuild of usernode

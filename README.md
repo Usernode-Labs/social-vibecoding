@@ -134,6 +134,78 @@ previous SHA, the version pill in the UI shows it, and child apps
 are unaffected. Schema migrations are forward-only, so don't
 rehearse across a migration boundary.
 
+### Migrating the platform DB to its `app_`-prefixed name (Phase 2d)
+
+The platform's data lives in `app_usernode_2d5619` (per the
+`app_<slug>` convention every child app follows). The Deploy
+workflow handles the one-time rename automatically — the first
+push that lands the `DATABASE_URL` change in `docker-compose.yml`
+triggers an idempotent migration block in `.github/workflows/deploy.yml`
+that:
+
+1. Skips if `app_usernode_2d5619` already exists and is healthy
+   (sanity-checks `users` is non-empty).
+2. Otherwise stops the harness, `pg_dump`s `usernode`, creates
+   `app_usernode_2d5619`, restores the dump, and verifies row
+   counts match. Any failure drops the partial target DB and aborts.
+3. Brings everything back up pointed at the new DB.
+
+Maintenance window is ~2–5 min of platform downtime, exactly the
+duration of the dump-and-restore. Child apps and the sidecar stay
+up — `docker compose stop usernode` only stops the harness
+service. Watch the deploy run logs; the migration block is clearly
+labeled (`==> One-time migration: usernode -> app_usernode_2d5619`).
+
+**Post-cutover:** the original `usernode` database stays in place
+as a rollback target *and* as the bookkeeping DB `db-manager.js`
+connects to when issuing `CREATE DATABASE` for new child apps —
+do not drop it. (Postgres requires connecting to *some* database
+to spawn another one; `usernode` is that meta-DB.) Rolling back
+during the confidence window means flipping
+`docker-compose.yml`'s `DATABASE_URL` back to `…/usernode` and
+redeploying.
+
+#### Manual fallback (only if the auto-migration is unable to run)
+
+If you need to run the migration by hand (e.g. the auto-migration
+hit a corner case and you want to do the steps yourself, or the
+deploy workflow itself is down), here's the equivalent runbook:
+
+```bash
+ssh deploy@<DEPLOY_HOST>
+cd /opt/usernode
+
+# Pre-flight: note current counts.
+docker exec usernode-db psql -U usernode -d usernode -c \
+  "SELECT count(*) AS users FROM users; \
+   SELECT count(*) AS apps  FROM apps;  \
+   SELECT count(*) AS chat_messages FROM chat_messages;"
+
+# Stop the harness; postgres/sidecar/caddy stay up.
+docker compose stop usernode
+
+# Dump → create → restore.
+TS=$(date -u +%Y%m%dT%H%M%SZ)
+docker exec -i usernode-db pg_dump -U usernode usernode \
+  > /tmp/usernode-pre-rename-$TS.sql
+docker exec -u postgres usernode-db createdb \
+  -U usernode -O usernode app_usernode_2d5619
+docker exec -i usernode-db psql -U usernode -d app_usernode_2d5619 \
+  -v ON_ERROR_STOP=1 < /tmp/usernode-pre-rename-$TS.sql
+
+# Verify counts match exactly.
+docker exec usernode-db psql -U usernode -d app_usernode_2d5619 -c \
+  "SELECT count(*) AS users FROM users; \
+   SELECT count(*) AS apps  FROM apps;  \
+   SELECT count(*) AS chat_messages FROM chat_messages;"
+
+# Bring everything back up against the new DB.
+docker compose up -d --build
+```
+
+If the restore fails partway through, drop the partial DB and
+retry: `docker exec -u postgres usernode-db dropdb -U usernode app_usernode_2d5619`.
+
 ## Running locally
 
 Fill in `.env.example` → `.env`, set `USERNODE_LOCAL_DEV=1` in your

@@ -76,7 +76,16 @@ services:
       # /status page can render an in-progress banner. See
       # services/status.js + .github/workflows/deploy.yml.
       USERNODE_RUNTIME_PATH: /var/lib/usernode/runtime
-      DATABASE_URL: postgres://usernode:${USERNODE_DB_PASSWORD}@usernode-db:5432/usernode
+      # Per Phase 2d (SELF-HOSTING-PLAN.md), the platform's own data
+      # lives in `app_usernode_<hex>` instead of the bare `usernode`
+      # database. Same `app_<slug>` convention every child app
+      # follows, with the hex suffix avoiding a collision with a
+      # hypothetical child app slugged `usernode`. The hex is frozen
+      # in src/config.js (SELF_APP_DB_NAME) and must match this URL.
+      # The bare `usernode` database stays around as the postgres-
+      # bookkeeping target db-manager.js issues `CREATE DATABASE`
+      # from when it spawns child-app DBs.
+      DATABASE_URL: postgres://usernode:${USERNODE_DB_PASSWORD}@usernode-db:5432/app_usernode_2d5619
       NODE_RPC_URL: http://usernode-node:3000
     volumes:
       # Required: the platform spawns child-app containers via the

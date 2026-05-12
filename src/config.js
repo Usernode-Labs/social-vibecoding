@@ -6,6 +6,25 @@ const REQUIRED = [
   'JWT_SECRET',
 ];
 
+// The platform appears as one row in `apps` with self_hosted=TRUE
+// (Phase 2f boot seed). These two values pin the row's identity:
+//   - SELF_APP_SLUG     — the apps.slug column; subdomain prefix for
+//                         any future staging clone of the platform.
+//   - SELF_APP_DB_NAME  — the per-app database that backs it. Same
+//                         convention as child apps (`app_<slug>` with
+//                         non-alphanumerics replaced by `_`), derived
+//                         once and frozen so docker-compose.yml and
+//                         the seed agree.
+//
+// The hex suffix exists only to avoid colliding with a hypothetical
+// child app whose user-chosen slug happens to be 'usernode'. It was
+// generated once via `crypto.randomBytes(3).toString('hex')` and is
+// committed to history; never read from env, never overridable.
+//
+// See SELF-HOSTING-PLAN.md sub-step 2d for the rename procedure.
+const SELF_APP_SLUG = 'usernode-2d5619';
+const SELF_APP_DB_NAME = 'app_usernode_2d5619';
+
 function mask(val) {
   if (!val) return '(not set)';
   if (val.length <= 8) return '****';
@@ -50,6 +69,8 @@ function load() {
     // Default targets the canonical Usernode-Labs repo; forks self-
     // hosting under their own org just need to override this in .env.
     platformRepoUrl: (process.env.USERNODE_PLATFORM_REPO || 'https://github.com/Usernode-Labs/social-vibecoding').replace(/\/$/, ''),
+    selfAppSlug: SELF_APP_SLUG,
+    selfAppDbName: SELF_APP_DB_NAME,
   };
 
   console.log('[config] Loaded:');
@@ -62,6 +83,7 @@ function load() {
   console.log(`  USERNODE_APP_PUBKEY=${config.usernodeAppPubkey || '(not set — wallet linking disabled)'}`);
   console.log(`  NODE_RPC_URL=${config.nodeRpcUrl}`);
   console.log(`  USERNODE_PLATFORM_REPO=${config.platformRepoUrl}`);
+  console.log(`  SELF_APP_SLUG=${config.selfAppSlug} (db=${config.selfAppDbName})`);
 
   return config;
 }
