@@ -8,19 +8,19 @@
     {
       "key": "GITHUB_PRIVATE_KEY",
       "required": true,
-      "sensitive": true,
+      "private": true,
       "description": "PEM private key for the GitHub App. Single-line with literal \\n escape sequences; the loader un-escapes at startup."
     },
     {
       "key": "GITHUB_BOT_TOKEN",
       "required": true,
-      "sensitive": true,
+      "private": true,
       "description": "Classic PAT with `repo` scope for the bot user. Powers repo creation, branch pushes, PR creation, and the in-app feedback flow (Issues:write on USERNODE_PLATFORM_REPO)."
     },
     {
       "key": "ANTHROPIC_API_KEY",
       "required": false,
-      "sensitive": true,
+      "private": true,
       "description": "Platform-wide fallback Claude key. Users can override with their own via BYOK; if neither is set, Mayor-driven flows are unavailable."
     },
     {
@@ -31,26 +31,26 @@
     {
       "key": "ADMIN_PASSWORD",
       "required": true,
-      "sensitive": true,
-      "description": "Bootstrap admin password. Hashed at first boot — rotating only takes effect on a fresh DB or via direct SQL update."
+      "private": true,
+      "description": "Bootstrap admin password. Hashed at first boot — rotating only takes effect on a fresh DB or via direct SQL update. `private` keeps a hypothetical future self-app-staging container from receiving the prod admin password (would let any PR reviewer log in as admin to prod). Until self-app staging gets wired, no runtime impact."
     },
     {
       "key": "JWT_SECRET",
       "required": true,
-      "sensitive": true,
-      "description": "Signing key for session JWTs and the iframe-issued tokens child apps verify (see app-conventions.md). Required at boot — config.js refuses to start without it. Rotating invalidates every active session."
+      "private": true,
+      "description": "Signing key for session JWTs and the iframe-issued tokens child apps verify (see app-conventions.md). Required at boot — config.js refuses to start without it. Rotating invalidates every active session. `private` ensures a self-app-staging container could not mint valid prod JWTs."
     },
     {
       "key": "SESSION_SECRET",
       "required": true,
-      "sensitive": true,
-      "description": "Cookie-signing secret for express-session. Required at boot. Rotating invalidates every active session cookie."
+      "private": true,
+      "description": "Cookie-signing secret for express-session. Required at boot. Rotating invalidates every active session cookie. `private` for parallel reasons to JWT_SECRET — staging must never sign cookies that browsers honor for prod."
     },
     {
       "key": "USERNODE_DB_PASSWORD",
       "required": true,
-      "sensitive": true,
-      "description": "Postgres superuser password the platform connects with. Used by docker-compose.yml to seed the postgres container, by db-manager.js to spawn per-app databases, and baked into DATABASE_URL for the platform itself. Rotating means rolling the postgres container too."
+      "private": true,
+      "description": "Postgres superuser password the platform connects with. Used by docker-compose.yml to seed the postgres container, by db-manager.js to spawn per-app databases, and baked into DATABASE_URL for the platform itself. Rotating means rolling the postgres container too. `private` blocks staging propagation of the prod DB superuser."
     },
     {
       "key": "USERNODE_APP_PUBKEY",
@@ -60,8 +60,8 @@
     {
       "key": "USERNODE_APP_SECRET_KEY",
       "required": false,
-      "sensitive": true,
-      "description": "Private counterpart to USERNODE_APP_PUBKEY. Pre-staged in deploy.yml so any future platform-originated wallet-send flow can use it without a redeploy — currently no runtime consumer reads it. Always set together with USERNODE_APP_PUBKEY."
+      "private": true,
+      "description": "Private counterpart to USERNODE_APP_PUBKEY. Pre-staged in deploy.yml so any future platform-originated wallet-send flow can use it without a redeploy — currently no runtime consumer reads it. Always set together with USERNODE_APP_PUBKEY. `private` blocks staging propagation: this key signs real on-chain transactions with real funds."
     }
   ]
 }

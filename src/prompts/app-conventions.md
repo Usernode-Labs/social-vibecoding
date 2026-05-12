@@ -221,7 +221,7 @@ Manifest shape:
       "key": "STRIPE_SECRET_KEY",
       "description": "Live Stripe secret for charging cards",
       "required": true,
-      "sensitive": true
+      "private": true
     },
     {
       "key": "DEFAULT_LOCALE",
@@ -241,17 +241,29 @@ Per-field rules:
 - `required` — `true` if the app cannot run without it. Defaults to
   `false`. **Required-but-unset blocks deploys** — only mark a key
   required if that's truly the contract.
-- `sensitive` — `true` if the value must never be readable from any API.
-  The platform stores it AES-256-GCM at rest and the Secrets UI shows
-  only "set" / "not set". Defaults to `false`. Mark API keys, secret
-  signing keys, etc. as sensitive; mark public addresses, URLs,
-  feature flags as non-sensitive.
+- `private` — `true` if the value must never be readable from any API
+  *and* must not propagate from prod into staging. Stored AES-256-GCM
+  at rest; the Secrets UI shows only "set" / "not set"; staging
+  containers see only the manifest-committed `staging_default` /
+  `default` fallback. Defaults to `false`. Mark API keys, signing
+  keys, wallet seeds, OAuth client secrets, etc. as private; mark
+  public addresses, URLs, feature flags as non-private. See "Public
+  vs private secrets" below for the full decision tree.
+- `sensitive` — **deprecated alias for `private`.** Existing
+  `dapp.json` files using `sensitive: true` keep working unchanged —
+  the platform reads either field and treats them as the same flag.
+  New manifests should write `private: true` instead.
 - `default` — applied at deploy time if no stored value exists (only
   meaningful when `required: false`). Use sparingly — it's documented
   as "the platform's default", not "this dapp's default". For
   platform-managed keys (see below) the manifest default is a
   fallback for *standalone* deploys; in-platform deploys use the
   platform's own env value instead.
+- `staging_default` — manifest-committed value used in staging for
+  `private: true` entries (see "Public vs private secrets"
+  below). Wins over `default` in staging. If both are unset and the
+  entry is `required + private`, the staging build fails with a
+  clear error pointing at the remediation.
 
 **Reserved keys** the platform owns and rejects from the manifest:
 `DATABASE_URL`, `JWT_SECRET`, `PORT`, `USERNODE_ENV`,
@@ -287,6 +299,131 @@ stored an override.
 When generating dapps from scratch, it's fine for the manifest to be
 empty (`{ "secrets": [] }`) — only add entries when a feature actually
 needs a value the platform should store.
+
+## Public vs private secrets — **IMPORTANT**
+
+Staging containers receive the prod secret store by default for
+*non-private* entries — same `NODE_RPC_URL`, same public client IDs,
+same feature flags as prod — because most config values are
+infrastructure URLs or public identifiers that need to match across
+environments for staging to be a useful preview.
+
+**`private: true` controls TWO things at once:**
+
+1. **At rest:** the value is encrypted in `app_secrets` and is never
+   returned by the platform API. The Settings UI shows only "set" /
+   "not set" with no `valueLast4`.
+2. **In staging:** the prod stored value is *not* propagated. Staging
+   resolves the value from manifest-committed fallbacks only — see
+   the resolution order below.
+
+The two behaviors are unified because they share a threat model: a
+value worth encrypting at rest is also a value worth keeping out of a
+PR's staging container, where any debug endpoint, error message, or
+SSRF in unreviewed code is a public exposure. (Sibling pattern to the
+SQL `staging:private` table marker.)
+
+> **Backward compatibility:** existing `dapp.json` files written with
+> `sensitive: true` keep working unchanged — the platform parses
+> `sensitive` as an alias for `private` and applies the same dual
+> behavior. New manifests should write `private: true`.
+
+Mark a secret private by setting `"private": true`, and commit
+the staging fallback alongside it:
+
+```json
+{
+  "secrets": [
+    {
+      "key": "STRIPE_SECRET_KEY",
+      "description": "Live Stripe secret for charging cards",
+      "required": true,
+      "private": true,
+      "staging_default": "sk_test_publishable_dummy"
+    }
+  ]
+}
+```
+
+In staging, private entries are resolved from manifest-committed
+values only (in priority order):
+
+1. `staging_default` — explicit, committed-to-source signal that
+   "this is the value safe to use in staging." Use this for sandbox
+   API keys (Stripe `sk_test_...`, sandbox OAuth `client_id`, etc.)
+   or for randomly-generated dummies the app's staging code can
+   detect and short-circuit on.
+2. `default` — same fallback used by `required: false` secrets in
+   prod. Reasonable when the dev intends the same default everywhere
+   (typical for opt-in features that no-op when unset).
+3. If both are unset on a `required: true` entry, the staging build
+   fails with a `PrivateSecretMissingStagingDefaultError` listing
+   the key and the remediation. This is intentional: silently passing
+   an empty string would let bugs propagate into PR reviews.
+
+Prod is unaffected — the staging filter only fires when
+`forStaging: true` is passed to the deploy merge, which only the
+staging path does. Prod resolves stored value → platform default →
+`default` as always.
+
+### Decide by asking: "would the staging container running this code with the prod value cause a real-world side effect, or could it leak from a debug endpoint?"
+
+Mark **private** when the secret unlocks:
+
+- Live payment processing (Stripe live keys, PayPal client_secret,
+  bank API tokens).
+- OAuth client secrets that mint *prod* user tokens (Google, GitHub,
+  Slack OAuth `client_secret`).
+- Signing keys used for prod user sessions (`JWT_SECRET`,
+  `SESSION_SECRET`).
+- Wallet / on-chain secret keys that hold real funds.
+- Database superuser passwords.
+- Push-notification keys (FCM, APNS) that fan out to real devices.
+- Email / SMS sending credentials (SendGrid API key, Twilio auth
+  token).
+- Any HSM / KMS unwrap key.
+
+Leave **non-private** (the default) for:
+
+- Public API keys and `client_id`s (anything ending in `_PUBLISHABLE_`
+  or marked "safe in client-side code" by the vendor).
+- Infrastructure URLs (`NODE_RPC_URL`, sidecar hostnames, queue URLs).
+- Feature flags, log levels, locale defaults.
+- Read-only scoped tokens whose blast radius is genuinely contained.
+- Public identifiers (account IDs, project slugs).
+
+### Rules
+
+- **`required + private` MUST commit a `staging_default` (or
+  `default`).** Otherwise the staging build will fail. This is the
+  only acceptable failure mode — empty-string-by-default would let
+  bugs propagate silently into PR reviews.
+- **A non-private secret MUST NOT be derived from a private one
+  in code.** If your app reads `JWT_SECRET` (private) and uses it
+  to compute `BUILD_FINGERPRINT` (non-private) which it then
+  exposes, the fingerprint is now a side-channel for the secret.
+  Either mark the derived value private too, or use a
+  one-way-but-distinguishable derivation that doesn't leak.
+- **Vendor-provided sandbox / test-mode keys are NOT a special case.**
+  Stripe's `sk_test_...` is still a credential the vendor expects you
+  to handle as one — mark it private *and* set
+  `staging_default: "sk_test_..."` (committing the test key directly).
+  Don't use this to share the prod key with staging.
+
+### When the Mayor / Claude Code adds a new secret to `dapp.json`
+
+1. **Default to `private: false`** for genuinely-public values
+   (URLs, IDs, feature flags). This is most secrets.
+2. **Run the "would the staging container running this code with the
+   prod value cause a real-world side effect, or leak from a debug
+   endpoint?" test.**
+3. If the answer is yes, set `"private": true` and add a
+   `"staging_default"` (a vendor-provided test-mode key or a dummy
+   the app's staging code can short-circuit on).
+4. Mention the choice briefly in the dev-chat reply: "Marked
+   `STRIPE_SECRET_KEY` private (encrypted at rest, isolated from
+   staging) — added `staging_default: 'sk_test_publishable_dummy'`
+   so staging gets a no-op test key."
 
 ## Don't `git push` yourself
 

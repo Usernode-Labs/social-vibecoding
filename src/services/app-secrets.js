@@ -63,8 +63,11 @@ async function getRawValues(pool, appId, jwtSecret) {
  *   - plus any "orphan" keys the user has stored but the manifest
  *     no longer mentions (so they show up in the UI for cleanup)
  *
- * Sensitive keys never carry their plaintext into the response, just
- * a `hasValue` flag. Non-sensitive keys include `valueLast4`.
+ * Private keys never carry their plaintext into the response, just
+ * a `hasValue` flag. Non-private keys include `valueLast4`.
+ *
+ * The response includes BOTH `private` (canonical) and `sensitive`
+ * (BC alias) populated identically so old UI clients keep working.
  */
 async function getRedactedView(pool, appId, manifest) {
   const stored = await list(pool, appId);
@@ -79,10 +82,12 @@ async function getRedactedView(pool, appId, manifest) {
       key: entry.key,
       description: entry.description,
       required: entry.required,
-      sensitive: entry.sensitive,
+      private: entry.private,
+      sensitive: entry.private,
       default: entry.default,
+      stagingDefault: entry.staging_default != null ? entry.staging_default : null,
       hasValue: !!s,
-      valueLast4: s && !entry.sensitive ? s.valueLast4 : null,
+      valueLast4: s && !entry.private ? s.valueLast4 : null,
       updatedAt: s ? s.updatedAt : null,
       orphan: false,
     });
@@ -94,8 +99,10 @@ async function getRedactedView(pool, appId, manifest) {
       key: s.key,
       description: '(no longer declared in dapp.json)',
       required: false,
+      private: true,
       sensitive: true,
       default: null,
+      stagingDefault: null,
       hasValue: true,
       valueLast4: null,
       updatedAt: s.updatedAt,
@@ -117,8 +124,11 @@ function computeLast4(value, sensitive) {
 }
 
 /**
- * Upsert a secret value. `sensitive` controls whether `value_last4` is
- * stored (it is for non-sensitive keys, so the UI can render a preview).
+ * Upsert a secret value. `sensitive` (the at-rest classification flag,
+ * which is just `manifest.private` at the call site) controls whether
+ * `value_last4` is stored — it is for non-private keys, so the UI can
+ * render a preview, and isn't for private keys, so the last 4 chars
+ * never leak via the secrets API.
  */
 async function setValue(pool, appId, key, value, { sensitive = false, userId = null, jwtSecret }) {
   if (typeof value !== 'string' || !value.length) {
@@ -163,7 +173,7 @@ function missingRequired(manifest, storedKeys) {
 /**
  * Build the env-var map the deploy paths pass to `docker.runContainer`.
  *
- * Precedence (high → low):
+ * Precedence (high → low) for non-private entries:
  *   1. Stored secret value     — explicit, user-set per app
  *   2. Platform default        — infrastructure-controlled, supplied
  *                                by the caller (e.g. `NODE_RPC_URL`
@@ -178,25 +188,61 @@ function missingRequired(manifest, storedKeys) {
  *                                deploys (the dapp running outside
  *                                the platform).
  *
- * Returns { env, missingRequired } so the caller can short-circuit
- * deploys cleanly without a second pass through the manifest.
+ * Private secrets in staging (sibling to the SQL `staging:private`
+ * pattern — see app-conventions.md "Public vs private secrets"):
+ *   When `opts.forStaging` is true and a manifest entry has
+ *   `private: true` (or the BC alias `sensitive: true`), the stored
+ *   value is *not* propagated. The reasoning: a value worth
+ *   encrypting at rest and redacting from API responses is also
+ *   worth keeping out of the staging container's env, where any PR's
+ *   debug endpoint, error message, or SSRF could leak it.
+ *   Resolution collapses to manifest-only fallbacks:
+ *     1. `staging_default` (committed in dapp.json — explicit signal
+ *        that this value is safe in staging; e.g. a Stripe test key)
+ *     2. `default` (committed in dapp.json — already publishable)
+ *     3. omit from env; if `required: true`, surface in
+ *        `missingPrivateStagingDefault` so the caller can fail fast.
+ *   This is a no-op outside staging: prod paths see private secrets
+ *   exactly as before.
+ *
+ * Returns { env, missingRequired, missingPrivateStagingDefault }.
+ * Callers can short-circuit on either failure list.
  */
-function mergeForDeploy(manifest, storedValues, platformDefaults) {
+function mergeForDeploy(manifest, storedValues, platformDefaults, opts = {}) {
+  const { forStaging = false } = opts;
   const env = {};
-  const storedKeys = Object.keys(storedValues || {});
-  const missing = missingRequired(manifest, storedKeys);
+  const missing = [];
+  const missingPrivateStagingDefault = [];
   const platform = platformDefaults || {};
+  const stored = storedValues || {};
 
   for (const s of manifest.secrets) {
-    if (Object.prototype.hasOwnProperty.call(storedValues || {}, s.key)) {
-      env[s.key] = storedValues[s.key];
+    const isPrivateInStaging = forStaging && !!s.private;
+
+    if (isPrivateInStaging) {
+      const fallback = s.staging_default != null
+        ? s.staging_default
+        : (s.default != null ? s.default : null);
+      if (fallback != null) {
+        env[s.key] = fallback;
+      } else if (s.required) {
+        missingPrivateStagingDefault.push(s.key);
+      }
+      continue;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(stored, s.key)) {
+      env[s.key] = stored[s.key];
     } else if (Object.prototype.hasOwnProperty.call(platform, s.key) && platform[s.key] != null) {
       env[s.key] = platform[s.key];
     } else if (s.default != null) {
       env[s.key] = s.default;
+    } else if (s.required) {
+      missing.push(s.key);
     }
   }
-  return { env, missingRequired: missing };
+
+  return { env, missingRequired: missing, missingPrivateStagingDefault };
 }
 
 /**

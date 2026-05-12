@@ -176,7 +176,10 @@ node_modules
       //         "key": "MY_API_KEY",
       //         "description": "Human help text shown in the Secrets UI",
       //         "required": true,
-      //         "sensitive": true,
+      //         "private": true,   // encrypted at rest, redacted from
+      //                            // API, and not propagated into
+      //                            // staging (`sensitive: true` is
+      //                            // accepted as a BC alias)
       //         "default": "..."   // applied if no stored value
       //       }
       //     ]

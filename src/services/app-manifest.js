@@ -17,12 +17,25 @@
  *         "key": "ECHO_APP_SECRET_KEY",       // env var name
  *         "description": "...",               // human help text for UI
  *         "required": true,                   // deploy blocks if unset
- *         "sensitive": true,                  // never returned by API
- *         "default": "..."                    // applied if no stored value
+ *         "private": true,                    // encrypted at rest, never
+ *                                             // returned by API, AND not
+ *                                             // propagated from prod into
+ *                                             // staging — sibling to
+ *                                             // staging:private for SQL.
+ *                                             // See app-conventions.md.
+ *         "default": "...",                   // applied if no stored value
+ *         "staging_default": "..."            // committed staging fallback
+ *                                             // for private entries.
+ *                                             // Wins over `default` in
+ *                                             // staging.
  *       },
  *       ...
  *     ]
  *   }
+ *
+ * `sensitive: true` is accepted as a backward-compatible alias for
+ * `private: true` — the canonical field is `private`. Existing
+ * dapp.json files written before the rename keep working unchanged.
  *
  * Missing file or unparseable JSON is treated as `{ secrets: [] }` — i.e.
  * exactly the legacy behavior. The platform never refuses to deploy on
@@ -91,8 +104,12 @@ function read(cloneDir) {
       key,
       description: typeof s.description === 'string' ? s.description : '',
       required: !!s.required,
-      sensitive: !!s.sensitive,
+      // `private` is the canonical field; `sensitive` is accepted as
+      // a backward-compatible alias. Either present (and truthy) flips
+      // the entry to private. Internally we expose only `.private`.
+      private: !!s.private || !!s.sensitive,
       default: typeof s.default === 'string' ? s.default : null,
+      staging_default: typeof s.staging_default === 'string' ? s.staging_default : null,
     });
   }
 

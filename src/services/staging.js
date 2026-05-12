@@ -19,6 +19,25 @@ class MissingSecretsError extends Error {
   }
 }
 
+// Distinct error for the staging-specific case where a `required + private`
+// secret has no manifest-committed `staging_default` (or `default`). Surfaces
+// with a different message because the remediation is different from
+// MissingSecretsError: the user can't fix this from Settings → Secrets
+// (private secrets are *intentionally* not staged from the prod store).
+// They have to either commit a `staging_default` to dapp.json or unmark
+// the entry private. See app-conventions.md "Public vs private secrets".
+class PrivateSecretMissingStagingDefaultError extends Error {
+  constructor(missingKeys) {
+    super(
+      `Cannot stage: required+private secret(s) [${missingKeys.join(', ')}] ` +
+      `have no staging fallback. Add a \`staging_default\` (or \`default\`) ` +
+      `to each entry in dapp.json, or unmark them private.`
+    );
+    this.name = 'PrivateSecretMissingStagingDefaultError';
+    this.missingKeys = missingKeys;
+  }
+}
+
 // Local-dev URLs are emitted with `localhost` as the host and rewritten to
 // whatever hostname the client is actually reaching the platform on. See
 // public/js/dev-host.js — this keeps laptop + phone-on-LAN working without
@@ -51,18 +70,34 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
 
     // 2. Read the dapp's manifest from the PR branch and check that all
     //    required secrets have stored values. Staging shares the prod
-    //    secrets store (one set of values per app, not per env), so a
-    //    PR introducing a new required key needs that key set in the
-    //    app's Settings → Secrets first — same gate prod uses below.
+    //    secrets store for *non-private* keys (one set of values per
+    //    app, not per env), so a PR introducing a new required key
+    //    needs that key set in the app's Settings → Secrets first —
+    //    same gate prod uses below.
+    //
+    //    Private secrets (the staging:private analog for env vars;
+    //    see app-conventions.md "Public vs private secrets") are
+    //    NOT propagated from the prod store. They resolve from
+    //    manifest-committed `staging_default` / `default` only; if
+    //    neither is set on a `required + private` entry, we fail
+    //    loudly so the operator knows to commit a staging fallback or
+    //    unmark private.
     const stagingManifest = appManifest.read(cloneDir);
     const stagingPool = getPool(config);
     const stagingStored = await appSecrets.getRawValues(stagingPool, app.id, config.jwtSecret);
     const stagingMerge = appSecrets.mergeForDeploy(
-      stagingManifest, stagingStored, appSecrets.platformDefaultsFromEnv()
+      stagingManifest, stagingStored, appSecrets.platformDefaultsFromEnv(),
+      { forStaging: true }
     );
     if (stagingMerge.missingRequired.length) {
       await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
       throw new MissingSecretsError(stagingMerge.missingRequired);
+    }
+    if (stagingMerge.missingPrivateStagingDefault.length) {
+      await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
+      throw new PrivateSecretMissingStagingDefaultError(
+        stagingMerge.missingPrivateStagingDefault
+      );
     }
 
     // 3. Build Docker image
@@ -281,4 +316,5 @@ module.exports = {
   teardownStaging,
   rebuildProduction,
   MissingSecretsError,
+  PrivateSecretMissingStagingDefaultError,
 };

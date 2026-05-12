@@ -99,17 +99,22 @@ function issueRoutes(config) {
         const manifest = (app.manifest_snapshot && typeof app.manifest_snapshot === 'object')
           ? app.manifest_snapshot : { secrets: [] };
         const declared = (manifest.secrets || []).find((s) => s.key === key);
-        const sensitive = !!declared?.sensitive;
+        // `private` is canonical; manifest.read() also accepts the
+        // legacy `sensitive` alias and normalizes to `.private`.
+        const isPrivate = !!declared?.private;
 
         // Encrypt the proposed value before it ever lands in the DB.
         // Even other admins reading the issues table see only ciphertext;
         // the GET /api/apps/:slug/issues route strips it from the
         // payload before serializing (see further below).
         const valueEnc = action === 'set' ? encrypt(value, config.jwtSecret) : null;
-        const valueLast4 = action === 'set' && !sensitive
+        const valueLast4 = action === 'set' && !isPrivate
           ? value.slice(-4) : null;
 
-        payload = { key, action, valueEnc, valueLast4, sensitive };
+        // Persist BOTH `private` (canonical) and `sensitive` (BC) on the
+        // issue payload so any in-flight issue serialized by an older
+        // build keeps deserializing cleanly when the votes complete.
+        payload = { key, action, valueEnc, valueLast4, private: isPrivate, sensitive: isPrivate };
         title = action === 'delete'
           ? `Remove secret "${key}"`
           : `Set secret "${key}"`;
@@ -486,7 +491,10 @@ async function maybeApplySecretChangeProposal(config, pool, issue) {
         log.warn('issues', 'Secret-change proposal could not decrypt value', { issueId: issue.id });
         return { applied: false, upCount, majority, active };
       }
-      const valueLast4 = payload.sensitive ? null : plaintext.slice(-4);
+      // Read canonical `private`, fall back to `sensitive` for issues
+      // proposed by an older build before the field was renamed.
+      const isPrivate = !!(payload.private || payload.sensitive);
+      const valueLast4 = isPrivate ? null : plaintext.slice(-4);
       // Re-encrypt to ensure the stored row uses a fresh IV (the
       // payload ciphertext was captured at proposal time).
       const reEnc = encrypt(plaintext, config.jwtSecret);
@@ -512,7 +520,8 @@ async function maybeApplySecretChangeProposal(config, pool, issue) {
     // metadata (who, when, how many votes) is what matters here.
     const auditPayload = {
       key, action,
-      sensitive: !!payload.sensitive,
+      private: !!(payload.private || payload.sensitive),
+      sensitive: !!(payload.private || payload.sensitive),
       valueLast4: payload.valueLast4 || null,
       appliedAt: new Date().toISOString(),
       appliedBy: 'group-vote',

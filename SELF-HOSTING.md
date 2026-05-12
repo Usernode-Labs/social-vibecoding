@@ -360,19 +360,19 @@ Per [src/services/app-manifest.js](./src/services/app-manifest.js):
     {
       "key": "GITHUB_PRIVATE_KEY",
       "required": true,
-      "sensitive": true,
+      "private": true,
       "description": "PEM private key for the GitHub App"
     },
     {
       "key": "GITHUB_BOT_TOKEN",
       "required": true,
-      "sensitive": true,
+      "private": true,
       "description": "Classic PAT for repo creation, branch pushes, PR creation"
     },
     {
       "key": "ANTHROPIC_API_KEY",
       "required": false,
-      "sensitive": true,
+      "private": true,
       "description": "Platform-wide fallback Claude key; users can BYOK"
     },
     {
@@ -383,7 +383,7 @@ Per [src/services/app-manifest.js](./src/services/app-manifest.js):
     {
       "key": "ADMIN_PASSWORD",
       "required": true,
-      "sensitive": true,
+      "private": true,
       "description": "Bootstrap admin password"
     }
   ]
@@ -763,8 +763,16 @@ observation; Phase 4 is deferred indefinitely.
 - [EXTRACT-PLAN.md](./EXTRACT-PLAN.md) — the standalone-deploy
   prerequisite, now done.
 - [src/prompts/app-conventions.md](./src/prompts/app-conventions.md)
-  — defines `staging:private` and `dapp.json`; Phase 0 and 2c/2e
-  bring the platform into compliance with rules it already
-  prescribes for child apps.
+  — defines `staging:private` (SQL) and `private: true` (env-vars,
+  parallel pattern: encrypted at rest *and* isolated from staging;
+  `sensitive: true` is accepted as a backward-compatible alias) and
+  `dapp.json`. Phase 0 and 2c/2e bring the platform into compliance
+  with rules it already prescribes for child apps. The platform's own
+  `dapp.json` marks every credential-bearing entry `private` (e.g.
+  `ADMIN_PASSWORD`, `JWT_SECRET`, `SESSION_SECRET`,
+  `USERNODE_DB_PASSWORD`, `USERNODE_APP_SECRET_KEY`,
+  `GITHUB_PRIVATE_KEY`, `GITHUB_BOT_TOKEN`, `ANTHROPIC_API_KEY`) —
+  defensive, since no platform-driven self-app staging exists
+  today, but ready if/when it does.
 - [scripts/rollback.sh](./scripts/rollback.sh) — Phase 1
   kill-switch; rehearsed quarterly per the safety rails.

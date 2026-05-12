@@ -486,7 +486,10 @@ function appRoutes(config) {
           key: entry.key,
           description: entry.description,
           required: entry.required,
-          sensitive: entry.sensitive,
+          // Canonical `private` plus `sensitive` BC alias (populated
+          // identically) so old UI clients keep working.
+          private: entry.private,
+          sensitive: entry.private,
           default: entry.default,
           hasValue: !!process.env[entry.key],
           valueLast4: null,
@@ -537,7 +540,7 @@ function appRoutes(config) {
       }
 
       await appSecrets.setValue(pool, app.id, req.params.key, value, {
-        sensitive: !!declared?.sensitive,
+        sensitive: !!declared?.private,
         userId: req.user.id,
         jwtSecret: config.jwtSecret,
       });
