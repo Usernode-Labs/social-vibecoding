@@ -103,7 +103,14 @@ const Secrets = {
     const footer = document.getElementById('app-secrets-footer');
     if (!list) return;
     const isAdmin = !!App.user?.isAdmin;
-    footer?.classList.toggle('hidden', !isAdmin);
+    // Footer contains the "redeploy now" shortcut, which hits
+    // /api/apps/:slug/redeploy. For self-hosted apps that endpoint is
+    // gated by refuseIfSelfHosted (the platform deploys via GitHub
+    // Actions). The /api/apps/:slug/secrets response sets readOnly=true
+    // for self-hosted apps; respect it here so admins don't get a
+    // confusing 403 from a button that shouldn't have been offered.
+    const showFooter = isAdmin && !data.readOnly;
+    footer?.classList.toggle('hidden', !showFooter);
 
     if (!data.manifestKnown) {
       list.innerHTML = `

@@ -243,7 +243,12 @@ const Home = {
     // is rendered conditionally so we don't reserve right padding on
     // tiles that have no buttons there at all.
     const showRetry = isError && (App.user?.isAdmin || App.user?.id === app.created_by);
-    const showCheck = App.user?.isAdmin && app.repo_url && isRunning;
+    // Self-hosted (the platform's own row) deploys via GitHub Actions, not
+    // through the in-app rebuildProduction codepath that ⟳ would hit. Showing
+    // the button only to 403 with "this action does not apply to the self-app
+    // row" is bad UX — hide it entirely. Same rationale as the missingSecrets
+    // skip in routes/apps.js.
+    const showCheck = App.user?.isAdmin && app.repo_url && isRunning && !app.self_hosted;
     const showDelete = !!App.user?.isAdmin;
     const hasCornerBtns = showRetry || showCheck || showDelete;
     // `Retry` is text rather than a glyph so we widen the title-row's
