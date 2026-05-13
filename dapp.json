@@ -3,54 +3,61 @@
     {
       "key": "GITHUB_APP_ID",
       "required": true,
-      "description": "GitHub App ID for the bot account that owns app repos. Without this, app creation fails and no PRs can be opened."
+      "default": "",
+      "description": "GitHub App ID for the bot account that owns app repos. Without this, app creation fails and no PRs can be opened. `default: \"\"` lets a self-app staging clone boot for UI work — github.init() degrades to disabled when this is empty (see services/github.js)."
     },
     {
       "key": "GITHUB_PRIVATE_KEY",
       "required": true,
       "private": true,
-      "description": "PEM private key for the GitHub App. Single-line with literal \\n escape sequences; the loader un-escapes at startup."
+      "staging_default": "",
+      "description": "PEM private key for the GitHub App. Single-line with literal \\n escape sequences; the loader un-escapes at startup. `staging_default: \"\"` pairs with GITHUB_APP_ID — both empty means github.init() takes the disabled branch and staging boots without GitHub features."
     },
     {
       "key": "GITHUB_BOT_TOKEN",
       "required": true,
       "private": true,
-      "description": "Classic PAT with `repo` scope for the bot user. Powers repo creation, branch pushes, PR creation, and the in-app feedback flow (Issues:write on USERNODE_PLATFORM_REPO)."
+      "staging_default": "",
+      "description": "Classic PAT with `repo` scope for the bot user. Powers repo creation, branch pushes, PR creation, and the in-app feedback flow (Issues:write on USERNODE_PLATFORM_REPO). `staging_default: \"\"` lets staging boot — every consumer guards on `if (!pat)` and degrades."
     },
     {
       "key": "ANTHROPIC_API_KEY",
       "required": false,
       "private": true,
-      "description": "Platform-wide fallback Claude key. Users can override with their own via BYOK; if neither is set, Mayor-driven flows are unavailable."
+      "description": "Platform-wide fallback Claude key. Users can override with their own via BYOK; if neither is set, Mayor-driven flows are unavailable. Already optional, so no staging fallback needed — staging just inherits the unset state."
     },
     {
       "key": "ADMIN_USERNAME",
       "required": true,
-      "description": "Bootstrap admin username. The first row in `users` is created with this name and is_admin=true on first boot."
+      "default": "admin",
+      "description": "Bootstrap admin username. The first row in `users` is created with this name and is_admin=true on first boot. `default: \"admin\"` covers self-app staging (where the secrets UI is read-only and prod app_secrets is always empty); the staging DB clone already carries whatever admin row prod has, so this default only matters for a fresh-DB clone."
     },
     {
       "key": "ADMIN_PASSWORD",
       "required": true,
       "private": true,
-      "description": "Bootstrap admin password. Hashed at first boot — rotating only takes effect on a fresh DB or via direct SQL update. `private` keeps a hypothetical future self-app-staging container from receiving the prod admin password (would let any PR reviewer log in as admin to prod). Until self-app staging gets wired, no runtime impact."
+      "staging_default": "__staging_admin_password__",
+      "description": "Bootstrap admin password. Hashed at first boot — rotating only takes effect on a fresh DB or via direct SQL update. `private` keeps a self-app-staging container from receiving the prod admin password (would let any PR reviewer log in as admin to prod). `staging_default` is a sentinel; staging admins should authenticate via the parent-issued iframe identity instead of this password (see SELF-HOSTING.md 2c notes on iframe-auth)."
     },
     {
       "key": "JWT_SECRET",
       "required": true,
       "private": true,
-      "description": "Signing key for session JWTs and the iframe-issued tokens child apps verify (see app-conventions.md). Required at boot — config.js refuses to start without it. Rotating invalidates every active session. `private` ensures a self-app-staging container could not mint valid prod JWTs."
+      "description": "Signing key for session JWTs and the iframe-issued tokens child apps verify (see app-conventions.md). Required at boot — config.js refuses to start without it. Rotating invalidates every active session. `private` ensures a self-app-staging container could not mint valid prod JWTs. NOTE: this entry is silently skipped by app-manifest.read() because JWT_SECRET is on the reserved-keys list (services/app-manifest.js); the platform injects the parent's value into staging containers explicitly via services/staging.js. Listed here for documentation only — no runtime effect."
     },
     {
       "key": "SESSION_SECRET",
       "required": true,
       "private": true,
-      "description": "Cookie-signing secret for express-session. Required at boot. Rotating invalidates every active session cookie. `private` for parallel reasons to JWT_SECRET — staging must never sign cookies that browsers honor for prod."
+      "staging_default": "__staging_session_secret_not_for_prod__",
+      "description": "Cookie-signing secret for express-session. Required at boot. Rotating invalidates every active session cookie. `private` for parallel reasons to JWT_SECRET — staging must never sign cookies that browsers honor for prod. `staging_default` is a deliberately distinguishable dummy so any cookie minted by staging is obviously not a prod cookie."
     },
     {
       "key": "USERNODE_DB_PASSWORD",
       "required": true,
       "private": true,
-      "description": "Postgres superuser password the platform connects with. Used by docker-compose.yml to seed the postgres container, by db-manager.js to spawn per-app databases, and baked into DATABASE_URL for the platform itself. Rotating means rolling the postgres container too. `private` blocks staging propagation of the prod DB superuser."
+      "staging_default": "__staging_db_unused__",
+      "description": "Postgres superuser password the platform connects with. Used by docker-compose.yml to seed the postgres container, by db-manager.js to spawn per-app databases, and baked into DATABASE_URL for the platform itself. Rotating means rolling the postgres container too. `private` blocks staging propagation of the prod DB superuser. `staging_default` is a placeholder — the staging container's DATABASE_URL is set explicitly to the staging clone's URL by services/staging.js, and db-manager.js falls back to 'localdev' when this is unfamiliar; spawning child apps from within a staging container is out of scope for UI-edit workflows."
     },
     {
       "key": "USERNODE_APP_PUBKEY",
