@@ -25,21 +25,53 @@
 // The corner case (a user who qualified once, vanished for months,
 // then briefly visits) gets counted as active even though strictly
 // they should re-qualify. Worth revisiting if/when this matters.
+//
+// Self-hosted (platform self-app) special case: app_activity rows are
+// only ever inserted while a user is on a child app's App tab (see
+// startActivityTracking in app-view.js). The self-app has no App tab
+// — the platform doesn't iframe itself — so its app_id never gets a
+// row, which would leave its active count at 0 forever and make the
+// vote-majority math unreachable. For self_hosted apps we instead
+// count the *union* across every app: anyone who's qualified on any
+// app and visited any app within the window. This matches the user's
+// mental model — "everyone using the platform is a user of the
+// platform" — and unblocks self-app voting/governance.
 
-async function getActiveUserStats(pool, appId) {
+async function isSelfHostedApp(pool, appId) {
   const { rows } = await pool.query(
-    `SELECT COUNT(DISTINCT a.user_id) AS cnt
-     FROM app_activity a
-     WHERE a.app_id = $1
-       AND a.date >= CURRENT_DATE - 10
-       AND EXISTS (
-         SELECT 1 FROM app_activity b
-         WHERE b.app_id = $1
-           AND b.user_id = a.user_id
-           AND b.seconds_spent >= 60
-       )`,
+    'SELECT self_hosted FROM apps WHERE id = $1',
     [appId]
   );
+  return !!rows[0]?.self_hosted;
+}
+
+async function getActiveUserStats(pool, appId) {
+  const selfHosted = await isSelfHostedApp(pool, appId);
+
+  const { rows } = selfHosted
+    ? await pool.query(
+        `SELECT COUNT(DISTINCT a.user_id) AS cnt
+           FROM app_activity a
+           WHERE a.date >= CURRENT_DATE - 10
+             AND EXISTS (
+               SELECT 1 FROM app_activity b
+               WHERE b.user_id = a.user_id
+                 AND b.seconds_spent >= 60
+             )`
+      )
+    : await pool.query(
+        `SELECT COUNT(DISTINCT a.user_id) AS cnt
+           FROM app_activity a
+           WHERE a.app_id = $1
+             AND a.date >= CURRENT_DATE - 10
+             AND EXISTS (
+               SELECT 1 FROM app_activity b
+               WHERE b.app_id = $1
+                 AND b.user_id = a.user_id
+                 AND b.seconds_spent >= 60
+             )`,
+        [appId]
+      );
   // Floor at 1 so the vote machinery's majority threshold is never
   // 0/0; this is a vote-correctness floor, not a real-count guarantee.
   // The dashboard tile passes the same value through; on a brand-new
@@ -57,18 +89,33 @@ async function getActiveUserStats(pool, appId) {
 // for unauthenticated callers.
 async function isUserActive(pool, appId, userId) {
   if (!userId) return false;
-  const { rows } = await pool.query(
-    `SELECT
-       EXISTS (
-         SELECT 1 FROM app_activity
-         WHERE app_id = $1 AND user_id = $2 AND date >= CURRENT_DATE - 10
-       ) AS visited_recently,
-       EXISTS (
-         SELECT 1 FROM app_activity
-         WHERE app_id = $1 AND user_id = $2 AND seconds_spent >= 60
-       ) AS ever_qualified`,
-    [appId, userId]
-  );
+  const selfHosted = await isSelfHostedApp(pool, appId);
+
+  const { rows } = selfHosted
+    ? await pool.query(
+        `SELECT
+           EXISTS (
+             SELECT 1 FROM app_activity
+             WHERE user_id = $1 AND date >= CURRENT_DATE - 10
+           ) AS visited_recently,
+           EXISTS (
+             SELECT 1 FROM app_activity
+             WHERE user_id = $1 AND seconds_spent >= 60
+           ) AS ever_qualified`,
+        [userId]
+      )
+    : await pool.query(
+        `SELECT
+           EXISTS (
+             SELECT 1 FROM app_activity
+             WHERE app_id = $1 AND user_id = $2 AND date >= CURRENT_DATE - 10
+           ) AS visited_recently,
+           EXISTS (
+             SELECT 1 FROM app_activity
+             WHERE app_id = $1 AND user_id = $2 AND seconds_spent >= 60
+           ) AS ever_qualified`,
+        [appId, userId]
+      );
   const r = rows[0] || {};
   return !!(r.visited_recently && r.ever_qualified);
 }

@@ -191,6 +191,27 @@ function appRoutes(config) {
         // trips. The richer per-app endpoint at
         // /api/apps/:slug/version still does the chat_sessions join
         // for PR title/author, which the home pill doesn't need.
+        // Self-hosted (platform self-app) overrides for `active_users`:
+        // the LEFT JOIN above scopes to `app_id = a.id`, but no rows
+        // ever land under the self-app's id (no App tab → no activity
+        // tracking — see services/active-users.js for the full
+        // rationale). Re-compute as the union across every app so the
+        // home tile shows a meaningful count and the value matches what
+        // getActiveUserStats returns for vote-majority math.
+        if (a.self_hosted) {
+          const { rows: unionRows } = await pool.query(
+            `SELECT COUNT(DISTINCT a.user_id) AS cnt
+               FROM app_activity a
+               WHERE a.date >= CURRENT_DATE - 10
+                 AND EXISTS (
+                   SELECT 1 FROM app_activity b
+                   WHERE b.user_id = a.user_id
+                     AND b.seconds_spent >= 60
+                 )`
+          );
+          a.active_users = parseInt(unionRows[0]?.cnt, 10) || 0;
+        }
+
         const [, owner, repo] = (a.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
         const version = a.main_sha
           ? {
