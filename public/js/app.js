@@ -1122,7 +1122,12 @@ const App = {
     if (shareBtn && AppView.appData?.status === 'running' && AppView.appData?.url) {
       shareBtn.classList.remove('hidden');
     }
-    App.switchTab(tab || 'app', sessionId);
+    // The App tab iframes appData.url, which doesn't resolve for the self-
+    // hosted platform row (no per-slug subdomain). Land on Group Chat
+    // instead — that's where votes/discussion happen and what users
+    // actually want when they open the self-app.
+    const defaultTab = AppView.appData?.self_hosted ? 'group-chat' : 'app';
+    App.switchTab(tab || defaultTab, sessionId);
   },
 
   navigateHome() {
@@ -1140,6 +1145,13 @@ const App = {
   },
 
   async switchTab(tab, sessionId) {
+    // The App tab is hidden for self-hosted apps (its iframe target doesn't
+    // resolve — see app-view.js renderAppTab). Coerce any incoming request
+    // for it (URL hash, browser back/forward, programmatic) to Group Chat
+    // so we never render an unreachable iframe.
+    if (tab === 'app' && AppView.appData?.self_hosted) {
+      tab = 'group-chat';
+    }
     App.currentTab = tab;
     document.querySelectorAll('.app-tab').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.tab === tab);

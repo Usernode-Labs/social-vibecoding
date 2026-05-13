@@ -16,6 +16,18 @@ const AppView = {
     const { app: appData } = await res.json();
     AppView.appData = appData;
 
+    // The App tab is an iframe of `appData.url` (the per-slug subdomain).
+    // The self-app row maps to a slug-derived hostname that doesn't exist —
+    // the platform itself lives at the root domain, not a subdomain — so
+    // the tab would render a TLS error. Hide it for self-hosted apps; the
+    // default-tab logic in App.navigateToApp/switchTab routes to Group Chat
+    // instead. Show it again for non-self-hosted (mounting AppView is per-
+    // app, so a previous self-app open could have left the button hidden).
+    const appTabBtn = document.querySelector('.app-tab[data-tab="app"]');
+    if (appTabBtn) {
+      appTabBtn.classList.toggle('hidden', !!appData.self_hosted);
+    }
+
     await AppView.refreshToken();
     AppView.startActivityTracking(slug);
     AppView.startTokenRefresh();
