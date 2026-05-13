@@ -152,8 +152,16 @@ function appRoutes(config) {
         // Per-app missing-required-secrets list. Cheap (one extra query
         // each) and lets the home tile show a "fix secrets" warning
         // without each card making its own /secrets fetch on render.
+        //
+        // Skipped for self-hosted apps: the platform reads its env from
+        // `.env` written by GitHub Actions (Phase 2h), and the secrets
+        // UI is intentionally read-only via refuseIfSelfHosted, so
+        // app_secrets is always empty. Computing missingSecrets here
+        // would surface every required manifest key as "missing" and
+        // prompt users to click Refresh, which then 403s with the
+        // "deploys via GitHub Actions" message — pure false-positive UX.
         let missingSecrets = null;
-        if (a.manifest_snapshot && typeof a.manifest_snapshot === 'object') {
+        if (!a.self_hosted && a.manifest_snapshot && typeof a.manifest_snapshot === 'object') {
           const declared = Array.isArray(a.manifest_snapshot.secrets)
             ? a.manifest_snapshot.secrets : [];
           if (declared.some((s) => s && s.required)) {
@@ -384,9 +392,12 @@ function appRoutes(config) {
 
       // Same missingSecrets computation as the /api/apps list — needed
       // here so AppView.open() can paint the header badge and the
-      // 'awaiting_secrets' splash without a second round-trip.
+      // 'awaiting_secrets' splash without a second round-trip. Same
+      // self_hosted skip rationale as above: refuseIfSelfHosted keeps
+      // app_secrets empty for the self-app, so the badge would always
+      // false-positive.
       let missingSecrets = null;
-      if (appRow.manifest_snapshot && typeof appRow.manifest_snapshot === 'object') {
+      if (!appRow.self_hosted && appRow.manifest_snapshot && typeof appRow.manifest_snapshot === 'object') {
         const declared = Array.isArray(appRow.manifest_snapshot.secrets)
           ? appRow.manifest_snapshot.secrets : [];
         if (declared.some((s) => s && s.required)) {
