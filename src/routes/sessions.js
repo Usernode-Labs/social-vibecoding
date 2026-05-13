@@ -2506,11 +2506,13 @@ CMD ["node", "server.js"]
   await docker.buildImage(tempDir, imageName);
   await docker.execFileAsync('rm', ['-rf', tempDir]).catch(() => {});
 
-  // Clone DB
+  // Clone DB. cloneDatabase mints a fresh per-clone postgres role —
+  // see staging.js for the rationale (one-shot password, dropped on
+  // teardown, never persisted on the platform).
   const prodDbName = dbManager.appDbName(app.slug);
   const stagingDbName = dbManager.stagingDbName(app.slug, `s${session.id}`, hash);
-  await dbManager.cloneDatabase(prodDbName, stagingDbName);
-  const stagingDbUrl = await dbManager.connectionUrl(stagingDbName);
+  const { password: stagingDbPassword } = await dbManager.cloneDatabase(prodDbName, stagingDbName);
+  const stagingDbUrl = dbManager.connectionUrl(stagingDbName, stagingDbPassword);
 
   // Stop old staging
   await docker.stopAndRemove(containerName).catch(() => {});

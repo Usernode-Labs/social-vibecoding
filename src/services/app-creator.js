@@ -29,10 +29,18 @@ async function createApp(config, appRow) {
 
     await updateStatus(pool, appId, 'creating');
 
-    // 1. Create the database for this app
+    // 1. Create the database for this app, plus its dedicated postgres
+    // role. Persist the role's random password to apps.db_password so
+    // future deploys / restarts / staging clones can reconstruct the
+    // per-role URL without the shared superuser credential. See
+    // SELF-HOSTING.md "Per-app postgres roles".
     const dbName = dbManager.appDbName(slug);
-    await dbManager.createDatabase(dbName);
-    const dbUrl = await dbManager.connectionUrl(dbName);
+    const { password: dbPassword } = await dbManager.createDatabase(dbName);
+    await pool.query(
+      'UPDATE apps SET db_password = $1 WHERE id = $2',
+      [dbPassword, appId]
+    );
+    const dbUrl = dbManager.connectionUrl(dbName, dbPassword);
 
     // 2. GitHub repo handling
     //    - Import-existing path: appRow.repo_url is preset by the route

@@ -4,6 +4,7 @@ const bcrypt = require('bcrypt');
 const { getPool } = require('./pool');
 const log = require('../services/logger');
 const appManifest = require('../services/app-manifest');
+const dbManager = require('../services/db-manager');
 
 async function migrate(config) {
   const pool = getPool(config);
@@ -19,6 +20,7 @@ async function migrate(config) {
 
   await seedAdmin(pool, config);
   await seedSelfApp(pool, config);
+  await migrateAppDbsToPerRole(pool, config);
 }
 
 async function seedAdmin(pool, config) {
@@ -103,6 +105,124 @@ async function seedSelfApp(pool, config) {
     sha: sha ? sha.slice(0, 7) : '(none)',
     secretsDeclared: manifest.secrets.length,
   });
+}
+
+// Per-app postgres role migration. Pre-migration model: every per-app
+// database (`app_<slug>`) is owned by the shared `usernode` superuser
+// and accessed via DATABASE_URL embedding the superuser password.
+// Compromise of any one app's URL grants access to every DB in the
+// cluster. Post-migration model: each DB has a dedicated role
+// `<dbName>_owner` with a unique random password persisted in
+// apps.db_password (staging:private). Compromise of one app's URL
+// only authorizes access to that one DB.
+//
+// This runs on every platform boot, idempotent in two modes:
+//   - Adopt (db_password IS NULL): create role, ALTER DATABASE OWNER,
+//     REASSIGN OWNED, REVOKE PUBLIC, persist password. After this
+//     succeeds, the running app container's URL is stale (still
+//     superuser); we restart it via app-respawn so it picks up the
+//     new credential immediately.
+//   - Verify (db_password IS NOT NULL): confirm the role exists with
+//     the stored password. If it was dropped (manual postgres
+//     intervention, partial backup restore, etc.), recreate it.
+//
+// Skipped for self_hosted apps: the platform's own DB is owned by
+// the `usernode` superuser intentionally — db-manager needs that
+// superuser to spawn child app DBs and create roles.
+//
+// Failure for any one app is logged but does NOT abort boot; other
+// apps continue to migrate. A failed adoption leaves the app in the
+// pre-migration state (still working with the shared superuser URL)
+// and will be retried on next boot.
+async function migrateAppDbsToPerRole(pool, config) {
+  log.info('db', 'Running per-app role migration');
+
+  const { rows } = await pool.query(
+    `SELECT id, slug, container_id, manifest_snapshot, db_password, status, self_hosted
+       FROM apps
+       WHERE COALESCE(self_hosted, FALSE) = FALSE
+         AND status NOT IN ('deleted', 'creating', 'awaiting_secrets')`
+  );
+
+  if (rows.length === 0) {
+    log.info('db', 'No apps to migrate to per-role model');
+    return;
+  }
+
+  const respawnQueue = [];
+  let adopted = 0, verified = 0, recreated = 0, skipped = 0, failed = 0;
+
+  for (const app of rows) {
+    const dbName = dbManager.appDbName(app.slug);
+
+    try {
+      if (!app.db_password) {
+        // First-time adoption. Verify the DB actually exists before
+        // trying to ALTER it — apps in transient states (failed
+        // create, errored mid-deploy) might be in apps without a
+        // matching postgres database yet.
+        const exists = await dbManager.databaseExists(dbName);
+        if (!exists) {
+          log.info('db', 'Skipping per-role migration; app DB does not exist yet', {
+            slug: app.slug, dbName, status: app.status,
+          });
+          skipped += 1;
+          continue;
+        }
+        const { password } = await dbManager.adoptExistingDatabase(dbName);
+        await pool.query(
+          'UPDATE apps SET db_password = $1 WHERE id = $2',
+          [password, app.id]
+        );
+        // Mutate in place so the respawn loop sees the new password.
+        app.db_password = password;
+        adopted += 1;
+        if (app.status === 'running' && app.container_id) {
+          respawnQueue.push(app);
+        }
+      } else {
+        // Verify role still exists; recreate with stored password if not.
+        const role = dbManager.ownerRoleName(dbName);
+        const exists = await dbManager.roleExists(role);
+        if (!exists) {
+          await dbManager.ensureRoleExists(dbName, app.db_password);
+          recreated += 1;
+        } else {
+          verified += 1;
+        }
+      }
+    } catch (err) {
+      log.error('db', 'Per-role migration failed for app', {
+        slug: app.slug, dbName, err: err.message,
+      });
+      failed += 1;
+    }
+  }
+
+  log.info('db', 'Per-app role migration scan complete', {
+    adopted, verified, recreated, skipped, failed,
+    toRespawn: respawnQueue.length,
+  });
+
+  // Restart freshly-adopted apps so they pick up the per-role URL.
+  // Sequential rather than parallel: each restart briefly stops a
+  // child app, and we don't want a thundering herd of new container
+  // boots all hitting Docker at once on a small VPS.
+  if (respawnQueue.length > 0) {
+    log.info('db', 'Respawning freshly-adopted app containers', {
+      count: respawnQueue.length, apps: respawnQueue.map((a) => a.slug),
+    });
+    const { respawnAppContainer } = require('../services/app-respawn');
+    for (const app of respawnQueue) {
+      try {
+        await respawnAppContainer(config, app);
+      } catch (err) {
+        log.error('db', 'App respawn failed during per-role migration', {
+          slug: app.slug, err: err.message,
+        });
+      }
+    }
+  }
 }
 
 module.exports = { migrate };

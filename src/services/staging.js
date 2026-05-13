@@ -104,11 +104,16 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
     await docker.buildImage(cloneDir, imageName);
     await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
 
-    // 3. Clone the production database
+    // 3. Clone the production database. cloneDatabase creates a fresh
+    // per-clone postgres role with its own random password — the
+    // staging container connects as that ephemeral role, not as the
+    // shared superuser. The password lives only in the staging
+    // container's DATABASE_URL env (never persisted on the platform);
+    // teardown drops the role with the clone DB.
     const prodDbName = dbManager.appDbName(app.slug);
     const stagingDbNameStr = dbManager.stagingDbName(app.slug, `s${session.id}`, commitHash);
-    await dbManager.cloneDatabase(prodDbName, stagingDbNameStr);
-    const stagingDbUrl = await dbManager.connectionUrl(stagingDbNameStr);
+    const { password: stagingDbPassword } = await dbManager.cloneDatabase(prodDbName, stagingDbNameStr);
+    const stagingDbUrl = dbManager.connectionUrl(stagingDbNameStr, stagingDbPassword);
 
     // 4. Stop existing staging container if any
     if (session.staging_container_id) {
@@ -282,7 +287,21 @@ async function rebuildProduction(config, app) {
     // Stop old container and start new one
     await docker.stopAndRemove(containerName).catch(() => {});
 
-    const dbUrl = await dbManager.connectionUrl(dbManager.appDbName(app.slug));
+    // Reload the app row to pick up apps.db_password — the per-role
+    // migration in db/migrate.js may have populated it after the
+    // caller fetched `app`, and createApp may have set it on a
+    // first-deploy path that arrives here on the next rebuild.
+    const { rows: dbPwdRows } = await prodPool.query(
+      'SELECT db_password FROM apps WHERE id = $1', [app.id]
+    );
+    const appDbPassword = dbPwdRows[0]?.db_password;
+    if (!appDbPassword) {
+      throw new Error(
+        `rebuildProduction: app ${app.slug} has no db_password — ` +
+        `migrateAppDbsToPerRole should have populated it at platform boot.`
+      );
+    }
+    const dbUrl = dbManager.connectionUrl(dbManager.appDbName(app.slug), appDbPassword);
     const containerId = await docker.runContainer(containerName, {
       image: imageName,
       env: {

@@ -67,8 +67,23 @@ UPDATE apps SET last_deploy_at = created_at WHERE last_deploy_at IS NULL;
 -- rebuildProduction both write it). The Secrets UI reads this so it
 -- can render the manifest-declared keys without re-cloning, and the
 -- deploy block-on-missing-required check uses it as the source of
--- truth for "what does this dapp need".
+-- truth for "what does this dapp create".
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS manifest_snapshot JSONB;
+
+-- Per-app postgres role password. Every app's database has a dedicated
+-- postgres role `<dbName>_owner` with this random password; the app's
+-- container connects with that role's URL instead of the shared
+-- superuser. Compromise of one app's DATABASE_URL no longer authorizes
+-- access to other apps' DBs in the cluster. NULL means the app
+-- predates the per-role migration; src/db/migrate.js's
+-- migrateAppDbsToPerRole adopts such DBs at boot and persists the
+-- password here. See src/services/db-manager.js for the role-creation
+-- and reassignment logic. Tagged `staging:private` so the existing
+-- column-scrub mechanism in cloneDatabase blanks it in any clone — a
+-- staging container reading this from its cloned `apps` table would
+-- get NULL for every row, which is correct (the staging container
+-- has no business connecting to other prod app DBs).
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS db_password TEXT;
 
 -- Activity tracking (for home screen sort)
 CREATE TABLE IF NOT EXISTS app_activity (
@@ -296,6 +311,14 @@ COMMENT ON COLUMN users.anthropic_key_enc      IS 'staging:private';
 COMMENT ON COLUMN users.anthropic_key_last4    IS 'staging:private';
 COMMENT ON COLUMN users.wallet_link_token      IS 'staging:private';
 COMMENT ON COLUMN users.wallet_link_expires_at IS 'staging:private';
+
+-- Per-app postgres role passwords. A staging clone has no legitimate
+-- need for the prod credentials of any app (including its own — the
+-- clone has its own dedicated role with its own ephemeral password),
+-- so blank every row's value. Without this scrub, a self-app staging
+-- container could SELECT db_password FROM apps and recover every
+-- prod app's credential.
+COMMENT ON COLUMN apps.db_password IS 'staging:private';
 
 -- Public by omission (no comment): apps, app_activity, issues, the
 -- users table itself, chat_messages, issue_votes, pr_votes. These

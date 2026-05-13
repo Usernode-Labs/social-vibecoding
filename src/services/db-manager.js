@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
 const log = require('./logger');
@@ -6,6 +7,26 @@ const execFileAsync = promisify(execFile);
 
 const DB_CONTAINER = process.env.DB_CONTAINER || 'project-usernode-db';
 const DB_USER = process.env.DB_USER || 'usernode';
+
+// All app DBs and their dedicated roles use these names. Slugs are
+// already passed through the same regex on the way in, so the worst
+// case here is a name we refuse to act on; better than splicing user
+// input into DDL even by accident.
+const SAFE_IDENT = /^[a-z_][a-z0-9_]*$/i;
+const SAFE_QUALIFIED_IDENT = /^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/i;
+
+// The role name suffix is hard-coded so callers don't need to think
+// about it. Every DB `app_xyz` has role `app_xyz_owner`.
+const ROLE_SUFFIX = '_owner';
+
+// Sentinel for NOT NULL columns scrubbed by `staging:private`. Chosen
+// to be obviously non-functional in any auth or token-comparison path:
+// bcrypt-style hashes start with `$2{a,b,y}$`, so bcrypt.compare
+// against this string returns false for every input. Same shape works
+// for any opaque-token column (wallet links, API keys); the auth path
+// would need to special-case the literal to ever accept it, and we
+// don't.
+const STAGING_REDACTED_SENTINEL = '__staging_redacted__';
 
 function appDbName(slug) {
   return `app_${slug.replace(/[^a-z0-9_]/g, '_')}`;
@@ -16,41 +37,197 @@ function stagingDbName(slug, username, commitHash) {
   return `app_${slug.replace(/[^a-z0-9_]/g, '_')}_staging_${username.replace(/[^a-z0-9_]/g, '_')}_${shortHash}`;
 }
 
-async function createDatabase(dbName) {
-  log.info('db-manager', 'Creating database', { dbName });
-  try {
-    await execInDb(`CREATE DATABASE ${dbName}`);
-    log.info('db-manager', 'Database created', { dbName });
-  } catch (err) {
-    if (err.message?.includes('already exists')) {
-      log.info('db-manager', 'Database already exists', { dbName });
-      return;
-    }
-    throw err;
-  }
+function ownerRoleName(dbName) {
+  return `${dbName}${ROLE_SUFFIX}`;
 }
 
+function generatePassword() {
+  // 24 random bytes → 48 hex chars. Hex contains no URL- or SQL-special
+  // characters, so the password is safe to splice into a `postgres://`
+  // URL or a `CREATE ROLE … PASSWORD '…'` statement without escaping.
+  return crypto.randomBytes(24).toString('hex');
+}
+
+// Build the connection URL for an app or staging DB using its
+// dedicated role. The password is required — passing it explicitly at
+// every call site rather than reading it from env makes the
+// per-DB-credential model visible in the code: every place that opens
+// a connection has to come up with the right credential, instead of
+// silently falling back to the superuser. See SELF-HOSTING.md
+// "Per-app postgres roles".
+function connectionUrl(dbName, password) {
+  if (!dbName || !SAFE_IDENT.test(dbName)) {
+    throw new Error(`connectionUrl: unsafe dbName ${JSON.stringify(dbName)}`);
+  }
+  if (!password || typeof password !== 'string') {
+    throw new Error(
+      `connectionUrl: password required for ${dbName}. ` +
+      `If this is a legacy app row that pre-dates the per-role migration, ` +
+      `db/migrate.js's migrateAppDbsToPerRole should have populated apps.db_password ` +
+      `before any caller invoked connectionUrl. Likely cause: race between migration ` +
+      `and a subsystem that started before it finished.`
+    );
+  }
+  const role = ownerRoleName(dbName);
+  return `postgres://${role}:${encodeURIComponent(password)}@${DB_CONTAINER}:5432/${dbName}`;
+}
+
+// Create a fresh database with a dedicated owner role. Caller MUST
+// persist the returned password (e.g. into apps.db_password) — it
+// can't be recovered after this call returns. Throws on any failure;
+// no half-state is left behind because both CREATE statements run as
+// independent commands and the caller will see the error.
+async function createDatabase(dbName) {
+  if (!SAFE_IDENT.test(dbName)) {
+    throw new Error(`createDatabase: unsafe dbName ${JSON.stringify(dbName)}`);
+  }
+  const role = ownerRoleName(dbName);
+  if (!SAFE_IDENT.test(role)) {
+    throw new Error(`createDatabase: unsafe role ${JSON.stringify(role)}`);
+  }
+  const password = generatePassword();
+
+  log.info('db-manager', 'Creating database with dedicated role', { dbName, role });
+
+  // CREATE ROLE is independent of database existence. If the role
+  // already exists from a partial earlier run, ALTER its password
+  // instead so the caller's persisted value is what actually grants
+  // access.
+  await execInDb(`DO $$ BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${role}') THEN
+      CREATE ROLE ${role} LOGIN PASSWORD '${password}';
+    ELSE
+      ALTER ROLE ${role} WITH LOGIN PASSWORD '${password}';
+    END IF;
+  END $$;`);
+
+  try {
+    await execInDb(`CREATE DATABASE ${dbName} OWNER ${role}`);
+  } catch (err) {
+    if (err.message?.includes('already exists')) {
+      // Pre-existing DB. Adopt it instead — set the owner, lock down
+      // PUBLIC, hand back the new password. Idempotent if the DB is
+      // already owned by this role.
+      log.info('db-manager', 'Database already exists; adopting under per-role model', { dbName, role });
+      await execInDb(`ALTER DATABASE ${dbName} OWNER TO ${role}`);
+    } else {
+      throw err;
+    }
+  }
+
+  // Belt-and-suspenders: lock down PUBLIC so even a hypothetical
+  // future role (with default permissions) can't connect. Owner +
+  // superuser still can.
+  await execInDb(`REVOKE CONNECT ON DATABASE ${dbName} FROM PUBLIC`);
+  await execInDb(`GRANT ALL PRIVILEGES ON DATABASE ${dbName} TO ${role}`);
+
+  // Reassign any objects in the DB currently owned by the superuser
+  // to the new role — a no-op for fresh CREATEs (no objects yet) but
+  // important for the adoption branch above.
+  await execInTarget(dbName, `REASSIGN OWNED BY ${DB_USER} TO ${role}`).catch((err) => {
+    log.warn('db-manager', 'REASSIGN OWNED skipped (likely no objects yet)', {
+      dbName, err: err.message,
+    });
+  });
+
+  log.info('db-manager', 'Database created with role', { dbName, role });
+  return { password };
+}
+
+// Drop a database AND its dedicated role. Order matters: postgres
+// won't drop a role that owns objects, so the DB has to go first.
+// `DROP OWNED BY <role>` cleans up any cluster-level privileges
+// (none in our model, but defensive).
 async function dropDatabase(dbName) {
   log.info('db-manager', 'Dropping database', { dbName });
+
+  if (!SAFE_IDENT.test(dbName)) {
+    log.warn('db-manager', 'Refusing to drop database with unsafe name', { dbName });
+    return;
+  }
+
+  // Terminate any open connections so DROP DATABASE doesn't error.
+  await execInDb(
+    `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${dbName}' AND pid <> pg_backend_pid()`
+  ).catch(() => {});
+
   try {
     await execInDb(`DROP DATABASE IF EXISTS ${dbName}`);
-    log.info('db-manager', 'Database dropped', { dbName });
   } catch (err) {
     log.warn('db-manager', 'Failed to drop database', { dbName, err: err.message });
+    // Don't try to drop the role if the DB drop failed — the role
+    // still owns it.
+    return;
   }
+
+  const role = ownerRoleName(dbName);
+  if (!SAFE_IDENT.test(role)) return;
+
+  await execInDb(`DROP OWNED BY ${role} CASCADE`).catch(() => {});
+  await execInDb(`DROP ROLE IF EXISTS ${role}`).catch((err) => {
+    log.warn('db-manager', 'Failed to drop role (may still own objects in another DB)', {
+      role, err: err.message,
+    });
+  });
+
+  log.info('db-manager', 'Database and role dropped', { dbName, role });
 }
 
 async function cloneDatabase(sourceDb, targetDb) {
   log.info('db-manager', 'Cloning database', { sourceDb, targetDb });
 
+  if (!SAFE_IDENT.test(sourceDb) || !SAFE_IDENT.test(targetDb)) {
+    throw new Error(`cloneDatabase: unsafe identifiers ${sourceDb}/${targetDb}`);
+  }
+
+  // Drop any prior clone (and its role) before cloning fresh. The
+  // dropDatabase below also takes care of the role.
   await dropDatabase(targetDb);
 
-  // Terminate active connections to source
+  // Terminate active connections to source so CREATE DATABASE TEMPLATE
+  // doesn't error with "source database … is being accessed".
   await execInDb(
     `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${sourceDb}' AND pid <> pg_backend_pid()`
   ).catch(() => {});
 
-  await execInDb(`CREATE DATABASE ${targetDb} TEMPLATE ${sourceDb}`);
+  // Create the per-clone role first so we can pass it as OWNER to
+  // CREATE DATABASE. This means the cloned DB starts owned by the
+  // new role, no separate ALTER step.
+  const targetRole = ownerRoleName(targetDb);
+  if (!SAFE_IDENT.test(targetRole)) {
+    throw new Error(`cloneDatabase: unsafe target role ${targetRole}`);
+  }
+  const password = generatePassword();
+  await execInDb(`CREATE ROLE ${targetRole} LOGIN PASSWORD '${password}'`);
+
+  await execInDb(`CREATE DATABASE ${targetDb} TEMPLATE ${sourceDb} OWNER ${targetRole}`);
+
+  // Lock down PUBLIC connect on the clone — the clone is single-tenant
+  // (one staging container) and nothing else should be able to reach it.
+  await execInDb(`REVOKE CONNECT ON DATABASE ${targetDb} FROM PUBLIC`);
+  await execInDb(`GRANT ALL PRIVILEGES ON DATABASE ${targetDb} TO ${targetRole}`);
+
+  // CREATE DATABASE … TEMPLATE copies tables but each one keeps its
+  // original owner from the source DB. For a clone of a per-role-
+  // migrated source, that owner is `<sourceDb>_owner`; for a clone
+  // of a not-yet-migrated source it's the superuser. Reassign every
+  // object inside the target DB to the new clone role so it can
+  // ALTER, SELECT, INSERT, and DROP without privilege errors.
+  // Try the source-role path first; if it fails (source not yet
+  // migrated), fall back to reassigning from the superuser.
+  const sourceRole = ownerRoleName(sourceDb);
+  if (SAFE_IDENT.test(sourceRole)) {
+    await execInTarget(targetDb, `REASSIGN OWNED BY ${sourceRole} TO ${targetRole}`).catch((err) => {
+      log.debug('db-manager', 'REASSIGN OWNED BY source-role skipped', {
+        sourceDb, sourceRole, err: err.message,
+      });
+    });
+  }
+  await execInTarget(targetDb, `REASSIGN OWNED BY ${DB_USER} TO ${targetRole}`).catch((err) => {
+    log.debug('db-manager', 'REASSIGN OWNED BY superuser skipped', {
+      targetDb, err: err.message,
+    });
+  });
 
   // Enforce the public/private convention documented in
   // src/prompts/app-conventions.md. The TEMPLATE clone above brings
@@ -69,7 +246,8 @@ async function cloneDatabase(sourceDb, targetDb) {
   // identity is useful in staging (FK targets for attribution) but a
   // few columns carry secrets — the canonical case is `users`, where
   // username + id + pubkey survive but password / API keys / wallet
-  // tokens get redacted.
+  // tokens get redacted; and `apps`, where the app row identity is
+  // visible but per-app db_password values get NULL'd.
   //
   // Failures in either pass are fatal — refusing to spawn a staging
   // container is strictly safer than spawning one that leaks. Tables
@@ -78,16 +256,110 @@ async function cloneDatabase(sourceDb, targetDb) {
   await truncatePrivateTables(targetDb);
   await scrubPrivateColumns(targetDb);
 
-  log.info('db-manager', 'Database cloned', { sourceDb, targetDb });
+  log.info('db-manager', 'Database cloned with new role', { sourceDb, targetDb, targetRole });
+  return { password };
 }
 
-async function connectionUrl(dbName) {
-  const password = process.env.USERNODE_DB_PASSWORD || 'localdev';
-  return `postgres://${DB_USER}:${password}@${DB_CONTAINER}:5432/${dbName}`;
+// One-shot per-app DB adoption used by the boot migration in
+// src/db/migrate.js. For an existing DB owned by the superuser:
+// create the dedicated role, transfer ownership, lock down PUBLIC,
+// reassign in-DB objects. Idempotent: if the role already exists,
+// rotates its password (callers must persist the returned value);
+// if ownership is already correct, ALTER DATABASE is a no-op.
+//
+// Run only against DBs that the platform owns. Calling this for the
+// platform's own database (`app_usernode_2d5619`) would orphan the
+// platform from its tables — db/migrate.js skips self_hosted rows.
+async function adoptExistingDatabase(dbName) {
+  if (!SAFE_IDENT.test(dbName)) {
+    throw new Error(`adoptExistingDatabase: unsafe dbName ${JSON.stringify(dbName)}`);
+  }
+  const role = ownerRoleName(dbName);
+  const password = generatePassword();
+
+  log.info('db-manager', 'Adopting existing database under per-role model', { dbName, role });
+
+  // 1. Ensure role exists with the new password.
+  await execInDb(`DO $$ BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${role}') THEN
+      CREATE ROLE ${role} LOGIN PASSWORD '${password}';
+    ELSE
+      ALTER ROLE ${role} WITH LOGIN PASSWORD '${password}';
+    END IF;
+  END $$;`);
+
+  // 2. Transfer DB ownership.
+  await execInDb(`ALTER DATABASE ${dbName} OWNER TO ${role}`);
+
+  // 3. Lock down PUBLIC + grant to owner.
+  await execInDb(`REVOKE CONNECT ON DATABASE ${dbName} FROM PUBLIC`);
+  await execInDb(`GRANT ALL PRIVILEGES ON DATABASE ${dbName} TO ${role}`);
+
+  // 4. Reassign every object in the DB currently owned by the
+  // superuser to the new role. This grant matters: without it the
+  // app's pool (now connecting as the new role) couldn't ALTER its
+  // own tables, INSERT into sequences it doesn't own, or DROP
+  // anything during schema migrations. Scoped to the target DB only
+  // (postgres semantics), so this can't reach into other DBs in the
+  // cluster.
+  await execInTarget(dbName, `REASSIGN OWNED BY ${DB_USER} TO ${role}`);
+
+  log.info('db-manager', 'Adoption complete', { dbName, role });
+  return { password };
 }
 
-async function execInDb(sql) {
-  return execInTarget('usernode', sql);
+// Used by the boot migration's verify path: if apps.db_password is
+// already populated but the role got dropped (manual postgres
+// intervention, restored backup, etc.), recreate it with the stored
+// password so the running container's URL keeps working.
+async function ensureRoleExists(dbName, password) {
+  if (!SAFE_IDENT.test(dbName)) {
+    throw new Error(`ensureRoleExists: unsafe dbName ${JSON.stringify(dbName)}`);
+  }
+  if (!password || typeof password !== 'string') {
+    throw new Error('ensureRoleExists: password required');
+  }
+  const role = ownerRoleName(dbName);
+  await execInDb(`DO $$ BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${role}') THEN
+      CREATE ROLE ${role} LOGIN PASSWORD '${password}';
+    ELSE
+      ALTER ROLE ${role} WITH LOGIN PASSWORD '${password}';
+    END IF;
+  END $$;`);
+  await execInDb(`ALTER DATABASE ${dbName} OWNER TO ${role}`).catch(() => {});
+  await execInDb(`REVOKE CONNECT ON DATABASE ${dbName} FROM PUBLIC`).catch(() => {});
+  await execInDb(`GRANT ALL PRIVILEGES ON DATABASE ${dbName} TO ${role}`).catch(() => {});
+}
+
+async function databaseExists(dbName) {
+  if (!SAFE_IDENT.test(dbName)) return false;
+  try {
+    const stdout = await execInDb(
+      `SELECT 1 FROM pg_database WHERE datname = '${dbName}'`,
+      { tuplesOnly: true }
+    );
+    return (stdout || '').trim() === '1';
+  } catch {
+    return false;
+  }
+}
+
+async function roleExists(roleName) {
+  if (!SAFE_IDENT.test(roleName)) return false;
+  try {
+    const stdout = await execInDb(
+      `SELECT 1 FROM pg_roles WHERE rolname = '${roleName}'`,
+      { tuplesOnly: true }
+    );
+    return (stdout || '').trim() === '1';
+  } catch {
+    return false;
+  }
+}
+
+async function execInDb(sql, opts = {}) {
+  return execInTarget('usernode', sql, opts);
 }
 
 async function execInTarget(dbName, sql, opts = {}) {
@@ -106,24 +378,6 @@ async function execInTarget(dbName, sql, opts = {}) {
   }
   return stdout;
 }
-
-// Strict allow-list for fully-qualified table names returned from
-// pg_catalog. PG identifiers can technically contain anything when
-// quoted, but our own dapps create tables via plain DDL and the worst
-// case here is a malicious app declaring a table whose name escapes
-// shell/SQL — rejecting unusual names costs us nothing since no real
-// app uses them.
-const SAFE_QUALIFIED_IDENT = /^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/i;
-const SAFE_IDENT = /^[a-z_][a-z0-9_]*$/i;
-
-// Sentinel for NOT NULL columns scrubbed by `staging:private`. Chosen
-// to be obviously non-functional in any auth or token-comparison path:
-// bcrypt-style hashes start with `$2{a,b,y}$`, so bcrypt.compare
-// against this string returns false for every input. Same shape works
-// for any opaque-token column (wallet links, API keys); the auth path
-// would need to special-case the literal to ever accept it, and we
-// don't.
-const STAGING_REDACTED_SENTINEL = '__staging_redacted__';
 
 async function truncatePrivateTables(targetDb) {
   // Discovery query. obj_description on pg_class returns the comment
@@ -299,10 +553,15 @@ SELECT n.nspname || '.' || c.relname,
 module.exports = {
   appDbName,
   stagingDbName,
+  ownerRoleName,
   createDatabase,
   dropDatabase,
   cloneDatabase,
   connectionUrl,
+  adoptExistingDatabase,
+  ensureRoleExists,
+  databaseExists,
+  roleExists,
   truncatePrivateTables,
   scrubPrivateColumns,
 };
