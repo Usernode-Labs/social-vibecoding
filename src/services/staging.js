@@ -116,6 +116,32 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
     }
 
     // 5. Run staging container
+    //
+    // Forward display-only locators so a fork running self-hosted under its
+    // own domain / GitHub org sees correct URLs in its self-app staging
+    // preview (otherwise the staging UI falls back to the canonical
+    // Usernode-Labs defaults baked into services/caddy.js + config.js).
+    //
+    // Explicitly NOT forwarded:
+    //   - DOCKER_NETWORK: only consumed by docker.js / worker.js when
+    //     spawning containers, which staging cannot do anyway (no Docker
+    //     socket mount, Phase 2g). Forwarding adds nothing.
+    //   - DB_CONTAINER: consumed by db-manager.js to build postgres
+    //     `connectionString` URLs. The staging container's own pool uses
+    //     DATABASE_URL (set explicitly above) and doesn't need this.
+    //     Leaving it unset means db-manager falls back to a stale default
+    //     ('project-usernode-db') that doesn't resolve on the prod
+    //     network — an accidental defense layer that blocks any code path
+    //     inside staging from opening direct pg.Pool connections to other
+    //     databases in the prod postgres cluster using the real superuser
+    //     password trapped inside DATABASE_URL. Costs nothing to keep
+    //     since no legitimate consumer in staging needs the real value.
+    //     See SELF-HOSTING.md Phase 5 risks.
+    const inheritedEnv = {};
+    for (const key of ['USERNODE_DOMAIN', 'USERNODE_PLATFORM_REPO']) {
+      if (process.env[key]) inheritedEnv[key] = process.env[key];
+    }
+
     const containerId = await docker.runContainer(containerName, {
       image: imageName,
       env: {
@@ -123,6 +149,7 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
         JWT_SECRET: config.jwtSecret,
         PORT: '3000',
         USERNODE_ENV: 'staging',
+        ...inheritedEnv,
         ...stagingMerge.env,
       },
       port: 3000,

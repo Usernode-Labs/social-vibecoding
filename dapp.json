@@ -37,7 +37,7 @@
       "required": true,
       "private": true,
       "staging_default": "__staging_admin_password__",
-      "description": "Bootstrap admin password. Hashed at first boot — rotating only takes effect on a fresh DB or via direct SQL update. `private` keeps a self-app-staging container from receiving the prod admin password (would let any PR reviewer log in as admin to prod). `staging_default` is a sentinel; staging admins should authenticate via the parent-issued iframe identity instead of this password (see SELF-HOSTING.md 2c notes on iframe-auth)."
+      "description": "Bootstrap admin password. Hashed at first boot — rotating only takes effect on a fresh DB or via direct SQL update. `private` keeps a self-app-staging container from receiving the prod admin password (would let any PR reviewer log in as admin to prod). `staging_default` is a config.js boot-sentinel only — never used to authenticate. Self-app staging containers expose no usable password login: the cloned `users.password` column is replaced with `__staging_redacted__` by db-manager.scrubPrivateColumns, and staging admins authenticate via the parent-issued iframe JWT instead (see SELF-HOSTING.md \"Self-staging — iframe-auth login flow\" and middleware/auth.js)."
     },
     {
       "key": "JWT_SECRET",

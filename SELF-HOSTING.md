@@ -249,9 +249,9 @@ message in a staging clone would render as "(deleted user)".
 `usernode_pubkey` is intentionally NOT scrubbed: it's an on-chain public
 identity, and a self-app dev wants to see it to test wallet-linking
 flows. `password` is scrubbed to a sentinel
-(`__staging_redacted__`); the future iframe-auth scheme (parent prod
-issues identity assertions to staging via postMessage) means staging
-won't need local `users.password` at all.
+(`__staging_redacted__`); see Phase 5 below for the iframe-auth scheme
+that lets self-app staging containers log admins in without ever
+needing a usable `users.password` value.
 
 **Public by omission (no comment):** `apps`, `app_activity`, `issues`,
 `users` (the table itself — only specific columns are scrubbed),
@@ -682,6 +682,151 @@ the broader permission-model question. Flipping the flag is just
 the mechanical knob; *should we* is the deeper question this
 document doesn't answer.
 
+## Phase 5 — Self-staging iframe-auth login flow (shipped)
+
+**Goal:** make the self-app eligible for the same dev-chat → staging
+preview → iframe edit loop that already works for child apps, without
+copying any prod password material across the staging boundary.
+
+**Wrinkle:** the cloned `users.password` column is a hard sentinel
+(`__staging_redacted__`) per Phase 0/2c, so a self-app staging
+container has no usable login at `/api/auth/login`. Without a different
+auth path the staging UI redirects to `/login.html` and the entire
+preview flow stalls. The historical fix would have been to copy a
+bcrypt'd password (or seed a known one) into staging — both of which
+move credential material across the prod/staging boundary that Phase
+0/2c exists to enforce.
+
+**Implementation:** the platform already mints 1-hour JWTs at
+[/api/iframe-token](./server.js) signed with `config.jwtSecret`, and
+[public/js/app-view.js](./public/js/app-view.js) already rewrites every
+embedded iframe's `src` to include `?token=<JWT>` (with periodic
+refresh). [src/services/staging.js](./src/services/staging.js)
+propagates `JWT_SECRET` into every staging container, so a parent-issued
+JWT verifies against the same secret inside staging. Child apps already
+honor this — see "Auth — iframe token injection" in
+[src/prompts/app-conventions.md](./src/prompts/app-conventions.md).
+Phase 5 wires the platform's *own*
+[src/middleware/auth.js](./src/middleware/auth.js) to the same
+convention, gated entirely on `USERNODE_ENV === 'staging'`:
+
+1. Cookie path runs first, identical to prod.
+2. If the cookie is missing/stale **and** `USERNODE_ENV === 'staging'`,
+   the middleware looks for `?token=<JWT>` (or the
+   `x-usernode-token` header) and verifies it against
+   `config.jwtSecret`.
+3. On verify it loads the matching `users` row from the local clone
+   (the row identity survives Phase 0/2c — only `password` and four
+   other columns are scrubbed; `id`, `username`, and `is_admin` are
+   preserved), defends against id/username drift, and mints a fresh
+   `sessions` row + `Set-Cookie: session=…`.
+4. Subsequent requests in the same iframe use the cookie path
+   normally; the parent's hourly token refresh stays harmless because
+   the cookie path short-circuits any later `?token=` value.
+
+**Trust chain:** parent prod admin auth (cookie) → parent
+`/api/iframe-token` (signed with shared `JWT_SECRET`) →
+`AppView.refreshToken()` injects token on iframe `src` → staging
+middleware verifies → mints local 7-day session cookie.
+
+**Why this is a downgraded credential:** in prod the same JWT is
+ignored — the production middleware never reads `req.query.token` /
+`x-usernode-token`. So a stolen iframe-token can authenticate against
+ephemeral staging clones (which are PR-scoped and short-lived) but
+never against prod itself. This matches the existing posture for
+child-app iframe tokens, which are also useless against the parent
+platform.
+
+**Forwarded env vars:** [staging.js](./src/services/staging.js) also
+forwards `USERNODE_DOMAIN` and `USERNODE_PLATFORM_REPO` from the
+parent process env into the spawned container (when set). Both are
+display-only locators read by [services/caddy.js](./src/services/caddy.js)
+and [config.js](./src/config.js); without forwarding, a fork running
+self-hosted under its own domain / GitHub org would see the canonical
+Usernode-Labs defaults rendered in its staging preview UI.
+
+**Deliberately NOT forwarded** (the load-bearing decision in Phase 5):
+
+- `DOCKER_NETWORK` — only read when spawning containers, which staging
+  cannot do (no Docker socket mount per Phase 2g). Forwarding adds
+  nothing.
+- `DB_CONTAINER` — read by [db-manager.js](./src/services/db-manager.js)
+  to build `postgres://...@${DB_CONTAINER}:5432/...` URLs. The staging
+  container's own pool uses the explicit `DATABASE_URL` set on line
+  121 of staging.js and doesn't need it. Leaving `DB_CONTAINER` unset
+  means db-manager falls back to a **stale default**
+  (`'project-usernode-db'`) that doesn't resolve on the canonical prod
+  network (`usernode-net`), which renames postgres to `usernode-db`.
+  This mismatch is an **accidental defense layer**: the staging
+  container's `DATABASE_URL` necessarily embeds the real postgres
+  superuser password (clone has to live on the same cluster), and a
+  buggy or hostile self-app PR that constructs a pg.Pool against any
+  other database in that cluster could mutate prod data. The hostname
+  fallback being wrong-by-default blocks the easy honest-mistake form
+  of that. Forwarding `DB_CONTAINER` would remove the defense for
+  zero gain — no legitimate consumer in staging needs it. See "Risks"
+  below.
+
+**What works in self-staging:** anything that's read-only against the
+clone (UI, dev-chat history view, `/api/version`, status surfaces,
+secrets list), anything that writes only to the clone DB (chat
+sessions, votes scoped to staging rows). The cookie minted by Phase 5
+is real, so all session-gated routes work.
+
+**What's deliberately broken in self-staging:**
+
+- Spawning child apps from inside a staging clone (no Docker socket
+  mount, on purpose).
+- Caddy route registration from inside staging (no socket).
+- Reading `deploy-status.json` (host-mounted file the staging container
+  doesn't see).
+- `/api/auth/login` against any cloned account (passwords scrubbed —
+  use the iframe path).
+- Writing back to GitHub (`GITHUB_PRIVATE_KEY` / `GITHUB_BOT_TOKEN`
+  default to empty in staging per [dapp.json](./dapp.json), so
+  github.init() takes the disabled branch).
+
+These are accepted limitations: self-staging exists for UI / prompts /
+docs / pure-Node logic edits, not for end-to-end testing of the
+infra-spawning code paths. Tests for those still run against a real
+prod-like environment in CI.
+
+**Acceptance:** open the self-app row in the parent's dev-chat,
+trigger a staging build, click the "App" tab. The staging container's
+HTML loads with `?token=…` present in the iframe URL bar; the
+middleware verifies the token, sets the `session` cookie on the
+staging origin, and the platform UI renders authenticated as the
+admin. No password prompt, no copied hashes, no manual login.
+
+**Cost (actual):** ~120 lines in
+[src/middleware/auth.js](./src/middleware/auth.js), ~10 lines in
+[src/services/staging.js](./src/services/staging.js), one
+description tweak in [dapp.json](./dapp.json), this section.
+
+**Risks (none specific to Phase 5; these are pre-existing properties
+of any staging clone, called out here because Phase 5 makes the
+clone routinely accessible through dev-chat preview):**
+
+- The staging container's `DATABASE_URL` must embed the real postgres
+  superuser password — the clone lives in the same postgres cluster
+  as prod, and there's no clean way to issue a downgraded credential
+  per cloned database. Honest code paths only ever target the staging
+  clone's own DB (the URL is the only connection string they use); a
+  hostile PR could parse the URL and connect to other prod databases.
+  Phase 5's intentional non-forwarding of `DB_CONTAINER` (above)
+  blocks the easy form of this; the substantive defense is admin
+  review of self-app PRs before merge.
+- The staging container reaches the prod sidecar `usernode-node` at
+  `http://usernode-node:3000` (default). All current consumers are
+  read-only chain queries — no funds at risk. Worth noting if a
+  future PR adds wallet-send paths to the platform.
+- The Phase 5 session cookie is set on the staging origin
+  (`*--<sha>.<USERNODE_DOMAIN>`); browsers scope cookies per-host so
+  a leaked staging cookie can only be replayed against its own
+  staging container, which is short-lived (deleted on PR merge or
+  `/api/teardown-staging`). It cannot escape to the parent prod
+  origin.
+
 ## Sequencing summary
 
 ```mermaid
@@ -701,6 +846,7 @@ flowchart LR
     P2k[2k: import-flow guard]
     P3[Phase 3: banner<br/>if needed]
     P4[Phase 4: in-app merge<br/>deferred]
+    P5[Phase 5: self-staging<br/>iframe-auth]
 
     P0 --> P2c
     P1 --> P2f
@@ -709,6 +855,7 @@ flowchart LR
     P2b --> P2f
     P2b --> P2k
     P2c --> P2d
+    P2c --> P5
     P2d --> P2f
     P2e --> P2f
     P2f --> P2g
@@ -717,13 +864,17 @@ flowchart LR
     P2f --> P2j
     P2f --> P2k
     P2g --> P3
+    P2g --> P5
     P3 --> P4
 ```
 
 Phase 0 and Phase 1 are independent and can land in either order.
 Both must precede Phase 2. Within Phase 2, sub-steps land in the
 order listed (each is a small commit). Phase 3 ships only after
-observation; Phase 4 is deferred indefinitely.
+observation; Phase 4 is deferred indefinitely. Phase 5 depends on
+the Phase 0/2c column-scrub policy (so we know what does and doesn't
+survive the clone) and on the Phase 2g ownership guards (which keep
+self-staging from racing the prod platform on shared resources).
 
 ## Risks and mitigations
 

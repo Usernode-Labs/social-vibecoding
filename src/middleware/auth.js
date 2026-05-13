@@ -1,3 +1,5 @@
+const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 
@@ -16,6 +18,27 @@ const PUBLIC_PATHS = [
   '/usernode-bridge.js',
 ];
 
+// SELF-HOSTING.md "Self-staging — iframe-auth login flow":
+// In a staging container spawned for the self-app (USERNODE_ENV === 'staging'),
+// the cloned users table has every prod row but with `password` scrubbed to
+// the literal sentinel `__staging_redacted__` by db-manager.scrubPrivateColumns
+// — so no cloned account can authenticate against /api/auth/login. Rather than
+// copying password hashes across the prod/staging boundary, we accept the same
+// platform-issued JWT every child app already verifies (see app-conventions.md
+// "Auth — iframe token injection") and exchange it for a real session row on
+// first hit. The trust chain is: parent prod admin authenticates via cookie →
+// parent mints a 1h JWT signed with config.jwtSecret via /api/iframe-token →
+// app-view.js sets `iframe.src = stagingUrl + '?token=' + jwt` → this
+// middleware verifies + mints a local session cookie. Subsequent fetches
+// inside the iframe use the cookie like any prod request.
+//
+// Gated entirely on USERNODE_ENV === 'staging'. Production never reads the
+// query token, so a stolen iframe-token can't be replayed against prod (it's
+// a downgraded credential that only works against staging clones).
+const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+const STAGING_SESSION_DAYS = 7;
+const SECURE_COOKIE = process.env.NODE_ENV === 'production';
+
 function authMiddleware(config) {
   const pool = getPool(config);
 
@@ -24,39 +47,134 @@ function authMiddleware(config) {
       return next();
     }
 
-    const token = req.cookies?.session;
-    if (!token) {
-      return redirectOrReject(req, res);
-    }
+    const cookieToken = req.cookies?.session;
 
-    try {
-      const { rows } = await pool.query(
-        `SELECT s.user_id, s.expires_at, u.username, u.is_admin
-         FROM sessions s JOIN users u ON s.user_id = u.id
-         WHERE s.token = $1`,
-        [token]
-      );
+    // Cookie path — identical in prod and staging once a session exists.
+    if (cookieToken) {
+      try {
+        const { rows } = await pool.query(
+          `SELECT s.user_id, s.expires_at, u.username, u.is_admin
+           FROM sessions s JOIN users u ON s.user_id = u.id
+           WHERE s.token = $1`,
+          [cookieToken]
+        );
 
-      if (rows.length === 0 || new Date(rows[0].expires_at) < new Date()) {
+        if (rows.length > 0 && new Date(rows[0].expires_at) >= new Date()) {
+          req.user = {
+            id: rows[0].user_id,
+            username: rows[0].username,
+            isAdmin: rows[0].is_admin,
+          };
+          log.debug('auth', 'Session validated', { userId: req.user.id });
+          return next();
+        }
+
+        // Stale or unknown cookie — drop it before deciding whether to
+        // redirect. In staging we still want to fall through to the
+        // iframe-token path; in prod this just becomes the "no auth" case.
         if (rows.length > 0) {
-          await pool.query('DELETE FROM sessions WHERE token = $1', [token]);
+          await pool.query('DELETE FROM sessions WHERE token = $1', [cookieToken]);
         }
         res.clearCookie('session');
-        return redirectOrReject(req, res);
+      } catch (err) {
+        log.error('auth', 'Session check failed', { message: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
       }
-
-      req.user = {
-        id: rows[0].user_id,
-        username: rows[0].username,
-        isAdmin: rows[0].is_admin,
-      };
-
-      log.debug('auth', 'Session validated', { userId: req.user.id });
-      next();
-    } catch (err) {
-      log.error('auth', 'Session check failed', { message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
     }
+
+    // Iframe-JWT path — staging only. See block comment above.
+    if (IS_STAGING) {
+      const queryToken = typeof req.query?.token === 'string' ? req.query.token : null;
+      const headerToken = req.headers['x-usernode-token'];
+      const jwtToken = queryToken || (typeof headerToken === 'string' ? headerToken : null);
+      if (jwtToken) {
+        const minted = await tryMintSessionFromIframeJwt(pool, config, jwtToken, res);
+        if (minted) {
+          req.user = minted;
+          log.debug('auth', 'Staging iframe-JWT auth succeeded', { userId: minted.id });
+          return next();
+        }
+      }
+    }
+
+    return redirectOrReject(req, res);
+  };
+}
+
+// Verify the parent-issued JWT, look up the matching user in the local
+// (cloned) users table, mint a session row + set the cookie. Returns the
+// resolved req.user shape on success, null on any failure (caller falls
+// through to redirectOrReject).
+async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
+  let payload;
+  try {
+    payload = jwt.verify(jwtToken, config.jwtSecret);
+  } catch (err) {
+    log.warn('auth', 'Staging iframe-JWT verification failed', { err: err.message });
+    return null;
+  }
+
+  if (!payload || typeof payload !== 'object' || typeof payload.id !== 'number') {
+    log.warn('auth', 'Staging iframe-JWT payload missing required fields');
+    return null;
+  }
+
+  // The cloned users table preserves row identity (id, username, is_admin)
+  // and only column-scrubs password / api keys / wallet tokens, so we can
+  // resolve is_admin from the local DB. Username match is defense-in-depth
+  // against a token whose id was renumbered between clone and now.
+  let userRow;
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, username, is_admin FROM users WHERE id = $1',
+      [payload.id]
+    );
+    userRow = rows[0];
+  } catch (err) {
+    log.error('auth', 'Staging iframe-JWT user lookup failed', { err: err.message });
+    return null;
+  }
+
+  if (!userRow) {
+    log.warn('auth', 'Staging iframe-JWT references unknown user', { id: payload.id });
+    return null;
+  }
+  if (typeof payload.username === 'string' && payload.username !== userRow.username) {
+    // Token issued for a user whose username changed since the clone. Refuse
+    // — the parent's cookie must re-issue against the current state.
+    log.warn('auth', 'Staging iframe-JWT username mismatch', {
+      tokenUsername: payload.username, dbUsername: userRow.username,
+    });
+    return null;
+  }
+
+  const sessionToken = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + STAGING_SESSION_DAYS * 24 * 60 * 60 * 1000);
+  try {
+    await pool.query(
+      'INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)',
+      [sessionToken, userRow.id, expiresAt]
+    );
+  } catch (err) {
+    log.error('auth', 'Staging iframe-JWT session insert failed', { err: err.message });
+    return null;
+  }
+
+  res.cookie('session', sessionToken, {
+    httpOnly: true,
+    secure: SECURE_COOKIE,
+    sameSite: 'lax',
+    expires: expiresAt,
+  });
+
+  log.info('auth', 'Staging iframe-JWT minted local session', {
+    userId: userRow.id, username: userRow.username,
+  });
+
+  return {
+    id: userRow.id,
+    username: userRow.username,
+    isAdmin: userRow.is_admin,
   };
 }
 
