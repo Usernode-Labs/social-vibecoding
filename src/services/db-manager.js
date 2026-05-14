@@ -313,6 +313,16 @@ BEGIN
   -- sequences, foreign tables. Indexes (relkind='i') and toast
   -- tables (relkind='t') are deliberately omitted; they inherit
   -- ownership from their parent table on ALTER TABLE OWNER TO.
+  --
+  -- The NOT EXISTS clause skips sequences (and any other relation)
+  -- that pg_depend marks as auto/internal-linked to a parent table
+  -- — i.e. the SERIAL/IDENTITY sequences postgres creates implicitly
+  -- when you declare an auto-increment column. Postgres refuses to
+  -- ALTER … OWNER TO those independently of their parent ("cannot
+  -- change owner of sequence X: linked to table Y"), and ALTER TABLE
+  -- on the parent already transfers them. Filtering here keeps the
+  -- DO block side-effect-clean instead of relying on per-statement
+  -- error swallowing.
   FOR r IN
     SELECT n.nspname, c.relname, c.relkind
       FROM pg_class c
@@ -321,6 +331,12 @@ BEGIN
      WHERE n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')
        AND role.rolname = '${fromRole}'
        AND c.relkind IN ('r','p','v','m','S','f')
+       AND NOT EXISTS (
+         SELECT 1 FROM pg_depend d
+          WHERE d.objid = c.oid
+            AND d.classid = 'pg_class'::regclass
+            AND d.deptype IN ('a','i')
+       )
   LOOP
     EXECUTE format(
       'ALTER %s %I.%I OWNER TO %I',
