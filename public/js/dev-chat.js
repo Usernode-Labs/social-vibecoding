@@ -602,6 +602,27 @@ const DevChat = {
                   DevChat.currentSession.staging_url = data.url;
                 }
                 break;
+              case 'staging_failed':
+                // Staging build failed in a recoverable way (most often a
+                // dapp.json staging_default missing, or a required secret
+                // unset). The server has already pushed a remediation-rich
+                // tool_result back to the Mayor — this UI message is the
+                // user-facing companion. Phase-2 wrap-up will follow up
+                // with the Mayor's natural-language explanation.
+                DevChat._removeSpinner();
+                DevChat._deactivateLastStatus();
+                DevChat.messages.push({
+                  role: 'system',
+                  content: `Staging build failed: ${data.error || 'unknown error'}`,
+                  stagingFailed: true,
+                  stagingErrorName: data.errorName || 'Error',
+                  stagingMissingKeys: data.missingKeys || [],
+                  created_at: new Date().toISOString(),
+                  _slug: Math.random().toString(36).slice(2, 8),
+                });
+                DevChat.renderMessages();
+                DevChat.scrollToBottom();
+                break;
               case 'pr_created':
               case 'pr_updated':
                 if (DevChat.currentSession) {
@@ -854,6 +875,21 @@ const DevChat = {
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         if (data.url && DevChat.currentSession) DevChat.currentSession.staging_url = data.url;
+        break;
+      case 'staging_failed':
+        DevChat._removeSpinner();
+        DevChat._deactivateLastStatus();
+        DevChat.messages.push({
+          role: 'system',
+          content: `Staging build failed: ${data.error || 'unknown error'}`,
+          stagingFailed: true,
+          stagingErrorName: data.errorName || 'Error',
+          stagingMissingKeys: data.missingKeys || [],
+          created_at: new Date().toISOString(),
+          _slug: Math.random().toString(36).slice(2, 8),
+        });
+        DevChat.renderMessages();
+        DevChat.scrollToBottom();
         break;
       case 'pr_created':
       case 'pr_updated':

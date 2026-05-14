@@ -2226,60 +2226,162 @@ INSTRUCTIONS:
 
       await sendStatus('Building staging preview...');
       const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
-      const stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
 
-      await pool.query(
-        `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
-        [stagingResult.containerId, stagingResult.stagingUrl, session.id]
-      );
+      // Staging build is a recoverable failure point: the commit + push +
+      // PR creation above already landed real-world artefacts, but the
+      // preview container can still fail to come up — most commonly when
+      // `dapp.json` is missing a `staging_default` for a private secret
+      // (`PrivateSecretMissingStagingDefaultError`) or when a required
+      // secret hasn't been set in Settings → Secrets
+      // (`MissingSecretsError`). Both are user-actionable: the first is a
+      // manifest edit the agent itself can apply; the second needs an
+      // admin to set the value in the platform UI.
+      //
+      // We catch here (rather than letting the throw escape to the
+      // generic chat-handler `catch`) so the failure flows back to the
+      // Mayor as a `tool_result` with `is_error: true`. That's what lets
+      // the wrap-up turn explain the fix to the user — and, when the
+      // user nudges the agent to retry, lets the next `dispatch_claude_code`
+      // see the failure context in chat history. Without this, the Mayor
+      // never finds out anything went wrong; the user sees a generic
+      // "Chat error" toast and has no breadcrumb to follow.
+      let stagingResult = null;
+      let stagingErr = null;
+      try {
+        stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
+      } catch (e) {
+        stagingErr = e;
+      }
 
-      stagingUrl = stagingResult.stagingUrl;
-      await sendStatus('Staging deployed!', { stagingUrl });
-      send('staging_ready', { url: stagingUrl });
-      summaryParts.push(`Staging redeployed: ${stagingUrl}`);
-
-      if (session.status === 'promoted') {
-        const { rowCount } = await pool.query(
-          `DELETE FROM pr_votes WHERE session_id = $1`,
-          [session.id]
+      if (stagingResult) {
+        await pool.query(
+          `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
+          [stagingResult.containerId, stagingResult.stagingUrl, session.id]
         );
-        if (rowCount > 0) {
-          const { sendSystemMessage, pushVoteUpdate } = require('../services/ws');
-          pushVoteUpdate({
-            sessionId: session.id,
-            appSlug: session.app_slug,
-            merged: false,
-          });
-          await sendSystemMessage(
-            pool, session.app_id,
-            `Votes reset on PR #${session.pr_number || session.id} — new commit ${commitHash.substring(0, 8)} pushed.`,
-            'system'
-          ).catch(() => {});
-          log.info('sessions', 'Reset PR votes after new commit', {
-            sessionId: session.id, commitHash: commitHash.substring(0, 8), votesDropped: rowCount,
-          });
-          summaryParts.push('Group-chat votes were reset for the new commit.');
-        }
-      }
 
-      if (session.pr_number && repoOwner && repoName) {
-        try {
-          const pat = process.env.GITHUB_BOT_TOKEN;
-          if (pat) {
-            const { Octokit } = await import('@octokit/rest');
-            const ok = new Octokit({ auth: pat });
-            await ok.rest.issues.createComment({
-              owner: repoOwner, repo: repoName,
-              issue_number: session.pr_number,
-              body: github.safeMention(`**Staging deployed!**\n\n${stagingResult.stagingUrl}\n\nCommit: ${commitHash.substring(0, 8)}`),
+        stagingUrl = stagingResult.stagingUrl;
+        await sendStatus('Staging deployed!', { stagingUrl });
+        send('staging_ready', { url: stagingUrl });
+        summaryParts.push(`Staging redeployed: ${stagingUrl}`);
+
+        if (session.status === 'promoted') {
+          const { rowCount } = await pool.query(
+            `DELETE FROM pr_votes WHERE session_id = $1`,
+            [session.id]
+          );
+          if (rowCount > 0) {
+            const { sendSystemMessage, pushVoteUpdate } = require('../services/ws');
+            pushVoteUpdate({
+              sessionId: session.id,
+              appSlug: session.app_slug,
+              merged: false,
             });
+            await sendSystemMessage(
+              pool, session.app_id,
+              `Votes reset on PR #${session.pr_number || session.id} — new commit ${commitHash.substring(0, 8)} pushed.`,
+              'system'
+            ).catch(() => {});
+            log.info('sessions', 'Reset PR votes after new commit', {
+              sessionId: session.id, commitHash: commitHash.substring(0, 8), votesDropped: rowCount,
+            });
+            summaryParts.push('Group-chat votes were reset for the new commit.');
           }
-        } catch (commentErr) {
-          log.warn('sessions', 'Failed to comment on PR', { err: commentErr.message });
         }
-      }
 
-      log.info('sessions', 'Full dev cycle complete', { sessionId: session.id, commitHash: commitHash.substring(0, 8) });
+        if (session.pr_number && repoOwner && repoName) {
+          try {
+            const pat = process.env.GITHUB_BOT_TOKEN;
+            if (pat) {
+              const { Octokit } = await import('@octokit/rest');
+              const ok = new Octokit({ auth: pat });
+              await ok.rest.issues.createComment({
+                owner: repoOwner, repo: repoName,
+                issue_number: session.pr_number,
+                body: github.safeMention(`**Staging deployed!**\n\n${stagingResult.stagingUrl}\n\nCommit: ${commitHash.substring(0, 8)}`),
+              });
+            }
+          } catch (commentErr) {
+            log.warn('sessions', 'Failed to comment on PR', { err: commentErr.message });
+          }
+        }
+
+        log.info('sessions', 'Full dev cycle complete', { sessionId: session.id, commitHash: commitHash.substring(0, 8) });
+      } else {
+        isError = true;
+
+        // Tailored remediation per error class. The `fix` field is what
+        // ends up in the Mayor's tool_result and on the user's screen,
+        // so it has to be self-contained: the Mayor doesn't read code,
+        // and the user shouldn't have to either. Keep prose short but
+        // concrete enough that "dispatch_claude_code" + this message is
+        // sufficient to drive an automated fix on the next turn.
+        let fix;
+        let missingKeys = [];
+        if (stagingErr instanceof staging.PrivateSecretMissingStagingDefaultError) {
+          missingKeys = stagingErr.missingKeys || [];
+          fix =
+            `The PR's \`dapp.json\` declares ${missingKeys.length === 1 ? 'a secret' : 'secrets'} ` +
+            `[${missingKeys.join(', ')}] as \`required\` + \`private\` (or the legacy alias \`sensitive: true\`), ` +
+            `but with no \`staging_default\` (or \`default\`). Private secrets are intentionally NOT ` +
+            `propagated from prod into staging clones, so without a manifest fallback the staging ` +
+            `build refuses to start. ` +
+            `\n\nFix: add \`"staging_default": "<value>"\` to each ${missingKeys.length === 1 ? 'entry' : 'entry'} in \`dapp.json\`. ` +
+            `If the app's code degrades gracefully when the secret is unset, use the empty string \`""\`. ` +
+            `For paid services use a vendor sandbox key (e.g. Stripe \`sk_test_...\`). ` +
+            `Never copy the prod value into \`staging_default\`. ` +
+            `See \`app-conventions.md\` "Public vs private secrets" for the full rubric. ` +
+            `\n\nThe agent can apply this fix directly: dispatch \`dispatch_claude_code\` with a prompt ` +
+            `like "edit dapp.json so each of [${missingKeys.join(', ')}] has staging_default set to <chosen value>".`;
+        } else if (stagingErr instanceof staging.MissingSecretsError) {
+          missingKeys = stagingErr.missingSecrets || [];
+          fix =
+            `The PR's \`dapp.json\` declares ${missingKeys.length === 1 ? 'a required secret' : 'required secrets'} ` +
+            `[${missingKeys.join(', ')}] that ${missingKeys.length === 1 ? 'has' : 'have'} no stored value in this ` +
+            `app's secret store, and no \`default\` in the manifest. ` +
+            `\n\nFix: an admin needs to set ${missingKeys.length === 1 ? 'this value' : 'these values'} in the platform UI ` +
+            `(Settings → Secrets) before staging can build. The agent CANNOT fix this from code — ` +
+            `secret values are intentionally not committed to source. ` +
+            `If a manifest \`default\` is appropriate (i.e. the value is genuinely public), the agent can ` +
+            `instead add it to \`dapp.json\` via \`dispatch_claude_code\`.`;
+        } else {
+          fix =
+            `Underlying error: ${(stagingErr && stagingErr.message) || String(stagingErr)}. ` +
+            `This is most likely an infrastructure or build-time failure (Docker build, network, ` +
+            `image cache, etc.) rather than a manifest issue. The agent can suggest the user retry, ` +
+            `inspect platform logs, or — if the build error message implicates the dapp's own code — ` +
+            `dispatch \`dispatch_claude_code\` to investigate.`;
+        }
+
+        const message =
+          `Staging build failed.\n\n` +
+          `What still happened: commit ${commitHash.substring(0, 8)} was pushed to ${session.branch_name}` +
+          (session.pr_number ? ` and PR #${session.pr_number} was created/updated` : '') +
+          `. Only the staging preview container is missing — there is no preview URL for this commit.\n\n` +
+          fix;
+
+        // Defensive: if buildAndDeployStaging ever returned null/undefined
+        // without throwing (it shouldn't — its contract is throw-or-return-
+        // result), stagingErr would be null here. Coerce so we still emit
+        // a meaningful event instead of NPE'ing inside this branch.
+        const errMsg = (stagingErr && stagingErr.message) || 'Unknown staging failure (no error thrown but no result returned)';
+        const errName = (stagingErr && stagingErr.name) || 'Error';
+
+        await sendStatus('Staging build failed', { error: errMsg });
+        send('staging_failed', {
+          error: errMsg,
+          errorName: errName,
+          missingKeys,
+        });
+        summaryParts.push(message);
+
+        log.error('staging', 'Staging build failed (surfaced to Mayor)', {
+          sessionId: session.id,
+          slug: app.slug,
+          errName,
+          err: errMsg,
+          missingKeys,
+        });
+      }
     }
 
     if (ccText) {
@@ -2397,6 +2499,12 @@ GENERAL RULES (apply to all tools):
 
 AFTER A TOOL RETURNS:
 You'll get a short summary of what happened. Write a 1-3 sentence reply to the user in plain English, referencing the spec doc / staging URL / PR if present. For dispatch_scout: tell them the spec was drafted and is available in the spec viewer. For ${specToolName}: tell them what you changed in the spec. For dispatch_claude_code: summarize what was built. If anything failed, explain briefly and suggest next steps.
+
+STAGING BUILD FAILURES (recoverable):
+A dispatch_claude_code tool_result may report that the commit/push/PR succeeded but the staging preview failed to build. The two common causes — both surfaced verbatim in the tool_result with explicit "Fix:" instructions:
+  * Missing \`staging_default\` for a private secret in dapp.json — the agent CAN fix this directly. Acknowledge the issue to the user, propose the concrete fix in one sentence (e.g. "I'll add \`staging_default: \"\"\` to SENDER_APP_SECRET_KEY since the app degrades gracefully without it"), and on the user's next confirmation call dispatch_claude_code with a prompt naming the keys and the value to use.
+  * Missing required secret in the platform secret store — the agent CANNOT fix this; the user (or admin) needs to set the value in Settings → Secrets. Tell them which key, point them at the Settings UI, and offer to retry once it's set.
+For other staging failures (Docker build, network, image cache), explain briefly and offer to retry. Do NOT pretend a failed staging build succeeded — the user can see the build status in the chat.
 
 HISTORY CONTEXT:
 Some assistant turns in this conversation contain "[CODING AGENT COMPLETED]:" — that is a summary from a PAST coding-agent run, written by the system, not by you. You may reference it when the user asks an INFORMATIONAL question about a past turn (e.g. "what did you do?", "why did you change X?", "what files were touched?") — quote or paraphrase to answer.
