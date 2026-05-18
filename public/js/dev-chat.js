@@ -1444,12 +1444,7 @@ const DevChat = {
       DevChat._markdownReady = true;
     }
 
-    let html = marked.parse(text);
-
-    html = html.replace(/(^|[^"=])(https?:\/\/[^\s<]+[^\s<.,;:!?)}\]'"])/g, (_, pre, url) => {
-      const display = url.length > 60 ? url.slice(0, 57) + '...' : url;
-      return `${pre}<a href="${url}" target="_blank" rel="noopener noreferrer">${display}</a>`;
-    });
+    const html = marked.parse(text);
 
     return DOMPurify.sanitize(html, {
       ALLOWED_TAGS: ['a', 'b', 'strong', 'i', 'em', 'code', 'pre', 'h3', 'h4',
