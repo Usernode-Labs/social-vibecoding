@@ -190,10 +190,9 @@
         const costToday = (parseFloat(user.cost_today_cents || 0) / 100).toFixed(2);
 
         const canCreate = !!user.can_create_apps;
-        const adminHint = user.is_admin ? ' <span class="text-xs text-zinc-500">(always has access)</span>' : '';
         const toggleHtml = `
           <div class="flex items-center gap-2">
-            <span class="text-xs text-zinc-400">Create apps${adminHint}</span>
+            <span class="text-xs text-zinc-400">Create apps</span>
             <label class="ios-switch" title="${canCreate
               ? 'This user can create apps. Click to revoke.'
               : 'This user cannot create apps. Click to grant.'}">

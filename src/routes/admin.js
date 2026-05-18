@@ -79,10 +79,8 @@ function adminRoutes(config) {
   });
 
   // Toggle the per-user app-creation permission (see users.can_create_apps
-  // in schema.sql). Admin-only; admins themselves implicitly bypass the
-  // gate so toggling an admin row is a no-op visually, but we still accept
-  // it for completeness. Default for every user is FALSE — set TRUE here
-  // to allow them to create apps.
+  // in schema.sql). Default for every user is FALSE — set TRUE here to
+  // allow them to create apps. Admins are included; there is no bypass.
   router.post('/api/admin/users/:id/can-create-apps', async (req, res) => {
     const userId = parseInt(req.params.id, 10);
     const { canCreateApps } = req.body || {};

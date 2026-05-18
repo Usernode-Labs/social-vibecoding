@@ -1,13 +1,6 @@
 const Home = {
-  // Whether the current viewer is permitted to create apps. Admins
-  // always can; everyone else needs users.can_create_apps = TRUE,
-  // which defaults FALSE and must be toggled on by an admin via
-  // /admin. Both the trailing "Your app here" tile and the empty-state
-  // CTA are gated on this so users without permission see no
-  // creation affordance at all (the server-side check in
-  // routes/apps.js is the real gate; this is just clean UX).
   canCreate() {
-    return !!(App.user?.isAdmin || App.user?.canCreateApps);
+    return !!App.user?.canCreateApps;
   },
 
   async load() {
