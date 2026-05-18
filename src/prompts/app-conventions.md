@@ -445,18 +445,65 @@ credentials, and the only outbound calls back to the platform are
 the push/PR proxy endpoints (which only accept the session's
 canonical branch). Commit cleanly and let the harness finish the job.
 
+## Bridge — centrally hosted (not vendored)
+
+`usernode-bridge.js` is the one piece of cross-dapp infrastructure
+that is **not vendored**. It is served as a single canonical copy
+from the Usernode Social Vibecoding platform itself:
+
+```
+https://social-vibecoding.usernodelabs.org/usernode-bridge/v1/bridge.js
+```
+
+Canonical source: `social-vibecoding/public/usernode-bridge/v1/bridge.js`.
+
+Every dapp's HTML shell loads this URL directly. Cross-origin
+`<script>` tags are allowed by default; no CORS dance is needed:
+
+```html
+<script src="https://social-vibecoding.usernodelabs.org/usernode-bridge/v1/bridge.js"></script>
+```
+
+Rules:
+
+- **Never vendor `usernode-bridge.js` per app.** Bridge fixes ship
+  from a single SV redeploy and propagate fleet-wide on the next page
+  load. SV serves the file with `Cache-Control: no-cache,
+  must-revalidate`, so browsers revalidate every load (304s when
+  unchanged).
+- **Versioning policy.** `/v1/` is the current major. Backward-
+  incompatible bridge API changes bump to `/v2/` at a new URL; dapps
+  migrate rollingly, and `/v1/` stays live until the last consumer
+  has moved off. Within a major, fixes and additive features ship in
+  place. When in doubt, prefer "additive within v1" over a v2 bump —
+  the version sprawl is the cost, the URL change is the win.
+- **Rollback.** Revert the offending commit in `social-vibecoding/`,
+  redeploy SV. All dapps recover on the next page load — no per-dapp
+  redeploy needed. This is the single biggest payoff of centralization
+  vs. the old vendored-fan-out model.
+- **Local-dev tradeoff.** `npm run dev` for any dapp now requires SV
+  reachable for bridge-touching paths. App-logic iteration still
+  works offline; only paths that actually exercise the bridge
+  (`getNodeAddress`, `sendTransaction`, etc.) depend on SV being up.
+- **Self-hosting caveat.** All dapps in the production fleet
+  hard-code the `social-vibecoding.usernodelabs.org` host. Forks
+  running their own SV instance either accept that their dapps load
+  the bridge from upstream prod, or fork the dapps and edit the URL.
+  See [SELF-HOSTING.md](../../SELF-HOSTING.md) for details.
+
 ## Vendored shared files
 
-Several files are **vendored across the platform fleet**: one
+Several other files are **vendored across the platform fleet**: one
 canonical source lives in `usernode-dapp-starter`, and each consumer
 dapp ships its own copy. Changes propagate by **re-vendoring** (copying
-the file from canonical), not by editing the per-app copy.
+the file from canonical), not by editing the per-app copy. (The
+bridge above is the exception — see that section for why it's
+centrally hosted instead.)
 
 Canonical sources (all in the `usernode-dapp-starter` repo):
 
 | File | Path within repo |
 |---|---|
-| `usernode-bridge.js` | repo root |
 | `usernode-usernames.js` | repo root |
 | `usernode-loading.js` | repo root |
 | `lib/dapp-server.js` | `examples/lib/dapp-server.js` |
@@ -464,11 +511,9 @@ Canonical sources (all in the `usernode-dapp-starter` repo):
 
 Consumers today include `usernode-echo-dapp`,
 `usernode-last-one-wins-dapp`, `usernode-opinion-market-dapp`,
-`usernode-falling-sands-dapp`, `usernode-feedback-hub`,
-`usernode-group-chat-dapp-test`, and the platform itself
-(`social-vibecoding/public/usernode-bridge.js`). The list grows over
-time; each consumer's own `CLAUDE.md` names what it vendors and from
-where.
+`usernode-falling-sands-dapp`, `usernode-feedback-hub`, and
+`usernode-group-chat-dapp-test`. The list grows over time; each
+consumer's own `CLAUDE.md` names what it vendors and from where.
 
 Rules:
 
@@ -482,7 +527,7 @@ Rules:
   explicit. The fan-out cost is invisible from inside a single
   consumer repo and is a common source of mis-pricing.
 - **One-off fixes that apply only to a single dapp** belong in that
-  dapp's own non-vendored code, not in its bridge copy. Sentinel: if
+  dapp's own non-vendored code, not in a vendored copy. Sentinel: if
   the change makes sense in every other consumer too, it goes in
   canonical.
 

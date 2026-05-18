@@ -909,6 +909,42 @@ self-staging from racing the prod platform on shared resources).
   audit visibility is undesired, hide them entirely with another
   branch on `app.self_hosted`.
 
+## Centralized bridge endpoint
+
+SV hosts the canonical `usernode-bridge.js` at
+`/usernode-bridge/v1/bridge.js`. Every dapp in the production fleet
+loads it directly from
+`https://social-vibecoding.usernodelabs.org/usernode-bridge/v1/bridge.js`
+rather than vendoring a per-app copy (see
+[src/prompts/app-conventions.md § Bridge — centrally hosted (not vendored)](./src/prompts/app-conventions.md)
+for the consumer-facing rules and versioning policy).
+
+Operational consequences for self-hosting:
+
+- **The endpoint comes free.** Any SV instance that ships
+  `public/usernode-bridge/v1/bridge.js` serves the bridge at
+  `https://<your-USERNODE_DOMAIN>/usernode-bridge/v1/bridge.js`.
+  The auth middleware exempts `/usernode-bridge/` and the static
+  handler sets `Cache-Control: no-cache, must-revalidate`.
+- **Fleet dapps point at the upstream production instance.** The
+  four production dapps (echo, lastwin, falling-sands, opinion-
+  market) hard-code `social-vibecoding.usernodelabs.org` as the host.
+  A self-hosted SV fork has three options:
+  1. Accept the dependency on upstream prod. Fine for read-only
+     mirrors; brittle for forks that want to run offline or against
+     a custom bridge build.
+  2. Fork each dapp repo and edit the URL to point at the self-hosted
+     instance. Five-character change per dapp; no other coupling.
+  3. Templatize the URL at dapp-deploy time (e.g. read it from a
+     `BRIDGE_BASE_URL` env var and string-substitute into
+     `index.html`). Not implemented today — comes back as a real
+     ask the first time someone tries (2) at scale.
+- **Bridge bug fixes from the upstream SV are fleet-wide.** When the
+  upstream SV redeploys with a bridge change, every dapp running
+  against an SV fork that still points to upstream picks up the
+  change on next page load. Self-hosters that want isolation should
+  pursue option 2 or 3 above.
+
 ## Cross-references
 
 - [EXTRACT-PLAN.md](./EXTRACT-PLAN.md) — the standalone-deploy
