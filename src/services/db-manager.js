@@ -214,21 +214,37 @@ async function cloneDatabase(sourceDb, targetDb) {
   // CREATE DATABASE … TEMPLATE copies tables but each one keeps its
   // original owner from the source DB. For a clone of a per-role-
   // migrated source, that owner is `<sourceDb>_owner`; for a clone
-  // of a not-yet-migrated source it's the superuser. Reassign every
-  // object inside the target DB to the new clone role so it can
-  // ALTER, SELECT, INSERT, and DROP without privilege errors.
-  // Try the source-role path first; if it fails (source not yet
-  // migrated), fall back to reassigning from the superuser.
+  // of a not-yet-migrated source (the self-app — db/migrate.js skips
+  // self_hosted rows in migrateAppDbsToPerRole) it's the superuser.
+  // Reassign every object inside the target DB to the new clone role
+  // so it can ALTER, SELECT, INSERT, and DROP without privilege errors.
+  //
+  // The source-role REASSIGN handles the child-app fast path: every
+  // user-schema table is owned by `<sourceDb>_owner`, no superuser
+  // ownership in the picture, plain REASSIGN OWNED BY works. If the
+  // source role doesn't exist (the self-app case), this is a no-op and
+  // the fallback below picks up the slack.
+  //
+  // The superuser fallback CANNOT be a plain `REASSIGN OWNED BY` — the
+  // superuser also owns pg_toast tables pinned to pg_catalog, and
+  // postgres aborts the whole REASSIGN with "cannot reassign ownership
+  // of objects owned by role X because they are required by the
+  // database system". That used to be swallowed at .catch(debug) here,
+  // which silently left tables owned by the superuser and produced
+  // clones the new role couldn't ALTER — staging then crash-looped
+  // with `42501 must be owner of table users` on the first migration.
+  // reassignUserObjectsTo walks only user-schema objects (skipping
+  // pg_catalog), so it works against superuser-owned sources too.
   const sourceRole = ownerRoleName(sourceDb);
   if (SAFE_IDENT.test(sourceRole)) {
     await execInTarget(targetDb, `REASSIGN OWNED BY ${sourceRole} TO ${targetRole}`).catch((err) => {
-      log.debug('db-manager', 'REASSIGN OWNED BY source-role skipped', {
+      log.warn('db-manager', 'REASSIGN OWNED BY source-role failed; falling back to per-object reassign from superuser', {
         sourceDb, sourceRole, err: err.message,
       });
     });
   }
-  await execInTarget(targetDb, `REASSIGN OWNED BY ${DB_USER} TO ${targetRole}`).catch((err) => {
-    log.debug('db-manager', 'REASSIGN OWNED BY superuser skipped', {
+  await reassignUserObjectsTo(targetDb, DB_USER, targetRole).catch((err) => {
+    log.warn('db-manager', 'reassignUserObjectsTo from superuser failed', {
       targetDb, err: err.message,
     });
   });
