@@ -432,6 +432,47 @@ pushes for you. Manual `git push` calls from the agent only add
 noise (and can confuse the reviewer) — commit with `git add -A &&
 git commit -m "…"` and stop there.
 
+## Vendored shared files
+
+Several files are **vendored across the platform fleet**: one
+canonical source lives in `usernode-dapp-starter`, and each consumer
+dapp ships its own copy. Changes propagate by **re-vendoring** (copying
+the file from canonical), not by editing the per-app copy.
+
+Canonical sources (all in the `usernode-dapp-starter` repo):
+
+| File | Path within repo |
+|---|---|
+| `usernode-bridge.js` | repo root |
+| `usernode-usernames.js` | repo root |
+| `usernode-loading.js` | repo root |
+| `lib/dapp-server.js` | `examples/lib/dapp-server.js` |
+| `lib/tx-match.js` | `examples/lib/tx-match.js` |
+
+Consumers today include `usernode-echo-dapp`,
+`usernode-last-one-wins-dapp`, `usernode-opinion-market-dapp`,
+`usernode-falling-sands-dapp`, `usernode-feedback-hub`,
+`usernode-group-chat-dapp-test`, and the platform itself
+(`social-vibecoding/public/usernode-bridge.js`). The list grows over
+time; each consumer's own `CLAUDE.md` names what it vendors and from
+where.
+
+Rules:
+
+- **Never edit a vendored copy in place** to fix a cross-cutting bug.
+  The next re-vendor overwrites it. Edit the canonical source in
+  `usernode-dapp-starter`, then re-vendor into each consumer.
+- **When designing a cross-cutting fix, count consumers up front.**
+  A "one-line" change in canonical is N+1 commits in practice
+  (canonical + every consumer). Don't propose a per-app call-site
+  change as cheaper than a canonical fix without making that count
+  explicit. The fan-out cost is invisible from inside a single
+  consumer repo and is a common source of mis-pricing.
+- **One-off fixes that apply only to a single dapp** belong in that
+  dapp's own non-vendored code, not in its bridge copy. Sentinel: if
+  the change makes sense in every other consumer too, it goes in
+  canonical.
+
 ## Dev console forwarder
 
 Every scaffolded `public/index.html` contains a `<script>` block
