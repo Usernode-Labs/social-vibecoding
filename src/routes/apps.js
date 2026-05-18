@@ -669,6 +669,54 @@ function appRoutes(config) {
     }
   });
 
+  // Toggle the admin-gated change lock (admin only). When locked=true,
+  // applying any group-voted change (PR merge, rename proposal, secret
+  // change) additionally requires at least one admin yes/up vote on top
+  // of the existing active-user majority — enforced in routes/votes.js
+  // (checkAndMerge) and routes/issues.js (maybeApplyRenameProposal /
+  // maybeApplySecretChangeProposal) via services/admin-approval.js.
+  //
+  // The home-card lock icon is the canonical UI affordance. We post a
+  // system chat message + broadcast `app_update` so every viewer's card
+  // and group-chat history reflects the change without a reload.
+  router.post('/api/apps/:slug/lock', drainGuard, async (req, res) => {
+    if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin access required' });
+    const { locked } = req.body || {};
+    if (typeof locked !== 'boolean') {
+      return res.status(400).json({ error: 'locked (boolean) required in body' });
+    }
+    try {
+      const { rows } = await pool.query(
+        `UPDATE apps SET locked = $1 WHERE slug = $2
+         RETURNING id, slug, locked`,
+        [locked, req.params.slug]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'App not found' });
+      const app = rows[0];
+
+      const { sendSystemMessage, pushAppUpdate } = require('../services/ws');
+      await sendSystemMessage(pool, app.id,
+        locked
+          ? `${req.user.username} locked this app — merges now also require an admin yes vote`
+          : `${req.user.username} unlocked this app — merges no longer require an admin yes vote`,
+        'system'
+      ).catch((err) => log.warn('apps', 'Lock chat msg failed', { err: err.message }));
+
+      pushAppUpdate({
+        action: 'lock_changed',
+        appSlug: app.slug,
+        appId: app.id,
+        locked: app.locked,
+      });
+
+      log.info('apps', 'Lock toggled', { slug: app.slug, locked, by: req.user.username });
+      res.json({ ok: true, locked: app.locked });
+    } catch (err) {
+      log.error('apps', 'Lock toggle failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Delete an app (admin only)
   router.delete('/api/apps/:slug', async (req, res) => {
     if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin access required' });

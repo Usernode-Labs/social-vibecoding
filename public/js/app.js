@@ -658,6 +658,20 @@ const App = {
           AppView.applyRename(data.newName);
         }
       }
+    } else if (data.action === 'lock_changed') {
+      // The admin-gated change lock flipped on this app (see
+      // POST /api/apps/:slug/lock in routes/apps.js). Refresh the
+      // home-card icon and, if the user is currently looking at this
+      // app's group chat, refresh the vote panel so the "(locked —
+      // also needs an admin yes)" hint appears or disappears in step.
+      if (typeof Home !== 'undefined' && Home.updateAppCardLock) {
+        Home.updateAppCardLock(data.appSlug, data.locked);
+      }
+      if (App.currentApp === data.appSlug
+          && App.currentTab === 'group-chat'
+          && typeof AppView !== 'undefined' && AppView.loadVotePanel) {
+        AppView.loadVotePanel(data.appSlug);
+      }
     }
   },
 

@@ -68,6 +68,17 @@ const Home = {
         });
       });
 
+      // Lock/unlock toggle. Admin-only; the corner button renders as an
+      // open padlock when the app is unlocked (default for every app) and
+      // as a closed padlock when locked. When locked, applying any group-
+      // voted change additionally requires at least one admin yes/up vote
+      // (enforced server-side in routes/votes.js + routes/issues.js).
+      // The click handler optimistically swaps the icon; the WS
+      // `app_update` event reconciles every other open tab.
+      listEl.querySelectorAll('.lock-btn').forEach((btn) => {
+        btn.addEventListener('click', (e) => Home.handleLockClick(e, btn));
+      });
+
       listEl.querySelectorAll('.check-updates-btn').forEach((btn) => {
         btn.addEventListener('click', async (e) => {
           e.stopPropagation();
@@ -250,15 +261,27 @@ const Home = {
     // skip in routes/apps.js.
     const showCheck = App.user?.isAdmin && app.repo_url && isRunning && !app.self_hosted;
     const showDelete = !!App.user?.isAdmin;
-    const hasCornerBtns = showRetry || showCheck || showDelete;
+    // The lock toggle is admin-only and applies to every app (including
+    // self-hosted: an admin may want to require admin approval for
+    // platform-self PRs too, which is precisely the kind of change worth
+    // gating). Default state is unlocked; click flips to locked. See
+    // POST /api/apps/:slug/lock in routes/apps.js for the server side.
+    const showLock = !!App.user?.isAdmin;
+    const isLocked = !!app.locked;
+    const hasCornerBtns = showRetry || showCheck || showLock || showDelete;
     // `Retry` is text rather than a glyph so we widen the title-row's
     // right padding when it's present; otherwise pr-14 is enough for
-    // the two icon buttons + gap.
-    const titlePadClass = showRetry ? 'pr-20' : (hasCornerBtns ? 'pr-14' : '');
+    // the two icon buttons + gap. With lock added we widen slightly
+    // when there are 3 glyph buttons (check + lock + delete).
+    const glyphCount = (showCheck ? 1 : 0) + (showLock ? 1 : 0) + (showDelete ? 1 : 0);
+    const titlePadClass = showRetry
+      ? 'pr-24'
+      : (glyphCount >= 3 ? 'pr-20' : (hasCornerBtns ? 'pr-14' : ''));
     const cornerBtnsHtml = hasCornerBtns ? `
       <div class="absolute top-2 right-2 flex items-center gap-1">
         ${showRetry ? `<button class="retry-btn text-xs text-emerald-500 hover:text-emerald-400 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors" data-slug="${app.slug}">Retry</button>` : ''}
         ${showCheck ? `<button class="check-updates-btn w-6 h-6 flex items-center justify-center rounded-md text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors text-sm leading-none" data-slug="${app.slug}" title="Check for updates and redeploy if changed" aria-label="Check for updates">⟳</button>` : ''}
+        ${showLock ? Home.renderLockButton(app.slug, isLocked) : ''}
         ${showDelete ? `<button class="delete-btn w-6 h-6 flex items-center justify-center rounded-md text-zinc-400 hover:text-red-500 hover:bg-red-500/10 transition-colors text-base leading-none" data-slug="${app.slug}" title="Delete app" aria-label="Delete app">&times;</button>` : ''}
       </div>` : '';
 
@@ -277,7 +300,7 @@ const Home = {
       </div>`;
 
     return `
-      <div class="app-card relative rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 hover:border-violet-300 dark:hover:border-violet-700 transition-colors p-4 flex flex-col gap-3 ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}">
+      <div class="app-card relative rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 hover:border-violet-300 dark:hover:border-violet-700 transition-colors p-4 flex flex-col gap-3 ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}">
         ${cornerBtnsHtml}
         <div class="flex items-start gap-3 ${titlePadClass}">
           <div class="w-11 h-11 rounded-xl bg-violet-600/20 flex items-center justify-center text-violet-400 font-bold text-base shrink-0">
@@ -321,6 +344,83 @@ const Home = {
           Create new app
         </button>
       </div>`;
+  },
+
+  // Lock-toggle button renderer. Two visual states keyed off `locked`:
+  //   - unlocked (default): open-padlock glyph, zinc/violet hover. The
+  //     icon tells the user "click to lock this app".
+  //   - locked: closed-padlock glyph, violet text + violet-tinted hover
+  //     background. The icon tells the user "this app is locked; click
+  //     to unlock". We tint locked icons violet (rather than red or
+  //     amber) because a lock is a governance setting, not an error —
+  //     red would read as "danger / something is wrong".
+  //
+  // Both states share the same `.lock-btn` class so the click handler
+  // in Home.load() can wire them uniformly. `data-locked` carries the
+  // current state so the handler knows which direction to toggle. The
+  // tooltip text adapts so admins know what clicking will do.
+  renderLockButton(slug, isLocked) {
+    const lockedSvg = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/></svg>`;
+    const unlockedSvg = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 10.5V6.75a4.5 4.5 0 119 0v3.75M3.75 21.75h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H3.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/></svg>`;
+    const cls = isLocked
+      ? 'lock-btn w-6 h-6 flex items-center justify-center rounded-md text-violet-500 hover:text-violet-400 hover:bg-violet-500/10 transition-colors leading-none'
+      : 'lock-btn w-6 h-6 flex items-center justify-center rounded-md text-zinc-400 hover:text-violet-400 hover:bg-violet-500/10 transition-colors leading-none';
+    const title = isLocked
+      ? 'App locked — merges also need an admin yes vote. Click to unlock.'
+      : 'Lock this app — admin yes vote will also be required to merge changes.';
+    const label = isLocked ? 'Unlock app' : 'Lock app';
+    return `<button class="${cls}" data-slug="${slug}" data-locked="${isLocked}" title="${title}" aria-label="${label}">${isLocked ? lockedSvg : unlockedSvg}</button>`;
+  },
+
+  // Targeted lock-button refresh for a single app card. Both the
+  // optimistic-click path (in Home.load) and the WS app_update handler
+  // (in app.js handleAppUpdate) route through here so the icon swap is
+  // identical, and so we don't blow away hover/scroll state on other
+  // cards with a full Home.load(). Safe no-op if the card isn't
+  // mounted (different screen, not loaded yet, etc.).
+  updateAppCardLock(slug, isLocked) {
+    if (!slug) return;
+    const card = document.querySelector(`.app-card[data-slug="${slug}"]`);
+    if (!card) return;
+    card.dataset.locked = String(!!isLocked);
+    const btn = card.querySelector('.lock-btn');
+    if (!btn) return;
+    const replacement = document.createElement('div');
+    replacement.innerHTML = Home.renderLockButton(slug, isLocked).trim();
+    const fresh = replacement.firstChild;
+    if (!fresh) return;
+    fresh.addEventListener('click', (e) => Home.handleLockClick(e, fresh));
+    btn.replaceWith(fresh);
+  },
+
+  // Click-handler body for the lock button. Shared by Home.load (on the
+  // first render of each card) and Home.updateAppCardLock (on every
+  // subsequent re-render driven by either the optimistic local swap or
+  // a WS app_update event). One source of truth so the toggle behavior
+  // can't drift between the two paths.
+  async handleLockClick(e, btn) {
+    e.stopPropagation();
+    const slug = btn.dataset.slug;
+    const wasLocked = btn.dataset.locked === 'true';
+    const nextLocked = !wasLocked;
+    btn.disabled = true;
+    try {
+      const res = await fetch(`/api/apps/${slug}/lock`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ locked: nextLocked }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || `Lock toggle failed (HTTP ${res.status})`);
+        return;
+      }
+      Home.updateAppCardLock(slug, nextLocked);
+    } catch (err) {
+      alert(`Lock toggle failed: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+    }
   },
 
   // Idempotent click-wiring for every `.home-create-btn` currently

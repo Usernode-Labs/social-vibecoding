@@ -6,6 +6,7 @@ const staging = require('../services/staging');
 const { checkAndResolveConflicts } = require('../services/conflict-resolver');
 const { sendSystemMessage } = require('../services/ws');
 const { getActiveUserStats, isUserActive } = require('../services/active-users');
+const { isAppLocked, hasAdminYesVote } = require('../services/admin-approval');
 
 function voteRoutes(config) {
   const router = Router();
@@ -183,7 +184,7 @@ function voteRoutes(config) {
   // List promoted sessions (for the vote panel in group chat)
   router.get('/api/apps/:slug/promoted', async (req, res) => {
     try {
-      const { rows: appRows } = await pool.query('SELECT id FROM apps WHERE slug = $1', [req.params.slug]);
+      const { rows: appRows } = await pool.query('SELECT id, locked FROM apps WHERE slug = $1', [req.params.slug]);
       if (!appRows.length) return res.status(404).json({ error: 'App not found' });
 
       const userId = req.user?.id || null;
@@ -212,7 +213,17 @@ function voteRoutes(config) {
       // existing active-stats query.
       const viewerActive = await isUserActive(pool, appRows[0].id, userId);
 
-      res.json({ promoted: rows, activeUsers, majority, viewerActive });
+      res.json({
+        promoted: rows,
+        activeUsers,
+        majority,
+        viewerActive,
+        // Surfaced so the vote panel can render the "(locked — also
+        // needs an admin yes)" hint on the Open PRs / Rename proposals
+        // sections without a second round-trip. See loadVotePanel in
+        // public/js/app-view.js.
+        locked: !!appRows[0].locked,
+      });
     } catch (err) {
       log.error('votes', 'Failed to list promoted', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -256,6 +267,21 @@ async function checkAndMerge(config, pool, session) {
 
   if (yesCount < majority) {
     return { merged: false, yesCount, needed: majority };
+  }
+
+  // Locked apps additionally require at least one admin yes vote (see
+  // services/admin-approval.js + the apps.locked column). The active-user
+  // majority gate above still has to pass — the admin yes is an extra
+  // condition, not a replacement. Toggled via the home-card lock icon
+  // (admin-only); see POST /api/apps/:slug/lock in routes/apps.js.
+  if (await isAppLocked(pool, session.app_id)) {
+    const adminYes = await hasAdminYesVote(pool, session.id);
+    if (!adminYes) {
+      log.info('votes', 'Majority reached but app is locked; awaiting admin yes', {
+        sessionId: session.id, yesCount, majority,
+      });
+      return { merged: false, yesCount, needed: majority, awaitingAdmin: true };
+    }
   }
 
   // Majority reached. Try to claim the merge by atomically flipping

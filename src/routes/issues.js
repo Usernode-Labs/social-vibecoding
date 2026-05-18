@@ -4,6 +4,7 @@ const log = require('../services/logger');
 const github = require('../services/github');
 const { sendSystemMessage, pushAppUpdate, pushIssueUpdate } = require('../services/ws');
 const { getActiveUserStats } = require('../services/active-users');
+const { isAppLocked, hasAdminUpVote } = require('../services/admin-approval');
 const appManifest = require('../services/app-manifest');
 const appSecrets = require('../services/app-secrets');
 const staging = require('../services/staging');
@@ -339,6 +340,19 @@ async function maybeApplyRenameProposal(pool, issue) {
     return { applied: false, upCount, majority, active };
   }
 
+  // Locked apps additionally require at least one admin up vote (see
+  // services/admin-approval.js + the apps.locked column). The majority
+  // gate above still has to pass — the admin up is an extra condition.
+  if (await isAppLocked(pool, issue.app_id)) {
+    const adminUp = await hasAdminUpVote(pool, issue.id);
+    if (!adminUp) {
+      log.info('issues', 'Rename majority reached but app is locked; awaiting admin up', {
+        issueId: issue.id, upCount, majority,
+      });
+      return { applied: false, upCount, majority, active, awaitingAdmin: true };
+    }
+  }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -459,6 +473,19 @@ async function maybeApplySecretChangeProposal(config, pool, issue) {
   const upCount = parseInt(upRows[0].cnt, 10) || 0;
   if (upCount < majority) {
     return { applied: false, upCount, majority, active };
+  }
+
+  // Locked apps additionally require at least one admin up vote (see
+  // services/admin-approval.js + the apps.locked column). Same rule as
+  // the rename path above.
+  if (await isAppLocked(pool, issue.app_id)) {
+    const adminUp = await hasAdminUpVote(pool, issue.id);
+    if (!adminUp) {
+      log.info('issues', 'Secret-change majority reached but app is locked; awaiting admin up', {
+        issueId: issue.id, upCount, majority,
+      });
+      return { applied: false, upCount, majority, active, awaitingAdmin: true };
+    }
   }
 
   const client = await pool.connect();

@@ -409,6 +409,16 @@ const AppView = {
       // (per src/services/active-users.js). Surfaced as a one-line
       // status on the Users dashboard tile.
       const viewerActive = !!promotedData.viewerActive;
+      // Admin-gated change lock (apps.locked). When true, every merge
+      // path (PR merge, rename proposal, secret-change proposal) also
+      // requires an admin yes/up vote on top of the active-user
+      // majority — see routes/votes.js + routes/issues.js. Surface as
+      // a one-line hint on the relevant sections so voters aren't
+      // confused by a stuck-at-majority PR.
+      const appLocked = !!promotedData.locked;
+      const lockedHint = appLocked
+        ? ' <span class="text-amber-500 font-normal">· locked: also needs an admin yes</span>'
+        : '';
       const issuesData = issuesRes.ok ? await issuesRes.json() : { issues: [] };
       const allIssues = issuesData.issues || [];
       const renameProposals = allIssues.filter((i) => i.kind === 'rename');
@@ -449,7 +459,7 @@ const AppView = {
         </div>`;
 
       if (promoted.length) {
-        bodyHtml += `<div class="mb-2"><div class="text-xs text-zinc-500 mb-1 font-medium">Open PRs <span class="text-zinc-600 font-normal">(need ${majority}/${activeUsers} votes to merge)</span></div>`;
+        bodyHtml += `<div class="mb-2"><div class="text-xs text-zinc-500 mb-1 font-medium">Open PRs <span class="text-zinc-600 font-normal">(need ${majority}/${activeUsers} votes to merge)</span>${lockedHint}</div>`;
         for (const pr of promoted) {
           const yesCount = parseInt(pr.yes_count);
           const isMerging = pr.status === 'merging';
@@ -487,7 +497,7 @@ const AppView = {
       }
 
       if (renameProposals.length) {
-        bodyHtml += `<div class="mb-2"><div class="text-xs text-zinc-500 mb-1 font-medium">Rename proposals <span class="text-zinc-600 font-normal">(need ${majority}/${activeUsers} up-votes to apply)</span></div>`;
+        bodyHtml += `<div class="mb-2"><div class="text-xs text-zinc-500 mb-1 font-medium">Rename proposals <span class="text-zinc-600 font-normal">(need ${majority}/${activeUsers} up-votes to apply)</span>${lockedHint}</div>`;
         for (const issue of renameProposals) {
           const myVote = issue.my_vote;
           const upCount = parseInt(issue.up_count) || 0;

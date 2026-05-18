@@ -70,6 +70,15 @@ UPDATE apps SET last_deploy_at = created_at WHERE last_deploy_at IS NULL;
 -- truth for "what does this dapp create".
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS manifest_snapshot JSONB;
 
+-- Admin-gated change lock. When TRUE, applying any group-voted change to
+-- this app (PR merge in routes/votes.js, rename proposal + secret-change
+-- proposal in routes/issues.js) additionally requires at least one admin
+-- "yes"/"up" vote on top of the existing active-user majority. Toggled by
+-- admins via POST /api/apps/:slug/lock; the home-card lock icon (admin-
+-- only) is the canonical UI affordance. Default FALSE so every existing
+-- app starts unlocked and behaves exactly as before.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS locked BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- Per-app postgres role password. Every app's database has a dedicated
 -- postgres role `<dbName>_owner` with this random password; the app's
 -- container connects with that role's URL instead of the shared
