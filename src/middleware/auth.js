@@ -16,6 +16,7 @@ const PUBLIC_PATHS = [
   '/css/',
   '/js/',
   '/usernode-bridge.js',
+  '/usernode-bridge/',
 ];
 
 // SELF-HOSTING.md "Self-staging — iframe-auth login flow":

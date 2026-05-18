@@ -183,6 +183,19 @@ app.get('/api/iframe-token', async (req, res) => {
   res.json({ token });
 });
 
+// Bridge centralization: versioned bridge served from /usernode-bridge/vN/.
+// Within a major version (e.g. v1), bug fixes ship by editing the file in
+// SV and redeploying — every dapp picks the fix up on next page load.
+// Browsers must therefore revalidate on every request so changes propagate
+// quickly; the file is ~100KB and revalidates via 304 when unchanged.
+// Across major versions the URL changes (/v1/ → /v2/) so caches segregate
+// naturally. Dapps still vendor their own copy for now; this is the
+// additive scaffolding for a future migration off vendoring.
+app.use('/usernode-bridge', (_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+  next();
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/admin', (req, res) => {
