@@ -146,6 +146,9 @@ html, body {
 .dc-h3 { font-size: 15px; font-weight: 600; margin: 12px 0 4px; color: var(--text-primary); }
 .dc-h4 { font-size: 14px; font-weight: 600; margin: 10px 0 4px; color: var(--text-secondary); }
 
+.dc-msg-content a { color: var(--accent); text-decoration: underline; word-break: break-all; }
+.dc-msg-content a:hover { color: var(--accent-light); }
+
 .dc-msg-content strong { font-weight: 600; color: var(--text-primary); }
 .dc-msg-content em { font-style: italic; color: var(--text-faint); }
 

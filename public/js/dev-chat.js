@@ -1385,6 +1385,21 @@ const DevChat = {
     // Inline code
     html = html.replace(/`([^`]+)`/g, '<code class="dc-inline-code">$1</code>');
 
+    // Markdown links [text](url) — only allow http(s) scheme
+    html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)]*)\)/g, (_, text, url) => {
+      const href = url.replace(/&amp;/g, '&');
+      return `<a href="${href}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+    });
+
+    // Bare URL auto-linking — skip URLs already inside href="..."
+    html = html.replace(/(^|[^"=])(https?:\/\/[^\s<]+[^\s<.,;:!?)}\]'"])/g, (_, pre, url) => {
+      const href = url.replace(/&amp;/g, '&');
+      const display = url.replace(/&amp;/g, '&').length > 60
+        ? url.replace(/&amp;/g, '&').slice(0, 57) + '...'
+        : url;
+      return `${pre}<a href="${href}" target="_blank" rel="noopener noreferrer">${display}</a>`;
+    });
+
     // Bold
     html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
 
