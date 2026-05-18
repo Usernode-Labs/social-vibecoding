@@ -197,6 +197,12 @@ html, body {
 .dc-ul { list-style: disc; padding-left: 20px; margin: 6px 0; }
 .dc-ol li, .dc-ul li { margin: 2px 0; }
 
+.dc-msg-content table { border-collapse: collapse; margin: 6px 0; width: 100%; font-size: 13px; }
+.dc-msg-content th, .dc-msg-content td { border: 1px solid var(--border-light); padding: 4px 8px; text-align: left; }
+.dc-msg-content th { font-weight: 600; color: var(--text-primary); background: var(--bg-code-header); }
+.dc-msg-content del { text-decoration: line-through; }
+.dc-msg-content hr { border: none; border-top: 1px solid var(--border-light); margin: 12px 0; }
+
 /* ── Status lines (deploying, building, etc.) ──────────── */
 
 .dc-status-log {
