@@ -15,12 +15,20 @@
 # pre-refactor behaviour.
 #
 # Required env (set via -e on `docker run`):
-#   CLONE_URL            git clone URL with embedded creds
-#   BRANCH               branch name to check out / push
+#   CLONE_URL            plain HTTPS git clone URL (no embedded creds —
+#                        public repos only, see app-conventions.md /
+#                        src/services/github.js::getCloneUrl)
+#   BRANCH               branch name to check out
 #   ANTHROPIC_API_KEY    forwarded to `claude`
+#   WORKER_JWT           session-scoped JWT used by usernode-push
+#   SESSION_ID           session id, used in platform API URLs
+#   PLATFORM_URL         base URL of the platform's internal API
 # Optional env:
 #   MODE                 warm (default) | build | scout
-#   PAT                  GitHub PAT used for the push credential helper
+#   PAT                  legacy — kept for back-compat only; not set by
+#                        the platform anymore. If present we still wire
+#                        the credential helper, but the platform-side
+#                        push proxy is the only legitimate write path.
 #   PROMPT, MODEL,       only required for legacy single-shot MODE=build|scout;
 #   COMMIT_MSG,          ignored in MODE=warm.
 #   CLAUDE_RESUME_SESSION_ID

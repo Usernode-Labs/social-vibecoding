@@ -1,0 +1,57 @@
+#!/bin/sh
+# Push the current dev branch to GitHub by asking the platform to do it.
+#
+# The worker container carries no GitHub credentials. This script is
+# the only path by which the worker can affect anything outside its
+# own filesystem: it POSTs to the platform's internal API, which
+# validates the session, looks up the canonical branch name from the
+# DB, and runs the actual `git push` from a docker-exec back into
+# this container with the bot token injected for that one call.
+#
+# The endpoint contract: POST /api/internal/sessions/$SESSION_ID/push
+# with `Authorization: Bearer $WORKER_JWT`. No body fields — the
+# branch is determined platform-side, not by us.
+#
+# Exit code mirrors push success so the caller (run-cc.sh) can carry
+# on the existing PUSH_OK accounting. We deliberately keep this script
+# tiny + stdout/stderr-only — anything fancier risks drifting from
+# run-cc.sh's __USERNODE_* marker parsing.
+
+set -u
+
+: "${WORKER_JWT:?WORKER_JWT required}"
+: "${SESSION_ID:?SESSION_ID required}"
+: "${PLATFORM_URL:=http://usernode:3000}"
+
+URL="${PLATFORM_URL%/}/api/internal/sessions/${SESSION_ID}/push"
+
+# `-w "\n%{http_code}"` appends the HTTP code on its own line so we
+# can split body from status without juggling temp files. `-sS` keeps
+# the output clean while still showing errors.
+RESP=$(curl -sS -X POST \
+  -H "Authorization: Bearer $WORKER_JWT" \
+  -H "Content-Type: application/json" \
+  -d '{}' \
+  -w "\n%{http_code}" \
+  --max-time 90 \
+  "$URL" 2>&1) || {
+  # curl-level failure (DNS, connect, timeout). Don't expose the JWT
+  # in error output; curl shouldn't echo it but be defensive.
+  echo "__USERNODE_WARN__ usernode-push: curl failed: $(echo "$RESP" | sed 's/Bearer [^ ]*/Bearer ***/g' | tr '\n' ' ')"
+  exit 1
+}
+
+CODE=$(printf '%s' "$RESP" | tail -n1)
+BODY=$(printf '%s' "$RESP" | sed '$d')
+
+if [ "$CODE" = "200" ]; then
+  # Echo the sha + branch the platform pushed for easier debugging in
+  # the host's stream-json parser. Keep this short; run-cc.sh will
+  # post its own __USERNODE_RESULT__ summary with the SHA from
+  # `git rev-parse HEAD` immediately after.
+  echo "usernode-push: ok ($BODY)"
+  exit 0
+fi
+
+echo "__USERNODE_WARN__ usernode-push: HTTP $CODE: $BODY"
+exit 1

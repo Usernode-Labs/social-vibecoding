@@ -16,6 +16,7 @@ const { adminRoutes } = require('./src/routes/admin');
 const { feedbackRoutes } = require('./src/routes/feedback');
 const { notificationsRoutes } = require('./src/routes/notifications');
 const { statusRoutes } = require('./src/routes/status');
+const { internalRoutes } = require('./src/routes/internal');
 const github = require('./src/services/github');
 const llm = require('./src/services/llm');
 const worker = require('./src/services/worker');
@@ -145,6 +146,14 @@ app.get('/node-status', (_req, res) => {
 // mount before authMiddleware so they don't redirect anonymous visitors.
 app.use(statusRoutes(config));
 
+// Worker → platform internal API (git push proxy, PR creation).
+// Mounted BEFORE authMiddleware because requests come from worker
+// containers, not users — they carry a session-scoped JWT in
+// Authorization: Bearer, verified by internal-auth middleware inside
+// the router. Also gated by a private-IP check; not reachable through
+// Caddy's external vhosts in production.
+app.use(internalRoutes(config));
+
 app.use(authMiddleware(config));
 app.use(authRoutes(config));
 app.use(appRoutes(config));
@@ -203,6 +212,16 @@ async function start() {
   const { backfillMainShas } = require('./src/services/app-version');
   backfillMainShas(getPool(config)).catch((err) => {
     log.warn('server', 'main_sha backfill failed', { err: err.message });
+  });
+
+  // Public-only audit: scan existing `apps` rows and log a warning for
+  // any repo that's currently private. The worker bootstrap guard
+  // refuses to spawn against private repos, so these apps will fail
+  // to start a dev session until the user makes the repo public —
+  // surfacing them at boot lets operators see the impact ahead of
+  // first user contact. Non-blocking.
+  auditExistingRepoPrivacy(getPool(config)).catch((err) => {
+    log.warn('server', 'private-repo audit failed', { err: err.message });
   });
 
   worker.ensureWorkerImage().catch((err) => {
@@ -279,6 +298,73 @@ start().catch((err) => {
   });
   process.exit(1);
 });
+
+// Scan existing imported apps for privacy violations. Usernode workers
+// run with zero GitHub credentials and rely on unauthenticated public
+// HTTPS clones; a private repo can't be cloned by the worker, so dev
+// sessions against it will fail at bootstrap. Surface those rows at
+// boot so the operator can decide whether to ask the user to make
+// the repo public or delete the import.
+//
+// Bounded concurrency (a small pool) keeps the scan from spending
+// minutes on a large `apps` table during startup. The check is purely
+// read-only — we log and move on.
+async function auditExistingRepoPrivacy(pool) {
+  const github = require('./src/services/github');
+  let rows;
+  try {
+    ({ rows } = await pool.query(
+      `SELECT id, slug, repo_url FROM apps
+       WHERE repo_url IS NOT NULL AND status != 'archived'`
+    ));
+  } catch (err) {
+    log.warn('server', 'private-repo audit: query failed', { err: err.message });
+    return;
+  }
+  if (!rows.length) return;
+
+  log.info('server', 'Starting private-repo audit', { count: rows.length });
+
+  // Cap concurrency so a 100-row deployment doesn't fire 100 GitHub
+  // API calls in parallel and trip secondary rate limits.
+  const CONCURRENCY = 4;
+  const queue = rows.slice();
+  let privateCount = 0;
+  let errorCount = 0;
+
+  async function worker() {
+    while (queue.length) {
+      const row = queue.shift();
+      const m = (row.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+      if (!m) continue;
+      const [, owner, repo] = m;
+      try {
+        const result = await github.checkRepoPublic(owner, repo);
+        if (!result.ok) {
+          errorCount++;
+          log.warn('server', 'private-repo audit: lookup failed', {
+            appId: row.id, slug: row.slug, repo: `${owner}/${repo}`, err: result.message,
+          });
+        } else if (result.private) {
+          privateCount++;
+          log.warn('server', 'private-repo audit: app references a PRIVATE repo (dev sessions will fail)', {
+            appId: row.id, slug: row.slug, repo: `${owner}/${repo}`,
+          });
+        }
+      } catch (err) {
+        errorCount++;
+        log.warn('server', 'private-repo audit: unexpected error', {
+          appId: row.id, slug: row.slug, err: err.message,
+        });
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+  log.info('server', 'Private-repo audit complete', {
+    total: rows.length, private: privateCount, errors: errorCount,
+  });
+}
 
 // Unstick sessions left in 'merging' by a previous server process.
 // See the call site for rationale.

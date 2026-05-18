@@ -6,12 +6,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN npm install -g @anthropic-ai/claude-code
 
-COPY worker-run.sh /usr/local/bin/worker-run.sh
-COPY run-cc.sh     /usr/local/bin/run-cc.sh
+COPY worker-run.sh   /usr/local/bin/worker-run.sh
+COPY run-cc.sh       /usr/local/bin/run-cc.sh
+# usernode-push is the worker's only path to writing anything back to
+# GitHub: it POSTs to the platform's internal push proxy, which runs
+# the actual `git push` from the host side with the bot token injected
+# for that one call. See worker.execPushFromWorker + src/routes/internal.js.
+# The worker container itself carries zero GitHub credentials.
+COPY usernode-push   /usr/local/bin/usernode-push
 # `.claude` must exist (owned by node) in the image so that when we mount a
 # named volume at that path for persistent CC sessions, Docker initialises the
 # volume with node ownership instead of defaulting to root.
-RUN chmod +x /usr/local/bin/worker-run.sh /usr/local/bin/run-cc.sh \
+RUN chmod +x /usr/local/bin/worker-run.sh \
+              /usr/local/bin/run-cc.sh \
+              /usr/local/bin/usernode-push \
   && mkdir -p /home/node/workspace /home/node/.claude \
   && chown -R node:node /home/node
 
@@ -29,7 +37,13 @@ WORKDIR /home/node/workspace
 # path alive (clone → CC → commit → push → exit) for rollback safety.
 #
 # Bootstrap env via -e on `docker run`:
-#   CLONE_URL, BRANCH, PAT, ANTHROPIC_API_KEY
+#   CLONE_URL          plain HTTPS, no embedded token (public repos only)
+#   BRANCH             session's canonical dev branch
+#   ANTHROPIC_API_KEY  forwarded to claude
+#   WORKER_JWT         session-scoped JWT for usernode-push
+#   SESSION_ID         used in the platform API URL
+#   PLATFORM_URL       internal endpoint of the platform server
 # Per-exec env via -e on `docker exec`:
-#   PROMPT, MODE, MODEL, COMMIT_MSG, CLAUDE_RESUME_SESSION_ID
+#   PROMPT, MODE, MODEL, COMMIT_MSG, CLAUDE_RESUME_SESSION_ID,
+#   WORKER_JWT (re-minted each turn), SESSION_ID, PLATFORM_URL
 CMD ["/usr/local/bin/worker-run.sh"]

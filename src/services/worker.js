@@ -1,6 +1,7 @@
 'use strict';
 
 const { spawn } = require('child_process');
+const jwt = require('jsonwebtoken');
 const log = require('./logger');
 const docker = require('./docker');
 const github = require('./github');
@@ -9,6 +10,40 @@ const WORKER_IMAGE = 'usernode-worker:latest';
 const WORKER_MEMORY = '2g';
 const WORKER_CPUS = '2';
 const WARM_READY_TIMEOUT_MS = 5 * 60 * 1000;
+
+// URL the worker container uses to reach the platform's internal API
+// (push proxy, PR creation, etc.). Both containers run on the same
+// docker network (compose service name `usernode`). Override via env
+// for self-hosted deployments that put the platform on a different
+// hostname / port.
+const PLATFORM_INTERNAL_URL = process.env.PLATFORM_INTERNAL_URL || 'http://usernode:3000';
+
+// Worker JWTs are short-lived but cover the entire chat session; 24h is
+// the cap any single session is allowed to run before re-auth becomes
+// the chat handler's problem. Re-minted on every warm bootstrap and on
+// every per-turn `docker exec`.
+const WORKER_JWT_TTL = '24h';
+
+// Lazy-load JWT_SECRET so module import doesn't crash before config
+// loads. server.js calls config.load() at startup which crashes on
+// missing JWT_SECRET; by the time any worker bootstrap runs the env
+// var is guaranteed present.
+function _jwtSecret() {
+  const s = process.env.JWT_SECRET;
+  if (!s) throw new Error('JWT_SECRET not set — cannot mint worker JWT');
+  return s;
+}
+
+// Mint the auth token the worker container uses to call back into the
+// platform's internal API. Scope locks it to a single session id; the
+// internal-auth middleware rejects anything missing the scope claim.
+function mintWorkerJwt(sessionId) {
+  return jwt.sign(
+    { session_id: sessionId, scope: 'worker:session' },
+    _jwtSecret(),
+    { expiresIn: WORKER_JWT_TTL }
+  );
+}
 
 // ──────────────────────────────────────────────────────────────────────
 // Stream-json / marker parsing
@@ -341,8 +376,36 @@ async function _bootstrapWarmContainer(sessionId, {
   // restarting, dead) gets reaped here so `docker run --name` can succeed.
   await docker.stopAndRemove(containerName).catch(() => {});
 
+  // Public-only invariant: the worker carries no GitHub credentials in
+  // its env — it relies on the unauthenticated git protocol for clones
+  // and fetches. Refuse to spawn against a repo that has gone private
+  // since import. Verified at import time too (verifyBotAccess), but
+  // a user could flip the repo to private on GitHub after import; this
+  // catches that case before we waste a container slot. Imports that
+  // pre-date the public-only enforcement are caught here as well.
+  const privacy = await github.checkRepoPublic(repoOwner, repoName);
+  if (!privacy.ok) {
+    throw new Error(
+      `Cannot bootstrap worker for ${repoOwner}/${repoName}: ${privacy.message}`
+    );
+  }
+  if (privacy.private) {
+    throw new Error(
+      `Cannot bootstrap worker for ${repoOwner}/${repoName}: repo is private. Usernode requires public repositories — make it public on GitHub or delete this app and re-import.`
+    );
+  }
+
+  // Plain HTTPS clone URL with no embedded token. Public repos clone
+  // anonymously; the credential helper in worker-run.sh is skipped when
+  // PAT is unset, so the worker container ends up with no auth wired
+  // into git at all.
   const cloneUrl = await github.getCloneUrl(repoOwner, repoName);
-  const pat = process.env.GITHUB_BOT_TOKEN || '';
+
+  // Mint the JWT the worker uses to call back into the platform's
+  // internal API. The only operation it authorizes is pushing the
+  // session's canonical branch (and creating its PR) — see
+  // src/routes/internal.js and execPushFromWorker below.
+  const workerJwt = mintWorkerJwt(sessionId);
 
   // CC volume persists across container churn so `claude --resume <id>`
   // can replay prior conversation state on every re-warm.
@@ -363,8 +426,9 @@ async function _bootstrapWarmContainer(sessionId, {
   // `safeEnv` holds the non-secret args that stay inline.
   const secretEnv = {
     ANTHROPIC_API_KEY: anthropicApiKey || '',
-    PAT: pat,
-    CLONE_URL: cloneUrl, // contains an embedded GitHub token
+    // No PAT — public clones don't need it, and removing it is the
+    // whole point of the platform-side push proxy.
+    WORKER_JWT: workerJwt,
   };
   const safeEnv = {
     GIT_AUTHOR_NAME: 'usernode-bot',
@@ -375,6 +439,12 @@ async function _bootstrapWarmContainer(sessionId, {
     // MODE=warm tells worker-run.sh to clone + checkout + sleep
     // infinity, so subsequent `docker exec` calls drive per-turn work.
     MODE: 'warm',
+    // CLONE_URL has no token in it now; safe to pass inline.
+    CLONE_URL: cloneUrl,
+    // Used by /usr/local/bin/usernode-push to identify the calling
+    // session and reach the platform's internal API.
+    SESSION_ID: String(sessionId),
+    PLATFORM_URL: PLATFORM_INTERNAL_URL,
   };
   const secretEnvArgs = Object.keys(secretEnv).flatMap((k) => ['-e', k]);
   const safeEnvArgs = Object.entries(safeEnv).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
@@ -565,9 +635,16 @@ async function execInWorker(sessionId, {
   }
   const containerName = meta.containerName;
 
+  // Re-mint the JWT on every turn so the worker's auth always has at
+  // least WORKER_JWT_TTL left, regardless of how long the warm
+  // container has been alive. This avoids edge cases where a session
+  // outlives its bootstrap-time token (24h is the cap today; could be
+  // shorter later) and the next push fails with 401 from the proxy.
+  const workerJwt = mintWorkerJwt(sessionId);
+
   const secretEnv = {
     ANTHROPIC_API_KEY: anthropicApiKey || process.env.ANTHROPIC_API_KEY || '',
-    PAT: process.env.GITHUB_BOT_TOKEN || '',
+    WORKER_JWT: workerJwt,
   };
   const safeEnv = {
     PROMPT: prompt,
@@ -578,6 +655,9 @@ async function execInWorker(sessionId, {
     // run-cc.sh defensively re-asserts BRANCH (in case the wrapper's
     // checkpoint moves) and gates the pre-exec git reset on it.
     BRANCH: branchName || '',
+    // Refresh in case the warm container's env was perturbed; cheap.
+    SESSION_ID: String(sessionId),
+    PLATFORM_URL: PLATFORM_INTERNAL_URL,
   };
   const secretEnvArgs = Object.keys(secretEnv).flatMap((k) => ['-e', k]);
   const safeEnvArgs = Object.entries(safeEnv).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
@@ -789,6 +869,92 @@ async function destroyCcVolume(sessionId) {
   await docker.removeVolume(ccVolumeName(sessionId));
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// Platform-side git push proxy
+// ──────────────────────────────────────────────────────────────────────
+//
+// The worker container carries no GitHub credentials. When CC commits
+// and wants to push, the worker's `usernode-push` shell wrapper hits
+// POST /api/internal/sessions/:id/push (see src/routes/internal.js),
+// which calls this helper.
+//
+// We use the worker's existing clone (origin already points at GitHub)
+// and inject `GITHUB_BOT_TOKEN` into a single one-shot `docker exec` via
+// an inline credential helper. The bot token never enters the worker's
+// persistent env or git config; it lives in the exec's environ for the
+// duration of the push and disappears when the exec exits.
+//
+// Branch is supplied by the caller (the route handler) AFTER looking up
+// the session's canonical `branch_name` from the DB. The worker doesn't
+// get to pick. Branch is sanitized to a strict charset before being
+// passed to bash so it can't break out of the shell expansion below.
+const BRANCH_NAME_RE = /^[A-Za-z0-9._/-]+$/;
+
+async function execPushFromWorker(sessionId, branchName) {
+  const botToken = process.env.GITHUB_BOT_TOKEN || '';
+  if (!botToken) {
+    const err = new Error('GITHUB_BOT_TOKEN not configured on platform');
+    err.code = 'no_token';
+    throw err;
+  }
+  if (!branchName || !BRANCH_NAME_RE.test(branchName)) {
+    const err = new Error(`Invalid branch name: ${branchName}`);
+    err.code = 'bad_branch';
+    throw err;
+  }
+
+  const containerName = workerContainerName(sessionId);
+
+  // Inline credential helper: prints `username=x-access-token` and
+  // `password=$PAT` to stdout when git asks for credentials. `-c
+  // credential.helper=…` is scoped to this single git invocation —
+  // doesn't touch the worker's .git/config. The `bash -c` script
+  // reads $PAT and $BRANCH from the exec env (passed via bare `-e`
+  // so the values aren't in argv).
+  //
+  // Final `git rev-parse HEAD` prints the SHA we pushed, which the
+  // caller surfaces back to the worker for logging and the
+  // __USERNODE_RESULT__ accounting.
+  const inlineScript =
+    'set -e; cd /home/node/workspace && ' +
+    'git -c credential.helper="!f() { echo username=x-access-token; echo password=$PAT; }; f" ' +
+    'push -u origin "$BRANCH" >&2 && ' +
+    'git rev-parse HEAD';
+
+  const args = [
+    'exec',
+    '-e', 'PAT',              // bare -e: value taken from docker's own env
+    '-e', 'BRANCH',
+    containerName,
+    'bash', '-c', inlineScript,
+  ];
+
+  try {
+    const { stdout, stderr } = await docker.execFileAsync('docker', args, {
+      timeout: 60000,
+      env: { ...process.env, PAT: botToken, BRANCH: branchName },
+    });
+    const sha = (stdout || '').trim().split('\n').pop();
+    log.info('worker', 'Push proxied to GitHub', {
+      sessionId, branch: branchName, sha: (sha || '').slice(0, 8),
+    });
+    return { sha, stderr: (stderr || '').trim() };
+  } catch (err) {
+    // Don't leak the PAT into log lines if `docker exec` printed any
+    // (it shouldn't — credential helpers don't echo creds — but defense
+    // in depth). err.message + err.stderr come from execFileAsync.
+    const cleanMsg = String(err.message || '').replace(botToken, '***');
+    const cleanStderr = String(err.stderr || '').replace(botToken, '***');
+    const wrapped = new Error(`push proxy failed: ${cleanMsg}`);
+    wrapped.code = 'push_failed';
+    wrapped.stderr = cleanStderr;
+    log.warn('worker', 'Push proxy failed', {
+      sessionId, branch: branchName, err: cleanMsg,
+    });
+    throw wrapped;
+  }
+}
+
 module.exports = {
   ensureWorkerImage,
   // long-lived API
@@ -807,4 +973,7 @@ module.exports = {
   parseClaudeResponse,
   // exposed for the routes' container-name lookups
   workerContainerName,
+  // platform-side git push proxy (called from src/routes/internal.js)
+  execPushFromWorker,
+  mintWorkerJwt,
 };

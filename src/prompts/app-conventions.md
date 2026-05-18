@@ -427,10 +427,23 @@ Leave **non-private** (the default) for:
 
 ## Don't `git push` yourself
 
-The harness clones the repo, runs Claude Code, then commits and
-pushes for you. Manual `git push` calls from the agent only add
-noise (and can confuse the reviewer) — commit with `git add -A &&
-git commit -m "…"` and stop there.
+The worker container runs with **zero GitHub credentials in env** —
+no PAT, no credential helper, nothing. Any direct `git push` you try
+will fail with an HTTPS auth error. Same for any direct GitHub REST
+API calls: there's no token to authenticate them with.
+
+What to do instead: just commit (`git add -A && git commit -m "…"`)
+and stop. The harness handles the push for you by calling back into
+the platform's internal API (`/api/internal/sessions/:id/push`),
+which validates your session and runs the push from the platform
+side with the canonical branch name pulled from the DB. You don't
+choose what gets pushed — your session's branch does, every time.
+
+If you're tempted to write a workaround that talks to GitHub
+directly, stop. There's no path that works: the worker has no
+credentials, and the only outbound calls back to the platform are
+the push/PR proxy endpoints (which only accept the session's
+canonical branch). Commit cleanly and let the harness finish the job.
 
 ## Vendored shared files
 

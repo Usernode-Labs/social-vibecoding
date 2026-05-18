@@ -200,13 +200,13 @@ async function createIssue(owner, repo, { title, body }) {
   return data;
 }
 
+// Worker containers carry no GitHub credentials — we restrict imports
+// to public repos, so `git clone` over plain HTTPS just works. This
+// used to return a token-embedded URL; that capability moved to the
+// platform-side push proxy (see src/routes/internal.js +
+// worker.execPushFromWorker).
 async function getCloneUrl(owner, repo) {
-  const pat = process.env.GITHUB_BOT_TOKEN;
-  if (pat) {
-    return `https://x-access-token:${pat}@github.com/${owner}/${repo}.git`;
-  }
-  const token = await getInstallationToken(owner);
-  return `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
+  return `https://github.com/${owner}/${repo}.git`;
 }
 
 // ---------------------------------------------------------------------------
@@ -309,6 +309,19 @@ async function verifyBotAccess(owner, repo) {
     return { ok: false, status: 502, code: 'github_error', message: `GitHub error: ${err.message}` };
   }
 
+  // Public-only enforcement. Usernode workers run with zero GitHub
+  // credentials inside the container — git pushes flow through a
+  // platform-side proxy instead. That model relies on the worker being
+  // able to `git clone` over unauthenticated HTTPS, which requires the
+  // repo to be public. Reject private imports up front so users get a
+  // clean error rather than a mysterious bootstrap failure later.
+  if (resp.data.private === true) {
+    return {
+      ok: false, status: 400, code: 'private_repo',
+      message: `${owner}/${repo} is a private repository. Usernode currently supports public repositories only — switch the repo to public on GitHub and resubmit.`,
+    };
+  }
+
   // permissions.push covers everyone the bot would actually be able to
   // commit through (Write, Maintain, Admin all set push:true).
   const perms = resp.data.permissions || {};
@@ -318,16 +331,36 @@ async function verifyBotAccess(owner, repo) {
       message: `\`usernode-bot\` has read-only access to ${owner}/${repo}. Grant Write/Maintain and resubmit.`,
     };
   }
-  // Hand back the repo metadata so the modal's "Check" button can use
-  // the authenticated response to prefill the name/description — works
-  // even for private repos, where the unauthenticated public-info path
-  // would 404.
   return {
     ok: true,
     name: resp.data.name || repo,
     description: resp.data.description || null,
     fullName: resp.data.full_name || `${owner}/${repo}`,
   };
+}
+
+// Lightweight privacy check. Used by:
+//   - worker bootstrap (defense against post-import privacy flips)
+//   - the startup audit (sweeps existing imports)
+// Returns { ok: true, private: bool } on success, { ok: false, code, message }
+// on failure. Callers decide whether to treat "couldn't determine" as
+// fatal (bootstrap) or just log (audit).
+async function checkRepoPublic(owner, repo) {
+  const pat = process.env.GITHUB_BOT_TOKEN;
+  if (!pat) {
+    return { ok: false, code: 'no_token', message: 'GitHub bot token not configured.' };
+  }
+  const { Octokit } = await import('@octokit/rest');
+  const octokit = new Octokit({ auth: pat });
+  try {
+    const { data } = await octokit.rest.repos.get({ owner, repo });
+    return { ok: true, private: data.private === true };
+  } catch (err) {
+    if (err.status === 404) {
+      return { ok: false, code: 'not_found', message: `Repo ${owner}/${repo} not accessible.` };
+    }
+    return { ok: false, code: 'github_error', message: err.message };
+  }
 }
 
 // Unauthenticated GET that powers the name-prefill in the modal. We
@@ -368,5 +401,6 @@ module.exports = {
   parseGithubUrl,
   acceptInvitationFor,
   verifyBotAccess,
+  checkRepoPublic,
   fetchPublicRepoInfo,
 };

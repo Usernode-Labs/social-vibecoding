@@ -17,15 +17,17 @@
 #   __USERNODE_ERROR__  <msg>
 #
 # Required env (passed via -e on `docker exec`):
-#   PROMPT, BRANCH
+#   PROMPT, BRANCH, WORKER_JWT, SESSION_ID, PLATFORM_URL
 # Optional env:
 #   MODE                       build (default) | scout
 #   MODEL                      default: claude-sonnet-4-6
 #   COMMIT_MSG                 default: "Changes via Usernode"
 #   CLAUDE_RESUME_SESSION_ID   if set, passes `--resume <id>` to claude
-#   PAT                        re-asserted into the credential helper in
-#                              case the warm container's git config got
-#                              wiped (defensive — harmless no-op if not).
+#   PAT                        legacy back-compat — not set by the
+#                              current platform. The push step uses
+#                              `usernode-push` (which calls back into
+#                              the platform's internal proxy), not
+#                              direct `git push` with embedded creds.
 
 set -u
 
@@ -36,6 +38,9 @@ die() {
 
 : "${PROMPT:?PROMPT required}"
 : "${BRANCH:?BRANCH required}"
+: "${WORKER_JWT:?WORKER_JWT required}"
+: "${SESSION_ID:?SESSION_ID required}"
+: "${PLATFORM_URL:?PLATFORM_URL required}"
 : "${MODE:=build}"
 : "${MODEL:=claude-sonnet-4-6}"
 : "${COMMIT_MSG:=Changes via Usernode}"
@@ -113,7 +118,15 @@ fi
 
 echo "__USERNODE_PHASE__ push"
 PUSH_OK=0
-if git push -u origin HEAD 2>&1; then
+HEAD_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+if [ "$HEAD_BRANCH" != "$BRANCH" ]; then
+  # Belt-and-suspenders: the platform-side push proxy ignores the
+  # worker's local HEAD and pushes the session's canonical branch
+  # from its own DB lookup, but if HEAD has drifted we likely
+  # committed onto the wrong branch, so the push would push stale
+  # content. Skip and surface clearly.
+  echo "__USERNODE_WARN__ HEAD branch ($HEAD_BRANCH) != session branch ($BRANCH); skipping push"
+elif /usr/local/bin/usernode-push; then
   PUSH_OK=1
 else
   echo "__USERNODE_WARN__ push failed"
