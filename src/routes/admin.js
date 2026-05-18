@@ -63,7 +63,7 @@ function adminRoutes(config) {
   router.get('/api/admin/users', async (req, res) => {
     try {
       const { rows } = await pool.query(
-        `SELECT u.id, u.username, u.is_admin, u.created_at,
+        `SELECT u.id, u.username, u.is_admin, u.can_create_apps, u.created_at,
                 ac.code as activation_code,
                 COALESCE(lu.total_cost_cents, 0) as cost_today_cents
          FROM users u
@@ -74,6 +74,38 @@ function adminRoutes(config) {
       res.json(rows);
     } catch (err) {
       log.error('admin', 'List users failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Toggle the per-user app-creation permission (see users.can_create_apps
+  // in schema.sql). Admin-only; admins themselves implicitly bypass the
+  // gate so toggling an admin row is a no-op visually, but we still accept
+  // it for completeness. Default for every user is FALSE — set TRUE here
+  // to allow them to create apps.
+  router.post('/api/admin/users/:id/can-create-apps', async (req, res) => {
+    const userId = parseInt(req.params.id, 10);
+    const { canCreateApps } = req.body || {};
+    if (!Number.isFinite(userId)) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+    if (typeof canCreateApps !== 'boolean') {
+      return res.status(400).json({ error: 'canCreateApps (boolean) required in body' });
+    }
+    try {
+      const { rows } = await pool.query(
+        `UPDATE users SET can_create_apps = $1 WHERE id = $2
+         RETURNING id, username, can_create_apps`,
+        [canCreateApps, userId]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'User not found' });
+      log.info('admin', 'App-creation permission toggled', {
+        id: rows[0].id, username: rows[0].username,
+        canCreateApps: rows[0].can_create_apps, by: req.user.username,
+      });
+      res.json({ ok: true, canCreateApps: rows[0].can_create_apps });
+    } catch (err) {
+      log.error('admin', 'App-creation toggle failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

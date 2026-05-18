@@ -171,15 +171,66 @@
 
         const costToday = (parseFloat(user.cost_today_cents || 0) / 100).toFixed(2);
 
+        // Per-user "can create apps" toggle. Hidden for admins, who
+        // implicitly bypass the gate server-side — showing them a
+        // toggle that does nothing visible would be confusing.
+        // Non-admins get a small pill that flips between "Can create"
+        // (violet, active) and "No create" (zinc, dimmed). The actual
+        // state lives in users.can_create_apps and defaults FALSE for
+        // every account — see src/db/schema.sql.
+        const canCreate = !!user.can_create_apps;
+        const toggleHtml = user.is_admin ? '' : `
+          <button
+            class="create-toggle-btn text-xs px-2 py-1 rounded-md transition-colors ${
+              canCreate
+                ? 'bg-violet-600/20 text-violet-300 hover:bg-violet-600/30'
+                : 'bg-zinc-700/50 text-zinc-400 hover:bg-zinc-700'
+            }"
+            data-user-id="${user.id}"
+            data-can-create="${canCreate}"
+            title="${canCreate
+              ? 'This user can create apps. Click to revoke.'
+              : 'This user cannot create apps. Click to grant.'}"
+          >${canCreate ? 'Can create apps' : 'Cannot create apps'}</button>`;
+
         el.innerHTML = `
           <div class="flex-1">
             <div class="font-medium">${escapeHtml(user.username)}${user.is_admin ? ' <span class="text-xs text-violet-400 ml-1">admin</span>' : ''}</div>
             <div class="text-sm text-zinc-500">$${costToday} spent today ${codeInfo}</div>
           </div>
+          ${toggleHtml}
           ${!user.is_admin ? `<button data-delete-id="${user.id}" class="text-red-400 hover:text-red-300 text-sm delete-btn">Delete</button>` : ''}
         `;
         list.appendChild(el);
       }
+
+      list.querySelectorAll('.create-toggle-btn').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const userId = btn.dataset.userId;
+          const next = btn.dataset.canCreate !== 'true';
+          btn.disabled = true;
+          try {
+            const res = await fetch(`/api/admin/users/${userId}/can-create-apps`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ canCreateApps: next }),
+            });
+            if (!res.ok) {
+              const data = await res.json().catch(() => ({}));
+              alert(data.error || `Toggle failed (HTTP ${res.status})`);
+              return;
+            }
+            // Reload the whole list so the pill color/label + tooltip
+            // are guaranteed to match server state. Cheap; the same
+            // endpoint that just answered the toggle.
+            await loadUsers();
+          } catch (err) {
+            alert(`Toggle failed: ${err.message}`);
+          } finally {
+            btn.disabled = false;
+          }
+        });
+      });
 
       list.querySelectorAll('.delete-btn').forEach((btn) => {
         btn.addEventListener('click', async () => {

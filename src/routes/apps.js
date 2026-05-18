@@ -285,6 +285,17 @@ function appRoutes(config) {
   });
 
   router.post('/api/apps', drainGuard, appCreateLimiter, async (req, res) => {
+    // Per-user app-creation gate (admin-controlled, default off — see
+    // users.can_create_apps in schema.sql). Admins implicitly bypass.
+    // The home-screen UI hides the create affordance for users who fail
+    // this check; the server-side enforcement here is the actual gate
+    // (a hidden button can still be hit via the API).
+    if (!req.user?.isAdmin && !req.user?.canCreateApps) {
+      return res.status(403).json({
+        error: 'You don\u2019t have permission to create apps. Ask an admin to enable app creation for your account.',
+      });
+    }
+
     const { name, repoUrl } = req.body;
 
     if (!name?.trim()) {

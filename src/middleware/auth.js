@@ -54,7 +54,7 @@ function authMiddleware(config) {
     if (cookieToken) {
       try {
         const { rows } = await pool.query(
-          `SELECT s.user_id, s.expires_at, u.username, u.is_admin
+          `SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.can_create_apps
            FROM sessions s JOIN users u ON s.user_id = u.id
            WHERE s.token = $1`,
           [cookieToken]
@@ -65,6 +65,10 @@ function authMiddleware(config) {
             id: rows[0].user_id,
             username: rows[0].username,
             isAdmin: rows[0].is_admin,
+            // Admin-gated per-user permission (see schema.sql). Admins
+            // implicitly bypass — callers should check `isAdmin ||
+            // canCreateApps`.
+            canCreateApps: !!rows[0].can_create_apps,
           };
           log.debug('auth', 'Session validated', { userId: req.user.id });
           return next();
@@ -127,7 +131,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
   let userRow;
   try {
     const { rows } = await pool.query(
-      'SELECT id, username, is_admin FROM users WHERE id = $1',
+      'SELECT id, username, is_admin, can_create_apps FROM users WHERE id = $1',
       [payload.id]
     );
     userRow = rows[0];
@@ -176,6 +180,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
     id: userRow.id,
     username: userRow.username,
     isAdmin: userRow.is_admin,
+    canCreateApps: !!userRow.can_create_apps,
   };
 }
 

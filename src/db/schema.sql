@@ -13,6 +13,16 @@ CREATE TABLE IF NOT EXISTS users (
 ALTER TABLE users ADD COLUMN IF NOT EXISTS anthropic_key_enc    TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS anthropic_key_last4  VARCHAR(8);
 
+-- Admin-gated per-user app-creation permission. Default FALSE means new
+-- (and existing, pre-migration) non-admin users can't create apps until
+-- an admin toggles them on from /admin. Admins bypass the gate entirely
+-- — `is_admin OR can_create_apps` is the effective rule — so this
+-- column is only consulted for non-admins. Enforced server-side on
+-- POST /api/apps in src/routes/apps.js; the home-screen "Create new
+-- app" affordance is hidden client-side for users who fail the check
+-- (see Home.canCreate in public/js/home.js).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS can_create_apps BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- Usernode wallet linking: pubkey is the on-chain identity once linked;
 -- token + expiry gate the QR-based linking flow.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS usernode_pubkey          VARCHAR(255);

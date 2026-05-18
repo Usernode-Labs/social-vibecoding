@@ -1,7 +1,19 @@
 const Home = {
+  // Whether the current viewer is permitted to create apps. Admins
+  // always can; everyone else needs users.can_create_apps = TRUE,
+  // which defaults FALSE and must be toggled on by an admin via
+  // /admin. Both the trailing "Your app here" tile and the empty-state
+  // CTA are gated on this so users without permission see no
+  // creation affordance at all (the server-side check in
+  // routes/apps.js is the real gate; this is just clean UX).
+  canCreate() {
+    return !!(App.user?.isAdmin || App.user?.canCreateApps);
+  },
+
   async load() {
     const listEl = document.getElementById('app-list');
     const emptyEl = document.getElementById('empty-state');
+    const canCreate = Home.canCreate();
 
     try {
       const res = await fetch('/api/apps');
@@ -11,16 +23,23 @@ const Home = {
       if (apps.length === 0) {
         listEl.innerHTML = '';
         emptyEl.classList.remove('hidden');
-        // Wire the empty-state's create button (rendered statically in
-        // index.html). Same `.home-create-btn` class as the in-list
-        // variant below so a single querySelectorAll covers both.
-        Home.wireCreateButtons();
+        // Toggle the empty-state CTA vs. a "ask an admin" hint based on
+        // whether this user is allowed to create. The static HTML in
+        // index.html holds both children — we just flip visibility.
+        Home.applyEmptyStateForPermissions(canCreate);
+        // Only wire the create button when it's actually visible.
+        // Wiring it for non-permitted users would do nothing because
+        // the button is hidden, but skipping the call keeps the DOM
+        // free of dangling listeners.
+        if (canCreate) Home.wireCreateButtons();
         return;
       }
 
       emptyEl.classList.add('hidden');
       // Render the app tiles, then append the "create new app" tile
-      // as a regular grid item. Living inside the grid (rather than
+      // as a regular grid item — only when the viewer is permitted
+      // to create. Users without permission just see the app grid
+      // and no trailing slot. Living inside the grid (rather than
       // as a col-span-full footer row) keeps it the same width &
       // height as the surrounding tiles via grid auto-stretch, and
       // makes the affordance feel like a peer of the existing apps
@@ -28,8 +47,8 @@ const Home = {
       // one") instead of a separate CTA banner.
       listEl.innerHTML =
         apps.map(Home.renderAppCard).join('') +
-        Home.renderCreateTile();
-      Home.wireCreateButtons();
+        (canCreate ? Home.renderCreateTile() : '');
+      if (canCreate) Home.wireCreateButtons();
 
       listEl.querySelectorAll('.app-card').forEach((card) => {
         card.addEventListener('click', (e) => {
@@ -420,6 +439,31 @@ const Home = {
       alert(`Lock toggle failed: ${err.message}`);
     } finally {
       btn.disabled = false;
+    }
+  },
+
+  // Empty-state ("No apps yet") has two variants — the existing
+  // "Create your first app" CTA for users with permission, and a
+  // muted "Ask an admin to enable app creation" hint for users
+  // without. Toggle the CTA button on/off in place rather than
+  // rebuilding the static DOM, so the surrounding "No apps yet"
+  // copy stays put.
+  applyEmptyStateForPermissions(canCreate) {
+    const emptyEl = document.getElementById('empty-state');
+    if (!emptyEl) return;
+    const btn = emptyEl.querySelector('.home-create-btn');
+    let hint = emptyEl.querySelector('.home-create-disabled-hint');
+    if (canCreate) {
+      if (btn) btn.classList.remove('hidden');
+      if (hint) hint.remove();
+    } else {
+      if (btn) btn.classList.add('hidden');
+      if (!hint) {
+        hint = document.createElement('p');
+        hint.className = 'home-create-disabled-hint text-sm text-zinc-400 dark:text-zinc-500 max-w-sm text-center';
+        hint.textContent = 'Ask an admin to enable app creation for your account.';
+        emptyEl.appendChild(hint);
+      }
     }
   },
 

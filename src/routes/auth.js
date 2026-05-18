@@ -165,6 +165,11 @@ function authRoutes(config) {
         id: req.user.id,
         username: req.user.username,
         isAdmin: req.user.isAdmin,
+        // Per-user app-creation gate (admin-controlled, default FALSE).
+        // The home screen hides the "Create new app" affordance for
+        // anyone who can't create — admins implicitly can, see the
+        // canCreate helper in public/js/home.js.
+        canCreateApps: !!req.user.canCreateApps,
         hasApiKey,
         keyLast4,
         usernodePubkey,
