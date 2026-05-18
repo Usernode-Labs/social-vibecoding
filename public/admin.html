@@ -17,6 +17,23 @@
       document.documentElement.classList.remove('dark');
     }
   </script>
+  <style>
+    .ios-switch { position:relative; width:40px; height:22px; flex-shrink:0; }
+    .ios-switch input { opacity:0; width:0; height:0; position:absolute; }
+    .ios-switch .track {
+      position:absolute; inset:0; border-radius:9999px;
+      background:#52525b; transition:background-color .2s ease;
+      cursor:pointer;
+    }
+    .ios-switch .track::after {
+      content:''; position:absolute; left:2px; top:2px;
+      width:18px; height:18px; border-radius:9999px;
+      background:#fff; transition:transform .2s ease;
+    }
+    .ios-switch input:checked + .track { background:#8b5cf6; }
+    .ios-switch input:checked + .track::after { transform:translateX(18px); }
+    .ios-switch input:disabled + .track { opacity:.5; cursor:not-allowed; }
+  </style>
 </head>
 <body class="bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 min-h-screen p-6">
   <div class="max-w-2xl mx-auto">
@@ -171,27 +188,19 @@
 
         const costToday = (parseFloat(user.cost_today_cents || 0) / 100).toFixed(2);
 
-        // Per-user "can create apps" toggle. Hidden for admins, who
-        // implicitly bypass the gate server-side — showing them a
-        // toggle that does nothing visible would be confusing.
-        // Non-admins get a small pill that flips between "Can create"
-        // (violet, active) and "No create" (zinc, dimmed). The actual
-        // state lives in users.can_create_apps and defaults FALSE for
-        // every account — see src/db/schema.sql.
         const canCreate = !!user.can_create_apps;
-        const toggleHtml = user.is_admin ? '' : `
-          <button
-            class="create-toggle-btn text-xs px-2 py-1 rounded-md transition-colors ${
-              canCreate
-                ? 'bg-violet-600/20 text-violet-300 hover:bg-violet-600/30'
-                : 'bg-zinc-700/50 text-zinc-400 hover:bg-zinc-700'
-            }"
-            data-user-id="${user.id}"
-            data-can-create="${canCreate}"
-            title="${canCreate
+        const adminHint = user.is_admin ? ' <span class="text-xs text-zinc-500">(always has access)</span>' : '';
+        const toggleHtml = `
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-zinc-400">Create apps${adminHint}</span>
+            <label class="ios-switch" title="${canCreate
               ? 'This user can create apps. Click to revoke.'
-              : 'This user cannot create apps. Click to grant.'}"
-          >${canCreate ? 'Can create apps' : 'Cannot create apps'}</button>`;
+              : 'This user cannot create apps. Click to grant.'}">
+              <input type="checkbox" class="create-toggle-cb" data-user-id="${user.id}"
+                ${canCreate ? 'checked' : ''}>
+              <span class="track"></span>
+            </label>
+          </div>`;
 
         el.innerHTML = `
           <div class="flex-1">
@@ -204,11 +213,11 @@
         list.appendChild(el);
       }
 
-      list.querySelectorAll('.create-toggle-btn').forEach((btn) => {
-        btn.addEventListener('click', async () => {
-          const userId = btn.dataset.userId;
-          const next = btn.dataset.canCreate !== 'true';
-          btn.disabled = true;
+      list.querySelectorAll('.create-toggle-cb').forEach((cb) => {
+        cb.addEventListener('change', async () => {
+          const userId = cb.dataset.userId;
+          const next = cb.checked;
+          cb.disabled = true;
           try {
             const res = await fetch(`/api/admin/users/${userId}/can-create-apps`, {
               method: 'POST',
@@ -217,17 +226,16 @@
             });
             if (!res.ok) {
               const data = await res.json().catch(() => ({}));
+              cb.checked = !next;
               alert(data.error || `Toggle failed (HTTP ${res.status})`);
               return;
             }
-            // Reload the whole list so the pill color/label + tooltip
-            // are guaranteed to match server state. Cheap; the same
-            // endpoint that just answered the toggle.
             await loadUsers();
           } catch (err) {
+            cb.checked = !next;
             alert(`Toggle failed: ${err.message}`);
           } finally {
-            btn.disabled = false;
+            cb.disabled = false;
           }
         });
       });
