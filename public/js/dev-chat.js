@@ -1371,51 +1371,88 @@ const DevChat = {
   renderMarkdown(text) {
     if (!text) return '';
 
-    let html = text
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
+      return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/\n/g, '<br>');
+    }
 
-    // Fenced code blocks with optional filepath
-    html = html.replace(/```(\w*)?:?([\w/._-]*)\n([\s\S]*?)```/g, (_, lang, path, code) => {
-      const header = path
-        ? `<div class="dc-code-header">${path}</div>`
-        : (lang ? `<div class="dc-code-header">${lang}</div>` : '');
-      return `${header}<pre class="dc-code-block"><code>${code}</code></pre>`;
+    if (!DevChat._markdownReady) {
+      const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+      marked.use({
+        breaks: true,
+        gfm: true,
+        renderer: {
+          code({ text, lang, escaped }) {
+            let language = lang || '';
+            let filepath = '';
+            if (language.includes(':')) {
+              const i = language.indexOf(':');
+              filepath = language.slice(i + 1);
+              language = language.slice(0, i);
+            }
+            const safe = escaped ? text : esc(text);
+            const header = filepath
+              ? `<div class="dc-code-header">${esc(filepath)}</div>`
+              : (language ? `<div class="dc-code-header">${esc(language)}</div>` : '');
+            return `${header}<pre class="dc-code-block"><code>${safe}</code></pre>`;
+          },
+          codespan({ text }) {
+            return `<code class="dc-inline-code">${text}</code>`;
+          },
+          heading({ tokens, depth }) {
+            const inner = this.parser.parseInline(tokens);
+            return depth <= 2
+              ? `<h3 class="dc-h3">${inner}</h3>`
+              : `<h4 class="dc-h4">${inner}</h4>`;
+          },
+          blockquote({ tokens }) {
+            const body = this.parser.parse(tokens);
+            return `<div class="dc-blockquote">${body}</div>`;
+          },
+          list({ ordered, body }) {
+            const tag = ordered ? 'ol' : 'ul';
+            const cls = ordered ? 'dc-ol' : 'dc-ul';
+            return `<${tag} class="${cls}">${body}</${tag}>`;
+          },
+          paragraph({ tokens }) {
+            return `<p class="dc-p">${this.parser.parseInline(tokens)}</p>`;
+          },
+          link({ href, title, tokens }) {
+            const inner = this.parser.parseInline(tokens);
+            if (!/^https?:\/\//i.test(href)) return inner;
+            return `<a href="${href}" target="_blank" rel="noopener noreferrer">${inner}</a>`;
+          },
+          image({ href, title, text }) {
+            if (!/^https?:\/\//i.test(href)) return text || '';
+            return `<a href="${href}" target="_blank" rel="noopener noreferrer">${text || href}</a>`;
+          },
+        },
+      });
+
+      DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+        if (node.tagName === 'A') {
+          node.setAttribute('target', '_blank');
+          node.setAttribute('rel', 'noopener noreferrer');
+          const href = node.getAttribute('href') || '';
+          if (href && !/^https?:\/\//i.test(href)) {
+            node.removeAttribute('href');
+          }
+        }
+      });
+
+      DevChat._markdownReady = true;
+    }
+
+    const html = marked.parse(text);
+
+    return DOMPurify.sanitize(html, {
+      ALLOWED_TAGS: ['a', 'b', 'strong', 'i', 'em', 'code', 'pre', 'h3', 'h4',
+        'p', 'br', 'ol', 'ul', 'li', 'div', 'span', 'table', 'thead', 'tbody',
+        'tr', 'th', 'td', 'hr', 'del'],
+      ALLOWED_ATTR: ['class', 'href', 'target', 'rel'],
+      ALLOW_DATA_ATTR: false,
     });
-
-    // Inline code
-    html = html.replace(/`([^`]+)`/g, '<code class="dc-inline-code">$1</code>');
-
-    // Bold
-    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-
-    // Italic
-    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-
-    // Headings
-    html = html.replace(/^### (.+)$/gm, '<h4 class="dc-h4">$1</h4>');
-    html = html.replace(/^## (.+)$/gm, '<h3 class="dc-h3">$1</h3>');
-    html = html.replace(/^# (.+)$/gm, '<h3 class="dc-h3">$1</h3>');
-
-    // Blockquotes
-    html = html.replace(/^&gt; (.+)$/gm, '<div class="dc-blockquote">$1</div>');
-
-    // Numbered lists
-    html = html.replace(/((?:^\d+\. .+\n?)+)/gm, (block) => {
-      const items = block.trim().split('\n').map((l) => `<li>${l.replace(/^\d+\.\s*/, '')}</li>`).join('');
-      return `<ol class="dc-ol">${items}</ol>`;
-    });
-
-    // Bullet lists
-    html = html.replace(/((?:^[-*] .+\n?)+)/gm, (block) => {
-      const items = block.trim().split('\n').map((l) => `<li>${l.replace(/^[-*]\s*/, '')}</li>`).join('');
-      return `<ul class="dc-ul">${items}</ul>`;
-    });
-
-    // Paragraphs and line breaks
-    html = html.replace(/\n\n/g, '</p><p class="dc-p">');
-    html = html.replace(/\n/g, '<br>');
-
-    return html;
   },
 
   _lockedToBottom: true,
