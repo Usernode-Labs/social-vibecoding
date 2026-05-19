@@ -1398,7 +1398,10 @@ const DevChat = {
             return `${header}<pre class="dc-code-block"><code>${safe}</code></pre>`;
           },
           codespan({ text }) {
-            return `<code class="dc-inline-code">${text}</code>`;
+            return `<code class="dc-inline-code">${esc(text)}</code>`;
+          },
+          html({ text }) {
+            return esc(text);
           },
           heading({ tokens, depth }) {
             const inner = this.parser.parseInline(tokens);
@@ -1430,8 +1433,9 @@ const DevChat = {
             return `<a href="${href}" target="_blank" rel="noopener noreferrer">${inner}</a>`;
           },
           image({ href, title, text }) {
-            if (!/^https?:\/\//i.test(href)) return text || '';
-            return `<a href="${href}" target="_blank" rel="noopener noreferrer">${text || href}</a>`;
+            const safeText = esc(text || '');
+            if (!/^https?:\/\//i.test(href)) return safeText;
+            return `<a href="${href}" target="_blank" rel="noopener noreferrer">${safeText || esc(href)}</a>`;
           },
         },
       });
