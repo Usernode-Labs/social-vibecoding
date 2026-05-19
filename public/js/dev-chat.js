@@ -1410,10 +1410,16 @@ const DevChat = {
             const body = this.parser.parse(tokens);
             return `<div class="dc-blockquote">${body}</div>`;
           },
-          list({ ordered, body }) {
+          list(token) {
+            const { ordered, start, items } = token;
             const tag = ordered ? 'ol' : 'ul';
             const cls = ordered ? 'dc-ol' : 'dc-ul';
-            return `<${tag} class="${cls}">${body}</${tag}>`;
+            const startAttr = ordered && start !== 1 && start !== '' ? ` start="${start}"` : '';
+            let body = '';
+            for (const item of items) {
+              body += this.listitem(item);
+            }
+            return `<${tag} class="${cls}"${startAttr}>${body}</${tag}>`;
           },
           paragraph({ tokens }) {
             return `<p class="dc-p">${this.parser.parseInline(tokens)}</p>`;
