@@ -399,6 +399,16 @@ html, body {
   color: var(--text-faint);
 }
 
+/* Admin "View as non-admin" preview banner. The banner element is
+   present in the DOM at all times (see public/index.html) but
+   hidden by default; the body class set in app.js reveals it. Kept
+   as a CSS-driven swap rather than imperative show/hide so a JS
+   error elsewhere on the page can never strand an admin in masked
+   mode without the visible reminder. */
+body.is-view-as-non-admin #view-as-non-admin-banner {
+  display: flex;
+}
+
 .dc-cc-attached-log {
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 11px;

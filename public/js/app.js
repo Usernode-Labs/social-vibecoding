@@ -1,3 +1,8 @@
+// Top-level `const` doesn't auto-write to `window` in non-module
+// scripts, so other modules that read `window.App.…` instead of the
+// bare `App.…` identifier silently see `undefined`. Mirror onto
+// `window` explicitly so both styles work — the rest of this file
+// uses bare `App` because it's already in scope here.
 const App = {
   user: null,
   currentApp: null,
@@ -26,6 +31,23 @@ const App = {
       }
       const data = await res.json();
       App.user = data.user;
+      // "View as non-admin" admin tool. We mask `App.user.isAdmin`
+      // for client-side UI gating (admin buttons, retry, delete, lock,
+      // app-secrets edit, etc. — see grep for App.user?.isAdmin) so
+      // an admin can preview the experience a regular user gets.
+      // Server-side `req.user.isAdmin` is unaffected — this is purely
+      // visual, not a privilege drop. We stash the real value on
+      // App._realIsAdmin so settings.js knows whether to render the
+      // toggle, and the body class lets a thin header banner reveal
+      // the masked state at all times so the admin doesn't forget
+      // they're in preview mode.
+      App._realIsAdmin = !!App.user?.isAdmin;
+      App._viewAsNonAdmin = App._realIsAdmin
+        && localStorage.getItem('viewAsNonAdmin') === '1';
+      if (App._viewAsNonAdmin && App.user) {
+        App.user.isAdmin = false;
+        document.body.classList.add('is-view-as-non-admin');
+      }
     } catch {
       window.location.href = '/login.html';
       return;
@@ -1217,4 +1239,5 @@ const App = {
   },
 };
 
+window.App = App;
 document.addEventListener('DOMContentLoaded', () => App.init());

@@ -44,6 +44,32 @@
         });
       }
 
+      // "View as non-admin" admin tool. Mirror state to localStorage
+      // and reload — the simplest way to flush every admin-gated
+      // render path (home buttons, app-secrets editor, etc.) without
+      // having to re-derive each one. See app.js for where the flag
+      // is read and applied to App.user.isAdmin.
+      const viewAsToggle = document.getElementById('view-as-non-admin');
+      if (viewAsToggle) {
+        viewAsToggle.addEventListener('change', (e) => {
+          if (e.target.checked) {
+            localStorage.setItem('viewAsNonAdmin', '1');
+          } else {
+            localStorage.removeItem('viewAsNonAdmin');
+          }
+          window.location.reload();
+        });
+      }
+      // The persistent header banner has its own "Switch back" link
+      // for admins who notice they're in preview mode mid-session.
+      const bannerOff = document.getElementById('view-as-non-admin-disable');
+      if (bannerOff) {
+        bannerOff.addEventListener('click', () => {
+          localStorage.removeItem('viewAsNonAdmin');
+          window.location.reload();
+        });
+      }
+
       this.modal.addEventListener('click', (e) => {
         if (e.target === this.modal) this.close();
       });
@@ -82,6 +108,7 @@
       this._renderBody();
       this._renderWalletSection();
       this._renderDevConsoleSection();
+      this._renderAdminSection();
       this._clearStatus();
       this.modal.classList.remove('hidden');
       if (!this.state.hasApiKey) {
@@ -94,6 +121,43 @@
       if (!toggle) return;
       const mode = window.DevConsole ? DevConsole.getMode() : 'errors-only';
       toggle.checked = mode === 'always';
+    },
+
+    // Show the admin-preview section only when the server reports the
+    // user as a *real* admin. App._realIsAdmin is the un-masked value
+    // captured in app.js before the localStorage override gets
+    // applied; reading App.user.isAdmin here would be wrong because
+    // it reflects the masked state, which would hide the toggle
+    // forever once flipped on.
+    //
+    // Fallback: if `_realIsAdmin` is undefined (e.g. a stale-cached
+    // app.js from before that flag was added), fall back to the live
+    // `App.user.isAdmin`. Safe because a stale app.js can't have
+    // applied the mask either, so the live value still reflects the
+    // server truth. `??` (not `||`) so an explicit `false` from a
+    // current-cache app.js wins over the fallback.
+    _renderAdminSection() {
+      const section = document.getElementById('settings-admin-section');
+      const toggle = document.getElementById('view-as-non-admin');
+      if (!section || !toggle) return;
+      // Read the bare `App` identifier rather than `window.App` —
+      // app.js declares `App` with `const`, which does NOT write to
+      // `window` in non-module browser scripts, so `window.App` is
+      // undefined. Using the bare identifier matches the rest of the
+      // codebase (dev-chat.js etc.). Fallback to `App.user.isAdmin`
+      // covers a stale-cached app.js from before `_realIsAdmin` was
+      // introduced; safe because a stale app.js can't have applied
+      // the mask either, so the live value still reflects the server
+      // truth. `??` (not `||`) so an explicit `false` from a current
+      // app.js wins over the fallback.
+      const realAdmin = (typeof App !== 'undefined' ? App._realIsAdmin : undefined)
+        ?? (typeof App !== 'undefined' && !!App.user?.isAdmin);
+      if (!realAdmin) {
+        section.classList.add('hidden');
+        return;
+      }
+      section.classList.remove('hidden');
+      toggle.checked = localStorage.getItem('viewAsNonAdmin') === '1';
     },
 
     close() {
