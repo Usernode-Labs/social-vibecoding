@@ -49,6 +49,16 @@ services:
       # Container name `db-manager.js` `docker exec`'s into to spawn
       # per-app databases.
       DB_CONTAINER: vibecoding-db-dev
+      # Internal URL workers + child apps use to reach the platform
+      # over `usernode-net`. Defaults to `http://usernode:3000` (the
+      # prod container name); in dev the platform runs as
+      # `vibecoding-dev`, so the default fails DNS from inside spawned
+      # containers. Specifically the Anthropic proxy: workers set
+      # ANTHROPIC_BASE_URL=${PLATFORM_INTERNAL_URL}/api/internal/anthropic
+      # for non-BYOK turns, and without this override `claude` errors
+      # with `ENOTFOUND usernode` and the spec just shows
+      # "Unable to connect to API". See src/services/worker.js.
+      PLATFORM_INTERNAL_URL: http://vibecoding-dev:3000
     command: node --watch --watch-path=server.js --watch-path=src server.js
     volumes:
       - ./public:/app/public

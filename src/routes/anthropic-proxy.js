@@ -1,5 +1,6 @@
 'use strict';
 
+const express = require('express');
 const { Router } = require('express');
 const { rateLimit } = require('express-rate-limit');
 const { anthropicProxyAuth } = require('../middleware/anthropic-proxy-auth');
@@ -187,6 +188,13 @@ function anthropicProxyRoutes(config) {
   if (!config.anthropicApiKey) {
     log.warn('anthropic-proxy', 'ANTHROPIC_API_KEY not set — proxy will 502 platform-key requests');
   }
+
+  // Scoped JSON parser. Global parser (server.js) is skipped for our
+  // path so we can carry our own 32mb limit — Anthropic itself caps
+  // request bodies at 32MB, and a normal CC turn can carry several
+  // MB of file context. See server.js comment near the global
+  // express.json() mount for context.
+  router.use(express.json({ limit: '32mb' }));
 
   // Same shape as the push-proxy rate-limit in internal.js — bounds a
   // runaway CC turn (or a malicious prompt looping API calls) to

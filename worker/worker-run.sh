@@ -77,7 +77,16 @@ fi
 # /home/node/.claude volume.
 if [ ! -d /home/node/workspace/.git ]; then
   echo "__USERNODE_PHASE__ clone"
-  git clone "$CLONE_URL" . 2>&1 || die "clone failed"
+  # `--recurse-submodules --shallow-submodules` matches the convention
+  # used elsewhere in the SV ecosystem (app-creator.js, dapp deploy
+  # workflows). Without this, repos that pin native code as a submodule
+  # (e.g. falling-sands → sandspiel) clone with empty submodule
+  # placeholders and CC's read-only scout mode can't read the source —
+  # it tries `git submodule update --init` (denied by plan-mode
+  # permissions) and then `gh api` (binary not installed in this
+  # image), leaving the spec stage unable to inspect the actual code.
+  git clone --recurse-submodules --shallow-submodules "$CLONE_URL" . 2>&1 \
+    || die "clone failed"
 
   echo "__USERNODE_PHASE__ checkout"
   git checkout "$BRANCH" 2>/dev/null \
@@ -92,6 +101,18 @@ else
   git checkout "$BRANCH" 2>/dev/null \
     || git checkout -b "$BRANCH" \
     || die "checkout failed"
+fi
+
+# Idempotent submodule sync — runs on every bootstrap (cold clone OR
+# pre-existing checkout) so a long-warm container that was cloned
+# before this change self-heals on next exec, and a branch switch that
+# changes submodule pointers picks up the new revs. `--recursive`
+# covers nested submodules; `--depth=1` keeps it cheap (~one commit
+# per submodule).
+if [ -f .gitmodules ]; then
+  echo "__USERNODE_PHASE__ submodules"
+  git submodule update --init --recursive --depth=1 2>&1 \
+    || echo "__USERNODE_WARN__ submodule update failed"
 fi
 
 if [ -n "$PAT" ]; then

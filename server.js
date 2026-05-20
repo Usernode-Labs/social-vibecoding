@@ -40,7 +40,19 @@ const app = express();
 // One hop (Caddy) in front of us — enables accurate req.ip for rate limits.
 app.set('trust proxy', 1);
 
-app.use(express.json());
+// Skip the global JSON parser for the Anthropic-proxy path so the proxy
+// can mount its own parser with a 32MB limit (matching Anthropic's
+// actual request-size cap). With the default 100kb limit a normal CC
+// turn body (often a few MB of file context) gets 413'd at the parser
+// boundary, and the `claude` CLI surfaces the generic
+// "Request too large (max 32MB). Try with a smaller file." message —
+// even though our parser, not Anthropic, is the one rejecting. Keep
+// the rest of the app on the small default; only the proxy needs the
+// large limit. See routes/anthropic-proxy.js for the scoped parser.
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/internal/anthropic/')) return next();
+  express.json()(req, res, next);
+});
 app.use(cookieParser());
 
 app.get('/health', (_req, res) => {

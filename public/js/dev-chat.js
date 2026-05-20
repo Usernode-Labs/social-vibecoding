@@ -1255,32 +1255,72 @@ const DevChat = {
     const session = DevChat.currentSession;
 
     // Pre-pass: pair each `progressLog` system message with the
-    // nearest preceding "Claude Code is running" (or legacy "...is
-    // making changes...") status line so we can render the live log
-    // inline under it as a click-to-collapse <details> instead of as
-    // a separate gray-boxed "Claude Code output (N lines)" entry.
-    // Two indices keep the main render loop cheap:
+    // nearest preceding active-CC status line ("Claude Code is
+    // running" for build, legacy "Claude Code is making changes",
+    // and "Scout reading the codebase" for scout) so we can render
+    // the live log inline under it as a click-to-collapse <details>
+    // instead of as a separate gray-boxed "Claude Code output (N
+    // lines)" entry that disappears on reload. Two indices keep the
+    // main render loop cheap:
     //   progressByStatus  — statusMsgRef → progressMsg (used to render)
     //   mergedProgress    — progressMsgRef → true       (skip standalone)
     const progressByStatus = new Map();
     const mergedProgress = new Set();
+    // Matches all status lines that wrap a worker exec: build mode
+    // emits "Claude Code is running" (and the older "...is making
+    // changes" wording for legacy DB rows); scout emits "Scout
+    // reading the codebase". Both are paired with a 'Claude Code
+    // progress' system row whose live log we want to attach.
+    const ACTIVE_CC_STATUS_RE
+      = /^(Claude Code is (running|making changes)|Scout reading the codebase)/i;
+    // Helper: is this a viable status candidate for pairing? Stop on
+    // any non-system row (status/progress pairs always live inside a
+    // single dispatch turn) and skip rows that already carry their
+    // own attached artefact (ccOutput / progressLog / stagingUrl /
+    // ccLog / specPreview) so we don't accidentally re-use a row
+    // belonging to a previous CC run.
+    const isPairableStatus = (s) => {
+      if (s.role !== 'system') return null; // null → caller breaks
+      if (s.progressLog) return false;
+      if (s.ccLog || s.ccOutput || s.stagingUrl || s.specPreview) return false;
+      return ACTIVE_CC_STATUS_RE.test(String(s.content || ''));
+    };
     for (let i = 0; i < DevChat.messages.length; i++) {
       const m = DevChat.messages[i];
       if (m.role !== 'system' || !m.progressLog) continue;
-      // Walk backward to find the nearest CC-running status line.
-      // Stop at any non-system message — the status / progress pair is
-      // always emitted within a single dispatch_claude_code turn.
+
+      // Walk backward first — this is the post-reload case where
+      // sendStatus's INSERT lands BEFORE the progress INSERT in the
+      // DB, so the timeline order is "status → progress".
+      let paired = null;
       for (let j = i - 1; j >= 0; j--) {
         const s = DevChat.messages[j];
         if (s.role !== 'system') break;
-        if (s.progressLog) continue;
-        if (s.ccLog || s.ccOutput || s.stagingUrl || s.specPreview) continue;
-        const txt = String(s.content || '');
-        if (/^Claude Code is (running|making changes)/i.test(txt)) {
-          progressByStatus.set(s, m);
-          mergedProgress.add(m);
-          break;
+        const ok = isPairableStatus(s);
+        if (ok === null) break;
+        if (ok === true) { paired = s; break; }
+      }
+
+      // Walk forward if backward found nothing. This is the LIVE case:
+      // the first `cc_progress` SSE event (typically from the
+      // `ensureWorker` bootstrap clone/checkout phase) creates the
+      // in-memory progress message BEFORE the upcoming
+      // "Claude Code is running…" / "Scout reading the codebase…"
+      // sendStatus event arrives, so the active-CC status sits at a
+      // later index than the progress row until the next reload.
+      if (!paired) {
+        for (let j = i + 1; j < DevChat.messages.length; j++) {
+          const s = DevChat.messages[j];
+          if (s.role !== 'system') break;
+          const ok = isPairableStatus(s);
+          if (ok === null) break;
+          if (ok === true) { paired = s; break; }
         }
+      }
+
+      if (paired) {
+        progressByStatus.set(paired, m);
+        mergedProgress.add(m);
       }
     }
 

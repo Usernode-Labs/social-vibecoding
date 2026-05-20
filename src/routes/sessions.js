@@ -1861,6 +1861,25 @@ Your final assistant message must be ONLY the markdown spec — no preamble, no 
       try { res.write(`:heartbeat\n\n`); } catch {}
     }, 5000);
 
+    // Persist a `'Claude Code progress'` system message and
+    // incrementally append onProgress lines to its
+    // metadata.progressLog. Mirrors the build-path persistence in
+    // runClaudeCodeTool so that on page reload (or any re-fetch of
+    // messages), the scout progress log still renders inline under
+    // the "Scout reading the codebase…" status. Without this, progress
+    // was SSE-transient — visible during the live turn, gone on the
+    // next message reload — which the dev-chat UI surfaced as a
+    // separate "Claude Code output" block that "disappeared after it
+    // is done". The client pairs this row with the preceding scout
+    // status line via the same pre-pass that handles build's
+    // "Claude Code is running…" pairing.
+    const { rows: progRows } = await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+       VALUES ($1, 'system', 'Claude Code progress', $2) RETURNING id`,
+      [session.id, JSON.stringify({ progressLog: [] })]
+    );
+    const progressMsgId = progRows[0].id;
+
     let result;
     try {
       result = await worker.execInWorker(session.id, {
@@ -1874,6 +1893,13 @@ Your final assistant message must be ONLY the markdown spec — no preamble, no 
         onProgress: (text) => {
           send('cc_progress', { text });
           workerProgress.set(session.id, text, { model: selectedModel });
+          pool.query(
+            `UPDATE chat_session_messages SET metadata = jsonb_set(
+              metadata, '{progressLog}',
+              (COALESCE(metadata->'progressLog', '[]'::jsonb) || $1::jsonb)
+            ) WHERE id = $2`,
+            [JSON.stringify([text]), progressMsgId]
+          ).catch(() => {});
         },
         onChild: (child) => {
           if (stopHandle) stopHandle.execChild = child;
