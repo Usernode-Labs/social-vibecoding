@@ -72,6 +72,25 @@ async function getContainerStatus(nameOrId) {
   }
 }
 
+// Read the container's labels (Config.Labels) as a flat object. Returns
+// {} if the container is missing or labels are unset. Used by the warm
+// CC worker fast-path to detect old (pre-Anthropic-proxy) containers
+// that need to be evicted and re-bootstrapped — see
+// src/services/worker.js's ensureWorker.
+async function getContainerLabels(nameOrId) {
+  try {
+    const { stdout } = await execFileAsync('docker', [
+      'inspect', '--format', '{{json .Config.Labels}}', nameOrId,
+    ], { timeout: 5000 });
+    const trimmed = stdout.trim();
+    if (!trimmed || trimmed === 'null') return {};
+    const parsed = JSON.parse(trimmed);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 async function containerExists(nameOrId) {
   const status = await getContainerStatus(nameOrId);
   return status !== 'not_found';
@@ -155,6 +174,7 @@ module.exports = {
   runContainer,
   stopAndRemove,
   getContainerStatus,
+  getContainerLabels,
   containerExists,
   waitForHealthy,
   getHostPort,

@@ -425,6 +425,15 @@ async function _bootstrapWarmContainer(sessionId, {
   // (root/same-user readable, not argv-visible).
   //
   // `safeEnv` holds the non-secret args that stay inline.
+  //
+  // Anthropic-proxy (key-exfil mitigation): for platform-key sessions
+  // (anthropicApiKey unset) we deliberately leave ANTHROPIC_API_KEY
+  // empty at bootstrap. The real key NEVER enters this container —
+  // execInWorker overrides ANTHROPIC_API_KEY per-turn with a
+  // session-scoped JWT, and ANTHROPIC_BASE_URL points at the platform
+  // proxy. For BYOK sessions the user's own key is set in env both at
+  // bootstrap and per-turn (their key is theirs to exfiltrate; only
+  // their session can read it).
   const secretEnv = {
     ANTHROPIC_API_KEY: anthropicApiKey || '',
     // No PAT — public clones don't need it, and removing it is the
@@ -463,6 +472,12 @@ async function _bootstrapWarmContainer(sessionId, {
     '--memory', WORKER_MEMORY,
     '--cpus', WORKER_CPUS,
     '--security-opt', 'no-new-privileges:true',
+    // Anthropic-proxy migration marker. ensureWorker checks this label
+    // on warm-path hits and evicts + rebootstraps any container missing
+    // it, so pre-proxy containers (which had the real ANTHROPIC_API_KEY
+    // baked into their bootstrap env) get cycled out on the next ensure.
+    // Bump the version when the bootstrap-env shape changes again.
+    '--label', 'usernode.proxy=v1',
     '-v', `${ccVolume}:/home/node/.claude`,
     ...secretEnvArgs,
     ...safeEnvArgs,
@@ -572,10 +587,27 @@ async function ensureWorker(sessionId, {
   // an external `docker rm` would otherwise leave stale state.
   const status = await docker.getContainerStatus(containerName);
   if (status === 'running') {
-    if (!existing) {
-      _registryUpsert(sessionId, { lastUsedMs: Date.now(), inFlight: false });
+    // Anthropic-proxy migration gate: pre-proxy warm containers had
+    // the real ANTHROPIC_API_KEY baked into their bootstrap env (still
+    // readable from /proc/1/environ between turns). Detect them via
+    // the missing usernode.proxy=v1 label and force a re-bootstrap so
+    // the platform key gets out of those containers ASAP. Cheap —
+    // single `docker inspect` on the warm-path hot path.
+    const labels = await docker.getContainerLabels(containerName);
+    if (labels['usernode.proxy'] !== 'v1') {
+      log.info('worker', 'Evicting pre-proxy warm container', { containerName });
+      await evictWorker(sessionId).catch((err) => {
+        log.warn('worker', 'Eviction failed; falling through to bootstrap', {
+          containerName, err: err.message,
+        });
+      });
+      // fall through to the bootstrap branch below
+    } else {
+      if (!existing) {
+        _registryUpsert(sessionId, { lastUsedMs: Date.now(), inFlight: false });
+      }
+      return containerName;
     }
-    return containerName;
   }
 
   // Anything else (exited, dead, restarting, or not_found): re-bootstrap.
@@ -643,8 +675,21 @@ async function execInWorker(sessionId, {
   // shorter later) and the next push fails with 401 from the proxy.
   const workerJwt = mintWorkerJwt(sessionId);
 
+  // Anthropic-proxy: when the caller provides a BYOK key (anthropicApiKey
+  // truthy), the worker hits api.anthropic.com directly with that key
+  // — same flow as before. When no BYOK key is provided we route the
+  // SDK's traffic through the platform's in-process proxy at
+  // /api/internal/anthropic. The `claude` CLI honors ANTHROPIC_BASE_URL
+  // for endpoint retargeting and ANTHROPIC_API_KEY as the x-api-key
+  // header, so we put the session-scoped WORKER_JWT in
+  // ANTHROPIC_API_KEY: the proxy verifies it, swaps in the real
+  // platform key, and forwards. The real key never enters the worker
+  // container, so a malicious prompt like "echo $ANTHROPIC_API_KEY"
+  // exfiltrates only a short-lived JWT that's useless against
+  // api.anthropic.com directly.
+  const useProxy = !anthropicApiKey;
   const secretEnv = {
-    ANTHROPIC_API_KEY: anthropicApiKey || process.env.ANTHROPIC_API_KEY || '',
+    ANTHROPIC_API_KEY: useProxy ? workerJwt : anthropicApiKey,
     WORKER_JWT: workerJwt,
   };
   const safeEnv = {
@@ -659,6 +704,12 @@ async function execInWorker(sessionId, {
     // Refresh in case the warm container's env was perturbed; cheap.
     SESSION_ID: String(sessionId),
     PLATFORM_URL: PLATFORM_INTERNAL_URL,
+    // Retarget the Anthropic SDK through our proxy when not BYOK.
+    // Setting it to '' would still be honored by the SDK as the base
+    // URL; only set the key when we mean it.
+    ...(useProxy
+      ? { ANTHROPIC_BASE_URL: `${PLATFORM_INTERNAL_URL}/api/internal/anthropic` }
+      : {}),
   };
   const secretEnvArgs = Object.keys(secretEnv).flatMap((k) => ['-e', k]);
   const safeEnvArgs = Object.entries(safeEnv).flatMap(([k, v]) => ['-e', `${k}=${v}`]);

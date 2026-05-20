@@ -1839,7 +1839,7 @@ Your final assistant message must be ONLY the markdown spec — no preamble, no 
     repoOwner,
     repoName,
     branchName: session.branch_name,
-    anthropicApiKey: userApiKey || config.anthropicApiKey,
+    anthropicApiKey: userApiKey || null,
     onProgress: (text) => {
       send('cc_progress', { text });
       workerProgress.set(session.id, text, { model: selectedModel });
@@ -1870,7 +1870,7 @@ Your final assistant message must be ONLY the markdown spec — no preamble, no 
         commitMsg: '',
         resumeSessionId: session.cc_session_id || null,
         branchName: session.branch_name,
-        anthropicApiKey: userApiKey || config.anthropicApiKey,
+        anthropicApiKey: userApiKey || null,
         onProgress: (text) => {
           send('cc_progress', { text });
           workerProgress.set(session.id, text, { model: selectedModel });
@@ -2063,16 +2063,19 @@ INSTRUCTIONS:
 
   const commitMsg = github.safeMention(`Changes: ${userMessage.substring(0, 50)}`);
 
-  // BYOK (#30): the warm container takes the user's key (if provided)
-  // at bootstrap time. On subsequent ensures the container is already
-  // warm, so a per-turn key change wouldn't refresh the env — but
-  // execInWorker re-asserts ANTHROPIC_API_KEY as a per-exec secret env
-  // var, so each turn picks up the active key without needing a re-warm.
+  // BYOK (#30): when the user has their own Anthropic key on file we
+  // pass it down so the worker can hit api.anthropic.com directly.
+  // When they don't, we pass null and worker.execInWorker routes the
+  // SDK through the platform's Anthropic proxy (the platform key never
+  // enters the worker container — see ANTHROPIC_BASE_URL/JWT in
+  // src/services/worker.js and src/routes/anthropic-proxy.js).
+  // execInWorker re-asserts these per-exec, so a key flip mid-session
+  // takes effect on the next turn without needing a re-warm.
   const containerName = await worker.ensureWorker(session.id, {
     repoOwner,
     repoName,
     branchName: session.branch_name,
-    anthropicApiKey: userApiKey || config.anthropicApiKey,
+    anthropicApiKey: userApiKey || null,
     onProgress: (text) => {
       send('cc_progress', { text });
       workerProgress.set(session.id, text, { model: selectedModel });
@@ -2121,7 +2124,7 @@ INSTRUCTIONS:
         commitMsg,
         resumeSessionId: session.cc_session_id || null,
         branchName: session.branch_name,
-        anthropicApiKey: userApiKey || config.anthropicApiKey,
+        anthropicApiKey: userApiKey || null,
         onProgress: (text) => {
           send('cc_progress', { text });
           workerProgress.set(session.id, text, { model: selectedModel });

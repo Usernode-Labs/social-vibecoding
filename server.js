@@ -17,6 +17,7 @@ const { feedbackRoutes } = require('./src/routes/feedback');
 const { notificationsRoutes } = require('./src/routes/notifications');
 const { statusRoutes } = require('./src/routes/status');
 const { internalRoutes } = require('./src/routes/internal');
+const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
 const github = require('./src/services/github');
 const llm = require('./src/services/llm');
 const worker = require('./src/services/worker');
@@ -153,6 +154,16 @@ app.use(statusRoutes(config));
 // the router. Also gated by a private-IP check; not reachable through
 // Caddy's external vhosts in production.
 app.use(internalRoutes(config));
+
+// Worker → platform Anthropic proxy. The CC worker container holds a
+// session-scoped JWT (in ANTHROPIC_API_KEY env, picked up as x-api-key
+// by the SDK) and ANTHROPIC_BASE_URL points at /api/internal/anthropic
+// here. The proxy verifies the JWT, swaps in the real platform key, and
+// forwards to api.anthropic.com — so the platform key never enters the
+// worker container and "echo $ANTHROPIC_API_KEY" exfiltrates only a
+// short-lived JWT useless against Anthropic directly. Same private-IP
+// gate as internalRoutes; not reachable through Caddy externally.
+app.use(anthropicProxyRoutes(config));
 
 app.use(authMiddleware(config));
 app.use(authRoutes(config));
