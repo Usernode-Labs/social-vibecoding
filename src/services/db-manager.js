@@ -219,27 +219,43 @@ async function cloneDatabase(sourceDb, targetDb) {
   // Reassign every object inside the target DB to the new clone role
   // so it can ALTER, SELECT, INSERT, and DROP without privilege errors.
   //
-  // The source-role REASSIGN handles the child-app fast path: every
-  // user-schema table is owned by `<sourceDb>_owner`, no superuser
-  // ownership in the picture, plain REASSIGN OWNED BY works. If the
-  // source role doesn't exist (the self-app case), this is a no-op and
-  // the fallback below picks up the slack.
+  // Why not plain `REASSIGN OWNED BY sourceRole TO targetRole`? It
+  // looks like the right tool — and was used here historically — but
+  // it has a critical cluster-wide side effect: REASSIGN OWNED also
+  // walks shared catalogs (`pg_database`, `pg_tablespace`,
+  // `pg_auth_members`), reassigning ownership of *databases* the
+  // source role owns. In our setup `app_<slug>_owner` owns the prod
+  // database `app_<slug>`, so cloning prod into a staging clone
+  // silently transferred prod's `pg_database` row + its grants to the
+  // throwaway staging role. The prod container kept its existing
+  // pool connections alive, so nothing broke until the container was
+  // next restarted (merge rebuild, drift redeploy, host reboot) —
+  // at which point the new container couldn't connect to its own DB
+  // with FATAL 42501 "permission denied for database … User does not
+  // have CONNECT privilege." See the post-mortem in the commit that
+  // introduced this comment.
   //
-  // The superuser fallback CANNOT be a plain `REASSIGN OWNED BY` — the
-  // superuser also owns pg_toast tables pinned to pg_catalog, and
-  // postgres aborts the whole REASSIGN with "cannot reassign ownership
-  // of objects owned by role X because they are required by the
-  // database system". That used to be swallowed at .catch(debug) here,
-  // which silently left tables owned by the superuser and produced
-  // clones the new role couldn't ALTER — staging then crash-looped
-  // with `42501 must be owner of table users` on the first migration.
-  // reassignUserObjectsTo walks only user-schema objects (skipping
-  // pg_catalog), so it works against superuser-owned sources too.
+  // The superuser-owned fast path has its own reason to avoid
+  // REASSIGN OWNED: the superuser also owns pg_toast tables pinned
+  // to pg_catalog, and postgres aborts the whole REASSIGN with
+  // "cannot reassign ownership of objects owned by role X because
+  // they are required by the database system" — which used to be
+  // swallowed at .catch(debug), silently leaving tables owned by
+  // the superuser and producing clones the new role couldn't ALTER
+  // (staging crash-looped with `42501 must be owner of table users`
+  // on the first migration).
+  //
+  // reassignUserObjectsTo enumerates only user-schema objects in
+  // the target DB and ALTERs each one individually — no shared-
+  // catalog side effects, no pg_catalog interference. Calling it
+  // once per source role (the prod owner if it exists, and the
+  // superuser as a fallback for the self-app case) covers both
+  // template variants without the REASSIGN OWNED footgun.
   const sourceRole = ownerRoleName(sourceDb);
   if (SAFE_IDENT.test(sourceRole)) {
-    await execInTarget(targetDb, `REASSIGN OWNED BY ${sourceRole} TO ${targetRole}`).catch((err) => {
-      log.warn('db-manager', 'REASSIGN OWNED BY source-role failed; falling back to per-object reassign from superuser', {
-        sourceDb, sourceRole, err: err.message,
+    await reassignUserObjectsTo(targetDb, sourceRole, targetRole).catch((err) => {
+      log.warn('db-manager', 'reassignUserObjectsTo from source-role failed', {
+        targetDb, sourceRole, err: err.message,
       });
     });
   }
