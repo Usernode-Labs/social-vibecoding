@@ -428,6 +428,18 @@ const AppView = {
       const lockedHint = appLocked
         ? ' <span class="text-amber-500 font-normal">· locked: also needs an admin yes</span>'
         : '';
+      // Always-visible top-level notice for locked apps. The panel
+      // body is collapsed by default, so the per-section `lockedHint`
+      // above is invisible until a user expands the panel — which
+      // means a non-admin who promotes a PR has no on-screen signal
+      // about why their majority-reached PR isn't merging. This line
+      // sits *outside* `gc-panel-body` so it's visible whether the
+      // panel is open or closed. Refresh on lock toggle is already
+      // wired: `App.handleAppUpdate` calls `loadVotePanel()` on the
+      // `lock_changed` WS event.
+      const lockNotice = appLocked
+        ? `<div class="mt-2 text-xs text-amber-500">App is locked — an admin must approve any PR before it merges.</div>`
+        : '';
       const issuesData = issuesRes.ok ? await issuesRes.json() : { issues: [] };
       const allIssues = issuesData.issues || [];
       const renameProposals = allIssues.filter((i) => i.kind === 'rename');
@@ -571,6 +583,7 @@ const AppView = {
           <span class="flex-1"></span>
           ${counts ? `<span class="text-xs text-zinc-500 dark:text-zinc-400 truncate">${counts}</span>` : ''}
         </button>
+        ${lockNotice}
         <div id="gc-panel-body" class="${AppView.panelOpen ? '' : 'hidden'} mt-2">${bodyHtml}</div>`;
 
       document.getElementById('gc-panel-toggle').addEventListener('click', () => {
