@@ -1343,14 +1343,31 @@ html, body {
   50%      { opacity: 0.5; }
 }
 
+/* ── Header title centering ───────────────────────────────
+   `#header-title` is in flex flow by default (left-aligned, truncating
+   from the right when the right group eats its width). When there's
+   enough horizontal room for it to be perfectly viewport-centered
+   without overlapping the back-btn area or the right group,
+   public/js/header-layout.js toggles `.is-centered` and the title flips
+   to absolute positioning at exactly 50% of the header. The user-facing
+   contract is: "centered if room, left-aligned otherwise". No
+   in-between state where the title is truncated *while* centered. */
+#header-title.is-centered {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  flex: none;
+  text-align: center;
+}
+
 /* ── Mobile pill collapse ─────────────────────────────────
    On narrow viewports the header's two pill slots (platform +
    per-app) and the per-card pills on Home eat into the space
-   that the absolutely-centered <h1> title and app-name need,
-   producing visible overlap. Hide them by default and only
-   reveal a compact yellow spinner while a deploy is in flight,
-   so users still see "the platform / this app is updating right
-   now" feedback next to the name. */
+   that the <h1> title and app-name need, producing visible overlap.
+   Hide them by default and only reveal a compact yellow spinner while
+   a deploy is in flight, so users still see "the platform / this app
+   is updating right now" feedback next to the name. */
 @media (max-width: 640px) {
   /* Collapse the slot itself (not just its inner pill) so the
      mr-3 on header slots and the gap-2 on home-card rows go

@@ -225,6 +225,18 @@ const AppView = {
     const quiet = !!(opts && opts.quiet);
     if (!slug) return '';
 
+    // Slug prefix (`<slug> ·`) is shown only in quiet mode (home tiles),
+    // where it's the *only* identifier — there's no other affordance on
+    // the card telling you which commit pill belongs to which app. In
+    // the AppView header (non-quiet), the page title already names the
+    // app, so repeating the slug inside the pill just widens the right
+    // group and pushes the title into truncation territory. Dropping it
+    // there is the second half of the title-overlap fix (the first half
+    // is the grid header layout in index.html — see the comment there).
+    const slugPart = quiet
+      ? `<span class="app-version-pill-name">${escapeHtml(slug)}</span><span class="app-version-pill-sep">·</span>`
+      : '';
+
     const isDeploying = !quiet && !!(deployProgress && deployProgress.deploying);
     if (isDeploying) {
       const elapsed = deployProgress.startedAt
@@ -238,8 +250,7 @@ const AppView = {
         <span class="app-version-pill app-version-pill--deploying" title="${escapeAttr(tip)}">
           <span class="app-version-pill-spinner" aria-hidden="true"></span>
           <span class="app-version-pill-label">
-            <span class="app-version-pill-name">${escapeHtml(slug)}</span>
-            <span class="app-version-pill-sep">·</span>
+            ${slugPart}
             deploying
           </span>
         </span>`;
@@ -257,8 +268,7 @@ const AppView = {
         <span class="app-version-pill" title="No deployed version recorded yet">
           ${quiet ? '' : '<span class="app-version-pill-dot" style="background:#71717a;box-shadow:none"></span>'}
           <span class="app-version-pill-label">
-            <span class="app-version-pill-name">${escapeHtml(slug)}</span>
-            <span class="app-version-pill-sep">·</span>
+            ${slugPart}
             dev
           </span>
         </span>`;
@@ -282,8 +292,7 @@ const AppView = {
       <a href="${href}" target="_blank" rel="noopener" class="app-version-pill" title="${escapeAttr(tip)}">
         ${quiet ? '' : '<span class="app-version-pill-dot"></span>'}
         <span class="app-version-pill-label">
-          <span class="app-version-pill-name">${escapeHtml(slug)}</span>
-          <span class="app-version-pill-sep">·</span>
+          ${slugPart}
           ${escapeHtml(sha)}
         </span>
       </a>`;

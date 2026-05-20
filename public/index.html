@@ -37,28 +37,37 @@
        prevents the (potentially overlapping) title from blocking icon
        clicks; `truncate` + max-width keeps long app names from running
        into the right-side group. -->
-  <header class="relative flex items-center px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-    <button id="back-btn" class="text-zinc-400 hover:text-zinc-100 hidden" aria-label="Home">
-      <svg id="back-icon-home" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1h-2z"/></svg>
-      <svg id="back-icon-arrow" class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
-    </button>
+  <!-- Two-mode header: title is *viewport-centered* when there's room
+       for it without overlapping the back-btn area or the variable-width
+       right group, otherwise it falls back to *flex-flow* (left-aligned,
+       truncating from the right). The mode switch is driven by
+       public/js/header-layout.js, which observes header / right-group /
+       title size changes and toggles `.is-centered` accordingly.
 
-    <!-- On mobile (<640px) the title sits in flex flow as a flex-1 item
-         right after the back button, taking all remaining horizontal
-         space up to the right-side group. This recovers the room the
-         old `max-w-[40%]` was burning and stops the centered title from
-         overlapping the right-side chrome on narrow viewports. At sm+
-         we revert to absolute-centered, which keeps left/right groups
-         independent on wider screens (see comment above). -->
+       Layout invariants:
+       - The back-btn wrapper is always 20px wide (`w-5 shrink-0`) so
+         toggling the button's `hidden` class doesn't collapse the
+         leftmost column and shift the title.
+       - The right group has `ml-auto` so when the title goes absolute
+         (centered mode) and is removed from flex flow, the right group
+         still sits at the right edge instead of collapsing next to the
+         back-btn.
+       - The title's default state is flow mode (left-aligned). JS
+         upgrades to centered after measurement, so first paint is safe
+         even if the JS is slow to run. -->
+  <header class="relative flex items-center gap-3 px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+    <div class="w-5 shrink-0">
+      <button id="back-btn" class="text-zinc-400 hover:text-zinc-100 hidden" aria-label="Home">
+        <svg id="back-icon-home" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1h-2z"/></svg>
+        <svg id="back-icon-arrow" class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+      </button>
+    </div>
+
     <h1 id="header-title"
-        class="flex-1 min-w-0 ml-2 text-left text-lg font-bold pointer-events-none truncate
-               sm:absolute sm:left-1/2 sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2
-               sm:flex-none sm:ml-0 sm:max-w-[40%] sm:text-center">Usernode Social Vibecoding</h1>
+        class="flex-1 min-w-0 text-lg font-bold pointer-events-none truncate
+               text-left">Usernode Social Vibecoding</h1>
 
-    <!-- Right-side group. `ml-auto` shoves it to the right edge; back-btn
-         (or its empty space when hidden) stays at the left edge. The
-         absolutely-positioned title floats above this row at center. -->
-    <div class="ml-auto flex items-center">
+    <div class="ml-auto shrink-0 flex items-center">
     <!-- Platform-version pill: which SHA of usernode itself is currently
          live. Populated by App.renderPlatformVersionPill() (polled on
          a timer so it flips to a yellow "deploying" state when a new
@@ -453,6 +462,7 @@
   </div>
 
   <script src="/js/dev-host.js"></script>
+  <script src="/js/header-layout.js"></script>
   <script src="/js/dev-console.js"></script>
   <script src="/js/notifications.js"></script>
   <script src="/js/settings.js"></script>
