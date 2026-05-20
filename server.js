@@ -686,6 +686,7 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
       ccSummary: recoveredCcSummary,
       username: session.username,
       broadcast: (event, data) => emit(event, data),
+      userId: session.user_id,
     });
 
     emit('status', { text: 'Building staging preview...' });

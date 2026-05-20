@@ -162,8 +162,9 @@ ${(ccSummary || '(no summary available)').slice(0, 6000)}
 
 Author: ${username || 'unknown'}`;
 
+  const model = 'claude-haiku-4-5-20251001';
   const resp = await activeClient.messages.create({
-    model: 'claude-haiku-4-5-20251001',
+    model,
     max_tokens: 512,
     system,
     messages: [{ role: 'user', content: user }],
@@ -180,7 +181,10 @@ Author: ${username || 'unknown'}`;
   let body = typeof parsed.body === 'string' ? parsed.body.trim() : '';
   if (!title) throw new Error('Empty PR title from LLM');
   if (title.length > 200) title = title.slice(0, 200);
-  return { title, body };
+  // Surface usage so callers (pr-metadata.js) can debit the user
+  // who triggered the PR. May be undefined if the SDK strips it on
+  // some response shapes; callers must tolerate that.
+  return { title, body, usage: resp.usage, model };
 }
 
 module.exports = { init, isEnabled, getSystemPrompt, streamChat, estimateCostCents, generatePrMetadata };

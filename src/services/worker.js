@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const log = require('./logger');
 const docker = require('./docker');
 const github = require('./github');
+const models = require('./models');
 
 const WORKER_IMAGE = 'usernode-worker:latest';
 const WORKER_MEMORY = '2g';
@@ -649,7 +650,7 @@ async function execInWorker(sessionId, {
   const safeEnv = {
     PROMPT: prompt,
     MODE: mode,
-    MODEL: model || 'claude-sonnet-4-6',
+    MODEL: models.resolve(model),
     COMMIT_MSG: commitMsg || 'Changes via Usernode',
     CLAUDE_RESUME_SESSION_ID: resumeSessionId || '',
     // run-cc.sh defensively re-asserts BRANCH (in case the wrapper's

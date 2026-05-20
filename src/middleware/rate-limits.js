@@ -60,4 +60,17 @@ const issueCreateLimiter = makeLimiter({
   message: 'Too many issues/proposals — take a breather',
 });
 
-module.exports = { authLimiter, appCreateLimiter, issueCreateLimiter };
+// Chat: 30 / minute / user. Loose enough that no honest user notices
+// during normal back-and-forth, tight enough that scripted abuse
+// (looping POSTs to drain the daily LLM cap) bounces off well before
+// hitting the daily limit. Per-user keying so a single abusive account
+// behind shared NAT can't degrade other users on the same IP.
+const chatLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 30,
+  name: 'chat',
+  keyByUser: true,
+  message: 'Too many chat messages — slow down for a minute.',
+});
+
+module.exports = { authLimiter, appCreateLimiter, issueCreateLimiter, chatLimiter };

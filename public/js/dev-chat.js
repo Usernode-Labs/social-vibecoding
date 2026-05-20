@@ -66,20 +66,57 @@ const DevChat = {
     isLoading: false,
   },
 
+  // Initial MODELS map. Populated authoritatively from GET /api/models
+  // at startup so the UI dropdown can never offer something the server
+  // wouldn't accept (server-side allowlist lives in src/services/models.js).
+  // Kept seeded with the current set so the dropdown renders correctly
+  // before the fetch resolves on a slow connection.
   MODELS: {
     'claude-haiku-4-5-20251001': 'Haiku 4.5',
     'claude-sonnet-4-6': 'Sonnet 4.6',
     'claude-opus-4-6': 'Opus 4.6',
   },
 
+  // Default model id used when sanitization rejects a stale storage
+  // value. Overwritten by GET /api/models with the server's authoritative
+  // default so the two stay aligned.
+  _defaultModel: 'claude-sonnet-4-6',
+
+  // Fetch the authoritative model allowlist from the server. Replaces
+  // the inline MODELS map so adding/removing a model on the server
+  // (src/services/models.js) automatically flows to the dropdown
+  // without a client redeploy. Resilient to network failures: on error
+  // we keep whatever MODELS was previously populated with.
+  async loadModels() {
+    try {
+      const res = await fetch('/api/models');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data && Array.isArray(data.models) && data.models.length) {
+        const next = {};
+        for (const m of data.models) {
+          if (m && typeof m.id === 'string') {
+            next[m.id] = (typeof m.label === 'string' && m.label) ? m.label : m.id;
+          }
+        }
+        DevChat.MODELS = next;
+      }
+      if (data && typeof data.default === 'string' && data.default) {
+        DevChat._defaultModel = data.default;
+      }
+      DevChat._sanitizeStoredModel();
+    } catch {}
+  },
+
   // Guard against a persisted model id that's no longer in MODELS
   // (e.g. we removed an old model). Without this the dropdown would
   // fall back to the first option visually while `selectedModel` held
   // the stale id — so the user would see "Haiku" on screen but send
-  // some ancient slug on submit. Called right after module load.
+  // some ancient slug on submit. Called right after module load and
+  // again after loadModels() refreshes the allowlist.
   _sanitizeStoredModel() {
     if (!DevChat.MODELS[DevChat.selectedModel]) {
-      DevChat.selectedModel = 'claude-sonnet-4-6';
+      DevChat.selectedModel = DevChat._defaultModel;
     }
   },
 
@@ -2184,3 +2221,7 @@ const DevChat = {
 };
 
 DevChat._sanitizeStoredModel();
+// Fire-and-forget: refreshes MODELS from the server's allowlist. If
+// the page rendered the dropdown before this resolves, the next
+// renderChatView() pass will pick up the new entries.
+DevChat.loadModels();

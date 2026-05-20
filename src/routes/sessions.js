@@ -14,6 +14,9 @@ const workerProgress = require('../services/worker-progress');
 const sessionBus = require('../services/session-bus');
 const { drainGuard } = require('../services/lifecycle');
 const { getAppConventions, getSelfHostedRefuseList } = require('../services/prompts');
+const models = require('../services/models');
+const limits = require('../services/limits');
+const { chatLimiter } = require('../middleware/rate-limits');
 
 // Track sessions with active Claude Code workers
 const activeWorkers = new Set();
@@ -33,8 +36,10 @@ function getActiveWorkerCount() {
   return activeWorkers.size;
 }
 
-const USER_DAILY_LIMIT_CENTS = 2500;
-const GLOBAL_DAILY_LIMIT_CENTS = 20000;
+// Daily LLM-spend caps used to live as hardcoded constants here. They
+// now live in the platform_settings table (admin-tunable) and are read
+// via src/services/limits.js with a 10s in-process cache. Per-user
+// overrides come from users.daily_limit_cents.
 
 // Pull the first ATX-style H1 from a spec's markdown content. Used by
 // the spec-share endpoint so the group-chat card can show "Title"
@@ -434,8 +439,11 @@ function sessionRoutes(config) {
     }
   });
 
-  // Send a message in a dev chat session — Mayor + Claude Code pattern
-  router.post('/api/sessions/:id/chat', drainGuard, async (req, res) => {
+  // Send a message in a dev chat session — Mayor + Claude Code pattern.
+  // chatLimiter caps a single user at 30 chat turns/min so a runaway
+  // script can't drain their daily LLM cap before checkBudget() can
+  // even respond. See src/middleware/rate-limits.js.
+  router.post('/api/sessions/:id/chat', chatLimiter, drainGuard, async (req, res) => {
     const { message, model } = req.body;
 
     if (!message?.trim()) {
@@ -483,7 +491,13 @@ function sessionRoutes(config) {
         [session.id, message.trim()]
       );
 
-      const selectedModel = model || 'claude-sonnet-4-6';
+      // Validate against the server-side allowlist (src/services/models.js).
+      // A bogus or unrecognized `model` falls back to the default — this
+      // is the user-facing escape hatch for HIGH #2 (client-controlled
+      // model name). The same allowlist powers the UI dropdown via
+      // GET /api/models, so there's no drift between what the UI
+      // offers and what the server accepts.
+      const selectedModel = models.resolve(model);
 
       // SSE response
       res.writeHead(200, {
@@ -707,19 +721,26 @@ function sessionRoutes(config) {
             .trim() || '(I described what should change, but didn\'t actually run the coding agent — try sending again.)';
         }
 
+        // Always debit the Mayor's phase-1 spend — even on tool-only
+        // turns where mayorText1 is empty (the Anthropic call still
+        // happened and was billed). chat_session_messages still gets
+        // an assistant row only when there's actual reasoning text;
+        // an empty assistant message would clutter the chat history.
+        const costCents1 = mayor1.usage ? llm.estimateCostCents(mayor1.usage, selectedModel) : 0;
         if (mayorText1.trim()) {
           send('mayor_reasoning', { text: mayorText1 });
-          const costCents1 = llm.estimateCostCents(mayor1.usage, selectedModel);
           await pool.query(
             `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
              VALUES ($1, 'assistant', $2, $3, $4, $5)`,
             [session.id, mayorText1, selectedModel, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1]
           );
-          // BYOK users pay Anthropic directly, so we don't track their
-          // spend in `llm_usage` (that table drives the admin-key daily
-          // cap). The per-message cost_cents above + the SSE 'usage'
-          // event still give them live visibility into what each turn
-          // cost on their own key.
+        }
+        // BYOK users pay Anthropic directly, so we don't track their
+        // spend in `llm_usage` (that table drives the admin-key daily
+        // cap). The per-message cost_cents above + the SSE 'usage'
+        // event still give them live visibility into what each turn
+        // cost on their own key.
+        if (mayor1.usage) {
           if (!userApiKey) {
             await pool.query(
               `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
@@ -1389,13 +1410,16 @@ function sessionRoutes(config) {
   // Get current user's budget
   router.get('/api/budget', async (req, res) => {
     try {
+      const userLimit = await limits.getEffectiveUserLimitCents(pool, req.user.id);
+      const globalLimit = await limits.getGlobalLimitCents(pool);
       const budget = await checkBudget(pool, req.user.id);
-      const userSpent = USER_DAILY_LIMIT_CENTS - (budget.userRemaining || 0);
+      const userSpent = budget.error ? userLimit : userLimit - (budget.userRemaining || 0);
+      const globalSpent = budget.error ? globalLimit : globalLimit - (budget.globalRemaining || 0);
       res.json({
-        spentCents: budget.error ? USER_DAILY_LIMIT_CENTS : userSpent,
-        limitCents: USER_DAILY_LIMIT_CENTS,
-        globalSpentCents: GLOBAL_DAILY_LIMIT_CENTS - (budget.globalRemaining || 0),
-        globalLimitCents: GLOBAL_DAILY_LIMIT_CENTS,
+        spentCents: userSpent,
+        limitCents: userLimit,
+        globalSpentCents: globalSpent,
+        globalLimitCents: globalLimit,
       });
     } catch (err) {
       log.error('sessions', 'Budget check failed', { message: err.message });
@@ -1451,25 +1475,11 @@ function sessionRoutes(config) {
   return router;
 }
 
+// Thin alias so existing in-file callers keep working unchanged.
+// New callers (conflict-resolver, etc.) should `require('../services/limits')`
+// directly and call `limits.checkBudget(pool, userId)`.
 async function checkBudget(pool, userId) {
-  const { rows: userRows } = await pool.query(
-    `SELECT total_cost_cents FROM llm_usage WHERE user_id = $1 AND date = CURRENT_DATE`,
-    [userId]
-  );
-  const userSpent = parseFloat(userRows[0]?.total_cost_cents || 0);
-  if (userSpent >= USER_DAILY_LIMIT_CENTS) {
-    return { error: `Daily limit reached ($${(USER_DAILY_LIMIT_CENTS / 100).toFixed(2)}). Resets at midnight UTC.` };
-  }
-
-  const { rows: globalRows } = await pool.query(
-    `SELECT SUM(total_cost_cents) as total FROM llm_usage WHERE date = CURRENT_DATE`
-  );
-  const globalSpent = parseFloat(globalRows[0]?.total || 0);
-  if (globalSpent >= GLOBAL_DAILY_LIMIT_CENTS) {
-    return { error: 'Global daily limit reached. Try again tomorrow.' };
-  }
-
-  return { ok: true, userRemaining: USER_DAILY_LIMIT_CENTS - userSpent, globalRemaining: GLOBAL_DAILY_LIMIT_CENTS - globalSpent };
+  return limits.checkBudget(pool, userId);
 }
 
 // Tools the Mayor can call. Each user message produces at most one
@@ -2206,22 +2216,13 @@ INSTRUCTIONS:
         userMessage, ccSummary: ccText, username: req.user.username,
         broadcast: (event, data) => send(event, data),
         apiKey: userApiKey,
+        userId: req.user.id,
       });
       if (prResult && wasNewPR) {
         await sendStatus(`PR #${prResult.prNumber} created`);
         summaryParts.push(`Opened PR #${prResult.prNumber}: ${prResult.prUrl}`);
       } else if (session.pr_number && !wasNewPR) {
         summaryParts.push(`Pushed to existing PR #${session.pr_number}.`);
-      }
-
-      if (result.costUsd) {
-        const ccCostCents = Math.round(result.costUsd * 100);
-        await pool.query(
-          `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
-           ON CONFLICT (user_id, date) DO UPDATE SET total_cost_cents = llm_usage.total_cost_cents + EXCLUDED.total_cost_cents`,
-          [req.user.id, ccCostCents]
-        );
-        send('usage', { costCents: ccCostCents, model: `claude-code/${selectedModel}` });
       }
 
       await sendStatus('Building staging preview...');
@@ -2382,6 +2383,22 @@ INSTRUCTIONS:
           missingKeys,
         });
       }
+    }
+
+    // Debit the platform's daily ledger for whatever Claude Code spent
+    // — even when the run produced no commit (CC error, no-op turn,
+    // partial-failure with `result.fatalError`). The Anthropic invoice
+    // is paid regardless of whether code changes landed; without this
+    // we'd silently let users burn budget on tool-only / failed turns
+    // and only debit on the success branch.
+    if (result.costUsd) {
+      const ccCostCents = Math.round(result.costUsd * 100);
+      await pool.query(
+        `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
+         ON CONFLICT (user_id, date) DO UPDATE SET total_cost_cents = llm_usage.total_cost_cents + EXCLUDED.total_cost_cents`,
+        [req.user.id, ccCostCents]
+      );
+      send('usage', { costCents: ccCostCents, model: `claude-code/${selectedModel}` });
     }
 
     if (ccText) {

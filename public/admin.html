@@ -69,6 +69,39 @@
       <div id="overview-details" class="space-y-3 text-sm"></div>
     </div>
 
+    <!-- LLM Spend Limits -->
+    <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 mb-6 border border-zinc-200 dark:border-zinc-800">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-lg font-semibold">LLM Spend Limits</h2>
+        <span class="text-xs text-zinc-500">USD · resets midnight UTC</span>
+      </div>
+      <div class="grid grid-cols-2 gap-3 mb-3">
+        <label class="block">
+          <span class="text-xs uppercase tracking-wide text-zinc-500">Default per-user daily cap</span>
+          <div class="relative mt-1">
+            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500 pointer-events-none">$</span>
+            <input id="limit-user" type="number" min="0" step="0.01" inputmode="decimal"
+              class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 pl-6 pr-3 py-2 text-sm font-mono"
+              placeholder="25.00">
+          </div>
+        </label>
+        <label class="block">
+          <span class="text-xs uppercase tracking-wide text-zinc-500">Global daily cap</span>
+          <div class="relative mt-1">
+            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500 pointer-events-none">$</span>
+            <input id="limit-global" type="number" min="0" step="0.01" inputmode="decimal"
+              class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 pl-6 pr-3 py-2 text-sm font-mono"
+              placeholder="200.00">
+          </div>
+        </label>
+      </div>
+      <div class="flex items-center justify-between">
+        <p class="text-xs text-zinc-500">Per-user overrides live in the Users list below; these are the platform defaults.</p>
+        <button id="save-limits-btn" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Save</button>
+      </div>
+      <p id="limits-status" class="text-xs mt-2 hidden"></p>
+    </div>
+
     <!-- Activation Codes -->
     <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 mb-6 border border-zinc-200 dark:border-zinc-800">
       <div class="flex items-center justify-between mb-3">
@@ -202,16 +235,85 @@
             </label>
           </div>`;
 
+        // Per-user daily-cap override. Empty input = no override =
+        // platform default applies. Input is in dollars; converted to
+        // integer cents by the commit handler before PUT.
+        const overrideCents = user.daily_limit_cents;
+        const overrideDollars = overrideCents == null ? '' : centsToDollars(overrideCents);
+        const limitHtml = `
+          <div class="flex items-center gap-1" title="Per-user daily cap in dollars. Blank = use platform default.">
+            <span class="text-xs text-zinc-400">Cap $</span>
+            <input type="number" min="0" step="0.01" inputmode="decimal"
+              class="user-limit-input w-20 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono"
+              data-user-id="${user.id}"
+              data-original="${overrideDollars}"
+              value="${overrideDollars}"
+              placeholder="default">
+          </div>`;
+
         el.innerHTML = `
           <div class="flex-1">
             <div class="font-medium">${escapeHtml(user.username)}${user.is_admin ? ' <span class="text-xs text-violet-400 ml-1">admin</span>' : ''}</div>
             <div class="text-sm text-zinc-500">$${costToday} spent today ${codeInfo}</div>
           </div>
+          ${limitHtml}
           ${toggleHtml}
           ${!user.is_admin ? `<button data-delete-id="${user.id}" class="text-red-400 hover:text-red-300 text-sm delete-btn">Delete</button>` : ''}
         `;
         list.appendChild(el);
       }
+
+      list.querySelectorAll('.user-limit-input').forEach((inp) => {
+        // Save on blur or Enter. Empty string clears the override.
+        // Input is dollars; the API speaks integer cents.
+        const commit = async () => {
+          const next = inp.value.trim();
+          const orig = inp.dataset.original || '';
+          if (next === orig) return;
+          const userId = inp.dataset.userId;
+          inp.disabled = true;
+          let body;
+          if (next === '') {
+            body = { cents: null };
+          } else {
+            try {
+              const cents = parseDollarsToCents('Cap', next);
+              body = { cents };
+            } catch (err) {
+              alert(err.message);
+              inp.value = orig;
+              inp.disabled = false;
+              return;
+            }
+          }
+          try {
+            const res = await fetch(`/api/admin/users/${userId}/daily-limit`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+            if (!res.ok) {
+              const data = await res.json().catch(() => ({}));
+              alert(data.error || `Save failed (HTTP ${res.status})`);
+              inp.value = orig;
+            } else {
+              const data = await res.json();
+              const v = data.daily_limit_cents == null ? '' : centsToDollars(data.daily_limit_cents);
+              inp.value = v;
+              inp.dataset.original = v;
+            }
+          } catch (err) {
+            alert(`Save failed: ${err.message}`);
+            inp.value = orig;
+          } finally {
+            inp.disabled = false;
+          }
+        };
+        inp.addEventListener('blur', commit);
+        inp.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
+        });
+      });
 
       list.querySelectorAll('.create-toggle-cb').forEach((cb) => {
         cb.addEventListener('change', async () => {
@@ -328,9 +430,78 @@
 
     document.getElementById('refresh-overview').addEventListener('click', loadOverview);
 
+    // The DB and API are cents-native (`total_cost_cents` etc.) so cost
+    // arithmetic stays in integer cents end-to-end. The admin UI just
+    // presents and accepts dollars for ergonomics — these helpers
+    // convert at the edge.
+    function centsToDollars(c) {
+      return (Number(c) / 100).toFixed(2);
+    }
+    function parseDollarsToCents(label, raw) {
+      if (raw === '') return null;
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n < 0) {
+        throw new Error(`${label} must be a non-negative dollar amount or blank.`);
+      }
+      return Math.round(n * 100);
+    }
+
+    async function loadLimits() {
+      const res = await fetch('/api/admin/limits');
+      if (!res.ok) return;
+      const data = await res.json();
+      document.getElementById('limit-user').value = centsToDollars(data.user_daily_limit_cents);
+      document.getElementById('limit-global').value = centsToDollars(data.global_daily_limit_cents);
+    }
+
+    document.getElementById('save-limits-btn').addEventListener('click', async () => {
+      const status = document.getElementById('limits-status');
+      status.classList.add('hidden');
+      const userInput = document.getElementById('limit-user').value.trim();
+      const globalInput = document.getElementById('limit-global').value.trim();
+      const body = {};
+      try {
+        const u = parseDollarsToCents('Default per-user', userInput);
+        const g = parseDollarsToCents('Global', globalInput);
+        if (u !== null) body.user = u;
+        if (g !== null) body.global = g;
+        if (!Object.keys(body).length) {
+          throw new Error('Provide at least one value.');
+        }
+      } catch (err) {
+        status.textContent = err.message;
+        status.className = 'text-xs mt-2 text-red-400';
+        status.classList.remove('hidden');
+        return;
+      }
+      try {
+        const res = await fetch('/api/admin/limits', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        document.getElementById('limit-user').value = centsToDollars(data.user_daily_limit_cents);
+        document.getElementById('limit-global').value = centsToDollars(data.global_daily_limit_cents);
+        status.textContent = 'Saved.';
+        status.className = 'text-xs mt-2 text-green-500';
+        status.classList.remove('hidden');
+        setTimeout(() => status.classList.add('hidden'), 2000);
+      } catch (err) {
+        status.textContent = `Save failed: ${err.message}`;
+        status.className = 'text-xs mt-2 text-red-400';
+        status.classList.remove('hidden');
+      }
+    });
+
     loadCodes();
     loadUsers();
     loadOverview();
+    loadLimits();
   </script>
 </body>
 </html>

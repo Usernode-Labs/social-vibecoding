@@ -1,10 +1,18 @@
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
+const models = require('../services/models');
 
 function chatRoutes(config) {
   const router = Router();
   const pool = getPool(config);
+
+  // Models the UI may offer in its dropdown. Backed by the same
+  // allowlist src/routes/sessions.js validates inbound `model`
+  // against, so the dropdown and server enforcement can never drift.
+  router.get('/api/models', (_req, res) => {
+    res.json({ models: models.list(), default: models.DEFAULT_MODEL });
+  });
 
   router.get('/api/apps/:slug/messages', async (req, res) => {
     const before = req.query.before;

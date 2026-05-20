@@ -1,0 +1,33 @@
+// Single source of truth for the LLM models the platform exposes to
+// authenticated users. Server validates inbound `model` against this
+// allowlist (resolve() falls back to DEFAULT_MODEL on anything unknown
+// or missing) so a client picking, say, an unreleased high-tier model
+// can't escalate per-call cost. The UI consumes the same map via
+// GET /api/models (see chat.js routes), eliminating drift between
+// client dropdown and server validation.
+//
+// Adding a model: add an entry here, restart the platform container.
+// Removing one: remove here; in-flight chats with that model fall back
+// to DEFAULT_MODEL on the very next turn.
+
+const MODELS = {
+  'claude-haiku-4-5-20251001': { label: 'Haiku 4.5', tier: 'haiku' },
+  'claude-sonnet-4-6':         { label: 'Sonnet 4.6', tier: 'sonnet' },
+  'claude-opus-4-6':           { label: 'Opus 4.6', tier: 'opus' },
+};
+
+const DEFAULT_MODEL = 'claude-sonnet-4-6';
+
+function isAllowed(m) {
+  return typeof m === 'string' && Object.prototype.hasOwnProperty.call(MODELS, m);
+}
+
+function resolve(m) {
+  return isAllowed(m) ? m : DEFAULT_MODEL;
+}
+
+function list() {
+  return Object.entries(MODELS).map(([id, meta]) => ({ id, ...meta }));
+}
+
+module.exports = { MODELS, DEFAULT_MODEL, isAllowed, resolve, list };

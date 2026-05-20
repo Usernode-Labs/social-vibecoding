@@ -1,5 +1,7 @@
 const { Router } = require('express');
 const log = require('../services/logger');
+const llm = require('../services/llm');
+const { getPool } = require('../db/pool');
 
 // Derive `owner/repo` from a github.com URL. We do this at module
 // load (well, at route-factory load) so a malformed
@@ -19,6 +21,7 @@ function parseGitHubRepo(url) {
 
 function feedbackRoutes(config) {
   const router = Router();
+  const pool = getPool(config);
   const { owner: feedbackOwner, repo: feedbackRepo } = parseGitHubRepo(config.platformRepoUrl);
 
   router.post('/api/feedback', async (req, res) => {
@@ -62,6 +65,24 @@ function feedbackRoutes(config) {
             const data = await titleRes.json();
             const text = data.content?.[0]?.text?.trim();
             if (text) title = text;
+            // Track this Haiku call against the user's daily ledger
+            // even though we don't budget-gate it (it's a few dozen
+            // tokens per feedback). Without this, the user could spam
+            // /api/feedback for a small but unbounded platform spend
+            // off-budget. No-op when usage is missing or user_id is
+            // unset (e.g. anonymous feedback in the future).
+            if (data.usage && req.user?.id) {
+              try {
+                const costCents = llm.estimateCostCents(data.usage, 'claude-haiku-4-5');
+                await pool.query(
+                  `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
+                   ON CONFLICT (user_id, date) DO UPDATE SET total_cost_cents = llm_usage.total_cost_cents + EXCLUDED.total_cost_cents`,
+                  [req.user.id, costCents]
+                );
+              } catch (err) {
+                log.warn('feedback', 'Failed to record llm_usage', { err: err.message });
+              }
+            }
           }
         } catch {}
       }

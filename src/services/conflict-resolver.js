@@ -3,7 +3,10 @@ const github = require('./github');
 const llm = require('./llm');
 const docker = require('./docker');
 const stagingService = require('./staging');
+const limits = require('./limits');
 const { getPool } = require('../db/pool');
+
+const CONFLICT_RESOLVER_MODEL = 'claude-sonnet-4-20250514';
 
 async function checkAndResolveConflicts(config, mergedSession) {
   const pool = getPool(config);
@@ -20,11 +23,11 @@ async function checkAndResolveConflicts(config, mergedSession) {
   if (!conflictCandidates.length) return;
 
   for (const session of conflictCandidates) {
-    await resolveIfConflicted(config, pool, session);
+    await resolveIfConflicted(config, pool, session, mergedSession);
   }
 }
 
-async function resolveIfConflicted(config, pool, session) {
+async function resolveIfConflicted(config, pool, session, mergedSession) {
   if (!github.isEnabled() || !session.repo_url) return;
 
   const [, owner, repo] = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
@@ -104,11 +107,47 @@ Only fix the conflict — do NOT change behavior or add features. Keep the inten
       return;
     }
 
+    // Charge the conflict-resolver Sonnet call to the user who just
+    // merged the PR that caused the conflict. The merging user is the
+    // one who triggered this work, so it's their daily cap that gates
+    // it. If they're already over their cap, skip the auto-resolution
+    // and tell the affected session's group chat — the conflicting PR
+    // owner can then either merge main themselves or wait for the cap
+    // to reset.
+    const budgetCheck = await limits.checkBudget(pool, mergedSession.user_id);
+    if (budgetCheck.error) {
+      log.info('conflict', 'Skipped — merging user over daily cap', {
+        sessionId: session.id, mergedBy: mergedSession.user_id, reason: budgetCheck.error,
+      });
+      try {
+        const { sendSystemMessage } = require('./ws');
+        await sendSystemMessage(pool, session.app_id,
+          `Auto-conflict-resolution skipped on PR #${session.pr_number}: the merging user has hit their daily LLM limit. Resolve manually or rebase against main.`,
+          'conflict'
+        );
+      } catch (err) {
+        log.warn('conflict', 'Failed to post skip notice to group chat', { err: err.message });
+      }
+      return;
+    }
+
     const result = await llm.streamChat({
       messages: [{ role: 'user', content: 'Please resolve the merge conflicts in this PR.' }],
       systemPrompt,
-      model: 'claude-sonnet-4-20250514',
+      model: CONFLICT_RESOLVER_MODEL,
     });
+
+    // Debit the merging user for the resolver's token spend. We do this
+    // even when extraction fails below — the API call still happened
+    // and the platform paid for it.
+    if (result?.usage) {
+      const costCents = llm.estimateCostCents(result.usage, CONFLICT_RESOLVER_MODEL);
+      await pool.query(
+        `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
+         ON CONFLICT (user_id, date) DO UPDATE SET total_cost_cents = llm_usage.total_cost_cents + EXCLUDED.total_cost_cents`,
+        [mergedSession.user_id, costCents]
+      );
+    }
 
     // Extract file changes from the response
     const fileRegex = /```filepath:([\w/.]+)\n([\s\S]*?)```/g;

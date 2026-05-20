@@ -27,6 +27,13 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS usernode_pubkey          VARCHAR(255)
 ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_link_token        VARCHAR(64);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_link_expires_at   TIMESTAMPTZ;
 
+-- Per-user override of the platform-wide daily LLM spend cap. NULL means
+-- "use the global default" stored in platform_settings.user_daily_limit_cents
+-- (see below). Set by admins from /admin to grant trusted users a higher
+-- cap without raising it for everyone. Read by checkBudget() in
+-- src/routes/sessions.js via src/services/limits.js.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_limit_cents INTEGER;
+
 CREATE TABLE IF NOT EXISTS sessions (
   token      VARCHAR(64) PRIMARY KEY,
   user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -250,6 +257,27 @@ CREATE TABLE IF NOT EXISTS llm_usage (
   total_cost_cents NUMERIC(10,4) NOT NULL DEFAULT 0,
   UNIQUE(user_id, date)
 );
+
+-- Platform-level admin-tunable settings. Currently only used for the
+-- daily LLM spend caps; designed as a generic key/value store so future
+-- admin knobs can land here without another migration. Values are
+-- TEXT so callers can interpret per-key (parseInt for cents, etc.).
+-- Read via src/services/limits.js with a 10s in-process cache;
+-- writes from /api/admin/limits invalidate the cache.
+CREATE TABLE IF NOT EXISTS platform_settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+-- Seed defaults that match the legacy hardcoded values in
+-- src/routes/sessions.js (USER_DAILY_LIMIT_CENTS=2500, GLOBAL=20000)
+-- so a fresh deploy preserves the prior behavior. ON CONFLICT DO
+-- NOTHING means existing operator-set values survive every boot.
+INSERT INTO platform_settings (key, value) VALUES
+  ('user_daily_limit_cents',   '2500'),
+  ('global_daily_limit_cents', '20000')
+ON CONFLICT (key) DO NOTHING;
 
 -- Notifications. Generic row format so we can add more `kind`s later
 -- (PR approvals, etc). Currently only 'mention' is emitted from the
