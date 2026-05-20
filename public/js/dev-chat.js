@@ -461,10 +461,16 @@ const DevChat = {
             }
             // `_active` is a client-only flag that swaps the static gear
             // glyph for the arc spinner, so on refresh mid-run the latest
-            // status line ("Claude Code is making changes…") needs it
+            // status line ("Claude Code is running…") needs it
             // re-applied. Pick the newest system message that isn't a
             // finalized artefact (ccOutput / progressLog / stagingUrl /
             // ccLog) — those are terminal, not in-flight.
+            //
+            // Note: progressLog is technically not "terminal" — it grows
+            // as live output streams in. But we treat it as terminal here
+            // so `_active` lands on the *parent* "Claude Code is running"
+            // status line instead, which then renders as the disclosure
+            // summary above the inline log (see renderMessages).
             for (let i = DevChat.messages.length - 1; i >= 0; i--) {
               const m = DevChat.messages[i];
               if (m.role !== 'system') continue;
@@ -1185,16 +1191,29 @@ const DevChat = {
   // full renderMessages() if the collapsible hasn't been rendered yet.
   _patchProgressDom(msg) {
     const pid = DevChat._detailsId(msg, 'progress');
-    const details = document.querySelector(`#dc-messages [data-persist-id="${CSS.escape(pid)}"]`);
-    if (!details) {
+    // The element with this pid is either:
+    //   - the inner <pre> in the merged "Claude Code is running"
+    //     <details> (current shape — no surrounding box), OR
+    //   - the legacy gray-box <details> wrapping a <pre> (orphan
+    //     progress messages persisted in the DB before the merge).
+    const target = document.querySelector(`#dc-messages [data-persist-id="${CSS.escape(pid)}"]`);
+    if (!target) {
       DevChat.renderMessages();
       return;
     }
-    const summary = details.querySelector('.dc-cc-log-toggle');
-    const pre = details.querySelector('.dc-cc-log-content');
+    const text = msg.progressLog.join('\n');
+    if (target.tagName === 'PRE') {
+      target.textContent = text;
+      target.scrollTop = target.scrollHeight;
+      return;
+    }
+    // Legacy details-wrapping element: keep updating the inner pre
+    // and the line-count summary so old timeline entries still work.
+    const summary = target.querySelector('.dc-cc-log-toggle');
+    const pre = target.querySelector('.dc-cc-log-content');
     if (summary) summary.textContent = `Claude Code output (${msg.progressLog.length} lines)`;
     if (pre) {
-      pre.textContent = msg.progressLog.join('\n');
+      pre.textContent = text;
       pre.scrollTop = pre.scrollHeight;
     }
   },
@@ -1234,6 +1253,37 @@ const DevChat = {
     const container = document.getElementById('dc-messages');
     if (!container) return;
     const session = DevChat.currentSession;
+
+    // Pre-pass: pair each `progressLog` system message with the
+    // nearest preceding "Claude Code is running" (or legacy "...is
+    // making changes...") status line so we can render the live log
+    // inline under it as a click-to-collapse <details> instead of as
+    // a separate gray-boxed "Claude Code output (N lines)" entry.
+    // Two indices keep the main render loop cheap:
+    //   progressByStatus  — statusMsgRef → progressMsg (used to render)
+    //   mergedProgress    — progressMsgRef → true       (skip standalone)
+    const progressByStatus = new Map();
+    const mergedProgress = new Set();
+    for (let i = 0; i < DevChat.messages.length; i++) {
+      const m = DevChat.messages[i];
+      if (m.role !== 'system' || !m.progressLog) continue;
+      // Walk backward to find the nearest CC-running status line.
+      // Stop at any non-system message — the status / progress pair is
+      // always emitted within a single dispatch_claude_code turn.
+      for (let j = i - 1; j >= 0; j--) {
+        const s = DevChat.messages[j];
+        if (s.role !== 'system') break;
+        if (s.progressLog) continue;
+        if (s.ccLog || s.ccOutput || s.stagingUrl || s.specPreview) continue;
+        const txt = String(s.content || '');
+        if (/^Claude Code is (running|making changes)/i.test(txt)) {
+          progressByStatus.set(s, m);
+          mergedProgress.add(m);
+          break;
+        }
+      }
+    }
+
     container.innerHTML = DevChat.messages.map((msg) => {
       // System messages — each is a single immutable status line
       if (msg.role === 'system') {
@@ -1269,14 +1319,21 @@ const DevChat = {
           return `<details class="dc-cc-log" data-persist-id="${pid}"><summary class="dc-cc-log-toggle">Claude Code log</summary><pre class="dc-cc-log-content">${msg.ccLog.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre></details>`;
         }
         if (msg.progressLog?.length) {
+          // Already merged into a parent "Claude Code is running"
+          // status line by the pre-pass above — nothing to render here.
+          if (mergedProgress.has(msg)) return '';
+          // Orphan progress message — old DB rows that didn't have a
+          // matching predecessor status line. Render in the SAME new
+          // attached style (not the legacy gray box) with a synthetic
+          // status line, so the visual stays consistent across the
+          // timeline regardless of how the row was originally written.
           const logText = msg.progressLog.join('\n').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-          const pid = DevChat._detailsId(msg, 'progress');
-          // Live streaming updates target this same element via
-          // _patchProgressDom(). Previously we rendered a second,
-          // DOM-only "Claude Code live output" <details> on top of this
-          // one, which showed up twice whenever the persisted log was
-          // already on screen (refresh mid-run, polling fallback).
-          return `<details class="dc-cc-log" data-persist-id="${pid}"><summary class="dc-cc-log-toggle">Claude Code output (${msg.progressLog.length} lines)</summary><pre class="dc-cc-log-content">${logText}</pre></details>`;
+          const innerPid = DevChat._detailsId(msg, 'progress');
+          const outerPid = DevChat._detailsId(msg, 'ccrunorphan');
+          const ts = msg.created_at ? new Date(msg.created_at).getTime() : '';
+          const id = msg.id || msg._slug || '';
+          const icon = '<span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span>';
+          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" data-default-open="1" open><summary class="dc-status-line dc-cc-attached-summary">${icon} Claude Code output<span class="dc-cc-attached-chevron" aria-hidden="true"></span><span style="font-size:9px;opacity:0.4;margin-left:auto">${id} ${ts}</span></summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
         }
         if (msg.stagingUrl) {
           const stgTs = msg.created_at ? new Date(msg.created_at).getTime() : '';
@@ -1305,10 +1362,42 @@ const DevChat = {
         const iconHtml = msg._active
           ? '<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>'
           : '<span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span>';
-        const ccDetail = msg.ccOutput
-          ? `<details class="dc-cc-log" style="margin-top:4px" data-persist-id="${DevChat._detailsId(msg, 'ccout')}"><summary class="dc-cc-log-toggle">Full Claude Code output</summary><div class="dc-msg-content" style="padding:8px 10px">${DevChat.renderMarkdown(msg.ccOutput)}</div></details>`
-          : '';
-        return `<div class="dc-status-line">${iconHtml} ${msg.content} <span style="font-size:9px;opacity:0.4;margin-left:auto">${sId} ${sTs}</span></div>${ccDetail}`;
+
+        const sumClass = 'dc-status-line dc-cc-attached-summary';
+        const chevron = '<span class="dc-cc-attached-chevron" aria-hidden="true"></span>';
+        const tsSpan = `<span style="font-size:9px;opacity:0.4;margin-left:auto">${sId} ${sTs}</span>`;
+
+        // Attached live progress log? Render the status line as the
+        // <summary> of an open-by-default <details>, with the
+        // streaming log block inline below. No box, slightly muted
+        // monospaced text — clicking the summary collapses the log
+        // (preserved across renders via _applyDetailsPersistence).
+        const attachedProgress = progressByStatus.get(msg);
+        if (attachedProgress) {
+          const logText = (attachedProgress.progressLog || []).join('\n')
+            .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+          const outerPid = DevChat._detailsId(msg, 'ccrun');
+          // Inner pre keeps the legacy progress pid so
+          // _patchProgressDom() can target it directly when streaming
+          // appends new lines mid-run.
+          const innerPid = DevChat._detailsId(attachedProgress, 'progress');
+          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" data-default-open="1" open><summary class="${sumClass}">${iconHtml} ${msg.content}${chevron}${tsSpan}</summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
+        }
+
+        // Post-turn ccOutput (the markdown summary that the worker
+        // emits when the run finishes — typically attached to a
+        // "Claude Code finished" status line). Same merged shape as
+        // the live-progress case: status line is the <summary>,
+        // markdown body inline below in muted text. We use a
+        // dedicated body class because the content is rendered
+        // markdown HTML, not a monospaced log dump — different font
+        // and indentation than .dc-cc-attached-log.
+        if (msg.ccOutput) {
+          const outerPid = DevChat._detailsId(msg, 'ccout');
+          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" data-default-open="1" open><summary class="${sumClass}">${iconHtml} ${msg.content}${chevron}${tsSpan}</summary><div class="dc-cc-attached-md">${DevChat.renderMarkdown(msg.ccOutput)}</div></details>`;
+        }
+
+        return `<div class="dc-status-line">${iconHtml} ${msg.content} ${tsSpan}</div>`;
       }
 
       // Skip truly empty assistant placeholders that exist only as the
@@ -1395,11 +1484,26 @@ const DevChat = {
     if (!sid) return;
     const state = DevChat._readDetailsState(sid);
     document.querySelectorAll('#dc-messages [data-persist-id]').forEach((el) => {
+      // The persistence layer applies to <details> only — the inner
+      // <pre> we tag with a persist-id (so live progress updates can
+      // find it) isn't a disclosure widget and has no toggle event.
+      if (el.tagName !== 'DETAILS') return;
       const key = el.dataset.persistId;
-      if (state[key]) el.open = true;
+      const defaultOpen = el.dataset.defaultOpen === '1';
+      // Storage convention:
+      //   state[key] === 1 → user explicitly opened a default-closed widget
+      //   state[key] === 0 → user explicitly closed a default-open widget
+      //   missing          → use the widget's default
+      if (state[key] === 1) el.open = true;
+      else if (state[key] === 0) el.open = false;
+      else el.open = defaultOpen;
       el.addEventListener('toggle', () => {
         const s = DevChat._readDetailsState(sid);
-        if (el.open) s[key] = 1; else delete s[key];
+        if (el.open === defaultOpen) {
+          delete s[key]; // back to default — drop the override
+        } else {
+          s[key] = el.open ? 1 : 0;
+        }
         DevChat._writeDetailsState(sid, s);
       });
     });

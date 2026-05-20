@@ -352,6 +352,101 @@ html, body {
   margin: 0;
 }
 
+/* ── Claude Code "is running" — status line + inline log ─
+   The status line itself is the disclosure summary; the live log
+   streams inline below as plain monospaced text (no border, no
+   background). Open by default; click the summary to collapse. */
+
+.dc-cc-attached {
+  margin: 0;
+}
+
+.dc-cc-attached-summary {
+  /* Reuse dc-status-line for icon/baseline, but make it the
+     <summary> of a <details> — suppress the native disclosure
+     marker (we already have the spinner / check glyph plus a
+     dedicated chevron span on the right). */
+  cursor: pointer;
+  list-style: none;
+}
+.dc-cc-attached-summary::-webkit-details-marker { display: none; }
+.dc-cc-attached-summary::marker { display: none; }
+.dc-cc-attached-summary:hover { background: var(--bg-code); }
+
+/* Click affordance — sits to the right of "Claude Code is
+   running…" before the id/ts span. Two distinct glyphs (▸ when
+   the log is collapsed, ▾ when expanded) instead of rotating a
+   single triangle: rotation looks subtly off because the
+   triangle's bounding box flips between portrait and landscape
+   when turned 90°, dragging the visual center off the baseline. */
+.dc-cc-attached-chevron {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--text-muted);
+  transition: color 120ms ease;
+  /* Reserve a fixed-width slot so the timestamp doesn't shift
+     horizontally when the glyph changes. */
+  width: 18px;
+  text-align: center;
+}
+.dc-cc-attached-chevron::before { content: '\25B8'; /* ▸ */ }
+.dc-cc-attached[open] > .dc-cc-attached-summary > .dc-cc-attached-chevron::before {
+  content: '\25BE'; /* ▾ */
+}
+.dc-cc-attached-summary:hover .dc-cc-attached-chevron {
+  color: var(--text-faint);
+}
+
+.dc-cc-attached-log {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  /* Slightly duller than --text-muted so it sits visually below the
+     status line without disappearing into the background. */
+  color: var(--text-faint);
+  /* Indent under the status icon so log lines align with the
+     status text, not the icon. 22px = icon width (14) + gap (6) +
+     2px breathing room. */
+  padding: 2px 0 4px 22px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+  margin: 0;
+  background: transparent;
+  border: none;
+}
+
+/* Sibling of .dc-cc-attached-log for the post-turn ccOutput
+   markdown summary (rather than a monospaced live-log). Same
+   indent + muted color, but body font and a bit more room for
+   structured markdown elements (paragraphs, lists, code blocks). */
+.dc-cc-attached-md {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-faint);
+  padding: 4px 0 6px 22px;
+  max-height: 360px;
+  overflow-y: auto;
+  background: transparent;
+  border: none;
+}
+/* Tighten markdown spacing inside the muted summary block — the
+   default .dc-msg-content treatment is too generous for a summary
+   that sits under a status line. */
+.dc-cc-attached-md p { margin: 4px 0; }
+.dc-cc-attached-md ul, .dc-cc-attached-md ol { margin: 4px 0; padding-left: 20px; }
+.dc-cc-attached-md li { margin: 2px 0; }
+.dc-cc-attached-md pre.dc-code-block {
+  margin: 6px 0;
+  font-size: 11px;
+}
+.dc-cc-attached-md code.dc-inline-code {
+  font-size: 11px;
+}
+
 /* ── Vote panel ─────────────────────────────────────────── */
 
 .gc-vote-btn {

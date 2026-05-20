@@ -2102,7 +2102,7 @@ INSTRUCTIONS:
   let isError = false;
 
   try {
-    await sendStatus('Claude Code is making changes...');
+    await sendStatus('Claude Code is running...');
 
     const heartbeat = setInterval(() => {
       try { res.write(`:heartbeat\n\n`); } catch {}
