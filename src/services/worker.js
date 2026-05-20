@@ -688,10 +688,20 @@ async function execInWorker(sessionId, {
   // exfiltrates only a short-lived JWT that's useless against
   // api.anthropic.com directly.
   const useProxy = !anthropicApiKey;
-  const secretEnv = {
-    ANTHROPIC_API_KEY: useProxy ? workerJwt : anthropicApiKey,
-    WORKER_JWT: workerJwt,
-  };
+  // Scout mode: omit WORKER_JWT so usernode-push has no way to
+  // authenticate against the platform's push proxy, regardless of how
+  // CC may try to invoke it. ANTHROPIC_API_KEY still gets the JWT when
+  // we're routing through the Anthropic proxy — the proxy authenticates
+  // request-scoped JWTs for the Anthropic round-trip itself, so dropping
+  // it would break LLM access entirely. Build mode keeps both: the
+  // commit/push block in run-cc.sh runs, and usernode-push needs the
+  // JWT to push the session branch.
+  const secretEnv = mode === 'scout'
+    ? { ANTHROPIC_API_KEY: useProxy ? workerJwt : anthropicApiKey }
+    : {
+        ANTHROPIC_API_KEY: useProxy ? workerJwt : anthropicApiKey,
+        WORKER_JWT: workerJwt,
+      };
   const safeEnv = {
     PROMPT: prompt,
     MODE: mode,

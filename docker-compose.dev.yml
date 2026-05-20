@@ -64,6 +64,14 @@ services:
       - ./public:/app/public
       - ./src:/app/src
       - ./server.js:/app/server.js
+      # `worker/` is the source for the worker container image (built
+      # via `ensureWorkerImage()` → `docker build /app/worker`). Without
+      # this bind mount, host-side edits to worker-run.sh / run-cc.sh
+      # never reach the dev container's /app/worker copy, so the
+      # rebuilt worker image keeps shipping the version baked in at
+      # `docker compose build` time. Mounting it live lets edits flow
+      # straight through to the next `ensureWorkerImage()` call.
+      - ./worker:/app/worker
       # Required: the platform spawns child-app containers via the
       # host Docker daemon. Without this the container hits
       # "spawn docker ENOENT" / connection refused on every

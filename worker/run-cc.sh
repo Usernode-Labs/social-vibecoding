@@ -73,10 +73,27 @@ elif [ "$MODE" = "build" ]; then
   die "branch missing upstream: origin/$BRANCH"
 fi
 
-# In scout mode we restrict CC to read-only tools (Read/Glob/Grep) so
-# the spec-stage's "scout" call can't accidentally edit the repo.
+# Scout permissions: previously `--permission-mode plan`, but plan mode
+# blocks all write-flavoured Bash with a generic "Bash: error" — so the
+# agent kept grinding through `git submodule update`, `gh api`, etc.,
+# burning tokens on tools it didn't realise were denied. We now run
+# scout with the same `--dangerously-skip-permissions` as build, but
+# strip Edit/Write/NotebookEdit at the tool layer so file mutations are
+# impossible regardless of what CC tries. The remaining safety nets:
+#   - `git reset --hard origin/$BRANCH` at the top of every turn (above)
+#     wipes any uncommitted/local commits the next turn would otherwise
+#     inherit
+#   - this script's MODE=scout branch (below) skips the commit/push
+#     block entirely
+#   - usernode-push refuses if MODE=scout (worker/usernode-push)
+#   - WORKER_JWT is omitted from scout's docker exec env
+#     (worker.execInWorker), so even direct `usernode-push` from CC's
+#     Bash has no JWT to authenticate with against the platform proxy
+# Net effect: scout has full read-only Bash + WebFetch (so it can run
+# `git submodule update --init`, `gh api`, etc.) but cannot escape the
+# worker container even if CC misbehaves.
 if [ "$MODE" = "scout" ]; then
-  PERMISSION_FLAGS="--permission-mode plan"
+  PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools Edit Write NotebookEdit"
 else
   PERMISSION_FLAGS="--dangerously-skip-permissions"
 fi

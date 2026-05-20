@@ -19,6 +19,19 @@
 
 set -u
 
+# Defense-in-depth: scout is meant to be read-only, and run-cc.sh
+# already skips the commit/push block when MODE=scout. But CC could
+# theoretically invoke this script directly via Bash — refuse outright
+# so a runaway scout turn cannot push to the session branch even if it
+# tries. The `WORKER_JWT` env is also dropped from scout's docker exec
+# (see worker.execInWorker), so the auth check below would fail anyway,
+# but a clear error here beats `WORKER_JWT required` as the surfaced
+# message.
+if [ "${MODE:-build}" = "scout" ]; then
+  echo "__USERNODE_WARN__ usernode-push: refusing to push from scout mode" >&2
+  exit 2
+fi
+
 : "${WORKER_JWT:?WORKER_JWT required}"
 : "${SESSION_ID:?SESSION_ID required}"
 : "${PLATFORM_URL:=http://usernode:3000}"
