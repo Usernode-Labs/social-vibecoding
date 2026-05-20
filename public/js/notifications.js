@@ -138,9 +138,10 @@ const Notifications = {
     Notifications.hide();
     Notifications._markOneRead(id);
     if (item.appSlug) {
-      // Route to the app's group chat (the only surface that emits
-      // notifications today). navigateToApp sets App.currentTab from
-      // the hash, so jump straight to the group-chat hash.
+      // Both mention and kudos notifications land on the app's group
+      // chat. Mentions originate there; kudos's PR is rendered in the
+      // group-chat tab's vote panel (Open PRs / Merged), where the
+      // user can scroll to it and reciprocate if they want.
       window.location.hash = `#app/${item.appSlug}/group-chat`;
     }
   },
@@ -188,6 +189,26 @@ function renderRow(n) {
   const unreadCls = n.readAt ? '' : 'bg-violet-500/5 border-l-2 border-violet-500';
   const appLine = n.appName ? escapeHtml(n.appName) : 'app';
   const who = n.sourceUsername ? escapeHtml(n.sourceUsername) : 'someone';
+
+  // Kudos rows have no chat-message body; they show the PR title (or
+  // "PR #N" if the PR has no LLM-generated title yet) and a small 👏
+  // icon to distinguish from mention rows at a glance.
+  if (n.kind === 'kudos') {
+    const prLabel = n.prTitle
+      ? escapeHtml(n.prTitle)
+      : (n.prNumber ? `PR #${n.prNumber}` : 'your PR');
+    return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
+      <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1">
+        <span aria-hidden="true">\u{1F44F}</span>
+        <span class="font-medium text-zinc-800 dark:text-zinc-200">@${who}</span>
+        <span>gave kudos to your PR in</span>
+        <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
+        <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
+      </div>
+      <div class="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2 font-medium">${prLabel}</div>
+    </button>`;
+  }
+
   const snippet = (n.messageContent || '').slice(0, 140);
   const kindText = n.kind === 'mention' ? 'mentioned you in' : 'in';
   return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">

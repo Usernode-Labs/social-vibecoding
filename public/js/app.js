@@ -7,6 +7,11 @@ const App = {
   user: null,
   currentApp: null,
   currentTab: 'app',
+  // Tracks whether the dedicated #leaderboard-screen is visible.
+  // Sibling state to `currentApp`: home / app / leaderboard are the
+  // three top-level screens, and they're mutually exclusive. Flipped
+  // by navigateToLeaderboard() / _exitLeaderboard() / navigateHome().
+  _inLeaderboard: false,
 
   // Set to true while restoreFromHash() is applying a URL (e.g. on
   // popstate/hashchange) so that the navigation helpers it calls
@@ -56,6 +61,11 @@ const App = {
     App.bindEvents();
     App.connectEvents();
     App.loadVersion();
+    // Header kudos budget badge polls /api/me/kudos-budget once at
+    // load and then on a long interval (hourly safety-net for the
+    // Monday-UTC rollover). Refreshes opportunistically on every
+    // successful give + on the leaderboard screen mount.
+    if (window.Kudos?.Budget?.init) Kudos.Budget.init();
     App.restoreFromHash();
 
     // Re-poll the platform version every 10s so the header pill flips to
@@ -465,6 +475,12 @@ const App = {
             break;
           case 'vote_update':
             App.handleVoteUpdate(data);
+            break;
+          case 'kudos_update':
+            // Kudos count changed for some PR — bump cached state +
+            // any visible buttons + the leaderboard if open. Delegated
+            // to Kudos so app.js stays thin.
+            if (window.Kudos) Kudos.applyLiveUpdate(data);
             break;
           case 'session_event':
             App.handleSessionEvent(data);
@@ -909,26 +925,60 @@ const App = {
       const hash = location.hash.replace('#', '');
       if (!hash) {
         if (App.currentApp) App.navigateHome();
+        else if (App._inLeaderboard) App.navigateHome();
         else Home.load();
         return;
       }
 
       const parts = hash.split('/');
+      if (parts[0] === 'leaderboard') {
+        App.navigateToLeaderboard();
+        return;
+      }
       if (parts[0] === 'app' && parts[1]) {
         const slug = parts[1];
         const tab = parts[2] || 'app';
         const sessionId = parts[3] ? parseInt(parts[3]) : null;
+        if (App._inLeaderboard) App._exitLeaderboard();
         if (App.currentApp !== slug) {
           App.navigateToApp(slug, tab, sessionId);
         } else if (App.currentTab !== tab) {
           App.switchTab(tab, sessionId);
         }
       } else {
+        if (App._inLeaderboard) App._exitLeaderboard();
         Home.load();
       }
     } finally {
       App._isRestoring = false;
     }
+  },
+
+  // Show the leaderboard screen. Sibling to navigateToApp/navigateHome —
+  // hides home + app, reveals the dedicated #leaderboard-screen, lets
+  // the Leaderboard module render itself into #leaderboard-root.
+  navigateToLeaderboard() {
+    if (App.currentApp) {
+      AppView.close();
+      App.currentApp = null;
+      document.getElementById('app-view').classList.add('hidden');
+    }
+    document.getElementById('home-screen').classList.add('hidden');
+    const screen = document.getElementById('leaderboard-screen');
+    if (screen) screen.classList.remove('hidden');
+    document.getElementById('back-btn').classList.remove('hidden');
+    document.getElementById('app-github-link').classList.add('hidden');
+    document.getElementById('app-share-btn').classList.add('hidden');
+    document.getElementById('header-title').textContent = 'Kudos leaderboard';
+    App._inLeaderboard = true;
+    if (window.Leaderboard?.open) Leaderboard.open();
+  },
+
+  _exitLeaderboard() {
+    App._inLeaderboard = false;
+    const screen = document.getElementById('leaderboard-screen');
+    if (screen) screen.classList.add('hidden');
+    if (window.Leaderboard?.close) Leaderboard.close();
   },
 
   // Push a new history entry on real screen transitions (entering an
@@ -1147,6 +1197,7 @@ const App = {
       AppView.close();
     }
     App.currentApp = slug;
+    if (App._inLeaderboard) App._exitLeaderboard();
     document.getElementById('home-screen').classList.add('hidden');
     document.getElementById('app-view').classList.remove('hidden');
     document.getElementById('back-btn').classList.remove('hidden');
@@ -1184,6 +1235,7 @@ const App = {
     AppView.close();
     App.currentApp = null;
     document.getElementById('app-view').classList.add('hidden');
+    if (App._inLeaderboard) App._exitLeaderboard();
     document.getElementById('home-screen').classList.remove('hidden');
     document.getElementById('back-btn').classList.add('hidden');
     document.getElementById('app-github-link').classList.add('hidden');

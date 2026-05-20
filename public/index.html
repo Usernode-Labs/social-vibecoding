@@ -79,6 +79,17 @@
          when an app is open. Sits next to the platform pill so the two
          read left-to-right as "platform · app". -->
     <span id="app-version-pill-slot" class="inline-flex mr-3"></span>
+    <!-- Kudos budget badge — populated by public/js/kudos.js after the
+         initial /api/me/kudos-budget fetch. Always visible (even at 0
+         remaining; tone changes from violet to muted in that case) so
+         users learn that the link routes to the leaderboard. -->
+    <span id="kudos-budget-slot" class="inline-flex mr-3"></span>
+    <!-- Kudos leaderboard entry point. Mirrors the bell/settings icons
+         visually; links straight to the #leaderboard hash route which
+         public/js/leaderboard.js handles. -->
+    <a id="leaderboard-btn" href="#leaderboard" class="text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Kudos leaderboard" title="Kudos leaderboard">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 11V3H8v8M5 7H3v4a2 2 0 002 2h3M19 7h2v4a2 2 0 01-2 2h-3M8 15a4 4 0 008 0h-8z M12 15v3m-3 3h6"/></svg>
+    </a>
     <button id="dev-console-btn" class="hidden relative text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Open developer console">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z"/></svg>
       <span id="dev-console-badge" class="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"></span>
@@ -163,6 +174,14 @@
         Create your first app
       </button>
     </div>
+  </main>
+
+  <!-- Kudos leaderboard screen (hidden by default). Populated by
+       public/js/leaderboard.js. Sits alongside #home-screen and
+       #app-view so the hash-router can swap to it without touching
+       the others. -->
+  <main id="leaderboard-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
+    <div id="leaderboard-root" class="max-w-3xl mx-auto p-4"></div>
   </main>
 
   <!-- App view (hidden by default) -->
@@ -499,6 +518,11 @@
   <script src="/js/settings.js"></script>
   <script src="/js/group-chat.js"></script>
   <script src="/js/dev-chat.js"></script>
+  <!-- Kudos widget (button + budget badge) and leaderboard screen.
+       Loaded BEFORE app-view.js so the panel renderer can use
+       Kudos.renderButton directly. -->
+  <script src="/js/kudos.js"></script>
+  <script src="/js/leaderboard.js"></script>
   <script src="/js/app-view.js"></script>
   <script src="/js/app-secrets.js"></script>
   <script src="/js/home.js"></script>

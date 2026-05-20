@@ -190,15 +190,21 @@ async function handleMessage(pool, client, msg) {
         });
         if (notifRows.length) {
           // Hydrate with app/sender info so the client can render the
-          // dropdown item immediately without another fetch.
+          // dropdown item immediately without another fetch. Mirror the
+          // column set of notifications.listForUser so the same
+          // serialize() works for both fresh and history rows — kudos
+          // added session_id / pr_title / pr_number on top of the
+          // original mention shape.
           const { rows: hydrated } = await pool.query(
             `SELECT n.id, n.kind, n.read_at, n.created_at,
                     n.app_id, a.slug AS app_slug, a.name AS app_name,
                     n.chat_message_id, cm.content AS message_content,
+                    n.session_id, cs.pr_title, cs.pr_number,
                     su.username AS source_username, n.user_id
              FROM notifications n
              LEFT JOIN apps a ON a.id = n.app_id
              LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
+             LEFT JOIN chat_sessions cs ON cs.id = n.session_id
              LEFT JOIN users su ON su.id = n.source_user_id
              WHERE n.id = ANY($1::int[])`,
             [notifRows.map((r) => r.id)]
@@ -282,6 +288,14 @@ function pushVoteUpdate(data) {
   broadcastGlobal({ type: 'vote_update', ...data });
 }
 
+// PR kudos count changed. Fan out the new total + the giver's username
+// (so the receiving client can append the new giver to its popover
+// cache without a refetch). Same broadcast model as vote_update —
+// every connected client gets the message and decides whether it cares.
+function pushKudosUpdate(data) {
+  broadcastGlobal({ type: 'kudos_update', ...data });
+}
+
 // Notify all clients that an app's metadata changed (e.g. renamed via vote).
 function pushAppUpdate(data) {
   broadcastGlobal({ type: 'app_update', ...data });
@@ -308,4 +322,4 @@ function pushNotificationToUser(userId, payload) {
   return sent;
 }
 
-module.exports = { attach, broadcast, broadcastGlobal, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushSessionUpdate, pushVoteUpdate, pushAppUpdate, pushIssueUpdate, pushNotificationToUser };
+module.exports = { attach, broadcast, broadcastGlobal, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushSessionUpdate, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushNotificationToUser };

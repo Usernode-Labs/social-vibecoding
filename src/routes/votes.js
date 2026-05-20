@@ -197,7 +197,14 @@ function voteRoutes(config) {
         `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.staging_url, cs.user_id, cs.status, u.username, cs.created_at,
            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') as yes_count,
            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'no') as no_count,
-           (SELECT vote FROM pr_votes WHERE session_id = cs.id AND user_id = $2) as my_vote
+           (SELECT vote FROM pr_votes WHERE session_id = cs.id AND user_id = $2) as my_vote,
+           -- Kudos counts piggy-back on this query so the vote panel
+           -- doesn't fan out to N extra round-trips per PR card. The
+           -- (session_id, giver_user_id) UNIQUE constraint makes EXISTS
+           -- a single-index probe; COUNT runs against the per-session
+           -- index added in schema.sql.
+           (SELECT COUNT(*)::int FROM pr_kudos WHERE session_id = cs.id) as kudos_count,
+           (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)) as my_kudos
          FROM chat_sessions cs
          JOIN users u ON cs.user_id = u.id
          WHERE cs.app_id = $1 AND cs.status IN ('promoted', 'merging')
@@ -236,14 +243,22 @@ function voteRoutes(config) {
       const { rows: appRows } = await pool.query('SELECT id FROM apps WHERE slug = $1', [req.params.slug]);
       if (!appRows.length) return res.status(404).json({ error: 'App not found' });
 
+      const userId = req.user?.id || null;
+      // Same kudos subqueries as /promoted so the merged card can show
+      // its count + per-viewer "you gave kudos" state without a second
+      // round-trip per row. cs.user_id is also surfaced so the FE
+      // kudos button can disable itself client-side for self-PRs
+      // (server still 403s as authority).
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, u.username, cs.created_at
+        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.user_id, u.username, cs.created_at,
+           (SELECT COUNT(*)::int FROM pr_kudos WHERE session_id = cs.id) as kudos_count,
+           (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)) as my_kudos
          FROM chat_sessions cs
          JOIN users u ON cs.user_id = u.id
          WHERE cs.app_id = $1 AND cs.status = 'merged'
          ORDER BY cs.created_at DESC
          LIMIT 20`,
-        [appRows[0].id]
+        [appRows[0].id, userId]
       );
 
       res.json({ merged: rows });

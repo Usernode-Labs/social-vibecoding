@@ -1,0 +1,375 @@
+// Kudos: PR appreciation widget + header budget badge.
+//
+// Two surfaces live in this file:
+//   - Kudos.renderButton(pr, opts) — returns the HTML for a give-kudos
+//     button (count + 👏 + hover popover) suitable for inlining into a
+//     PR card (vote panel + merged list). Buttons hook the DOM via
+//     [data-kudos-session] so live updates and clicks can find them
+//     after rerenders.
+//   - Kudos.Budget — pollable + WS-driven badge in the header. Tracks
+//     remaining quota for the current user, links through to the
+//     leaderboard screen on click.
+//
+// The component is intentionally not stateful — every render produces
+// a fresh fragment of HTML using the data the caller already has
+// (kudos_count + my_kudos come from /promoted, /merged, /leaderboard
+// responses; the giver list lazy-loads on hover the first time).
+// AppView calls Kudos.applyLiveUpdate() when a `kudos_update` WS
+// event arrives so any visible button gets its count + state bumped
+// without a panel reload.
+
+const Kudos = {
+  // appSlug => Map<sessionId, { count, my_kudos, givers? }>. We cache
+  // the giver list per session so re-hovering doesn't refetch.
+  // Mutated by applyLiveUpdate when WS broadcasts arrive.
+  _cache: new Map(),
+
+  _ensureCache(sessionId) {
+    if (!Kudos._cache.has(sessionId)) {
+      Kudos._cache.set(sessionId, { count: 0, my_kudos: false, givers: null });
+    }
+    return Kudos._cache.get(sessionId);
+  },
+
+  // Seed cache from a server response (a PR row from /promoted or
+  // /merged, or a session-kudos object). Idempotent: known fields
+  // overwrite, unknown ones leave existing cache untouched. Lets a
+  // hover-popover render instantly the second time even if the
+  // canonical fetch hasn't happened yet.
+  primeFromPr(pr) {
+    if (!pr || pr.id == null) return;
+    const entry = Kudos._ensureCache(pr.id);
+    if (typeof pr.kudos_count === 'number') entry.count = pr.kudos_count;
+    if (typeof pr.my_kudos === 'boolean') entry.my_kudos = pr.my_kudos;
+  },
+
+  // Returns a button HTML string. `pr` must carry `id`, `kudos_count`,
+  // `my_kudos`, and `user_id` (PR author, for the self-kudos check).
+  // `opts.disabled` overrides everything else (e.g. "PR not yet
+  // promoted, hide button"). `opts.compact` switches to the small
+  // variant used in tight lists; default is the regular button.
+  //
+  // The button is wrapped in a positioned container so the absolute
+  // popover lines up against it. The popover is rendered empty and
+  // hydrated on first hover via fetch.
+  renderButton(pr, opts = {}) {
+    Kudos.primeFromPr(pr);
+    const entry = Kudos._ensureCache(pr.id);
+    const count = entry.count || 0;
+    const mine = !!entry.my_kudos;
+
+    const viewerId = window.App?.user?.id || null;
+    const isSelf = viewerId && pr.user_id && pr.user_id === viewerId;
+
+    // Disabled reasons:
+    //   - explicit opts.disabled
+    //   - viewer is the author (self-kudos forbidden — match server)
+    //   - viewer already gave kudos (server returns 409 if retried)
+    // We don't gate on quota here; the budget badge surfaces it and a
+    // 429 from POST shows a toast.
+    const disabledReason = opts.disabled
+      ? opts.disabledReason || ''
+      : isSelf
+        ? 'You can\u2019t give kudos to your own PR'
+        : mine
+          ? 'You already gave kudos to this PR'
+          : '';
+    const disabled = !!disabledReason;
+
+    const sizeCls = opts.compact
+      ? 'gc-vote-btn'
+      : 'gc-vote-btn';
+    const activeCls = mine ? ' gc-vote-active' : '';
+    const disabledCls = disabled ? ' opacity-60 cursor-not-allowed' : '';
+
+    const tipAttr = disabledReason ? ` title="${escapeAttr(disabledReason)}"` : '';
+
+    // Wrap in a relatively-positioned span so the popover can absolute-
+    // position against it. Clicks and hover are bound by Kudos.attach()
+    // (called by app-view after innerHTML render).
+    return `
+      <span class="kudos-wrap relative inline-block" data-kudos-session="${pr.id}">
+        <button class="${sizeCls}${activeCls}${disabledCls}" ${disabled ? 'disabled' : ''}${tipAttr}
+                data-kudos-action="give" data-kudos-session-id="${pr.id}">
+          <span aria-hidden="true">\u{1F44F}</span>
+          <span data-kudos-count>${count}</span>
+        </button>
+        <span class="kudos-popover hidden absolute z-30 right-0 top-full mt-1 min-w-[12rem] max-w-[18rem]
+                     bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700
+                     rounded-lg shadow-xl text-xs text-zinc-700 dark:text-zinc-200 p-2"
+              data-kudos-popover></span>
+      </span>`;
+  },
+
+  // Bind hover + click handlers for any kudos wrappers under `root`
+  // (default: whole document). Idempotent — re-binding the same node
+  // is a no-op via the data-kudos-bound marker.
+  attach(root) {
+    const scope = root || document;
+    scope.querySelectorAll('.kudos-wrap[data-kudos-session]').forEach((wrap) => {
+      if (wrap.dataset.kudosBound === '1') return;
+      wrap.dataset.kudosBound = '1';
+      const sid = parseInt(wrap.dataset.kudosSession, 10);
+      const btn = wrap.querySelector('[data-kudos-action="give"]');
+      const popover = wrap.querySelector('[data-kudos-popover]');
+      if (btn) {
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (btn.disabled) return;
+          Kudos.give(sid);
+        });
+      }
+      if (popover) {
+        // Lazy-load givers on first hover. Cached afterwards.
+        let loadPromise = null;
+        wrap.addEventListener('mouseenter', () => {
+          popover.classList.remove('hidden');
+          const entry = Kudos._ensureCache(sid);
+          if (entry.count === 0) {
+            popover.innerHTML = '<span class="text-zinc-500">No kudos yet — be the first.</span>';
+            return;
+          }
+          if (!entry.givers && !loadPromise) {
+            loadPromise = Kudos.fetchGivers(sid).then(() => {
+              if (!popover.classList.contains('hidden')) Kudos._renderPopover(sid, popover);
+            });
+            popover.innerHTML = '<span class="text-zinc-500">Loading…</span>';
+            return;
+          }
+          Kudos._renderPopover(sid, popover);
+        });
+        wrap.addEventListener('mouseleave', () => {
+          popover.classList.add('hidden');
+        });
+      }
+    });
+  },
+
+  _renderPopover(sid, popover) {
+    const entry = Kudos._ensureCache(sid);
+    if (!entry.givers || !entry.givers.length) {
+      popover.innerHTML = '<span class="text-zinc-500">No kudos yet — be the first.</span>';
+      return;
+    }
+    const items = entry.givers.map((g) => {
+      const who = escapeHtml(g.username || 'someone');
+      const when = relativeTime(g.createdAt);
+      return `<div class="flex items-center justify-between gap-2 py-0.5">
+        <span class="font-medium">@${who}</span>
+        <span class="text-zinc-500">${when}</span>
+      </div>`;
+    }).join('');
+    popover.innerHTML = `<div class="mb-1 text-zinc-500 dark:text-zinc-400">Kudos givers (${entry.givers.length})</div>${items}`;
+  },
+
+  async fetchGivers(sessionId) {
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/kudos`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const entry = Kudos._ensureCache(sessionId);
+      entry.count = data.count || 0;
+      entry.my_kudos = !!data.my_kudos;
+      entry.givers = Array.isArray(data.givers) ? data.givers : [];
+      // Bump the in-DOM counter in case the cache was stale.
+      Kudos._refreshButton(sessionId);
+    } catch (err) {
+      console.warn('[kudos] fetchGivers failed', err);
+    }
+  },
+
+  // POST /api/sessions/:id/kudos and react to all 5 outcomes
+  // (ok / 403 self / 409 dup / 404 ineligible / 429 quota / 500).
+  async give(sessionId) {
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/kudos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        const entry = Kudos._ensureCache(sessionId);
+        entry.my_kudos = true;
+        entry.count = (entry.count || 0) + 1;
+        // Append the viewer to the cached giver list so the popover
+        // reflects the change immediately (without waiting for the
+        // WS bounce). The WS handler is idempotent on count, so even
+        // if we double-apply nothing breaks.
+        if (entry.givers) {
+          entry.givers.push({
+            username: window.App?.user?.username || 'you',
+            createdAt: new Date().toISOString(),
+          });
+        }
+        Kudos._refreshButton(sessionId);
+        // The server already broadcast a kudos_update; we'd see it
+        // back as another live update which is harmless (dedup via
+        // sessionId-keyed state). Refresh the budget badge so the
+        // header re-renders the new remaining count.
+        Kudos.Budget.refresh();
+      } else if (res.status === 429) {
+        Kudos._toast(data.error || 'Weekly kudos quota exceeded.');
+      } else if (res.status === 403) {
+        Kudos._toast('You can\u2019t give kudos to your own PR.');
+      } else if (res.status === 409) {
+        Kudos._toast('You already gave kudos to this PR.');
+      } else if (res.status === 404) {
+        Kudos._toast(data.error || 'This PR isn\u2019t eligible for kudos.');
+      } else {
+        Kudos._toast('Failed to give kudos. Try again?');
+      }
+    } catch (err) {
+      console.warn('[kudos] give failed', err);
+      Kudos._toast('Network error giving kudos.');
+    }
+  },
+
+  // Called by App's WS handler. Bumps the cache for `sessionId` and
+  // updates any live button(s) in place. Also nudges Budget.refresh
+  // when *we* are not the giver (when we are, give() already updated
+  // the badge optimistically).
+  applyLiveUpdate(data) {
+    if (!data || !data.sessionId) return;
+    const entry = Kudos._ensureCache(data.sessionId);
+    if (typeof data.count === 'number') entry.count = data.count;
+    if (data.giverUsername) {
+      const me = window.App?.user?.username;
+      if (data.giverUsername === me) entry.my_kudos = true;
+      // Lazy-append to the giver list cache if we have it. We can't
+      // be sure of createdAt — use "now" which is close enough for
+      // the popover display (the next hover re-fetch will reconcile).
+      if (entry.givers) {
+        const exists = entry.givers.some((g) => g.username === data.giverUsername);
+        if (!exists) {
+          entry.givers.push({
+            username: data.giverUsername,
+            createdAt: new Date().toISOString(),
+          });
+        }
+      }
+    }
+    Kudos._refreshButton(data.sessionId);
+    // Leaderboard screen, if open, refresh inline.
+    if (window.Leaderboard?.isOpen?.()) window.Leaderboard.refresh();
+  },
+
+  _refreshButton(sessionId) {
+    const entry = Kudos._ensureCache(sessionId);
+    document.querySelectorAll(`.kudos-wrap[data-kudos-session="${sessionId}"]`).forEach((wrap) => {
+      const counter = wrap.querySelector('[data-kudos-count]');
+      if (counter) counter.textContent = String(entry.count || 0);
+      const btn = wrap.querySelector('[data-kudos-action="give"]');
+      if (btn) {
+        if (entry.my_kudos) {
+          btn.classList.add('gc-vote-active');
+          btn.disabled = true;
+          btn.setAttribute('title', 'You already gave kudos to this PR');
+        }
+      }
+    });
+  },
+
+  _toast(msg) {
+    // Lightweight toast — we don't have a global toast system, so
+    // surface it as a transient bottom-center banner that fades
+    // after a few seconds. Stacking is handled by replacing the
+    // previous toast in-place.
+    let el = document.getElementById('kudos-toast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'kudos-toast';
+      el.className = 'fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] px-4 py-2 rounded-lg bg-zinc-900 text-white text-sm shadow-xl border border-zinc-700 transition-opacity duration-300 opacity-0 pointer-events-none';
+      document.body.appendChild(el);
+    }
+    el.textContent = msg;
+    el.classList.remove('opacity-0');
+    el.classList.add('opacity-100');
+    clearTimeout(el._timer);
+    el._timer = setTimeout(() => {
+      el.classList.remove('opacity-100');
+      el.classList.add('opacity-0');
+    }, 3000);
+  },
+
+  // ----------------------------------------------------------------
+  // Header budget badge — polls /api/me/kudos-budget on first load
+  // and re-fetches after every successful give() or any kudos_update
+  // that names us as the giver. Cheap enough to also poll once an
+  // hour as a safety net against the Monday-UTC rollover happening
+  // while a tab is open across the boundary.
+  // ----------------------------------------------------------------
+  Budget: {
+    state: null,
+    _refreshTimer: null,
+
+    init() {
+      Kudos.Budget.refresh();
+      // Long-tab safety net: re-fetch hourly so a tab left open
+      // through Monday-00-UTC sees the bucket reset without a manual
+      // page refresh.
+      Kudos.Budget._refreshTimer = setInterval(Kudos.Budget.refresh, 60 * 60 * 1000);
+    },
+
+    async refresh() {
+      try {
+        const res = await fetch('/api/me/kudos-budget');
+        if (!res.ok) return;
+        const data = await res.json();
+        Kudos.Budget.state = data;
+        Kudos.Budget._render();
+      } catch (err) {
+        console.warn('[kudos] budget refresh failed', err);
+      }
+    },
+
+    _render() {
+      const slot = document.getElementById('kudos-budget-slot');
+      if (!slot) return;
+      const s = Kudos.Budget.state;
+      if (!s) {
+        slot.innerHTML = '';
+        return;
+      }
+      const remaining = s.remaining;
+      const limit = s.limit;
+      // Click navigates to the leaderboard. Tooltip explains the
+      // weekly cap + reset boundary.
+      const tip = `${remaining} of ${limit} kudos left this week. Resets Monday 00:00 UTC.`;
+      const tone = remaining === 0
+        ? 'border-zinc-300 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400'
+        : 'border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-900/30';
+      slot.innerHTML = `
+        <a href="#leaderboard" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-medium ${tone}" title="${escapeAttr(tip)}">
+          <span aria-hidden="true">\u{1F44F}</span>
+          <span>${remaining}</span>
+        </a>`;
+      // Header layout watches for slot size changes so the centered
+      // title knows about the new width.
+      if (window.HeaderLayout?.refresh) window.HeaderLayout.refresh();
+    },
+  },
+};
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = String(str == null ? '' : str);
+  return div.innerHTML;
+}
+
+function escapeAttr(str) {
+  return escapeHtml(str).replace(/"/g, '&quot;');
+}
+
+function relativeTime(ts) {
+  if (!ts) return '';
+  const then = new Date(ts).getTime();
+  const now = Date.now();
+  const diff = Math.max(0, now - then) / 1000;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+window.Kudos = Kudos;

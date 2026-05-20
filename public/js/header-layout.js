@@ -96,9 +96,16 @@
   // Re-evaluate on header size changes (viewport resize, devtools
   // open/close, sidebar toggle, etc.) and on right-group size changes
   // (deploy state pill flip, platform-version chip changes, app
-  // navigation that swaps the per-app pill content).
+  // navigation that swaps the per-app pill content, kudos budget
+  // badge appearing).
   new ResizeObserver(schedule).observe(header);
   new ResizeObserver(schedule).observe(rightGroup);
+
+  // Expose a manual recompute hook for components that mutate the
+  // right group via innerHTML and want an instant remeasure rather
+  // than waiting on the next ResizeObserver tick. Kudos.Budget._render
+  // calls this after re-rendering the badge.
+  window.HeaderLayout = { refresh: schedule };
 
   // Title text changes (Home → AppView navigation, app rename, etc.)
   // don't fire ResizeObserver because the title's rendered width is

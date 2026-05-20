@@ -64,16 +64,24 @@ async function createMentionNotifications(pool, { appId, chatMessageId, senderId
 // Fetch up to `limit` recent notifications for a user, newest first.
 // Joins app + sender + message content so the UI dropdown can render in a
 // single round-trip.
+//
+// Kudos notifications reference a chat_session instead of a chat_message,
+// so we join both tables and the FE renderer picks the right one based on
+// `kind`. Both joins are LEFT so mentions still render fine without a
+// session and kudos still render fine without a message.
 async function listForUser(pool, userId, { limit = 30 } = {}) {
   const { rows } = await pool.query(
     `SELECT n.id, n.kind, n.read_at, n.created_at,
             n.app_id, a.slug AS app_slug, a.name AS app_name,
             n.chat_message_id,
             cm.content AS message_content,
+            n.session_id,
+            cs.pr_title, cs.pr_number,
             su.username AS source_username
      FROM notifications n
      LEFT JOIN apps a ON a.id = n.app_id
      LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
+     LEFT JOIN chat_sessions cs ON cs.id = n.session_id
      LEFT JOIN users su ON su.id = n.source_user_id
      WHERE n.user_id = $1
      ORDER BY n.created_at DESC
@@ -109,6 +117,11 @@ async function markRead(pool, userId, { id, all = false } = {}) {
 // Decorate a raw notification row with the fields the client dropdown wants.
 // Keeps the wire format identical whether the notif is fresh (over WS) or
 // loaded from history (`GET /api/notifications`).
+//
+// Kudos extension: sessionId / prTitle / prNumber ride along whenever the
+// row carries a session reference. The FE renderer keys off `kind` to
+// decide which fields to use — kudos rows ignore chatMessageId /
+// messageContent, mention rows ignore sessionId / prTitle.
 function serialize(row) {
   return {
     id: row.id,
@@ -119,6 +132,9 @@ function serialize(row) {
     appName: row.app_name,
     chatMessageId: row.chat_message_id,
     messageContent: row.message_content,
+    sessionId: row.session_id,
+    prTitle: row.pr_title,
+    prNumber: row.pr_number,
     sourceUsername: row.source_username,
   };
 }

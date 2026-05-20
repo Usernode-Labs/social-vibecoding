@@ -504,6 +504,14 @@ const AppView = {
               </div>`;
             continue;
           }
+          // Kudos button piggybacks on the same PR row. The vote
+          // panel/PR card already carries kudos_count + my_kudos from
+          // the /promoted query (extended in routes/votes.js); we
+          // pass the full row so Kudos.renderButton's self-kudos
+          // check (viewer === pr.user_id) works.
+          const kudosBtn = window.Kudos
+            ? Kudos.renderButton(pr, { compact: true })
+            : '';
           bodyHtml += `
             <div class="gc-vote-item flex items-center gap-2 py-1">
               <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-violet-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
@@ -512,6 +520,7 @@ const AppView = {
               ${pr.staging_url ? `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStaging('${pr.staging_url}')">Preview</button>` : ''}
               <button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}" onclick="AppView.castVote(${pr.id}, 'yes')">Yes (${pr.yes_count})</button>
               <button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}" onclick="AppView.castVote(${pr.id}, 'no')">No (${pr.no_count})</button>
+              ${kudosBtn}
             </div>`;
         }
         bodyHtml += '</div>';
@@ -560,11 +569,18 @@ const AppView = {
           const mergedLabel = pr.pr_title
             ? `${escapeHtml(pr.pr_title)} <span class="text-zinc-500">· ${escapeHtml(pr.username)}</span>`
             : `by ${escapeHtml(pr.username)}`;
+          // Merged PRs are still eligible for kudos (promoted + merging
+          // + merged) — that's intentional. People often come back to
+          // a recently-merged PR and want to thank the author.
+          const kudosBtn = window.Kudos
+            ? Kudos.renderButton(pr, { compact: true })
+            : '';
           bodyHtml += `
             <div class="gc-vote-item flex items-center gap-2 py-1">
               <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-emerald-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
               <span class="text-xs text-zinc-400 flex-1 truncate">${mergedLabel}</span>
               <span class="text-xs text-zinc-600">${date}</span>
+              ${kudosBtn}
             </div>`;
         }
         bodyHtml += '</div>';
@@ -593,6 +609,11 @@ const AppView = {
         if (body) body.classList.toggle('hidden');
         if (arrow) arrow.innerHTML = AppView.panelOpen ? '&#9660;' : '&#9654;';
       });
+
+      // Bind hover + click handlers for any kudos buttons we just
+      // rendered. Idempotent — Kudos.attach skips wrappers it has
+      // already bound (data-kudos-bound flag).
+      if (window.Kudos) Kudos.attach(panel);
     } catch {
       panel.innerHTML = '';
     }

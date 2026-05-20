@@ -280,8 +280,9 @@ INSERT INTO platform_settings (key, value) VALUES
 ON CONFLICT (key) DO NOTHING;
 
 -- Notifications. Generic row format so we can add more `kind`s later
--- (PR approvals, etc). Currently only 'mention' is emitted from the
--- group-chat @mention parser (see src/services/ws.js).
+-- (PR approvals, etc). Currently 'mention' (group-chat @mention parser
+-- in src/services/ws.js) and 'kudos' (PR kudos give in
+-- src/routes/kudos.js).
 CREATE TABLE IF NOT EXISTS notifications (
   id              SERIAL PRIMARY KEY,
   user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -297,6 +298,13 @@ CREATE INDEX IF NOT EXISTS idx_notifications_user_unread
   WHERE read_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_notifications_user_recent
   ON notifications (user_id, created_at DESC);
+
+-- Kudos notifications carry a chat_sessions reference so the notification
+-- dropdown can navigate back to the PR (group-chat tab) and render the
+-- PR's title in the preview. Added later than the rest of the column
+-- set, so wrapped in IF NOT EXISTS for idempotent re-runs.
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS session_id
+  INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE;
 
 -- Per-app environment secrets. Values are AES-256-GCM encrypted via
 -- src/services/secrets.js (keyed off jwtSecret), serialized as
@@ -369,3 +377,34 @@ COMMENT ON COLUMN apps.db_password IS 'staging:private';
 -- users table itself, chat_messages, issue_votes, pr_votes. These
 -- carry no per-row secrets and the aggregates are already visible
 -- to anyone the staging clone would be spun up for.
+
+-- PR kudos. A platform-wide appreciation signal that's orthogonal to
+-- `pr_votes` (which is a yes/no merge gate). Every user gets 5 kudos
+-- per week, can give at most 1 per PR, can't give to their own PR, and
+-- can't take a kudos back. Eligibility lives in src/routes/kudos.js:
+-- only chat_sessions in status ('promoted','merging','merged') can
+-- receive kudos.
+--
+-- `week_start` is the Monday-00:00-UTC bucket containing `created_at`,
+-- stored explicitly so (giver_user_id, week_start) is an indexable
+-- equality lookup for the per-week quota check. Postgres
+-- `date_trunc('week', x AT TIME ZONE 'UTC')::DATE` returns the Monday
+-- of that ISO week, which matches the boundary exactly. See
+-- src/routes/kudos.js for both the JS-side (`weekStartUtc`) and SQL
+-- usages — keep them aligned if the boundary is ever changed.
+--
+-- Tagged staging:private so kudos history doesn't leak into staging
+-- clones; per-user counts are derivable from production but the
+-- row-level (giver, PR) attribution is privacy-flavored social data.
+CREATE TABLE IF NOT EXISTS pr_kudos (
+  id             SERIAL PRIMARY KEY,
+  session_id     INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  giver_user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  week_start     DATE NOT NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(session_id, giver_user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_pr_kudos_session     ON pr_kudos (session_id);
+CREATE INDEX IF NOT EXISTS idx_pr_kudos_giver_week  ON pr_kudos (giver_user_id, week_start);
+CREATE INDEX IF NOT EXISTS idx_pr_kudos_created     ON pr_kudos (created_at DESC);
+COMMENT ON TABLE pr_kudos IS 'staging:private';
