@@ -3,7 +3,7 @@ const log = require('./logger');
 const { execFileAsync } = require('./docker');
 
 const USERNODE_CONF_PATH = process.env.USERNODE_CONF_PATH || '/etc/caddy/usernode.conf';
-const USERNODE_DOMAIN = process.env.USERNODE_DOMAIN || 'usernode.evanshapiro.dev';
+const USERNODE_DOMAIN = process.env.USERNODE_DOMAIN || 'social-vibecoding.usernodelabs.org';
 
 async function registerRoute(hostname, containerName, port) {
   const routeBlock = `\n${hostname} {\n    reverse_proxy ${containerName}:${port}\n}\n`;

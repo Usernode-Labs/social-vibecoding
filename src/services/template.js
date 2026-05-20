@@ -74,10 +74,9 @@ const DEV_CONSOLE_FORWARDER = `
 // inject into scaffolded apps? Apps need to point users back to the
 // platform that hosts them (the "Open in Usernode" landing page) and
 // reference its `/claude.md` URL. Driven by USERNODE_DOMAIN env so a
-// fork running at e.g. social-vibecoding.usernodelabs.org templates
-// the right URL into its child apps. Fallback covers the historical
-// monorepo deploy.
-const PLATFORM_DOMAIN = process.env.USERNODE_DOMAIN || 'usernode.evanshapiro.dev';
+// fork running at a different domain templates the right URL into its
+// child apps. Fallback is the canonical standalone deploy.
+const PLATFORM_DOMAIN = process.env.USERNODE_DOMAIN || 'social-vibecoding.usernodelabs.org';
 const PLATFORM_BASE_URL = `https://${PLATFORM_DOMAIN}`;
 
 function getTemplateFiles(appName, slug, dbUrl, jwtSecret) {

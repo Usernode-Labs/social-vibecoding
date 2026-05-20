@@ -5,7 +5,8 @@
 // container at *its* own view of the host — not at the string "localhost".
 //
 // No-op for any URL that doesn't point at localhost / 127.0.0.1, so
-// production URLs (https://<slug>.evanshapiro.dev) are untouched.
+// production URLs (https://<slug>.social-vibecoding.usernodelabs.org)
+// are untouched.
 
 (function () {
   const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
