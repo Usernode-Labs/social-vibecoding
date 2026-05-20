@@ -77,6 +77,14 @@ assert_safe_extract_dir() {
   [[ "$dir" != "$HOME" ]] || die "refusing to replace HOME directory: $dir"
 }
 
+check_extract_dir_available() {
+  local dir="$1"
+  assert_safe_extract_dir "$dir"
+  if [[ -e "$dir" ]] && ! dir_is_empty "$dir" && [[ "$replace" -eq 0 ]]; then
+    die "extract directory already exists and is not empty: $dir (use --replace)"
+  fi
+}
+
 server=""
 remote_source="$DEFAULT_REMOTE_SOURCE"
 remote_work_dir="$DEFAULT_REMOTE_WORK_DIR"
@@ -184,6 +192,10 @@ fi
 
 local_tar_dir="$(expand_local_path "$local_tar_dir")"
 extract_dir="$(expand_local_path "$extract_dir")"
+
+if [[ "$no_extract" -eq 0 ]]; then
+  check_extract_dir_available "$extract_dir"
+fi
 
 ssh_remote() {
   if (( ${#ssh_opts[@]} )); then
