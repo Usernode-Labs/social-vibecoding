@@ -54,10 +54,10 @@ function mintWorkerJwt(sessionId) {
 // stream-json --verbose`). The worker entrypoint additionally emits a
 // handful of sentinel lines the host relies on:
 //
-//   __USERNODE_PHASE__  <phase>                            status transitions
-//   __USERNODE_RESULT__ cc_exit=N ahead=N sha=… push_ok=N      final summary
-//   __USERNODE_WARN__   <msg>                              non-fatal issue
-//   __USERNODE_ERROR__  <msg>                              fatal, bail out
+//   __USERNODE_PHASE__  <phase>                                                  status transitions
+//   __USERNODE_RESULT__ cc_exit=N ahead=N behind=N sha=… push_ok=N [sync_result=…]   final summary
+//   __USERNODE_WARN__   <msg>                                                    non-fatal issue
+//   __USERNODE_ERROR__  <msg>                                                    fatal, bail out
 //
 // Everything else is treated as a plain progress line (git output, etc.).
 //
@@ -197,8 +197,10 @@ function parseLine(line, onProgress, state) {
       const [k, v] = kv.split('=');
       if (k === 'cc_exit') state.ccExit = parseInt(v, 10);
       else if (k === 'ahead') state.ahead = parseInt(v, 10) || 0;
+      else if (k === 'behind') state.behind = parseInt(v, 10) || 0;
       else if (k === 'sha') state.sha = v || null;
       else if (k === 'push_ok') state.pushOk = v === '1';
+      else if (k === 'sync_result') state.syncResult = v || null;
     }
     state.resultSeen = true;
     return;
@@ -230,8 +232,16 @@ function newWatchState() {
     ccIsError: false,
     ccExit: null,
     ahead: 0,
+    // #8: how many commits the branch is behind origin/main, parsed from
+    // run-cc.sh's __USERNODE_RESULT__ line. Persisted to
+    // chat_sessions.behind_main on every turn so the dev-chat banner
+    // and merge-time block always reflect the latest state.
+    behind: 0,
     sha: null,
     pushOk: false,
+    // #8: clean|resolved|conflict|already_synced (MODE=sync only). The
+    // route handler routes the chat message off this.
+    syncResult: null,
     phase: null,
     fatalError: null,
     resultSeen: false,

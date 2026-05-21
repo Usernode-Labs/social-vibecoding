@@ -80,9 +80,155 @@ function extractSpecSnippet(content, title) {
   return lines.slice(start).join('\n').slice(0, 280);
 }
 
-// Read the live spec_md draft for a session. Used to inject the current
-// spec into the Mayor's system prompt every turn so it never edits
-// blind, and to validate edit_spec calls against fresh DB state.
+// #8: persist the latest behind-origin/main count for a session and
+// broadcast a session_update so the dev-chat banner refreshes live.
+// No-op (with logging) if the write fails — drift accounting is
+// best-effort; the next turn will refresh it.
+async function persistBehindMain(pool, session, behind) {
+  try {
+    const n = Number.isFinite(behind) ? Math.max(0, behind) : 0;
+    await pool.query(
+      'UPDATE chat_sessions SET behind_main = $1 WHERE id = $2',
+      [n, session.id]
+    );
+    try {
+      const { pushSessionUpdate } = require('../services/ws');
+      pushSessionUpdate({
+        action: 'behind_main',
+        sessionId: session.id,
+        appSlug: session.app_slug || null,
+        behindMain: n,
+      });
+    } catch (_) { /* ws failures are non-fatal */ }
+  } catch (err) {
+    log.warn('sessions', 'persistBehindMain failed', { sessionId: session?.id, err: err.message });
+  }
+}
+
+// #8: dispatch a MODE=sync worker turn for the given session. Used by
+// both POST /api/sessions/:id/sync-main (explicit user click) and the
+// silent auto-trigger inside POST /resume. Idempotent / safe to call
+// when nothing's behind (the worker short-circuits with
+// sync_result=already_synced).
+//
+// Returns an object the route can serialise verbatim:
+//   { ok: true, syncResult, behind, sha, pushOk, message }
+// Throws on infrastructure errors (image build, ensureWorker) — the
+// route catches and 500s; the background caller in /resume catches
+// and warns.
+async function runSyncMain(config, pool, sessionId, { sessionRow } = {}) {
+  let session = sessionRow;
+  if (!session) {
+    const { rows } = await pool.query(
+      `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+       FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
+       WHERE cs.id = $1`,
+      [sessionId]
+    );
+    if (!rows.length) throw new Error('Session not found');
+    session = rows[0];
+  }
+
+  if (!session.repo_url) {
+    throw new Error('Session has no repo_url; cannot sync');
+  }
+  const m = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+  if (!m) throw new Error(`Unparseable repo_url: ${session.repo_url}`);
+  const [, repoOwner, repoName] = m;
+
+  // Look up the owner's BYOK key (matches the build-turn flow).
+  // Sync turns charge to the session owner — they're the one who
+  // benefits from the integration. If decryption fails the worker
+  // falls back to the platform proxy via WORKER_JWT just like build
+  // turns do.
+  let userApiKey = null;
+  try {
+    const { rows: keyRows } = await pool.query(
+      'SELECT anthropic_key_enc FROM users WHERE id = $1',
+      [session.user_id]
+    );
+    if (keyRows[0]?.anthropic_key_enc) {
+      const secrets = require('../services/secrets');
+      userApiKey = secrets.decrypt(keyRows[0].anthropic_key_enc, config.jwtSecret);
+    }
+  } catch (_) { userApiKey = null; }
+
+  await worker.ensureWorkerImage();
+  await worker.ensureWorker(session.id, {
+    repoOwner,
+    repoName,
+    branchName: session.branch_name,
+    anthropicApiKey: userApiKey || null,
+    onProgress: () => {},
+  });
+
+  activeWorkers.add(session.id);
+  let result;
+  try {
+    result = await worker.execInWorker(session.id, {
+      mode: 'sync',
+      prompt: '(sync turn — see MODE=sync block in run-cc.sh)',
+      // Use a small fast model — the prompt is short and the task is
+      // mechanical. The route's caller doesn't get to pick.
+      model: 'claude-sonnet-4-6',
+      commitMsg: '',
+      // Don't pass cc_session_id — we don't want sync turns polluting
+      // the session's main CC conversation thread.
+      resumeSessionId: null,
+      branchName: session.branch_name,
+      anthropicApiKey: userApiKey || null,
+      onProgress: () => {},
+    });
+  } finally {
+    activeWorkers.delete(session.id);
+  }
+
+  // Persist the new behind count regardless of outcome (a failed
+  // sync still teaches us how stale we are).
+  await persistBehindMain(pool, session, result.behind || 0);
+
+  const syncResult = result.syncResult || (result.exitCode === 0 ? 'clean' : 'conflict');
+  let message;
+  switch (syncResult) {
+    case 'already_synced':
+      message = 'Already up to date with main — nothing to merge.';
+      break;
+    case 'clean':
+      message = `Merged main cleanly. Pushed ${result.sha ? result.sha.slice(0, 7) : 'merge commit'}.`;
+      break;
+    case 'resolved':
+      message = `Claude resolved merge conflicts with main and pushed ${result.sha ? result.sha.slice(0, 7) : 'the merge commit'}.`;
+      break;
+    case 'conflict':
+    default:
+      message = 'Tried to sync with main but Claude couldn\'t resolve the conflicts. The branch is unchanged; try again or resolve locally.';
+      break;
+  }
+
+  // Drop a system note into the session chat so the user has a
+  // breadcrumb on refresh.
+  try {
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+       VALUES ($1, 'system', $2, $3)`,
+      [session.id, message, JSON.stringify({ syncMain: { syncResult, behind: result.behind || 0, sha: result.sha || null } })]
+    );
+  } catch (_) { /* non-fatal */ }
+
+  return {
+    ok: syncResult !== 'conflict',
+    syncResult,
+    behind: result.behind || 0,
+    sha: result.sha || null,
+    pushOk: !!result.pushOk,
+    message,
+  };
+}
+
+// #8: persist the latest behind-origin/main count for a session and
+// broadcast a session_update so the dev-chat banner refreshes live.
+// No-op (with logging) if the write fails — drift accounting is
+// best-effort; the next turn will refresh it.
 async function loadSessionSpec(pool, sessionId) {
   const { rows } = await pool.query(
     'SELECT spec_md FROM chat_sessions WHERE id = $1',
@@ -159,7 +305,7 @@ function sessionRoutes(config) {
       if (!appRows.length) return res.status(404).json({ error: 'App not found' });
 
       const { rows } = await pool.query(
-        `SELECT id, branch_name, pr_number, pr_url, pr_title, staging_url, status, created_at
+        `SELECT id, branch_name, pr_number, pr_url, pr_title, staging_url, status, behind_main, created_at
          FROM chat_sessions
          WHERE app_id = $1 AND user_id = $2
          ORDER BY created_at DESC`,
@@ -432,10 +578,73 @@ function sessionRoutes(config) {
       const { pushSessionUpdate } = require('../services/ws');
       pushSessionUpdate({ action: 'resumed', sessionId, appSlug });
       log.info('sessions', 'Session resumed', { sessionId });
+
+      // #8: if the resumed session is behind main, kick off a silent
+      // sync in the background. The HTTP response returns immediately
+      // (the UI doesn't wait for the sync to complete) — drift
+      // accounting is best-effort and the dev-chat banner will
+      // update via the session_update WS event when it lands. We
+      // run this only when the session has a known positive drift
+      // count from a prior turn; sessions that never ran a turn
+      // have behind_main=0 and the next /chat turn will populate it.
+      const { rows: driftRows } = await pool.query(
+        'SELECT behind_main FROM chat_sessions WHERE id = $1',
+        [sessionId]
+      );
+      if ((driftRows[0]?.behind_main || 0) > 0) {
+        // Fire-and-forget. Failures are logged but don't bubble up;
+        // the user explicitly clicking "Sync with main" later will
+        // re-attempt with full surface area for errors.
+        runSyncMain(config, pool, sessionId).catch((err) => {
+          log.warn('sessions', 'Background sync-on-resume failed', {
+            sessionId, err: err.message,
+          });
+        });
+      }
+
       res.json({ ok: true });
     } catch (err) {
       log.error('sessions', 'Resume failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #8: POST /api/sessions/:id/sync-main
+  //   Merge origin/main into the session's branch. Runs a worker turn
+  //   in MODE=sync (see worker/run-cc.sh). Clean merges are
+  //   commit+push only (no CC, no LLM spend); conflicts dispatch CC
+  //   with a resolution-only prompt and abort cleanly if CC can't
+  //   resolve.
+  //
+  //   Owner-only. Returns the syncResult so the UI can route messaging:
+  //     already_synced — nothing to do
+  //     clean          — merged + pushed without LLM
+  //     resolved       — CC resolved conflicts; merged + pushed
+  //     conflict       — CC couldn't resolve; merge aborted, no push
+  router.post('/api/sessions/:id/sync-main', drainGuard, async (req, res) => {
+    const sessionId = parseInt(req.params.id, 10);
+    if (Number.isNaN(sessionId)) return res.status(400).json({ error: 'Bad session id' });
+
+    try {
+      const { rows } = await pool.query(
+        `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+         FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
+         WHERE cs.id = $1 AND cs.user_id = $2`,
+        [sessionId, req.user.id]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Session not found' });
+      const session = rows[0];
+      if (!['active', 'promoted'].includes(session.status)) {
+        return res.status(409).json({
+          error: `Cannot sync a ${session.status} session — resume or unarchive first.`,
+        });
+      }
+
+      const result = await runSyncMain(config, pool, sessionId, { sessionRow: session });
+      res.json(result);
+    } catch (err) {
+      log.error('sessions', 'sync-main failed', { sessionId, err: err.message });
+      res.status(500).json({ error: err.message || 'Internal server error' });
     }
   });
 
@@ -2227,6 +2436,13 @@ INSTRUCTIONS:
     const ccText = result.lastResultText || '';
     commitHash = result.sha;
     const hasChanges = result.ahead > 0 && !!commitHash;
+
+    // #8: persist the latest behind-main count + broadcast so any open
+    // dev-chat banner refreshes without waiting for the next session
+    // refetch. We do this here (post-CC, before push outcome handling)
+    // so the value lands even on the no-changes paths below — every
+    // turn is an opportunity to learn the branch drifted.
+    await persistBehindMain(pool, session, result.behind || 0);
 
     if (result.fatalError) {
       isError = true;

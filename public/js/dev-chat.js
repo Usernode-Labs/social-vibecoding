@@ -1846,6 +1846,104 @@ const DevChat = {
     });
   },
 
+  // ── Sync-with-main banner (#8) ────────────────────────────
+  //
+  // Shows up below the session header whenever the branch is behind
+  // origin/main. Click triggers POST /api/sessions/:id/sync-main,
+  // which dispatches a worker turn in MODE=sync. The worker
+  // short-circuits when the merge is clean (no LLM spend); only
+  // dispatches CC when there are real conflicts to resolve.
+  //
+  // The behind count is refreshed live via the WS session_update
+  // event (action='behind_main'); see App.handleSessionUpdate.
+
+  _renderSyncBannerHtml(session) {
+    const behind = session && Number(session.behind_main) || 0;
+    if (behind <= 0) return '';
+    const syncing = !!DevChat._syncInFlight;
+    const noun = behind === 1 ? 'commit' : 'commits';
+    return `
+      <div id="dc-sync-banner" class="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs">
+        <svg class="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.732 0 2.814-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
+        </svg>
+        <span class="text-amber-800 dark:text-amber-200 flex-1">
+          main has moved <span class="font-semibold">${behind}</span> ${noun} ahead of this branch.
+        </span>
+        <button id="dc-sync-btn" type="button"
+          ${syncing ? 'disabled' : ''}
+          class="rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-60 disabled:cursor-not-allowed px-3 py-1 text-xs font-medium text-white transition-colors">
+          ${syncing ? 'Syncing…' : 'Sync with main'}
+        </button>
+      </div>`;
+  },
+
+  _wireSyncBanner() {
+    const btn = document.getElementById('dc-sync-btn');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      if (DevChat._syncInFlight) return;
+      const sessionId = DevChat.currentSession?.id;
+      if (!sessionId) return;
+      DevChat._syncInFlight = true;
+      btn.disabled = true;
+      btn.textContent = 'Syncing…';
+      try {
+        const resp = await fetch(`/api/sessions/${sessionId}/sync-main`, { method: 'POST' });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          alert(data.error || `Sync failed (HTTP ${resp.status}).`);
+        } else if (data.message) {
+          // Refresh the session record so behind_main + chat history
+          // pick up the new state, then re-render. The
+          // session_update WS broadcast from persistBehindMain also
+          // triggers this path, but doing it explicitly here covers
+          // the case where the user has the tab inactive when the
+          // WS event fires.
+          await DevChat.openSession(sessionId);
+          DevChat.renderChatView();
+        }
+      } catch (err) {
+        alert(`Sync failed: ${err.message}`);
+      } finally {
+        DevChat._syncInFlight = false;
+      }
+    });
+  },
+
+  // Called by App.handleSessionUpdate when an action='behind_main'
+  // event arrives. Patches currentSession + re-renders the banner
+  // without tearing down the rest of the chat view. No-op if the
+  // event is for a different session.
+  applyBehindMainUpdate(sessionId, behindMain) {
+    if (!DevChat.currentSession || DevChat.currentSession.id !== sessionId) {
+      // Update the in-memory sessions cache so a back-to-list click
+      // shows the right state without a refetch.
+      if (Array.isArray(DevChat.sessions)) {
+        const row = DevChat.sessions.find((s) => s.id === sessionId);
+        if (row) row.behind_main = behindMain;
+      }
+      return;
+    }
+    DevChat.currentSession.behind_main = behindMain;
+    // Replace just the banner element if the rest of the chat view
+    // is mounted; otherwise full re-render.
+    const existing = document.getElementById('dc-sync-banner');
+    const html = DevChat._renderSyncBannerHtml(DevChat.currentSession);
+    if (existing) {
+      if (html) {
+        existing.outerHTML = html;
+        DevChat._wireSyncBanner();
+      } else {
+        existing.remove();
+      }
+    } else if (html) {
+      // No prior banner — easiest is a full re-render so the new
+      // element ends up in the right slot.
+      DevChat.renderChatView();
+    }
+  },
+
   // ── Chat view ─────────────────────────────────────────────
 
   renderChatView() {
@@ -1888,6 +1986,7 @@ const DevChat = {
         <span class="text-xs text-zinc-400 truncate flex-1" title="${escapeHtml(DevChat.currentSession.branch_name || '')}">${escapeHtml(DevChat.currentSession.pr_title || DevChat.currentSession.branch_name || 'Session')}</span>
         ${DevChat.currentSession.pr_number ? `<button id="dc-pr-header-link" class="text-xs text-violet-400 hover:text-violet-300">PR #${DevChat.currentSession.pr_number}</button>` : ''}
       </div>
+      ${DevChat._renderSyncBannerHtml(DevChat.currentSession)}
       <div class="dc-session-body flex-1 flex min-h-0">
         <div id="dc-tab-chat" class="dc-chat-pane flex-1 flex flex-col min-h-0">
           <div id="dc-messages" class="dc-messages-container flex-1 overflow-y-auto py-2"></div>
@@ -1959,6 +2058,8 @@ const DevChat = {
       DevChat.renderChatView();
       App.updateHash();
     });
+
+    DevChat._wireSyncBanner();
 
     document.getElementById('dc-form').addEventListener('submit', (e) => {
       e.preventDefault();

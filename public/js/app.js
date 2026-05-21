@@ -589,6 +589,17 @@ const App = {
   },
 
   handleSessionUpdate(data) {
+    // #8: behind_main updates patch the dev-chat banner in place
+    // without disturbing the surrounding chat view. We dispatch
+    // before the broader re-render branches because behind_main
+    // events are scoped per-session and don't need a session-list
+    // refetch.
+    if (data.action === 'behind_main' && typeof data.behindMain === 'number') {
+      if (typeof DevChat !== 'undefined' && DevChat.applyBehindMainUpdate) {
+        DevChat.applyBehindMainUpdate(data.sessionId, data.behindMain);
+      }
+      return;
+    }
     // Refresh session list if we're on the dev chat tab for this app
     if (App.currentApp === data.appSlug && App.currentTab === 'individual-chat') {
       if (AppView.appData) {

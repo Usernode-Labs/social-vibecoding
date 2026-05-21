@@ -12,14 +12,14 @@
 # Output contract is identical to the legacy single-shot worker-run.sh
 # so the host's stream-json + USERNODE_* parser doesn't change:
 #   __USERNODE_PHASE__  <phase>
-#   __USERNODE_RESULT__ cc_exit=N ahead=N sha=… push_ok=N mode=…
+#   __USERNODE_RESULT__ cc_exit=N ahead=N behind=N sha=… push_ok=N mode=… [sync_result=…]
 #   __USERNODE_WARN__   <msg>
 #   __USERNODE_ERROR__  <msg>
 #
 # Required env (passed via -e on `docker exec`):
 #   PROMPT, BRANCH, WORKER_JWT, SESSION_ID, PLATFORM_URL
 # Optional env:
-#   MODE                       build (default) | scout
+#   MODE                       build (default) | scout | sync
 #   MODEL                      default: claude-sonnet-4-6
 #   COMMIT_MSG                 default: "Changes via Usernode"
 #   CLAUDE_RESUME_SESSION_ID   if set, passes `--resume <id>` to claude
@@ -28,6 +28,21 @@
 #                              `usernode-push` (which calls back into
 #                              the platform's internal proxy), not
 #                              direct `git push` with embedded creds.
+#
+# MODE=sync (#8): merge origin/main into the current branch and push.
+#   1. git fetch origin
+#   2. git reset --hard origin/$BRANCH (same hygiene as build)
+#   3. git merge origin/main --no-edit
+#      - clean → commit (already done by merge), push, sync_result=clean,
+#        no CC invocation, no LLM spend
+#      - conflict → leave conflict markers in working tree, invoke CC
+#        with a resolution-only prompt, then sanity-check no markers
+#        remain; commit + push if clean, abort if not
+#         - resolved   = CC fixed it, push succeeded
+#         - conflict   = CC failed; merge aborted, branch unchanged
+#   Sync turns intentionally don't refresh CC's --resume session id —
+#   they're a side-effect operation and shouldn't blow CC's main
+#   conversation context.
 
 set -u
 
@@ -67,11 +82,102 @@ fi
 if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
   git reset --hard "origin/$BRANCH" --quiet 2>&1 || \
     echo "__USERNODE_WARN__ git reset failed"
-elif [ "$MODE" = "build" ]; then
-  # Branch missing upstream after PR merge → unrecoverable for build mode.
+elif [ "$MODE" = "build" ] || [ "$MODE" = "sync" ]; then
+  # Branch missing upstream after PR merge → unrecoverable for build/sync.
   # Scout mode can still run against the local checkout, so we don't bail.
   die "branch missing upstream: origin/$BRANCH"
 fi
+
+# ── MODE=sync ─────────────────────────────────────────────────────────
+# Merge origin/main into the current branch. Try clean merge first; if
+# it conflicts, hand the conflicted tree to CC with a tight prompt.
+# We deliberately do NOT pass --resume here — sync is bookkeeping, not
+# part of the conversation history.
+if [ "$MODE" = "sync" ]; then
+  echo "__USERNODE_PHASE__ sync_fetch_main"
+  git fetch origin main --quiet 2>&1 || \
+    echo "__USERNODE_WARN__ fetch origin main failed"
+
+  # Quick precheck — if we're already up to date, there's nothing to do
+  # and we want to skip CC entirely.
+  BEHIND_NOW=$(git rev-list --count "HEAD..origin/main" 2>/dev/null || echo 0)
+  if [ "$BEHIND_NOW" = "0" ]; then
+    AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
+    SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+    echo "__USERNODE_RESULT__ cc_exit=0 ahead=$AHEAD behind=0 sha=$SHA push_ok=1 mode=sync sync_result=already_synced"
+    exit 0
+  fi
+
+  echo "__USERNODE_PHASE__ sync_merge"
+  # `git merge origin/main` produces a merge commit on clean success
+  # and leaves the tree dirty on conflict. We let it fail-non-zero
+  # without `set -e` here on purpose.
+  if git merge origin/main --no-edit -m "Merge origin/main via Usernode sync" 2>&1; then
+    # Clean merge → already committed by `git merge`.
+    SYNC_RESULT="clean"
+  else
+    # Conflict path. Hand off to CC.
+    echo "__USERNODE_PHASE__ sync_conflict_cc"
+    CONFLICT_FILES=$(git diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')
+    SYNC_PROMPT="A merge of origin/main into branch '$BRANCH' produced conflicts. The conflict markers (<<<<<<<, =======, >>>>>>>) are in the working tree.
+
+Conflicted files: $CONFLICT_FILES
+
+Resolve every conflict marker. Preserve the intent of both sides — keep the changes from main AND keep the work-in-progress on this branch. Do NOT add features or change behavior beyond what's needed to integrate cleanly. When done, every conflict marker must be gone from every file.
+
+Do not run git commands. I will commit and push for you after you finish editing files."
+
+    claude --print --dangerously-skip-permissions --verbose \
+      --model "$MODEL" --output-format stream-json -p "$SYNC_PROMPT"
+    CC_EXIT=$?
+
+    # Sanity check: any conflict markers left? If yes, the merge is
+    # not resolvable — abort cleanly so the next attempt starts from
+    # a sane state. We deliberately only check for `<<<<<<<` and
+    # `>>>>>>>` (not `=======`); `=======` on its own line is a
+    # legitimate markdown setext h2 underline and would false-positive
+    # any spec/README that uses that style.
+    if grep -rlE --exclude-dir='.git' '^(<<<<<<<|>>>>>>>)( |$)' . 2>/dev/null | grep -q .; then
+      echo "__USERNODE_WARN__ CC left conflict markers; aborting merge"
+      git merge --abort 2>&1 || echo "__USERNODE_WARN__ merge --abort failed"
+      AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
+      BEHIND=$(git rev-list --count "HEAD..origin/main" 2>/dev/null || echo 0)
+      SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+      echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=0 mode=sync sync_result=conflict"
+      exit 0
+    fi
+
+    # CC resolved cleanly — stage everything (CC may have edited files
+    # outside the conflict set as a side effect; we want them all in
+    # the merge commit) and commit.
+    git add -A
+    if ! git commit -m "Merge origin/main via Usernode sync (Claude-resolved)" 2>&1; then
+      echo "__USERNODE_WARN__ commit failed after conflict resolution"
+      git merge --abort 2>&1 || true
+      echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=$BEHIND_NOW sha= push_ok=0 mode=sync sync_result=conflict"
+      exit 0
+    fi
+    SYNC_RESULT="resolved"
+  fi
+
+  # Push the merge commit (clean or resolved).
+  echo "__USERNODE_PHASE__ sync_push"
+  PUSH_OK=0
+  if /usr/local/bin/usernode-push; then
+    PUSH_OK=1
+  else
+    echo "__USERNODE_WARN__ push failed"
+  fi
+
+  # Re-fetch so origin/main is fresh for the behind count below.
+  git fetch origin main --quiet 2>/dev/null || true
+  AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
+  BEHIND=$(git rev-list --count "HEAD..origin/main" 2>/dev/null || echo 0)
+  SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+  echo "__USERNODE_RESULT__ cc_exit=0 ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=sync sync_result=$SYNC_RESULT"
+  exit 0
+fi
+# ── end MODE=sync ─────────────────────────────────────────────────────
 
 # Scout permissions: previously `--permission-mode plan`, but plan mode
 # blocks all write-flavoured Bash with a generic "Bash: error" — so the
@@ -123,7 +229,9 @@ fi
 if [ "$MODE" = "scout" ]; then
   # Read-only run: no commit, no push. The host pulls scout output out
   # of stream-json's `result` event and writes it into spec_md.
-  echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 sha= push_ok=0 mode=scout"
+  # behind=0 because scout never modifies the tree; the real number
+  # gets refreshed by the next build/sync turn.
+  echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=0 sha= push_ok=0 mode=scout"
   exit "$CC_EXIT"
 fi
 
@@ -151,7 +259,10 @@ fi
 
 git fetch origin main --quiet 2>/dev/null || true
 AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
+# #8: how many commits this branch is behind origin/main. Drives the
+# dev-chat "Sync with main" banner and the merge-time block.
+BEHIND=$(git rev-list --count "HEAD..origin/main" 2>/dev/null || echo 0)
 SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
 
-echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD sha=$SHA push_ok=$PUSH_OK mode=build"
+echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=build"
 exit "$CC_EXIT"

@@ -299,6 +299,31 @@ async function checkAndMerge(config, pool, session) {
     }
   }
 
+  // #8: refuse the merge if the branch is behind origin/main. We don't
+  // auto-spawn a sync turn from here because:
+  //   1. Charging the sync to the voter who happened to push us over
+  //      the threshold is unfair — the cost should land on the
+  //      session owner who controls the branch.
+  //   2. Auto-spawning would add ~30-90s latency to the merge with no
+  //      visible feedback to the voter who triggered it.
+  // Instead, surface in group chat that the owner needs to click
+  // "Sync with main" in their dev-chat. The next yes vote will
+  // re-attempt the merge, which succeeds once behind_main=0.
+  if ((session.behind_main || 0) > 0) {
+    const owner = session.user_id ? `<@${session.user_id}>` : 'the session owner';
+    const label = session.pr_title
+      ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+      : `PR #${session.pr_number || session.id}`;
+    await sendSystemMessage(pool, session.app_id,
+      `${label} can't merge yet — the branch is ${session.behind_main} commit${session.behind_main === 1 ? '' : 's'} behind main. ${owner}: open the session's dev-chat and click "Sync with main", then we'll retry the merge.`,
+      'system'
+    );
+    log.info('votes', 'Merge blocked: branch behind main', {
+      sessionId: session.id, behind: session.behind_main,
+    });
+    return { merged: false, yesCount, needed: majority, behindMain: session.behind_main };
+  }
+
   // Majority reached. Try to claim the merge by atomically flipping
   // status 'promoted' → 'merging'. Only one concurrent caller will
   // win this; everyone else bails out. This guards against the

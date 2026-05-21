@@ -179,6 +179,15 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS cc_session_id VARCHA
 -- (dev chat, vote panel, status page). Nullable so old rows predate the
 -- auto-title feature and just fall back to showing "by <user>".
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS pr_title VARCHAR(256);
+-- #8: how many commits the session branch is behind origin/main, as of
+-- the most recent worker turn. Updated by run-cc.sh on every turn
+-- (MODE=build and MODE=sync) via the BEHIND= field of the
+-- __USERNODE_RESULT__ line. Drives the "Sync with main" banner in the
+-- dev-chat session view and the merge-time block in votes.tryMerge.
+-- Defaults to 0 for fresh rows; existing rows backfill on their next
+-- turn (no separate migration backfill — pre-#8 sessions just show no
+-- banner until they next run).
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS behind_main INTEGER NOT NULL DEFAULT 0;
 
 -- Spec-stage: per-session live markdown spec doc + version history.
 -- spec_md is the live draft (written by the Mayor's write_spec tool or
