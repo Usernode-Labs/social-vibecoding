@@ -467,11 +467,66 @@ async function checkAndMerge(config, pool, session) {
        WHERE id = $1 AND status = 'merging'`,
       [session.id]
     ).catch(() => {});
-    await sendSystemMessage(pool, session.app_id,
-      `Failed to merge PR #${session.pr_number || session.id}: ${err.message}`,
-      'system'
-    );
-    return { merged: false, error: err.message };
+
+    // #9: detect GitHub's "merge conflict" rejection specifically.
+    // Octokit returns status 405 with a message containing "merge
+    // conflict" or "not mergeable" when `pulls.merge` is called on
+    // an unmergeable PR. The pre-merge gate in checkAndMerge catches
+    // the common case (our recorded behind_main > 0), but races
+    // (another PR merging in the window between our last sync and
+    // the vote crossing threshold) can slip past it. When that
+    // happens, our local behind_main is stale (= 0) but the branch
+    // really is behind main, so we:
+    //   1. Bump behind_main to at least 1 so the dev-chat banner
+    //      reappears for the owner. The next worker turn will
+    //      recompute the exact count.
+    //   2. Broadcast session_update(behind_main) so any open dev-chat
+    //      banner refreshes in place.
+    //   3. Post a tailored group-chat message that matches the
+    //      pre-merge gate's wording, so the user knows it's a
+    //      "owner needs to click Sync" situation rather than a
+    //      mysterious GitHub blowup.
+    const msg = String(err.message || '').toLowerCase();
+    const isConflict =
+      err.status === 405 ||
+      msg.includes('merge conflict') ||
+      msg.includes('not mergeable') ||
+      msg.includes('pull request is not mergeable');
+
+    if (isConflict) {
+      try {
+        const { rows: bumpRows } = await pool.query(
+          `UPDATE chat_sessions SET behind_main = GREATEST(behind_main, 1)
+           WHERE id = $1 RETURNING behind_main`,
+          [session.id]
+        );
+        const newBehind = bumpRows[0]?.behind_main || 1;
+        try {
+          const { pushSessionUpdate } = require('../services/ws');
+          pushSessionUpdate({
+            action: 'behind_main',
+            sessionId: session.id,
+            appSlug: session.app_slug,
+            behindMain: newBehind,
+          });
+        } catch (_) { /* ws failures non-fatal */ }
+      } catch (_) { /* DB bump failures non-fatal — chat msg still goes out */ }
+
+      const owner = session.user_id ? `<@${session.user_id}>` : 'the session owner';
+      const label = session.pr_title
+        ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+        : `PR #${session.pr_number || session.id}`;
+      await sendSystemMessage(pool, session.app_id,
+        `${label} can't merge — GitHub says the branch has conflicts with main. ${owner}: open the session's dev-chat and click "Sync with main", then we'll retry the merge.`,
+        'system'
+      );
+    } else {
+      await sendSystemMessage(pool, session.app_id,
+        `Failed to merge PR #${session.pr_number || session.id}: ${err.message}`,
+        'system'
+      );
+    }
+    return { merged: false, error: err.message, conflict: isConflict };
   }
 }
 
