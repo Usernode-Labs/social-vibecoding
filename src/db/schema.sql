@@ -188,6 +188,34 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS pr_title VARCHAR(256
 -- turn (no separate migration backfill — pre-#8 sessions just show no
 -- banner until they next run).
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS behind_main INTEGER NOT NULL DEFAULT 0;
+-- #11: vote-to-undo a merged PR. When the undo majority is reached we
+-- open a `git revert <merge_commit_sha>` PR and insert a new
+-- chat_sessions row pointing back here via revert_of_session_id.
+-- The new row goes through the regular promoted → merging → merged
+-- flow (a second checkpoint instead of single-voter rollback), so
+-- this is just bookkeeping for the original.
+--   merge_commit_sha is captured from github.mergePR's response in
+--   votes.tryMerge so the revert helper has a SHA to revert.
+--   revert_of_session_id, when NOT NULL, marks this row as itself a
+--   revert PR — the UI hides chat input + the undo button on
+--   reverts so we can't vote-to-undo-an-undo from the merged list.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS merge_commit_sha    VARCHAR(40);
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS revert_of_session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS chat_sessions_revert_of_idx ON chat_sessions(revert_of_session_id);
+
+-- #11: undo votes on already-merged PRs. Same shape as pr_votes;
+-- same majority math (services/active-users.js). When the yes count
+-- crosses the active-user majority threshold, votes.checkAndOpenRevert
+-- opens a revert PR + new chat_sessions row.
+CREATE TABLE IF NOT EXISTS pr_undo_votes (
+  id         SERIAL PRIMARY KEY,
+  session_id INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  vote       VARCHAR(10) NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(session_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS pr_undo_votes_session_idx ON pr_undo_votes(session_id);
 
 -- Spec-stage: per-session live markdown spec doc + version history.
 -- spec_md is the live draft (written by the Mayor's write_spec tool or

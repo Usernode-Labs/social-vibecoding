@@ -3,6 +3,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const github = require('../services/github');
 const staging = require('../services/staging');
+const docker = require('../services/docker');
 const { checkAndResolveConflicts } = require('../services/conflict-resolver');
 const { sendSystemMessage } = require('../services/ws');
 const { getActiveUserStats, isUserActive } = require('../services/active-users');
@@ -204,9 +205,18 @@ function voteRoutes(config) {
            -- a single-index probe; COUNT runs against the per-session
            -- index added in schema.sql.
            (SELECT COUNT(*)::int FROM pr_kudos WHERE session_id = cs.id) as kudos_count,
-           (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)) as my_kudos
+           (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)) as my_kudos,
+           -- #11: revert_of_session_id is non-null on PRs that are
+           -- themselves a git-revert of an earlier merged PR. The
+           -- vote panel uses this to render a Revert label
+           -- instead of the regular title so voters know what they
+           -- are voting on.
+           cs.revert_of_session_id,
+           orig.pr_number as original_pr_number,
+           orig.pr_title  as original_pr_title
          FROM chat_sessions cs
          JOIN users u ON cs.user_id = u.id
+         LEFT JOIN chat_sessions orig ON orig.id = cs.revert_of_session_id
          WHERE cs.app_id = $1 AND cs.status IN ('promoted', 'merging')
          ORDER BY cs.created_at DESC`,
         [appRows[0].id, userId]
@@ -249,12 +259,28 @@ function voteRoutes(config) {
       // round-trip per row. cs.user_id is also surfaced so the FE
       // kudos button can disable itself client-side for self-PRs
       // (server still 403s as authority).
+      //
+      // #11: also surfaces undo vote tallies + the viewer's own undo
+      // vote (drives the undo Yes/No buttons) and the revert-session
+      // metadata (pr_number, status) when one exists — so the UI can
+      // render "Undone by PR #N" / "Revert in vote (PR #N)" labels
+      // without a per-row round-trip.
       const { rows } = await pool.query(
         `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.user_id, u.username, cs.created_at,
+           cs.revert_of_session_id,
            (SELECT COUNT(*)::int FROM pr_kudos WHERE session_id = cs.id) as kudos_count,
-           (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)) as my_kudos
+           (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)) as my_kudos,
+           (SELECT COUNT(*)::int FROM pr_undo_votes WHERE session_id = cs.id AND vote = 'yes') as undo_yes_count,
+           (SELECT COUNT(*)::int FROM pr_undo_votes WHERE session_id = cs.id AND vote = 'no') as undo_no_count,
+           (SELECT vote FROM pr_undo_votes WHERE session_id = cs.id AND user_id = $2) as my_undo_vote,
+           rv.id        as revert_session_id,
+           rv.pr_number as revert_pr_number,
+           rv.pr_url    as revert_pr_url,
+           rv.status    as revert_status
          FROM chat_sessions cs
          JOIN users u ON cs.user_id = u.id
+         LEFT JOIN chat_sessions rv ON rv.revert_of_session_id = cs.id
+           AND rv.status IN ('promoted', 'merging', 'merged')
          WHERE cs.app_id = $1 AND cs.status = 'merged'
          ORDER BY cs.created_at DESC
          LIMIT 20`,
@@ -264,6 +290,138 @@ function voteRoutes(config) {
       res.json({ merged: rows });
     } catch (err) {
       log.error('votes', 'Failed to list merged', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── #11: vote-to-undo a merged PR ──────────────────────────────────
+  //
+  // Mirrors POST /vote, but operates on merged sessions and writes to
+  // pr_undo_votes. When the yes count crosses the same active-user
+  // majority threshold used for merge votes, opens a revert PR via
+  // checkAndOpenRevert (clones repo, `git revert <merge_sha>`, pushes,
+  // opens PR, inserts a new chat_sessions row with revert_of_session_id
+  // pointing back here). That new row goes through the regular vote
+  // flow — second checkpoint, no unilateral rollback.
+  //
+  // Owner-of-this-vote is the caster who tipped majority; that user
+  // ends up as the revert session's user_id so they "own" the resulting
+  // PR for chat / status purposes.
+  router.post('/api/sessions/:id/undo-vote', async (req, res) => {
+    const { vote } = req.body;
+    if (!['yes', 'no'].includes(vote)) {
+      return res.status(400).json({ error: 'Vote must be "yes" or "no"' });
+    }
+
+    try {
+      const { rows: sessionRows } = await pool.query(
+        `SELECT cs.*, a.slug as app_slug, a.id as app_id, a.repo_url
+         FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
+         WHERE cs.id = $1 AND cs.status = 'merged'`,
+        [req.params.id]
+      );
+      if (!sessionRows.length) return res.status(404).json({ error: 'Merged session not found' });
+      const session = sessionRows[0];
+
+      // Revert PRs are not themselves vote-to-undoable — would create
+      // an endless undo-undo-undo loop in the UI. The button is hidden
+      // on the client already; this is the server-side enforcement.
+      if (session.revert_of_session_id) {
+        return res.status(409).json({ error: 'Cannot undo a revert PR' });
+      }
+
+      // Block a fresh undo vote if a revert is already in flight or
+      // landed. The deciding voter's session sits in promoted/merging
+      // /merged; we look up by revert_of_session_id.
+      const { rows: existingRevert } = await pool.query(
+        `SELECT id, status, pr_number, pr_url FROM chat_sessions
+         WHERE revert_of_session_id = $1 AND status IN ('promoted', 'merging', 'merged')
+         ORDER BY id DESC LIMIT 1`,
+        [session.id]
+      );
+      if (existingRevert.length) {
+        const rv = existingRevert[0];
+        return res.status(409).json({
+          error: `A revert PR for this merge already exists (status: ${rv.status})`,
+          revertSessionId: rv.id,
+          revertPrNumber: rv.pr_number,
+          revertPrUrl: rv.pr_url,
+        });
+      }
+
+      // Idempotent upsert; same shape as /vote. Distinguish first-cast
+      // vs flip so we don't re-broadcast / re-check on a mash.
+      const { rows: prevRows } = await pool.query(
+        `SELECT vote FROM pr_undo_votes WHERE session_id = $1 AND user_id = $2`,
+        [session.id, req.user.id]
+      );
+      const previousVote = prevRows[0]?.vote || null;
+      const unchanged = previousVote === vote;
+
+      await pool.query(
+        `INSERT INTO pr_undo_votes (session_id, user_id, vote) VALUES ($1, $2, $3)
+         ON CONFLICT (session_id, user_id) DO UPDATE SET vote = EXCLUDED.vote, created_at = NOW()`,
+        [session.id, req.user.id, vote]
+      );
+
+      if (unchanged) {
+        return res.json({ ok: true, reverted: false, unchanged: true });
+      }
+
+      const voteLabel = session.pr_title
+        ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+        : `PR #${session.pr_number || session.id}`;
+      await sendSystemMessage(pool, session.app_id,
+        `${req.user.username} voted ${vote} to undo ${voteLabel}`,
+        'vote'
+      );
+
+      // Broadcast a vote_update so any open vote panel re-fetches the
+      // merged list (which carries undo tallies and my_undo_vote).
+      const { pushVoteUpdate } = require('../services/ws');
+      pushVoteUpdate({ sessionId: session.id, appSlug: session.app_slug, merged: false, kind: 'undo' });
+      log.info('votes', 'Undo vote cast', { sessionId: session.id, vote, userId: req.user.id });
+      res.json({ ok: true, reverted: false });
+
+      // Background majority check — if it fires, opens the revert PR
+      // and inserts a fresh chat_sessions row. Both steps emit their
+      // own broadcasts.
+      checkAndOpenRevert(config, pool, session, req.user)
+        .then((result) => {
+          if (result?.reverted) {
+            pushVoteUpdate({
+              sessionId: session.id,
+              appSlug: session.app_slug,
+              merged: false,
+              kind: 'undo',
+              revertSessionId: result.revertSessionId,
+              revertPrNumber: result.revertPrNumber,
+            });
+          }
+        })
+        .catch((err) => {
+          log.error('votes', 'Background revert failed', { sessionId: session.id, err: err.message });
+        });
+    } catch (err) {
+      log.error('votes', 'Undo vote failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Tally lookup — mirrors GET /api/sessions/:id/votes.
+  router.get('/api/sessions/:id/undo-votes', async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT puv.vote, u.username
+         FROM pr_undo_votes puv JOIN users u ON puv.user_id = u.id
+         WHERE puv.session_id = $1`,
+        [req.params.id]
+      );
+      const yes = rows.filter((r) => r.vote === 'yes');
+      const no = rows.filter((r) => r.vote === 'no');
+      res.json({ yes: yes.map((r) => r.username), no: no.map((r) => r.username) });
+    } catch (err) {
+      log.error('votes', 'Failed to get undo votes', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -369,12 +527,18 @@ async function checkAndMerge(config, pool, session) {
 
   log.info('votes', 'Majority reached, merging', { sessionId: session.id, yesCount, needed: majority });
 
+  let mergeCommitSha = null;
+
   try {
     // Merge PR on GitHub
     if (github.isEnabled() && session.repo_url && session.pr_number) {
       const [, owner, repo] = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
       if (owner && repo) {
-        await github.mergePR(owner, repo, session.pr_number);
+        const mergeData = await github.mergePR(owner, repo, session.pr_number);
+        // #11: capture the squash-merge commit SHA so future vote-to-undo
+        // can `git revert <sha>` against main. The Octokit `pulls.merge`
+        // response shape is { sha, merged: true, message }.
+        mergeCommitSha = mergeData?.sha || null;
       }
     }
 
@@ -429,8 +593,9 @@ async function checkAndMerge(config, pool, session) {
     await staging.teardownStaging(session, app);
 
     await pool.query(
-      `UPDATE chat_sessions SET status = 'merged' WHERE id = $1`,
-      [session.id]
+      `UPDATE chat_sessions SET status = 'merged', merge_commit_sha = COALESCE($2, merge_commit_sha)
+       WHERE id = $1`,
+      [session.id, mergeCommitSha]
     );
 
     // Chat session is done — no further turns will reference CC memory,
@@ -527,6 +692,250 @@ async function checkAndMerge(config, pool, session) {
       );
     }
     return { merged: false, error: err.message, conflict: isConflict };
+  }
+}
+
+// #11: vote-to-undo helper. Called from the /undo-vote route after a
+// fresh vote lands. Counts yes votes against the same active-user
+// majority used for forward merges; if reached and not already
+// claimed, opens a revert PR and inserts a chat_sessions row for it.
+//
+// `decider` is the user who cast the deciding vote — becomes the
+// revert session's user_id so they own the resulting PR in dev-chat.
+async function checkAndOpenRevert(config, pool, session, decider) {
+  const { active: activeCount, majority } = await getActiveUserStats(pool, session.app_id);
+
+  const { rows: yesRows } = await pool.query(
+    `SELECT COUNT(*) as cnt FROM pr_undo_votes WHERE session_id = $1 AND vote = 'yes'`,
+    [session.id]
+  );
+  const yesCount = parseInt(yesRows[0].cnt);
+  if (yesCount < majority) {
+    return { reverted: false, yesCount, needed: majority };
+  }
+
+  // Locked-app gate: same as forward merges.
+  if (await isAppLocked(pool, session.app_id)) {
+    // hasAdminYesVote queries pr_votes; for undo we want admin yes in
+    // pr_undo_votes specifically. Inline the check rather than fork
+    // the helper.
+    const { rows: adminRows } = await pool.query(
+      `SELECT 1 FROM pr_undo_votes puv
+       JOIN users u ON puv.user_id = u.id
+       WHERE puv.session_id = $1 AND puv.vote = 'yes' AND u.is_admin = true
+       LIMIT 1`,
+      [session.id]
+    );
+    if (!adminRows.length) {
+      log.info('votes', 'Undo majority reached but app is locked; awaiting admin yes', {
+        sessionId: session.id, yesCount, majority,
+      });
+      return { reverted: false, yesCount, needed: majority, awaitingAdmin: true };
+    }
+  }
+
+  // Atomic claim — race-safe against parallel deciding votes. We mark
+  // the original session with revert_of_session_id = its own id as a
+  // sentinel "claimed" value; the real revert session id swaps in
+  // below once we have it. The WHERE NULL guarantees only one caller
+  // wins this transition.
+  const { rows: claim } = await pool.query(
+    `UPDATE chat_sessions SET revert_of_session_id = id
+     WHERE id = $1 AND revert_of_session_id IS NULL
+     RETURNING id`,
+    [session.id]
+  );
+  if (!claim.length) {
+    log.info('votes', 'Revert already claimed by another request, skipping', {
+      sessionId: session.id,
+    });
+    return { reverted: false, inProgress: true };
+  }
+
+  // Sanity precondition: we need a merge SHA to revert. Without it
+  // (pre-#11 merged rows), bail with a chat message — the user has
+  // to do the revert manually.
+  if (!session.merge_commit_sha) {
+    await pool.query(
+      `UPDATE chat_sessions SET revert_of_session_id = NULL WHERE id = $1`,
+      [session.id]
+    ).catch(() => {});
+    const label = session.pr_title
+      ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+      : `PR #${session.pr_number || session.id}`;
+    await sendSystemMessage(pool, session.app_id,
+      `Couldn't auto-revert ${label}: no recorded merge commit SHA. Pre-#11 merges weren't tracked; please open the revert PR manually.`,
+      'system'
+    );
+    return { reverted: false, error: 'no merge_commit_sha' };
+  }
+  if (!session.repo_url) {
+    await pool.query(
+      `UPDATE chat_sessions SET revert_of_session_id = NULL WHERE id = $1`,
+      [session.id]
+    ).catch(() => {});
+    return { reverted: false, error: 'no repo_url' };
+  }
+
+  const m = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+  if (!m) {
+    await pool.query(
+      `UPDATE chat_sessions SET revert_of_session_id = NULL WHERE id = $1`,
+      [session.id]
+    ).catch(() => {});
+    return { reverted: false, error: 'unparseable repo_url' };
+  }
+  const [, repoOwner, repoName] = m;
+
+  log.info('votes', 'Undo majority reached, opening revert PR', {
+    sessionId: session.id, yesCount, needed: majority,
+  });
+
+  let revertInfo;
+  try {
+    revertInfo = await createRevertPR({
+      session,
+      mergeSha: session.merge_commit_sha,
+      repoOwner,
+      repoName,
+      deciderUsername: decider.username,
+    });
+  } catch (err) {
+    // Release the claim so a future vote can retry. Most common
+    // failure here is `git revert` conflict — surface it clearly.
+    await pool.query(
+      `UPDATE chat_sessions SET revert_of_session_id = NULL WHERE id = $1`,
+      [session.id]
+    ).catch(() => {});
+    log.error('votes', 'Revert PR creation failed', { sessionId: session.id, err: err.message });
+    const label = session.pr_title
+      ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+      : `PR #${session.pr_number || session.id}`;
+    await sendSystemMessage(pool, session.app_id,
+      `Couldn't auto-revert ${label}: ${err.message}. ` +
+      `Most likely later commits depend on it. Please open the revert PR manually.`,
+      'system'
+    );
+    return { reverted: false, error: err.message };
+  }
+
+  // Insert the revert session row. status=promoted means it lands
+  // directly in the vote panel ready for a second checkpoint vote.
+  const { rows: revertRows } = await pool.query(
+    `INSERT INTO chat_sessions
+       (app_id, user_id, branch_name, pr_number, pr_url, pr_title,
+        status, revert_of_session_id)
+     VALUES ($1, $2, $3, $4, $5, $6, 'promoted', $7)
+     RETURNING id`,
+    [
+      session.app_id, decider.id, revertInfo.branch,
+      revertInfo.prNumber, revertInfo.prUrl, revertInfo.prTitle,
+      session.id,
+    ]
+  );
+  const revertSessionId = revertRows[0].id;
+
+  // Patch the original's revert_of_session_id pointer to actually
+  // point at the revert session (was set to its own id as a claim
+  // sentinel above). Now `revert_of_session_id IS NOT NULL` on the
+  // original correctly identifies "has a revert in flight".
+  await pool.query(
+    `UPDATE chat_sessions SET revert_of_session_id = $1 WHERE id = $2`,
+    [revertSessionId, session.id]
+  );
+
+  // Announce in group chat so the new revert PR shows up in the vote
+  // panel with context. Tag the original PR # for breadcrumbs.
+  const label = session.pr_title
+    ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+    : `PR #${session.pr_number || session.id}`;
+  await sendSystemMessage(pool, session.app_id,
+    `Undo vote reached majority on ${label}. Opened revert PR #${revertInfo.prNumber} — needs ${majority}/${activeCount} votes to land.`,
+    'system'
+  );
+
+  return {
+    reverted: true,
+    revertSessionId,
+    revertPrNumber: revertInfo.prNumber,
+    revertPrUrl: revertInfo.prUrl,
+  };
+}
+
+// Clone the repo to a tmpdir, branch off main, `git revert <sha>`,
+// push, open a PR. Returns { branch, prNumber, prUrl, prTitle }.
+// Throws on revert conflict or network errors; caller surfaces the
+// failure to chat.
+async function createRevertPR({ session, mergeSha, repoOwner, repoName, deciderUsername }) {
+  const token = process.env.GITHUB_BOT_TOKEN;
+  if (!token) throw new Error('GITHUB_BOT_TOKEN not set');
+
+  const cloneUrl = `https://x-access-token:${token}@github.com/${repoOwner}/${repoName}.git`;
+  const tmpDir = `/tmp/usernode-revert-${session.id}-${Date.now()}`;
+  // Branch naming pattern: revert/<original-branch>-<timestamp>. The
+  // timestamp suffix avoids collisions if a prior revert attempt left
+  // a stale branch on the remote.
+  const safeBase = (session.branch_name || `pr-${session.pr_number || session.id}`).replace(/[^a-zA-Z0-9._/-]/g, '-');
+  const revertBranch = `revert/${safeBase}-${Date.now()}`;
+
+  try {
+    // Full clone — we need history reaching back to the merge SHA, so
+    // the rebuildProduction shallow-clone pattern doesn't apply here.
+    await docker.execFileAsync('git', ['clone', cloneUrl, tmpDir], { timeout: 180000 });
+
+    // Committer identity for the revert commit. Matches the
+    // usernode-bot convention used elsewhere.
+    await docker.execFileAsync('git', ['-C', tmpDir, 'config', 'user.name', 'usernode-bot']);
+    await docker.execFileAsync('git', ['-C', tmpDir, 'config', 'user.email', 'usernode-bot@users.noreply.github.com']);
+
+    // Branch off the current main. main has already been updated by
+    // the original merge + any subsequent merges by the time we get
+    // here, so this is the "current" main.
+    await docker.execFileAsync('git', ['-C', tmpDir, 'checkout', '-b', revertBranch], { timeout: 10000 });
+
+    // `git revert --no-edit <sha>` — squash merges produce single-parent
+    // commits, so no `-m 1` needed. If the revert conflicts (later
+    // commits depend on this one), git exits non-zero and the docker
+    // helper rejects.
+    try {
+      await docker.execFileAsync('git', ['-C', tmpDir, 'revert', '--no-edit', mergeSha], { timeout: 30000 });
+    } catch (revertErr) {
+      // Clean up the conflicted state inside the tmp dir for hygiene
+      // (best-effort), then surface a tight error.
+      await docker.execFileAsync('git', ['-C', tmpDir, 'revert', '--abort']).catch(() => {});
+      const m = String(revertErr.message || '').toLowerCase();
+      if (m.includes('conflict')) {
+        throw new Error('Revert produced merge conflicts');
+      }
+      throw new Error(`git revert failed: ${revertErr.message.slice(0, 200)}`);
+    }
+
+    await docker.execFileAsync('git', ['-C', tmpDir, 'push', '-u', 'origin', revertBranch], { timeout: 60000 });
+
+    const origLabel = session.pr_title
+      ? `${session.pr_title} (PR #${session.pr_number || session.id})`
+      : `PR #${session.pr_number || session.id}`;
+    const prTitle = `Revert: ${session.pr_title || `PR #${session.pr_number || session.id}`}`.slice(0, 200);
+    const prBody =
+      `Automated revert of ${origLabel}.\n\n` +
+      `Undo vote reached majority on the original PR; deciding vote cast by @${deciderUsername}. ` +
+      `This PR still needs a regular merge vote to land — vote in the app's group chat panel.\n\n` +
+      `Reverts commit ${mergeSha}.`;
+
+    const prData = await github.createPR(repoOwner, repoName, {
+      branch: revertBranch,
+      title: prTitle,
+      body: prBody,
+    });
+
+    return {
+      branch: revertBranch,
+      prNumber: prData.number,
+      prUrl: prData.html_url,
+      prTitle,
+    };
+  } finally {
+    await docker.execFileAsync('rm', ['-rf', tmpDir]).catch(() => {});
   }
 }
 

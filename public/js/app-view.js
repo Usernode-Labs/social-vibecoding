@@ -487,9 +487,21 @@ const AppView = {
           // Prefer the LLM-generated PR title when present; fall back
           // to the original "by <user>" label so old rows (pre-pr_title)
           // still render reasonably.
-          const labelText = pr.pr_title
-            ? `${escapeHtml(pr.pr_title)} <span class="text-zinc-500">· ${escapeHtml(pr.username)}</span>`
-            : `by ${escapeHtml(pr.username)}`;
+          // #11: revert PRs get a distinctive label so voters in the
+          // panel know this is a rollback (not a forward feature).
+          // original_pr_number/_title come from the LEFT JOIN against
+          // chat_sessions in /promoted (see routes/votes.js).
+          let labelText;
+          if (pr.revert_of_session_id) {
+            const origLabel = pr.original_pr_title
+              ? `${escapeHtml(pr.original_pr_title)}`
+              : `PR #${pr.original_pr_number || pr.revert_of_session_id}`;
+            labelText = `<span class="text-amber-500">↩ Revert of</span> ${origLabel} <span class="text-zinc-500">· ${escapeHtml(pr.username)}</span>`;
+          } else {
+            labelText = pr.pr_title
+              ? `${escapeHtml(pr.pr_title)} <span class="text-zinc-500">· ${escapeHtml(pr.username)}</span>`
+              : `by ${escapeHtml(pr.username)}`;
+          }
           if (isMerging) {
             // Threshold crossed; the merge pipeline (GitHub merge +
             // prod rebuild + staging teardown) is in flight. Keep the
@@ -563,7 +575,7 @@ const AppView = {
       // chat panel focused on visible PRs / issues / merged work.
 
       if (merged.length) {
-        bodyHtml += '<div><div class="text-xs text-zinc-500 mb-1 font-medium">Merged</div>';
+        bodyHtml += `<div><div class="text-xs text-zinc-500 mb-1 font-medium">Merged <span class="text-zinc-600 font-normal">· undo needs ${majority}/${activeUsers} votes</span></div>`;
         for (const pr of merged) {
           const date = new Date(pr.created_at).toLocaleDateString();
           const mergedLabel = pr.pr_title
@@ -575,11 +587,53 @@ const AppView = {
           const kudosBtn = window.Kudos
             ? Kudos.renderButton(pr, { compact: true })
             : '';
+
+          // #11: undo-vote UI. The undo button only renders on
+          // ordinary merged PRs that don't already have a revert in
+          // flight or merged:
+          //   - revert_of_session_id != null on this row means this
+          //     row IS itself a revert PR; voters undoing a revert
+          //     would create an infinite undo-undo loop.
+          //   - revert_session_id (from the LEFT JOIN) means a revert
+          //     PR already exists pointing at this row — show its
+          //     status as a label instead.
+          let undoUI = '';
+          if (pr.revert_of_session_id) {
+            // This row is a revert PR. (Shouldn't appear in the
+            // merged list often — revert PRs are short-lived in
+            // 'promoted' before they themselves merge — but show a
+            // breadcrumb if they do.)
+            undoUI = `<span class="text-xs text-zinc-500" title="This PR is itself a revert">↩ revert</span>`;
+          } else if (pr.revert_session_id) {
+            const rs = pr.revert_status;
+            const rpr = pr.revert_pr_number || pr.revert_session_id;
+            const label = rs === 'merged'
+              ? `Undone by PR#${rpr}`
+              : rs === 'merging'
+                ? `Revert merging (PR#${rpr})`
+                : `Revert in vote · PR#${rpr}`;
+            const linkHref = pr.revert_pr_url || '#';
+            undoUI = `<a href="${linkHref}" target="_blank" class="text-xs text-amber-500 hover:text-amber-400 font-medium">${label}</a>`;
+          } else {
+            const yesUndo = parseInt(pr.undo_yes_count) || 0;
+            const noUndo = parseInt(pr.undo_no_count) || 0;
+            const myUndo = pr.my_undo_vote;
+            undoUI = `
+              <span class="text-xs text-zinc-600" title="Undo votes vs majority">${yesUndo}/${majority}</span>
+              <button class="gc-vote-btn gc-vote-btn-undo${myUndo === 'yes' ? ' gc-vote-active' : ''}"
+                title="Vote to revert this merge"
+                onclick="AppView.castUndoVote(${pr.id}, 'yes')">Undo (${yesUndo})</button>
+              <button class="gc-vote-btn${myUndo === 'no' ? ' gc-vote-active' : ''}"
+                title="Vote against reverting"
+                onclick="AppView.castUndoVote(${pr.id}, 'no')">Keep (${noUndo})</button>`;
+          }
+
           bodyHtml += `
             <div class="gc-vote-item flex items-center gap-2 py-1">
               <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-emerald-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
               <span class="text-xs text-zinc-400 flex-1 truncate">${mergedLabel}</span>
               <span class="text-xs text-zinc-600">${date}</span>
+              ${undoUI}
               ${kudosBtn}
             </div>`;
         }
@@ -616,6 +670,38 @@ const AppView = {
       if (window.Kudos) Kudos.attach(panel);
     } catch {
       panel.innerHTML = '';
+    }
+  },
+
+  // #11: undo-vote sibling of castVote. Posts to the new
+  // /undo-vote route; on success the server's pushVoteUpdate event
+  // refreshes the panel and the merged-list row reflects the new
+  // count + my_undo_vote highlight. The deciding YES vote that
+  // tips majority can take a few seconds (clone + git revert + push +
+  // PR create), but the response returns immediately — the resulting
+  // revert PR appears via the WS broadcast.
+  async castUndoVote(sessionId, vote) {
+    const key = `undo:${sessionId}`;
+    if (AppView._voteInFlight.has(key)) return;
+    AppView._voteInFlight.add(key);
+    try {
+      const resp = await fetch(`/api/sessions/${sessionId}/undo-vote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vote }),
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        // 409 means a revert is already in flight or eligibility was
+        // lost between render and click. Show the helpful message and
+        // re-fetch so the UI reflects reality.
+        alert(data.error || `Vote failed (HTTP ${resp.status}).`);
+      }
+      if (AppView.appData) AppView.loadVotePanel(AppView.appData.slug);
+    } catch (err) {
+      alert(`Vote failed: ${err.message}`);
+    } finally {
+      AppView._voteInFlight.delete(key);
     }
   },
 
