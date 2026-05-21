@@ -515,6 +515,10 @@
   <script src="/js/header-layout.js"></script>
   <script src="/js/dev-console.js"></script>
   <script src="/js/notifications.js"></script>
+  <!-- Webview-safe replacement for window.confirm(). Loaded before any
+       feature script that wants a "really?" gate (dev-chat archive,
+       future settings/home destructive actions). -->
+  <script src="/js/confirm-modal.js"></script>
   <script src="/js/settings.js"></script>
   <script src="/js/group-chat.js"></script>
   <script src="/js/dev-chat.js"></script>

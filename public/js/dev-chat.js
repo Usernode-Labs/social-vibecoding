@@ -300,7 +300,7 @@ const DevChat = {
           <span class="dc-active-title" title="${title}">${title}</span>
           ${isOtherApp ? `<span class="dc-active-app" title="${appName}">${appName}</span>` : ''}
           <button class="dc-active-action ${isPaused ? 'dc-active-action-resume' : 'dc-active-action-pause'}" data-id="${s.id}" data-action="${primaryAction}">${primaryLabel}</button>
-          <button class="dc-active-archive" data-id="${s.id}" title="Archive (drops Claude's memory & closes PR)">Archive</button>
+          <button class="dc-active-archive" data-id="${s.id}" data-name="${title}" title="Archive (drops Claude's memory & closes PR)">Archive</button>
           <svg class="dc-active-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
         </div>`;
     }).join('');
@@ -354,14 +354,24 @@ const DevChat = {
       });
     });
 
-    // Archive (destructive). Same propagation stop + same refresh
-    // wiring as the pause/resume button. We don't bother confirming
-    // — the per-app list has used this same affordance without a
-    // confirm and people use it routinely; the wording in the
-    // tooltip is the warning surface.
+    // Archive (destructive, irreversible — drops Claude's memory,
+    // destroys the warm worker + CC volume, and closes the PR). Gate
+    // behind ConfirmModal (a webview-safe replacement for native
+    // window.confirm, which is no-op'd in several mobile/in-app
+    // browsers the platform runs in). data-name carries the PR/branch
+    // title (escapeHtml'd at render time) so the prompt can name the
+    // thing being archived.
     container.querySelectorAll('.dc-active-archive').forEach((btn) => {
       btn.addEventListener('click', async (ev) => {
         ev.stopPropagation();
+        const name = btn.dataset.name || 'this session';
+        const ok = await ConfirmModal.show({
+          title: `Archive "${name}"?`,
+          message: "This drops Claude's memory and closes the PR. It can't be undone.",
+          confirmLabel: 'Archive',
+          danger: true,
+        });
+        if (!ok) return;
         btn.textContent = '...';
         btn.disabled = true;
         const id = parseInt(btn.dataset.id, 10);
@@ -1765,7 +1775,7 @@ const DevChat = {
           ${s.pr_url ? `<a href="${s.pr_url}" target="_blank" class="text-xs text-violet-400 hover:text-violet-300" onclick="event.stopPropagation()">PR#${s.pr_number}</a>` : ''}
           ${isPausable ? `<button class="dc-pause-btn text-xs text-zinc-400 hover:text-emerald-400" data-id="${s.id}" data-action="pause" onclick="event.stopPropagation()">Pause</button>` : ''}
           ${isPaused ? `<button class="dc-pause-btn text-xs text-emerald-400 hover:text-emerald-300" data-id="${s.id}" data-action="resume" onclick="event.stopPropagation()">Resume</button>` : ''}
-          ${isActionable ? `<button class="dc-archive-btn text-xs text-zinc-500 hover:text-red-400" data-id="${s.id}" title="Archive (drops Claude's memory & closes PR)" onclick="event.stopPropagation()">Archive</button>` : ''}
+          ${isActionable ? `<button class="dc-archive-btn text-xs text-zinc-500 hover:text-red-400" data-id="${s.id}" data-name="${escapeHtml(s.pr_title || s.branch_name || 'Session')}" title="Archive (drops Claude's memory & closes PR)" onclick="event.stopPropagation()">Archive</button>` : ''}
           <span class="text-xs text-zinc-600">${date}</span>
         </div>`;
     }).join('');
@@ -1811,8 +1821,20 @@ const DevChat = {
       });
     });
 
+    // Archive (destructive, irreversible). Mirror the cross-app
+    // panel's confirm dialog — same wording, same data-name lookup,
+    // same webview-safe ConfirmModal — so the two surfaces behave
+    // identically.
     container.querySelectorAll('.dc-archive-btn').forEach((btn) => {
       btn.addEventListener('click', async () => {
+        const name = btn.dataset.name || 'this session';
+        const ok = await ConfirmModal.show({
+          title: `Archive "${name}"?`,
+          message: "This drops Claude's memory and closes the PR. It can't be undone.",
+          confirmLabel: 'Archive',
+          danger: true,
+        });
+        if (!ok) return;
         btn.textContent = '...';
         await fetch(`/api/sessions/${btn.dataset.id}/archive`, { method: 'POST' });
         if (AppView.appData) {
