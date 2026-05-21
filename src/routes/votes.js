@@ -923,11 +923,20 @@ async function checkAndOpenRevert(config, pool, session, decider, options = {}) 
   // etc.).
   if (!session.merge_commit_sha) {
     let backfilledSha = null;
-    if (github.isEnabled() && session.repo_url && session.pr_number) {
-      try {
-        const bm = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-        if (bm) {
-          const [, bOwner, bRepo] = bm;
+    let backfillReason = 'unknown';
+    if (!github.isEnabled()) {
+      backfillReason = 'GitHub auth not configured on this deployment';
+    } else if (!session.repo_url) {
+      backfillReason = 'session has no repo_url';
+    } else if (!session.pr_number) {
+      backfillReason = 'session has no pr_number';
+    } else {
+      const bm = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+      if (!bm) {
+        backfillReason = `unparseable repo_url ${session.repo_url}`;
+      } else {
+        const [, bOwner, bRepo] = bm;
+        try {
           const octokit = await github.getInstallationOctokit(bOwner);
           const { data: pr } = await octokit.rest.pulls.get({
             owner: bOwner, repo: bRepo, pull_number: session.pr_number,
@@ -944,12 +953,17 @@ async function checkAndOpenRevert(config, pool, session, decider, options = {}) 
               sessionId: session.id, prNumber: session.pr_number,
               sha: pr.merge_commit_sha,
             });
+          } else {
+            backfillReason = pr.merged
+              ? 'GitHub returned a merged PR with no merge_commit_sha'
+              : 'GitHub says this PR is not merged';
           }
+        } catch (err) {
+          backfillReason = `GitHub lookup failed: ${err.message}`;
+          log.warn('votes', 'merge_commit_sha backfill from GitHub failed', {
+            sessionId: session.id, prNumber: session.pr_number, err: err.message,
+          });
         }
-      } catch (err) {
-        log.warn('votes', 'merge_commit_sha backfill from GitHub failed', {
-          sessionId: session.id, prNumber: session.pr_number, err: err.message,
-        });
       }
     }
 
@@ -962,10 +976,10 @@ async function checkAndOpenRevert(config, pool, session, decider, options = {}) 
         ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
       await sendSystemMessage(pool, session.app_id,
-        `Couldn't auto-revert ${label}: no merge commit SHA available (GitHub didn't return one). Please open the revert PR manually.`,
+        `Couldn't auto-revert ${label}: ${backfillReason}. Please open the revert PR manually.`,
         'system'
       );
-      return { reverted: false, error: 'no merge_commit_sha' };
+      return { reverted: false, error: 'no merge_commit_sha', backfillReason };
     }
   }
   if (!session.repo_url) {
