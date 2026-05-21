@@ -408,6 +408,138 @@ function voteRoutes(config) {
     }
   });
 
+  // ── Admin force-merge ─────────────────────────────────────────────
+  //
+  // Admin-only escape hatch: merge a promoted PR right now, regardless
+  // of vote tally or the locked-app admin-yes gate. Used when an admin
+  // is confident the change should ship and doesn't want to wait for
+  // the active-user majority. The frontend gates this behind a
+  // ConfirmModal so a misclick can't accidentally bypass voting.
+  //
+  // The actual merge pipeline (atomic 'promoted → merging' claim,
+  // GitHub merge, prod rebuild, staging teardown, broadcasts) is the
+  // same `checkAndMerge` path the regular vote route uses — we just
+  // pass `force: true` to skip the early gates. The chat message
+  // distinguishes the override so users see who did it and why a PR
+  // landed without the usual tally.
+  router.post('/api/sessions/:id/admin-merge', async (req, res) => {
+    if (!req.user?.isAdmin) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    try {
+      const { rows } = await pool.query(
+        `SELECT cs.*, a.slug as app_slug, a.id as app_id, a.repo_url,
+                a.self_hosted as app_self_hosted
+         FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
+         WHERE cs.id = $1 AND cs.status = 'promoted'`,
+        [req.params.id]
+      );
+      if (!rows.length) {
+        return res.status(404).json({ error: 'Promoted session not found' });
+      }
+      const session = rows[0];
+
+      // Respond immediately; the merge itself runs in the background
+      // exactly like the regular vote-driven path. Clients refresh via
+      // the `pushVoteUpdate` broadcasts emitted by checkAndMerge.
+      log.info('votes', 'Admin force-merge requested', {
+        sessionId: session.id, by: req.user.username,
+      });
+      res.json({ ok: true, queued: true });
+
+      checkAndMerge(config, pool, session, { force: true, forceBy: req.user })
+        .then((mergeResult) => {
+          if (mergeResult?.merged) {
+            const { pushVoteUpdate } = require('../services/ws');
+            pushVoteUpdate({ sessionId: session.id, appSlug: session.app_slug, merged: true });
+          }
+        })
+        .catch((err) => {
+          log.error('votes', 'Admin force-merge failed', {
+            sessionId: session.id, err: err.message,
+          });
+        });
+    } catch (err) {
+      log.error('votes', 'Admin force-merge route failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Admin force-undo ──────────────────────────────────────────────
+  //
+  // Sibling of admin-merge for the undo path. Triggers the revert PR
+  // pipeline on a merged session right now, regardless of undo-vote
+  // tally or the locked-app admin-yes gate. The revert PR that drops
+  // out *still* needs a regular merge vote to land — admins can't
+  // unilaterally rewrite main, only put the rollback up for review.
+  router.post('/api/sessions/:id/admin-undo', async (req, res) => {
+    if (!req.user?.isAdmin) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    try {
+      const { rows } = await pool.query(
+        `SELECT cs.*, a.slug as app_slug, a.id as app_id, a.repo_url
+         FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
+         WHERE cs.id = $1 AND cs.status = 'merged'`,
+        [req.params.id]
+      );
+      if (!rows.length) {
+        return res.status(404).json({ error: 'Merged session not found' });
+      }
+      const session = rows[0];
+
+      // Same blockers as the regular undo-vote route — undoing a
+      // revert is meaningless, and a revert already in flight
+      // shouldn't be racing a second one.
+      if (session.revert_of_session_id) {
+        return res.status(409).json({ error: 'Cannot undo a revert PR' });
+      }
+      const { rows: existingRevert } = await pool.query(
+        `SELECT id, status, pr_number, pr_url FROM chat_sessions
+         WHERE revert_of_session_id = $1 AND status IN ('promoted', 'merging', 'merged')
+         ORDER BY id DESC LIMIT 1`,
+        [session.id]
+      );
+      if (existingRevert.length) {
+        const rv = existingRevert[0];
+        return res.status(409).json({
+          error: `A revert PR for this merge already exists (status: ${rv.status})`,
+          revertSessionId: rv.id,
+          revertPrNumber: rv.pr_number,
+          revertPrUrl: rv.pr_url,
+        });
+      }
+
+      log.info('votes', 'Admin force-undo requested', {
+        sessionId: session.id, by: req.user.username,
+      });
+      res.json({ ok: true, queued: true });
+
+      checkAndOpenRevert(config, pool, session, req.user, { force: true })
+        .then((result) => {
+          if (result?.reverted) {
+            const { pushVoteUpdate } = require('../services/ws');
+            pushVoteUpdate({
+              sessionId: session.id,
+              appSlug: session.app_slug,
+              merged: false,
+              kind: 'undo',
+              revertSessionId: result.revertSessionId,
+              revertPrNumber: result.revertPrNumber,
+            });
+          }
+        })
+        .catch((err) => {
+          log.error('votes', 'Admin force-undo failed', {
+            sessionId: session.id, err: err.message,
+          });
+        });
+    } catch (err) {
+      log.error('votes', 'Admin force-undo route failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Tally lookup — mirrors GET /api/sessions/:id/votes.
   router.get('/api/sessions/:id/undo-votes', async (req, res) => {
     try {
@@ -429,7 +561,14 @@ function voteRoutes(config) {
   return router;
 }
 
-async function checkAndMerge(config, pool, session) {
+// `options.force` (admin force-merge): skip the vote-count, locked-app
+// admin-yes, and behind_main gates entirely and proceed straight to the
+// claim+merge pipeline. The atomic `promoted → merging` claim still
+// races against any concurrent vote-driven merge, so we won't double-
+// merge. `options.forceBy` is the admin user object (id, username) used
+// for the "merged by <admin> overriding vote" chat message.
+async function checkAndMerge(config, pool, session, options = {}) {
+  const { force = false, forceBy = null } = options;
   const { active: activeCount, majority } = await getActiveUserStats(pool, session.app_id);
 
   const { rows: yesRows } = await pool.query(
@@ -438,49 +577,56 @@ async function checkAndMerge(config, pool, session) {
   );
   const yesCount = parseInt(yesRows[0].cnt);
 
-  if (yesCount < majority) {
-    return { merged: false, yesCount, needed: majority };
-  }
+  if (!force) {
+    if (yesCount < majority) {
+      return { merged: false, yesCount, needed: majority };
+    }
 
-  // Locked apps additionally require at least one admin yes vote (see
-  // services/admin-approval.js + the apps.locked column). The active-user
-  // majority gate above still has to pass — the admin yes is an extra
-  // condition, not a replacement. Toggled via the home-card lock icon
-  // (admin-only); see POST /api/apps/:slug/lock in routes/apps.js.
-  if (await isAppLocked(pool, session.app_id)) {
-    const adminYes = await hasAdminYesVote(pool, session.id);
-    if (!adminYes) {
-      log.info('votes', 'Majority reached but app is locked; awaiting admin yes', {
-        sessionId: session.id, yesCount, majority,
+    // Locked apps additionally require at least one admin yes vote (see
+    // services/admin-approval.js + the apps.locked column). The active-user
+    // majority gate above still has to pass — the admin yes is an extra
+    // condition, not a replacement. Toggled via the home-card lock icon
+    // (admin-only); see POST /api/apps/:slug/lock in routes/apps.js.
+    if (await isAppLocked(pool, session.app_id)) {
+      const adminYes = await hasAdminYesVote(pool, session.id);
+      if (!adminYes) {
+        log.info('votes', 'Majority reached but app is locked; awaiting admin yes', {
+          sessionId: session.id, yesCount, majority,
+        });
+        return { merged: false, yesCount, needed: majority, awaitingAdmin: true };
+      }
+    }
+
+    // #8: refuse the merge if the branch is behind origin/main. We don't
+    // auto-spawn a sync turn from here because:
+    //   1. Charging the sync to the voter who happened to push us over
+    //      the threshold is unfair — the cost should land on the
+    //      session owner who controls the branch.
+    //   2. Auto-spawning would add ~30-90s latency to the merge with no
+    //      visible feedback to the voter who triggered it.
+    // Instead, surface in group chat that the owner needs to click
+    // "Sync with main" in their dev-chat. The next yes vote will
+    // re-attempt the merge, which succeeds once behind_main=0.
+    if ((session.behind_main || 0) > 0) {
+      const owner = session.user_id ? `<@${session.user_id}>` : 'the session owner';
+      const label = session.pr_title
+        ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+        : `PR #${session.pr_number || session.id}`;
+      await sendSystemMessage(pool, session.app_id,
+        `${label} can't merge yet — the branch is ${session.behind_main} commit${session.behind_main === 1 ? '' : 's'} behind main. ${owner}: open the session's dev-chat and click "Sync with main", then we'll retry the merge.`,
+        'system'
+      );
+      log.info('votes', 'Merge blocked: branch behind main', {
+        sessionId: session.id, behind: session.behind_main,
       });
-      return { merged: false, yesCount, needed: majority, awaitingAdmin: true };
+      return { merged: false, yesCount, needed: majority, behindMain: session.behind_main };
     }
   }
-
-  // #8: refuse the merge if the branch is behind origin/main. We don't
-  // auto-spawn a sync turn from here because:
-  //   1. Charging the sync to the voter who happened to push us over
-  //      the threshold is unfair — the cost should land on the
-  //      session owner who controls the branch.
-  //   2. Auto-spawning would add ~30-90s latency to the merge with no
-  //      visible feedback to the voter who triggered it.
-  // Instead, surface in group chat that the owner needs to click
-  // "Sync with main" in their dev-chat. The next yes vote will
-  // re-attempt the merge, which succeeds once behind_main=0.
-  if ((session.behind_main || 0) > 0) {
-    const owner = session.user_id ? `<@${session.user_id}>` : 'the session owner';
-    const label = session.pr_title
-      ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
-      : `PR #${session.pr_number || session.id}`;
-    await sendSystemMessage(pool, session.app_id,
-      `${label} can't merge yet — the branch is ${session.behind_main} commit${session.behind_main === 1 ? '' : 's'} behind main. ${owner}: open the session's dev-chat and click "Sync with main", then we'll retry the merge.`,
-      'system'
-    );
-    log.info('votes', 'Merge blocked: branch behind main', {
-      sessionId: session.id, behind: session.behind_main,
-    });
-    return { merged: false, yesCount, needed: majority, behindMain: session.behind_main };
-  }
+  // For admin force-merge we deliberately skip the behind_main pre-check
+  // — GitHub will still reject the merge if there's a real conflict,
+  // and the catch-block below surfaces that the same way it does for
+  // votes. Admins overriding the vote can decide whether to push the
+  // branch sync themselves.
 
   // Majority reached. Try to claim the merge by atomically flipping
   // status 'promoted' → 'merging'. Only one concurrent caller will
@@ -525,7 +671,12 @@ async function checkAndMerge(config, pool, session) {
     selfHosted: !!session.app_self_hosted,
   });
 
-  log.info('votes', 'Majority reached, merging', { sessionId: session.id, yesCount, needed: majority });
+  log.info('votes',
+    force ? 'Admin force-merge invoked, merging' : 'Majority reached, merging',
+    {
+      sessionId: session.id, yesCount, needed: majority,
+      ...(force && forceBy ? { forcedBy: forceBy.username } : {}),
+    });
 
   let mergeCommitSha = null;
 
@@ -611,8 +762,11 @@ async function checkAndMerge(config, pool, session) {
     const mergedLabel = session.pr_title
       ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
       : `PR #${session.pr_number || session.id}`;
+    const mergedSuffix = force && forceBy
+      ? `force-merged by admin ${forceBy.username} (${yesCount}/${activeCount} vote${yesCount === 1 ? '' : 's'} at the time)`
+      : `merged and deployed! (${yesCount}/${activeCount} votes)`;
     await sendSystemMessage(pool, session.app_id,
-      `${mergedLabel} was merged and deployed! (${yesCount}/${activeCount} votes)`,
+      `${mergedLabel} ${mergedSuffix}`,
       'system'
     );
 
@@ -702,7 +856,13 @@ async function checkAndMerge(config, pool, session) {
 //
 // `decider` is the user who cast the deciding vote — becomes the
 // revert session's user_id so they own the resulting PR in dev-chat.
-async function checkAndOpenRevert(config, pool, session, decider) {
+//
+// `options.force` (admin force-undo): skip the vote-count + locked-app
+// admin-yes gates. `decider` for force-undo is the admin user; the
+// resulting revert session is still owned by them so they're the
+// "author" of the revert PR in dev-chat.
+async function checkAndOpenRevert(config, pool, session, decider, options = {}) {
+  const { force = false } = options;
   const { active: activeCount, majority } = await getActiveUserStats(pool, session.app_id);
 
   const { rows: yesRows } = await pool.query(
@@ -710,27 +870,29 @@ async function checkAndOpenRevert(config, pool, session, decider) {
     [session.id]
   );
   const yesCount = parseInt(yesRows[0].cnt);
-  if (yesCount < majority) {
-    return { reverted: false, yesCount, needed: majority };
-  }
+  if (!force) {
+    if (yesCount < majority) {
+      return { reverted: false, yesCount, needed: majority };
+    }
 
-  // Locked-app gate: same as forward merges.
-  if (await isAppLocked(pool, session.app_id)) {
-    // hasAdminYesVote queries pr_votes; for undo we want admin yes in
-    // pr_undo_votes specifically. Inline the check rather than fork
-    // the helper.
-    const { rows: adminRows } = await pool.query(
-      `SELECT 1 FROM pr_undo_votes puv
-       JOIN users u ON puv.user_id = u.id
-       WHERE puv.session_id = $1 AND puv.vote = 'yes' AND u.is_admin = true
-       LIMIT 1`,
-      [session.id]
-    );
-    if (!adminRows.length) {
-      log.info('votes', 'Undo majority reached but app is locked; awaiting admin yes', {
-        sessionId: session.id, yesCount, majority,
-      });
-      return { reverted: false, yesCount, needed: majority, awaitingAdmin: true };
+    // Locked-app gate: same as forward merges.
+    if (await isAppLocked(pool, session.app_id)) {
+      // hasAdminYesVote queries pr_votes; for undo we want admin yes in
+      // pr_undo_votes specifically. Inline the check rather than fork
+      // the helper.
+      const { rows: adminRows } = await pool.query(
+        `SELECT 1 FROM pr_undo_votes puv
+         JOIN users u ON puv.user_id = u.id
+         WHERE puv.session_id = $1 AND puv.vote = 'yes' AND u.is_admin = true
+         LIMIT 1`,
+        [session.id]
+      );
+      if (!adminRows.length) {
+        log.info('votes', 'Undo majority reached but app is locked; awaiting admin yes', {
+          sessionId: session.id, yesCount, majority,
+        });
+        return { reverted: false, yesCount, needed: majority, awaitingAdmin: true };
+      }
     }
   }
 
@@ -787,9 +949,12 @@ async function checkAndOpenRevert(config, pool, session, decider) {
   }
   const [, repoOwner, repoName] = m;
 
-  log.info('votes', 'Undo majority reached, opening revert PR', {
-    sessionId: session.id, yesCount, needed: majority,
-  });
+  log.info('votes',
+    force ? 'Admin force-undo invoked, opening revert PR' : 'Undo majority reached, opening revert PR',
+    {
+      sessionId: session.id, yesCount, needed: majority,
+      ...(force ? { forcedBy: decider.username } : {}),
+    });
 
   let revertInfo;
   try {
@@ -849,8 +1014,11 @@ async function checkAndOpenRevert(config, pool, session, decider) {
   const label = session.pr_title
     ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
     : `PR #${session.pr_number || session.id}`;
+  const undoPreamble = force
+    ? `Admin ${decider.username} force-undid ${label} (overriding vote)`
+    : `Undo vote reached majority on ${label}`;
   await sendSystemMessage(pool, session.app_id,
-    `Undo vote reached majority on ${label}. Opened revert PR #${revertInfo.prNumber} — needs ${majority}/${activeCount} votes to land.`,
+    `${undoPreamble}. Opened revert PR #${revertInfo.prNumber} — needs ${majority}/${activeCount} votes to land.`,
     'system'
   );
 

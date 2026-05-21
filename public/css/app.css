@@ -477,6 +477,17 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .gc-vote-btn-no:hover { background: rgba(239, 68, 68, 0.15); }
 .gc-vote-btn-preview { color: var(--accent); }
 .gc-vote-btn-preview:hover { background: rgba(167, 139, 250, 0.15); }
+/* Admin force-merge / force-undo buttons. Amber instead of red so
+ * they don't visually dominate the Yes/No pair, but distinct enough
+ * from the regular vote buttons that an admin clicking through the
+ * row can tell at a glance which one bypasses voting. The
+ * ConfirmModal in castAdminMerge/castAdminUndo is the actual
+ * misclick guard; the colour is just the affordance hint. */
+.gc-vote-btn-admin {
+  color: #f59e0b;
+  border-color: rgba(245, 158, 11, 0.4);
+}
+.gc-vote-btn-admin:hover { background: rgba(245, 158, 11, 0.15); }
 .gc-vote-active { background: var(--bg-tertiary); font-weight: 600; }
 
 /* ── Developer console ─────────────────────────────────── */

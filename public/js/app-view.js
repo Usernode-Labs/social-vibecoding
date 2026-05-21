@@ -524,6 +524,20 @@ const AppView = {
           const kudosBtn = window.Kudos
             ? Kudos.renderButton(pr, { compact: true })
             : '';
+          // Admin force-merge button: lets an admin land a PR right
+          // now without waiting for the active-user majority. Sits to
+          // the right of the regular Yes/No buttons so the normal
+          // voting affordances stay primary; the danger styling +
+          // ConfirmModal in castAdminMerge keep it from being a
+          // misclick risk. Mirrors the visibility gate used on the
+          // home-card admin actions: App.user?.isAdmin only — the
+          // "View as non-admin" tool already masks this client-side
+          // (see app.js).
+          const adminMergeBtn = App.user?.isAdmin
+            ? `<button class="gc-vote-btn gc-vote-btn-admin"
+                title="Admin: merge this PR right now, bypassing the vote majority"
+                onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
+            : '';
           bodyHtml += `
             <div class="gc-vote-item flex items-center gap-2 py-1">
               <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-violet-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
@@ -532,6 +546,7 @@ const AppView = {
               ${pr.staging_url ? `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStaging('${pr.staging_url}')">Preview</button>` : ''}
               <button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}" onclick="AppView.castVote(${pr.id}, 'yes')">Yes (${pr.yes_count})</button>
               <button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}" onclick="AppView.castVote(${pr.id}, 'no')">No (${pr.no_count})</button>
+              ${adminMergeBtn}
               ${kudosBtn}
             </div>`;
         }
@@ -618,6 +633,15 @@ const AppView = {
             const yesUndo = parseInt(pr.undo_yes_count) || 0;
             const noUndo = parseInt(pr.undo_no_count) || 0;
             const myUndo = pr.my_undo_vote;
+            // Mirror image of the Open-PRs admin-merge button: lets an
+            // admin open a revert PR right now without waiting for the
+            // undo-vote majority. Same visibility rule (App.user?.isAdmin)
+            // and same ConfirmModal gate in castAdminUndo.
+            const adminUndoBtn = App.user?.isAdmin
+              ? `<button class="gc-vote-btn gc-vote-btn-admin"
+                  title="Admin: open a revert PR right now, bypassing the undo-vote majority"
+                  onclick="AppView.castAdminUndo(${pr.id})">Admin undo</button>`
+              : '';
             undoUI = `
               <span class="text-xs text-zinc-600" title="Undo votes vs majority">${yesUndo}/${majority}</span>
               <button class="gc-vote-btn gc-vote-btn-undo${myUndo === 'yes' ? ' gc-vote-active' : ''}"
@@ -625,7 +649,8 @@ const AppView = {
                 onclick="AppView.castUndoVote(${pr.id}, 'yes')">Undo (${yesUndo})</button>
               <button class="gc-vote-btn${myUndo === 'no' ? ' gc-vote-active' : ''}"
                 title="Vote against reverting"
-                onclick="AppView.castUndoVote(${pr.id}, 'no')">Keep (${noUndo})</button>`;
+                onclick="AppView.castUndoVote(${pr.id}, 'no')">Keep (${noUndo})</button>
+              ${adminUndoBtn}`;
           }
 
           bodyHtml += `
@@ -700,6 +725,80 @@ const AppView = {
       if (AppView.appData) AppView.loadVotePanel(AppView.appData.slug);
     } catch (err) {
       alert(`Vote failed: ${err.message}`);
+    } finally {
+      AppView._voteInFlight.delete(key);
+    }
+  },
+
+  // Admin force-merge: bypass the active-user vote majority entirely
+  // and merge a promoted PR right now. Gated server-side by
+  // /api/sessions/:id/admin-merge (admin-only). The ConfirmModal here
+  // is the misclick guard — the "Admin merge" button sits inline with
+  // the regular Yes/No buttons, and we don't want a fat-finger to
+  // accidentally bypass voting when the admin meant to just vote.
+  async castAdminMerge(sessionId) {
+    if (!App.user?.isAdmin) return;
+    const key = `admin-merge:${sessionId}`;
+    if (AppView._voteInFlight.has(key)) return;
+    const ok = await ConfirmModal.show({
+      title: 'Force-merge this PR?',
+      message:
+        'This bypasses the active-user vote majority and merges the PR right now.\n\n'
+        + 'Use only when you\'re confident the change should ship — the override is announced in group chat with your username.',
+      confirmLabel: 'Force-merge',
+      cancelLabel: 'Cancel',
+      danger: true,
+    });
+    if (!ok) return;
+    AppView._voteInFlight.add(key);
+    try {
+      const resp = await fetch(`/api/sessions/${sessionId}/admin-merge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        alert(data.error || `Force-merge failed (HTTP ${resp.status}).`);
+      }
+      if (AppView.appData) AppView.loadVotePanel(AppView.appData.slug);
+    } catch (err) {
+      alert(`Force-merge failed: ${err.message}`);
+    } finally {
+      AppView._voteInFlight.delete(key);
+    }
+  },
+
+  // Admin force-undo: bypass the undo-vote majority and open a revert
+  // PR right now. The revert PR itself still needs a regular merge
+  // vote to land — this is "open the rollback for review", not "rewrite
+  // main unilaterally". Same ConfirmModal guard as castAdminMerge.
+  async castAdminUndo(sessionId) {
+    if (!App.user?.isAdmin) return;
+    const key = `admin-undo:${sessionId}`;
+    if (AppView._voteInFlight.has(key)) return;
+    const ok = await ConfirmModal.show({
+      title: 'Force-undo this merge?',
+      message:
+        'This bypasses the undo-vote majority and opens a revert PR right now.\n\n'
+        + 'The revert PR still needs a regular merge vote to land — admins can\'t rewrite main unilaterally. The override is announced in group chat with your username.',
+      confirmLabel: 'Force-undo',
+      cancelLabel: 'Cancel',
+      danger: true,
+    });
+    if (!ok) return;
+    AppView._voteInFlight.add(key);
+    try {
+      const resp = await fetch(`/api/sessions/${sessionId}/admin-undo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        alert(data.error || `Force-undo failed (HTTP ${resp.status}).`);
+      }
+      if (AppView.appData) AppView.loadVotePanel(AppView.appData.slug);
+    } catch (err) {
+      alert(`Force-undo failed: ${err.message}`);
     } finally {
       AppView._voteInFlight.delete(key);
     }
