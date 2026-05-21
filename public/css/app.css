@@ -80,6 +80,16 @@ html, body {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%238b5cf6' stroke-opacity='0.75' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
 }
 
+/* ── Favorites section headers ─────────────────────────── */
+
+.home-section-header {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  padding: 0.25rem 0;
+}
+
 /* ── Status dots ───────────────────────────────────────── */
 
 .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }

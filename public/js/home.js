@@ -29,18 +29,19 @@ const Home = {
       }
 
       emptyEl.classList.add('hidden');
-      // Render the app tiles, then append the "create new app" tile
-      // as a regular grid item — only when the viewer is permitted
-      // to create. Users without permission just see the app grid
-      // and no trailing slot. Living inside the grid (rather than
-      // as a col-span-full footer row) keeps it the same width &
-      // height as the surrounding tiles via grid auto-stretch, and
-      // makes the affordance feel like a peer of the existing apps
-      // ("here are your apps, and here's an empty slot for the next
-      // one") instead of a separate CTA banner.
-      listEl.innerHTML =
-        apps.map(Home.renderAppCard).join('') +
-        (canCreate ? Home.renderCreateTile() : '');
+      const starred = apps.filter((a) => a.is_favorited);
+      const rest = apps.filter((a) => !a.is_favorited);
+      const hasStarred = starred.length > 0;
+
+      let html = '';
+      if (hasStarred) {
+        html += '<div class="home-section-header col-span-full">Starred</div>';
+        html += starred.map(Home.renderAppCard).join('');
+        html += '<div class="home-section-header col-span-full mt-2">All Apps</div>';
+      }
+      html += rest.map(Home.renderAppCard).join('');
+      html += canCreate ? Home.renderCreateTile() : '';
+      listEl.innerHTML = html;
       if (canCreate) Home.wireCreateButtons();
 
       listEl.querySelectorAll('.app-card').forEach((card) => {
@@ -89,6 +90,10 @@ const Home = {
       // `app_update` event reconciles every other open tab.
       listEl.querySelectorAll('.lock-btn').forEach((btn) => {
         btn.addEventListener('click', (e) => Home.handleLockClick(e, btn));
+      });
+
+      listEl.querySelectorAll('.star-btn').forEach((btn) => {
+        btn.addEventListener('click', (e) => Home.handleStarClick(e, btn));
       });
 
       listEl.querySelectorAll('.check-updates-btn').forEach((btn) => {
@@ -265,37 +270,30 @@ const Home = {
     // apps); check-updates and delete are admin-only. The corner div
     // is rendered conditionally so we don't reserve right padding on
     // tiles that have no buttons there at all.
+    const isFavorited = !!app.is_favorited;
     const showRetry = isError && (App.user?.isAdmin || App.user?.id === app.created_by);
-    // Self-hosted (the platform's own row) deploys via GitHub Actions, not
-    // through the in-app rebuildProduction codepath that ⟳ would hit. Showing
-    // the button only to 403 with "this action does not apply to the self-app
-    // row" is bad UX — hide it entirely. Same rationale as the missingSecrets
-    // skip in routes/apps.js.
     const showCheck = App.user?.isAdmin && app.repo_url && isRunning && !app.self_hosted;
     const showDelete = !!App.user?.isAdmin;
-    // The lock toggle is admin-only and applies to every app (including
-    // self-hosted: an admin may want to require admin approval for
-    // platform-self PRs too, which is precisely the kind of change worth
-    // gating). Default state is unlocked; click flips to locked. See
-    // POST /api/apps/:slug/lock in routes/apps.js for the server side.
     const showLock = !!App.user?.isAdmin;
     const isLocked = !!app.locked;
-    const hasCornerBtns = showRetry || showCheck || showLock || showDelete;
+    const hasCornerBtns = true;
     // `Retry` is text rather than a glyph so we widen the title-row's
     // right padding when it's present; otherwise pr-14 is enough for
     // the two icon buttons + gap. With lock added we widen slightly
     // when there are 3 glyph buttons (check + lock + delete).
-    const glyphCount = (showCheck ? 1 : 0) + (showLock ? 1 : 0) + (showDelete ? 1 : 0);
+    const glyphCount = 1 + (showCheck ? 1 : 0) + (showLock ? 1 : 0) + (showDelete ? 1 : 0);
     const titlePadClass = showRetry
       ? 'pr-24'
-      : (glyphCount >= 3 ? 'pr-20' : (hasCornerBtns ? 'pr-14' : ''));
-    const cornerBtnsHtml = hasCornerBtns ? `
+      : (glyphCount >= 3 ? 'pr-20' : 'pr-14');
+    const starBtnHtml = `<button class="star-btn w-6 h-6 flex items-center justify-center rounded-md transition-colors text-sm leading-none ${isFavorited ? 'text-amber-400 hover:text-amber-300' : 'text-zinc-400 hover:text-amber-400 hover:bg-amber-500/10'}" data-slug="${app.slug}" data-favorited="${isFavorited}" title="${isFavorited ? 'Unstar app' : 'Star app'}" aria-label="${isFavorited ? 'Unstar app' : 'Star app'}">${isFavorited ? '★' : '☆'}</button>`;
+    const cornerBtnsHtml = `
       <div class="absolute top-2 right-2 flex items-center gap-1">
+        ${starBtnHtml}
         ${showRetry ? `<button class="retry-btn text-xs text-emerald-500 hover:text-emerald-400 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors" data-slug="${app.slug}">Retry</button>` : ''}
         ${showCheck ? `<button class="check-updates-btn w-6 h-6 flex items-center justify-center rounded-md text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors text-sm leading-none" data-slug="${app.slug}" title="Check for updates and redeploy if changed" aria-label="Check for updates">⟳</button>` : ''}
         ${showLock ? Home.renderLockButton(app.slug, isLocked) : ''}
         ${showDelete ? `<button class="delete-btn w-6 h-6 flex items-center justify-center rounded-md text-zinc-400 hover:text-red-500 hover:bg-red-500/10 transition-colors text-base leading-none" data-slug="${app.slug}" title="Delete app" aria-label="Delete app">&times;</button>` : ''}
-      </div>` : '';
+      </div>`;
 
     // Stats column (left) + commit pill (right) share one flex row at
     // the bottom of the tile. `items-end` baselines the pill against
@@ -430,6 +428,41 @@ const Home = {
       Home.updateAppCardLock(slug, nextLocked);
     } catch (err) {
       alert(`Lock toggle failed: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+    }
+  },
+
+  async handleStarClick(e, btn) {
+    e.stopPropagation();
+    const slug = btn.dataset.slug;
+    const wasFavorited = btn.dataset.favorited === 'true';
+    const next = !wasFavorited;
+    btn.dataset.favorited = String(next);
+    btn.textContent = next ? '★' : '☆';
+    btn.classList.toggle('text-amber-400', next);
+    btn.classList.toggle('hover:text-amber-300', next);
+    btn.classList.toggle('text-zinc-400', !next);
+    btn.classList.toggle('hover:text-amber-400', !next);
+    btn.classList.toggle('hover:bg-amber-500/10', !next);
+    btn.title = next ? 'Unstar app' : 'Star app';
+    btn.disabled = true;
+    try {
+      const res = await fetch(`/api/apps/${slug}/favorite`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ favorited: next }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      await Home.load();
+    } catch (err) {
+      btn.dataset.favorited = String(wasFavorited);
+      btn.textContent = wasFavorited ? '★' : '☆';
+      btn.title = wasFavorited ? 'Unstar app' : 'Star app';
+      alert(`Star toggle failed: ${err.message}`);
     } finally {
       btn.disabled = false;
     }

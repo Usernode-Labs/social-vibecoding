@@ -445,3 +445,15 @@ CREATE INDEX IF NOT EXISTS idx_pr_kudos_session     ON pr_kudos (session_id);
 CREATE INDEX IF NOT EXISTS idx_pr_kudos_giver_week  ON pr_kudos (giver_user_id, week_start);
 CREATE INDEX IF NOT EXISTS idx_pr_kudos_created     ON pr_kudos (created_at DESC);
 COMMENT ON TABLE pr_kudos IS 'staging:private';
+
+-- Per-user app favorites. Personal shortcut — starred apps appear in a
+-- dedicated section above the main grid on the home screen. No effect
+-- on visibility or permissions for other users. Not staging:private
+-- because favorites are non-sensitive and useful in staging previews.
+CREATE TABLE IF NOT EXISTS app_favorites (
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (app_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_app_favorites_user ON app_favorites(user_id);
