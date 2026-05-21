@@ -114,11 +114,13 @@ function appRoutes(config) {
       // 10 days. Computed in one batched query (one row per app) to
       // avoid the obvious O(N apps) per-app round trip from the
       // group-chat dashboard tile path.
+      const userId = req.user?.id || null;
       const { rows } = await pool.query(`
         SELECT a.*,
           COALESCE(msg_counts.cnt, 0) AS message_count,
           COALESCE(activity.total_seconds, 0) AS total_seconds,
-          COALESCE(au.cnt, 0) AS active_users
+          COALESCE(au.cnt, 0) AS active_users,
+          (favs.app_id IS NOT NULL) AS is_favorited
         FROM apps a
         LEFT JOIN (
           SELECT app_id, COUNT(*) AS cnt
@@ -144,9 +146,12 @@ function appRoutes(config) {
             )
           GROUP BY a1.app_id
         ) au ON au.app_id = a.id
+        LEFT JOIN (
+          SELECT app_id FROM app_favorites WHERE user_id = $2
+        ) favs ON favs.app_id = a.id
         WHERE NOT a.self_hosted OR $1::boolean
         ORDER BY (COALESCE(msg_counts.cnt, 0) + COALESCE(activity.total_seconds, 0)) DESC, a.created_at DESC
-      `, [showSelfHosted]);
+      `, [showSelfHosted, userId]);
 
       const apps = await Promise.all(rows.map(async (a) => {
         // Per-app missing-required-secrets list. Cheap (one extra query
@@ -232,6 +237,7 @@ function appRoutes(config) {
           version,
           deployProgress: appDeployStatus.read(a.slug),
           missingSecrets,
+          is_favorited: !!a.is_favorited,
         };
       }));
       res.json({ apps });
@@ -801,6 +807,39 @@ function appRoutes(config) {
       res.json({ ok: true });
     } catch (err) {
       log.error('apps', 'Retry failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/apps/:slug/favorite', async (req, res) => {
+    const { favorited } = req.body;
+    if (typeof favorited !== 'boolean') {
+      return res.status(400).json({ error: 'favorited must be a boolean' });
+    }
+    try {
+      const showSelfHosted = !!req.user?.isAdmin || !!config.selfAppPublicVoting;
+      const { rows: appRows } = await pool.query(
+        'SELECT id FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)',
+        [req.params.slug, showSelfHosted]
+      );
+      if (appRows.length === 0) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+      const appId = appRows[0].id;
+      if (favorited) {
+        await pool.query(
+          'INSERT INTO app_favorites (app_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+          [appId, req.user.id]
+        );
+      } else {
+        await pool.query(
+          'DELETE FROM app_favorites WHERE app_id = $1 AND user_id = $2',
+          [appId, req.user.id]
+        );
+      }
+      res.json({ ok: true, is_favorited: favorited });
+    } catch (err) {
+      log.error('apps', 'Failed to toggle favorite', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
