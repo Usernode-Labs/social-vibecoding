@@ -15,6 +15,26 @@ const GroupChat = {
   _savedScrollTop: null,
   _didInitialScroll: false,
 
+  // Reconnect bookkeeping (#7). The WS connection is the canonical
+  // send path for chat messages; if it's down we have to either
+  // queue or drop. We queue.
+  //   _reconnectAttempts — exponent for backoff (1s,2s,4s,…30s).
+  //                        Reset to 0 on every successful onopen.
+  //   _reconnectTimer    — pending setTimeout handle; null if no
+  //                        reconnect is scheduled. Guards against
+  //                        double-scheduling.
+  //   _pendingOutgoing   — chat texts the user submitted while the
+  //                        socket was down. Flushed in order on the
+  //                        next onopen. Capped at PENDING_LIMIT so
+  //                        a long-offline session can't grow
+  //                        unbounded; oldest entries are dropped
+  //                        first when full (rare in practice; the
+  //                        2000-char-per-message * 50 ceiling is
+  //                        ~100KB which is fine to hold in RAM).
+  _reconnectAttempts: 0,
+  _reconnectTimer: null,
+  _pendingOutgoing: [],
+
   // In-progress draft helpers — preserved across tab switches *and* page
   // refreshes (via localStorage). Keyed by app slug so each app has its
   // own draft. Cleared on send.
@@ -48,7 +68,14 @@ const GroupChat = {
     GroupChat._initSpecPanelResizer();
     GroupChat._restoreSpecPanelIfSaved(appSlug);
 
-    if (GroupChat.appSlug === appSlug && GroupChat.ws) {
+    // Reuse the existing connection only if it's actually usable
+    // (CONNECTING or OPEN). A CLOSING/CLOSED socket sitting in
+    // GroupChat.ws was the silent-drop trap behind #7: mount would
+    // short-circuit here and subsequent send()s would no-op on the
+    // dead socket until the user refreshed. Treat anything past
+    // OPEN as "no socket" and reconnect.
+    const liveWs = GroupChat.ws && GroupChat.ws.readyState <= 1; // CONNECTING(0) or OPEN(1)
+    if (GroupChat.appSlug === appSlug && liveWs) {
       GroupChat.render();
       GroupChat.attachScrollHandlers();
       GroupChat.restoreScroll();
@@ -66,35 +93,105 @@ const GroupChat = {
     GroupChat._lockedToBottom = true;
     GroupChat._savedScrollTop = null;
     GroupChat._didInitialScroll = false;
+    GroupChat._reconnectAttempts = 0;
 
+    GroupChat._openSocket();
+    GroupChat.attachScrollHandlers();
+  },
+
+  // Open (or re-open) the WS for the currently-mounted appSlug.
+  // Split out from connect() so the reconnect path can reuse the
+  // socket-construction without resetting message history, draft,
+  // scroll, etc. Reads GroupChat.appSlug rather than taking it as
+  // an arg so a reconnect that fires after disconnect() has nulled
+  // appSlug is a clean no-op.
+  _openSocket() {
+    const appSlug = GroupChat.appSlug;
+    if (!appSlug) return;
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    GroupChat.ws = new WebSocket(`${proto}//${location.host}/ws/chat/${appSlug}`);
+    const ws = new WebSocket(`${proto}//${location.host}/ws/chat/${appSlug}`);
+    GroupChat.ws = ws;
 
-    GroupChat.ws.onopen = () => {
+    ws.onopen = () => {
+      // Successful handshake → backoff resets, queued messages
+      // flush in order, history loads (refreshes the cache in case
+      // we missed broadcasts while disconnected).
+      GroupChat._reconnectAttempts = 0;
+      GroupChat._flushPendingOutgoing();
+      GroupChat._renderStatusLine();
       GroupChat.loadHistory();
     };
 
-    GroupChat.ws.onmessage = (event) => {
+    ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
         GroupChat.handleIncoming(msg);
       } catch {}
     };
 
-    GroupChat.ws.onclose = () => {
-      setTimeout(() => {
-        if (GroupChat.appSlug === appSlug && App.currentTab === 'group-chat') {
-          GroupChat.connect(appSlug);
-        }
-      }, 3000);
+    ws.onclose = () => {
+      // Bail if disconnect() ran (we changed apps / left the
+      // surface entirely); the existing socket reference is stale.
+      if (GroupChat.ws !== ws) return;
+      GroupChat._renderStatusLine();
+      GroupChat._scheduleReconnect();
     };
 
-    GroupChat.attachScrollHandlers();
+    // onerror typically fires immediately before onclose; leave
+    // rescheduling to onclose so we don't double-schedule. We just
+    // want the early UI signal that something went wrong.
+    ws.onerror = () => {
+      if (GroupChat.ws !== ws) return;
+      GroupChat._renderStatusLine();
+    };
+  },
+
+  _scheduleReconnect() {
+    if (GroupChat._reconnectTimer) return;
+    if (!GroupChat.appSlug) return;
+    // 1s, 2s, 4s, 8s, 16s, capped at 30s. Plus 0–500ms jitter so a
+    // server restart doesn't get a thundering herd from every open
+    // tab waking up in lockstep.
+    const n = GroupChat._reconnectAttempts;
+    const base = Math.min(30_000, 1000 * Math.pow(2, n));
+    const delay = base + Math.floor(Math.random() * 500);
+    GroupChat._reconnectTimer = setTimeout(() => {
+      GroupChat._reconnectTimer = null;
+      GroupChat._reconnectAttempts++;
+      if (GroupChat.appSlug) GroupChat._openSocket();
+    }, delay);
+  },
+
+  // Drain the offline-typed messages onto the freshly-open socket.
+  // Slice + reset before sending so a synchronous re-entry (e.g. if
+  // ws.send throws and we somehow re-enter) doesn't double-send.
+  _flushPendingOutgoing() {
+    if (!GroupChat._pendingOutgoing.length) return;
+    if (!GroupChat.ws || GroupChat.ws.readyState !== 1) return;
+    const queue = GroupChat._pendingOutgoing.slice();
+    GroupChat._pendingOutgoing.length = 0;
+    for (const content of queue) {
+      try {
+        GroupChat.ws.send(JSON.stringify({ type: 'chat', content }));
+      } catch {
+        // Socket closed mid-flush — re-queue whatever didn't go
+        // and let the next reconnect try again.
+        GroupChat._pendingOutgoing.unshift(content);
+        break;
+      }
+    }
   },
 
   disconnect() {
+    if (GroupChat._reconnectTimer) {
+      clearTimeout(GroupChat._reconnectTimer);
+      GroupChat._reconnectTimer = null;
+    }
     if (GroupChat.ws) {
+      GroupChat.ws.onopen = null;
+      GroupChat.ws.onmessage = null;
       GroupChat.ws.onclose = null;
+      GroupChat.ws.onerror = null;
       GroupChat.ws.close();
       GroupChat.ws = null;
     }
@@ -103,6 +200,11 @@ const GroupChat = {
     GroupChat._lockedToBottom = true;
     GroupChat._savedScrollTop = null;
     GroupChat._didInitialScroll = false;
+    GroupChat._reconnectAttempts = 0;
+    // Pending messages are tied to *this* app's chat room — when
+    // we switch apps, drop them rather than silently sending them
+    // to whatever room reconnects next.
+    GroupChat._pendingOutgoing.length = 0;
   },
 
   async loadHistory() {
@@ -163,9 +265,38 @@ const GroupChat = {
     }
   },
 
+  // Hard cap on the offline queue. Picked to be large enough that
+  // a transient drop never bites (a fast typer at ~5 msgs/sec for
+  // 10s is 50 msgs) and small enough that a genuinely-offline
+  // session can't balloon RAM. When full, we drop the oldest to
+  // preserve the user's most recent intent.
+  PENDING_LIMIT: 50,
+
+  // Submit a chat message. Either ships it now (socket OPEN) or
+  // queues it for the next reconnect. Never silently drops — that
+  // was the visible half of #7 ("messages fail to send without
+  // page refresh"). The caller can clear the input as soon as we
+  // return without losing user-typed content.
   send(content) {
-    if (!GroupChat.ws || GroupChat.ws.readyState !== 1) return;
-    GroupChat.ws.send(JSON.stringify({ type: 'chat', content }));
+    if (GroupChat.ws && GroupChat.ws.readyState === 1) {
+      GroupChat.ws.send(JSON.stringify({ type: 'chat', content }));
+      return;
+    }
+    // Drop oldest if at cap — better to lose the message someone
+    // typed 3 minutes ago than the one they just typed.
+    if (GroupChat._pendingOutgoing.length >= GroupChat.PENDING_LIMIT) {
+      GroupChat._pendingOutgoing.shift();
+    }
+    GroupChat._pendingOutgoing.push(content);
+    // Kick a reconnect if one isn't already in flight. Covers the
+    // edge case where send() is called between onclose firing and
+    // the next reconnect being scheduled (shouldn't happen in
+    // practice — onclose schedules synchronously — but cheap
+    // insurance).
+    if (!GroupChat._reconnectTimer && (!GroupChat.ws || GroupChat.ws.readyState >= 2)) {
+      GroupChat._scheduleReconnect();
+    }
+    GroupChat._renderStatusLine();
   },
 
   sendTyping() {
@@ -586,8 +717,29 @@ const GroupChat = {
   },
 
   renderTyping() {
+    GroupChat._renderStatusLine();
+  },
+
+  // Single writer for #gc-typing. Two pieces of state compete for
+  // this slot: the connection-state indicator (#7 reconnect / queued
+  // messages) and the typing-users line. Connection-state wins when
+  // we're offline because it's actionable ("your message is waiting,
+  // here's why") and a typing notice from a stale state would be
+  // misleading. When connected, the typing-users line owns the slot
+  // exactly as before.
+  _renderStatusLine() {
     const el = document.getElementById('gc-typing');
     if (!el) return;
+
+    const wsOpen = GroupChat.ws && GroupChat.ws.readyState === 1;
+    if (!wsOpen && GroupChat.appSlug) {
+      const queued = GroupChat._pendingOutgoing.length;
+      el.textContent = queued > 0
+        ? `Reconnecting… (${queued} queued)`
+        : 'Reconnecting…';
+      return;
+    }
+
     const names = [...GroupChat.typingUsers.values()].filter((n) => n !== App.user?.username);
     if (names.length === 0) {
       el.textContent = '';
