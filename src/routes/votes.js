@@ -33,10 +33,15 @@ function voteRoutes(config) {
         try {
           const [, owner, repo] = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
           if (owner && repo) {
+            // octokit.request rather than .rest.pulls.update —
+            // @octokit/app's installation Octokit is a bare core
+            // instance without the rest-endpoint-methods plugin, so
+            // .rest is undefined.
             const octokit = await github.getInstallationOctokit(owner);
-            await octokit.rest.pulls.update({
-              owner, repo, pull_number: session.pr_number, draft: false,
-            });
+            await octokit.request(
+              'PATCH /repos/{owner}/{repo}/pulls/{pull_number}',
+              { owner, repo, pull_number: session.pr_number, draft: false }
+            );
           }
         } catch (err) {
           log.warn('votes', 'Failed to update PR on GitHub', { err: err.message });

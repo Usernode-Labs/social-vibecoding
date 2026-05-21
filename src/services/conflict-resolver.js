@@ -34,10 +34,18 @@ async function resolveIfConflicted(config, pool, session, mergedSession) {
   if (!owner || !repo) return;
 
   try {
+    // octokit.request rather than .rest.* — @octokit/app's installation
+    // Octokit is a bare core instance without the rest-endpoint-methods
+    // plugin, so .rest is undefined and every .rest.foo.bar call here
+    // used to TypeError silently inside the surrounding catch (i.e.
+    // automatic conflict resolution was a no-op since the @octokit/app
+    // upgrade). The {+name} form keeps `/` characters in path params
+    // (refs, file paths, branch-named tree_shas) un-encoded.
     const octokit = await github.getInstallationOctokit(owner);
-    const { data: pr } = await octokit.rest.pulls.get({
-      owner, repo, pull_number: session.pr_number,
-    });
+    const { data: pr } = await octokit.request(
+      'GET /repos/{owner}/{repo}/pulls/{pull_number}',
+      { owner, repo, pull_number: session.pr_number }
+    );
 
     if (pr.mergeable === true || pr.mergeable === null) {
       return; // No conflict or GitHub hasn't computed yet
@@ -48,20 +56,27 @@ async function resolveIfConflicted(config, pool, session, mergedSession) {
     });
 
     // Get the conflicting diff
-    const { data: diff } = await octokit.rest.pulls.get({
-      owner, repo, pull_number: session.pr_number,
-      mediaType: { format: 'diff' },
-    });
+    const { data: diff } = await octokit.request(
+      'GET /repos/{owner}/{repo}/pulls/{pull_number}',
+      {
+        owner, repo, pull_number: session.pr_number,
+        mediaType: { format: 'diff' },
+      }
+    );
 
     // Get main branch files for context
-    const { data: mainTree } = await octokit.rest.git.getTree({
-      owner, repo, tree_sha: 'main', recursive: 'true',
-    });
+    const { data: mainTree } = await octokit.request(
+      'GET /repos/{owner}/{repo}/git/trees/{+tree_sha}',
+      { owner, repo, tree_sha: 'main', recursive: 'true' }
+    );
 
     const mainFiles = [];
     for (const file of mainTree.tree.filter((f) => f.type === 'blob' && f.size < 50000).slice(0, 15)) {
       try {
-        const { data } = await octokit.rest.repos.getContent({ owner, repo, path: file.path, ref: 'main' });
+        const { data } = await octokit.request(
+          'GET /repos/{owner}/{repo}/contents/{+path}',
+          { owner, repo, path: file.path, ref: 'main' }
+        );
         if (data.encoding === 'base64') {
           mainFiles.push(`--- ${file.path} ---\n${Buffer.from(data.content, 'base64').toString('utf8')}`);
         }
@@ -69,14 +84,18 @@ async function resolveIfConflicted(config, pool, session, mergedSession) {
     }
 
     // Get branch files
-    const { data: branchTree } = await octokit.rest.git.getTree({
-      owner, repo, tree_sha: session.branch_name, recursive: 'true',
-    });
+    const { data: branchTree } = await octokit.request(
+      'GET /repos/{owner}/{repo}/git/trees/{+tree_sha}',
+      { owner, repo, tree_sha: session.branch_name, recursive: 'true' }
+    );
 
     const branchFiles = [];
     for (const file of branchTree.tree.filter((f) => f.type === 'blob' && f.size < 50000).slice(0, 15)) {
       try {
-        const { data } = await octokit.rest.repos.getContent({ owner, repo, path: file.path, ref: session.branch_name });
+        const { data } = await octokit.request(
+          'GET /repos/{owner}/{repo}/contents/{+path}',
+          { owner, repo, path: file.path, ref: session.branch_name }
+        );
         if (data.encoding === 'base64') {
           branchFiles.push(`--- ${file.path} ---\n${Buffer.from(data.content, 'base64').toString('utf8')}`);
         }
@@ -171,7 +190,10 @@ Only fix the conflict — do NOT change behavior or add features. Keep the inten
     // Rebuild staging
     const { rows: appRows } = await pool.query('SELECT * FROM apps WHERE id = $1', [session.app_id]);
     if (appRows[0]) {
-      const latestRef = await octokit.rest.git.getRef({ owner, repo, ref: `heads/${session.branch_name}` });
+      const latestRef = await octokit.request(
+        'GET /repos/{owner}/{repo}/git/ref/{+ref}',
+        { owner, repo, ref: `heads/${session.branch_name}` }
+      );
       const commitHash = latestRef.data.object.sha;
 
       const stagingResult = await stagingService.buildAndDeployStaging(config, session, appRows[0], commitHash);

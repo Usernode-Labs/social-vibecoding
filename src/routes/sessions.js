@@ -1668,8 +1668,15 @@ function sessionRoutes(config) {
         try {
           const [, owner, repo] = app.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
           if (owner && repo) {
+            // octokit.request, not .rest.git.getRef — @octokit/app's
+            // installation Octokit lacks the rest-endpoint-methods
+            // plugin. {+ref} preserves the `/` in `heads/<branch>`;
+            // plain {ref} would percent-encode it and 404.
             const octokit = await github.getInstallationOctokit(owner);
-            const { data: ref } = await octokit.rest.git.getRef({ owner, repo, ref: `heads/${session.branch_name}` });
+            const { data: ref } = await octokit.request(
+              'GET /repos/{owner}/{repo}/git/ref/{+ref}',
+              { owner, repo, ref: `heads/${session.branch_name}` }
+            );
             commitHash = ref.object.sha;
           }
         } catch {}
