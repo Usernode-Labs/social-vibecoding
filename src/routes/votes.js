@@ -914,22 +914,59 @@ async function checkAndOpenRevert(config, pool, session, decider, options = {}) 
     return { reverted: false, inProgress: true };
   }
 
-  // Sanity precondition: we need a merge SHA to revert. Without it
-  // (pre-#11 merged rows), bail with a chat message — the user has
-  // to do the revert manually.
+  // Sanity precondition: we need a merge SHA to revert. For pre-#11
+  // merged rows the column is NULL because mergePR's response wasn't
+  // captured at the time. GitHub still knows the SHA via pulls.get —
+  // try to backfill on demand, persist for next time, and proceed.
+  // Only fall through to the manual-revert message if GitHub can't
+  // help either (auth disabled, repo gone, PR never actually merged,
+  // etc.).
   if (!session.merge_commit_sha) {
-    await pool.query(
-      `UPDATE chat_sessions SET revert_of_session_id = NULL WHERE id = $1`,
-      [session.id]
-    ).catch(() => {});
-    const label = session.pr_title
-      ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
-      : `PR #${session.pr_number || session.id}`;
-    await sendSystemMessage(pool, session.app_id,
-      `Couldn't auto-revert ${label}: no recorded merge commit SHA. Pre-#11 merges weren't tracked; please open the revert PR manually.`,
-      'system'
-    );
-    return { reverted: false, error: 'no merge_commit_sha' };
+    let backfilledSha = null;
+    if (github.isEnabled() && session.repo_url && session.pr_number) {
+      try {
+        const bm = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+        if (bm) {
+          const [, bOwner, bRepo] = bm;
+          const octokit = await github.getInstallationOctokit(bOwner);
+          const { data: pr } = await octokit.rest.pulls.get({
+            owner: bOwner, repo: bRepo, pull_number: session.pr_number,
+          });
+          if (pr.merged && pr.merge_commit_sha) {
+            await pool.query(
+              `UPDATE chat_sessions SET merge_commit_sha = $2
+               WHERE id = $1 AND merge_commit_sha IS NULL`,
+              [session.id, pr.merge_commit_sha]
+            );
+            session.merge_commit_sha = pr.merge_commit_sha;
+            backfilledSha = pr.merge_commit_sha;
+            log.info('votes', 'Backfilled merge_commit_sha from GitHub', {
+              sessionId: session.id, prNumber: session.pr_number,
+              sha: pr.merge_commit_sha,
+            });
+          }
+        }
+      } catch (err) {
+        log.warn('votes', 'merge_commit_sha backfill from GitHub failed', {
+          sessionId: session.id, prNumber: session.pr_number, err: err.message,
+        });
+      }
+    }
+
+    if (!backfilledSha) {
+      await pool.query(
+        `UPDATE chat_sessions SET revert_of_session_id = NULL WHERE id = $1`,
+        [session.id]
+      ).catch(() => {});
+      const label = session.pr_title
+        ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+        : `PR #${session.pr_number || session.id}`;
+      await sendSystemMessage(pool, session.app_id,
+        `Couldn't auto-revert ${label}: no merge commit SHA available (GitHub didn't return one). Please open the revert PR manually.`,
+        'system'
+      );
+      return { reverted: false, error: 'no merge_commit_sha' };
+    }
   }
   if (!session.repo_url) {
     await pool.query(
