@@ -1037,6 +1037,18 @@ function sessionRoutes(config) {
   // the result. Old sessions that already have frozen versions in
   // chat_session_specs keep their browseable history through this
   // endpoint and the share endpoint below.)
+  //
+  // Access rule:
+  //   - Owner of the originating session: every version (saved drafts
+  //     are private until explicitly shared).
+  //   - Anyone else (any authed user): only versions where
+  //     shared_to_group_at IS NOT NULL — i.e. the spec was explicitly
+  //     posted into the app's group chat via /specs/:version/share.
+  //     The group-chat read endpoint has no membership gate, so once
+  //     a spec is shared every logged-in user can already see the
+  //     share card; the body of the spec should be reachable too,
+  //     otherwise the "View full spec" affordance on the card 404s
+  //     for everyone except the original sharer (#6).
   router.get('/api/sessions/:id/specs/:version', async (req, res) => {
     const sessionId = parseInt(req.params.id, 10);
     const version = parseInt(req.params.version, 10);
@@ -1044,12 +1056,13 @@ function sessionRoutes(config) {
       return res.status(400).json({ error: 'Bad id/version' });
     }
     try {
-      // Auth via session ownership join.
       const { rows } = await pool.query(
         `SELECT s.version, s.content, s.built_at, s.commit_sha, s.pr_number, s.shared_to_group_at
          FROM chat_session_specs s
          JOIN chat_sessions cs ON cs.id = s.session_id
-         WHERE s.session_id = $1 AND s.version = $2 AND cs.user_id = $3`,
+         WHERE s.session_id = $1
+           AND s.version = $2
+           AND (cs.user_id = $3 OR s.shared_to_group_at IS NOT NULL)`,
         [sessionId, version, req.user.id]
       );
       if (!rows.length) return res.status(404).json({ error: 'Spec version not found' });

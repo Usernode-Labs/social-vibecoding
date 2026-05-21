@@ -294,16 +294,18 @@ const GroupChat = {
       });
       try {
         const resp = await fetch(`/api/sessions/${sessionId}/specs/${version}`);
-        // 404 expected for users who don't own the originating session
-        // (sessions are private; specs aren't reshared with the group
-        // beyond the snippet). Show a clear message instead of failing
-        // silently — they can ask the sharer for more detail.
+        // After #6, the server allows any authed user to read a spec
+        // version that was explicitly shared into the group chat. A
+        // 404 here therefore means the share was withdrawn or the
+        // version row is gone (rare — would require manual DB edits
+        // or a session DELETE CASCADE) rather than the routine
+        // "not the owner" case it used to mean.
         if (!resp.ok) {
           GroupChat._showSpecPanel({
             title: previewTitle,
             version,
             content: resp.status === 404
-              ? 'You can only view the full spec of sessions you own. Ask the sharer for more detail or open the linked PR.'
+              ? 'This spec is no longer available. The sharer may have deleted the session.'
               : `Failed to load spec (HTTP ${resp.status}).`,
             isError: true,
           });
@@ -557,7 +559,7 @@ const GroupChat = {
           title: previewTitle,
           version,
           content: resp.status === 404
-            ? 'You can only view the full spec of sessions you own. Ask the sharer for more detail or open the linked PR.'
+            ? 'This spec is no longer available. The sharer may have deleted the session.'
             : `Failed to load spec (HTTP ${resp.status}).`,
           isError: true,
         });
