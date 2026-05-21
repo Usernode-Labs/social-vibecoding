@@ -937,10 +937,15 @@ async function checkAndOpenRevert(config, pool, session, decider, options = {}) 
       } else {
         const [, bOwner, bRepo] = bm;
         try {
+          // Use octokit.request rather than octokit.rest.pulls.get —
+          // @octokit/app's installation octokit is a bare @octokit/core
+          // instance and does not include the rest-endpoint-methods
+          // plugin, so .rest is undefined.
           const octokit = await github.getInstallationOctokit(bOwner);
-          const { data: pr } = await octokit.rest.pulls.get({
-            owner: bOwner, repo: bRepo, pull_number: session.pr_number,
-          });
+          const { data: pr } = await octokit.request(
+            'GET /repos/{owner}/{repo}/pulls/{pull_number}',
+            { owner: bOwner, repo: bRepo, pull_number: session.pr_number }
+          );
           if (pr.merged && pr.merge_commit_sha) {
             await pool.query(
               `UPDATE chat_sessions SET merge_commit_sha = $2
