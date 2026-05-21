@@ -6,6 +6,20 @@ const AppView = {
   activeSeconds: 0,
   iframeFocused: false,
 
+  _INFO_PANEL_OPEN_KEY_PREFIX: 'gc-info-panel-open-v1:',
+
+  _readInfoPanelOpen(appSlug) {
+    if (!appSlug) return false;
+    try { return localStorage.getItem(AppView._INFO_PANEL_OPEN_KEY_PREFIX + appSlug) === '1'; }
+    catch { return false; }
+  },
+
+  _writeInfoPanelOpen(appSlug, isOpen) {
+    if (!appSlug) return;
+    try { localStorage.setItem(AppView._INFO_PANEL_OPEN_KEY_PREFIX + appSlug, isOpen ? '1' : '0'); }
+    catch {}
+  },
+
   // Iframe tokens are signed for 1h. Refresh at 45min so the child app never
   // sees an expired JWT during a long reading/editing session.
   TOKEN_REFRESH_MS: 45 * 60 * 1000,
@@ -402,6 +416,7 @@ const AppView = {
   async loadVotePanel(slug) {
     const panel = document.getElementById('gc-panel-content');
     if (!panel) return;
+    AppView.panelOpen = AppView._readInfoPanelOpen(slug);
 
     try {
       const [promotedRes, issuesRes, mergedRes] = await Promise.all([
@@ -683,6 +698,7 @@ const AppView = {
 
       document.getElementById('gc-panel-toggle').addEventListener('click', () => {
         AppView.panelOpen = !AppView.panelOpen;
+        AppView._writeInfoPanelOpen(slug, AppView.panelOpen);
         const body = document.getElementById('gc-panel-body');
         const arrow = document.querySelector('#gc-panel-toggle span:first-child');
         if (body) body.classList.toggle('hidden');
