@@ -249,6 +249,27 @@ jobs:
                 # existing archive is still valid.
                 echo "==> Recreating usernode-node so it picks up the fresh archive..."
                 docker compose up -d --no-deps --force-recreate usernode-node
+
+                # Child-app cache flush. Every dapp server keeps an
+                # in-memory raw-tx cache (createAppStateCache) that
+                # dedups by tx_id. If the sidecar was running in
+                # partial-ledger mode for any window before this
+                # recreate, those caches will hold rows with
+                # source=null, and the new full-mode SSE stream's
+                # re-deliveries (same tx_ids, source set) get dropped
+                # by the dedup. Result: dapp UI stays silently broken
+                # until each child container is restarted, even after
+                # the sidecar is healthy. Restart them all so they
+                # re-backfill from the now-authoritative sidecar.
+                #
+                # Cheap (<1s per container, parallel-safe), idempotent,
+                # and runs only on the success path where we just
+                # rotated the sidecar — pure platform-code deploys
+                # skip this entirely.
+                echo "==> Restarting child-app containers to flush stale source-null cache rows..."
+                docker ps --format '{{.Names}}' | grep '^usernode-app-' \
+                  | xargs -r -n 1 -P 8 docker restart \
+                  | sed 's/^/    restarted: /'
               else
                 # Fetch failed. The sidecar's --archive flag will self-
                 # write new snapshots over time, so a non-empty existing
