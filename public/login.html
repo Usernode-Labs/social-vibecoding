@@ -41,6 +41,7 @@
       <!-- Options when pubkey is not linked -->
       <div id="wallet-options" class="hidden space-y-3">
         <p class="text-sm text-center text-zinc-400">Your wallet is not linked to an account yet.</p>
+        <p id="wallet-detected-pubkey" class="text-[11px] text-center text-zinc-500 font-mono break-all px-2"></p>
         <button id="btn-link-existing" class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white">
           I have an account
         </button>
@@ -223,6 +224,20 @@
 
         walletStatus.textContent = '';
 
+        // Treat any non-2xx as a real transport/server error and surface
+        // it; falling through to the "not linked" UI here is misleading
+        // (e.g. a 429 from the auth rate-limiter would tell a user with
+        // a perfectly-linked wallet that their wallet isn't linked).
+        if (!checkRes.ok) {
+          const msg = (checkData && checkData.error)
+            ? checkData.error
+            : ('Wallet check failed (HTTP ' + checkRes.status + ')');
+          showError(walletError, msg);
+          loginForm.classList.remove('hidden');
+          registerLink.classList.remove('hidden');
+          return;
+        }
+
         if (checkData.isGenesis === false) {
           showError(walletError, 'Your wallet is not in the genesis ledger. Only genesis participants can use wallet authentication.');
           loginForm.classList.remove('hidden');
@@ -236,6 +251,8 @@
           loginForm.classList.remove('hidden');
           registerLink.classList.remove('hidden');
         } else {
+          const pubkeyDisplay = document.getElementById('wallet-detected-pubkey');
+          if (pubkeyDisplay) pubkeyDisplay.textContent = 'Detected: ' + walletPubkey;
           showOnly(walletOptions);
         }
       } catch (e) {

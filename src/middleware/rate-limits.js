@@ -32,12 +32,27 @@ function makeLimiter({ windowMs, max, name, keyByUser = false, message }) {
 }
 
 // Auth: 10 attempts / 15 min / IP. Tight because it's the primary brute-
-// force surface.
+// force surface (password POSTs + signed-challenge submission).
 const authLimiter = makeLimiter({
   windowMs: 15 * 60 * 1000,
   max: 10,
   name: 'auth',
   message: 'Too many login attempts, try again in a few minutes',
+});
+
+// Wallet pre-check: 60 / min / IP. /api/auth/wallet-check is a read-only
+// lookup that fires on every login-page load to decide whether to show
+// "Sign in with wallet" vs "Link / register". Reusing authLimiter here
+// caused legitimate users (esp. mobile webview refreshes) to bounce off
+// after 10 page loads in 15 min and see a misleading "not linked" UI.
+// The endpoint can't be used to brute-force credentials — verification
+// still goes through wallet-verify with a server-issued ECDSA challenge,
+// which IS gated by authLimiter.
+const walletCheckLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 60,
+  name: 'wallet-check',
+  message: 'Too many wallet checks, slow down for a minute',
 });
 
 // App creation: 5 / hour / user. Each create provisions a container, DB,
@@ -73,4 +88,4 @@ const chatLimiter = makeLimiter({
   message: 'Too many chat messages — slow down for a minute.',
 });
 
-module.exports = { authLimiter, appCreateLimiter, issueCreateLimiter, chatLimiter };
+module.exports = { authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, chatLimiter };

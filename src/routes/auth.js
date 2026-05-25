@@ -5,7 +5,7 @@ const http = require('http');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
-const { authLimiter } = require('../middleware/rate-limits');
+const { authLimiter, walletCheckLimiter } = require('../middleware/rate-limits');
 const genesisAccounts = require('../services/genesis-accounts');
 
 const SESSION_DAYS = 7;
@@ -369,7 +369,7 @@ function authRoutes(config) {
     return { token, expiresAt };
   }
 
-  router.post('/api/auth/wallet-check', authLimiter, async (req, res) => {
+  router.post('/api/auth/wallet-check', walletCheckLimiter, async (req, res) => {
     const { pubkey } = req.body || {};
     if (!pubkey || typeof pubkey !== 'string') {
       return res.status(400).json({ error: 'pubkey required' });

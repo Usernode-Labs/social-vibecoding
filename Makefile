@@ -1,4 +1,4 @@
-.PHONY: up down restart logs ps build node-full node-full-no-fetch fetch-archive
+.PHONY: up down restart logs ps build node-full node-full-no-fetch fetch-archive node-tunnel node-tunnel-down
 
 # Local development entrypoints. Production deploys go through
 # .github/workflows/deploy.yml + the top-level docker-compose.yml; nothing
@@ -156,3 +156,53 @@ logs:
 
 ps:
 	$(DEV_COMPOSE) ps
+
+# ---------------------------------------------------------------------------
+# SSH tunnel to prod's usernode-node sidecar.
+#
+# Wallet sign-in (`/api/auth/wallet-verify`) needs a usernode RPC at
+# host.docker.internal:3001/misc/verify-signature to verify ECDSA
+# signatures. The "real" dev path is `make node-full` (a native node
+# locally), but it's slow to boot and overkill if you just want to
+# exercise the platform UI.
+#
+# This target opens an SSH `-L` tunnel from local:3001 to the prod
+# `usernode-node` container's IPv4 on the prod docker bridge, so the
+# dev compose stack's existing NODE_RPC_URL=http://host.docker.internal:3001
+# resolves to a real working node. The endpoint we hit is /misc/verify-
+# signature, which is pure crypto with no auth, so this isn't a privilege
+# escalation — anyone who can sign with a linked wallet's key can sign
+# in regardless.
+#
+# Override DEPLOY_HOST / NODE_CONTAINER on the command line if you've
+# pointed the dev stack at a different deploy.
+# ---------------------------------------------------------------------------
+DEPLOY_HOST    ?= social-vibecoding.usernodelabs.org
+DEPLOY_USER    ?= deploy
+NODE_CONTAINER ?= usernode-node
+TUNNEL_PORT    ?= 3001
+
+node-tunnel:
+	@# Resolve the prod sidecar's docker-bridge IPv4 once (it's stable
+	@# across container restarts unless the docker network is recreated).
+	@NODE_IP=$$(ssh $(DEPLOY_USER)@$(DEPLOY_HOST) "docker inspect $(NODE_CONTAINER) --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'") && \
+	if [ -z "$$NODE_IP" ]; then echo "Could not resolve $(NODE_CONTAINER) IP on $(DEPLOY_HOST)"; exit 1; fi && \
+	echo "==> Tunneling localhost:$(TUNNEL_PORT) -> $(DEPLOY_HOST):$$NODE_IP:3000" && \
+	pkill -f "$$NODE_IP:3000" 2>/dev/null; sleep 1; \
+	nohup ssh -N -L $(TUNNEL_PORT):$$NODE_IP:3000 $(DEPLOY_USER)@$(DEPLOY_HOST) >/tmp/sv-node-tunnel.log 2>&1 & \
+	sleep 2 && \
+	if lsof -nP -iTCP:$(TUNNEL_PORT) -sTCP:LISTEN 2>/dev/null | grep -q ssh; then \
+		echo "==> Tunnel up. Test with: curl http://localhost:$(TUNNEL_PORT)/status"; \
+	else \
+		echo "==> Tunnel did not come up; check /tmp/sv-node-tunnel.log"; exit 1; \
+	fi
+
+node-tunnel-down:
+	@echo "==> Closing usernode-node tunnel(s) on port $(TUNNEL_PORT)..."
+	@pkill -f "ssh.*-L $(TUNNEL_PORT):.*:3000.*$(DEPLOY_HOST)" 2>/dev/null || true
+	@sleep 0.5
+	@if lsof -nP -iTCP:$(TUNNEL_PORT) -sTCP:LISTEN 2>/dev/null | grep -q ssh; then \
+		echo "  (still some ssh listeners on $(TUNNEL_PORT); pkill may have missed them)"; \
+	else \
+		echo "  done."; \
+	fi
