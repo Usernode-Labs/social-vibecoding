@@ -324,8 +324,15 @@ const AppView = {
     // viewport width.
     content.innerHTML = `
       <div class="flex flex-col h-full">
-        <!-- Vote/issue panel (spans full width above the body row) -->
-        <div id="gc-panel" class="shrink-0 border-b border-zinc-200 dark:border-zinc-800">
+        <!-- Vote/issue panel (spans full width above the body row).
+             Capped at 50% of the chat container's height so a long
+             expanded dashboard (lots of PRs / kudos / etc) can never
+             push the messages list off-screen. The percentage resolves
+             against the parent's definite height (.flex-col.h-full
+             inside #app-content's flex track). overflow-y-auto turns
+             the whole panel into a scroll region — toggle button is at
+             the top, so it scrolls into view at content-start. -->
+        <div id="gc-panel" class="shrink-0 max-h-[50%] overflow-y-auto overscroll-contain border-b border-zinc-200 dark:border-zinc-800">
           <div id="gc-panel-content" class="px-3 py-2"></div>
         </div>
 
@@ -495,7 +502,12 @@ const AppView = {
         </div>`;
 
       if (promoted.length) {
-        bodyHtml += `<div class="mb-2"><div class="text-xs text-zinc-500 mb-1 font-medium">Open PRs <span class="text-zinc-600 font-normal">(need ${majority}/${activeUsers} votes to merge)</span>${lockedHint}</div>`;
+        // The inner divide-y wrapper draws a 1px line between consecutive
+        // gc-vote-items on phones where each item now spans 2 rows
+        // (title row + controls row). On sm+ we drop the dividers via
+        // `sm:divide-y-0` so the original single-row list stays visually
+        // unchanged. Same pattern on every list section below.
+        bodyHtml += `<div class="mb-2"><div class="text-xs text-zinc-500 mb-1 font-medium">Open PRs <span class="text-zinc-600 font-normal">(need ${majority}/${activeUsers} votes to merge)</span>${lockedHint}</div><div class="divide-y divide-zinc-200 dark:divide-zinc-800 sm:divide-y-0 border-y border-zinc-200 dark:border-zinc-800 sm:border-y-0">`;
         for (const pr of promoted) {
           const yesCount = parseInt(pr.yes_count);
           const isMerging = pr.status === 'merging';
@@ -522,12 +534,19 @@ const AppView = {
             // prod rebuild + staging teardown) is in flight. Keep the
             // row visible with a spinner so it doesn't look like the
             // PR got lost between "majority reached" and "merged".
+            //
+            // Mobile layout: controls wrapped in a basis-full + sm:contents
+            // group so they take their own row below ~640px and the title
+            // gets the full first row. See open-PR row below for the
+            // canonical comment on this pattern.
             bodyHtml += `
-              <div class="gc-vote-item flex items-center gap-2 py-1 opacity-70">
+              <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1 opacity-70">
                 <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-violet-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
-                <span class="text-xs text-zinc-300 flex-1 truncate">${labelText}</span>
-                <span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>
-                <span class="text-xs text-emerald-400">Merging…</span>
+                <span class="text-xs text-zinc-300 flex-1 min-w-0 truncate">${labelText}</span>
+                <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
+                  <span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>
+                  <span class="text-xs text-emerald-400">Merging…</span>
+                </div>
               </div>`;
             continue;
           }
@@ -553,51 +572,68 @@ const AppView = {
                 title="Admin: merge this PR right now, bypassing the vote majority"
                 onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
             : '';
+          // Mobile layout: PR# + title share row 1; counts + vote/admin/
+          // kudos buttons live in a wrapper that's `basis-full` (its own
+          // row) below sm and `sm:contents` (transparent passthrough) at
+          // sm+. The outer flex-wrap + the wrapper's basis-full force a
+          // line break before the controls on narrow screens, so the
+          // title with `flex-1 min-w-0 truncate` actually has horizontal
+          // room to render the LLM-generated PR title (otherwise the
+          // ~400px sum of trailing buttons starves it on 360-390px
+          // phones). On sm+ display:contents removes the wrapper from
+          // the box tree and the layout collapses back to the original
+          // single-row form, preserving desktop UX exactly.
           bodyHtml += `
-            <div class="gc-vote-item flex items-center gap-2 py-1">
+            <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
               <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-violet-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
-              <span class="text-xs text-zinc-300 flex-1 truncate">${labelText}</span>
-              <span class="text-xs text-zinc-500">${yesCount}/${majority}</span>
-              ${pr.staging_url ? `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStaging('${pr.staging_url}')">Preview</button>` : ''}
-              <button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}" onclick="AppView.castVote(${pr.id}, 'yes')">Yes (${pr.yes_count})</button>
-              <button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}" onclick="AppView.castVote(${pr.id}, 'no')">No (${pr.no_count})</button>
-              ${adminMergeBtn}
-              ${kudosBtn}
+              <span class="text-xs text-zinc-300 flex-1 min-w-0 truncate">${labelText}</span>
+              <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
+                <span class="text-xs text-zinc-500">${yesCount}/${majority}</span>
+                ${pr.staging_url ? `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStaging('${pr.staging_url}')">Preview</button>` : ''}
+                <button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}" onclick="AppView.castVote(${pr.id}, 'yes')">Yes (${pr.yes_count})</button>
+                <button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}" onclick="AppView.castVote(${pr.id}, 'no')">No (${pr.no_count})</button>
+                ${adminMergeBtn}
+                ${kudosBtn}
+              </div>
             </div>`;
         }
-        bodyHtml += '</div>';
+        bodyHtml += '</div></div>';
       }
 
       if (renameProposals.length) {
-        bodyHtml += `<div class="mb-2"><div class="text-xs text-zinc-500 mb-1 font-medium">Rename proposals <span class="text-zinc-600 font-normal">(need ${majority}/${activeUsers} up-votes to apply)</span>${lockedHint}</div>`;
+        bodyHtml += `<div class="mb-2"><div class="text-xs text-zinc-500 mb-1 font-medium">Rename proposals <span class="text-zinc-600 font-normal">(need ${majority}/${activeUsers} up-votes to apply)</span>${lockedHint}</div><div class="divide-y divide-zinc-200 dark:divide-zinc-800 sm:divide-y-0 border-y border-zinc-200 dark:border-zinc-800 sm:border-y-0">`;
         for (const issue of renameProposals) {
           const myVote = issue.my_vote;
           const upCount = parseInt(issue.up_count) || 0;
           const progress = majority > 0 ? Math.min(100, (upCount / majority) * 100) : 0;
           const newName = (issue.payload && issue.payload.newName) || issue.title;
           bodyHtml += `
-            <div class="gc-vote-item flex items-center gap-2 py-1">
-              <span class="text-xs text-zinc-300 flex-1 truncate" title="Proposed by ${issue.created_by_username || ''}">&#8594; ${escapeHtml(newName)}</span>
-              <span class="text-xs text-zinc-500">${upCount}/${majority}</span>
-              <button class="gc-vote-btn ${myVote === 'up' ? 'gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'up')">&#9650; ${issue.up_count}</button>
-              <button class="gc-vote-btn ${myVote === 'down' ? 'gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'down')">&#9660; ${issue.down_count}</button>
+            <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
+              <span class="text-xs text-zinc-300 flex-1 min-w-0 truncate" title="Proposed by ${issue.created_by_username || ''}">&#8594; ${escapeHtml(newName)}</span>
+              <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
+                <span class="text-xs text-zinc-500">${upCount}/${majority}</span>
+                <button class="gc-vote-btn ${myVote === 'up' ? 'gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'up')">&#9650; ${issue.up_count}</button>
+                <button class="gc-vote-btn ${myVote === 'down' ? 'gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'down')">&#9660; ${issue.down_count}</button>
+              </div>
             </div>`;
         }
-        bodyHtml += '</div>';
+        bodyHtml += '</div></div>';
       }
 
       if (issues.length) {
-        bodyHtml += '<div class="mb-2"><div class="text-xs text-zinc-500 mb-1 font-medium">Issues</div>';
+        bodyHtml += '<div class="mb-2"><div class="text-xs text-zinc-500 mb-1 font-medium">Issues</div><div class="divide-y divide-zinc-200 dark:divide-zinc-800 sm:divide-y-0 border-y border-zinc-200 dark:border-zinc-800 sm:border-y-0">';
         for (const issue of issues.slice(0, 5)) {
           const myVote = issue.my_vote;
           bodyHtml += `
-            <div class="gc-vote-item flex items-center gap-2 py-1">
-              <span class="text-xs text-zinc-300 flex-1 truncate">${escapeHtml(issue.title)}</span>
-              <button class="gc-vote-btn ${myVote === 'up' ? 'gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'up')">&#9650; ${issue.up_count}</button>
-              <button class="gc-vote-btn ${myVote === 'down' ? 'gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'down')">&#9660; ${issue.down_count}</button>
+            <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
+              <span class="text-xs text-zinc-300 flex-1 min-w-0 truncate">${escapeHtml(issue.title)}</span>
+              <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
+                <button class="gc-vote-btn ${myVote === 'up' ? 'gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'up')">&#9650; ${issue.up_count}</button>
+                <button class="gc-vote-btn ${myVote === 'down' ? 'gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'down')">&#9660; ${issue.down_count}</button>
+              </div>
             </div>`;
         }
-        bodyHtml += '</div>';
+        bodyHtml += '</div></div>';
       }
 
       // Note: the "Propose rename" trigger lives in the dev-chat tab's
@@ -605,7 +641,7 @@ const AppView = {
       // chat panel focused on visible PRs / issues / merged work.
 
       if (merged.length) {
-        bodyHtml += `<div><div class="text-xs text-zinc-500 mb-1 font-medium">Merged <span class="text-zinc-600 font-normal">· undo needs ${majority}/${activeUsers} votes</span></div>`;
+        bodyHtml += `<div><div class="text-xs text-zinc-500 mb-1 font-medium">Merged <span class="text-zinc-600 font-normal">(undo needs ${majority}/${activeUsers} votes)</span></div><div class="divide-y divide-zinc-200 dark:divide-zinc-800 sm:divide-y-0 border-y border-zinc-200 dark:border-zinc-800 sm:border-y-0">`;
         for (const pr of merged) {
           const date = new Date(pr.created_at).toLocaleDateString();
           const mergedLabel = pr.pr_title
@@ -669,15 +705,17 @@ const AppView = {
           }
 
           bodyHtml += `
-            <div class="gc-vote-item flex items-center gap-2 py-1">
+            <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
               <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-emerald-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
-              <span class="text-xs text-zinc-400 flex-1 truncate">${mergedLabel}</span>
-              <span class="text-xs text-zinc-600">${date}</span>
-              ${undoUI}
-              ${kudosBtn}
+              <span class="text-xs text-zinc-400 flex-1 min-w-0 truncate">${mergedLabel}</span>
+              <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
+                <span class="text-xs text-zinc-600">${date}</span>
+                ${undoUI}
+                ${kudosBtn}
+              </div>
             </div>`;
         }
-        bodyHtml += '</div>';
+        bodyHtml += '</div></div>';
       }
 
       // Pill: fixed title on the left ("App information and activity")
@@ -686,15 +724,39 @@ const AppView = {
       // but only when there's actually something — when nothing's
       // open, the right side stays empty and the pill is just a clean
       // affordance for opening the dashboard.
+      // Sticky header so the toggle + activity summary stay reachable
+      // while the panel body scrolls. -mx-3/-mt-2 cancels the parent's
+      // px-3/py-2 padding so the header bg spans the full panel width
+      // and sits flush against the top of the scroll container; px-3
+      // py-2 inside puts the same padding back on the toggle itself,
+      // so the visual position of the button doesn't shift. The
+      // border-b only appears once content has scrolled underneath the
+      // sticky bar (CSS sibling selector + JS scroll listener below).
       panel.innerHTML = `
-        <button id="gc-panel-toggle" class="flex items-center gap-2 w-full text-left">
-          <span class="text-xs text-zinc-500 dark:text-zinc-400">${AppView.panelOpen ? '&#9660;' : '&#9654;'}</span>
-          <span class="text-xs font-medium text-zinc-700 dark:text-zinc-300">App information and activity</span>
-          <span class="flex-1"></span>
-          ${counts ? `<span class="text-xs text-zinc-500 dark:text-zinc-400 truncate">${counts}</span>` : ''}
-        </button>
+        <div id="gc-panel-sticky" class="sticky top-0 z-10 -mx-3 -mt-2 px-3 py-2 bg-white dark:bg-zinc-950 border-b border-transparent">
+          <button id="gc-panel-toggle" class="flex items-center gap-2 w-full text-left">
+            <span class="text-xs text-zinc-500 dark:text-zinc-400">${AppView.panelOpen ? '&#9660;' : '&#9654;'}</span>
+            <span class="text-xs font-medium text-zinc-700 dark:text-zinc-300">App information and activity</span>
+            <span class="flex-1"></span>
+            ${counts ? `<span class="text-xs text-zinc-500 dark:text-zinc-400 truncate">${counts}</span>` : ''}
+          </button>
+        </div>
         ${lockNotice}
         <div id="gc-panel-body" class="${AppView.panelOpen ? '' : 'hidden'} mt-2">${bodyHtml}</div>`;
+
+      // Add a faint border to the sticky header once the panel scrolls,
+      // so it visually separates from content sliding underneath it.
+      const stickyEl = document.getElementById('gc-panel-sticky');
+      const scrollEl = document.getElementById('gc-panel');
+      if (stickyEl && scrollEl) {
+        const updateStickyBorder = () => {
+          stickyEl.classList.toggle('border-zinc-200', scrollEl.scrollTop > 0);
+          stickyEl.classList.toggle('dark:border-zinc-800', scrollEl.scrollTop > 0);
+          stickyEl.classList.toggle('border-transparent', scrollEl.scrollTop === 0);
+        };
+        scrollEl.addEventListener('scroll', updateStickyBorder, { passive: true });
+        updateStickyBorder();
+      }
 
       document.getElementById('gc-panel-toggle').addEventListener('click', () => {
         AppView.panelOpen = !AppView.panelOpen;
