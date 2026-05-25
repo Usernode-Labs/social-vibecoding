@@ -937,7 +937,19 @@ const App = {
       if (!hash) {
         if (App.currentApp) App.navigateHome();
         else if (App._inLeaderboard) App.navigateHome();
-        else Home.load();
+        else {
+          // Already on home (no app, no leaderboard). Don't call
+          // navigateHome() — that would pushState, AppView.close(),
+          // etc., none of which are appropriate when we're already
+          // here. But we still want to ensure the page title is
+          // correct, since this branch is reached on initial page
+          // load and on any popstate/hashchange that resolves to "/".
+          // Without this the title can be stuck on a previous app's
+          // name if document.title was set elsewhere (e.g. a stale
+          // value persisted across a Flutter WebView session).
+          App.setHeaderTitle('dApps');
+          Home.load();
+        }
         return;
       }
 
@@ -958,6 +970,7 @@ const App = {
         }
       } else {
         if (App._inLeaderboard) App._exitLeaderboard();
+        App.setHeaderTitle('dApps');
         Home.load();
       }
     } finally {
@@ -1212,7 +1225,18 @@ const App = {
     document.getElementById('home-screen').classList.add('hidden');
     document.getElementById('app-view').classList.remove('hidden');
     document.getElementById('back-btn').classList.remove('hidden');
-    App.setHeaderTitle(slug);
+    // Intentionally NOT setting the header to `slug` here. Slugs are
+    // generated as `${name}-${randomHex}` (see routes/apps.js), so a
+    // slug-as-placeholder shows up to users as something like
+    // "whiteboard-abc123" — which the Flutter WebView's AppBar then
+    // mirrors via document.title. Leaving the previous header title
+    // in place during the brief /api/apps/:slug round-trip is much
+    // better UX: from home you see "dApps" briefly, then "Whiteboard";
+    // from app A to app B you see "App A" briefly, then "App B". The
+    // user never sees the raw slug.
+    //
+    // The display name lands once the await below resolves (see the
+    // `AppView.appData?.name` block).
 
     await AppView.open(slug);
 
