@@ -1298,12 +1298,44 @@ const App = {
   // also used by Notifications._updateTitle() to prepend an unread
   // count "(N) "; we re-invoke it here so a navigation that happens
   // while there are pending notifications keeps the badge.
+  //
+  // Inside the Flutter WebView, the native AppBar mirrors
+  // `document.title`. Flutter's `_refreshPageTitle` only re-reads the
+  // title at navigation moments (onPageFinished + onUrlChange). Most
+  // of our title sets are *after* a `pushState` (in navigateHome) or
+  // *before* one (in navigateToApp, since setHeaderTitle runs before
+  // `switchTab → updateHash → pushState`), but the AppBar still ends
+  // up one navigation behind in practice — the getTitle() round-trip
+  // races with the next JS task, and the result is that the AppBar
+  // shows the title that was current at the *previous* pushState.
+  // To pin the AppBar to whatever we just set, we also fire-and-forget
+  // a `titleChanged` message over the existing Usernode JS channel.
+  // The native side handles it by setting `_pageTitle` directly
+  // (see lib/features/dapps/dapp_webview_screen.dart). Older app
+  // builds that don't know `titleChanged` ignore the message
+  // (Flutter logs and drops unknown methods), so this is safe to ship
+  // ahead of the Flutter rebuild.
   setHeaderTitle(text) {
     const headerEl = document.getElementById('header-title');
     if (headerEl) headerEl.textContent = text;
     document.title = text;
     if (window.Notifications && typeof Notifications._updateTitle === 'function') {
       Notifications._updateTitle();
+    }
+    try {
+      if (window.Usernode && typeof window.Usernode.postMessage === 'function') {
+        window.Usernode.postMessage(JSON.stringify({
+          method: 'titleChanged',
+          // Use the final title (with the optional "(N) " unread prefix
+          // that Notifications._updateTitle just applied) so the AppBar
+          // matches what a desktop browser tab would show.
+          value: document.title,
+        }));
+      }
+    } catch (_) {
+      // Non-critical — title sync via JS channel is just a fast path
+      // for the native shell. Falling back to webview_flutter's
+      // onUrlChange path is fine for desktop browsers.
     }
   },
 
