@@ -18,6 +18,19 @@
     }
   </script>
   <script src="/usernode-bridge.js"></script>
+  <script>
+    // Hide the header title when running as the top frame of the
+    // Usernode Flutter WebView. The native shell already shows the
+    // app/screen name in its own header chrome, so the in-page title
+    // would just be redundant noise. We toggle a `.in-native-webview`
+    // class on <html> rather than waiting until app.js runs so the
+    // title never flashes in before being hidden — the bridge sets
+    // `window.usernode.isNative` synchronously at load time based on
+    // the presence of the injected `Usernode` JS channel.
+    if (window.usernode && window.usernode.isNative) {
+      document.documentElement.classList.add('in-native-webview');
+    }
+  </script>
   <script src="https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs/qrcode.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js" integrity="sha384-948ahk4ZmxYVYOc+rxN1H2gM1EJ2Duhp7uHtZ4WSLkV4Vtx5MUqnV+l7u9B+jFv+" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.4/dist/purify.min.js" integrity="sha384-ljaibG+rFiOlF9Y2x5ulbWhmu7GWQMKeAPHRiLXj0iozfwSIrIs1Ud1WeQ0Z+FqY" crossorigin="anonymous"></script>

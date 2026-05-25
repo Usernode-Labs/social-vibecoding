@@ -702,7 +702,7 @@ const App = {
         if (avatar) avatar.textContent = (data.newName || '?').charAt(0).toUpperCase();
       }
       if (App.currentApp === data.slug) {
-        document.getElementById('header-title').textContent = data.newName;
+        App.setHeaderTitle(data.newName);
         if (typeof AppView !== 'undefined' && AppView.applyRename) {
           AppView.applyRename(data.newName);
         }
@@ -980,7 +980,7 @@ const App = {
     document.getElementById('back-btn').classList.remove('hidden');
     document.getElementById('app-github-link').classList.add('hidden');
     document.getElementById('app-share-btn').classList.add('hidden');
-    document.getElementById('header-title').textContent = 'Kudos leaderboard';
+    App.setHeaderTitle('Kudos leaderboard');
     App._inLeaderboard = true;
     if (window.Leaderboard?.open) Leaderboard.open();
   },
@@ -1212,13 +1212,13 @@ const App = {
     document.getElementById('home-screen').classList.add('hidden');
     document.getElementById('app-view').classList.remove('hidden');
     document.getElementById('back-btn').classList.remove('hidden');
-    document.getElementById('header-title').textContent = slug;
+    App.setHeaderTitle(slug);
 
     await AppView.open(slug);
 
     // After app data is loaded, swap header to the display name.
     if (AppView.appData?.name) {
-      document.getElementById('header-title').textContent = AppView.appData.name;
+      App.setHeaderTitle(AppView.appData.name);
     }
 
     // Show GitHub link if app has a repo
@@ -1251,10 +1251,26 @@ const App = {
     document.getElementById('back-btn').classList.add('hidden');
     document.getElementById('app-github-link').classList.add('hidden');
     document.getElementById('app-share-btn').classList.add('hidden');
-    document.getElementById('header-title').textContent = 'Usernode Social Vibecoding';
+    App.setHeaderTitle('Usernode Social Vibecoding');
     document.getElementById('app-content').innerHTML = '';
     App.updateHash();
     Home.load();
+  },
+
+  // Mirror the visible header text into both the on-screen <h1> and
+  // the browser tab title so the OS/window surface reflects the
+  // current screen (home → "Usernode Social Vibecoding", app open →
+  // app display name, leaderboard → "Kudos leaderboard"). The browser
+  // tab title is also used by Notifications._updateTitle() to prepend
+  // an unread count "(N) "; we re-invoke it here so a navigation that
+  // happens while there are pending notifications keeps the badge.
+  setHeaderTitle(text) {
+    const headerEl = document.getElementById('header-title');
+    if (headerEl) headerEl.textContent = text;
+    document.title = text;
+    if (window.Notifications && typeof Notifications._updateTitle === 'function') {
+      Notifications._updateTitle();
+    }
   },
 
   async switchTab(tab, sessionId) {

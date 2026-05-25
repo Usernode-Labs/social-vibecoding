@@ -1487,6 +1487,19 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   text-align: center;
 }
 
+/* Hide the in-page title when the platform is loaded as the top frame
+   of the Usernode Flutter WebView — the native shell already shows
+   the screen name in its own chrome, so showing ours below it would
+   just duplicate it. The class is set by the inline detection script
+   in <head> right after the bridge loads (see index.html), so this
+   takes effect before first paint and there's no flash.
+   `document.title` (browser-tab title) is still kept in sync via
+   App.setHeaderTitle — useful for the native shell if it ever
+   surfaces it, and harmless otherwise. */
+html.in-native-webview #header-title {
+  display: none;
+}
+
 /* ── Mobile pill collapse ─────────────────────────────────
    On narrow viewports the header's two pill slots (platform +
    per-app) and the per-card pills on Home eat into the space
