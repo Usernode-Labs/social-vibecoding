@@ -763,7 +763,7 @@ const App = {
     // bind here anymore.
     document.getElementById('create-cancel').addEventListener('click', App.hideCreateModal);
     document.getElementById('create-modal').addEventListener('click', (e) => {
-      if (e.target === e.currentTarget) App.hideCreateModal();
+      if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) App.hideCreateModal();
     });
     document.getElementById('create-form').addEventListener('submit', App.handleCreateApp);
 
@@ -819,7 +819,7 @@ const App = {
     if (renameModal) {
       document.getElementById('rename-cancel').addEventListener('click', AppView.closeRenameModal);
       renameModal.addEventListener('click', (e) => {
-        if (e.target === e.currentTarget) AppView.closeRenameModal();
+        if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) AppView.closeRenameModal();
       });
       document.getElementById('rename-form').addEventListener('submit', AppView.submitRename);
     }
@@ -888,7 +888,7 @@ const App = {
       feedbackStatus.classList.add('hidden');
     });
     document.getElementById('feedback-modal').addEventListener('click', (e) => {
-      if (e.target === e.currentTarget) document.getElementById('feedback-cancel').click();
+      if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) document.getElementById('feedback-cancel').click();
     });
     feedbackBtn.addEventListener('click', submitFeedback);
     // cmd+enter / ctrl+enter inside the textarea submits — fixes #34.
@@ -911,7 +911,7 @@ const App = {
     if (shareClose) shareClose.addEventListener('click', () => AppView.closeShareModal());
     const shareModal = document.getElementById('share-modal');
     if (shareModal) shareModal.addEventListener('click', (e) => {
-      if (e.target === e.currentTarget) AppView.closeShareModal();
+      if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) AppView.closeShareModal();
     });
     const shareCopy = document.getElementById('share-copy-btn');
     if (shareCopy) shareCopy.addEventListener('click', () => AppView.copyShareUrl());

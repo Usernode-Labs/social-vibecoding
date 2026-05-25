@@ -274,8 +274,9 @@
        app.css keys off both attributes to show/hide inputs and the
        submit button. JS only needs to flip attributes, never juggle
        classes per element. -->
-  <div id="create-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60" data-mode="new" data-import-state="idle">
-    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm mx-4 shadow-xl">
+  <div id="create-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60" data-mode="new" data-import-state="idle">
+    <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
+    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl">
       <h2 id="create-title" class="text-lg font-bold mb-4">Create a new app</h2>
 
       <div class="flex p-1 mb-4 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
@@ -334,11 +335,13 @@
         </div>
       </form>
     </div>
+    </div>
   </div>
 
   <!-- Rename app modal -->
-  <div id="rename-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm mx-4 shadow-xl">
+  <div id="rename-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60">
+    <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
+    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl">
       <h2 class="text-lg font-bold mb-1">Propose rename</h2>
       <p class="text-xs text-zinc-500 mb-4">Current name: <span id="rename-current" class="font-mono text-zinc-300"></span></p>
       <form id="rename-form" class="space-y-4">
@@ -363,11 +366,13 @@
         </div>
       </form>
     </div>
+    </div>
   </div>
 
   <!-- Feedback modal -->
-  <div id="feedback-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm mx-4 shadow-xl">
+  <div id="feedback-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60">
+    <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
+    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl">
       <h2 class="text-lg font-bold mb-4">Send Feedback</h2>
       <textarea id="feedback-text" rows="4" maxlength="2000" placeholder="Describe the issue or suggestion..."
         class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 resize-none"></textarea>
@@ -377,14 +382,16 @@
         <button id="feedback-submit" class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Submit</button>
       </div>
     </div>
+    </div>
   </div>
 
   <!-- Share modal — shows the app's bare subdomain URL so users can pass it
        around outside the platform. The URL itself never carries auth: child
        apps that need a JWT will gate visitors at their own login page;
        public apps (e.g. echo) render directly. -->
-  <div id="share-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md mx-4 shadow-xl relative">
+  <div id="share-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60">
+    <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
+    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl relative">
       <button id="share-close" class="absolute top-4 right-4 text-zinc-400 hover:text-zinc-200 transition-colors" aria-label="Close share">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
       </button>
@@ -403,11 +410,37 @@
         </a>
       </div>
     </div>
+    </div>
   </div>
 
-  <!-- #30: Settings modal (BYOK — user Anthropic API key) -->
-  <div id="settings-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md mx-4 shadow-xl relative">
+  <!-- #30: Settings modal (BYOK — user Anthropic API key).
+
+       Modal scroll pattern — used by every full-screen modal in this
+       file. `html, body { overflow: hidden }` (see app.css) blocks
+       page-level scroll, so each modal must own its own scroll layer
+       or its content disappears off the bottom on mobile.
+
+       Structure:
+         <div #the-modal class="fixed inset-0 z-50
+                                 overflow-y-auto overscroll-contain
+                                 bg-black/60">
+           <div data-modal-backdrop
+                class="flex min-h-full items-center justify-center p-4">
+             <div class="…panel…">…</div>
+           </div>
+         </div>
+
+       - The outer fixed div is the scroll layer.
+       - `min-h-full` on the flex wrapper makes it expand to viewport
+         height when content is short (so the panel still centers) AND
+         grow past viewport when content is tall (so the outer can
+         scroll).
+       - `data-modal-backdrop` lets the JS click handler treat the
+         wrapper as backdrop too — clicks on the dim area outside the
+         panel still dismiss. -->
+  <div id="settings-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60">
+    <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
+    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl relative">
       <button id="settings-close" class="absolute top-4 right-4 text-zinc-400 hover:text-zinc-200 transition-colors" aria-label="Close settings">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
       </button>
@@ -501,6 +534,7 @@
           When unchecked (the default), the icon only appears once the current app has logged at least one error.
         </p>
       </div>
+    </div>
     </div>
   </div>
 

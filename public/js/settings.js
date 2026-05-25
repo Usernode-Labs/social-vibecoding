@@ -70,8 +70,15 @@
         });
       }
 
+      // Close on backdrop click. The dim area is now split between the
+      // outer scroll container (`this.modal`) and a flex wrapper that
+      // centers the panel and grows to `min-h-full`; either can be the
+      // event target depending on where the user clicked, so accept
+      // both. (Same `data-modal-backdrop` attribute is used on every
+      // modal in the app — see comment in index.html on the settings
+      // modal for the rationale.)
       this.modal.addEventListener('click', (e) => {
-        if (e.target === this.modal) this.close();
+        if (e.target === this.modal || e.target.dataset.modalBackdrop !== undefined) this.close();
       });
 
       document.addEventListener('keydown', (e) => {

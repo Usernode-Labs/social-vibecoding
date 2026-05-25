@@ -36,16 +36,23 @@
     if (rootEl) return rootEl;
     rootEl = document.createElement('div');
     rootEl.id = 'app-confirm-modal';
-    rootEl.className = 'hidden fixed inset-0 z-[60] flex items-center justify-center bg-black/60';
+    // Same scroll-friendly structure as the static modals in index.html
+    // (see the long comment on #settings-modal). Outer div is the scroll
+    // layer; the `data-modal-backdrop` wrapper centers the panel and
+    // grows with content so the dialog can scroll on small viewports if
+    // the caller passes a long message.
+    rootEl.className = 'hidden fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
     rootEl.innerHTML = `
-      <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md mx-4 shadow-xl relative">
-        <h2 data-role="title" class="text-lg font-bold mb-2 text-zinc-900 dark:text-zinc-100"></h2>
-        <p data-role="message" class="text-sm text-zinc-600 dark:text-zinc-400 mb-5 whitespace-pre-line"></p>
-        <div class="flex justify-end gap-2">
-          <button data-role="cancel" type="button"
-            class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"></button>
-          <button data-role="confirm" type="button"
-            class="rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors"></button>
+      <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
+        <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl relative">
+          <h2 data-role="title" class="text-lg font-bold mb-2 text-zinc-900 dark:text-zinc-100"></h2>
+          <p data-role="message" class="text-sm text-zinc-600 dark:text-zinc-400 mb-5 whitespace-pre-line"></p>
+          <div class="flex justify-end gap-2">
+            <button data-role="cancel" type="button"
+              class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"></button>
+            <button data-role="confirm" type="button"
+              class="rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors"></button>
+          </div>
         </div>
       </div>`;
     document.body.appendChild(rootEl);
@@ -97,7 +104,9 @@
       };
       const onCancel = () => cleanup(false);
       const onConfirm = () => cleanup(true);
-      const onBackdrop = (e) => { if (e.target === root) cleanup(false); };
+      const onBackdrop = (e) => {
+        if (e.target === root || e.target.dataset.modalBackdrop !== undefined) cleanup(false);
+      };
       const onKey = (e) => {
         if (e.key === 'Escape') { e.preventDefault(); cleanup(false); }
         // Only intercept Enter if our confirm button has focus, so we
