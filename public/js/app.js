@@ -1216,6 +1216,16 @@ const App = {
 
     await AppView.open(slug);
 
+    // The user can navigate away (back to home, into a different app,
+    // to the leaderboard) while `AppView.open(slug)` is still resolving
+    // its /api/apps/:slug fetch. Without this guard the rest of the
+    // setup below would clobber the header title, re-show the
+    // GitHub/Share icons, and force-switch the tab on the screen the
+    // user has since moved to. `App.currentApp` is updated synchronously
+    // at the top of every navigate* method, so it's the canonical
+    // "what's actually on screen right now" signal.
+    if (App.currentApp !== slug) return;
+
     // After app data is loaded, swap header to the display name.
     if (AppView.appData?.name) {
       App.setHeaderTitle(AppView.appData.name);
@@ -1251,7 +1261,7 @@ const App = {
     document.getElementById('back-btn').classList.add('hidden');
     document.getElementById('app-github-link').classList.add('hidden');
     document.getElementById('app-share-btn').classList.add('hidden');
-    App.setHeaderTitle('Usernode Social Vibecoding');
+    App.setHeaderTitle('dApps');
     document.getElementById('app-content').innerHTML = '';
     App.updateHash();
     Home.load();
@@ -1259,11 +1269,11 @@ const App = {
 
   // Mirror the visible header text into both the on-screen <h1> and
   // the browser tab title so the OS/window surface reflects the
-  // current screen (home → "Usernode Social Vibecoding", app open →
-  // app display name, leaderboard → "Kudos leaderboard"). The browser
-  // tab title is also used by Notifications._updateTitle() to prepend
-  // an unread count "(N) "; we re-invoke it here so a navigation that
-  // happens while there are pending notifications keeps the badge.
+  // current screen (home → "dApps", app open → app display name,
+  // leaderboard → "Kudos leaderboard"). The browser tab title is
+  // also used by Notifications._updateTitle() to prepend an unread
+  // count "(N) "; we re-invoke it here so a navigation that happens
+  // while there are pending notifications keeps the badge.
   setHeaderTitle(text) {
     const headerEl = document.getElementById('header-title');
     if (headerEl) headerEl.textContent = text;
