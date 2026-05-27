@@ -30,6 +30,9 @@
       const cancelLink = document.getElementById('wallet-link-cancel');
       if (cancelLink) cancelLink.addEventListener('click', () => this._cancelWalletLink());
 
+      const logoutBtn = document.getElementById('settings-logout');
+      if (logoutBtn) logoutBtn.addEventListener('click', () => this.logout());
+
       // Dev console "always show" toggle. State lives in DevConsole +
       // localStorage; we just mirror it here. Wire change immediately
       // so the icon appears/disappears without needing to close the
@@ -252,6 +255,19 @@
         saveBtn.disabled = false;
         removeBtn.disabled = false;
       }
+    },
+
+    async logout() {
+      const btn = document.getElementById('settings-logout');
+      if (btn) btn.disabled = true;
+      try {
+        await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+      } catch (_) {
+        // Server-side session deletion is best-effort; the auth middleware
+        // will still treat the user as logged out once the cookie is
+        // cleared (server clears it on the response) or expires.
+      }
+      window.location.href = '/login.html';
     },
 
     async remove() {
