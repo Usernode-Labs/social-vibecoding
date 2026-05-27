@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Usernode Social Vibecoding — Login</title>
+  <title>dApps</title>
   <script src="/usernode-bridge.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>tailwind.config = {
@@ -22,7 +22,7 @@
 <body class="bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 min-h-screen flex items-center justify-center">
   <div class="w-full max-w-sm px-6">
     <h1 class="text-2xl font-bold text-center mb-1">Usernode Social Vibecoding</h1>
-    <p class="text-xs text-zinc-500 dark:text-zinc-400 text-center mb-8 italic">where the users are the developers are the users are the developers...</p>
+    <p class="text-xs text-zinc-500 dark:text-zinc-400 text-center mb-8 italic">Usernode application layer, enabling user-owned applications</p>
 
     <!-- Wallet auth status (shown when native bridge detected) -->
     <div id="wallet-auth" class="hidden space-y-4">
@@ -280,8 +280,8 @@
 
         if (!cachedChallenge) {
           walletStatus.textContent = '';
-          showError(walletError, 'Could not get challenge from server');
           showOnly(walletSignIn);
+          showError(walletError, 'Could not get challenge from server');
           return;
         }
 
@@ -305,17 +305,17 @@
           return;
         }
         walletStatus.textContent = '';
-        showError(walletError, verifyData.error || 'Verification failed');
         showOnly(walletSignIn);
+        showError(walletError, verifyData.error || 'Verification failed');
       } catch (e) {
         cachedChallenge = null;
         walletStatus.textContent = '';
+        showOnly(walletSignIn);
         if (e.message && e.message.includes('denied')) {
           showError(walletError, 'Signature request was denied.');
         } else {
           showError(walletError, 'Signature failed: ' + (e.message || e));
         }
-        showOnly(walletSignIn);
       }
     });
 
