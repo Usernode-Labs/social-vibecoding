@@ -196,7 +196,7 @@ function authRoutes(config) {
       const { default: Anthropic } = await import('@anthropic-ai/sdk');
       const test = new Anthropic({ apiKey: clean });
       await test.messages.create({
-        model: 'claude-haiku-4-5-20251001',
+        model: 'claude-haiku-4-5',
         max_tokens: 1,
         messages: [{ role: 'user', content: 'ping' }],
       });
