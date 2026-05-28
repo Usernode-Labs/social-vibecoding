@@ -3136,6 +3136,13 @@
         return resp.json();
       }).then(function (sendResult) {
         var sendFailed = sendResult && (sendResult.error || sendResult.queued === false);
+        // Mock backend resolved; surface this to callers so they can reset
+        // send-phase timers, matching native/QR semantics.
+        if (!sendFailed && opts && typeof opts.onSubmitted === "function") {
+          try { opts.onSubmitted(sendResult); } catch (e) {
+            console.warn("[usernode-bridge] onSubmitted threw:", e);
+          }
+        }
         var shouldWait =
           !sendFailed && (!opts || opts.waitForInclusion == null ? true : !!opts.waitForInclusion);
         if (!shouldWait) return sendResult;
@@ -3148,7 +3155,12 @@
             destination_pubkey: destination_pubkey == null ? null : String(destination_pubkey),
             from_pubkey: from ? String(from).trim() : null,
             amount: amount,
-          }, opts).then(function () { return sendResult; });
+          }, opts).then(function (tx) {
+            // Attach the matched on-chain tx so callers see the same
+            // { queued: true, tx: <tx> } shape that QR mode provides.
+            if (tx) sendResult.tx = tx;
+            return sendResult;
+          });
         });
       });
     };
@@ -3168,6 +3180,14 @@
       }).then(function (sendResult) {
         var sendError = sendResult && sendResult.error;
         if (sendError) throw new Error(String(sendError));
+        // Native channel resolved: the user has accepted the wallet dialog and
+        // Flutter has begun broadcasting. Fire onSubmitted so callers can reset
+        // send-phase timers (parity with the QR-mode "scanned" moment).
+        if (opts && typeof opts.onSubmitted === "function") {
+          try { opts.onSubmitted(sendResult); } catch (e) {
+            console.warn("[usernode-bridge] onSubmitted threw:", e);
+          }
+        }
         var sendFailed = sendResult && sendResult.queued === false;
         var shouldWait =
           !sendFailed && (!opts || opts.waitForInclusion == null ? true : !!opts.waitForInclusion);
@@ -3180,7 +3200,13 @@
           destination_pubkey: destination_pubkey == null ? null : String(destination_pubkey),
           from_pubkey: from_pubkey || null,
           amount: amount,
-        }, opts).then(function () { return sendResult; });
+        }, opts).then(function (tx) {
+          // Native channel returns { queued: true } with no tx ID; attach the
+          // matched on-chain tx so callers can read result.tx.id (parity with
+          // qrSendTransaction's { queued: true, tx: tx } shape).
+          if (tx) sendResult.tx = tx;
+          return sendResult;
+        });
       });
     }
 
