@@ -162,7 +162,7 @@ ${(ccSummary || '(no summary available)').slice(0, 6000)}
 
 Author: ${username || 'unknown'}`;
 
-  const model = 'claude-haiku-4-5-20251001';
+  const model = 'claude-haiku-4-5';
   const resp = await activeClient.messages.create({
     model,
     max_tokens: 512,
