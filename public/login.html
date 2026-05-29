@@ -40,14 +40,14 @@
 
       <!-- Options when pubkey is not linked -->
       <div id="wallet-options" class="hidden space-y-3">
+        <button id="btn-link-existing" class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white">
+          Login
+        </button>
+        <button id="btn-register-new" class="w-full rounded-lg border border-zinc-300 dark:border-zinc-600 hover:border-zinc-400 dark:hover:border-zinc-500 px-4 py-2 font-medium transition-colors text-zinc-700 dark:text-zinc-200">
+          Register
+        </button>
         <p class="text-sm text-center text-zinc-400">Your wallet is not linked to an account yet.</p>
         <p id="wallet-detected-pubkey" class="text-[11px] text-center text-zinc-500 font-mono break-all px-2"></p>
-        <button id="btn-link-existing" class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white">
-          I have an account
-        </button>
-        <button id="btn-register-new" class="w-full rounded-lg border border-zinc-600 hover:border-zinc-500 px-4 py-2 font-medium transition-colors text-zinc-200">
-          Create new account
-        </button>
       </div>
 
       <!-- Link existing account form -->
@@ -253,6 +253,11 @@
         } else {
           const pubkeyDisplay = document.getElementById('wallet-detected-pubkey');
           if (pubkeyDisplay) pubkeyDisplay.textContent = 'Detected: ' + walletPubkey;
+          // Unlinked wallet in the native app: only offer the link/register
+          // options. The username/password form and activation-code link
+          // below are noise here, so keep them hidden.
+          loginForm.classList.add('hidden');
+          registerLink.classList.add('hidden');
           showOnly(walletOptions);
         }
       } catch (e) {
