@@ -72,9 +72,9 @@ const DevChat = {
   // Kept seeded with the current set so the dropdown renders correctly
   // before the fetch resolves on a slow connection.
   MODELS: {
-    'claude-haiku-4-5-20251001': 'Haiku 4.5',
+    'claude-haiku-4-5': 'Haiku 4.5',
     'claude-sonnet-4-6': 'Sonnet 4.6',
-    'claude-opus-4-6': 'Opus 4.6',
+    'claude-opus-4-8': 'Opus 4.8',
   },
 
   // Default model id used when sanitization rejects a stale storage
