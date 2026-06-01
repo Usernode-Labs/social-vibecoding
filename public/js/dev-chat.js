@@ -1878,6 +1878,58 @@ const DevChat = {
       </div>`;
   },
 
+  // A session maps to exactly one branch + one PR. Once that PR exists
+  // and especially once it's been proposed to the group, continuing to
+  // chat here adds MORE changes to the same PR — which bundles unrelated
+  // work into one votable unit. Surface a nudge to "Start a new change"
+  // (a fresh session) so each PR stays focused. Shown when the session
+  // already has a PR and it's past the active-editing stage
+  // (promoted / merging / merged). Active sessions with a PR don't get
+  // the banner — the user is presumably still refining that change.
+  _renderNewChangeBannerHtml(session) {
+    if (!session || !session.pr_number) return '';
+    const status = session.status;
+    if (status !== 'promoted' && status !== 'merging' && status !== 'merged') return '';
+    const proposed = status === 'promoted' || status === 'merging';
+    const stateLabel = proposed
+      ? `proposed to the group (PR #${session.pr_number})`
+      : `merged (PR #${session.pr_number})`;
+    return `
+      <div id="dc-new-change-banner" class="flex items-center gap-2 px-3 py-2 bg-violet-50 dark:bg-violet-950/30 border-b border-violet-200 dark:border-violet-900/50 text-xs">
+        <svg class="w-4 h-4 text-violet-600 dark:text-violet-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+        </svg>
+        <span class="text-violet-800 dark:text-violet-200 flex-1">
+          This change has been ${stateLabel}. New work in this chat is added to the same PR — start a new change to keep PRs focused.
+        </span>
+        <button id="dc-new-change-btn" type="button"
+          class="rounded-md bg-violet-600 hover:bg-violet-500 disabled:opacity-60 disabled:cursor-not-allowed px-3 py-1 text-xs font-medium text-white transition-colors shrink-0">
+          Start a new change
+        </button>
+      </div>`;
+  },
+
+  // Spin up a fresh session (new branch → new PR) for the same app and
+  // open it. Reuses createSession's per-user 3-active-session cap +
+  // error alerting. Intentionally does NOT carry over Claude's memory or
+  // the spec — a new change starts clean on its own branch.
+  async startNewChange() {
+    const slug = (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug)
+      || (DevChat.currentSession && DevChat.currentSession.app_slug);
+    if (!slug) return;
+    const btn = document.getElementById('dc-new-change-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+    const session = await DevChat.createSession(slug);
+    if (!session) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Start a new change'; }
+      return;
+    }
+    await DevChat.openSession(session.id);
+    DevChat.renderChatView();
+    if (typeof App !== 'undefined' && App.updateHash) App.updateHash();
+    if (typeof DevChat.loadActiveSessions === 'function') DevChat.loadActiveSessions();
+  },
+
   _wireSyncBanner() {
     const btn = document.getElementById('dc-sync-btn');
     if (!btn) return;
@@ -1984,9 +2036,12 @@ const DevChat = {
       <div class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
         <button id="dc-back" class="text-zinc-400 hover:text-zinc-200 text-sm">&larr;</button>
         <span class="text-xs text-zinc-400 truncate flex-1" title="${escapeHtml(DevChat.currentSession.branch_name || '')}">${escapeHtml(DevChat.currentSession.pr_title || DevChat.currentSession.branch_name || 'Session')}</span>
-        ${DevChat.currentSession.pr_number ? `<button id="dc-pr-header-link" class="text-xs text-violet-400 hover:text-violet-300">PR #${DevChat.currentSession.pr_number}</button>` : ''}
+        ${DevChat.currentSession.pr_number
+          ? `<button id="dc-pr-header-link" class="text-xs text-violet-400 hover:text-violet-300" title="This session's pull request — every change in this chat goes to PR #${DevChat.currentSession.pr_number}. Use “Start a new change” for separate work.">PR #${DevChat.currentSession.pr_number}</button>`
+          : '<span class="text-xs text-zinc-500" title="This chat is one change → one pull request. A PR opens after the first build.">New change</span>'}
       </div>
       ${DevChat._renderSyncBannerHtml(DevChat.currentSession)}
+      ${DevChat._renderNewChangeBannerHtml(DevChat.currentSession)}
       <div class="dc-session-body flex-1 flex min-h-0">
         <div id="dc-tab-chat" class="dc-chat-pane flex-1 flex flex-col min-h-0">
           <div id="dc-messages" class="dc-messages-container flex-1 overflow-y-auto py-2"></div>
@@ -2060,6 +2115,11 @@ const DevChat = {
     });
 
     DevChat._wireSyncBanner();
+
+    const newChangeBtn = document.getElementById('dc-new-change-btn');
+    if (newChangeBtn) {
+      newChangeBtn.addEventListener('click', () => DevChat.startNewChange());
+    }
 
     document.getElementById('dc-form').addEventListener('submit', (e) => {
       e.preventDefault();

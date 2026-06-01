@@ -828,7 +828,10 @@ function sessionRoutes(config) {
         // regenerating from scratch. Re-read before phase-2 below in
         // case the tool we're about to run mutated it.
         let currentSpec = await loadSessionSpec(pool, session.id);
-        let mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted);
+        const prContext = session.pr_number
+          ? { prNumber: session.pr_number, prTitle: session.pr_title, status: session.status }
+          : null;
+        let mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext);
         const messages = buildMayorMessages(history);
 
         if (!llm.isEnabled()) {
@@ -1119,7 +1122,12 @@ function sessionRoutes(config) {
         // wrap-up turn should describe the doc as it is now (not as it
         // was at the start of phase-1).
         currentSpec = await loadSessionSpec(pool, session.id);
-        mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted);
+        // Recompute PR context: a dispatch this turn may have just opened
+        // a PR (applyPrMetadata mutates session.pr_number in place).
+        const prContext2 = session.pr_number
+          ? { prNumber: session.pr_number, prTitle: session.pr_title, status: session.status }
+          : null;
+        mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext2);
         const mayor2 = await llm.streamChat({
           messages: followUpMessages,
           systemPrompt: mayorPrompt,
@@ -2689,7 +2697,7 @@ INSTRUCTIONS:
   return { toolResultText, ccLog, stagingUrl, isError, commitSha: commitHash || null };
 }
 
-function getMayorSystemPrompt(appName, isWorkerBusy, currentSpec, selfHosted) {
+function getMayorSystemPrompt(appName, isWorkerBusy, currentSpec, selfHosted, prContext) {
   // The spec-edit tool name shown to the model depends on whether a
   // spec already exists: write_spec when the doc is empty (no anchor
   // to edit against), edit_spec once it has content (anchored
@@ -2733,6 +2741,25 @@ to expect on the staging preview.`;
 ${specIsEmpty ? '(empty — no spec drafted yet)' : currentSpec}
 
 ==== END CURRENT SPEC ====`;
+
+  // Session ↔ PR binding guidance. A session maps to exactly ONE branch
+  // and ONE pull request: every dispatch in this chat lands on the same
+  // PR, and the group votes on it as one unit. When the session already
+  // has a PR and the user asks for a DISTINCT new change, nudge them to
+  // start a new change (a fresh session) so PRs stay focused — instead of
+  // silently bundling unrelated work (the multi-change-per-session
+  // problem). The user always wins if they insist on adding it here.
+  const prBlock = prContext && prContext.prNumber
+    ? `
+
+==== THIS SESSION'S PULL REQUEST ====
+
+This chat session maps to ONE branch and ONE pull request: PR #${prContext.prNumber}${prContext.prTitle ? ` — "${prContext.prTitle}"` : ''} (status: ${prContext.status || 'active'}). Every change you dispatch in this session is added to that SAME PR, and the group votes on it as a single unit.
+
+If the user's next request is a DISTINCT, separate change — a new feature or fix that isn't part of what PR #${prContext.prNumber} already covers — do NOT silently bundle it in. In one sentence, point out that this session already has its own PR, and suggest they use the "Start a new change" button at the top of the chat so the new work gets its own focused PR the group can vote on separately. If they confirm they want it added to this PR anyway, go ahead.${prContext.status === 'promoted' ? '\nThis PR has already been PROPOSED to the group for voting, so additional changes here modify something people may already be voting on. Lean toward suggesting a new change unless the user is clearly fixing or refining THIS PR.' : ''}
+
+==== END PULL REQUEST ====`
+    : '';
 
   // Conditional spec-tool description. Only one of these tools is
   // exposed to the API at any moment, so the prompt only describes
@@ -2793,7 +2820,7 @@ Some assistant turns in this conversation contain "[CODING AGENT COMPLETED]:" �
 
 You MUST NOT, under any circumstances:
 - Write the literal string "[CODING AGENT COMPLETED]" in your reply. That marker is reserved for the harness; emitting it yourself fakes a coding-agent run that never happened.
-- Paraphrase a past summary as a substitute for dispatching a new run. If the user reports a bug, regression, or "still not quite right" — even if a previous run targeted the same area — that is a NEW change request and you MUST call dispatch_claude_code (assuming the tool is available per STATUS). Past summaries are read-only history; they cannot fix new bugs.${toolNote}${conventionsBlock}${selfHosted ? getSelfHostedRefuseList() : ''}${specBlock}`;
+- Paraphrase a past summary as a substitute for dispatching a new run. If the user reports a bug, regression, or "still not quite right" — even if a previous run targeted the same area — that is a NEW change request and you MUST call dispatch_claude_code (assuming the tool is available per STATUS). Past summaries are read-only history; they cannot fix new bugs.${toolNote}${conventionsBlock}${selfHosted ? getSelfHostedRefuseList() : ''}${prBlock}${specBlock}`;
 }
 
 async function getFilesFromContainer(appSlug) {
