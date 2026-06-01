@@ -320,8 +320,9 @@ ON CONFLICT (key) DO NOTHING;
 
 -- Notifications. Generic row format so we can add more `kind`s later
 -- (PR approvals, etc). Currently 'mention' (group-chat @mention parser
--- in src/services/ws.js) and 'kudos' (PR kudos give in
--- src/routes/kudos.js).
+-- in src/services/ws.js), 'kudos' (PR kudos give in src/routes/kudos.js),
+-- and 'reply' (#15 — someone quoted your message/PR in group chat;
+-- chat_message_id points to the reply, set in src/services/ws.js).
 CREATE TABLE IF NOT EXISTS notifications (
   id              SERIAL PRIMARY KEY,
   user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

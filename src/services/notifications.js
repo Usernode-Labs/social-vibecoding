@@ -1,8 +1,9 @@
 // Notifications service: @mention parsing + persistence + WS push.
 //
-// Scope today is only group-chat @mentions, but the DB shape (`kind` column)
-// is generic so we can layer PR/issue notifications on the same pipeline
-// without another table.
+// The DB shape (`kind` column) is generic so different notification types
+// share one table + pipeline. Kinds today: 'mention' (group-chat @mention),
+// 'kudos' (PR kudos), and 'reply' (#15 — someone quoted your message/PR in
+// group chat).
 
 const log = require('./logger');
 
@@ -57,6 +58,21 @@ async function createMentionNotifications(pool, { appId, chatMessageId, senderId
      VALUES ${values.join(', ')}
      RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
     params
+  );
+  return rows;
+}
+
+// #15: reply notification. Fired when a user quotes someone's message or
+// PR in group chat. `replyMessageId` is the NEW reply message, so clicking
+// the notification lands the recipient on the app's group chat where the
+// reply lives. No-op for self-replies or authorless (system) targets.
+async function createReplyNotification(pool, { appId, replyMessageId, senderId, recipientId }) {
+  if (!recipientId || recipientId === senderId) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind)
+     VALUES ($1, $2, $3, $4, 'reply')
+     RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
+    [recipientId, appId, replyMessageId, senderId]
   );
   return rows;
 }
@@ -142,6 +158,7 @@ function serialize(row) {
 module.exports = {
   parseMentions,
   createMentionNotifications,
+  createReplyNotification,
   listForUser,
   countUnread,
   markRead,

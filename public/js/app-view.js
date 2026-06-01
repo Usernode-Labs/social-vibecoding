@@ -346,6 +346,9 @@ const AppView = {
 
             <!-- Input -->
             <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2">
+              <!-- #15: "Replying to …" preview chip; populated by
+                   GroupChat._renderQuotePreview when a quote is staged. -->
+              <div id="gc-reply-preview" class="hidden"></div>
               <form id="gc-form" class="flex gap-2">
                 <input
                   id="gc-input"
@@ -403,6 +406,20 @@ const AppView = {
       GroupChat.sendTyping();
     });
 
+    // #15: Escape clears a staged reply quote (when the input is empty so
+    // we don't fight other Escape semantics mid-typing).
+    gcInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && GroupChat.replyDraft && !gcInput.value) {
+        e.preventDefault();
+        GroupChat.clearQuote();
+      }
+    });
+
+    // #15: clicking a PR title in the activity panel stages it as a reply
+    // quote. Bound once on the stable #gc-panel (content is re-rendered by
+    // loadVotePanel, so delegate). Tap-not-drag, same as the chat rows.
+    AppView._bindPanelQuoteHandler();
+
     if (AppView.appData) {
       // `mount` re-uses the existing WS + message cache when the user
       // comes back to this tab, preserving their scroll position; it only
@@ -410,6 +427,38 @@ const AppView = {
       GroupChat.mount(AppView.appData.slug);
       AppView.loadVotePanel(AppView.appData.slug);
     }
+    // Re-render any staged reply preview (the composer DOM was just
+    // recreated on this tab (re-)entry, but replyDraft persists).
+    GroupChat._renderQuotePreview();
+  },
+
+  // #15: delegated tap-to-quote for PR titles in the activity panel.
+  _bindPanelQuoteHandler() {
+    const panel = document.getElementById('gc-panel');
+    if (!panel || panel._gcQuoteBound) return;
+    panel._gcQuoteBound = true;
+    panel.addEventListener('pointerdown', (e) => {
+      AppView._panelTap = { x: e.clientX, y: e.clientY };
+    }, true);
+    panel.addEventListener('click', (e) => {
+      if (e.target.closest('a, button')) return;
+      const t = e.target.closest('.gc-quote-pr');
+      if (!t || typeof GroupChat === 'undefined') return;
+      const tap = AppView._panelTap || { x: e.clientX, y: e.clientY };
+      if (Math.abs(e.clientX - tap.x) + Math.abs(e.clientY - tap.y) > 8) return;
+      const sel = window.getSelection && window.getSelection();
+      if (sel && String(sel).trim() !== '') return;
+      const sessionId = parseInt(t.dataset.sessionId || '', 10);
+      if (!sessionId) return;
+      GroupChat.setQuote({
+        source: 'pr',
+        sessionId,
+        prNumber: parseInt(t.dataset.prNumber || '', 10) || null,
+        author: t.dataset.prAuthor || null,
+        snippet: t.dataset.prTitle || `PR #${t.dataset.prNumber || ''}`,
+        href: t.dataset.prUrl || null,
+      });
+    });
   },
 
   // The dropdown started life as an "activity feed" (open PRs, merged
@@ -572,6 +621,14 @@ const AppView = {
                 title="Admin: merge this PR right now, bypassing the vote majority"
                 onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
             : '';
+          // #15: make the PR title tap-to-quote into group chat. A clean
+          // text snapshot rides along in data-* so the composer/preview
+          // doesn't have to re-parse the labelText HTML.
+          const prQuoteTitle = pr.pr_title || `PR #${pr.pr_number || pr.id}`;
+          const prQuoteAttrs = `class="text-xs text-zinc-300 flex-1 min-w-0 truncate gc-quote-pr" `
+            + `data-session-id="${pr.id}" data-pr-number="${pr.pr_number || pr.id}" `
+            + `data-pr-title="${escapeHtml(prQuoteTitle)}" data-pr-author="${escapeHtml(pr.username)}" `
+            + `data-pr-url="${pr.pr_url || ''}" title="Tap to reply in chat"`;
           // Mobile layout: PR# + title share row 1; counts + vote/admin/
           // kudos buttons live in a wrapper that's `basis-full` (its own
           // row) below sm and `sm:contents` (transparent passthrough) at
@@ -586,7 +643,7 @@ const AppView = {
           bodyHtml += `
             <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
               <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-violet-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
-              <span class="text-xs text-zinc-300 flex-1 min-w-0 truncate">${labelText}</span>
+              <span ${prQuoteAttrs}>${labelText}</span>
               <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
                 <span class="text-xs text-zinc-500">${yesCount}/${majority}</span>
                 ${pr.staging_url ? `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStaging('${pr.staging_url}')">Preview</button>` : ''}
@@ -647,6 +704,12 @@ const AppView = {
           const mergedLabel = pr.pr_title
             ? `${escapeHtml(pr.pr_title)} <span class="text-zinc-500">· ${escapeHtml(pr.username)}</span>`
             : `by ${escapeHtml(pr.username)}`;
+          // #15: merged PR title is also tap-to-quote into group chat.
+          const mergedQuoteTitle = pr.pr_title || `PR #${pr.pr_number || pr.id}`;
+          const mergedQuoteAttrs = `class="text-xs text-zinc-400 flex-1 min-w-0 truncate gc-quote-pr" `
+            + `data-session-id="${pr.id}" data-pr-number="${pr.pr_number || pr.id}" `
+            + `data-pr-title="${escapeHtml(mergedQuoteTitle)}" data-pr-author="${escapeHtml(pr.username)}" `
+            + `data-pr-url="${pr.pr_url || ''}" title="Tap to reply in chat"`;
           // Merged PRs are still eligible for kudos (promoted + merging
           // + merged) — that's intentional. People often come back to
           // a recently-merged PR and want to thank the author.
@@ -692,7 +755,7 @@ const AppView = {
           bodyHtml += `
             <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
               <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-emerald-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
-              <span class="text-xs text-zinc-400 flex-1 min-w-0 truncate">${mergedLabel}</span>
+              <span ${mergedQuoteAttrs}>${mergedLabel}</span>
               <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
                 <span class="text-xs text-zinc-600">${date}</span>
                 ${undoUI}

@@ -35,6 +35,13 @@ const GroupChat = {
   _reconnectTimer: null,
   _pendingOutgoing: [],
 
+  // #15: Signal-style reply. `replyDraft` is the quote to attach to the
+  // NEXT outgoing message (or null). `_tap` records the last pointerdown
+  // position so the tap-to-quote handler can distinguish a clean tap from
+  // a drag/text-selection (mobile-first: tap quotes, drag selects).
+  replyDraft: null,
+  _tap: null,
+
   // In-progress draft helpers — preserved across tab switches *and* page
   // refreshes (via localStorage). Keyed by app slug so each app has its
   // own draft. Cleared on send.
@@ -94,6 +101,7 @@ const GroupChat = {
     GroupChat._savedScrollTop = null;
     GroupChat._didInitialScroll = false;
     GroupChat._reconnectAttempts = 0;
+    GroupChat.replyDraft = null;
 
     GroupChat._openSocket();
     GroupChat.attachScrollHandlers();
@@ -170,13 +178,13 @@ const GroupChat = {
     if (!GroupChat.ws || GroupChat.ws.readyState !== 1) return;
     const queue = GroupChat._pendingOutgoing.slice();
     GroupChat._pendingOutgoing.length = 0;
-    for (const content of queue) {
+    for (const payload of queue) {
       try {
-        GroupChat.ws.send(JSON.stringify({ type: 'chat', content }));
+        GroupChat.ws.send(JSON.stringify(payload));
       } catch {
         // Socket closed mid-flush — re-queue whatever didn't go
         // and let the next reconnect try again.
-        GroupChat._pendingOutgoing.unshift(content);
+        GroupChat._pendingOutgoing.unshift(payload);
         break;
       }
     }
@@ -278,8 +286,17 @@ const GroupChat = {
   // page refresh"). The caller can clear the input as soon as we
   // return without losing user-typed content.
   send(content) {
+    // #15: consume the pending reply quote (if any) for this message and
+    // clear it so it only attaches once. We send a minimal reference; the
+    // server re-derives author/snippet from the source row.
+    const quote = GroupChat.replyDraft;
+    GroupChat.replyDraft = null;
+    GroupChat._renderQuotePreview();
+    const payload = { type: 'chat', content };
+    if (quote) payload.quote = GroupChat._wireQuote(quote);
+
     if (GroupChat.ws && GroupChat.ws.readyState === 1) {
-      GroupChat.ws.send(JSON.stringify({ type: 'chat', content }));
+      GroupChat.ws.send(JSON.stringify(payload));
       return;
     }
     // Drop oldest if at cap — better to lose the message someone
@@ -287,7 +304,7 @@ const GroupChat = {
     if (GroupChat._pendingOutgoing.length >= GroupChat.PENDING_LIMIT) {
       GroupChat._pendingOutgoing.shift();
     }
-    GroupChat._pendingOutgoing.push(content);
+    GroupChat._pendingOutgoing.push(payload);
     // Kick a reconnect if one isn't already in flight. Covers the
     // edge case where send() is called between onclose firing and
     // the next reconnect being scheduled (shouldn't happen in
@@ -318,6 +335,128 @@ const GroupChat = {
     container.insertAdjacentHTML('beforeend', GroupChat.renderMessageHtml(msg));
   },
 
+  // ── #15: reply / quote ──────────────────────────────────────────────
+
+  // Stage a quote to attach to the next message and focus the composer.
+  // Called by the tap handler (chat rows) and by AppView (PR titles).
+  setQuote(quote) {
+    if (!quote) return;
+    GroupChat.replyDraft = quote;
+    GroupChat._renderQuotePreview();
+    const input = document.getElementById('gc-input');
+    if (input) input.focus();
+  },
+
+  clearQuote() {
+    GroupChat.replyDraft = null;
+    GroupChat._renderQuotePreview();
+  },
+
+  // Minimal wire form — server re-derives author/snippet from the source.
+  _wireQuote(q) {
+    if (q.source === 'pr') return { source: 'pr', sessionId: q.sessionId };
+    return { source: q.source, refMsgId: q.refMsgId };
+  },
+
+  // Render (or clear) the composer's "Replying to …" preview chip.
+  _renderQuotePreview() {
+    const el = document.getElementById('gc-reply-preview');
+    if (!el) return;
+    const q = GroupChat.replyDraft;
+    if (!q) {
+      el.classList.add('hidden');
+      el.innerHTML = '';
+      return;
+    }
+    const label = q.source === 'pr'
+      ? `PR #${q.prNumber || ''}`.trim()
+      : (q.author ? `@${q.author}` : 'message');
+    const snippet = (q.snippet || '').slice(0, 120);
+    el.classList.remove('hidden');
+    el.innerHTML =
+      `<div class="gc-reply-preview-inner">` +
+        `<div class="gc-reply-preview-body">` +
+          `<span class="gc-reply-preview-label">\u21A9 Replying to ${escapeHtml(label)}</span>` +
+          `<span class="gc-reply-preview-snippet">${escapeHtml(snippet)}</span>` +
+        `</div>` +
+        `<button type="button" id="gc-reply-cancel" class="gc-reply-preview-x" aria-label="Cancel reply">\u2715</button>` +
+      `</div>`;
+    const x = document.getElementById('gc-reply-cancel');
+    if (x) x.onclick = () => GroupChat.clearQuote();
+  },
+
+  // True only for a clean tap: pointer barely moved AND no text is
+  // selected. Lets drag-to-select / long-press-select coexist with
+  // tap-to-quote (mobile-first, per #15).
+  _isCleanTap(e) {
+    const t = GroupChat._tap || { x: e.clientX, y: e.clientY };
+    if (Math.abs(e.clientX - t.x) + Math.abs(e.clientY - t.y) > 8) return false;
+    const sel = window.getSelection && window.getSelection();
+    if (sel && String(sel).trim() !== '') return false;
+    return true;
+  },
+
+  // Build a quote object from a tapped chat row (message / event / spec).
+  _quoteFromRow(row) {
+    const id = parseInt(row.dataset.msgId || '', 10) || null;
+    if (!id) return null;
+    if (row.classList.contains('gc-spec-card')) {
+      return {
+        source: 'spec', refMsgId: id,
+        author: row.dataset.sharedBy || null,
+        snippet: row.dataset.specTitle || 'Spec',
+      };
+    }
+    if (row.classList.contains('gc-msg-system')) {
+      return { source: 'event', refMsgId: id, author: null, snippet: (row.textContent || '').trim() };
+    }
+    const body = row.querySelector('.gc-msg-content');
+    return {
+      source: 'message', refMsgId: id,
+      author: row.dataset.username || null,
+      snippet: (body ? body.textContent : '').trim(),
+    };
+  },
+
+  // Click on a rendered quote block → open the PR, or scroll to & flash
+  // the original message if it's in the loaded window.
+  _handleQuotedClick(quoted) {
+    if (quoted.dataset.quoteSource === 'pr') {
+      const href = quoted.dataset.quoteHref;
+      if (href) window.open(href, '_blank', 'noopener');
+      return;
+    }
+    const ref = parseInt(quoted.dataset.quoteRef || '', 10);
+    if (!ref) return;
+    const container = document.getElementById('gc-messages');
+    const target = container && container.querySelector(`[data-msg-id="${ref}"]`);
+    if (!target) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    target.classList.add('gc-msg-flash');
+    setTimeout(() => target.classList.remove('gc-msg-flash'), 1500);
+  },
+
+  // Delegated tap-to-quote + quote-jump on the messages container. Bound
+  // once (idempotent), mirroring _attachSpecCardHandlers.
+  _attachQuoteHandlers(container) {
+    if (container._gcQuoteBound) return;
+    container._gcQuoteBound = true;
+    container.addEventListener('pointerdown', (e) => {
+      GroupChat._tap = { x: e.clientX, y: e.clientY };
+    }, true);
+    container.addEventListener('click', (e) => {
+      const quoted = e.target.closest('.gc-quoted');
+      if (quoted) { GroupChat._handleQuotedClick(quoted); return; }
+      // Real links/buttons (PR link, "View full spec", mentions) win.
+      if (e.target.closest('a, button')) return;
+      if (!GroupChat._isCleanTap(e)) return;
+      const row = e.target.closest('.gc-msg, .gc-msg-system, .gc-spec-card');
+      if (!row || !container.contains(row)) return;
+      const quote = GroupChat._quoteFromRow(row);
+      if (quote) GroupChat.setQuote(quote);
+    });
+  },
+
   renderMessageHtml(msg) {
     const time = new Date(msg.createdAt || msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const username = msg.username || 'System';
@@ -339,17 +478,42 @@ const GroupChat = {
     }
 
     if (isSystem || isVote) {
-      return `<div class="gc-msg-system ${isVote ? 'gc-msg-vote' : ''}">${escapeHtml(msg.content)}</div>`;
+      return `<div class="gc-msg-system ${isVote ? 'gc-msg-vote' : ''}" data-msg-id="${msg.id || ''}">${escapeHtml(msg.content)}</div>`;
     }
 
+    // #15: a user message may carry a quote (reply) in metadata. Render the
+    // quoted block above the content; data-msg-id lets a reply elsewhere
+    // scroll back to this row.
+    const quotedHtml = GroupChat._renderQuotedBlock(msg.metadata || msg.meta);
     return `
-      <div class="gc-msg ${isSelf ? 'gc-msg-self' : ''}">
+      <div class="gc-msg ${isSelf ? 'gc-msg-self' : ''}" data-msg-id="${msg.id || ''}" data-username="${escapeHtml(username)}">
         <div class="gc-msg-header">
           <span class="gc-msg-username ${isSelf ? 'gc-msg-username-self' : ''}">${escapeHtml(username)}</span>
           <span class="gc-msg-time">${time}</span>
         </div>
+        ${quotedHtml}
         <div class="gc-msg-content">${renderWithMentions(msg.content)}</div>
       </div>`;
+  },
+
+  // #15: the quote block shown on a message that is itself a reply. Click
+  // handling (jump-to-original / open PR) is delegated in
+  // _attachQuoteHandlers.
+  _renderQuotedBlock(metadata) {
+    const q = (metadata || {}).quote;
+    if (!q) return '';
+    const who = q.author
+      ? escapeHtml(q.author)
+      : (q.source === 'pr' ? `PR #${q.prNumber || ''}`.trim() : 'system');
+    const snippet = escapeHtml((q.snippet || '').slice(0, 160));
+    const icon = q.source === 'pr' ? '\u{1F500}' : (q.source === 'spec' ? '\u{1F4CB}' : '\u21A9');
+    const data = q.source === 'pr'
+      ? `data-quote-source="pr" data-quote-href="${escapeHtml(q.href || '')}"`
+      : `data-quote-source="${escapeHtml(q.source || '')}" data-quote-ref="${q.refMsgId || ''}"`;
+    return `<div class="gc-quoted" ${data}>` +
+      `<span class="gc-quoted-author">${icon} ${who}</span>` +
+      `<span class="gc-quoted-snippet">${snippet}</span>` +
+      `</div>`;
   },
 
   renderSpecShareCard(msg, meta, time) {
@@ -379,7 +543,7 @@ const GroupChat = {
     const snippetHtml = meta.snippet ? renderMd(meta.snippet) : '';
     const titleAttr = meta.title || `spec v${meta.version}`;
     return `
-      <div class="gc-spec-card" data-msg-id="${msg.id || ''}" data-spec-title="${escapeHtml(titleAttr)}">
+      <div class="gc-spec-card" data-msg-id="${msg.id || ''}" data-spec-title="${escapeHtml(titleAttr)}" data-session-id="${meta.sessionId || ''}" data-shared-by="${escapeHtml(sharedBy)}">
         <div class="gc-spec-card-header">
           <span class="gc-spec-card-icon">📋</span>
           <span class="gc-spec-card-title">${escapeHtml(title)}</span>
@@ -773,6 +937,7 @@ const GroupChat = {
     const container = document.getElementById('gc-messages');
     if (!container) return;
     GroupChat._attachSpecCardHandlers(container);
+    GroupChat._attachQuoteHandlers(container);
     if (container._gcScrollBound) return;
     container._gcScrollBound = true;
     container.addEventListener('scroll', () => {

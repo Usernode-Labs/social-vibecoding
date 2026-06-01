@@ -607,6 +607,78 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 
 .gc-msg-vote { color: var(--accent); }
 
+/* Tap-to-quote affordance: system/vote lines and PR titles get a pointer
+   cursor so it reads as interactive (chat bubbles keep the text cursor so
+   drag-to-select still feels natural). */
+.gc-msg-system { cursor: pointer; }
+.gc-quote-pr { cursor: pointer; }
+@media (hover: hover) {
+  .gc-quote-pr:hover { text-decoration: underline; }
+}
+
+/* ── #15: reply / quote ─────────────────────────────────── */
+
+/* Quoted block shown above a message that is itself a reply, and the
+   composer "Replying to …" preview chip — they share styling so a reply
+   looks the same before and after it's sent. */
+.gc-quoted,
+.gc-reply-preview-inner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  background: var(--bg-card);
+  max-width: min(560px, 100%);
+}
+.gc-quoted {
+  margin: 2px 0 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.gc-quoted:hover { filter: brightness(1.08); }
+.gc-reply-preview-inner { padding: 6px 8px; }
+
+.gc-quoted-author,
+.gc-reply-preview-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.gc-quoted-snippet,
+.gc-reply-preview-snippet {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.gc-quoted { flex-direction: column; align-items: flex-start; gap: 0; }
+
+#gc-reply-preview { margin-bottom: 6px; }
+.gc-reply-preview-body { display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 1px; }
+.gc-reply-preview-x {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px 6px;
+  flex-shrink: 0;
+}
+.gc-reply-preview-x:hover { color: var(--text-primary); }
+
+/* Brief highlight when you jump to a quoted message's original. */
+.gc-msg-flash { animation: gcMsgFlash 1.5s ease-out; }
+@keyframes gcMsgFlash {
+  0% { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+  100% { background: transparent; }
+}
+
 /* ── Streaming spinner (bouncing dots) ─────────────────── */
 
 .dc-streaming-dots { display: flex; gap: 4px; padding: 4px 0; }

@@ -159,11 +159,84 @@ async function handleMessage(pool, client, msg) {
       if (!msg.content?.trim()) return;
       const content = msg.content.trim().substring(0, 2000);
 
+      // #15: optional quote (Signal-style reply). The client only sends a
+      // reference (refMsgId for a chat row, or sessionId for a PR); we
+      // re-derive author + snippet server-side from the referenced row so
+      // a client can't spoof who said what. If the reference doesn't
+      // validate we drop the quote silently and send a plain message.
+      // `replyRecipientId` is the author of the quoted thing — used to
+      // fire a reply notification below (NULL for system rows / self).
+      let quote = null;
+      let replyRecipientId = null;
+      try {
+        const q = msg.quote;
+        if (q && typeof q === 'object') {
+          if (q.source === 'pr' && Number.isInteger(q.sessionId)) {
+            const { rows: prRows } = await pool.query(
+              `SELECT cs.id, cs.user_id, cs.pr_number, cs.pr_title, cs.pr_url, u.username
+               FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id
+               WHERE cs.id = $1 AND cs.app_id = $2`,
+              [q.sessionId, client.appId]
+            );
+            if (prRows.length) {
+              const r = prRows[0];
+              quote = {
+                source: 'pr',
+                sessionId: r.id,
+                prNumber: r.pr_number,
+                author: r.username || null,
+                snippet: (r.pr_title || `PR #${r.pr_number || r.id}`).substring(0, 200),
+                href: r.pr_url || null,
+              };
+              replyRecipientId = r.user_id || null;
+            }
+          } else if (['message', 'event', 'spec'].includes(q.source) && Number.isInteger(q.refMsgId)) {
+            const { rows: refRows } = await pool.query(
+              `SELECT m.id, m.user_id, m.content, m.msg_type, m.metadata, u.username
+               FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id
+               WHERE m.id = $1 AND m.app_id = $2`,
+              [q.refMsgId, client.appId]
+            );
+            if (refRows.length) {
+              const r = refRows[0];
+              let snippet;
+              let author;
+              if (r.msg_type === 'spec_share') {
+                const sm = (r.metadata || {}).specShare || {};
+                snippet = sm.title || `Spec v${sm.version || ''}`.trim();
+                author = sm.sharedBy?.username || r.username || null;
+              } else if (r.msg_type === 'system' || r.msg_type === 'vote' || r.msg_type === 'conflict') {
+                snippet = r.content;
+                author = null; // system event — no person to attribute / notify
+              } else {
+                snippet = r.content;
+                author = r.username || null;
+              }
+              const normalizedSource = r.msg_type === 'spec_share'
+                ? 'spec'
+                : (r.msg_type === 'message' ? 'message' : 'event');
+              quote = {
+                source: normalizedSource,
+                refMsgId: r.id,
+                author,
+                snippet: (snippet || '').substring(0, 200),
+              };
+              replyRecipientId = r.user_id || null;
+            }
+          }
+        }
+      } catch (err) {
+        log.warn('ws', 'quote validation failed', { err: err.message });
+        quote = null;
+        replyRecipientId = null;
+      }
+
+      const metadata = quote ? { quote } : null;
       const { rows } = await pool.query(
-        `INSERT INTO chat_messages (app_id, user_id, content, msg_type)
-         VALUES ($1, $2, $3, 'message')
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata)
+         VALUES ($1, $2, $3, 'message', $4)
          RETURNING id, created_at`,
-        [client.appId, client.user.id, content]
+        [client.appId, client.user.id, content, metadata ? JSON.stringify(metadata) : null]
       );
 
       const outMsg = {
@@ -173,10 +246,46 @@ async function handleMessage(pool, client, msg) {
         username: client.user.username,
         content,
         msgType: 'message',
+        ...(metadata ? { metadata } : {}),
         createdAt: rows[0].created_at,
       };
 
       broadcast(client.appId, outMsg);
+
+      // #15: reply notification — ping the author of the quoted message
+      // or PR (no-op for self-quotes and authorless system rows).
+      try {
+        const replyRows = await notifications.createReplyNotification(pool, {
+          appId: client.appId,
+          replyMessageId: rows[0].id,
+          senderId: client.user.id,
+          recipientId: replyRecipientId,
+        });
+        if (replyRows.length) {
+          const { rows: hydrated } = await pool.query(
+            `SELECT n.id, n.kind, n.read_at, n.created_at,
+                    n.app_id, a.slug AS app_slug, a.name AS app_name,
+                    n.chat_message_id, cm.content AS message_content,
+                    n.session_id, cs.pr_title, cs.pr_number,
+                    su.username AS source_username, n.user_id
+             FROM notifications n
+             LEFT JOIN apps a ON a.id = n.app_id
+             LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
+             LEFT JOIN chat_sessions cs ON cs.id = n.session_id
+             LEFT JOIN users su ON su.id = n.source_user_id
+             WHERE n.id = ANY($1::int[])`,
+            [replyRows.map((r) => r.id)]
+          );
+          for (const row of hydrated) {
+            pushNotificationToUser(row.user_id, {
+              type: 'notification_new',
+              notification: notifications.serialize(row),
+            });
+          }
+        }
+      } catch (err) {
+        log.warn('ws', 'reply notify failed', { err: err.message });
+      }
 
       // Fan out @mention notifications after the chat echo so UI order
       // stays predictable (everyone sees the message first, target user

@@ -210,7 +210,9 @@ function renderRow(n) {
   }
 
   const snippet = (n.messageContent || '').slice(0, 140);
-  const kindText = n.kind === 'mention' ? 'mentioned you in' : 'in';
+  const kindText = n.kind === 'mention'
+    ? 'mentioned you in'
+    : (n.kind === 'reply' ? 'replied to you in' : 'in');
   return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
     <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1">
       <span class="font-medium text-zinc-800 dark:text-zinc-200">@${who}</span>
