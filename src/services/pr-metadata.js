@@ -14,7 +14,7 @@ const github = require('./github');
 // to the legacy template so PR creation is never blocked on LLM
 // availability. `usage` is undefined when the fallback fires (no API
 // call was made) so callers can skip debiting in that case.
-async function generatePrMetadata({ userMessage, ccSummary, username, apiKey }) {
+async function generatePrMetadata({ userMessage, ccSummary, requests, summaries, specs, username, apiKey }) {
   const fallbackTitle = `${username}'s changes`;
   const fallbackBody = `Dev session by ${username} via Usernode`;
 
@@ -29,6 +29,9 @@ async function generatePrMetadata({ userMessage, ccSummary, username, apiKey }) 
     const meta = await llm.generatePrMetadata({
       userRequest: userMessage,
       ccSummary,
+      requests,
+      summaries,
+      specs,
       username,
       apiKey,
     });
@@ -42,6 +45,83 @@ async function generatePrMetadata({ userMessage, ccSummary, username, apiKey }) 
     log.warn('pr-metadata', 'Generation failed; using fallback', { err: err.message });
     return { title: fallbackTitle, body: fallbackBody };
   }
+}
+
+// Pull the full per-turn history for a session so the PR title/body can
+// reflect every update on the branch, not just the latest turn (#26):
+//  - `requests`:  every user-role message, chronological. The current
+//                 turn's message is already persisted (sessions.js inserts
+//                 it before the worker runs), so it's included here.
+//  - `summaries`: each completed turn's coding-agent summary, persisted as
+//                 a system row with metadata.ccOutput. The CURRENT turn's
+//                 summary is NOT yet persisted when this runs, so callers
+//                 pass it separately and we append it as the final entry.
+//  - `specs`:     the session's spec doc(s) — the Mayor-maintained markdown
+//                 that captures overall intent. Includes the live draft
+//                 (chat_sessions.spec_md) plus any saved snapshots
+//                 (chat_session_specs), since a single chat can carry more
+//                 than one distinct spec (#27). Deduped, oldest-first.
+//                 Used as a THEME signal: it describes intended scope (which
+//                 may run ahead of what's actually built), so the prompt
+//                 leans on requests/summaries for the concrete changes.
+async function gatherSessionContext(pool, sessionId, currentCcSummary) {
+  const ctx = { requests: [], summaries: [], specs: [] };
+  if (pool && sessionId != null) {
+    try {
+      const { rows } = await pool.query(
+        `SELECT role, content, metadata FROM chat_session_messages
+           WHERE session_id = $1
+             AND (role = 'user' OR (role = 'system' AND metadata->>'ccOutput' IS NOT NULL))
+           ORDER BY id ASC`,
+        [sessionId]
+      );
+      for (const row of rows) {
+        if (row.role === 'user' && row.content) {
+          ctx.requests.push(row.content);
+        } else if (row.role === 'system' && row.metadata && row.metadata.ccOutput) {
+          ctx.summaries.push(String(row.metadata.ccOutput));
+        }
+      }
+    } catch (err) {
+      log.warn('pr-metadata', 'Failed to gather session history; using current turn only', { err: err.message, sessionId });
+    }
+
+    // Spec(s): saved snapshots (oldest-first) then the live draft. We dedupe
+    // exact duplicates so an unchanged draft that was also "saved" doesn't
+    // appear twice. Querying by session.id keeps both call sites (sessions.js
+    // and the server.js orphan path) working without passing spec text in.
+    try {
+      const specTexts = [];
+      const { rows: specRows } = await pool.query(
+        `SELECT content FROM chat_session_specs WHERE session_id = $1 ORDER BY version ASC`,
+        [sessionId]
+      );
+      for (const r of specRows) {
+        const c = (r.content || '').trim();
+        if (c) specTexts.push(c);
+      }
+      const { rows: liveRows } = await pool.query(
+        `SELECT spec_md FROM chat_sessions WHERE id = $1`,
+        [sessionId]
+      );
+      const live = (liveRows[0] && liveRows[0].spec_md ? String(liveRows[0].spec_md) : '').trim();
+      if (live) specTexts.push(live);
+
+      const seen = new Set();
+      for (const s of specTexts) {
+        if (!seen.has(s)) { seen.add(s); ctx.specs.push(s); }
+      }
+    } catch (err) {
+      log.warn('pr-metadata', 'Failed to gather session specs', { err: err.message, sessionId });
+    }
+  }
+  // Append the in-flight turn's summary (not yet persisted). Skip if it's
+  // already the last entry (e.g. orphan-recovery may re-read a row).
+  const cur = (currentCcSummary || '').trim();
+  if (cur && ctx.summaries[ctx.summaries.length - 1] !== cur) {
+    ctx.summaries.push(cur);
+  }
+  return ctx;
 }
 
 // Either open a new PR with the generated title/body, or update the
@@ -61,8 +141,12 @@ async function applyPrMetadata({
 }) {
   if (!repoOwner || !repoName) return null;
 
+  // Build cumulative context across all of this PR's turns. Falls back to
+  // the single current turn when no history is available.
+  const { requests, summaries, specs } = await gatherSessionContext(pool, session && session.id, ccSummary);
+
   const meta = await generatePrMetadata({
-    userMessage, ccSummary, username, apiKey,
+    userMessage, ccSummary, requests, summaries, specs, username, apiKey,
   });
   const { title: prTitle, body: prBody } = meta;
 

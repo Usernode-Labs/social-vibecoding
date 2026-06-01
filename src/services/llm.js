@@ -134,32 +134,73 @@ function estimateCostCents(usage, model) {
 }
 
 // Generate a human-readable PR title + description from the user's
-// request and Claude Code's own summary of what it built. Runs after
-// the worker finishes and before we open the GitHub PR so the title
-// is accurate (not a guess from the mayor ahead of time). Uses Haiku
-// for speed + cost; the call is ~1s and a fraction of a cent per PR.
+// request(s) and Claude Code's own summary of what it built. Runs after
+// the worker finishes and before we open/update the GitHub PR so the
+// title is accurate (not a guess from the mayor ahead of time). Uses
+// Haiku for speed + cost; the call is ~1s and a fraction of a cent per PR.
+//
+// A single PR/branch accumulates multiple dev turns ("updates"). To keep
+// the title reflecting ALL changes in the PR — not just the most recent
+// update (#26) — callers may pass the full history as `requests`
+// (every user ask, chronological) and `summaries` (each turn's coding
+// agent summary). `specs` carries the session's spec doc(s) as a theme
+// signal (intended scope, which may run ahead of what's actually built).
+// The legacy single `userRequest`/`ccSummary` fields are still accepted
+// and treated as a one-entry history.
 //
 // Returns `{ title, body }` or throws on failure — callers MUST catch
 // and fall back to the old template ("<user>'s changes") rather than
 // blocking PR creation on LLM downtime.
-async function generatePrMetadata({ userRequest, ccSummary, username, apiKey }) {
+async function generatePrMetadata({ userRequest, ccSummary, requests, summaries, specs, username, apiKey }) {
   const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
   if (!activeClient) throw new Error('LLM not initialized');
 
+  // Normalize to chronological lists, falling back to the legacy
+  // single-value fields. Cap count + per-item length so a long-lived PR
+  // with many turns can't blow the prompt budget; the most recent turns
+  // matter most so we keep the tail.
+  const MAX_TURNS = 20;
+  const toList = (arr, single) => {
+    const list = (Array.isArray(arr) ? arr : []).map((s) => String(s || '').trim()).filter(Boolean);
+    if (list.length) return list.slice(-MAX_TURNS);
+    return single && String(single).trim() ? [String(single).trim()] : [];
+  };
+  const reqList = toList(requests, userRequest);
+  const sumList = toList(summaries, ccSummary);
+  // Specs are large; keep only the 2 most recent distinct docs (older
+  // drafts are usually subsets of the latest) and truncate each.
+  const specList = (Array.isArray(specs) ? specs : [])
+    .map((s) => String(s || '').trim())
+    .filter(Boolean)
+    .slice(-2);
+  const multi = reqList.length > 1 || sumList.length > 1;
+
   const system = `You write concise GitHub pull request titles and descriptions.
 
-Given the user's original request and the coding agent's summary of what it built, produce:
-- A title (max 72 chars, imperative mood, no trailing period, no PR #)
-- A short markdown description (2-5 lines): 1 sentence of context, then bullet points of concrete changes. Keep it tight; no filler.
+A pull request may bundle several updates made over multiple turns. You are given the FULL history of the user's requests and the coding agent's summaries for this PR, and possibly the session's spec doc(s). Produce metadata that reflects ALL the changes in the PR, not just the latest update:
+- A title (max 72 chars, imperative mood, no trailing period, no PR #) that captures the overall scope of the PR. If the updates are related, summarize them as one theme; if they are distinct, lead with the most significant change.
+- A short markdown description (2-6 lines): 1 sentence of context, then bullet points covering the concrete changes across all updates. Keep it tight; no filler.
+
+The SPEC section (when present) describes the intended scope and overall theme — useful for framing — but it may describe work that isn't built yet, so base the concrete changes on the requests and coding-agent summaries, not the spec alone.
 
 Respond with ONLY a JSON object: {"title": "...", "body": "..."}. No prose before or after.`;
 
-  const user = `USER REQUEST:
-${(userRequest || '').slice(0, 2000)}
+  const reqBlock = reqList.length
+    ? reqList.map((r, i) => (multi ? `${i + 1}. ${r.slice(0, 1000)}` : r.slice(0, 2000))).join('\n')
+    : '(no request available)';
+  const sumBlock = sumList.length
+    ? sumList.map((s, i) => (multi ? `Update ${i + 1}:\n${s.slice(0, 2000)}` : s.slice(0, 6000))).join('\n\n')
+    : '(no summary available)';
+  const specBlock = specList.length
+    ? specList.map((s, i) => (specList.length > 1 ? `Spec ${i + 1}:\n${s.slice(0, 3000)}` : s.slice(0, 4000))).join('\n\n')
+    : '';
 
-CODING AGENT SUMMARY:
-${(ccSummary || '(no summary available)').slice(0, 6000)}
+  const user = `USER REQUEST${reqList.length > 1 ? 'S (chronological)' : ''}:
+${reqBlock}
 
+CODING AGENT SUMMAR${sumList.length > 1 ? 'IES (one per update, chronological)' : 'Y'}:
+${sumBlock}
+${specBlock ? `\nSPEC${specList.length > 1 ? 'S' : ''} (intended scope / theme):\n${specBlock}\n` : ''}
 Author: ${username || 'unknown'}`;
 
   const model = 'claude-haiku-4-5';
