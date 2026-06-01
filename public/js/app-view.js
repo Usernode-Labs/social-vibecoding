@@ -977,7 +977,7 @@ const AppView = {
 
     if (!next || next.length < 3) return showError('Name must be at least 3 characters');
     if (next.length > 64) return showError('Name must be 64 characters or fewer');
-    if (next === current) return showError('New name must differ from the current one');
+    if (next === current) return showError('New app name must differ from the current one');
 
     submitBtn.disabled = true;
     submitBtn.textContent = 'Proposing...';
@@ -1062,7 +1062,7 @@ const AppView = {
             <button id="dc-edit-rename"
               class="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 transition-colors text-left">
               <svg class="w-4 h-4 text-zinc-500 dark:text-zinc-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-              <span class="flex-1 text-zinc-800 dark:text-zinc-200">Display name</span>
+              <span class="flex-1 text-zinc-800 dark:text-zinc-200">App display name</span>
               <span class="text-xs text-zinc-400 dark:text-zinc-500 truncate max-w-[40%]" title="${currentName}">${currentName}</span>
               <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
             </button>
