@@ -237,6 +237,31 @@ async function loadSessionSpec(pool, sessionId) {
   return (rows[0] && rows[0].spec_md) || '';
 }
 
+// #27: freeze the current spec content as a new immutable version in
+// chat_session_specs and return its version number. Every spec mutation
+// (write_spec / edit_spec / scout) calls this and tags its inline spec
+// preview card with the returned version, so clicking an OLDER card
+// opens exactly the content it represented — instead of always falling
+// back to the live draft (which only ever showed the most recent spec).
+// The version sequence is shared with the user's manual "Save version"
+// button (POST /specs); both use MAX(version)+1. Best-effort: returns
+// null on failure so the card falls back to the live draft (the prior,
+// pre-#27 behavior) rather than blocking the spec edit.
+async function snapshotSessionSpec(pool, sessionId, content) {
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO chat_session_specs (session_id, version, content)
+       VALUES ($1, COALESCE((SELECT MAX(version) FROM chat_session_specs WHERE session_id = $1), 0) + 1, $2)
+       RETURNING version`,
+      [sessionId, content]
+    );
+    return rows[0].version;
+  } catch (err) {
+    log.warn('sessions', 'Failed to snapshot spec version', { err: err.message, sessionId });
+    return null;
+  }
+}
+
 function sessionRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -1208,7 +1233,9 @@ function sessionRoutes(config) {
   //
   // The session has a live spec_md draft (overwritten by Mayor's
   // write_spec / edit_spec / dispatch_scout) and an append-only history
-  // in chat_session_specs (rows are frozen on dispatch_claude_code).
+  // in chat_session_specs. A version is frozen on every spec mutation
+  // (#27, via snapshotSessionSpec) so each inline spec card can reopen
+  // its own content, plus whenever the user clicks "Save version".
   // The dev-chat UI surfaces the live draft in a read-only side-panel
   // viewer (see DevChat.specViewer in public/js/dev-chat.js); the user
   // ships the spec by asking the Mayor to dispatch the coding agent in
@@ -1913,11 +1940,14 @@ async function runWriteSpecTool({ pool, session, send, sendStatus, toolInput }) 
   const charCount = content.length;
   const preview = content.length > 400 ? `${content.substring(0, 400)}…` : content;
 
+  // #27: freeze this draft so the inline card opens its own content.
+  const specVersion = await snapshotSessionSpec(pool, session.id, content);
+
   await sendStatus(
     `Spec updated (${lineCount} lines).`,
-    { specPreview: preview, specLines: lineCount }
+    { specPreview: preview, specLines: lineCount, specVersion }
   );
-  send('spec_updated', { length: charCount, lines: lineCount });
+  send('spec_updated', { length: charCount, lines: lineCount, version: specVersion });
 
   return {
     toolResultText:
@@ -2011,11 +2041,14 @@ async function runEditSpecTool({ pool, session, send, sendStatus, toolInput }) {
   const lineDelta = afterLines - beforeLines;
   const preview = updated.length > 400 ? `${updated.substring(0, 400)}…` : updated;
 
+  // #27: freeze this edited spec so the inline card opens its own content.
+  const specVersion = await snapshotSessionSpec(pool, session.id, updated);
+
   await sendStatus(
     `Spec edited (−${removedLines} / +${addedLines} lines, now ${afterLines} total).`,
-    { specPreview: preview, specLines: afterLines }
+    { specPreview: preview, specLines: afterLines, specVersion }
   );
-  send('spec_updated', { length: updated.length, lines: afterLines });
+  send('spec_updated', { length: updated.length, lines: afterLines, version: specVersion });
 
   return {
     toolResultText:
@@ -2192,11 +2225,13 @@ Your final assistant message must be ONLY the markdown spec — no preamble, no 
 
       const lineCount = ccText.split('\n').length;
       const preview = ccText.length > 400 ? `${ccText.substring(0, 400)}…` : ccText;
+      // #27: freeze the scout's draft so the inline card opens its own content.
+      const specVersion = await snapshotSessionSpec(pool, session.id, ccText);
       await sendStatus(
         `Scout drafted a ${lineCount}-line spec from the codebase.`,
-        { specPreview: preview, specLines: lineCount, scoutOutput: ccText }
+        { specPreview: preview, specLines: lineCount, scoutOutput: ccText, specVersion }
       );
-      send('spec_updated', { length: ccText.length, lines: lineCount });
+      send('spec_updated', { length: ccText.length, lines: lineCount, version: specVersion });
       summaryParts.push(
         `The scout investigated the repo and drafted a ${lineCount}-line markdown spec. `
         + `It now lives in the session's spec doc; the user can review it in the dev-chat spec viewer. When they're ready to ship, they'll ask you to dispatch the coding agent.`
