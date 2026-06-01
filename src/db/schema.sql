@@ -251,6 +251,20 @@ CREATE INDEX IF NOT EXISTS idx_chat_session_specs_session
 -- without overloading the free-form `content` field.
 ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
 
+-- #25: emoji reactions on group-chat messages (WhatsApp-style, but
+-- Slack-model: a user may add multiple distinct emoji to one message,
+-- hence UNIQUE(message_id, user_id, emoji) rather than per-user). Toggled
+-- via the per-app chat WebSocket ('react' message in src/services/ws.js).
+CREATE TABLE IF NOT EXISTS message_reactions (
+  id         SERIAL PRIMARY KEY,
+  message_id INTEGER REFERENCES chat_messages(id) ON DELETE CASCADE,
+  user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  emoji      VARCHAR(16) NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(message_id, user_id, emoji)
+);
+CREATE INDEX IF NOT EXISTS message_reactions_message_idx ON message_reactions(message_id);
+
 -- Issues (mirrored to GitHub Issues). `kind` discriminates general issues from
 -- structured proposals like 'rename' (see src/routes/issues.js). `payload`
 -- carries the proposal-specific data (e.g. { newName }).
@@ -321,8 +335,10 @@ ON CONFLICT (key) DO NOTHING;
 -- Notifications. Generic row format so we can add more `kind`s later
 -- (PR approvals, etc). Currently 'mention' (group-chat @mention parser
 -- in src/services/ws.js), 'kudos' (PR kudos give in src/routes/kudos.js),
--- and 'reply' (#15 — someone quoted your message/PR in group chat;
--- chat_message_id points to the reply, set in src/services/ws.js).
+-- 'reply' (#15 — someone quoted your message/PR in group chat;
+-- chat_message_id points to the reply, set in src/services/ws.js), and
+-- 'reaction' (#25 — someone reacted to your message; chat_message_id is
+-- the reacted message, `detail` holds the emoji).
 CREATE TABLE IF NOT EXISTS notifications (
   id              SERIAL PRIMARY KEY,
   user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -345,6 +361,11 @@ CREATE INDEX IF NOT EXISTS idx_notifications_user_recent
 -- set, so wrapped in IF NOT EXISTS for idempotent re-runs.
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS session_id
   INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE;
+
+-- #25: free-form detail for a notification kind that needs a small extra
+-- string. Today only 'reaction' uses it (the emoji someone reacted with);
+-- kept generic + nullable so future kinds can reuse it.
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS detail VARCHAR(32);
 
 -- Per-app environment secrets. Values are AES-256-GCM encrypted via
 -- src/services/secrets.js (keyed off jwtSecret), serialized as

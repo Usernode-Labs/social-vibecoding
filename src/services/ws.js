@@ -236,7 +236,8 @@ async function handleMessage(pool, client, msg) {
         `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata)
          VALUES ($1, $2, $3, 'message', $4)
          RETURNING id, created_at`,
-        [client.appId, client.user.id, content, metadata ? JSON.stringify(metadata) : null]
+        // metadata is NOT NULL DEFAULT '{}', so always pass a JSON object.
+        [client.appId, client.user.id, content, JSON.stringify(metadata || {})]
       );
 
       const outMsg = {
@@ -331,6 +332,81 @@ async function handleMessage(pool, client, msg) {
       break;
     }
 
+    // #25: emoji reaction toggle. Slack-model — a user may stack multiple
+    // distinct emoji on one message; the same emoji twice toggles it off.
+    // The socket is already scoped to an app room, so we only need to
+    // confirm the message lives in this app before mutating.
+    case 'react': {
+      const messageId = Number(msg.messageId);
+      const emoji = typeof msg.emoji === 'string' ? msg.emoji.trim() : '';
+      // Keep it a single short token (no whitespace) — the picker only
+      // ever sends one emoji, and this bounds what lands in the column.
+      if (!Number.isInteger(messageId) || !emoji || emoji.length > 16 || /\s/.test(emoji)) return;
+
+      const { rows: mrows } = await pool.query(
+        `SELECT user_id FROM chat_messages WHERE id = $1 AND app_id = $2`,
+        [messageId, client.appId]
+      );
+      if (!mrows.length) return;
+      const authorId = mrows[0].user_id;
+
+      const { rowCount: deleted } = await pool.query(
+        `DELETE FROM message_reactions WHERE message_id = $1 AND user_id = $2 AND emoji = $3`,
+        [messageId, client.user.id, emoji]
+      );
+      let added = false;
+      if (!deleted) {
+        await pool.query(
+          `INSERT INTO message_reactions (message_id, user_id, emoji) VALUES ($1, $2, $3)
+           ON CONFLICT (message_id, user_id, emoji) DO NOTHING`,
+          [messageId, client.user.id, emoji]
+        );
+        added = true;
+      }
+
+      const reactions = await getMessageReactions(pool, messageId);
+      broadcast(client.appId, { type: 'reaction', messageId, reactions });
+
+      // Notify the author only when a reaction is *added* (not removed),
+      // and never for self-reactions or authorless system rows.
+      if (added && authorId) {
+        try {
+          const notifRows = await notifications.createReactionNotification(pool, {
+            appId: client.appId,
+            messageId,
+            senderId: client.user.id,
+            recipientId: authorId,
+            emoji,
+          });
+          if (notifRows.length) {
+            const { rows: hydrated } = await pool.query(
+              `SELECT n.id, n.kind, n.read_at, n.created_at,
+                      n.app_id, a.slug AS app_slug, a.name AS app_name,
+                      n.chat_message_id, cm.content AS message_content,
+                      n.session_id, cs.pr_title, cs.pr_number,
+                      su.username AS source_username, n.user_id, n.detail
+               FROM notifications n
+               LEFT JOIN apps a ON a.id = n.app_id
+               LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
+               LEFT JOIN chat_sessions cs ON cs.id = n.session_id
+               LEFT JOIN users su ON su.id = n.source_user_id
+               WHERE n.id = ANY($1::int[])`,
+              [notifRows.map((r) => r.id)]
+            );
+            for (const row of hydrated) {
+              pushNotificationToUser(row.user_id, {
+                type: 'notification_new',
+                notification: notifications.serialize(row),
+              });
+            }
+          }
+        } catch (err) {
+          log.warn('ws', 'reaction notify failed', { err: err.message });
+        }
+      }
+      break;
+    }
+
     case 'typing': {
       broadcast(client.appId, {
         type: 'typing',
@@ -343,6 +419,42 @@ async function handleMessage(pool, client, msg) {
     default:
       break;
   }
+}
+
+// #25: aggregate reactions for a message → [{ emoji, count, users:[username] }]
+// ordered by first-reacted. `users` powers both the per-viewer "mine"
+// highlight (membership check) and the who-reacted tooltip, so history and
+// live broadcasts can share one shape.
+async function getMessageReactions(pool, messageId) {
+  const { rows } = await pool.query(
+    `SELECT mr.emoji, COUNT(*)::int AS count,
+            COALESCE(array_agg(u.username ORDER BY mr.created_at), '{}') AS users
+     FROM message_reactions mr JOIN users u ON u.id = mr.user_id
+     WHERE mr.message_id = $1
+     GROUP BY mr.emoji
+     ORDER BY MIN(mr.created_at)`,
+    [messageId]
+  );
+  return rows.map((r) => ({ emoji: r.emoji, count: r.count, users: r.users || [] }));
+}
+
+// Batch variant for history hydration: messageIds → { [id]: reactions[] }.
+async function getReactionsForMessages(pool, messageIds) {
+  if (!messageIds.length) return {};
+  const { rows } = await pool.query(
+    `SELECT mr.message_id, mr.emoji, COUNT(*)::int AS count,
+            COALESCE(array_agg(u.username ORDER BY mr.created_at), '{}') AS users
+     FROM message_reactions mr JOIN users u ON u.id = mr.user_id
+     WHERE mr.message_id = ANY($1::int[])
+     GROUP BY mr.message_id, mr.emoji
+     ORDER BY mr.message_id, MIN(mr.created_at)`,
+    [messageIds]
+  );
+  const out = {};
+  for (const r of rows) {
+    (out[r.message_id] = out[r.message_id] || []).push({ emoji: r.emoji, count: r.count, users: r.users || [] });
+  }
+  return out;
 }
 
 async function sendSystemMessage(pool, appId, content, msgType = 'system') {
@@ -431,4 +543,4 @@ function pushNotificationToUser(userId, payload) {
   return sent;
 }
 
-module.exports = { attach, broadcast, broadcastGlobal, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushSessionUpdate, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushNotificationToUser };
+module.exports = { attach, broadcast, broadcastGlobal, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushSessionUpdate, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushNotificationToUser, getReactionsForMessages };

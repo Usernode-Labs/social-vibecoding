@@ -51,7 +51,19 @@ function chatRoutes(config) {
       }
 
       const { rows } = await pool.query(query, params);
-      res.json({ messages: rows.reverse() });
+      const messages = rows.reverse();
+
+      // #25: attach emoji reactions so the chat renders them on load (live
+      // updates arrive separately over the per-app WS 'reaction' event).
+      try {
+        const { getReactionsForMessages } = require('../services/ws');
+        const byId = await getReactionsForMessages(pool, messages.map((m) => m.id));
+        for (const m of messages) m.reactions = byId[m.id] || [];
+      } catch (err) {
+        log.warn('chat', 'reaction hydrate failed', { message: err.message });
+      }
+
+      res.json({ messages });
     } catch (err) {
       log.error('chat', 'Failed to load messages', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

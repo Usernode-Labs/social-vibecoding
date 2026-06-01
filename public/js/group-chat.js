@@ -42,6 +42,25 @@ const GroupChat = {
   replyDraft: null,
   _tap: null,
 
+  // #25: emoji reactions. Long-press (or hover button) opens the reaction
+  // bar; `_pressTimer` arms the long-press, `_longPressed` swallows the
+  // trailing click so it doesn't also quote. `_reactBar` is the lazily
+  // built floating picker.
+  _pressTimer: null,
+  _longPressed: false,
+  _reactBar: null,
+  _reactBarDismiss: null,
+  _reactBarOpenedAt: 0,
+  QUICK_REACTIONS: ['\u{1F44D}', '\u2764\uFE0F', '\u{1F602}', '\u{1F62E}', '\u{1F622}', '\u{1F64F}'],
+  GRID_REACTIONS: [
+    '\u{1F44D}', '\u{1F44E}', '\u2764\uFE0F', '\u{1F525}', '\u{1F389}', '\u{1F44F}',
+    '\u{1F602}', '\u{1F923}', '\u{1F60A}', '\u{1F60D}', '\u{1F60E}', '\u{1F914}',
+    '\u{1F62E}', '\u{1F632}', '\u{1F622}', '\u{1F62D}', '\u{1F621}', '\u{1F644}',
+    '\u{1F64F}', '\u{1F4AF}', '\u{1F680}', '\u{1F44C}', '\u{1F440}', '\u{1F9E0}',
+    '\u{1F389}', '\u2705', '\u274C', '\u26A0\uFE0F', '\u{1F41B}', '\u{1F4A1}',
+    '\u{1F44B}', '\u{1F913}', '\u{1F525}', '\u{1F31F}', '\u{1F926}', '\u{1F937}',
+  ],
+
   // In-progress draft helpers — preserved across tab switches *and* page
   // refreshes (via localStorage). Keyed by app slug so each app has its
   // own draft. Cleared on send.
@@ -102,6 +121,9 @@ const GroupChat = {
     GroupChat._didInitialScroll = false;
     GroupChat._reconnectAttempts = 0;
     GroupChat.replyDraft = null;
+    GroupChat._longPressed = false;
+    GroupChat._clearPressTimer();
+    GroupChat._closeReactionBar();
 
     GroupChat._openSocket();
     GroupChat.attachScrollHandlers();
@@ -261,6 +283,11 @@ const GroupChat = {
         if (shouldStick) GroupChat.scrollToBottom();
         break;
       }
+      case 'reaction': {
+        // #25: authoritative reaction aggregate for one message.
+        GroupChat._updateMessageReactions(msg.messageId, msg.reactions || []);
+        break;
+      }
       case 'typing': {
         GroupChat.typingUsers.set(msg.userId, msg.username);
         GroupChat.renderTyping();
@@ -408,7 +435,9 @@ const GroupChat = {
       };
     }
     if (row.classList.contains('gc-msg-system')) {
-      return { source: 'event', refMsgId: id, author: null, snippet: (row.textContent || '').trim() };
+      const textEl = row.querySelector('.gc-msg-system-text');
+      const text = (textEl ? textEl.textContent : row.textContent) || '';
+      return { source: 'event', refMsgId: id, author: null, snippet: text.trim() };
     }
     const body = row.querySelector('.gc-msg-content');
     return {
@@ -436,25 +465,224 @@ const GroupChat = {
     setTimeout(() => target.classList.remove('gc-msg-flash'), 1500);
   },
 
-  // Delegated tap-to-quote + quote-jump on the messages container. Bound
-  // once (idempotent), mirroring _attachSpecCardHandlers.
+  // Delegated tap-to-quote + quote-jump + reactions on the messages
+  // container. Bound once (idempotent), mirroring _attachSpecCardHandlers.
+  //
+  // Interaction model (#15 + #25, mobile-first):
+  //   • quick tap         → quote the row (#15)
+  //   • long-press (hold) → open the reaction bar (#25, WhatsApp-style)
+  //   • hover react button→ open the reaction bar (desktop)
+  //   • tap a reaction pill → toggle that emoji for you
+  //   • drag / text-select → neither (handled by the move threshold)
   _attachQuoteHandlers(container) {
     if (container._gcQuoteBound) return;
     container._gcQuoteBound = true;
+
+    const ROW_SEL = '.gc-msg, .gc-msg-system, .gc-spec-card';
+
     container.addEventListener('pointerdown', (e) => {
       GroupChat._tap = { x: e.clientX, y: e.clientY };
+      GroupChat._longPressed = false;
+      GroupChat._clearPressTimer();
+      // Don't arm long-press on interactive children (links, buttons,
+      // pills, the quote block) — those have their own click semantics.
+      if (e.target.closest('a, button, .gc-quoted')) return;
+      const row = e.target.closest(ROW_SEL);
+      if (!row || !container.contains(row)) return;
+      GroupChat._pressTimer = setTimeout(() => {
+        GroupChat._pressTimer = null;
+        GroupChat._longPressed = true;
+        GroupChat._openReactionBar(row);
+      }, 450);
     }, true);
+
+    const cancelPress = (e) => {
+      if (!GroupChat._pressTimer) return;
+      if (e && GroupChat._tap &&
+          Math.abs(e.clientX - GroupChat._tap.x) + Math.abs(e.clientY - GroupChat._tap.y) <= 8 &&
+          e.type === 'pointermove') {
+        return; // tiny jitter — keep the timer alive
+      }
+      GroupChat._clearPressTimer();
+    };
+    container.addEventListener('pointermove', cancelPress, true);
+    container.addEventListener('pointerup', () => GroupChat._clearPressTimer(), true);
+    container.addEventListener('pointercancel', () => GroupChat._clearPressTimer(), true);
+
     container.addEventListener('click', (e) => {
+      // Reaction pill → toggle that emoji for the viewer.
+      const pill = e.target.closest('.gc-react-pill');
+      if (pill) {
+        const row = pill.closest('[data-msg-id]');
+        const id = row && parseInt(row.dataset.msgId || '', 10);
+        if (id) GroupChat.sendReact(id, pill.dataset.emoji);
+        return;
+      }
+      // Hover react button (desktop) → open the bar for this row.
+      const addBtn = e.target.closest('.gc-react-add');
+      if (addBtn) {
+        const row = addBtn.closest(ROW_SEL);
+        if (row) GroupChat._openReactionBar(row);
+        return;
+      }
+      // A long-press already opened the bar — swallow the trailing click
+      // so it doesn't also quote the row.
+      if (GroupChat._longPressed) { GroupChat._longPressed = false; return; }
       const quoted = e.target.closest('.gc-quoted');
       if (quoted) { GroupChat._handleQuotedClick(quoted); return; }
       // Real links/buttons (PR link, "View full spec", mentions) win.
       if (e.target.closest('a, button')) return;
       if (!GroupChat._isCleanTap(e)) return;
-      const row = e.target.closest('.gc-msg, .gc-msg-system, .gc-spec-card');
+      const row = e.target.closest(ROW_SEL);
       if (!row || !container.contains(row)) return;
       const quote = GroupChat._quoteFromRow(row);
       if (quote) GroupChat.setQuote(quote);
     });
+  },
+
+  _clearPressTimer() {
+    if (GroupChat._pressTimer) {
+      clearTimeout(GroupChat._pressTimer);
+      GroupChat._pressTimer = null;
+    }
+  },
+
+  // ── #25: reaction rendering ─────────────────────────────────────────
+
+  _renderReactionPills(msg) {
+    const rx = (msg && msg.reactions) || [];
+    if (!rx.length) return '';
+    const me = App.user && App.user.username;
+    return rx.map((r) => {
+      const users = Array.isArray(r.users) ? r.users : [];
+      const mine = me && users.includes(me);
+      return `<button class="gc-react-pill${mine ? ' gc-react-mine' : ''}" data-emoji="${escapeHtml(r.emoji)}" title="${escapeHtml(users.join(', '))}">` +
+        `<span class="gc-react-emoji">${escapeHtml(r.emoji)}</span>` +
+        `<span class="gc-react-count">${r.count}</span>` +
+        `</button>`;
+    }).join('');
+  },
+
+  // Always render the (possibly empty) container so live updates have a
+  // stable target to patch without re-rendering the whole row.
+  _renderReactionsHtml(msg) {
+    return `<div class="gc-reactions" id="gc-react-${msg.id || ''}">${GroupChat._renderReactionPills(msg)}</div>`;
+  },
+
+  // Desktop hover affordance to open the reaction bar. tabindex -1 keeps it
+  // out of the tab order; touch devices use long-press instead (CSS hides
+  // it where there's no hover).
+  _renderReactAddBtn(_msg) {
+    return `<button class="gc-react-add" title="React" aria-label="Add reaction" tabindex="-1">\u{1F642}</button>`;
+  },
+
+  // Apply a fresh reaction aggregate (from the WS 'reaction' broadcast or
+  // history) to a message — update state + patch just its pill row.
+  _updateMessageReactions(messageId, reactions) {
+    const msg = GroupChat.messages.find((m) => String(m.id) === String(messageId));
+    if (msg) msg.reactions = reactions || [];
+    const el = document.getElementById(`gc-react-${messageId}`);
+    if (el) el.innerHTML = GroupChat._renderReactionPills(msg || { reactions: reactions || [] });
+  },
+
+  // Toggle an emoji on a message for the current user (server decides
+  // add-vs-remove). Fire-and-forget over the chat socket; the authoritative
+  // aggregate comes back via the 'reaction' broadcast.
+  sendReact(messageId, emoji) {
+    if (!messageId || !emoji) return;
+    if (GroupChat.ws && GroupChat.ws.readyState === 1) {
+      GroupChat.ws.send(JSON.stringify({ type: 'react', messageId, emoji }));
+    }
+    GroupChat._closeReactionBar();
+  },
+
+  // ── #25: reaction bar (WhatsApp-style quick row + curated grid) ──────
+
+  _ensureReactionBar() {
+    if (GroupChat._reactBar) return GroupChat._reactBar;
+    const bar = document.createElement('div');
+    bar.id = 'gc-react-bar';
+    bar.className = 'gc-react-bar hidden';
+    const quick = GroupChat.QUICK_REACTIONS
+      .map((e) => `<button class="gc-react-bar-emoji" data-emoji="${escapeHtml(e)}">${escapeHtml(e)}</button>`)
+      .join('');
+    const grid = GroupChat.GRID_REACTIONS
+      .map((e) => `<button class="gc-react-bar-emoji" data-emoji="${escapeHtml(e)}">${escapeHtml(e)}</button>`)
+      .join('');
+    bar.innerHTML =
+      `<div class="gc-react-bar-quick">${quick}` +
+        `<button class="gc-react-bar-more" aria-label="More emoji">\uFF0B</button>` +
+      `</div>` +
+      `<div class="gc-react-bar-grid hidden">${grid}</div>`;
+    bar.addEventListener('click', (e) => {
+      const em = e.target.closest('.gc-react-bar-emoji');
+      if (em) { GroupChat._reactFromBar(em.dataset.emoji); return; }
+      if (e.target.closest('.gc-react-bar-more')) {
+        bar.querySelector('.gc-react-bar-grid').classList.toggle('hidden');
+      }
+    });
+    document.body.appendChild(bar);
+    GroupChat._reactBar = bar;
+    return bar;
+  },
+
+  _openReactionBar(row) {
+    const id = row && parseInt(row.dataset.msgId || '', 10);
+    if (!id) return;
+    const bar = GroupChat._ensureReactionBar();
+    bar.dataset.msgId = String(id);
+    bar.querySelector('.gc-react-bar-grid').classList.add('hidden');
+    bar.classList.remove('hidden');
+    GroupChat._reactBarOpenedAt = Date.now();
+
+    // Position above the row (fall back to below if it would clip the top).
+    const r = row.getBoundingClientRect();
+    const bw = bar.offsetWidth || 280;
+    const bh = bar.offsetHeight || 44;
+    const left = Math.min(Math.max(8, r.left), window.innerWidth - bw - 8);
+    let top = r.top - bh - 6;
+    if (top < 8) top = Math.min(r.bottom + 6, window.innerHeight - bh - 8);
+    bar.style.left = `${left}px`;
+    bar.style.top = `${top}px`;
+
+    if (!GroupChat._reactBarDismiss) {
+      GroupChat._reactBarDismiss = (ev) => {
+        if (ev.type === 'keydown') { if (ev.key === 'Escape') GroupChat._closeReactionBar(); return; }
+        if (ev.type === 'click') {
+          // Ignore the click that opened the bar (long-press release or the
+          // hover button's own click).
+          if (Date.now() - (GroupChat._reactBarOpenedAt || 0) < 350) return;
+          if (GroupChat._reactBar && GroupChat._reactBar.contains(ev.target)) return;
+          GroupChat._closeReactionBar();
+          return;
+        }
+        GroupChat._closeReactionBar(); // scroll
+      };
+    }
+    setTimeout(() => {
+      document.addEventListener('click', GroupChat._reactBarDismiss, true);
+      document.addEventListener('keydown', GroupChat._reactBarDismiss, true);
+      const msgs = document.getElementById('gc-messages');
+      if (msgs) msgs.addEventListener('scroll', GroupChat._reactBarDismiss, true);
+    }, 0);
+  },
+
+  _closeReactionBar() {
+    const bar = GroupChat._reactBar;
+    if (bar) { bar.classList.add('hidden'); bar.removeAttribute('data-msg-id'); }
+    if (GroupChat._reactBarDismiss) {
+      document.removeEventListener('click', GroupChat._reactBarDismiss, true);
+      document.removeEventListener('keydown', GroupChat._reactBarDismiss, true);
+      const msgs = document.getElementById('gc-messages');
+      if (msgs) msgs.removeEventListener('scroll', GroupChat._reactBarDismiss, true);
+    }
+  },
+
+  _reactFromBar(emoji) {
+    const bar = GroupChat._reactBar;
+    const id = bar && parseInt(bar.dataset.msgId || '', 10);
+    if (id && emoji) GroupChat.sendReact(id, emoji);
+    GroupChat._closeReactionBar();
   },
 
   renderMessageHtml(msg) {
@@ -478,12 +706,16 @@ const GroupChat = {
     }
 
     if (isSystem || isVote) {
-      return `<div class="gc-msg-system ${isVote ? 'gc-msg-vote' : ''}" data-msg-id="${msg.id || ''}">${escapeHtml(msg.content)}</div>`;
+      return `<div class="gc-msg-system ${isVote ? 'gc-msg-vote' : ''}" data-msg-id="${msg.id || ''}">` +
+        `<span class="gc-msg-system-text">${escapeHtml(msg.content)}</span>` +
+        GroupChat._renderReactAddBtn(msg) +
+        GroupChat._renderReactionsHtml(msg) +
+        `</div>`;
     }
 
     // #15: a user message may carry a quote (reply) in metadata. Render the
     // quoted block above the content; data-msg-id lets a reply elsewhere
-    // scroll back to this row.
+    // scroll back to this row. #25: reactions + the hover react button.
     const quotedHtml = GroupChat._renderQuotedBlock(msg.metadata || msg.meta);
     return `
       <div class="gc-msg ${isSelf ? 'gc-msg-self' : ''}" data-msg-id="${msg.id || ''}" data-username="${escapeHtml(username)}">
@@ -493,6 +725,8 @@ const GroupChat = {
         </div>
         ${quotedHtml}
         <div class="gc-msg-content">${renderWithMentions(msg.content)}</div>
+        ${GroupChat._renderReactionsHtml(msg)}
+        ${GroupChat._renderReactAddBtn(msg)}
       </div>`;
   },
 
@@ -556,6 +790,8 @@ const GroupChat = {
         <div class="gc-spec-card-actions">
           <button class="gc-spec-card-view" data-session-id="${meta.sessionId}" data-version="${meta.version}">View full spec</button>
         </div>
+        ${GroupChat._renderReactionsHtml(msg)}
+        ${GroupChat._renderReactAddBtn(msg)}
       </div>`;
   },
 

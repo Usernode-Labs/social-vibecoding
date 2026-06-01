@@ -679,6 +679,117 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   100% { background: transparent; }
 }
 
+/* ── #25: emoji reactions ───────────────────────────────── */
+
+/* Rows need positioning context for the hover react button. */
+.gc-msg, .gc-msg-system, .gc-spec-card { position: relative; }
+
+/* Hover affordance to open the reaction bar (desktop only — touch uses
+   long-press). Hidden until the row is hovered. */
+.gc-react-add {
+  position: absolute;
+  top: 2px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms;
+  z-index: 2;
+}
+@media (hover: hover) {
+  .gc-msg:hover .gc-react-add,
+  .gc-msg-system:hover .gc-react-add,
+  .gc-spec-card:hover .gc-react-add { opacity: 0.85; }
+  .gc-react-add:hover { opacity: 1; }
+}
+@media (hover: none) { .gc-react-add { display: none; } }
+
+/* Reaction pills under a message. */
+.gc-reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 3px;
+}
+.gc-reactions:empty { margin-top: 0; }
+.gc-msg-system .gc-reactions { justify-content: center; }
+
+.gc-react-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background 100ms, border-color 100ms;
+}
+.gc-react-pill:hover { border-color: var(--accent); }
+.gc-react-mine {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+.gc-react-emoji { font-size: 13px; }
+.gc-react-count { font-size: 11px; }
+
+/* Floating reaction bar (quick row + curated grid). */
+.gc-react-bar {
+  position: fixed;
+  z-index: 1000;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
+  padding: 4px 6px;
+}
+.gc-react-bar.hidden { display: none; }
+.gc-react-bar-quick { display: flex; align-items: center; gap: 2px; }
+.gc-react-bar-emoji {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+  padding: 4px;
+  border-radius: 8px;
+  transition: transform 80ms ease, background 80ms;
+}
+.gc-react-bar-emoji:hover { transform: scale(1.25); background: var(--bg-tertiary); }
+.gc-react-bar-more {
+  margin-left: 2px;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 16px;
+  cursor: pointer;
+}
+.gc-react-bar-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 2px;
+  max-width: 264px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.gc-react-bar-grid.hidden { display: none; }
+
 /* ── Streaming spinner (bouncing dots) ─────────────────── */
 
 .dc-streaming-dots { display: flex; gap: 4px; padding: 4px 0; }

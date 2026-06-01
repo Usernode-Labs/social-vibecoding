@@ -209,6 +209,23 @@ function renderRow(n) {
     </button>`;
   }
 
+  // Reaction rows lead with the emoji someone reacted with, then preview
+  // the message they reacted to.
+  if (n.kind === 'reaction') {
+    const emoji = n.detail || '\u2764\uFE0F';
+    const reactSnippet = (n.messageContent || '').slice(0, 140);
+    return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
+      <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1">
+        <span aria-hidden="true">${escapeHtml(emoji)}</span>
+        <span class="font-medium text-zinc-800 dark:text-zinc-200">@${who}</span>
+        <span>reacted to your message in</span>
+        <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
+        <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
+      </div>
+      <div class="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2">${renderMentionSnippet(reactSnippet)}</div>
+    </button>`;
+  }
+
   const snippet = (n.messageContent || '').slice(0, 140);
   const kindText = n.kind === 'mention'
     ? 'mentioned you in'

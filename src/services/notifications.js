@@ -2,8 +2,9 @@
 //
 // The DB shape (`kind` column) is generic so different notification types
 // share one table + pipeline. Kinds today: 'mention' (group-chat @mention),
-// 'kudos' (PR kudos), and 'reply' (#15 — someone quoted your message/PR in
-// group chat).
+// 'kudos' (PR kudos), 'reply' (#15 — someone quoted your message/PR in
+// group chat), and 'reaction' (#25 — someone reacted to your message;
+// `detail` carries the emoji).
 
 const log = require('./logger');
 
@@ -77,6 +78,21 @@ async function createReplyNotification(pool, { appId, replyMessageId, senderId, 
   return rows;
 }
 
+// #25: reaction notification. Fired when a user adds an emoji reaction to
+// someone else's message. `messageId` is the reacted message (so clicking
+// lands on the app's group chat); `emoji` rides in the `detail` column.
+// No-op for self-reactions or authorless (system) targets.
+async function createReactionNotification(pool, { appId, messageId, senderId, recipientId, emoji }) {
+  if (!recipientId || recipientId === senderId) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind, detail)
+     VALUES ($1, $2, $3, $4, 'reaction', $5)
+     RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
+    [recipientId, appId, messageId, senderId, (emoji || '').slice(0, 32)]
+  );
+  return rows;
+}
+
 // Fetch up to `limit` recent notifications for a user, newest first.
 // Joins app + sender + message content so the UI dropdown can render in a
 // single round-trip.
@@ -93,7 +109,8 @@ async function listForUser(pool, userId, { limit = 30 } = {}) {
             cm.content AS message_content,
             n.session_id,
             cs.pr_title, cs.pr_number,
-            su.username AS source_username
+            su.username AS source_username,
+            n.detail
      FROM notifications n
      LEFT JOIN apps a ON a.id = n.app_id
      LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
@@ -152,6 +169,7 @@ function serialize(row) {
     prTitle: row.pr_title,
     prNumber: row.pr_number,
     sourceUsername: row.source_username,
+    detail: row.detail,
   };
 }
 
@@ -159,6 +177,7 @@ module.exports = {
   parseMentions,
   createMentionNotifications,
   createReplyNotification,
+  createReactionNotification,
   listForUser,
   countUnread,
   markRead,
