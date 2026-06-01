@@ -641,7 +641,7 @@ const AppView = {
       // chat panel focused on visible PRs / issues / merged work.
 
       if (merged.length) {
-        bodyHtml += `<div><div class="text-xs text-zinc-500 mb-1 font-medium">Merged <span class="text-zinc-600 font-normal">(undo needs ${majority}/${activeUsers} votes)</span></div><div class="divide-y divide-zinc-200 dark:divide-zinc-800 sm:divide-y-0 border-y border-zinc-200 dark:border-zinc-800 sm:border-y-0">`;
+        bodyHtml += `<div><div class="text-xs text-zinc-500 mb-1 font-medium">Merged <span class="text-zinc-600 font-normal">(undo opens a revert PR — needs ${majority}/${activeUsers} votes to land)</span></div><div class="divide-y divide-zinc-200 dark:divide-zinc-800 sm:divide-y-0 border-y border-zinc-200 dark:border-zinc-800 sm:border-y-0">`;
         for (const pr of merged) {
           const date = new Date(pr.created_at).toLocaleDateString();
           const mergedLabel = pr.pr_title
@@ -654,12 +654,14 @@ const AppView = {
             ? Kudos.renderButton(pr, { compact: true })
             : '';
 
-          // #11: undo-vote UI. The undo button only renders on
+          // #16: undo is a single direct action — clicking Undo opens a
+          // revert PR (like proposing a change) which then needs the
+          // normal merge vote to land. The button only renders on
           // ordinary merged PRs that don't already have a revert in
           // flight or merged:
           //   - revert_of_session_id != null on this row means this
-          //     row IS itself a revert PR; voters undoing a revert
-          //     would create an infinite undo-undo loop.
+          //     row IS itself a revert PR; undoing a revert would
+          //     create an infinite undo-undo loop.
           //   - revert_session_id (from the LEFT JOIN) means a revert
           //     PR already exists pointing at this row — show its
           //     status as a label instead.
@@ -681,27 +683,10 @@ const AppView = {
             const linkHref = pr.revert_pr_url || '#';
             undoUI = `<a href="${linkHref}" target="_blank" class="text-xs text-amber-500 hover:text-amber-400 font-medium">${label}</a>`;
           } else {
-            const yesUndo = parseInt(pr.undo_yes_count) || 0;
-            const noUndo = parseInt(pr.undo_no_count) || 0;
-            const myUndo = pr.my_undo_vote;
-            // Mirror image of the Open-PRs admin-merge button: lets an
-            // admin open a revert PR right now without waiting for the
-            // undo-vote majority. Same visibility rule (App.user?.isAdmin)
-            // and same ConfirmModal gate in castAdminUndo.
-            const adminUndoBtn = App.user?.isAdmin
-              ? `<button class="gc-vote-btn gc-vote-btn-admin"
-                  title="Admin: open a revert PR right now, bypassing the undo-vote majority"
-                  onclick="AppView.castAdminUndo(${pr.id})">Admin undo</button>`
-              : '';
             undoUI = `
-              <span class="text-xs text-zinc-600" title="Undo votes vs majority">${yesUndo}/${majority}</span>
-              <button class="gc-vote-btn gc-vote-btn-undo${myUndo === 'yes' ? ' gc-vote-active' : ''}"
-                title="Vote to revert this merge"
-                onclick="AppView.castUndoVote(${pr.id}, 'yes')">Undo (${yesUndo})</button>
-              <button class="gc-vote-btn${myUndo === 'no' ? ' gc-vote-active' : ''}"
-                title="Vote against reverting"
-                onclick="AppView.castUndoVote(${pr.id}, 'no')">Keep (${noUndo})</button>
-              ${adminUndoBtn}`;
+              <button class="gc-vote-btn gc-vote-btn-undo"
+                title="Open a revert PR for this merge. It still needs a merge vote to land."
+                onclick="AppView.undoPr(${pr.id})">Undo</button>`;
           }
 
           bodyHtml += `
@@ -776,33 +761,42 @@ const AppView = {
     }
   },
 
-  // #11: undo-vote sibling of castVote. Posts to the new
-  // /undo-vote route; on success the server's pushVoteUpdate event
-  // refreshes the panel and the merged-list row reflects the new
-  // count + my_undo_vote highlight. The deciding YES vote that
-  // tips majority can take a few seconds (clone + git revert + push +
-  // PR create), but the response returns immediately — the resulting
-  // revert PR appears via the WS broadcast.
-  async castUndoVote(sessionId, vote) {
+  // #16: undo a merged PR. A single click opens a revert PR (like
+  // proposing a change) which then needs the normal merge vote to land —
+  // no separate undo-vote gate. Guarded by a ConfirmModal since it's a
+  // concrete action (it creates a PR). The revert (clone + git revert +
+  // push + PR create) runs server-side in the background and takes a few
+  // seconds; the resulting revert PR appears via the WS vote_update
+  // broadcast, which refreshes this panel.
+  async undoPr(sessionId) {
     const key = `undo:${sessionId}`;
     if (AppView._voteInFlight.has(key)) return;
+    const ok = await ConfirmModal.show({
+      title: 'Undo this merge?',
+      message:
+        'This opens a revert PR that backs out this merged change.\n\n'
+        + 'It still needs a merge vote to land — undoing is a proposal the group votes on, just like any other change.',
+      confirmLabel: 'Open revert PR',
+      cancelLabel: 'Cancel',
+      danger: true,
+    });
+    if (!ok) return;
     AppView._voteInFlight.add(key);
     try {
-      const resp = await fetch(`/api/sessions/${sessionId}/undo-vote`, {
+      const resp = await fetch(`/api/sessions/${sessionId}/undo`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vote }),
       });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        // 409 means a revert is already in flight or eligibility was
-        // lost between render and click. Show the helpful message and
-        // re-fetch so the UI reflects reality.
-        alert(data.error || `Vote failed (HTTP ${resp.status}).`);
+        // 409 means a revert is already in flight, or eligibility was
+        // lost between render and click. Show the message and re-fetch
+        // so the UI reflects reality.
+        alert(data.error || `Undo failed (HTTP ${resp.status}).`);
       }
       if (AppView.appData) AppView.loadVotePanel(AppView.appData.slug);
     } catch (err) {
-      alert(`Vote failed: ${err.message}`);
+      alert(`Undo failed: ${err.message}`);
     } finally {
       AppView._voteInFlight.delete(key);
     }
@@ -846,41 +840,6 @@ const AppView = {
     }
   },
 
-  // Admin force-undo: bypass the undo-vote majority and open a revert
-  // PR right now. The revert PR itself still needs a regular merge
-  // vote to land — this is "open the rollback for review", not "rewrite
-  // main unilaterally". Same ConfirmModal guard as castAdminMerge.
-  async castAdminUndo(sessionId) {
-    if (!App.user?.isAdmin) return;
-    const key = `admin-undo:${sessionId}`;
-    if (AppView._voteInFlight.has(key)) return;
-    const ok = await ConfirmModal.show({
-      title: 'Force-undo this merge?',
-      message:
-        'This bypasses the undo-vote majority and opens a revert PR right now.\n\n'
-        + 'The revert PR still needs a regular merge vote to land — admins can\'t rewrite main unilaterally. The override is announced in group chat with your username.',
-      confirmLabel: 'Force-undo',
-      cancelLabel: 'Cancel',
-      danger: true,
-    });
-    if (!ok) return;
-    AppView._voteInFlight.add(key);
-    try {
-      const resp = await fetch(`/api/sessions/${sessionId}/admin-undo`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      if (!resp.ok) {
-        const data = await resp.json().catch(() => ({}));
-        alert(data.error || `Force-undo failed (HTTP ${resp.status}).`);
-      }
-      if (AppView.appData) AppView.loadVotePanel(AppView.appData.slug);
-    } catch (err) {
-      alert(`Force-undo failed: ${err.message}`);
-    } finally {
-      AppView._voteInFlight.delete(key);
-    }
-  },
 
   _voteInFlight: new Set(),
   async castVote(sessionId, vote) {

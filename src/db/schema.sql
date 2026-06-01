@@ -203,10 +203,12 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS merge_commit_sha    
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS revert_of_session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS chat_sessions_revert_of_idx ON chat_sessions(revert_of_session_id);
 
--- #11: undo votes on already-merged PRs. Same shape as pr_votes;
--- same majority math (services/active-users.js). When the yes count
--- crosses the active-user majority threshold, votes.checkAndOpenRevert
--- opens a revert PR + new chat_sessions row.
+-- #11/#16: DEPRECATED. Originally held undo votes on merged PRs (a
+-- separate majority gate before a revert PR could be opened). As of #16
+-- undo is a single direct action — clicking Undo opens a revert PR
+-- immediately and the revert's own merge vote is the only checkpoint —
+-- so nothing reads or writes this table anymore. Kept (not dropped) to
+-- avoid a destructive migration on existing deployments.
 CREATE TABLE IF NOT EXISTS pr_undo_votes (
   id         SERIAL PRIMARY KEY,
   session_id INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE,

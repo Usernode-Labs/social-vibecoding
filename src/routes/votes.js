@@ -265,19 +265,16 @@ function voteRoutes(config) {
       // kudos button can disable itself client-side for self-PRs
       // (server still 403s as authority).
       //
-      // #11: also surfaces undo vote tallies + the viewer's own undo
-      // vote (drives the undo Yes/No buttons) and the revert-session
-      // metadata (pr_number, status) when one exists — so the UI can
-      // render "Undone by PR #N" / "Revert in vote (PR #N)" labels
-      // without a per-row round-trip.
+      // #11/#16: surfaces the revert-session metadata (pr_number, status)
+      // when one exists — so the UI can render "Undone by PR #N" /
+      // "Revert in vote (PR #N)" labels without a per-row round-trip.
+      // (Undo is now a single direct action that opens a revert PR, so
+      // there are no separate undo-vote tallies to surface.)
       const { rows } = await pool.query(
         `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.user_id, u.username, cs.created_at,
            cs.revert_of_session_id,
            (SELECT COUNT(*)::int FROM pr_kudos WHERE session_id = cs.id) as kudos_count,
            (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)) as my_kudos,
-           (SELECT COUNT(*)::int FROM pr_undo_votes WHERE session_id = cs.id AND vote = 'yes') as undo_yes_count,
-           (SELECT COUNT(*)::int FROM pr_undo_votes WHERE session_id = cs.id AND vote = 'no') as undo_no_count,
-           (SELECT vote FROM pr_undo_votes WHERE session_id = cs.id AND user_id = $2) as my_undo_vote,
            rv.id        as revert_session_id,
            rv.pr_number as revert_pr_number,
            rv.pr_url    as revert_pr_url,
@@ -299,25 +296,20 @@ function voteRoutes(config) {
     }
   });
 
-  // ── #11: vote-to-undo a merged PR ──────────────────────────────────
+  // ── #11/#16: undo a merged PR by opening a revert PR ───────────────
   //
-  // Mirrors POST /vote, but operates on merged sessions and writes to
-  // pr_undo_votes. When the yes count crosses the same active-user
-  // majority threshold used for merge votes, opens a revert PR via
-  // checkAndOpenRevert (clones repo, `git revert <merge_sha>`, pushes,
-  // opens PR, inserts a new chat_sessions row with revert_of_session_id
-  // pointing back here). That new row goes through the regular vote
-  // flow — second checkpoint, no unilateral rollback.
+  // Undo is symmetric with proposing a forward change: a single click
+  // opens a revert PR (clone repo, `git revert <merge_sha>`, push, open
+  // PR), inserted as a `promoted` session, which then goes through the
+  // SAME merge vote as any other PR. There is no separate "undo vote"
+  // gate anymore (#16) — previously undo was double-gated (a majority to
+  // open the revert, then a second majority to merge it), which was
+  // confusing and redundant. The merge vote on the revert PR is now the
+  // single checkpoint, mirroring the forward propose→vote flow.
   //
-  // Owner-of-this-vote is the caster who tipped majority; that user
-  // ends up as the revert session's user_id so they "own" the resulting
-  // PR for chat / status purposes.
-  router.post('/api/sessions/:id/undo-vote', async (req, res) => {
-    const { vote } = req.body;
-    if (!['yes', 'no'].includes(vote)) {
-      return res.status(400).json({ error: 'Vote must be "yes" or "no"' });
-    }
-
+  // The caller becomes the revert session's owner (user_id) so they
+  // "own" the resulting PR for chat / status purposes.
+  router.post('/api/sessions/:id/undo', async (req, res) => {
     try {
       const { rows: sessionRows } = await pool.query(
         `SELECT cs.*, a.slug as app_slug, a.id as app_id, a.repo_url
@@ -328,16 +320,14 @@ function voteRoutes(config) {
       if (!sessionRows.length) return res.status(404).json({ error: 'Merged session not found' });
       const session = sessionRows[0];
 
-      // Revert PRs are not themselves vote-to-undoable — would create
-      // an endless undo-undo-undo loop in the UI. The button is hidden
-      // on the client already; this is the server-side enforcement.
+      // Revert PRs are not themselves undoable — would create an endless
+      // undo-undo-undo loop. The button is hidden on the client already;
+      // this is the server-side enforcement.
       if (session.revert_of_session_id) {
         return res.status(409).json({ error: 'Cannot undo a revert PR' });
       }
 
-      // Block a fresh undo vote if a revert is already in flight or
-      // landed. The deciding voter's session sits in promoted/merging
-      // /merged; we look up by revert_of_session_id.
+      // Block if a revert is already in flight or landed for this merge.
       const { rows: existingRevert } = await pool.query(
         `SELECT id, status, pr_number, pr_url FROM chat_sessions
          WHERE revert_of_session_id = $1 AND status IN ('promoted', 'merging', 'merged')
@@ -354,43 +344,15 @@ function voteRoutes(config) {
         });
       }
 
-      // Idempotent upsert; same shape as /vote. Distinguish first-cast
-      // vs flip so we don't re-broadcast / re-check on a mash.
-      const { rows: prevRows } = await pool.query(
-        `SELECT vote FROM pr_undo_votes WHERE session_id = $1 AND user_id = $2`,
-        [session.id, req.user.id]
-      );
-      const previousVote = prevRows[0]?.vote || null;
-      const unchanged = previousVote === vote;
+      log.info('votes', 'Undo requested — opening revert PR', {
+        sessionId: session.id, by: req.user.username,
+      });
+      // Respond immediately; the revert (clone + git revert + push + PR)
+      // runs in the background and announces itself in group chat. The
+      // vote panel refreshes via the pushVoteUpdate broadcast below.
+      res.json({ ok: true, opening: true });
 
-      await pool.query(
-        `INSERT INTO pr_undo_votes (session_id, user_id, vote) VALUES ($1, $2, $3)
-         ON CONFLICT (session_id, user_id) DO UPDATE SET vote = EXCLUDED.vote, created_at = NOW()`,
-        [session.id, req.user.id, vote]
-      );
-
-      if (unchanged) {
-        return res.json({ ok: true, reverted: false, unchanged: true });
-      }
-
-      const voteLabel = session.pr_title
-        ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
-        : `PR #${session.pr_number || session.id}`;
-      await sendSystemMessage(pool, session.app_id,
-        `${req.user.username} voted ${vote} to undo ${voteLabel}`,
-        'vote'
-      );
-
-      // Broadcast a vote_update so any open vote panel re-fetches the
-      // merged list (which carries undo tallies and my_undo_vote).
       const { pushVoteUpdate } = require('../services/ws');
-      pushVoteUpdate({ sessionId: session.id, appSlug: session.app_slug, merged: false, kind: 'undo' });
-      log.info('votes', 'Undo vote cast', { sessionId: session.id, vote, userId: req.user.id });
-      res.json({ ok: true, reverted: false });
-
-      // Background majority check — if it fires, opens the revert PR
-      // and inserts a fresh chat_sessions row. Both steps emit their
-      // own broadcasts.
       checkAndOpenRevert(config, pool, session, req.user)
         .then((result) => {
           if (result?.reverted) {
@@ -408,7 +370,7 @@ function voteRoutes(config) {
           log.error('votes', 'Background revert failed', { sessionId: session.id, err: err.message });
         });
     } catch (err) {
-      log.error('votes', 'Undo vote failed', { message: err.message });
+      log.error('votes', 'Undo failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -466,99 +428,6 @@ function voteRoutes(config) {
         });
     } catch (err) {
       log.error('votes', 'Admin force-merge route failed', { message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // ── Admin force-undo ──────────────────────────────────────────────
-  //
-  // Sibling of admin-merge for the undo path. Triggers the revert PR
-  // pipeline on a merged session right now, regardless of undo-vote
-  // tally or the locked-app admin-yes gate. The revert PR that drops
-  // out *still* needs a regular merge vote to land — admins can't
-  // unilaterally rewrite main, only put the rollback up for review.
-  router.post('/api/sessions/:id/admin-undo', async (req, res) => {
-    if (!req.user?.isAdmin) {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
-    try {
-      const { rows } = await pool.query(
-        `SELECT cs.*, a.slug as app_slug, a.id as app_id, a.repo_url
-         FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
-         WHERE cs.id = $1 AND cs.status = 'merged'`,
-        [req.params.id]
-      );
-      if (!rows.length) {
-        return res.status(404).json({ error: 'Merged session not found' });
-      }
-      const session = rows[0];
-
-      // Same blockers as the regular undo-vote route — undoing a
-      // revert is meaningless, and a revert already in flight
-      // shouldn't be racing a second one.
-      if (session.revert_of_session_id) {
-        return res.status(409).json({ error: 'Cannot undo a revert PR' });
-      }
-      const { rows: existingRevert } = await pool.query(
-        `SELECT id, status, pr_number, pr_url FROM chat_sessions
-         WHERE revert_of_session_id = $1 AND status IN ('promoted', 'merging', 'merged')
-         ORDER BY id DESC LIMIT 1`,
-        [session.id]
-      );
-      if (existingRevert.length) {
-        const rv = existingRevert[0];
-        return res.status(409).json({
-          error: `A revert PR for this merge already exists (status: ${rv.status})`,
-          revertSessionId: rv.id,
-          revertPrNumber: rv.pr_number,
-          revertPrUrl: rv.pr_url,
-        });
-      }
-
-      log.info('votes', 'Admin force-undo requested', {
-        sessionId: session.id, by: req.user.username,
-      });
-      res.json({ ok: true, queued: true });
-
-      checkAndOpenRevert(config, pool, session, req.user, { force: true })
-        .then((result) => {
-          if (result?.reverted) {
-            const { pushVoteUpdate } = require('../services/ws');
-            pushVoteUpdate({
-              sessionId: session.id,
-              appSlug: session.app_slug,
-              merged: false,
-              kind: 'undo',
-              revertSessionId: result.revertSessionId,
-              revertPrNumber: result.revertPrNumber,
-            });
-          }
-        })
-        .catch((err) => {
-          log.error('votes', 'Admin force-undo failed', {
-            sessionId: session.id, err: err.message,
-          });
-        });
-    } catch (err) {
-      log.error('votes', 'Admin force-undo route failed', { message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // Tally lookup — mirrors GET /api/sessions/:id/votes.
-  router.get('/api/sessions/:id/undo-votes', async (req, res) => {
-    try {
-      const { rows } = await pool.query(
-        `SELECT puv.vote, u.username
-         FROM pr_undo_votes puv JOIN users u ON puv.user_id = u.id
-         WHERE puv.session_id = $1`,
-        [req.params.id]
-      );
-      const yes = rows.filter((r) => r.vote === 'yes');
-      const no = rows.filter((r) => r.vote === 'no');
-      res.json({ yes: yes.map((r) => r.username), no: no.map((r) => r.username) });
-    } catch (err) {
-      log.error('votes', 'Failed to get undo votes', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -854,54 +723,25 @@ async function checkAndMerge(config, pool, session, options = {}) {
   }
 }
 
-// #11: vote-to-undo helper. Called from the /undo-vote route after a
-// fresh vote lands. Counts yes votes against the same active-user
-// majority used for forward merges; if reached and not already
-// claimed, opens a revert PR and inserts a chat_sessions row for it.
+// #11/#16: undo helper. Called from the /undo route. Opens a revert PR
+// for a merged session (clone, `git revert <merge_sha>`, push, open PR)
+// and inserts a `promoted` chat_sessions row for it that then goes
+// through the normal merge vote. As of #16 there's no undo-vote gate —
+// the merge vote on the revert PR is the single checkpoint.
 //
-// `decider` is the user who cast the deciding vote — becomes the
-// revert session's user_id so they own the resulting PR in dev-chat.
-//
-// `options.force` (admin force-undo): skip the vote-count + locked-app
-// admin-yes gates. `decider` for force-undo is the admin user; the
-// resulting revert session is still owned by them so they're the
-// "author" of the revert PR in dev-chat.
-async function checkAndOpenRevert(config, pool, session, decider, options = {}) {
-  const { force = false } = options;
+// `decider` is the user who requested the undo — becomes the revert
+// session's user_id so they own the resulting PR in dev-chat.
+async function checkAndOpenRevert(config, pool, session, decider) {
+  // #16: opening a revert is now a direct action (like proposing a
+  // forward change) — there's no separate undo-vote gate to clear. We
+  // still read activeCount/majority so the announcement can tell users
+  // how many votes the revert PR will need to actually land. The
+  // locked-app admin-yes gate is NOT applied here: it's a merge-time
+  // control and is enforced when the revert PR's own merge vote is
+  // tallied (checkAndMerge), exactly like a forward proposal.
   const { active: activeCount, majority } = await getActiveUserStats(pool, session.app_id);
 
-  const { rows: yesRows } = await pool.query(
-    `SELECT COUNT(*) as cnt FROM pr_undo_votes WHERE session_id = $1 AND vote = 'yes'`,
-    [session.id]
-  );
-  const yesCount = parseInt(yesRows[0].cnt);
-  if (!force) {
-    if (yesCount < majority) {
-      return { reverted: false, yesCount, needed: majority };
-    }
-
-    // Locked-app gate: same as forward merges.
-    if (await isAppLocked(pool, session.app_id)) {
-      // hasAdminYesVote queries pr_votes; for undo we want admin yes in
-      // pr_undo_votes specifically. Inline the check rather than fork
-      // the helper.
-      const { rows: adminRows } = await pool.query(
-        `SELECT 1 FROM pr_undo_votes puv
-         JOIN users u ON puv.user_id = u.id
-         WHERE puv.session_id = $1 AND puv.vote = 'yes' AND u.is_admin = true
-         LIMIT 1`,
-        [session.id]
-      );
-      if (!adminRows.length) {
-        log.info('votes', 'Undo majority reached but app is locked; awaiting admin yes', {
-          sessionId: session.id, yesCount, majority,
-        });
-        return { reverted: false, yesCount, needed: majority, awaitingAdmin: true };
-      }
-    }
-  }
-
-  // Atomic claim — race-safe against parallel deciding votes. We mark
+  // Atomic claim — race-safe against parallel undo requests. We mark
   // the original session with revert_of_session_id = its own id as a
   // sentinel "claimed" value; the real revert session id swaps in
   // below once we have it. The WHERE NULL guarantees only one caller
@@ -1010,12 +850,9 @@ async function checkAndOpenRevert(config, pool, session, decider, options = {}) 
   }
   const [, repoOwner, repoName] = m;
 
-  log.info('votes',
-    force ? 'Admin force-undo invoked, opening revert PR' : 'Undo majority reached, opening revert PR',
-    {
-      sessionId: session.id, yesCount, needed: majority,
-      ...(force ? { forcedBy: decider.username } : {}),
-    });
+  log.info('votes', 'Opening revert PR', {
+    sessionId: session.id, needed: majority, requestedBy: decider.username,
+  });
 
   let revertInfo;
   try {
@@ -1075,11 +912,8 @@ async function checkAndOpenRevert(config, pool, session, decider, options = {}) 
   const label = session.pr_title
     ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
     : `PR #${session.pr_number || session.id}`;
-  const undoPreamble = force
-    ? `Admin ${decider.username} force-undid ${label} (overriding vote)`
-    : `Undo vote reached majority on ${label}`;
   await sendSystemMessage(pool, session.app_id,
-    `${undoPreamble}. Opened revert PR #${revertInfo.prNumber} — needs ${majority}/${activeCount} votes to land.`,
+    `${decider.username} proposed undoing ${label}. Opened revert PR #${revertInfo.prNumber} — needs ${majority}/${activeCount} votes to land.`,
     'system'
   );
 
