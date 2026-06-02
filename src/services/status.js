@@ -1,3 +1,4 @@
+const os = require('os');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
 const { getPool } = require('../db/pool');
@@ -93,7 +94,7 @@ async function gatherFull(config) {
   const pool = getPool(config);
   const isAdmin = true; // Always build the full payload; redact at serve time.
 
-  const [appsQ, sessionsQ, llmQ, containers, stats] = await Promise.all([
+  const [appsQ, sessionsQ, llmQ, sessionCountsQ, containers, stats] = await Promise.all([
     pool.query(
       `SELECT a.id, a.name, a.slug, a.repo_url, a.container_id, a.status, a.created_at,
               u.username AS created_by_username,
@@ -120,6 +121,20 @@ async function gatherFull(config) {
        FROM llm_usage lu JOIN users u ON u.id = lu.user_id
        WHERE lu.date = CURRENT_DATE
        ORDER BY lu.total_cost_cents DESC`
+    ),
+    // Session-status census for the capacity gauge. One indexed aggregate;
+    // FILTERed so the whole ramp picture (cap usage, paused backlog, stale
+    // PRs heading for archive, resumable archives) comes back in one row.
+    pool.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE status IN ('active','promoted'))                      AS global_used,
+         COUNT(*) FILTER (WHERE status = 'active')                                    AS active,
+         COUNT(*) FILTER (WHERE status = 'promoted')                                  AS promoted,
+         COUNT(*) FILTER (WHERE status = 'paused')                                    AS paused,
+         COUNT(*) FILTER (WHERE status = 'archived')                                  AS archived,
+         COUNT(*) FILTER (WHERE status = 'promoted' AND stale_notified_at IS NOT NULL) AS stale_notified,
+         COUNT(*) FILTER (WHERE status = 'archived' AND cc_purged = FALSE)            AS archived_resumable
+       FROM chat_sessions`
     ),
     listContainers(),
     getStats(),
@@ -321,6 +336,58 @@ async function gatherFull(config) {
   const workersInFlight = workers.filter((w) => w.workerMode === 'in-flight').length;
   const workersWarmIdle = workers.filter((w) => w.workerMode === 'warm-idle').length;
   const workersBootstrapping = workers.filter((w) => w.workerMode === 'bootstrapping').length;
+
+  // ── Ramp telemetry ──────────────────────────────────────────────────
+  // The numbers that actually answer "are we close to falling over?":
+  //   capacity.activeTurns  — concurrent `docker exec` CC turns. This is
+  //                           the real RAM/CPU pressure (warm/paused
+  //                           sessions are cheap), so it's the headline.
+  //   capacity.globalUsed   — active+promoted vs the global cap that
+  //                           demand-eviction / 429s gate on.
+  //   host                  — host RAM + load (os reads the host's
+  //                           /proc, so freemem reflects the whole box,
+  //                           not just the platform container).
+  //   db                    — pg pool saturation; `waiting > 0` means
+  //                           handlers are queuing on connections.
+  const sc = sessionCountsQ.rows[0] || {};
+  const num = (v) => parseInt(v, 10) || 0;
+  const globalCap = config.maxGlobalSessions || MAX_STAGING_GLOBAL;
+  const capacity = {
+    globalUsed: num(sc.global_used),
+    globalCap,
+    userCap: config.maxUserSessions || MAX_STAGING_PER_USER,
+    activeTurns: workersInFlight,
+    warmIdleWorkers: workersWarmIdle,
+    byStatus: {
+      active: num(sc.active),
+      promoted: num(sc.promoted),
+      paused: num(sc.paused),
+      archived: num(sc.archived),
+    },
+    staleNotified: num(sc.stale_notified),
+    archivedResumable: num(sc.archived_resumable),
+  };
+
+  const totalMem = os.totalmem();
+  const freeMem = os.freemem();
+  const host = {
+    memTotalBytes: totalMem,
+    memFreeBytes: freeMem,
+    memUsedPct: totalMem ? Math.round(((totalMem - freeMem) / totalMem) * 100) : null,
+    loadAvg1: Math.round((os.loadavg()[0] || 0) * 100) / 100,
+    cpus: os.cpus().length,
+  };
+
+  let dbPool = null;
+  try {
+    dbPool = {
+      total: pool.totalCount,
+      idle: pool.idleCount,
+      waiting: pool.waitingCount,
+      max: config.dbPoolMax || 10,
+    };
+  } catch { /* pg internals not present — leave null */ }
+
   const summary = {
     apps: apps.length,
     prodRunning: appTree.filter((a) => a.prod?.state === 'running').length,
@@ -335,6 +402,13 @@ async function gatherFull(config) {
     stuckSessions: stuckSessions.length,
     globalSpendCents,
     globalSpendCap: GLOBAL_DAILY_LIMIT_CENTS,
+    // Ramp headlines, mirrored into the summary bar.
+    sessionsGlobalUsed: capacity.globalUsed,
+    sessionsGlobalCap: globalCap,
+    activeTurns: capacity.activeTurns,
+    hostMemUsedPct: host.memUsedPct,
+    hostLoadAvg1: host.loadAvg1,
+    dbPoolWaiting: dbPool ? dbPool.waiting : null,
   };
 
   return {
@@ -361,6 +435,9 @@ async function gatherFull(config) {
       ),
     },
     summary,
+    capacity,
+    host,
+    db: dbPool,
     apps: appTree,
     workers,
     stuckSessions,
@@ -394,8 +471,14 @@ function redact(full, { isAdmin }) {
     const { lastProgress, lastProgressAt, model, ...rest } = w;
     return rest;
   };
-  const { llmUsage, events, summary, limits, apps, workers, ...rest } = full;
-  const { globalSpendCents, globalSpendCap, ...publicSummary } = summary || {};
+  // Drop host RAM/load + pg pool internals (operational signal we only
+  // want admins to see) along with the existing admin-only blocks.
+  const { llmUsage, events, summary, limits, apps, workers, host, db, ...rest } = full;
+  const {
+    globalSpendCents, globalSpendCap,
+    hostMemUsedPct, hostLoadAvg1, dbPoolWaiting,
+    ...publicSummary
+  } = summary || {};
   const { userDailyCents, globalDailyCents, ...publicLimits } = limits || {};
   return {
     ...rest,

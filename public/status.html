@@ -89,6 +89,11 @@
 
     <!-- Right: System lanes -->
     <div class="space-y-6">
+      <section class="admin-only">
+        <h2 class="text-sm font-semibold text-zinc-400 uppercase tracking-wide mb-2">Capacity &amp; host</h2>
+        <div id="capacity" class="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 text-sm"></div>
+      </section>
+
       <section>
         <h2 class="text-sm font-semibold text-zinc-400 uppercase tracking-wide mb-2">Workers</h2>
         <div id="workers" class="space-y-2 text-sm"></div>
@@ -137,6 +142,76 @@ function fmtDuration(seconds) {
 
 function fmtDollars(cents) {
   return `$${(Number(cents || 0) / 100).toFixed(2)}`;
+}
+
+function fmtBytes(bytes) {
+  if (bytes == null) return '—';
+  const gb = bytes / (1024 ** 3);
+  if (gb >= 1) return `${gb.toFixed(1)} GB`;
+  return `${(bytes / (1024 ** 2)).toFixed(0)} MB`;
+}
+
+// A labeled meter row: label, value text, and a colored fill bar at pct.
+function meterRow(label, valueText, pct, tone = 'zinc') {
+  const barTone = { zinc: 'bg-zinc-500', green: 'bg-green-500', yellow: 'bg-yellow-500', red: 'bg-red-500' }[tone] || 'bg-zinc-500';
+  const w = Math.max(0, Math.min(100, Math.round(pct || 0)));
+  return `
+    <div class="mb-2">
+      <div class="flex justify-between text-xs mb-1">
+        <span class="text-zinc-400">${h(label)}</span>
+        <span class="mono text-zinc-300">${valueText}</span>
+      </div>
+      <div class="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+        <div class="h-full ${barTone}" style="width:${w}%"></div>
+      </div>
+    </div>`;
+}
+
+// Capacity & host panel — the ramp dashboard. Leads with the two numbers
+// that decide whether the box is near its limit (sessions vs cap, active
+// turns) then host RAM/load and DB pool saturation, then the lifecycle
+// backlog (paused / stale-heading-to-archive / resumable archives).
+function renderCapacity(data) {
+  const c = data.capacity;
+  if (!c) return '<div class="text-zinc-500">No capacity data.</div>';
+  const host = data.host;
+  const db = data.db;
+
+  const sessPct = c.globalCap ? (c.globalUsed / c.globalCap) * 100 : 0;
+  const sessTone = sessPct >= 90 ? 'red' : sessPct >= 70 ? 'yellow' : 'green';
+  let out = meterRow('Sessions (active + promoted)', `${c.globalUsed} / ${c.globalCap}`, sessPct, sessTone);
+
+  out += `<div class="flex justify-between text-xs mb-3 text-zinc-400">
+    <span>Active turns <span class="mono text-zinc-200">${c.activeTurns}</span> · warm idle <span class="mono text-zinc-200">${c.warmIdleWorkers}</span></span>
+    <span>per-user cap <span class="mono text-zinc-200">${c.userCap}</span></span>
+  </div>`;
+
+  if (host) {
+    const memUsed = host.memTotalBytes - host.memFreeBytes;
+    const memTone = host.memUsedPct >= 90 ? 'red' : host.memUsedPct >= 75 ? 'yellow' : 'green';
+    out += meterRow('Host RAM', `${fmtBytes(memUsed)} / ${fmtBytes(host.memTotalBytes)} (${host.memUsedPct}%)`, host.memUsedPct, memTone);
+    const loadPct = host.cpus ? (host.loadAvg1 / host.cpus) * 100 : 0;
+    const loadTone = loadPct >= 100 ? 'red' : loadPct >= 70 ? 'yellow' : 'zinc';
+    out += meterRow(`Load (1m) / ${host.cpus} cores`, `${host.loadAvg1}`, loadPct, loadTone);
+  }
+
+  if (db) {
+    const poolPct = db.max ? (db.total / db.max) * 100 : 0;
+    const poolTone = db.waiting > 0 ? 'red' : poolPct >= 80 ? 'yellow' : 'zinc';
+    out += meterRow('DB pool (open / max)', `${db.total} / ${db.max}${db.waiting > 0 ? ` · ${db.waiting} waiting` : ''}`, poolPct, poolTone);
+  }
+
+  const bs = c.byStatus || {};
+  out += `<div class="mt-3 pt-3 border-t border-zinc-800 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+    <div class="flex justify-between"><span class="text-zinc-500">active</span><span class="mono">${bs.active ?? 0}</span></div>
+    <div class="flex justify-between"><span class="text-zinc-500">promoted</span><span class="mono">${bs.promoted ?? 0}</span></div>
+    <div class="flex justify-between"><span class="text-zinc-500">paused</span><span class="mono">${bs.paused ?? 0}</span></div>
+    <div class="flex justify-between"><span class="text-zinc-500">archived</span><span class="mono">${bs.archived ?? 0}</span></div>
+    <div class="flex justify-between"><span class="text-zinc-500">stale → archive</span><span class="mono ${c.staleNotified > 0 ? 'text-yellow-400' : ''}">${c.staleNotified}</span></div>
+    <div class="flex justify-between"><span class="text-zinc-500">resumable</span><span class="mono">${c.archivedResumable}</span></div>
+  </div>`;
+
+  return out;
 }
 
 function statePill(state, label) {
@@ -197,6 +272,26 @@ function renderSummary(s, node) {
     summaryCard('Stuck', `${s.stuckSessions}`, stuckTone),
     summaryCard('Prod missing', `${s.prodMissing}`, s.prodMissing > 0 ? 'red' : 'zinc'),
   ];
+
+  // Ramp headlines. Sessions vs the global cap (what 429s/eviction gate
+  // on) and active turns (the real RAM pressure) are the two numbers to
+  // watch during a load ramp. Host RAM/load are admin-only (stripped for
+  // non-admins server-side), so guard on presence.
+  if (s.sessionsGlobalCap != null) {
+    const sessPct = s.sessionsGlobalCap ? Math.round((s.sessionsGlobalUsed / s.sessionsGlobalCap) * 100) : 0;
+    const sessTone = sessPct >= 90 ? 'red' : sessPct >= 70 ? 'yellow' : 'zinc';
+    cards.push(summaryCard('Sessions', `${s.sessionsGlobalUsed}/${s.sessionsGlobalCap}`, sessTone));
+  }
+  if (s.activeTurns != null) {
+    cards.push(summaryCard('Active turns', `${s.activeTurns}`, s.activeTurns > 0 ? 'green' : 'zinc'));
+  }
+  if (s.hostMemUsedPct != null) {
+    const memTone = s.hostMemUsedPct >= 90 ? 'red' : s.hostMemUsedPct >= 75 ? 'yellow' : 'zinc';
+    cards.push(summaryCard('Host RAM', `${s.hostMemUsedPct}%`, memTone));
+  }
+  if (s.dbPoolWaiting != null) {
+    cards.push(summaryCard('DB queue', `${s.dbPoolWaiting}`, s.dbPoolWaiting > 0 ? 'red' : 'zinc'));
+  }
 
   if (s.globalSpendCents != null) {
     const spendPct = Math.round((s.globalSpendCents / s.globalSpendCap) * 100);
@@ -515,6 +610,7 @@ async function refresh() {
     document.getElementById('stuck').innerHTML = renderStuck(data.stuckSessions);
     document.getElementById('drift').innerHTML = renderDrift(data.driftContainers);
     if (data.isAdmin) {
+      document.getElementById('capacity').innerHTML = renderCapacity(data);
       document.getElementById('llm').innerHTML = renderLlm(data);
       document.getElementById('events').innerHTML = renderEvents(data.events || []);
     }
