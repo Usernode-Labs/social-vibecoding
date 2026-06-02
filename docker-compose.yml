@@ -42,7 +42,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 128m
+          memory: 256m
           cpus: "0.5"
 
   usernode:
@@ -109,9 +109,14 @@ services:
       retries: 3
     deploy:
       resources:
+        # The single platform process is the funnel for ALL HTTP, every
+        # SSE chat stream (Mayor token relay + CC progress), all WebSocket
+        # fan-out, and Docker orchestration. The old 512m/1-CPU cap was the
+        # real ceiling for concurrent dev sessions on an otherwise huge box.
+        # Raised for the ~50-concurrent-user target; see scaling notes.
         limits:
-          memory: 512m
-          cpus: "1"
+          memory: 3g
+          cpus: "4"
     security_opt:
       - no-new-privileges:true
 
@@ -134,9 +139,13 @@ services:
       retries: 3
     deploy:
       resources:
+        # Backs platform data + every per-app and per-staging database
+        # (pg_dump/restore clones). Raised from 512m/1-CPU to absorb ~50
+        # sessions' query load + staging clone churn. Note: a wider pg
+        # Pool.max (DB_POOL_MAX) leans harder on this — keep them in step.
         limits:
-          memory: 512m
-          cpus: "1"
+          memory: 4g
+          cpus: "4"
     security_opt:
       - no-new-privileges:true
 
@@ -191,9 +200,13 @@ services:
       - usernode-node-archive:/archive
     deploy:
       resources:
+        # Shared full-ledger chain node for every dapp. Observed pinned at
+        # ~99.8% of the old 2g limit at idle (before any dev-session load),
+        # so this was already a saturation/OOM risk. Raised to 4g + a 2nd
+        # CPU to give headroom as app + session count grows.
         limits:
-          memory: 2g
-          cpus: "1"
+          memory: 4g
+          cpus: "2"
     security_opt:
       - no-new-privileges:true
 

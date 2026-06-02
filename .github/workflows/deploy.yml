@@ -130,6 +130,17 @@ jobs:
             USERNODE_APP_SECRET_KEY=${{ secrets.USERNODE_APP_SECRET_KEY }}
             LOG_LEVEL=INFO
             GIT_SHA=${{ github.sha }}
+            # Scaling tunables (see README scaling notes). Committed defaults
+            # target ~50 concurrent users on the current 20-core/62GB box;
+            # override any of them by setting a matching GitHub repo var
+            # (Settings -> Secrets and variables -> Actions -> Variables)
+            # without a code change.
+            MAX_GLOBAL_SESSIONS=${{ vars.MAX_GLOBAL_SESSIONS || '50' }}
+            MAX_USER_SESSIONS=${{ vars.MAX_USER_SESSIONS || '3' }}
+            WORKER_MEMORY=${{ vars.WORKER_MEMORY || '1280m' }}
+            WORKER_CPUS=${{ vars.WORKER_CPUS || '1' }}
+            WORKER_IDLE_EVICTION_MS=${{ vars.WORKER_IDLE_EVICTION_MS || '300000' }}
+            DB_POOL_MAX=${{ vars.DB_POOL_MAX || '40' }}
             ENVEOF
             chmod 600 .env
 

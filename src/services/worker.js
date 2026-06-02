@@ -8,8 +8,12 @@ const github = require('./github');
 const models = require('./models');
 
 const WORKER_IMAGE = 'usernode-worker:latest';
-const WORKER_MEMORY = '2g';
-const WORKER_CPUS = '2';
+// Per-session worker container resource limits. Read from env (mirrored
+// into src/config.js as workerMemory/workerCpus for logging) so prod can
+// shrink the footprint to fit more concurrent warm workers on one box
+// without a code deploy. Defaults preserve historical 2g/2-CPU behavior.
+const WORKER_MEMORY = process.env.WORKER_MEMORY || '2g';
+const WORKER_CPUS = process.env.WORKER_CPUS || '2';
 const WARM_READY_TIMEOUT_MS = 5 * 60 * 1000;
 
 // URL the worker container uses to reach the platform's internal API

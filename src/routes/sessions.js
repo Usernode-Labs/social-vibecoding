@@ -356,14 +356,14 @@ function sessionRoutes(config) {
         `SELECT COUNT(*) as cnt FROM chat_sessions WHERE user_id = $1 AND status IN ('active', 'promoted')`,
         [req.user.id]
       );
-      if (parseInt(countRows[0].cnt) >= 3) {
-        return res.status(429).json({ error: 'You already have 3 active sessions. Pause, archive, or merge one first.' });
+      if (parseInt(countRows[0].cnt) >= config.maxUserSessions) {
+        return res.status(429).json({ error: `You already have ${config.maxUserSessions} active sessions. Pause, archive, or merge one first.` });
       }
 
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
       );
-      if (parseInt(globalRows[0].cnt) >= 25) {
+      if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
         return res.status(429).json({ error: 'Global staging limit reached. Try again later.' });
       }
 
@@ -579,8 +579,8 @@ function sessionRoutes(config) {
          WHERE user_id = $1 AND status IN ('active', 'promoted')`,
         [req.user.id]
       );
-      if (parseInt(countRows[0].cnt) >= 3) {
-        return res.status(429).json({ error: 'You already have 3 active sessions. Pause one first to free a slot.' });
+      if (parseInt(countRows[0].cnt) >= config.maxUserSessions) {
+        return res.status(429).json({ error: `You already have ${config.maxUserSessions} active sessions. Pause one first to free a slot.` });
       }
 
       const { rows } = await pool.query(

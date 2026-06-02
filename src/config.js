@@ -54,6 +54,24 @@ function load() {
     // the cap; errored rows don't count (they hold ~no resources and users
     // can delete them to free a slot). See src/routes/apps.js.
     maxApps: parseInt(process.env.MAX_APPS || '20', 10),
+    // Concurrency caps on dev sessions. A "session" holds (or can lazily
+    // spawn) a warm worker container + optional staging container, so
+    // these bound host resource fan-out. Previously hardcoded literals in
+    // src/routes/sessions.js; lifted here so prod can tune them via env
+    // without a code deploy. See the scaling notes in README / SPEC.
+    //   - maxGlobalSessions: platform-wide active+promoted session ceiling.
+    //   - maxUserSessions:   per-user active+promoted session ceiling.
+    maxGlobalSessions: parseInt(process.env.MAX_GLOBAL_SESSIONS || '25', 10),
+    maxUserSessions: parseInt(process.env.MAX_USER_SESSIONS || '3', 10),
+    // Per-session worker container resource limits, passed to `docker run`
+    // by src/services/worker.js. Defaults preserve historical behavior;
+    // shrink them in prod to fit more concurrent warm workers on one box.
+    workerMemory: process.env.WORKER_MEMORY || '2g',
+    workerCpus: process.env.WORKER_CPUS || '2',
+    // Postgres connection pool size (pg `Pool.max`). pg's built-in default
+    // is 10, which can bottleneck under many concurrent SSE turns + staging
+    // DB work. Tunable via env so prod can widen it without a code change.
+    dbPoolMax: parseInt(process.env.DB_POOL_MAX || '10', 10),
     usernodeAppPubkey: process.env.USERNODE_APP_PUBKEY || '',
     // Default points at the sidecar usernode container that
     // docker-compose.yml runs alongside the platform (service name
@@ -89,6 +107,10 @@ function load() {
   console.log(`  ANTHROPIC_API_KEY=${mask(config.anthropicApiKey)}`);
   console.log(`  LOG_LEVEL=${config.logLevel}`);
   console.log(`  MAX_APPS=${config.maxApps}`);
+  console.log(`  MAX_GLOBAL_SESSIONS=${config.maxGlobalSessions}`);
+  console.log(`  MAX_USER_SESSIONS=${config.maxUserSessions}`);
+  console.log(`  WORKER_MEMORY=${config.workerMemory} WORKER_CPUS=${config.workerCpus}`);
+  console.log(`  DB_POOL_MAX=${config.dbPoolMax}`);
   console.log(`  USERNODE_APP_PUBKEY=${config.usernodeAppPubkey || '(not set — wallet linking disabled)'}`);
   console.log(`  NODE_RPC_URL=${config.nodeRpcUrl}`);
   console.log(`  USERNODE_PLATFORM_REPO=${config.platformRepoUrl}`);
