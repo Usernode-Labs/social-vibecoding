@@ -48,6 +48,10 @@ const GroupChat = {
   // built floating picker.
   _pressTimer: null,
   _longPressed: false,
+  // True while a pointer is held down on a message row. Used to gate the
+  // drag-vs-hold decision that toggles native text selection (hold =
+  // react bar + no selection; drag = re-enable selection).
+  _pressActive: false,
   _reactBar: null,
   _reactBarDismiss: null,
   _reactBarOpenedAt: 0,
@@ -122,6 +126,7 @@ const GroupChat = {
     GroupChat._reconnectAttempts = 0;
     GroupChat.replyDraft = null;
     GroupChat._longPressed = false;
+    GroupChat._pressActive = false;
     GroupChat._clearPressTimer();
     GroupChat._closeReactionBar();
 
@@ -483,12 +488,20 @@ const GroupChat = {
     container.addEventListener('pointerdown', (e) => {
       GroupChat._tap = { x: e.clientX, y: e.clientY };
       GroupChat._longPressed = false;
+      GroupChat._pressActive = false;
       GroupChat._clearPressTimer();
       // Don't arm long-press on interactive children (links, buttons,
       // pills, the quote block) — those have their own click semantics.
       if (e.target.closest('a, button, .gc-quoted')) return;
       const row = e.target.closest(ROW_SEL);
       if (!row || !container.contains(row)) return;
+      // Suppress native text selection while the press is stationary, so a
+      // long-press opens the reaction bar cleanly instead of highlighting
+      // the message text (and popping the iOS selection magnifier). If the
+      // user drags past the threshold (pointermove below) we hand selection
+      // back so a deliberate drag still selects text.
+      GroupChat._pressActive = true;
+      GroupChat._setMsgSelect(container, false);
       GroupChat._pressTimer = setTimeout(() => {
         GroupChat._pressTimer = null;
         GroupChat._longPressed = true;
@@ -496,18 +509,25 @@ const GroupChat = {
       }, 450);
     }, true);
 
-    const cancelPress = (e) => {
-      if (!GroupChat._pressTimer) return;
-      if (e && GroupChat._tap &&
-          Math.abs(e.clientX - GroupChat._tap.x) + Math.abs(e.clientY - GroupChat._tap.y) <= 8 &&
-          e.type === 'pointermove') {
-        return; // tiny jitter — keep the timer alive
-      }
+    container.addEventListener('pointermove', (e) => {
+      if (!GroupChat._pressActive || !GroupChat._tap) return;
+      const dist = Math.abs(e.clientX - GroupChat._tap.x) + Math.abs(e.clientY - GroupChat._tap.y);
+      if (dist <= 8) return; // tiny jitter — keep the timer + selection suppressed
+      // Real drag: the user is selecting text (desktop) or scrolling
+      // (touch), not long-pressing. Cancel the reaction timer and re-enable
+      // selection so the drag highlights text.
       GroupChat._clearPressTimer();
+      GroupChat._setMsgSelect(container, true);
+    }, true);
+
+    const endPress = () => {
+      GroupChat._clearPressTimer();
+      GroupChat._pressActive = false;
+      // Restore the default (selectable) state for the next gesture.
+      GroupChat._setMsgSelect(container, true);
     };
-    container.addEventListener('pointermove', cancelPress, true);
-    container.addEventListener('pointerup', () => GroupChat._clearPressTimer(), true);
-    container.addEventListener('pointercancel', () => GroupChat._clearPressTimer(), true);
+    container.addEventListener('pointerup', endPress, true);
+    container.addEventListener('pointercancel', endPress, true);
 
     container.addEventListener('click', (e) => {
       // Reaction pill → toggle that emoji for the viewer.
@@ -545,6 +565,18 @@ const GroupChat = {
       clearTimeout(GroupChat._pressTimer);
       GroupChat._pressTimer = null;
     }
+  },
+
+  // Toggle native text selection on the messages list. Disabled at the
+  // start of a press so a stationary long-press reacts (instead of
+  // selecting/highlighting text); re-enabled as soon as a drag is detected
+  // so drag-to-select still works.
+  _setMsgSelect(container, enabled) {
+    const c = container || document.getElementById('gc-messages');
+    if (!c) return;
+    const v = enabled ? '' : 'none';
+    c.style.userSelect = v;
+    c.style.webkitUserSelect = v;
   },
 
   // ── #25: reaction rendering ─────────────────────────────────────────
@@ -722,11 +754,11 @@ const GroupChat = {
         <div class="gc-msg-header">
           <span class="gc-msg-username ${isSelf ? 'gc-msg-username-self' : ''}">${escapeHtml(username)}</span>
           <span class="gc-msg-time">${time}</span>
+          ${GroupChat._renderReactAddBtn(msg)}
         </div>
         ${quotedHtml}
         <div class="gc-msg-content">${renderWithMentions(msg.content)}</div>
         ${GroupChat._renderReactionsHtml(msg)}
-        ${GroupChat._renderReactAddBtn(msg)}
       </div>`;
   },
 

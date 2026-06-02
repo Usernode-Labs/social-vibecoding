@@ -551,9 +551,24 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 
 /* ── Group chat messages ───────────────────────────────── */
 
+/* The chat pane is a flex item in the gc-tab-body row. Flex items
+   default to min-width: auto, which refuses to shrink below their
+   content's intrinsic width — so a long word/URL (or the open spec
+   side-panel) pushes the column wider than the viewport and the right
+   edge gets clipped. min-width: 0 lets it shrink so message text wraps
+   to the available width instead. */
+.gc-chat-pane { min-width: 0; }
+
+/* Guard: never let the message list scroll/expand horizontally. Per-
+   element wrapping (.gc-msg-content, quoted blocks) is the real fix, but
+   this clips any future stray wide child so a narrow screen can't end up
+   with a horizontal scrollbar. */
+#gc-messages { overflow-x: hidden; }
+
 .gc-msg {
   padding: 6px 12px;
   transition: background 150ms;
+  min-width: 0;
 }
 
 .gc-msg:hover { background: var(--bg-card-alt); }
@@ -583,6 +598,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   font-size: 13px;
   line-height: 1.5;
   color: var(--text-secondary);
+  overflow-wrap: anywhere;
   word-break: break-word;
 }
 
@@ -603,6 +619,8 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   font-size: 11px;
   text-align: center;
   color: var(--text-muted);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .gc-msg-vote { color: var(--accent); }
@@ -646,6 +664,11 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   color: var(--accent);
   white-space: nowrap;
   flex-shrink: 0;
+  /* Cap + clip so a long author/label can't push the quote block wider
+     than its container (which would force horizontal scroll). */
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .gc-quoted-snippet,
 .gc-reply-preview-snippet {
@@ -655,6 +678,11 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+  /* Inside .gc-quoted (a flex column with align-items: flex-start) the
+     snippet otherwise sizes to its full nowrap content width and the
+     ellipsis never engages — capping at 100% bounds it to the container
+     so it truncates instead of overflowing. */
+  max-width: 100%;
 }
 .gc-quoted { flex-direction: column; align-items: flex-start; gap: 0; }
 
@@ -684,6 +712,13 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 /* Rows need positioning context for the hover react button. */
 .gc-msg, .gc-msg-system, .gc-spec-card { position: relative; }
 
+/* Long-press opens the reaction bar (see _attachQuoteHandlers). Suppress
+   the iOS long-press callout/magnifier so a stationary hold reacts instead
+   of triggering the system text-selection menu. Native text selection
+   itself is toggled in JS — re-enabled the instant a drag is detected — so
+   drag-to-select still works. */
+.gc-msg, .gc-msg-system, .gc-spec-card { -webkit-touch-callout: none; }
+
 /* Hover affordance to open the reaction bar (desktop only — touch uses
    long-press). Hidden until the row is hovered. */
 .gc-react-add {
@@ -704,6 +739,31 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   transition: opacity 120ms;
   z-index: 2;
 }
+/* On regular messages the button lives inside the header row, so it sits
+   just to the right of the first line (username · time) instead of being
+   pinned to the far right edge of the chat. It's always laid out (reserving
+   its slot so there's no hover reflow) but invisible until the row is
+   hovered. System/spec rows keep the absolute top-right fallback above. */
+.gc-msg-header .gc-react-add {
+  position: static;
+  align-self: center;
+  width: 20px;
+  height: 20px;
+  margin-left: -2px;
+}
+
+/* System / vote lines (e.g. "alice voted yes on PR #12") are centered with
+   no header, so flow the button inline right after the text instead of the
+   absolute top-right fallback. Deliberately NOT setting `display` here so
+   the `@media (hover: none)` display:none rule still hides it on touch. */
+.gc-msg-system > .gc-react-add {
+  position: static;
+  vertical-align: middle;
+  width: 18px;
+  height: 18px;
+  margin-left: 4px;
+}
+
 @media (hover: hover) {
   .gc-msg:hover .gc-react-add,
   .gc-msg-system:hover .gc-react-add,
