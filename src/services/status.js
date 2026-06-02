@@ -16,7 +16,10 @@ const WORKER_PREFIX = 'usernode-worker-';
 const APP_PREFIX = 'usernode-app-';
 const STAGING_PREFIX = 'usernode-staging-';
 
-// Match SPEC.md limits.
+// Fallbacks only — the live caps come from config (MAX_GLOBAL_SESSIONS /
+// MAX_USER_SESSIONS). Staging is 1:1 with sessions and built per dev turn,
+// so its real ceiling IS the session cap, not a separate number. These
+// constants are kept so the dashboard still renders if config is absent.
 const MAX_STAGING_GLOBAL = 25;
 const MAX_STAGING_PER_USER = 3;
 const WORKER_ORPHAN_THRESHOLD_MS = 20 * 60 * 1000;
@@ -393,7 +396,7 @@ async function gatherFull(config) {
     prodRunning: appTree.filter((a) => a.prod?.state === 'running').length,
     prodMissing: appTree.filter((a) => a.prodMissing).length,
     stagingRunning,
-    stagingCap: MAX_STAGING_GLOBAL,
+    stagingCap: globalCap,
     workersRunning: workers.filter((w) => w.state === 'running').length,
     workersInFlight,
     workersWarmIdle,
@@ -421,8 +424,8 @@ async function gatherFull(config) {
     deployProgress: deployStatus.read(),
     node: nodeStatus.get(),
     limits: {
-      stagingGlobal: MAX_STAGING_GLOBAL,
-      stagingPerUser: MAX_STAGING_PER_USER,
+      stagingGlobal: globalCap,
+      stagingPerUser: config.maxUserSessions || MAX_STAGING_PER_USER,
       userDailyCents: USER_DAILY_LIMIT_CENTS,
       globalDailyCents: GLOBAL_DAILY_LIMIT_CENTS,
       workerOrphanThresholdMs: WORKER_ORPHAN_THRESHOLD_MS,
