@@ -420,6 +420,26 @@ const DevChat = {
       const res = await fetch(`/api/sessions/${sessionId}`);
       if (!res.ok) return;
       const { session, messages } = await res.json();
+
+      // Auto-resume on open: opening a paused session transparently
+      // resumes it (the backend applies the per-user LRU + global cap
+      // logic, auto-pausing the user's least-recently-active session if
+      // needed). We flip the local status optimistically so the rest of
+      // renderChatView treats it as active; other tabs sync via the
+      // server's 'resumed' WS event. If resume is refused (e.g. the
+      // global cap is hit), leave it paused and tell the user.
+      if (session.status === 'paused') {
+        try {
+          const rr = await fetch(`/api/sessions/${sessionId}/resume`, { method: 'POST' });
+          if (rr.ok) {
+            session.status = 'active';
+          } else {
+            const data = await rr.json().catch(() => ({}));
+            alert(data.error || 'Could not resume this session right now. Try again in a moment.');
+          }
+        } catch { /* network blip — fall through; session stays paused */ }
+      }
+
       DevChat.currentSession = session;
       // Restore the spec viewer's open/closed state from localStorage
       // before the caller's renderChatView fires, so a refresh on a

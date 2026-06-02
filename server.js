@@ -22,6 +22,7 @@ const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
 const github = require('./src/services/github');
 const llm = require('./src/services/llm');
 const worker = require('./src/services/worker');
+const sessionLifecycle = require('./src/services/session-lifecycle');
 const ws = require('./src/services/ws');
 const log = require('./src/services/logger');
 const lifecycle = require('./src/services/lifecycle');
@@ -301,6 +302,12 @@ async function start() {
   // if memory headroom shrinks; raise it if we're seeing frequent
   // re-warms in production logs.
   startIdleEvictionSweeper();
+
+  // Session auto-pause sweeper (separate, longer timer than worker
+  // eviction above). Flips long-idle 'active' sessions to 'paused' so
+  // they stop counting against the per-user / global session caps. The
+  // CC volume + branch + PR are preserved; reopening auto-resumes.
+  startSessionAutoPauseSweeper(config);
 
   // If the previous server died mid-merge, some sessions may be stuck
   // in the 'merging' claim state. There's no way to know from here
@@ -790,6 +797,58 @@ function startIdleEvictionSweeper() {
   // race-free stop the sweeper before exit.
 }
 
+// Session auto-pause sweeper. Distinct from the worker idle-eviction
+// sweeper above: that one reclaims container RAM on a short timer; this
+// one frees the cap *slot* on a long timer by transitioning idle
+// 'active' sessions to 'paused' (worker + staging torn down, CC volume +
+// branch + PR preserved). Reopening a paused session auto-resumes it.
+//
+// Tunables: SESSION_AUTOPAUSE_IDLE_MS (default 2h; 0 disables) and
+// SESSION_SWEEP_INTERVAL_MS (default 60s). We only ever pause status=
+// 'active' here — never 'promoted' (those are awaiting merge votes and
+// should stay live, and pausing+resuming would currently lose the
+// promoted distinction).
+let sessionSweeperHandle = null;
+
+function startSessionAutoPauseSweeper(config) {
+  if (sessionSweeperHandle) return;
+  if (!config.sessionAutopauseIdleMs || config.sessionAutopauseIdleMs <= 0) {
+    log.info('server', 'Session auto-pause sweeper disabled', { reason: 'SESSION_AUTOPAUSE_IDLE_MS<=0' });
+    return;
+  }
+  const pool = getPool(config);
+  log.info('server', 'Session auto-pause sweeper started', {
+    idleMs: config.sessionAutopauseIdleMs,
+    sweepIntervalMs: config.sessionSweepIntervalMs,
+  });
+  sessionSweeperHandle = setInterval(async () => {
+    if (lifecycle.isShuttingDown()) return;
+    try {
+      const { rows } = await pool.query(
+        `SELECT id FROM chat_sessions
+         WHERE status = 'active'
+           AND last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0)
+         ORDER BY last_activity_at ASC
+         LIMIT 50`,
+        [config.sessionAutopauseIdleMs]
+      );
+      for (const row of rows) {
+        // Never auto-pause a session with a CC turn in flight — that would
+        // kill the user's running turn. isInFlight mirrors the worker
+        // registry's per-session inFlight flag.
+        if (worker.isInFlight(row.id)) continue;
+        try {
+          await sessionLifecycle.pauseSession({ pool, sessionId: row.id, reason: 'auto-idle' });
+        } catch (err) {
+          log.warn('server', 'Auto-pause failed', { sessionId: row.id, err: err.message });
+        }
+      }
+    } catch (err) {
+      log.warn('server', 'Session auto-pause sweep failed', { err: err.message });
+    }
+  }, config.sessionSweepIntervalMs).unref();
+}
+
 // Graceful shutdown: mark drain state so new chats/app-creates/builds get
 // 503'd, wait up to DRAIN_TIMEOUT_MS for in-flight HTTP handlers to
 // finish flushing DB writes, then exit.
@@ -816,6 +875,10 @@ async function cleanup() {
   if (sweeperHandle) {
     clearInterval(sweeperHandle);
     sweeperHandle = null;
+  }
+  if (sessionSweeperHandle) {
+    clearInterval(sessionSweeperHandle);
+    sessionSweeperHandle = null;
   }
 
   const startingCount = getActiveWorkerCount();

@@ -231,6 +231,18 @@ CREATE INDEX IF NOT EXISTS pr_undo_votes_session_idx ON pr_undo_votes(session_id
 -- set when the user posts a snapshot into the app's group chat.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS spec_md TEXT NOT NULL DEFAULT '';
 
+-- Session auto-pause: persisted "last interacted with" timestamp. Bumped
+-- on every chat turn, on session open/view, and on resume. The DB-driven
+-- auto-pause sweeper (server.js) flips long-idle 'active' sessions to
+-- 'paused' so they stop counting against the per-user / global session
+-- caps; the in-memory worker idle-eviction (which only reclaims the
+-- container) is a separate, shorter-timer concern. DEFAULT NOW() is
+-- deliberate: it backfills existing rows to "active now" so the first
+-- sweep after this migration doesn't mass-pause every open session.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+-- Supports the sweeper's "active + idle past threshold" scan.
+CREATE INDEX IF NOT EXISTS chat_sessions_activity_idx ON chat_sessions(status, last_activity_at);
+
 CREATE TABLE IF NOT EXISTS chat_session_specs (
   id                  SERIAL PRIMARY KEY,
   session_id          INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,

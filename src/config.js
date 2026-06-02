@@ -72,6 +72,20 @@ function load() {
     // is 10, which can bottleneck under many concurrent SSE turns + staging
     // DB work. Tunable via env so prod can widen it without a code change.
     dbPoolMax: parseInt(process.env.DB_POOL_MAX || '10', 10),
+    // Session auto-pause: a DB-driven sweeper (server.js) flips long-idle
+    // 'active' sessions to 'paused' so they stop counting against the
+    // session caps. This is a SEPARATE, longer timer from the in-memory
+    // worker idle-eviction (WORKER_IDLE_EVICTION_MS) — eviction reclaims
+    // the container RAM; auto-pause frees the cap slot. Default 2h. Set
+    // sessionAutopauseIdleMs=0 to disable auto-pause entirely.
+    sessionAutopauseIdleMs: parseInt(process.env.SESSION_AUTOPAUSE_IDLE_MS || String(2 * 60 * 60 * 1000), 10),
+    // How often the session sweeper scans for idle sessions.
+    sessionSweepIntervalMs: parseInt(process.env.SESSION_SWEEP_INTERVAL_MS || '60000', 10),
+    // When a user at their session cap reopens/resumes a paused session,
+    // auto-pause their least-recently-active session to make room instead
+    // of refusing with a 429. Set SESSION_LRU_ON_RESUME=false to keep the
+    // old hard-cap behavior.
+    sessionLruOnResume: process.env.SESSION_LRU_ON_RESUME !== 'false',
     usernodeAppPubkey: process.env.USERNODE_APP_PUBKEY || '',
     // Default points at the sidecar usernode container that
     // docker-compose.yml runs alongside the platform (service name
@@ -111,6 +125,9 @@ function load() {
   console.log(`  MAX_USER_SESSIONS=${config.maxUserSessions}`);
   console.log(`  WORKER_MEMORY=${config.workerMemory} WORKER_CPUS=${config.workerCpus}`);
   console.log(`  DB_POOL_MAX=${config.dbPoolMax}`);
+  console.log(`  SESSION_AUTOPAUSE_IDLE_MS=${config.sessionAutopauseIdleMs}${config.sessionAutopauseIdleMs === 0 ? ' (disabled)' : ''}`);
+  console.log(`  SESSION_SWEEP_INTERVAL_MS=${config.sessionSweepIntervalMs}`);
+  console.log(`  SESSION_LRU_ON_RESUME=${config.sessionLruOnResume}`);
   console.log(`  USERNODE_APP_PUBKEY=${config.usernodeAppPubkey || '(not set — wallet linking disabled)'}`);
   console.log(`  NODE_RPC_URL=${config.nodeRpcUrl}`);
   console.log(`  USERNODE_PLATFORM_REPO=${config.platformRepoUrl}`);

@@ -11,6 +11,7 @@ const docker = require('../services/docker');
 const caddy = require('../services/caddy');
 const worker = require('../services/worker');
 const workerProgress = require('../services/worker-progress');
+const sessionLifecycle = require('../services/session-lifecycle');
 const sessionBus = require('../services/session-bus');
 const { drainGuard } = require('../services/lifecycle');
 const { getAppConventions, getSelfHostedRefuseList } = require('../services/prompts');
@@ -408,6 +409,13 @@ function sessionRoutes(config) {
       );
       if (!rows.length) return res.status(404).json({ error: 'Session not found' });
 
+      // Viewing a session counts as activity so the auto-pause sweeper
+      // doesn't pause a session the user is actively reading. Fire-and-
+      // forget — the view shouldn't block on this write, and a missed
+      // bump just means the next chat turn / open re-marks it.
+      pool.query(`UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1`, [req.params.id])
+        .catch((err) => log.warn('sessions', 'activity bump on view failed', { err: err.message }));
+
       const { rows: messages } = await pool.query(
         `SELECT id, role, content, model, token_count, cost_cents, metadata, created_at
          FROM chat_session_messages
@@ -512,49 +520,30 @@ function sessionRoutes(config) {
   //   the same.
   router.post('/api/sessions/:id/pause', async (req, res) => {
     try {
-      const { rows } = await pool.query(
-        `UPDATE chat_sessions SET status = 'paused'
-         WHERE id = $1 AND user_id = $2 AND status IN ('active', 'promoted')
-         RETURNING id, app_id`,
-        [req.params.id, req.user.id]
-      );
-      if (!rows.length) {
+      const sessionId = parseInt(req.params.id, 10);
+
+      // Drop in-flight bookkeeping first so pausing mid-turn (the user
+      // pausing to abort a running turn) releases the activeWorkers slot.
+      // pauseSession() tears down the container + staging itself.
+      if (activeWorkers.has(sessionId)) {
+        activeWorkers.delete(sessionId);
+        workerProgress.clear(sessionId);
+      }
+
+      const { paused } = await sessionLifecycle.pauseSession({
+        pool, sessionId, userId: req.user.id, reason: 'manual',
+      });
+      if (!paused) {
         // Either it doesn't exist, isn't ours, or is already paused/archived.
         // Surface a soft 200 if it's already paused so the UI can no-op the
         // button click; treat anything else as not found.
         const { rows: check } = await pool.query(
           `SELECT id, status FROM chat_sessions WHERE id = $1 AND user_id = $2`,
-          [req.params.id, req.user.id]
+          [sessionId, req.user.id]
         );
         if (check[0] && check[0].status === 'paused') return res.json({ ok: true, alreadyPaused: true });
         return res.status(404).json({ error: 'Session not found or cannot be paused' });
       }
-
-      const sessionId = parseInt(req.params.id, 10);
-      const { rows: sessionRows } = await pool.query(
-        `SELECT cs.*, a.slug as app_slug
-         FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
-         WHERE cs.id = $1`,
-        [sessionId]
-      );
-      const session = sessionRows[0];
-
-      if (session?.staging_container_id) {
-        await staging.teardownStaging(session, { slug: session.app_slug }).catch(() => {});
-      }
-
-      // Drop in-flight bookkeeping so a paused session's old turn
-      // doesn't hold the activeWorkers slot. destroyWorker is a no-op
-      // if the container is already gone.
-      if (activeWorkers.has(sessionId)) {
-        activeWorkers.delete(sessionId);
-        workerProgress.clear(sessionId);
-      }
-      await worker.destroyWorker(`usernode-worker-${sessionId}`).catch(() => {});
-
-      const { pushSessionUpdate } = require('../services/ws');
-      pushSessionUpdate({ action: 'paused', sessionId, appSlug: session?.app_slug });
-      log.info('sessions', 'Session paused', { sessionId });
       res.json({ ok: true });
     } catch (err) {
       log.error('sessions', 'Pause failed', { message: err.message });
@@ -566,32 +555,71 @@ function sessionRoutes(config) {
   //   Inverse of /pause. Flips status back to 'active' so the next
   //   chat turn can lazily spawn a worker (CC volume is still on
   //   disk, so --resume <cc_session_id> picks up where we left off).
-  //   Enforces the same per-user 3-active-session cap as session
-  //   creation — if the user is already at the cap, we 429 with a
-  //   pointer to "pause something else first" rather than silently
-  //   exceeding the cap. We deliberately do NOT pre-spawn the worker
-  //   here; first-turn lazy boot is what every other path uses, so
-  //   resume staying lazy keeps the behavior consistent.
+  //   Also the auto-resume target: the dev-chat UI calls this when a
+  //   user opens a paused session.
+  //
+  //   Cap handling:
+  //     - Global cap: refuse if the platform-wide active+promoted count
+  //       is already at maxGlobalSessions (a flood of simultaneous
+  //       resumes shouldn't blow past the concurrency ceiling).
+  //     - Per-user cap: if the user is already at maxUserSessions, the
+  //       default (sessionLruOnResume) is to auto-pause their least-
+  //       recently-active session to make room, so reopening always
+  //       works. Set SESSION_LRU_ON_RESUME=false to keep the old hard
+  //       429. If every other session is mid-turn (can't be paused), we
+  //       fall back to a 429.
+  //   We deliberately do NOT pre-spawn the worker here; first-turn lazy
+  //   boot is what every other path uses.
   router.post('/api/sessions/:id/resume', async (req, res) => {
     try {
+      const sessionId = parseInt(req.params.id, 10);
+
+      const { rows: globalRows } = await pool.query(
+        `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
+      );
+      if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
+        return res.status(429).json({ error: 'Global session limit reached. Try again in a bit.' });
+      }
+
       const { rows: countRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
          WHERE user_id = $1 AND status IN ('active', 'promoted')`,
         [req.user.id]
       );
       if (parseInt(countRows[0].cnt) >= config.maxUserSessions) {
-        return res.status(429).json({ error: `You already have ${config.maxUserSessions} active sessions. Pause one first to free a slot.` });
+        if (!config.sessionLruOnResume) {
+          return res.status(429).json({ error: `You already have ${config.maxUserSessions} active sessions. Pause one first to free a slot.` });
+        }
+        // LRU: pause the user's least-recently-active 'active' session
+        // (not 'promoted' — those await merge votes) to free a slot.
+        // Skip any that are mid-turn; if none can be freed, 429.
+        const { rows: lruRows } = await pool.query(
+          `SELECT id FROM chat_sessions
+           WHERE user_id = $1 AND status = 'active' AND id <> $2
+           ORDER BY last_activity_at ASC`,
+          [req.user.id, sessionId]
+        );
+        let freed = false;
+        for (const victim of lruRows) {
+          if (worker.isInFlight(victim.id)) continue;
+          const { paused } = await sessionLifecycle.pauseSession({
+            pool, sessionId: victim.id, userId: req.user.id, reason: 'lru',
+          });
+          if (paused) { freed = true; break; }
+        }
+        if (!freed) {
+          return res.status(429).json({ error: 'Your other sessions are busy finishing turns. Try again in a moment.' });
+        }
       }
 
       const { rows } = await pool.query(
-        `UPDATE chat_sessions SET status = 'active'
+        `UPDATE chat_sessions SET status = 'active', last_activity_at = NOW()
          WHERE id = $1 AND user_id = $2 AND status = 'paused'
          RETURNING id, app_id`,
-        [req.params.id, req.user.id]
+        [sessionId, req.user.id]
       );
       if (!rows.length) return res.status(404).json({ error: 'Session not found or not paused' });
 
-      const sessionId = parseInt(req.params.id, 10);
       const { rows: sessionRows } = await pool.query(
         `SELECT a.slug as app_slug
          FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
@@ -723,6 +751,14 @@ function sessionRoutes(config) {
       await pool.query(
         `INSERT INTO chat_session_messages (session_id, role, content) VALUES ($1, 'user', $2)`,
         [session.id, message.trim()]
+      );
+
+      // Mark the session as freshly active so the auto-pause sweeper
+      // leaves it alone (see server.js session sweeper + schema
+      // last_activity_at). A chat turn is the strongest activity signal.
+      await pool.query(
+        `UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1`,
+        [session.id]
       );
 
       // Validate against the server-side allowlist (src/services/models.js).

@@ -141,6 +141,9 @@ jobs:
             WORKER_CPUS=${{ vars.WORKER_CPUS || '1' }}
             WORKER_IDLE_EVICTION_MS=${{ vars.WORKER_IDLE_EVICTION_MS || '300000' }}
             DB_POOL_MAX=${{ vars.DB_POOL_MAX || '40' }}
+            SESSION_AUTOPAUSE_IDLE_MS=${{ vars.SESSION_AUTOPAUSE_IDLE_MS || '7200000' }}
+            SESSION_SWEEP_INTERVAL_MS=${{ vars.SESSION_SWEEP_INTERVAL_MS || '60000' }}
+            SESSION_LRU_ON_RESUME=${{ vars.SESSION_LRU_ON_RESUME || 'true' }}
             ENVEOF
             chmod 600 .env
 
