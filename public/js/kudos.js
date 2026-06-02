@@ -190,17 +190,26 @@ const Kudos = {
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         const entry = Kudos._ensureCache(sessionId);
+        // The server broadcasts the kudos_update WS event *before* it
+        // sends this HTTP response, so applyLiveUpdate() may have
+        // already counted this give by the time we get here. If so,
+        // `my_kudos` is already true and `count` already reflects the
+        // authoritative total — bumping again would show N+2 until the
+        // next refresh. Only apply the optimistic delta when the WS
+        // hasn't beaten us to it.
+        const alreadyApplied = entry.my_kudos;
         entry.my_kudos = true;
-        entry.count = (entry.count || 0) + 1;
-        // Append the viewer to the cached giver list so the popover
-        // reflects the change immediately (without waiting for the
-        // WS bounce). The WS handler is idempotent on count, so even
-        // if we double-apply nothing breaks.
-        if (entry.givers) {
-          entry.givers.push({
-            username: window.App?.user?.username || 'you',
-            createdAt: new Date().toISOString(),
-          });
+        if (!alreadyApplied) {
+          entry.count = (entry.count || 0) + 1;
+          // Append the viewer to the cached giver list so the popover
+          // reflects the change immediately (without waiting for the
+          // WS bounce).
+          if (entry.givers) {
+            entry.givers.push({
+              username: window.App?.user?.username || 'you',
+              createdAt: new Date().toISOString(),
+            });
+          }
         }
         Kudos._refreshButton(sessionId);
         // The server already broadcast a kudos_update; we'd see it
