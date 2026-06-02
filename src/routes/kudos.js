@@ -291,7 +291,8 @@ function kudosRoutes(config) {
   // Top PRs by kudos count. Joins author + app for the card render.
   // --------------------------------------------------------------
   router.get('/api/leaderboard/prs', async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    // Public endpoint (see PUBLIC_PATHS in middleware/auth.js) — no
+    // req.user guard; only aggregate, non-private data is returned.
     const windowArg = req.query.window === 'week' ? 'week' : 'all';
     const limit = clampLimit(req.query.limit);
     try {
@@ -349,7 +350,8 @@ function kudosRoutes(config) {
   //                                 there's nothing to window it by. Display-only.
   // --------------------------------------------------------------
   router.get('/api/leaderboard/users', async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    // Public endpoint (see PUBLIC_PATHS in middleware/auth.js) — no
+    // req.user guard; only aggregate, non-private data is returned.
     const windowArg = req.query.window === 'week' ? 'week' : 'all';
     const limit = clampLimit(req.query.limit);
     try {

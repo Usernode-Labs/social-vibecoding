@@ -12,6 +12,10 @@ const PUBLIC_PATHS = [
   '/api/auth/wallet-verify',
   '/api/auth/wallet-register',
   '/api/auth/wallet-link-login',
+  // Read-only kudos leaderboard (Top PRs / Top users). Public so the
+  // board can be linked/embedded without a session; no private data is
+  // exposed (usernames + public PR titles + aggregate counts only).
+  '/api/leaderboard/',
   '/health',
   '/css/',
   '/js/',
