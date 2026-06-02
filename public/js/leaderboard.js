@@ -210,14 +210,30 @@ const Leaderboard = {
       const rank = i + 1;
       const who = row.username || 'unknown';
       const initial = (who[0] || '?').toUpperCase();
+      const prsMerged = row.prs_merged || 0;
+      const kudosOnUnmerged = row.kudos_received_prs_unmerged || 0;
+      // prs_merged is all-time (no merge timestamp to window by), so only
+      // show it in the all-time view to avoid implying a weekly figure.
+      const mergedMeta = (Leaderboard.window === 'all' && prsMerged > 0)
+        ? `<span class="text-zinc-400">\u00b7</span><span>${prsMerged} merged</span>`
+        : '';
+      // Footnote on the kudos badge: how many of those kudos are on PRs
+      // that haven't landed yet. Only meaningful when > 0.
+      const unmergedKudosNote = kudosOnUnmerged > 0
+        ? `<span class="shrink-0 text-[11px] text-amber-600 dark:text-amber-400" title="Kudos on PRs that haven\u2019t merged yet">${kudosOnUnmerged} on unmerged</span>`
+        : '';
       return `
         <div class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-800">
           <div class="w-7 text-center text-sm font-mono text-zinc-500">${rank}</div>
           <div class="w-9 h-9 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-sm">${escapeHtml(initial)}</div>
           <div class="flex-1 min-w-0">
             <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate">@${escapeHtml(who)}</div>
-            <div class="text-xs text-zinc-500 mt-0.5">${row.prs_kudosed} PR${row.prs_kudosed === 1 ? '' : 's'} kudosed</div>
+            <div class="text-xs text-zinc-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
+              <span>${row.prs_kudosed} PR${row.prs_kudosed === 1 ? '' : 's'} kudosed</span>
+              ${mergedMeta}
+            </div>
           </div>
+          ${unmergedKudosNote}
           <div class="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-900/30 border border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300 text-sm font-semibold">
             <span aria-hidden="true">\u{1F44F}</span>
             <span>${row.kudos_received}</span>

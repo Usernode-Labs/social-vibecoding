@@ -333,9 +333,20 @@ function kudosRoutes(config) {
 
   // --------------------------------------------------------------
   // GET /api/leaderboard/users?window=all|week&limit=20
-  // Top users by kudos RECEIVED on PRs they authored. Excludes
-  // sessions with NULL author (deleted user) so the leaderboard
-  // doesn't credit a ghost row.
+  // Top users by kudos received on MERGED PRs (window-filtered), then
+  // total kudos received as a tiebreaker. Excludes sessions with NULL
+  // author (deleted user) so the leaderboard doesn't credit a ghost row.
+  //
+  // Per-row stats:
+  //   kudos_received              — total kudos on the user's PRs (window-filtered)
+  //   prs_kudosed                 — distinct PRs of theirs that got any kudos
+  //   kudos_received_prs_merged   — kudos on PRs now 'merged' (window-filtered);
+  //                                 the primary sort key.
+  //   kudos_received_prs_unmerged — kudos on PRs not 'merged' (window-filtered)
+  //   prs_merged                  — count of the user's PRs that landed. ALL-TIME
+  //                                 regardless of window: chat_sessions has no
+  //                                 merge timestamp, only a 'merged' status, so
+  //                                 there's nothing to window it by. Display-only.
   // --------------------------------------------------------------
   router.get('/api/leaderboard/users', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
@@ -351,14 +362,23 @@ function kudosRoutes(config) {
                 u.username,
                 COUNT(*)::int AS kudos_received,
                 COUNT(DISTINCT pk.session_id)::int AS prs_kudosed,
+                COUNT(*) FILTER (WHERE cs.status = 'merged')::int AS kudos_received_prs_merged,
+                COUNT(*) FILTER (WHERE cs.status <> 'merged')::int AS kudos_received_prs_unmerged,
+                COALESCE(m.prs_merged, 0) AS prs_merged,
                 MAX(pk.created_at) AS last_kudos_at
            FROM pr_kudos pk
            JOIN chat_sessions cs ON cs.id = pk.session_id
            JOIN users u ON u.id = cs.user_id
+           LEFT JOIN (
+             SELECT user_id, COUNT(*)::int AS prs_merged
+               FROM chat_sessions
+              WHERE status = 'merged' AND user_id IS NOT NULL
+              GROUP BY user_id
+           ) m ON m.user_id = u.id
            WHERE cs.user_id IS NOT NULL
            ${whereWindow}
-           GROUP BY u.id, u.username
-           ORDER BY kudos_received DESC, last_kudos_at DESC
+           GROUP BY u.id, u.username, m.prs_merged
+           ORDER BY kudos_received_prs_merged DESC, kudos_received DESC, last_kudos_at DESC
            LIMIT ${limitParamIdx}`,
         params
       );
