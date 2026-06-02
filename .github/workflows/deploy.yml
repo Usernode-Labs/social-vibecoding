@@ -135,12 +135,12 @@ jobs:
             # override any of them by setting a matching GitHub repo var
             # (Settings -> Secrets and variables -> Actions -> Variables)
             # without a code change.
-            MAX_GLOBAL_SESSIONS=${{ vars.MAX_GLOBAL_SESSIONS || '50' }}
+            MAX_GLOBAL_SESSIONS=${{ vars.MAX_GLOBAL_SESSIONS || '75' }}
             MAX_USER_SESSIONS=${{ vars.MAX_USER_SESSIONS || '3' }}
             WORKER_MEMORY=${{ vars.WORKER_MEMORY || '1280m' }}
             WORKER_CPUS=${{ vars.WORKER_CPUS || '1' }}
             WORKER_IDLE_EVICTION_MS=${{ vars.WORKER_IDLE_EVICTION_MS || '300000' }}
-            DB_POOL_MAX=${{ vars.DB_POOL_MAX || '40' }}
+            DB_POOL_MAX=${{ vars.DB_POOL_MAX || '60' }}
             SESSION_AUTOPAUSE_IDLE_MS=${{ vars.SESSION_AUTOPAUSE_IDLE_MS || '300000' }}
             STAGING_IDLE_TEARDOWN_MS=${{ vars.STAGING_IDLE_TEARDOWN_MS || '21600000' }}
             SESSION_SWEEP_INTERVAL_MS=${{ vars.SESSION_SWEEP_INTERVAL_MS || '60000' }}
