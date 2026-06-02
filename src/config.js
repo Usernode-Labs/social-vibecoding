@@ -72,13 +72,22 @@ function load() {
     // is 10, which can bottleneck under many concurrent SSE turns + staging
     // DB work. Tunable via env so prod can widen it without a code change.
     dbPoolMax: parseInt(process.env.DB_POOL_MAX || '10', 10),
-    // Session auto-pause: a DB-driven sweeper (server.js) flips long-idle
+    // Session auto-pause: a DB-driven sweeper (server.js) flips idle
     // 'active' sessions to 'paused' so they stop counting against the
-    // session caps. This is a SEPARATE, longer timer from the in-memory
-    // worker idle-eviction (WORKER_IDLE_EVICTION_MS) — eviction reclaims
-    // the container RAM; auto-pause frees the cap slot. Default 2h. Set
-    // sessionAutopauseIdleMs=0 to disable auto-pause entirely.
-    sessionAutopauseIdleMs: parseInt(process.env.SESSION_AUTOPAUSE_IDLE_MS || String(2 * 60 * 60 * 1000), 10),
+    // session caps. Now that pause is cheap (it no longer tears down
+    // staging — see session-lifecycle.js) and activity is kept fresh by
+    // the dev-chat heartbeat while the tab is open, this is tuned to
+    // line up with the worker idle-eviction timescale (~5 min). A
+    // session pauses ~5 min after the user actually leaves (tab closed/
+    // backgrounded → no more heartbeats). Set to 0 to disable.
+    sessionAutopauseIdleMs: parseInt(process.env.SESSION_AUTOPAUSE_IDLE_MS || String(5 * 60 * 1000), 10),
+    // Staging preview GC: pause no longer tears staging down, so this
+    // sweeper reclaims the staging container + cloned DB from sessions
+    // that have gone cold for this long (promoted/merging sessions are
+    // exempt — their preview backs group voting). Much longer than the
+    // pause timer so reopening a recently-paused session keeps a warm
+    // preview. Default 6h; set to 0 to disable staging GC.
+    stagingIdleTeardownMs: parseInt(process.env.STAGING_IDLE_TEARDOWN_MS || String(6 * 60 * 60 * 1000), 10),
     // How often the session sweeper scans for idle sessions.
     sessionSweepIntervalMs: parseInt(process.env.SESSION_SWEEP_INTERVAL_MS || '60000', 10),
     // When a user at their session cap reopens/resumes a paused session,
@@ -86,6 +95,16 @@ function load() {
     // of refusing with a 429. Set SESSION_LRU_ON_RESUME=false to keep the
     // old hard-cap behavior.
     sessionLruOnResume: process.env.SESSION_LRU_ON_RESUME !== 'false',
+    // Demand-driven global-cap eviction. When a new session is needed but
+    // the platform is at maxGlobalSessions, we pause the globally least-
+    // recently-active session that has been idle longer than this grace
+    // window (and isn't mid-turn), freeing a slot immediately instead of
+    // making the new user wait for the slow 2h auto-pause. The grace
+    // window protects anyone who's actually working — only sessions idle
+    // past it are eligible. If nothing qualifies, the request 429s.
+    // Default 15 min; set to 0 to disable pressure-eviction (back to a
+    // hard 429 at the global cap).
+    sessionPressureGraceMs: parseInt(process.env.SESSION_PRESSURE_GRACE_MS || String(15 * 60 * 1000), 10),
     usernodeAppPubkey: process.env.USERNODE_APP_PUBKEY || '',
     // Default points at the sidecar usernode container that
     // docker-compose.yml runs alongside the platform (service name
@@ -126,8 +145,10 @@ function load() {
   console.log(`  WORKER_MEMORY=${config.workerMemory} WORKER_CPUS=${config.workerCpus}`);
   console.log(`  DB_POOL_MAX=${config.dbPoolMax}`);
   console.log(`  SESSION_AUTOPAUSE_IDLE_MS=${config.sessionAutopauseIdleMs}${config.sessionAutopauseIdleMs === 0 ? ' (disabled)' : ''}`);
+  console.log(`  STAGING_IDLE_TEARDOWN_MS=${config.stagingIdleTeardownMs}${config.stagingIdleTeardownMs === 0 ? ' (disabled)' : ''}`);
   console.log(`  SESSION_SWEEP_INTERVAL_MS=${config.sessionSweepIntervalMs}`);
   console.log(`  SESSION_LRU_ON_RESUME=${config.sessionLruOnResume}`);
+  console.log(`  SESSION_PRESSURE_GRACE_MS=${config.sessionPressureGraceMs}${config.sessionPressureGraceMs === 0 ? ' (disabled)' : ''}`);
   console.log(`  USERNODE_APP_PUBKEY=${config.usernodeAppPubkey || '(not set — wallet linking disabled)'}`);
   console.log(`  NODE_RPC_URL=${config.nodeRpcUrl}`);
   console.log(`  USERNODE_PLATFORM_REPO=${config.platformRepoUrl}`);

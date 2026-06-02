@@ -415,6 +415,32 @@ const DevChat = {
     }
   },
 
+  // Activity heartbeat. While a session is open and the browser tab is
+  // visible, ping the server (~every 60s) so last_activity_at stays
+  // fresh. That's what lets the server's auto-pause timer run on a short
+  // (~5 min) window aligned with worker eviction without pausing a
+  // session the user is actively reading. A single persistent interval
+  // is created once and no-ops whenever no session is open or the tab is
+  // hidden/backgrounded — so a session pauses ~5 min after the user
+  // actually leaves (closes/backgrounds the tab, or navigates out of the
+  // app, which clears currentSession via reset()).
+  _startHeartbeat() {
+    const beat = () => {
+      if (document.visibilityState !== 'visible') return;
+      const s = DevChat.currentSession;
+      if (!s || !s.id) return;
+      fetch(`/api/sessions/${s.id}/activity`, { method: 'POST' }).catch(() => {});
+    };
+    if (!DevChat._heartbeatVisHandler) {
+      // Bump immediately on regaining visibility so a just-refocused
+      // session isn't caught by the next sweep tick.
+      DevChat._heartbeatVisHandler = () => { if (document.visibilityState === 'visible') beat(); };
+      document.addEventListener('visibilitychange', DevChat._heartbeatVisHandler);
+    }
+    if (DevChat._heartbeatTimer) return;
+    DevChat._heartbeatTimer = setInterval(beat, 60000);
+  },
+
   async openSession(sessionId) {
     try {
       const res = await fetch(`/api/sessions/${sessionId}`);
@@ -441,6 +467,7 @@ const DevChat = {
       }
 
       DevChat.currentSession = session;
+      DevChat._startHeartbeat();
       // Restore the spec viewer's open/closed state from localStorage
       // before the caller's renderChatView fires, so a refresh on a
       // session that had the viewer open paints with the panel

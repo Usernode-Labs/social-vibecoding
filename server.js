@@ -819,10 +819,15 @@ function startSessionAutoPauseSweeper(config) {
   const pool = getPool(config);
   log.info('server', 'Session auto-pause sweeper started', {
     idleMs: config.sessionAutopauseIdleMs,
+    stagingIdleMs: config.stagingIdleTeardownMs,
     sweepIntervalMs: config.sessionSweepIntervalMs,
   });
   sessionSweeperHandle = setInterval(async () => {
     if (lifecycle.isShuttingDown()) return;
+
+    // Pass 1: auto-pause idle 'active' sessions (worker + slot only;
+    // staging is left up for the cheap-resume window). Never pause a
+    // session mid-turn.
     try {
       const { rows } = await pool.query(
         `SELECT id FROM chat_sessions
@@ -833,9 +838,6 @@ function startSessionAutoPauseSweeper(config) {
         [config.sessionAutopauseIdleMs]
       );
       for (const row of rows) {
-        // Never auto-pause a session with a CC turn in flight — that would
-        // kill the user's running turn. isInFlight mirrors the worker
-        // registry's per-session inFlight flag.
         if (worker.isInFlight(row.id)) continue;
         try {
           await sessionLifecycle.pauseSession({ pool, sessionId: row.id, reason: 'auto-idle' });
@@ -845,6 +847,34 @@ function startSessionAutoPauseSweeper(config) {
       }
     } catch (err) {
       log.warn('server', 'Session auto-pause sweep failed', { err: err.message });
+    }
+
+    // Pass 2: staging GC. Reclaim the staging container + cloned DB from
+    // sessions cold past the (much longer) staging-idle window. Skips
+    // promoted/merging (their preview backs the group vote) and anything
+    // mid-turn. Status is untouched — only the preview is reclaimed.
+    if (config.stagingIdleTeardownMs && config.stagingIdleTeardownMs > 0) {
+      try {
+        const { rows } = await pool.query(
+          `SELECT id FROM chat_sessions
+           WHERE staging_container_id IS NOT NULL
+             AND status NOT IN ('promoted', 'merging', 'merged', 'archived')
+             AND last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0)
+           ORDER BY last_activity_at ASC
+           LIMIT 20`,
+          [config.stagingIdleTeardownMs]
+        );
+        for (const row of rows) {
+          if (worker.isInFlight(row.id)) continue;
+          try {
+            await sessionLifecycle.teardownStagingForSession({ pool, sessionId: row.id, reason: 'idle-gc' });
+          } catch (err) {
+            log.warn('server', 'Staging GC failed', { sessionId: row.id, err: err.message });
+          }
+        }
+      } catch (err) {
+        log.warn('server', 'Staging GC sweep failed', { err: err.message });
+      }
     }
   }, config.sessionSweepIntervalMs).unref();
 }

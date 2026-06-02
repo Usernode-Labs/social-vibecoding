@@ -365,7 +365,16 @@ function sessionRoutes(config) {
         `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
-        return res.status(429).json({ error: 'Global staging limit reached. Try again later.' });
+        // At the global cap: try to reclaim a slot from a globally idle
+        // session (idle past the pressure grace window, not mid-turn)
+        // instead of making this user wait for the slow 2h auto-pause.
+        // Only 429 if everything is genuinely active.
+        const { freed } = await sessionLifecycle.freeGlobalSlot({
+          pool, graceMs: config.sessionPressureGraceMs,
+        });
+        if (!freed) {
+          return res.status(429).json({ error: 'Platform is at capacity right now. Try again in a few minutes.' });
+        }
       }
 
       const branchName = `dev/${req.user.username}-${Date.now()}`;
@@ -428,6 +437,28 @@ function sessionRoutes(config) {
     } catch (err) {
       log.error('sessions', 'Failed to get session', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // POST /api/sessions/:id/activity
+  //   Lightweight heartbeat from the dev-chat UI. While the user has a
+  //   session open and the tab visible, the client pings this so
+  //   last_activity_at stays fresh — that's what lets the auto-pause
+  //   timer run on a short (~5 min) worker-eviction-aligned window
+  //   without pausing sessions someone is actively reading. One indexed
+  //   UPDATE; only bumps 'active'/'promoted' rows owned by the caller.
+  router.post('/api/sessions/:id/activity', async (req, res) => {
+    try {
+      await pool.query(
+        `UPDATE chat_sessions SET last_activity_at = NOW()
+         WHERE id = $1 AND user_id = $2 AND status IN ('active', 'promoted')`,
+        [req.params.id, req.user.id]
+      );
+      res.json({ ok: true });
+    } catch (err) {
+      // Best-effort — a failed heartbeat just risks an earlier auto-pause,
+      // which is recoverable (reopening auto-resumes). Don't 500-spam.
+      res.json({ ok: false });
     }
   });
 
@@ -578,7 +609,15 @@ function sessionRoutes(config) {
         `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
       );
       if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
-        return res.status(429).json({ error: 'Global session limit reached. Try again in a bit.' });
+        // At the global cap: reclaim a slot from a globally idle session
+        // (not this one) rather than blocking the reopen. Only 429 if
+        // everything else is genuinely active.
+        const { freed } = await sessionLifecycle.freeGlobalSlot({
+          pool, graceMs: config.sessionPressureGraceMs, excludeSessionId: sessionId,
+        });
+        if (!freed) {
+          return res.status(429).json({ error: 'Platform is at capacity right now. Try again in a few minutes.' });
+        }
       }
 
       const { rows: countRows } = await pool.query(
