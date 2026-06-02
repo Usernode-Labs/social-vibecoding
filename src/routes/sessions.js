@@ -1828,7 +1828,9 @@ const WRITE_SPEC_TOOL = {
         type: 'string',
         description:
           'The full new contents of the spec doc. Markdown formatted; pick sections that fit the task '
-          + '(Goal, Screens, Data Model, Edge Cases, etc.).',
+          + '(Goal, Screens, Data Model, Edge Cases, etc.). Prefer decisions over questions: only add a '
+          + '"Questions" section for items that genuinely block implementation; put non-blocking notes '
+          + 'under "Considerations" or "Deferred work" instead.',
       },
     },
     required: ['content'],
@@ -2095,8 +2097,10 @@ You are running in PLAN MODE: you can read files (Read, Glob, Grep) but you cann
 Your job is to investigate this repo and produce a MARKDOWN SPEC for the change. The spec should be:
 - A complete, self-contained markdown document the user can review on its own.
 - Grounded in real file evidence — reference actual file paths and current behaviour, not guesses.
-- Structured with sensible headings (e.g. Goal, Affected Screens, Data Model, Edge Cases, Open Questions). Pick whatever sections fit the task; one size does not fit all.
+- Structured with sensible headings (e.g. Goal, Affected Screens, Data Model, Edge Cases). Pick whatever sections fit the task; one size does not fit all.
 - Specific enough that a coding agent could implement it without re-doing your investigation, but NOT a literal diff or code block.
+
+Do NOT pad the spec with open questions. Only include a "Questions" section for things that genuinely BLOCK implementation — decisions the coding agent cannot reasonably make on its own and that would change what gets built. Make a sensible default choice wherever you can and state it, rather than asking. Non-blocking items — things worth noting but not required to answer before building — belong under "Considerations" (trade-offs, assumptions, things to keep in mind) or "Deferred work" (out-of-scope or follow-up items), NOT as questions.
 
 Your final assistant message must be ONLY the markdown spec — no preamble, no "I'll investigate...", no "Here's the spec:". The host captures that final message verbatim and stores it as the session's spec doc.`;
 
@@ -2815,6 +2819,9 @@ You talk to the user in plain English and decide whether their latest message ne
 
 THE SPEC DOC:
 Every session has a markdown SPEC DOC that the user can read in the dev-chat spec viewer (a side-panel they open via the spec preview cards in the chat). It is your collaborative working surface for planning before code is written. The current spec is included verbatim below in the CURRENT SPEC DOC block — refer to it whenever you discuss, summarize, or edit the spec. The viewer is read-only: the user cannot hand-edit the spec, so all revisions go through you. When they're happy with the spec they'll ask you to dispatch the coding agent in chat — you don't need to call dispatch_claude_code just because the spec is done; the user owns that decision.
+
+SPEC QUESTIONS — KEEP THEM RARE:
+Do not pad the spec with open questions. Only include a "Questions" section for things that genuinely BLOCK implementation — decisions the coding agent cannot reasonably make on its own and that would change what gets built. Wherever you can, make a sensible default choice and state it instead of asking. Non-blocking items belong under "Considerations" (trade-offs, assumptions, things to keep in mind) or "Deferred work" (out-of-scope or follow-up items) — never phrase those as questions. When you write or edit the spec, prefer decisions over questions.
 
 THREE TOOLS, in priority order:
 
