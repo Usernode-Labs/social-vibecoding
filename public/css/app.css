@@ -1391,6 +1391,28 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   }
 }
 
+/* Horizontal divider between the "App information and activity" panel
+   and the chat below it. Renders as a plain 1px border when the panel
+   is collapsed; the .gc-panel-resizer-draggable modifier (added when
+   the panel is open) turns it into a 5px row-resize handle. */
+.gc-panel-resizer {
+  flex-shrink: 0;
+  height: 1px;
+  background: var(--border, rgba(255,255,255,0.12));
+}
+
+.gc-panel-resizer-draggable {
+  height: 5px;
+  cursor: row-resize;
+  touch-action: none;
+  transition: background 120ms ease;
+}
+
+.gc-panel-resizer-draggable:hover,
+.gc-panel-resizer-active {
+  background: rgb(139 92 246);
+}
+
 /* Draggable divider between chat pane and spec panel. Hidden by
    default, only visible when the panel is open AND the viewport is
    wide enough for side-panel layout. Same shape as the dev-chat

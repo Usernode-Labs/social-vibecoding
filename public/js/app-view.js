@@ -7,6 +7,15 @@ const AppView = {
   iframeFocused: false,
 
   _INFO_PANEL_OPEN_KEY_PREFIX: 'gc-info-panel-open-v1:',
+  // Persisted height of the "App information and activity" panel,
+  // stored as a percentage (10–90) of the group-chat container so it
+  // survives viewport/zoom changes. Per-app slug, mirroring the
+  // open-state key above.
+  _INFO_PANEL_HEIGHT_KEY_PREFIX: 'gc-info-panel-height-v1:',
+  // Clamp the panel between 10% and 90% of the container so neither the
+  // panel nor the chat below it can be dragged away entirely.
+  _INFO_PANEL_MIN_PCT: 10,
+  _INFO_PANEL_MAX_PCT: 90,
 
   _readInfoPanelOpen(appSlug) {
     if (!appSlug) return false;
@@ -17,6 +26,22 @@ const AppView = {
   _writeInfoPanelOpen(appSlug, isOpen) {
     if (!appSlug) return;
     try { localStorage.setItem(AppView._INFO_PANEL_OPEN_KEY_PREFIX + appSlug, isOpen ? '1' : '0'); }
+    catch {}
+  },
+
+  _readInfoPanelHeight(appSlug) {
+    if (!appSlug) return null;
+    try {
+      const v = parseFloat(localStorage.getItem(AppView._INFO_PANEL_HEIGHT_KEY_PREFIX + appSlug) || '');
+      if (!Number.isFinite(v)) return null;
+      return Math.min(AppView._INFO_PANEL_MAX_PCT, Math.max(AppView._INFO_PANEL_MIN_PCT, v));
+    } catch { return null; }
+  },
+
+  _writeInfoPanelHeight(appSlug, pct) {
+    if (!appSlug) return;
+    const clamped = Math.min(AppView._INFO_PANEL_MAX_PCT, Math.max(AppView._INFO_PANEL_MIN_PCT, pct));
+    try { localStorage.setItem(AppView._INFO_PANEL_HEIGHT_KEY_PREFIX + appSlug, String(Math.round(clamped * 10) / 10)); }
     catch {}
   },
 
@@ -332,9 +357,18 @@ const AppView = {
              inside #app-content's flex track). overflow-y-auto turns
              the whole panel into a scroll region — toggle button is at
              the top, so it scrolls into view at content-start. -->
-        <div id="gc-panel" class="shrink-0 max-h-[50%] overflow-y-auto overscroll-contain border-b border-zinc-200 dark:border-zinc-800">
+        <div id="gc-panel" class="shrink-0 max-h-[50%] overflow-y-auto overscroll-contain">
           <div id="gc-panel-content" class="px-3 py-2"></div>
         </div>
+
+        <!-- Draggable divider between the info/activity panel and the
+             chat below it. Acts as a plain 1px border when the panel is
+             collapsed; once the panel is open the .gc-panel-resizer-draggable
+             class turns it into a grabbable handle. AppView._initPanelResizer
+             wires a pointer-event drag that sets the panel's inline height
+             (clamped to 10–90% of the container) and persists the final
+             percentage to localStorage. -->
+        <div id="gc-panel-resizer" class="gc-panel-resizer" role="separator" aria-orientation="horizontal" aria-label="Resize app information panel"></div>
 
         <div class="gc-tab-body flex-1 flex min-h-0">
           <div class="gc-chat-pane flex-1 flex flex-col min-h-0">
@@ -426,6 +460,11 @@ const AppView = {
       // opens a fresh connection on the first visit to an app.
       GroupChat.mount(AppView.appData.slug);
       AppView.loadVotePanel(AppView.appData.slug);
+      // Wire the draggable info-panel divider and restore its saved
+      // height. Bind + sync immediately (the #gc-panel / resizer nodes
+      // exist now even though loadVotePanel fills the content async).
+      AppView._initPanelResizer(AppView.appData.slug);
+      AppView._syncPanelResizer(AppView.appData.slug);
     }
     // Re-render any staged reply preview (the composer DOM was just
     // recreated on this tab (re-)entry, but replyDraft persists).
@@ -458,6 +497,114 @@ const AppView = {
         snippet: t.dataset.prTitle || `PR #${t.dataset.prNumber || ''}`,
         href: t.dataset.prUrl || null,
       });
+    });
+  },
+
+  // Apply (or clear) the persisted panel height. Only takes effect when
+  // the panel is open: a collapsed panel stays content-sized (just the
+  // pill) so we don't strand a tall empty box above the chat. The saved
+  // value is a percentage of the container, re-applied as an inline
+  // height so it tracks viewport resizes. maxHeight is forced to none so
+  // it can override the default Tailwind max-h-[50%] cap.
+  _applySavedPanelHeight(slug) {
+    const panel = document.getElementById('gc-panel');
+    if (!panel) return;
+    const open = AppView._readInfoPanelOpen(slug);
+    const pct = open ? AppView._readInfoPanelHeight(slug) : null;
+    if (pct != null) {
+      panel.style.height = `${pct}%`;
+      panel.style.maxHeight = 'none';
+    } else {
+      // Revert to the default content-driven height (capped by the
+      // Tailwind max-h-[50%] class on the element).
+      panel.style.height = '';
+      panel.style.maxHeight = '';
+    }
+  },
+
+  // Toggle the resizer between "plain divider" and "grabbable handle"
+  // based on whether the panel is open, and (re)apply the saved height.
+  // Call this on mount and whenever the open state flips.
+  _syncPanelResizer(slug) {
+    const resizer = document.getElementById('gc-panel-resizer');
+    if (resizer) {
+      resizer.classList.toggle('gc-panel-resizer-draggable', AppView._readInfoPanelOpen(slug));
+    }
+    AppView._applySavedPanelHeight(slug);
+  },
+
+  // Wire the pointer-event drag handler on the panel resizer. Idempotent
+  // per handle element (the node is recreated on every tab re-render, so
+  // we tag it to avoid double-binding within a single render).
+  _initPanelResizer(slug) {
+    const handle = document.getElementById('gc-panel-resizer');
+    const panel = document.getElementById('gc-panel');
+    if (!handle || !panel) return;
+    if (handle._gcPanelResizerBound) return;
+    handle._gcPanelResizerBound = true;
+
+    handle.addEventListener('pointerdown', (e) => {
+      // Only resize when the panel is open — a collapsed panel has no
+      // meaningful height to drag.
+      if (!AppView._readInfoPanelOpen(slug)) return;
+      const container = panel.parentElement;
+      if (!container) return;
+      e.preventDefault();
+
+      const containerRect = container.getBoundingClientRect();
+      const containerH = containerRect.height;
+      if (containerH <= 0) return;
+      const minPx = (AppView._INFO_PANEL_MIN_PCT / 100) * containerH;
+      const maxPx = (AppView._INFO_PANEL_MAX_PCT / 100) * containerH;
+
+      handle.setPointerCapture(e.pointerId);
+      handle.classList.add('gc-panel-resizer-active');
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'row-resize';
+      panel.style.maxHeight = 'none';
+
+      // Anchor the chat by its distance from the bottom while dragging.
+      // Resizing the chat pane changes its height, and the messages list
+      // is top-anchored, so without this the visible messages shift (and
+      // the async ResizeObserver in group-chat.js only re-pins when the
+      // user happens to be at the very bottom, a frame late). Capturing
+      // the bottom-gap and restoring it synchronously on every step keeps
+      // the same messages steady relative to the input box — whether the
+      // user is pinned to the bottom or scrolled up reading history.
+      const msgs = document.getElementById('gc-messages');
+      const bottomGap = msgs
+        ? Math.max(0, msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight)
+        : 0;
+      const pinChat = () => {
+        if (!msgs) return;
+        msgs.scrollTop = Math.max(0, msgs.scrollHeight - msgs.clientHeight - bottomGap);
+      };
+
+      let finalPct = null;
+      const onMove = (ev) => {
+        // The panel's top edge is the container top; its bottom edge
+        // follows the pointer.
+        const nextPx = Math.max(minPx, Math.min(maxPx, ev.clientY - containerRect.top));
+        finalPct = (nextPx / containerH) * 100;
+        panel.style.height = `${finalPct}%`;
+        pinChat();
+      };
+
+      const onUp = () => {
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', onUp);
+        handle.removeEventListener('pointercancel', onUp);
+        try { handle.releasePointerCapture(e.pointerId); } catch {}
+        handle.classList.remove('gc-panel-resizer-active');
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+        pinChat();
+        if (finalPct != null) AppView._writeInfoPanelHeight(slug, finalPct);
+      };
+
+      handle.addEventListener('pointermove', onMove);
+      handle.addEventListener('pointerup', onUp);
+      handle.addEventListener('pointercancel', onUp);
     });
   },
 
@@ -813,6 +960,9 @@ const AppView = {
         const arrow = document.querySelector('#gc-panel-toggle span:first-child');
         if (body) body.classList.toggle('hidden');
         if (arrow) arrow.innerHTML = AppView.panelOpen ? '&#9660;' : '&#9654;';
+        // Flip the divider between plain border / grabbable handle and
+        // (re)apply the saved height now that the open state changed.
+        AppView._syncPanelResizer(slug);
       });
 
       // Bind hover + click handlers for any kudos buttons we just
