@@ -1191,6 +1191,19 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   padding: 12px;
 }
 
+/* Footer bar reminding the user that a spec is a plan, not a built
+   change — they still need to ask the AI in chat to build it. Only
+   rendered while viewing a non-empty draft (see _renderSpecViewer). */
+.dc-spec-viewer-build-hint {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary, #a1a1aa);
+  border-top: 1px solid var(--border, rgba(255,255,255,0.12));
+  background: var(--bg-secondary, #18181b);
+}
+
 .dc-spec-viewer-body {
   font-size: 13px;
   line-height: 1.55;

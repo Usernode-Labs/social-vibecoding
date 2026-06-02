@@ -2418,6 +2418,15 @@ const DevChat = {
         ? `<div class="dc-spec-viewer-body">${DevChat.renderMarkdown(displayContent)}</div>`
         : `<div class="p-4 text-sm text-zinc-500">No spec yet. Ask the AI to draft one.</div>`;
 
+    // Spec planning and building are two separate steps: drafting a spec
+    // does NOT build anything. Make the handoff explicit so a finished
+    // spec doesn't read as a finished change (there is no in-UI build
+    // button — the user asks the Mayor in chat). Only shown while viewing
+    // a non-empty draft, where the next action is to dispatch a build.
+    const buildHintHtml = isDraft && !draftEmpty
+      ? `<div class="dc-spec-viewer-build-hint">This is a plan, not a built change. Ready? Ask the AI in chat to build it.</div>`
+      : '';
+
     pane.innerHTML = `
       <div class="dc-spec-viewer-header">
         <select id="dc-spec-viewer-version" class="text-xs rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1">
@@ -2430,7 +2439,8 @@ const DevChat = {
       </div>
       <div class="dc-spec-viewer-body-wrap">
         ${bodyHtml}
-      </div>`;
+      </div>
+      ${buildHintHtml}`;
 
     const versionSel = pane.querySelector('#dc-spec-viewer-version');
     if (versionSel) {

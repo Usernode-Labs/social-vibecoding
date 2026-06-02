@@ -1179,6 +1179,10 @@ function sessionRoutes(config) {
               : toolKind === 'scout'
                 ? "_The scout didn't finish successfully — see the status above._"
                 : "_The coding agent didn't complete successfully — see the status messages above._";
+          } else if (toolKind === 'write_spec' || toolKind === 'edit_spec' || toolKind === 'scout') {
+            // Spec/scout just planned something — make the build handoff
+            // explicit so a finished spec doesn't read as a finished change.
+            mayorText2 = "_Spec updated — it's in the spec viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._";
           } else {
             mayorText2 = '_Done._';
           }
@@ -2850,6 +2854,7 @@ GENERAL RULES (apply to all tools):
 
 AFTER A TOOL RETURNS:
 You'll get a short summary of what happened. Write a 1-3 sentence reply to the user in plain English, referencing the spec doc / staging URL / PR if present. For dispatch_scout: tell them the spec was drafted and is available in the spec viewer. For ${specToolName}: tell them what you changed in the spec. For dispatch_claude_code: summarize what was built. If anything failed, explain briefly and suggest next steps.
+- IMPORTANT — spec→build handoff: after dispatch_scout, write_spec, or edit_spec, the spec is only PLANNED, not built. End your reply with a one-line next step that makes this explicit, e.g. "When this looks right, just tell me to build it and I'll have the coding agent implement it." Nothing gets built until the user asks — don't let a finished spec read as a finished change. (After dispatch_claude_code the change IS built, so no handoff line is needed.)
 
 STAGING BUILD FAILURES (recoverable):
 A dispatch_claude_code tool_result may report that the commit/push/PR succeeded but the staging preview failed to build. The two common causes — both surfaced verbatim in the tool_result with explicit "Fix:" instructions:
