@@ -48,8 +48,11 @@ function voteRoutes(config) {
         }
       }
 
+      // promoted_at anchors the stale-PR sweeper's "no interest since"
+      // clock; clearing stale_notified_at handles the re-promote case
+      // (a previously-stale PR that's proposed again starts fresh).
       await pool.query(
-        `UPDATE chat_sessions SET status = 'promoted' WHERE id = $1`,
+        `UPDATE chat_sessions SET status = 'promoted', promoted_at = NOW(), stale_notified_at = NULL WHERE id = $1`,
         [session.id]
       );
 
@@ -117,6 +120,15 @@ function voteRoutes(config) {
          ON CONFLICT (session_id, user_id) DO UPDATE SET vote = EXCLUDED.vote, created_at = NOW()`,
         [session.id, req.user.id, vote]
       );
+
+      // Any voting activity revives a going-stale PR: clear the warning
+      // flag so the stale sweeper restarts its clock instead of archiving.
+      if (session.stale_notified_at) {
+        await pool.query(
+          `UPDATE chat_sessions SET stale_notified_at = NULL WHERE id = $1`,
+          [session.id]
+        );
+      }
 
       if (unchanged) {
         log.debug('votes', 'Vote unchanged, skipping broadcast+merge', {

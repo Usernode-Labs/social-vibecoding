@@ -146,6 +146,10 @@ jobs:
             SESSION_SWEEP_INTERVAL_MS=${{ vars.SESSION_SWEEP_INTERVAL_MS || '60000' }}
             SESSION_LRU_ON_RESUME=${{ vars.SESSION_LRU_ON_RESUME || 'true' }}
             SESSION_PRESSURE_GRACE_MS=${{ vars.SESSION_PRESSURE_GRACE_MS || '900000' }}
+            PR_STALE_NOTIFY_MS=${{ vars.PR_STALE_NOTIFY_MS || '604800000' }}
+            PR_STALE_GRACE_MS=${{ vars.PR_STALE_GRACE_MS || '259200000' }}
+            ARCHIVED_RETENTION_MS=${{ vars.ARCHIVED_RETENTION_MS || '2592000000' }}
+            STALE_SWEEP_INTERVAL_MS=${{ vars.STALE_SWEEP_INTERVAL_MS || '3600000' }}
             ENVEOF
             chmod 600 .env
 

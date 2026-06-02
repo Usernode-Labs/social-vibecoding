@@ -243,6 +243,27 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ 
 -- Supports the sweeper's "active + idle past threshold" scan.
 CREATE INDEX IF NOT EXISTS chat_sessions_activity_idx ON chat_sessions(status, last_activity_at);
 
+-- Stale-promoted-PR policy + reversible archive.
+--   promoted_at       : when the session was proposed to the group. With
+--                       the latest pr_votes timestamp this gives the
+--                       "interest" recency the stale sweeper measures.
+--   stale_notified_at : set when the author was warned the PR is going
+--                       stale; cleared when a new vote revives it. The
+--                       grace-then-archive step keys off this.
+--   archived_at       : when the session was archived. Archive is now
+--                       REVERSIBLE within a retention window — the CC
+--                       volume + branch are kept so /unarchive restores
+--                       it; a hard GC purges the volume only after
+--                       archived_at passes ARCHIVED_RETENTION_MS.
+--   cc_purged         : TRUE once the hard GC has destroyed the CC volume
+--                       (memory gone). /unarchive still works but starts
+--                       a fresh Claude session.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS promoted_at        TIMESTAMPTZ;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS stale_notified_at  TIMESTAMPTZ;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS archived_at        TIMESTAMPTZ;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS cc_purged          BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS chat_sessions_archived_idx ON chat_sessions(status, archived_at);
+
 CREATE TABLE IF NOT EXISTS chat_session_specs (
   id                  SERIAL PRIMARY KEY,
   session_id          INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,

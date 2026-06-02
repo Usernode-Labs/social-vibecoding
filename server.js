@@ -309,6 +309,12 @@ async function start() {
   // CC volume + branch + PR are preserved; reopening auto-resumes.
   startSessionAutoPauseSweeper(config);
 
+  // Stale-promoted-PR policy + reversible-archive GC. Warns authors of
+  // promoted PRs that have gone quiet, auto-archives them after a grace
+  // period, and hard-purges archived CC volumes once their retention
+  // window elapses. Day-scale, so it polls on its own slow interval.
+  startStalePrSweeper(config);
+
   // If the previous server died mid-merge, some sessions may be stuck
   // in the 'merging' claim state. There's no way to know from here
   // whether the GitHub merge + prod rebuild actually completed — but
@@ -879,6 +885,123 @@ function startSessionAutoPauseSweeper(config) {
   }, config.sessionSweepIntervalMs).unref();
 }
 
+let stalePrSweeperHandle = null;
+
+// Stale-promoted-PR policy + reversible-archive hard GC.
+//   Pass 1 (notify): a promoted PR with no voting interest for
+//     PR_STALE_NOTIFY_MS gets its author a 'stale_pr' notification, and
+//     we stamp stale_notified_at so the warning fires once.
+//   Pass 2 (archive): if still untouched PR_STALE_GRACE_MS after that
+//     warning, auto-archive it (reversible — keeps CC + branch).
+//   Pass 3 (GC): archived sessions past ARCHIVED_RETENTION_MS get their
+//     CC volume purged so memory stops occupying disk.
+// "Interest" = the later of promoted_at and the newest vote; casting a
+// vote clears stale_notified_at (see routes/votes.js), reviving the PR.
+function startStalePrSweeper(config) {
+  if (stalePrSweeperHandle) return;
+  const notifyEnabled = config.prStaleNotifyMs > 0;
+  const gcEnabled = config.archivedRetentionMs > 0;
+  if (!notifyEnabled && !gcEnabled) {
+    log.info('server', 'Stale-PR / archived-GC sweeper disabled');
+    return;
+  }
+  const pool = getPool(config);
+  const notifications = require('./src/services/notifications');
+  log.info('server', 'Stale-PR / archived-GC sweeper started', {
+    notifyMs: config.prStaleNotifyMs, graceMs: config.prStaleGraceMs,
+    retentionMs: config.archivedRetentionMs, intervalMs: config.staleSweepIntervalMs,
+  });
+  stalePrSweeperHandle = setInterval(async () => {
+    if (lifecycle.isShuttingDown()) return;
+
+    if (notifyEnabled) {
+      // Pass 1: warn authors of quiet promoted PRs (once).
+      try {
+        const { rows } = await pool.query(
+          `SELECT cs.id AS session_id, cs.user_id, cs.app_id, cs.pr_title, cs.pr_number,
+                  a.slug AS app_slug, a.name AS app_name
+           FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
+           WHERE cs.status = 'promoted'
+             AND cs.stale_notified_at IS NULL
+             AND GREATEST(
+                   COALESCE(cs.promoted_at, cs.created_at),
+                   COALESCE((SELECT MAX(created_at) FROM pr_votes WHERE session_id = cs.id), cs.promoted_at, cs.created_at)
+                 ) < NOW() - make_interval(secs => $1::double precision / 1000.0)
+           LIMIT 50`,
+          [config.prStaleNotifyMs]
+        );
+        for (const row of rows) {
+          try {
+            const inserted = await notifications.createStalePrNotification(pool, {
+              userId: row.user_id, appId: row.app_id, sessionId: row.session_id,
+            });
+            await pool.query(`UPDATE chat_sessions SET stale_notified_at = NOW() WHERE id = $1`, [row.session_id]);
+            if (inserted[0]) {
+              ws.pushNotificationToUser(row.user_id, {
+                type: 'notification_new',
+                notification: notifications.serialize({
+                  id: inserted[0].id, kind: 'stale_pr', read_at: null, created_at: inserted[0].created_at,
+                  app_id: row.app_id, app_slug: row.app_slug, app_name: row.app_name,
+                  chat_message_id: null, message_content: null,
+                  session_id: row.session_id, pr_title: row.pr_title, pr_number: row.pr_number,
+                  source_username: null, detail: null,
+                }),
+              });
+            }
+          } catch (err) {
+            log.warn('server', 'Stale-PR notify failed', { sessionId: row.session_id, err: err.message });
+          }
+        }
+      } catch (err) {
+        log.warn('server', 'Stale-PR notify sweep failed', { err: err.message });
+      }
+
+      // Pass 2: archive PRs still untouched after the grace period.
+      try {
+        const { rows } = await pool.query(
+          `SELECT id FROM chat_sessions
+           WHERE status = 'promoted' AND stale_notified_at IS NOT NULL
+             AND stale_notified_at < NOW() - make_interval(secs => $1::double precision / 1000.0)
+           LIMIT 50`,
+          [config.prStaleGraceMs]
+        );
+        for (const row of rows) {
+          if (worker.isInFlight(row.id)) continue;
+          try {
+            await sessionLifecycle.archiveSession({ pool, sessionId: row.id, reason: 'stale-pr' });
+          } catch (err) {
+            log.warn('server', 'Stale-PR archive failed', { sessionId: row.id, err: err.message });
+          }
+        }
+      } catch (err) {
+        log.warn('server', 'Stale-PR archive sweep failed', { err: err.message });
+      }
+    }
+
+    if (gcEnabled) {
+      // Pass 3: hard-GC archived CC volumes past the retention window.
+      try {
+        const { rows } = await pool.query(
+          `SELECT id FROM chat_sessions
+           WHERE status = 'archived' AND cc_purged = FALSE AND archived_at IS NOT NULL
+             AND archived_at < NOW() - make_interval(secs => $1::double precision / 1000.0)
+           LIMIT 50`,
+          [config.archivedRetentionMs]
+        );
+        for (const row of rows) {
+          try {
+            await sessionLifecycle.purgeArchivedCc({ pool, sessionId: row.id });
+          } catch (err) {
+            log.warn('server', 'Archived CC GC failed', { sessionId: row.id, err: err.message });
+          }
+        }
+      } catch (err) {
+        log.warn('server', 'Archived CC GC sweep failed', { err: err.message });
+      }
+    }
+  }, config.staleSweepIntervalMs).unref();
+}
+
 // Graceful shutdown: mark drain state so new chats/app-creates/builds get
 // 503'd, wait up to DRAIN_TIMEOUT_MS for in-flight HTTP handlers to
 // finish flushing DB writes, then exit.
@@ -909,6 +1032,10 @@ async function cleanup() {
   if (sessionSweeperHandle) {
     clearInterval(sessionSweeperHandle);
     sessionSweeperHandle = null;
+  }
+  if (stalePrSweeperHandle) {
+    clearInterval(stalePrSweeperHandle);
+    stalePrSweeperHandle = null;
   }
 
   const startingCount = getActiveWorkerCount();

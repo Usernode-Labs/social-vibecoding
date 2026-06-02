@@ -300,7 +300,7 @@ const DevChat = {
           <span class="dc-active-title" title="${title}">${title}</span>
           ${isOtherApp ? `<span class="dc-active-app" title="${appName}">${appName}</span>` : ''}
           <button class="dc-active-action ${isPaused ? 'dc-active-action-resume' : 'dc-active-action-pause'}" data-id="${s.id}" data-action="${primaryAction}">${primaryLabel}</button>
-          <button class="dc-active-archive" data-id="${s.id}" data-name="${title}" title="Archive (drops Claude's memory & closes PR)">Archive</button>
+          <button class="dc-active-archive" data-id="${s.id}" data-name="${title}" title="Archive (frees the slot; restorable for a while)">Archive</button>
           <svg class="dc-active-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
         </div>`;
     }).join('');
@@ -367,7 +367,7 @@ const DevChat = {
         const name = btn.dataset.name || 'this session';
         const ok = await ConfirmModal.show({
           title: `Archive "${name}"?`,
-          message: "This drops Claude's memory and closes the PR. It can't be undone.",
+          message: "This closes the PR and frees the slot. You can Unarchive it later from the app's session list (Claude's memory is kept for a while).",
           confirmLabel: 'Archive',
           danger: true,
         });
@@ -1813,6 +1813,7 @@ const DevChat = {
         'text-zinc-500';
       const isPausable = s.status === 'active' || s.status === 'promoted';
       const isPaused = s.status === 'paused';
+      const isArchived = s.status === 'archived';
       const isActionable = isPausable || isPaused;
       const date = new Date(s.created_at).toLocaleDateString();
       return `
@@ -1822,7 +1823,8 @@ const DevChat = {
           ${s.pr_url ? `<a href="${s.pr_url}" target="_blank" class="text-xs text-violet-400 hover:text-violet-300" onclick="event.stopPropagation()">PR#${s.pr_number}</a>` : ''}
           ${isPausable ? `<button class="dc-pause-btn text-xs text-zinc-400 hover:text-emerald-400" data-id="${s.id}" data-action="pause" onclick="event.stopPropagation()">Pause</button>` : ''}
           ${isPaused ? `<button class="dc-pause-btn text-xs text-emerald-400 hover:text-emerald-300" data-id="${s.id}" data-action="resume" onclick="event.stopPropagation()">Resume</button>` : ''}
-          ${isActionable ? `<button class="dc-archive-btn text-xs text-zinc-500 hover:text-red-400" data-id="${s.id}" data-name="${escapeHtml(s.pr_title || s.branch_name || 'Session')}" title="Archive (drops Claude's memory & closes PR)" onclick="event.stopPropagation()">Archive</button>` : ''}
+          ${isArchived ? `<button class="dc-unarchive-btn text-xs text-emerald-400 hover:text-emerald-300" data-id="${s.id}" onclick="event.stopPropagation()" title="Restore this session (reopens the PR)">Unarchive</button>` : ''}
+          ${isActionable ? `<button class="dc-archive-btn text-xs text-zinc-500 hover:text-red-400" data-id="${s.id}" data-name="${escapeHtml(s.pr_title || s.branch_name || 'Session')}" title="Archive (frees the slot; restorable for a while)" onclick="event.stopPropagation()">Archive</button>` : ''}
           <span class="text-xs text-zinc-600">${date}</span>
         </div>`;
     }).join('');
@@ -1868,22 +1870,55 @@ const DevChat = {
       });
     });
 
-    // Archive (destructive, irreversible). Mirror the cross-app
-    // panel's confirm dialog — same wording, same data-name lookup,
-    // same webview-safe ConfirmModal — so the two surfaces behave
-    // identically.
+    // Archive. Reversible now: it frees the active-session slot, tears
+    // down staging + worker, and closes the PR, but keeps Claude's memory
+    // and the branch so Unarchive can restore it (until the retention GC
+    // eventually purges memory). Wording reflects that it's recoverable.
     container.querySelectorAll('.dc-archive-btn').forEach((btn) => {
       btn.addEventListener('click', async () => {
         const name = btn.dataset.name || 'this session';
         const ok = await ConfirmModal.show({
           title: `Archive "${name}"?`,
-          message: "This drops Claude's memory and closes the PR. It can't be undone.",
+          message: "This closes the PR and frees the slot. You can Unarchive it later to restore it (Claude's memory is kept for a while).",
           confirmLabel: 'Archive',
           danger: true,
         });
         if (!ok) return;
         btn.textContent = '...';
         await fetch(`/api/sessions/${btn.dataset.id}/archive`, { method: 'POST' });
+        if (AppView.appData) {
+          await DevChat.loadSessions(AppView.appData.slug);
+          DevChat.renderSessionList();
+        }
+        await DevChat.loadActiveSessions();
+      });
+    });
+
+    // Unarchive. Restores an archived session to 'paused' (opening it then
+    // auto-resumes) and best-effort reopens its PR. If the retention GC
+    // already purged the CC volume, we warn that Claude starts fresh.
+    container.querySelectorAll('.dc-unarchive-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const original = btn.textContent;
+        btn.textContent = '...';
+        btn.disabled = true;
+        try {
+          const resp = await fetch(`/api/sessions/${btn.dataset.id}/unarchive`, { method: 'POST' });
+          const data = await resp.json().catch(() => ({}));
+          if (!resp.ok) {
+            alert(data.error || 'Failed to unarchive session');
+            btn.textContent = original;
+            btn.disabled = false;
+            return;
+          }
+          if (data.ccPurged) {
+            alert("Session restored. Note: Claude's memory had already been cleared, so this picks up as a fresh chat on the same branch.");
+          }
+        } catch {
+          btn.textContent = original;
+          btn.disabled = false;
+          return;
+        }
         if (AppView.appData) {
           await DevChat.loadSessions(AppView.appData.slug);
           DevChat.renderSessionList();

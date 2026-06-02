@@ -462,72 +462,48 @@ function sessionRoutes(config) {
     }
   });
 
-  // Archive a session
+  // Archive a session. Reversible: tears down staging + worker and closes
+  // the PR, but KEEPS the CC volume + branch so /unarchive can restore it
+  // within the retention window (a background GC purges the volume only
+  // after ARCHIVED_RETENTION_MS). Use the service so the stale-PR sweeper
+  // archives the exact same way.
   router.post('/api/sessions/:id/archive', async (req, res) => {
     try {
-      const { rows } = await pool.query(
-        `UPDATE chat_sessions SET status = 'archived'
-         WHERE id = $1 AND user_id = $2 AND status IN ('active', 'promoted', 'paused')
-         RETURNING id`,
-        [req.params.id, req.user.id]
-      );
-      if (!rows.length) return res.status(404).json({ error: 'Session not found or already archived' });
+      const sessionId = parseInt(req.params.id, 10);
 
-      // Teardown staging container if any
-      const { rows: sessionRows } = await pool.query(
-        `SELECT cs.*, a.slug as app_slug, a.repo_url FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id WHERE cs.id = $1`,
-        [req.params.id]
-      );
-      if (sessionRows[0]?.staging_container_id) {
-        await staging.teardownStaging(sessionRows[0], { slug: sessionRows[0].app_slug }).catch(() => {});
-      }
-
-      // Close the PR on GitHub
-      const session = sessionRows[0];
-      if (session?.pr_number) {
-        try {
-          const [, owner, repo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-          if (owner && repo) {
-            const octokit = await github.getInstallationOctokit(owner).catch(() => null);
-            const pat = process.env.GITHUB_BOT_TOKEN;
-            if (pat) {
-              const { Octokit } = await import('@octokit/rest');
-              const ok = new Octokit({ auth: pat });
-              await ok.rest.pulls.update({
-                owner, repo,
-                pull_number: session.pr_number,
-                state: 'closed',
-              });
-              log.info('sessions', 'PR closed', { pr: session.pr_number });
-            }
-          }
-        } catch (err) {
-          log.warn('sessions', 'Failed to close PR', { err: err.message });
-        }
-      }
-
-      // Tear down the worker container. With long-lived workers, the
-      // container can exist even when nothing is in flight (warm-idle
-      // waiting for the next dispatch), so we always try destroyWorker
-      // — it's a no-op if the container is already gone. activeWorkers
-      // is only the in-flight set, not the warm-container set.
-      const sessionId = parseInt(req.params.id);
+      // Release any in-flight bookkeeping first (archiving mid-turn).
       if (activeWorkers.has(sessionId)) {
         activeWorkers.delete(sessionId);
         workerProgress.clear(sessionId);
       }
-      await worker.destroyWorker(`usernode-worker-${sessionId}`).catch(() => {});
 
-      // Drop the persistent CC session volume — the chat is gone, so its
-      // conversation memory shouldn't linger on disk.
-      await worker.destroyCcVolume(sessionId).catch(() => {});
-
-      const { pushSessionUpdate } = require('../services/ws');
-      pushSessionUpdate({ action: 'archived', sessionId, appSlug: session?.app_slug });
-      log.info('sessions', 'Session archived', { sessionId });
+      const { archived } = await sessionLifecycle.archiveSession({
+        pool, sessionId, userId: req.user.id, reason: 'manual',
+      });
+      if (!archived) return res.status(404).json({ error: 'Session not found or already archived' });
       res.json({ ok: true });
     } catch (err) {
       log.error('sessions', 'Archive failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // POST /api/sessions/:id/unarchive
+  //   Reverse an archive (within the retention window). Restores the
+  //   session to 'paused' and best-effort reopens the PR; reopening it in
+  //   the UI then auto-resumes via the normal path. If the CC volume was
+  //   already GC'd (cc_purged), the restore still works but Claude starts
+  //   fresh — we surface that so the UI can warn.
+  router.post('/api/sessions/:id/unarchive', async (req, res) => {
+    try {
+      const sessionId = parseInt(req.params.id, 10);
+      const { unarchived, ccPurged, prReopened } = await sessionLifecycle.unarchiveSession({
+        pool, sessionId, userId: req.user.id,
+      });
+      if (!unarchived) return res.status(404).json({ error: 'Session not found or not archived' });
+      res.json({ ok: true, ccPurged: !!ccPurged, prReopened: !!prReopened });
+    } catch (err) {
+      log.error('sessions', 'Unarchive failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

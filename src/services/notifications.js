@@ -93,6 +93,23 @@ async function createReactionNotification(pool, { appId, messageId, senderId, re
   return rows;
 }
 
+// Stale-PR warning. Fired by the stale-promoted-PR sweeper when a PR
+// proposed to the group has had no voting interest for the configured
+// window. Addressed to the PR author (session.user_id) so they can nudge
+// the group or merge/withdraw before the grace period elapses and it's
+// auto-archived. System-generated, so source_user_id is null; references
+// the session so the dropdown can render the PR title + a deep link.
+async function createStalePrNotification(pool, { userId, appId, sessionId }) {
+  if (!userId) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
+     VALUES ($1, $2, $3, NULL, 'stale_pr')
+     RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
+    [userId, appId, sessionId]
+  );
+  return rows;
+}
+
 // Fetch up to `limit` recent notifications for a user, newest first.
 // Joins app + sender + message content so the UI dropdown can render in a
 // single round-trip.
@@ -178,6 +195,7 @@ module.exports = {
   createMentionNotifications,
   createReplyNotification,
   createReactionNotification,
+  createStalePrNotification,
   listForUser,
   countUnread,
   markRead,

@@ -178,6 +178,28 @@ async function updatePR(owner, repo, prNumber, { title, body } = {}) {
   return data;
 }
 
+async function closePR(owner, repo, prNumber) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.pulls.update({
+    owner, repo, pull_number: prNumber, state: 'closed',
+  });
+  log.info('github', 'PR closed', { repo: `${owner}/${repo}`, pr: prNumber });
+  return data;
+}
+
+// Reopen a previously-closed PR. Best-effort: GitHub refuses to reopen a
+// PR whose head branch was deleted (and some installations restrict
+// reopening to the user who closed it), so callers should treat a throw
+// as "couldn't reopen — fall back to proposing a fresh PR from the branch".
+async function reopenPR(owner, repo, prNumber) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.pulls.update({
+    owner, repo, pull_number: prNumber, state: 'open',
+  });
+  log.info('github', 'PR reopened', { repo: `${owner}/${repo}`, pr: prNumber });
+  return data;
+}
+
 async function mergePR(owner, repo, prNumber) {
   const octokit = await getOctokit(owner);
   const { data } = await octokit.rest.pulls.merge({
@@ -394,6 +416,8 @@ module.exports = {
   createBranch,
   createPR,
   updatePR,
+  closePR,
+  reopenPR,
   mergePR,
   createIssue,
   getCloneUrl,

@@ -13,6 +13,14 @@ const log = require('./logger');
 const staging = require('./staging');
 const worker = require('./worker');
 const workerProgress = require('./worker-progress');
+const github = require('./github');
+
+// Parse "owner/repo" out of a stored GitHub repo URL. Returns [owner,
+// repo] or [] when the URL is missing/unparseable.
+function ownerRepo(repoUrl) {
+  const [, owner, repo] = (repoUrl || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  return owner && repo ? [owner, repo] : [];
+}
 
 // Transition a session 'active'|'promoted' -> 'paused'. Reversible: keeps
 // the CC volume, branch, PR, AND the staging preview so /resume restores
@@ -167,4 +175,142 @@ async function teardownStagingForSession({ pool, sessionId, reason = 'idle' }) {
   return { torn: true };
 }
 
-module.exports = { pauseSession, freeGlobalSlot, teardownStagingForSession };
+// Archive a session. Reversible now: it tears down the live resources
+// (staging + worker) and closes the PR, but KEEPS the CC volume + branch
+// so /unarchive can restore it. The CC volume is only destroyed later by
+// purgeArchivedCc once the retention window elapses (or immediately when
+// purgeCc=true, for callers that want the old hard-delete).
+//
+// Params:
+//   pool, sessionId
+//   userId  - optional owner scope (HTTP authz). Omit for system actions.
+//   reason  - 'manual' | 'stale-pr' | ...
+//   purgeCc - destroy the CC volume immediately (skip retention). Default
+//             false. The activeWorkers in-flight set (routes/sessions.js)
+//             is cleared by the HTTP handler, not here.
+// Returns { archived: boolean, appSlug?: string }.
+async function archiveSession({ pool, sessionId, userId = null, reason = 'manual', purgeCc = false }) {
+  const params = [sessionId];
+  let ownerClause = '';
+  if (userId != null) {
+    params.push(userId);
+    ownerClause = ' AND user_id = $2';
+  }
+
+  const { rows } = await pool.query(
+    `UPDATE chat_sessions SET status = 'archived', archived_at = NOW()
+     WHERE id = $1${ownerClause} AND status IN ('active', 'promoted', 'paused')
+     RETURNING id`,
+    params
+  );
+  if (!rows.length) return { archived: false };
+
+  const { rows: sessionRows } = await pool.query(
+    `SELECT cs.*, a.slug as app_slug, a.repo_url
+     FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
+     WHERE cs.id = $1`,
+    [sessionId]
+  );
+  const session = sessionRows[0];
+  const appSlug = session?.app_slug;
+
+  if (session?.staging_container_id) {
+    await staging.teardownStaging(session, { slug: appSlug }).catch(() => {});
+    await pool.query(
+      `UPDATE chat_sessions SET staging_container_id = NULL, staging_url = NULL WHERE id = $1`,
+      [sessionId]
+    );
+  }
+
+  if (session?.pr_number) {
+    const [owner, repo] = ownerRepo(session.repo_url);
+    if (owner) await github.closePR(owner, repo, session.pr_number).catch((err) => {
+      log.warn('session-lifecycle', 'Failed to close PR on archive', { sessionId, err: err.message });
+    });
+  }
+
+  workerProgress.clear(sessionId);
+  await worker.destroyWorker(worker.workerContainerName(sessionId)).catch(() => {});
+
+  // Retention: keep the CC volume so /unarchive can restore conversation
+  // memory. purgeArchivedCc (or purgeCc=true here) destroys it later.
+  if (purgeCc) {
+    await worker.destroyCcVolume(sessionId).catch(() => {});
+    await pool.query(`UPDATE chat_sessions SET cc_purged = TRUE WHERE id = $1`, [sessionId]);
+  }
+
+  const { pushSessionUpdate } = require('./ws');
+  pushSessionUpdate({ action: 'archived', sessionId, appSlug });
+  log.info('session-lifecycle', 'Session archived', { sessionId, reason, purgeCc });
+  return { archived: true, appSlug };
+}
+
+// Reverse an archive (within the retention window). Restores the session
+// to 'paused' — reopening it then goes through the normal auto-resume
+// path. Best-effort reopens the PR; if that fails (branch gone, install
+// restrictions), the session still has its branch + (unless purged) its
+// CC memory, and the user can propose a fresh PR.
+//
+// Returns { unarchived: boolean, ccPurged?: boolean, prReopened?: boolean }.
+async function unarchiveSession({ pool, sessionId, userId = null }) {
+  const params = [sessionId];
+  let ownerClause = '';
+  if (userId != null) {
+    params.push(userId);
+    ownerClause = ' AND user_id = $2';
+  }
+
+  const { rows } = await pool.query(
+    `UPDATE chat_sessions SET status = 'paused', archived_at = NULL
+     WHERE id = $1${ownerClause} AND status = 'archived'
+     RETURNING id`,
+    params
+  );
+  if (!rows.length) return { unarchived: false };
+
+  const { rows: sessionRows } = await pool.query(
+    `SELECT cs.*, a.slug as app_slug, a.repo_url
+     FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
+     WHERE cs.id = $1`,
+    [sessionId]
+  );
+  const session = sessionRows[0];
+
+  let prReopened = false;
+  if (session?.pr_number) {
+    const [owner, repo] = ownerRepo(session.repo_url);
+    if (owner) {
+      try {
+        await github.reopenPR(owner, repo, session.pr_number);
+        prReopened = true;
+      } catch (err) {
+        log.warn('session-lifecycle', 'Could not reopen PR on unarchive (branch may need re-proposing)', { sessionId, err: err.message });
+      }
+    }
+  }
+
+  const { pushSessionUpdate } = require('./ws');
+  pushSessionUpdate({ action: 'unarchived', sessionId, appSlug: session?.app_slug });
+  log.info('session-lifecycle', 'Session unarchived', { sessionId, prReopened, ccPurged: !!session?.cc_purged });
+  return { unarchived: true, ccPurged: !!session?.cc_purged, prReopened };
+}
+
+// Hard GC for the retention window: destroy the CC volume of an archived
+// session so its conversation memory stops occupying disk. Idempotent —
+// flips cc_purged so the sweeper won't revisit it. The row + branch
+// survive; /unarchive still works but with fresh Claude memory.
+async function purgeArchivedCc({ pool, sessionId }) {
+  await worker.destroyCcVolume(sessionId).catch(() => {});
+  await pool.query(`UPDATE chat_sessions SET cc_purged = TRUE WHERE id = $1`, [sessionId]);
+  log.info('session-lifecycle', 'Archived CC volume purged (retention elapsed)', { sessionId });
+  return { purged: true };
+}
+
+module.exports = {
+  pauseSession,
+  freeGlobalSlot,
+  teardownStagingForSession,
+  archiveSession,
+  unarchiveSession,
+  purgeArchivedCc,
+};

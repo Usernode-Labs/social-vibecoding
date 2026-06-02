@@ -95,6 +95,22 @@ function load() {
     // of refusing with a 429. Set SESSION_LRU_ON_RESUME=false to keep the
     // old hard-cap behavior.
     sessionLruOnResume: process.env.SESSION_LRU_ON_RESUME !== 'false',
+    // Stale-promoted-PR policy. A PR proposed to the group ('promoted')
+    // is otherwise sticky — it never auto-pauses and holds a cap slot
+    // forever. This sweeper warns the author after prStaleNotifyMs of no
+    // voting interest, then auto-archives prStaleGraceMs later if still
+    // untouched. Set prStaleNotifyMs=0 to disable the whole policy.
+    prStaleNotifyMs: parseInt(process.env.PR_STALE_NOTIFY_MS || String(7 * 24 * 60 * 60 * 1000), 10),
+    prStaleGraceMs: parseInt(process.env.PR_STALE_GRACE_MS || String(3 * 24 * 60 * 60 * 1000), 10),
+    // Reversible-archive retention. Archive keeps the CC volume + branch
+    // so /unarchive can restore a session; this is how long before a hard
+    // GC destroys the CC volume (memory). The row + branch survive, so
+    // unarchive still works afterward but Claude starts fresh. Set to 0
+    // to keep CC volumes forever (no hard GC).
+    archivedRetentionMs: parseInt(process.env.ARCHIVED_RETENTION_MS || String(30 * 24 * 60 * 60 * 1000), 10),
+    // How often the stale-PR / archived-GC sweeper runs. These actions
+    // are day-scale, so it polls infrequently. Default 1h.
+    staleSweepIntervalMs: parseInt(process.env.STALE_SWEEP_INTERVAL_MS || String(60 * 60 * 1000), 10),
     // Demand-driven global-cap eviction. When a new session is needed but
     // the platform is at maxGlobalSessions, we pause the globally least-
     // recently-active session that has been idle longer than this grace
@@ -149,6 +165,8 @@ function load() {
   console.log(`  SESSION_SWEEP_INTERVAL_MS=${config.sessionSweepIntervalMs}`);
   console.log(`  SESSION_LRU_ON_RESUME=${config.sessionLruOnResume}`);
   console.log(`  SESSION_PRESSURE_GRACE_MS=${config.sessionPressureGraceMs}${config.sessionPressureGraceMs === 0 ? ' (disabled)' : ''}`);
+  console.log(`  PR_STALE_NOTIFY_MS=${config.prStaleNotifyMs}${config.prStaleNotifyMs === 0 ? ' (disabled)' : ''} PR_STALE_GRACE_MS=${config.prStaleGraceMs}`);
+  console.log(`  ARCHIVED_RETENTION_MS=${config.archivedRetentionMs}${config.archivedRetentionMs === 0 ? ' (keep forever)' : ''}`);
   console.log(`  USERNODE_APP_PUBKEY=${config.usernodeAppPubkey || '(not set — wallet linking disabled)'}`);
   console.log(`  NODE_RPC_URL=${config.nodeRpcUrl}`);
   console.log(`  USERNODE_PLATFORM_REPO=${config.platformRepoUrl}`);

@@ -226,6 +226,25 @@ function renderRow(n) {
     </button>`;
   }
 
+  // Stale-PR rows are system warnings (no source user): the author's
+  // promoted PR has gone quiet and is heading for auto-archive. Lead with
+  // a ⏳ and show the PR title so it's actionable at a glance.
+  if (n.kind === 'stale_pr') {
+    const prLabel = n.prTitle
+      ? escapeHtml(n.prTitle)
+      : (n.prNumber ? `PR #${n.prNumber}` : 'your PR');
+    return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
+      <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1">
+        <span aria-hidden="true">\u23F3</span>
+        <span>Your PR in</span>
+        <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
+        <span>is going stale — it'll auto-archive soon without votes</span>
+        <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
+      </div>
+      <div class="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2 font-medium">${prLabel}</div>
+    </button>`;
+  }
+
   const snippet = (n.messageContent || '').slice(0, 140);
   const kindText = n.kind === 'mention'
     ? 'mentioned you in'
