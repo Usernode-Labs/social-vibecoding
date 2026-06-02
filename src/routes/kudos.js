@@ -333,55 +333,64 @@ function kudosRoutes(config) {
   });
 
   // --------------------------------------------------------------
-  // GET /api/leaderboard/users?window=all|week&limit=20
-  // Top users by kudos received on MERGED PRs (window-filtered), then
-  // total kudos received as a tiebreaker. Excludes sessions with NULL
-  // author (deleted user) so the leaderboard doesn't credit a ghost row.
+  // GET /api/leaderboard/users?window=all|week&limit=N
+  // Lists ALL users (not just those who've received kudos), ranked by
+  // PRs merged, then kudos received on merged PRs, then total kudos.
+  // Rooted at `users` with LEFT JOINs so a user with zero kudos still
+  // shows up. `limit` is optional — omit it to return every user.
   //
   // Per-row stats:
   //   kudos_received              — total kudos on the user's PRs (window-filtered)
   //   prs_kudosed                 — distinct PRs of theirs that got any kudos
-  //   kudos_received_prs_merged   — kudos on PRs now 'merged' (window-filtered);
-  //                                 the primary sort key.
+  //   kudos_received_prs_merged   — kudos on PRs now 'merged' (window-filtered)
   //   kudos_received_prs_unmerged — kudos on PRs not 'merged' (window-filtered)
-  //   prs_merged                  — count of the user's PRs that landed. ALL-TIME
-  //                                 regardless of window: chat_sessions has no
-  //                                 merge timestamp, only a 'merged' status, so
-  //                                 there's nothing to window it by. Display-only.
+  //   prs_merged                  — count of the user's PRs that landed, and the
+  //                                 primary sort key. ALL-TIME regardless of
+  //                                 window: chat_sessions has no merge timestamp,
+  //                                 only a 'merged' status, so there's nothing to
+  //                                 window it by.
   // --------------------------------------------------------------
   router.get('/api/leaderboard/users', async (req, res) => {
     // Public endpoint (see PUBLIC_PATHS in middleware/auth.js) — no
     // req.user guard; only aggregate, non-private data is returned.
     const windowArg = req.query.window === 'week' ? 'week' : 'all';
-    const limit = clampLimit(req.query.limit);
+    // `limit` is optional now: absent/blank => return all users.
+    const hasLimit = req.query.limit !== undefined && req.query.limit !== '';
     try {
       const weekStart = weekStartUtc();
-      const whereWindow = windowArg === 'week' ? `AND pk.week_start = $1` : '';
-      const params = windowArg === 'week' ? [weekStart, limit] : [limit];
-      const limitParamIdx = windowArg === 'week' ? '$2' : '$1';
+      const params = [];
+      // Window filter lives in the kudos LEFT JOIN's ON clause (not a
+      // WHERE) so users/sessions are preserved even when they have no
+      // kudos in the window — only the kudos aggregates get scoped.
+      let kudosWindow = '';
+      if (windowArg === 'week') {
+        params.push(weekStart);
+        kudosWindow = `AND pk.week_start = $${params.length}`;
+      }
+      let limitClause = '';
+      if (hasLimit) {
+        params.push(clampLimit(req.query.limit));
+        limitClause = `LIMIT $${params.length}`;
+      }
       const { rows } = await pool.query(
         `SELECT u.id AS user_id,
                 u.username,
-                COUNT(*)::int AS kudos_received,
+                COUNT(pk.id)::int AS kudos_received,
                 COUNT(DISTINCT pk.session_id)::int AS prs_kudosed,
-                COUNT(*) FILTER (WHERE cs.status = 'merged')::int AS kudos_received_prs_merged,
-                COUNT(*) FILTER (WHERE cs.status <> 'merged')::int AS kudos_received_prs_unmerged,
-                COALESCE(m.prs_merged, 0) AS prs_merged,
+                COUNT(pk.id) FILTER (WHERE cs.status = 'merged')::int AS kudos_received_prs_merged,
+                COUNT(pk.id) FILTER (WHERE cs.status <> 'merged')::int AS kudos_received_prs_unmerged,
+                COUNT(DISTINCT cs.id) FILTER (WHERE cs.status = 'merged')::int AS prs_merged,
                 MAX(pk.created_at) AS last_kudos_at
-           FROM pr_kudos pk
-           JOIN chat_sessions cs ON cs.id = pk.session_id
-           JOIN users u ON u.id = cs.user_id
-           LEFT JOIN (
-             SELECT user_id, COUNT(*)::int AS prs_merged
-               FROM chat_sessions
-              WHERE status = 'merged' AND user_id IS NOT NULL
-              GROUP BY user_id
-           ) m ON m.user_id = u.id
-           WHERE cs.user_id IS NOT NULL
-           ${whereWindow}
-           GROUP BY u.id, u.username, m.prs_merged
-           ORDER BY kudos_received_prs_merged DESC, kudos_received DESC, last_kudos_at DESC
-           LIMIT ${limitParamIdx}`,
+           FROM users u
+           LEFT JOIN chat_sessions cs ON cs.user_id = u.id
+           LEFT JOIN pr_kudos pk ON pk.session_id = cs.id ${kudosWindow}
+           GROUP BY u.id, u.username
+           ORDER BY prs_merged DESC,
+                    kudos_received_prs_merged DESC,
+                    kudos_received DESC,
+                    last_kudos_at DESC NULLS LAST,
+                    u.username ASC
+           ${limitClause}`,
         params
       );
       res.json({
