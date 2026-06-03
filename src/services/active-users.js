@@ -120,4 +120,39 @@ async function isUserActive(pool, appId, userId) {
   return !!(r.visited_recently && r.ever_qualified);
 }
 
-module.exports = { getActiveUserStats, isUserActive };
+// The full set of user ids currently counted as active for an app,
+// using the same definition as getActiveUserStats (so "who gets the
+// vote-request ping" matches "whose votes count"). Returns a bare
+// array of ids. self_hosted apps fan out across every app's activity,
+// mirroring getActiveUserStats's union semantics.
+async function listActiveUserIds(pool, appId) {
+  const selfHosted = await isSelfHostedApp(pool, appId);
+
+  const { rows } = selfHosted
+    ? await pool.query(
+        `SELECT DISTINCT a.user_id AS id
+           FROM app_activity a
+           WHERE a.date >= CURRENT_DATE - 10
+             AND EXISTS (
+               SELECT 1 FROM app_activity b
+               WHERE b.user_id = a.user_id
+                 AND b.seconds_spent >= 60
+             )`
+      )
+    : await pool.query(
+        `SELECT DISTINCT a.user_id AS id
+           FROM app_activity a
+           WHERE a.app_id = $1
+             AND a.date >= CURRENT_DATE - 10
+             AND EXISTS (
+               SELECT 1 FROM app_activity b
+               WHERE b.app_id = $1
+                 AND b.user_id = a.user_id
+                 AND b.seconds_spent >= 60
+             )`,
+        [appId]
+      );
+  return rows.map((r) => r.id);
+}
+
+module.exports = { getActiveUserStats, isUserActive, listActiveUserIds };

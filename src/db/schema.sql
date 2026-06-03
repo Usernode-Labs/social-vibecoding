@@ -369,9 +369,12 @@ ON CONFLICT (key) DO NOTHING;
 -- (PR approvals, etc). Currently 'mention' (group-chat @mention parser
 -- in src/services/ws.js), 'kudos' (PR kudos give in src/routes/kudos.js),
 -- 'reply' (#15 — someone quoted your message/PR in group chat;
--- chat_message_id points to the reply, set in src/services/ws.js), and
+-- chat_message_id points to the reply, set in src/services/ws.js),
 -- 'reaction' (#25 — someone reacted to your message; chat_message_id is
--- the reacted message, `detail` holds the emoji).
+-- the reacted message, `detail` holds the emoji), 'stale_pr' (a promoted
+-- PR is going quiet, addressed to its author), and 'pr_proposed' (a PR
+-- was promoted for voting — session_id points to it; fanned out to the
+-- app's active users + creator + favoriters in src/routes/votes.js).
 CREATE TABLE IF NOT EXISTS notifications (
   id              SERIAL PRIMARY KEY,
   user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

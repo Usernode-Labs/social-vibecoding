@@ -245,6 +245,25 @@ function renderRow(n) {
     </button>`;
   }
 
+  // PR-proposed (vote-request) rows: someone promoted a PR and we're
+  // nudging this user to come vote. Lead with a ballot box and show the
+  // PR title; clicking lands on the app's group-chat vote panel.
+  if (n.kind === 'pr_proposed') {
+    const prLabel = n.prTitle
+      ? escapeHtml(n.prTitle)
+      : (n.prNumber ? `PR #${n.prNumber}` : 'a PR');
+    return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
+      <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1">
+        <span aria-hidden="true">\u{1F5F3}\uFE0F</span>
+        <span class="font-medium text-zinc-800 dark:text-zinc-200">@${who}</span>
+        <span>proposed a PR to vote on in</span>
+        <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
+        <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
+      </div>
+      <div class="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2 font-medium">${prLabel}</div>
+    </button>`;
+  }
+
   const snippet = (n.messageContent || '').slice(0, 140);
   const kindText = n.kind === 'mention'
     ? 'mentioned you in'

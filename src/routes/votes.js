@@ -5,8 +5,9 @@ const github = require('../services/github');
 const staging = require('../services/staging');
 const docker = require('../services/docker');
 const { checkAndResolveConflicts } = require('../services/conflict-resolver');
-const { sendSystemMessage } = require('../services/ws');
+const { sendSystemMessage, pushNotificationToUser } = require('../services/ws');
 const { getActiveUserStats, isUserActive } = require('../services/active-users');
+const notifications = require('../services/notifications');
 const { isAppLocked, hasAdminYesVote } = require('../services/admin-approval');
 
 function voteRoutes(config) {
@@ -72,6 +73,39 @@ function voteRoutes(config) {
       pushSessionUpdate({ action: 'promoted', sessionId: session.id, appSlug: session.app_slug });
       log.info('votes', 'Session promoted', { sessionId: session.id });
       res.json({ ok: true });
+
+      // Vote-request fan-out. Non-fatal + post-response: the promote
+      // itself has already succeeded, so a notification hiccup must not
+      // 500 the request. Pings the app's active users + creator +
+      // favoriters (minus the proposer) so the right people come vote,
+      // and de-dupes per session so a re-promote doesn't re-spam.
+      try {
+        const notifRows = await notifications.createPrProposedNotifications(pool, {
+          appId: session.app_id,
+          sessionId: session.id,
+          proposerId: req.user.id,
+        });
+        for (const row of notifRows) {
+          pushNotificationToUser(row.user_id, {
+            type: 'notification_new',
+            notification: notifications.serialize({
+              ...row,
+              app_slug: session.app_slug,
+              app_name: session.app_name,
+              pr_title: session.pr_title,
+              pr_number: session.pr_number,
+              source_username: req.user.username,
+            }),
+          });
+        }
+        if (notifRows.length) {
+          log.info('votes', 'PR-proposed notifications sent', {
+            sessionId: session.id, count: notifRows.length,
+          });
+        }
+      } catch (err) {
+        log.warn('votes', 'pr_proposed notify failed', { sessionId: session.id, err: err.message });
+      }
     } catch (err) {
       log.error('votes', 'Promote failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

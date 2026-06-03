@@ -3,10 +3,13 @@
 // The DB shape (`kind` column) is generic so different notification types
 // share one table + pipeline. Kinds today: 'mention' (group-chat @mention),
 // 'kudos' (PR kudos), 'reply' (#15 — someone quoted your message/PR in
-// group chat), and 'reaction' (#25 — someone reacted to your message;
-// `detail` carries the emoji).
+// group chat), 'reaction' (#25 — someone reacted to your message;
+// `detail` carries the emoji), 'stale_pr' (a promoted PR going quiet), and
+// 'pr_proposed' (a PR was promoted for voting — fanned out to the app's
+// active users + creator + favoriters so they come vote).
 
 const log = require('./logger');
+const { listActiveUserIds } = require('./active-users');
 
 // Usernames in this app are [A-Za-z0-9_]+, length-restricted on signup.
 // Match @token that is NOT preceded by a word character (so emails don't
@@ -110,6 +113,58 @@ async function createStalePrNotification(pool, { userId, appId, sessionId }) {
   return rows;
 }
 
+// PR-proposed (vote-request) notification. Fired when a session is
+// promoted — the genuine "please come vote on this" moment, NOT raw PR
+// creation (which happens automatically after the first commit and would
+// be far noisier). References the session so the dropdown renders the PR
+// title + a group-chat deep link, exactly like the kudos/stale_pr kinds.
+//
+// Targeting (deliberately narrower than "every registered user", which
+// would be a platform-wide firehose since membership is global): the
+// app's currently-active users (the people whose votes actually count
+// per services/active-users.js), plus the app creator and anyone who
+// favorited it — so stakeholders who aren't currently "active" still get
+// nudged. The proposer is always excluded.
+//
+// De-dupe: skips any recipient who already has a pr_proposed row for this
+// session, so a re-promote (e.g. a PR that went stale then was proposed
+// again) doesn't re-spam people who were already pinged. `source_user_id`
+// is the proposer so the dropdown can render "@user proposed a PR…".
+async function createPrProposedNotifications(pool, { appId, sessionId, proposerId }) {
+  if (!appId || !sessionId) return [];
+
+  const activeIds = await listActiveUserIds(pool, appId);
+
+  // App creator + favoriters as a stakeholder floor. Either may already
+  // be in activeIds; we dedupe via the Set below.
+  const { rows: extraRows } = await pool.query(
+    `SELECT created_by AS id FROM apps WHERE id = $1 AND created_by IS NOT NULL
+     UNION
+     SELECT user_id AS id FROM app_favorites WHERE app_id = $1`,
+    [appId]
+  );
+
+  const recipientIds = new Set([...activeIds, ...extraRows.map((r) => r.id)]);
+  recipientIds.delete(proposerId);
+  if (!recipientIds.size) return [];
+
+  // INSERT ... SELECT with a NOT EXISTS guard so the per-recipient
+  // de-dupe is atomic (no read-then-write race on concurrent promotes).
+  const ids = [...recipientIds];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
+     SELECT u, $2, $3, $4, 'pr_proposed'
+       FROM UNNEST($1::int[]) AS u
+      WHERE NOT EXISTS (
+        SELECT 1 FROM notifications n
+        WHERE n.user_id = u AND n.session_id = $3 AND n.kind = 'pr_proposed'
+      )
+     RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
+    [ids, appId, sessionId, proposerId || null]
+  );
+  return rows;
+}
+
 // Fetch up to `limit` recent notifications for a user, newest first.
 // Joins app + sender + message content so the UI dropdown can render in a
 // single round-trip.
@@ -196,6 +251,7 @@ module.exports = {
   createReplyNotification,
   createReactionNotification,
   createStalePrNotification,
+  createPrProposedNotifications,
   listForUser,
   countUnread,
   markRead,
