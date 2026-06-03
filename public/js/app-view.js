@@ -687,6 +687,20 @@ const AppView = {
         merged.length && `${merged.length} merged`,
       ].filter(Boolean).join(' · ');
 
+      // How many open PRs the viewer still hasn't voted on. We count only
+      // PRs that are actually votable for them right now: status
+      // 'promoted' (not 'merging', which is past the vote) with no
+      // recorded vote. The viewer's own PRs are included — authors still
+      // need to cast an explicit yes/no on their own proposal. Drives the
+      // "Vote on N →" CTA in the panel header so the call to action is
+      // visible even while the panel body is collapsed.
+      const unvotedCount = promoted.filter(
+        (pr) => pr.status === 'promoted' && !pr.my_vote
+      ).length;
+      const unvotedCtaHtml = unvotedCount
+        ? `<span id="gc-vote-cta" role="button" tabindex="0" class="cursor-pointer text-xs font-medium text-violet-600 dark:text-violet-400 hover:underline whitespace-nowrap" title="Jump to the PRs you haven't voted on yet">Vote on ${unvotedCount} PR${unvotedCount === 1 ? '' : 's'} &rarr;</span>`
+        : '';
+
       // (3) Just-in-time teaching: the first time a viewer sees open PRs
       // in the vote panel, explain what a vote actually does. Gated on a
       // localStorage flag so it teaches once, then gets out of the way —
@@ -812,11 +826,21 @@ const AppView = {
           // phones). On sm+ display:contents removes the wrapper from
           // the box tree and the layout collapses back to the original
           // single-row form, preserving desktop UX exactly.
+          // Tag rows the viewer hasn't voted on (same rule as the header
+          // CTA count) so the CTA can smooth-scroll to the first one, and
+          // show an at-a-glance "Vote" marker (pulsing dot, mirroring the
+          // status.html ping pattern) so it's obvious which rows still
+          // want your input.
+          const isUnvoted = pr.status === 'promoted' && !pr.my_vote;
+          const unvotedBadge = isUnvoted
+            ? `<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 shrink-0" title="You haven't voted on this yet"><span class="relative flex h-1.5 w-1.5"><span class="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75 animate-ping"></span><span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-violet-500"></span></span>Vote</span>`
+            : '';
           bodyHtml += `
-            <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
+            <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1"${isUnvoted ? ' data-unvoted="1"' : ''}>
               <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-violet-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
               <span ${prQuoteAttrs}>${labelText}</span>
               <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
+                ${unvotedBadge}
                 <span class="text-xs text-zinc-500">${yesCount}/${majority}</span>
                 ${pr.staging_url ? `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStaging('${pr.staging_url}')">Preview</button>` : ''}
                 <button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}" onclick="AppView.castVote(${pr.id}, 'yes')">Yes (${pr.yes_count})</button>
@@ -964,6 +988,7 @@ const AppView = {
             <span class="text-xs font-medium text-zinc-700 dark:text-zinc-300">App information and activity</span>
             <span class="flex-1"></span>
             ${counts ? `<span class="text-xs text-zinc-500 dark:text-zinc-400 truncate">${counts}</span>` : ''}
+            ${unvotedCtaHtml}
           </button>
         </div>
         ${lockNotice}
@@ -994,6 +1019,33 @@ const AppView = {
         // (re)apply the saved height now that the open state changed.
         AppView._syncPanelResizer(slug);
       });
+
+      // "Vote on N →" CTA: lives inside the toggle button, so we stop
+      // propagation (we always want to *open* the panel and jump to the
+      // first unvoted PR, never toggle it closed) and then scroll the
+      // first unvoted row into view.
+      const voteCta = document.getElementById('gc-vote-cta');
+      if (voteCta) {
+        const openAndScroll = (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          if (!AppView.panelOpen) {
+            AppView.panelOpen = true;
+            AppView._writeInfoPanelOpen(slug, true);
+            const body = document.getElementById('gc-panel-body');
+            const arrow = document.querySelector('#gc-panel-toggle span:first-child');
+            if (body) body.classList.remove('hidden');
+            if (arrow) arrow.innerHTML = '&#9660;';
+            AppView._syncPanelResizer(slug);
+          }
+          const target = panel.querySelector('[data-unvoted="1"]');
+          if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        };
+        voteCta.addEventListener('click', openAndScroll);
+        voteCta.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') openAndScroll(e);
+        });
+      }
 
       // Bind hover + click handlers for any kudos buttons we just
       // rendered. Idempotent — Kudos.attach skips wrappers it has
