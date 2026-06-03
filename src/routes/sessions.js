@@ -17,6 +17,7 @@ const { drainGuard } = require('../services/lifecycle');
 const { getAppConventions, getSelfHostedRefuseList } = require('../services/prompts');
 const models = require('../services/models');
 const limits = require('../services/limits');
+const events = require('../services/events');
 const { chatLimiter } = require('../middleware/rate-limits');
 
 // Track sessions with active Claude Code workers
@@ -399,6 +400,12 @@ function sessionRoutes(config) {
       );
 
       log.info('sessions', 'Session created', { sessionId: rows[0].id, branch: branchName });
+      events.record(pool, {
+        type: events.EVENT_TYPES.DEV_SESSION_STARTED,
+        userId: req.user.id,
+        appId: app.id,
+        sessionId: rows[0].id,
+      });
       res.status(201).json({ session: rows[0] });
     } catch (err) {
       log.error('sessions', 'Failed to create session', { message: err.message });
@@ -2588,6 +2595,13 @@ INSTRUCTIONS:
       if (prResult && wasNewPR) {
         await sendStatus(`PR #${prResult.prNumber} created`);
         summaryParts.push(`Opened PR #${prResult.prNumber}: ${prResult.prUrl}`);
+        events.record(pool, {
+          type: events.EVENT_TYPES.PR_OPENED,
+          userId: req.user.id,
+          appId: session.app_id,
+          sessionId: session.id,
+          metadata: { prNumber: prResult.prNumber },
+        });
       } else if (session.pr_number && !wasNewPR) {
         summaryParts.push(`Pushed to existing PR #${session.pr_number}.`);
       }

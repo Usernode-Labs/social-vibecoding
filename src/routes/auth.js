@@ -7,6 +7,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { authLimiter, walletCheckLimiter } = require('../middleware/rate-limits');
 const genesisAccounts = require('../services/genesis-accounts');
+const events = require('../services/events');
 
 const SESSION_DAYS = 7;
 
@@ -119,6 +120,7 @@ function authRoutes(config) {
       });
 
       log.info('auth', 'User registered', { userId, username: username.trim(), codeId });
+      events.record(pool, { type: events.EVENT_TYPES.USER_SIGNED_UP, userId, metadata: { via: 'activation_code' } });
       res.json({ user: { id: userId, username: username.trim(), isAdmin: false } });
     } catch (err) {
       if (err.code === '23505') {
@@ -485,6 +487,7 @@ function authRoutes(config) {
       });
 
       log.info('wallet-auth', 'Wallet-gated registration', { userId, username: username.trim() });
+      events.record(pool, { type: events.EVENT_TYPES.USER_SIGNED_UP, userId, metadata: { via: 'wallet' } });
       res.json({
         user: { id: userId, username: username.trim(), isAdmin: false },
         walletLink: {

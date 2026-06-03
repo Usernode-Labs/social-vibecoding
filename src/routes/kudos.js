@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const ws = require('../services/ws');
+const events = require('../services/events');
 
 // Weekly quota per giver. The plan locks this at 5; if it ever moves,
 // tweak here and the FE budget badge will pick it up via /api/me/kudos-budget.
@@ -166,6 +167,14 @@ function kudosRoutes(config) {
         }
         throw err;
       }
+
+      events.record(pool, {
+        type: events.EVENT_TYPES.KUDOS_GIVEN,
+        userId: req.user.id,
+        appId: session.app_id,
+        sessionId,
+        metadata: { recipientId: session.user_id || null },
+      });
 
       // Notification for the PR author (skip if no author or self —
       // the self case is already 403'd above, but guard anyway).

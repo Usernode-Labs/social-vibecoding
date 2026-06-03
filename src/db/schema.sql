@@ -264,6 +264,17 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS archived_at        TIMESTAMPT
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS cc_purged          BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS chat_sessions_archived_idx ON chat_sessions(status, archived_at);
 
+-- Exact merge timestamp. Historically chat_sessions only recorded the
+-- terminal `status = 'merged'` with no time, so "merges over time" could
+-- not be charted (see the note in routes/kudos.js leaderboard query).
+-- Set in routes/votes.js checkAndMerge() at the moment the PR lands (both
+-- vote-driven and admin force-merge paths). NULL for rows merged before
+-- this column existed; the events backfill approximates those with
+-- promoted_at. Covered by the table-level staging:private comment, so it
+-- is scrubbed from staging clones with the rest of the row.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS merged_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS chat_sessions_merged_at_idx ON chat_sessions(merged_at);
+
 CREATE TABLE IF NOT EXISTS chat_session_specs (
   id                  SERIAL PRIMARY KEY,
   session_id          INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
@@ -517,3 +528,35 @@ CREATE TABLE IF NOT EXISTS app_favorites (
   PRIMARY KEY (app_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_app_favorites_user ON app_favorites(user_id);
+
+-- Append-only product-analytics event log. The long-term source of truth
+-- behind the admin /dashboard (growth, retention, and the dapp-usage /
+-- PR-promotion funnels). Rows are written fire-and-forget at action sites
+-- via src/services/events.js (never blocking or failing the originating
+-- request). On first boot the events table is backfilled from the existing
+-- domain tables (users, apps, app_activity, chat_messages, pr_votes,
+-- pr_kudos, app_favorites, chat_sessions) so the funnels and retention
+-- curves are continuous across the cutover — see backfillEvents() in
+-- src/db/migrate.js.
+--
+-- `event_type` is a free-form verb (e.g. 'user_signed_up', 'dapp_opened',
+-- 'pr_promoted', 'pr_merged'); see EVENT_TYPES in src/services/events.js
+-- for the canonical list. The nullable user/app/session FKs use ON DELETE
+-- SET NULL so analytics history survives the deletion of the referenced
+-- row (the aggregate counts stay correct even after a user is removed).
+CREATE TABLE IF NOT EXISTS events (
+  id          BIGSERIAL PRIMARY KEY,
+  user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  app_id      INTEGER REFERENCES apps(id) ON DELETE SET NULL,
+  session_id  INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL,
+  event_type  VARCHAR(64) NOT NULL,
+  metadata    JSONB NOT NULL DEFAULT '{}',
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_events_type_created ON events(event_type, created_at);
+CREATE INDEX IF NOT EXISTS idx_events_user_created ON events(user_id, created_at);
+
+-- Tagged staging:private so the analytics log (which is derived from
+-- chat_sessions / pr_kudos, both already private) is TRUNCATEd in staging
+-- clones rather than leaking social history into previews.
+COMMENT ON TABLE events IS 'staging:private';

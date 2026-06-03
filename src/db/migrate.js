@@ -20,7 +20,99 @@ async function migrate(config) {
 
   await seedAdmin(pool, config);
   await seedSelfApp(pool, config);
+  await backfillEvents(pool);
   await migrateAppDbsToPerRole(pool, config);
+}
+
+// One-shot backfill of the append-only `events` analytics log from the
+// existing domain tables. The events table (schema.sql) is the long-term
+// source of truth behind the admin /dashboard, but it only starts
+// accumulating rows once the action-site emitters (src/services/events.js
+// callers) ship. Without a backfill, every growth / retention / funnel
+// chart would show a cliff at the deploy boundary. This synthesizes the
+// historical rows from the timestamps already recorded elsewhere so the
+// curves are continuous.
+//
+// Idempotent by construction: it no-ops the moment the table holds any
+// row, so a normal boot (events already populated, by backfill or by live
+// emission) skips it entirely. It only ever runs against a genuinely
+// empty table — i.e. the first boot after this migration lands.
+async function backfillEvents(pool) {
+  const { rows } = await pool.query(
+    'SELECT NOT EXISTS (SELECT 1 FROM events LIMIT 1) AS empty'
+  );
+  if (!rows[0]?.empty) {
+    log.debug('db', 'events table already populated; skipping backfill');
+    return;
+  }
+
+  log.info('db', 'Backfilling events log from existing tables...');
+
+  // Each statement maps one domain table to one event_type. created_at is
+  // the best available historical timestamp for that action. app_activity
+  // only has day granularity (DATE), which is exactly what the retention /
+  // active-day signals need. pr_merged uses merged_at when present (rows
+  // merged after this migration) and falls back to promoted_at/created_at
+  // for older rows that never recorded a merge time.
+  const statements = [
+    `INSERT INTO events (user_id, event_type, created_at)
+       SELECT id, 'user_signed_up', created_at FROM users`,
+
+    `INSERT INTO events (user_id, app_id, event_type, created_at)
+       SELECT created_by, id, 'app_created', created_at
+       FROM apps WHERE created_by IS NOT NULL`,
+
+    `INSERT INTO events (user_id, app_id, event_type, created_at, metadata)
+       SELECT user_id, app_id, 'dapp_active_day', date::timestamptz,
+              jsonb_build_object('secondsSpent', seconds_spent)
+       FROM app_activity WHERE user_id IS NOT NULL`,
+
+    `INSERT INTO events (user_id, app_id, event_type, created_at)
+       SELECT user_id, app_id, 'chat_message_sent', created_at
+       FROM chat_messages WHERE user_id IS NOT NULL`,
+
+    `INSERT INTO events (user_id, app_id, session_id, event_type, created_at)
+       SELECT u.id, cs.app_id, cs.id, 'dev_session_started', cs.created_at
+       FROM chat_sessions cs JOIN users u ON u.id = cs.user_id`,
+
+    `INSERT INTO events (user_id, app_id, session_id, event_type, created_at)
+       SELECT cs.user_id, cs.app_id, cs.id, 'pr_opened', cs.created_at
+       FROM chat_sessions cs WHERE cs.pr_number IS NOT NULL`,
+
+    `INSERT INTO events (user_id, app_id, session_id, event_type, created_at)
+       SELECT cs.user_id, cs.app_id, cs.id, 'pr_promoted', cs.promoted_at
+       FROM chat_sessions cs WHERE cs.promoted_at IS NOT NULL`,
+
+    `INSERT INTO events (user_id, app_id, session_id, event_type, created_at)
+       SELECT cs.user_id, cs.app_id, cs.id, 'pr_merged',
+              COALESCE(cs.merged_at, cs.promoted_at, cs.created_at)
+       FROM chat_sessions cs WHERE cs.status = 'merged'`,
+
+    `INSERT INTO events (user_id, session_id, app_id, event_type, created_at)
+       SELECT pv.user_id, pv.session_id, cs.app_id, 'pr_vote_cast', pv.created_at
+       FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id`,
+
+    `INSERT INTO events (user_id, session_id, app_id, event_type, created_at)
+       SELECT pk.giver_user_id, pk.session_id, cs.app_id, 'kudos_given', pk.created_at
+       FROM pr_kudos pk JOIN chat_sessions cs ON cs.id = pk.session_id`,
+
+    `INSERT INTO events (user_id, app_id, event_type, created_at)
+       SELECT user_id, app_id, 'app_favorited', created_at FROM app_favorites`,
+  ];
+
+  let total = 0;
+  for (const sql of statements) {
+    try {
+      const res = await pool.query(sql);
+      total += res.rowCount || 0;
+    } catch (err) {
+      // A single source table hiccup must not abort boot — log and keep
+      // going so the rest of the backfill (and the server) still come up.
+      log.warn('db', 'events backfill statement failed', { err: err.message });
+    }
+  }
+
+  log.info('db', 'Events backfill complete', { inserted: total });
 }
 
 async function seedAdmin(pool, config) {

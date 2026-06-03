@@ -14,6 +14,7 @@ const { voteRoutes } = require('./src/routes/votes');
 const { kudosRoutes } = require('./src/routes/kudos');
 const { issueRoutes } = require('./src/routes/issues');
 const { adminRoutes } = require('./src/routes/admin');
+const { dashboardRoutes } = require('./src/routes/dashboard');
 const { feedbackRoutes } = require('./src/routes/feedback');
 const { notificationsRoutes } = require('./src/routes/notifications');
 const { statusRoutes } = require('./src/routes/status');
@@ -188,6 +189,7 @@ app.use(voteRoutes(config));
 app.use(kudosRoutes(config));
 app.use(issueRoutes(config));
 app.use(adminRoutes(config));
+app.use(dashboardRoutes(config));
 app.use(feedbackRoutes(config));
 app.use(notificationsRoutes(config));
 
@@ -226,6 +228,14 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
+// Admin analytics dashboard. Like /admin, the static shell is served to
+// anyone; the page bootstraps by checking /api/auth/me and redirects
+// non-admins, while the /api/admin/analytics/* data endpoints it calls
+// are independently enforced by adminMiddleware.
+app.get('/dashboard', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
 });
 
 app.get('*', (req, res) => {

@@ -11,6 +11,7 @@ const appManifest = require('../services/app-manifest');
 const staging = require('../services/staging');
 const { drainGuard } = require('../services/lifecycle');
 const { appCreateLimiter } = require('../middleware/rate-limits');
+const events = require('../services/events');
 
 // Local-dev URL fallback ("http://localhost:<hostport>" instead of the
 // real "https://<slug>.<USERNODE_DOMAIN>") is opt-in via env. Previously
@@ -372,6 +373,12 @@ function appRoutes(config) {
         appId: appRow.id,
         slug,
         ...(repoUrlNormalized ? { repoUrl: repoUrlNormalized } : {}),
+      });
+      events.record(pool, {
+        type: events.EVENT_TYPES.APP_CREATED,
+        userId: req.user.id,
+        appId: appRow.id,
+        metadata: { imported: !!repoUrlNormalized },
       });
 
       // Kick off async creation — don't await. If it throws, flip to error.
@@ -861,13 +868,29 @@ function appRoutes(config) {
         return res.status(404).json({ error: 'App not found' });
       }
 
-      await pool.query(
+      // `xmax = 0` is true only for a freshly INSERTed row; on the
+      // ON CONFLICT update path xmax is the locking txid (non-zero). We
+      // use it to emit the dapp_active_day analytics event exactly once
+      // per (user, app, day) — the first heartbeat of the day — rather
+      // than on every periodic activity ping, which would bloat the
+      // append-only events log. This matches the one-row-per-active-day
+      // shape the migrate.js backfill produces from app_activity.
+      const { rows: activityRows } = await pool.query(
         `INSERT INTO app_activity (app_id, user_id, seconds_spent, date)
          VALUES ($1, $2, $3, CURRENT_DATE)
          ON CONFLICT (app_id, user_id, date)
-         DO UPDATE SET seconds_spent = app_activity.seconds_spent + EXCLUDED.seconds_spent`,
+         DO UPDATE SET seconds_spent = app_activity.seconds_spent + EXCLUDED.seconds_spent
+         RETURNING (xmax = 0) AS inserted`,
         [appRows[0].id, req.user.id, Math.round(seconds)]
       );
+
+      if (activityRows[0]?.inserted) {
+        events.record(pool, {
+          type: events.EVENT_TYPES.DAPP_ACTIVE_DAY,
+          userId: req.user.id,
+          appId: appRows[0].id,
+        });
+      }
 
       res.json({ ok: true });
     } catch (err) {

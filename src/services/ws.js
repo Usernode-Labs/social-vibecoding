@@ -2,6 +2,7 @@ const { WebSocketServer } = require('ws');
 const { getPool } = require('../db/pool');
 const log = require('./logger');
 const notifications = require('./notifications');
+const events = require('./events');
 
 let wss;
 const rooms = new Map(); // appId -> Set<{ ws, user }>
@@ -252,6 +253,12 @@ async function handleMessage(pool, client, msg) {
       };
 
       broadcast(client.appId, outMsg);
+
+      events.record(pool, {
+        type: events.EVENT_TYPES.CHAT_MESSAGE_SENT,
+        userId: client.user.id,
+        appId: client.appId,
+      });
 
       // #15: reply notification — ping the author of the quoted message
       // or PR (no-op for self-quotes and authorless system rows).

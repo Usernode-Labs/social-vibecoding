@@ -9,6 +9,7 @@ const { sendSystemMessage, pushNotificationToUser } = require('../services/ws');
 const { getActiveUserStats, isUserActive } = require('../services/active-users');
 const notifications = require('../services/notifications');
 const { isAppLocked, hasAdminYesVote } = require('../services/admin-approval');
+const events = require('../services/events');
 
 function voteRoutes(config) {
   const router = Router();
@@ -72,6 +73,13 @@ function voteRoutes(config) {
       const { pushSessionUpdate } = require('../services/ws');
       pushSessionUpdate({ action: 'promoted', sessionId: session.id, appSlug: session.app_slug });
       log.info('votes', 'Session promoted', { sessionId: session.id });
+      events.record(pool, {
+        type: events.EVENT_TYPES.PR_PROMOTED,
+        userId: req.user.id,
+        appId: session.app_id,
+        sessionId: session.id,
+        metadata: { prNumber: session.pr_number || null },
+      });
       res.json({ ok: true });
 
       // Vote-request fan-out. Non-fatal + post-response: the promote
@@ -193,6 +201,27 @@ function voteRoutes(config) {
       const { pushVoteUpdate } = require('../services/ws');
       pushVoteUpdate({ sessionId: session.id, appSlug: session.app_slug, merged: false });
       log.info('votes', 'Vote cast', { sessionId: session.id, vote, userId: req.user.id });
+
+      // Emit only on a real (new or flipped) vote — the `unchanged`
+      // no-op already returned above. pr_vote_cast credits the voter;
+      // pr_vote_received credits the PR author (when still attributed),
+      // so the PR-promotion funnel can measure "got a vote" reach.
+      events.record(pool, {
+        type: events.EVENT_TYPES.PR_VOTE_CAST,
+        userId: req.user.id,
+        appId: session.app_id,
+        sessionId: session.id,
+        metadata: { vote },
+      });
+      if (session.user_id && session.user_id !== req.user.id) {
+        events.record(pool, {
+          type: events.EVENT_TYPES.PR_VOTE_RECEIVED,
+          userId: session.user_id,
+          appId: session.app_id,
+          sessionId: session.id,
+          metadata: { vote, voterId: req.user.id },
+        });
+      }
       res.json({ ok: true, merged: false });
 
       // Kick off the majority check in the background. If it turns
@@ -664,10 +693,27 @@ async function checkAndMerge(config, pool, session, options = {}) {
     await staging.teardownStaging(session, app);
 
     await pool.query(
-      `UPDATE chat_sessions SET status = 'merged', merge_commit_sha = COALESCE($2, merge_commit_sha)
+      `UPDATE chat_sessions SET status = 'merged', merged_at = NOW(),
+                                merge_commit_sha = COALESCE($2, merge_commit_sha)
        WHERE id = $1`,
       [session.id, mergeCommitSha]
     );
+
+    // pr_merged is the terminal stage of the PR-promotion funnel and the
+    // signal behind the "merges over time" growth chart (now exact thanks
+    // to merged_at above). Attributed to the PR author (session.user_id),
+    // which may be NULL if the author was deleted.
+    events.record(pool, {
+      type: events.EVENT_TYPES.PR_MERGED,
+      userId: session.user_id || null,
+      appId: session.app_id,
+      sessionId: session.id,
+      metadata: {
+        prNumber: session.pr_number || null,
+        forced: !!force,
+        ...(force && forceBy ? { forcedBy: forceBy.username } : {}),
+      },
+    });
 
     // Chat session is done — no further turns will reference CC memory,
     // so drop the persistent `.claude` volume.

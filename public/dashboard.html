@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Usernode Social Vibecoding — Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config = {
+    darkMode: 'class',
+    theme: { extend: { colors: {
+      zinc: { 50:'#f6f6fb',100:'#eeeef6',200:'#d4d4e4',300:'#b0b0c8',400:'#9898b0',500:'#6e6e8a',600:'#4e4e6a',700:'#484870',800:'#2e2e50',900:'#1a1a30',950:'#08080f' },
+      violet: { 400:'#a78bfa',500:'#8b5cf6',600:'#7c3aed',700:'#6d28d9' },
+    } } },
+  }</script>
+  <script>
+    if (localStorage.theme === 'light' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: light)').matches)) {
+      document.documentElement.classList.remove('dark');
+    }
+  </script>
+</head>
+<body class="bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 min-h-screen p-6">
+  <div class="max-w-5xl mx-auto">
+    <div class="flex items-center justify-between mb-8">
+      <h1 class="text-2xl font-bold">Dashboard</h1>
+      <div class="flex items-center gap-3">
+        <a href="/admin" class="text-sm text-violet-400 hover:text-violet-300">Admin &rarr;</a>
+        <a href="/status" class="text-sm text-violet-400 hover:text-violet-300">Status &rarr;</a>
+        <a href="/" class="text-sm text-violet-400 hover:text-violet-300">&larr; Back to app</a>
+      </div>
+    </div>
+
+    <div id="gate" class="hidden text-zinc-500 text-center py-20"></div>
+
+    <main id="content" class="hidden space-y-6">
+      <!-- Counters -->
+      <section>
+        <div id="counters" class="grid grid-cols-2 sm:grid-cols-4 gap-3"></div>
+      </section>
+
+      <!-- Funnels -->
+      <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-semibold">Funnels</h2>
+          <div class="flex items-center gap-1 text-xs">
+            <span class="text-zinc-500 mr-1">Cohort:</span>
+            <button data-cohort="all"  class="cohort-btn px-2 py-1 rounded bg-violet-600 text-white">All time</button>
+            <button data-cohort="90d" class="cohort-btn px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">Last 90d</button>
+            <button data-cohort="30d" class="cohort-btn px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">Last 30d</button>
+          </div>
+        </div>
+        <div class="grid md:grid-cols-2 gap-6">
+          <div>
+            <h3 class="text-sm font-semibold text-zinc-400 mb-3">Users using dapps</h3>
+            <div id="funnel-dapp" class="space-y-2"></div>
+          </div>
+          <div>
+            <h3 class="text-sm font-semibold text-zinc-400 mb-3">Promoting PRs (dev sessions)</h3>
+            <div id="funnel-pr" class="space-y-2"></div>
+            <h3 class="text-sm font-semibold text-zinc-400 mt-5 mb-3">Promoting PRs (distinct users)</h3>
+            <div id="funnel-pr-users" class="space-y-2"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Growth -->
+      <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <h2 class="text-lg font-semibold mb-1">Growth</h2>
+        <p class="text-xs text-zinc-500 mb-4">New signups, apps, promoted &amp; merged PRs per week.</p>
+        <div id="growth" class="grid sm:grid-cols-2 gap-6"></div>
+      </section>
+
+      <!-- Retention -->
+      <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <h2 class="text-lg font-semibold mb-1">Retention</h2>
+        <p class="text-xs text-zinc-500 mb-4">
+          Cohort = signup week. Each cell is the share of that cohort active (any action) N weeks later.
+        </p>
+        <div id="retention-cohorts" class="overflow-x-auto"></div>
+        <h3 class="text-sm font-semibold text-zinc-400 mt-6 mb-3">WAU / MAU stickiness</h3>
+        <div id="stickiness"></div>
+      </section>
+
+      <!-- Engagement tiers (custom DAU / WAU) -->
+      <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <h2 class="text-lg font-semibold mb-1">Engagement tiers</h2>
+        <p class="text-xs text-zinc-500 mb-4">Custom engagement bars, charted weekly. These are not the classic active-user counts above.</p>
+        <div class="grid sm:grid-cols-2 gap-6">
+          <div>
+            <div class="flex items-center justify-between text-sm mb-1">
+              <span class="font-semibold text-zinc-300">DAU</span>
+              <span id="eng-dau-latest" class="text-zinc-500"></span>
+            </div>
+            <p class="text-[11px] text-zinc-500 mb-2">Per week: used a dapp &ge; 4&times; OR promoted &ge; 1 session.</p>
+            <div id="eng-dau"></div>
+          </div>
+          <div>
+            <div class="flex items-center justify-between text-sm mb-1">
+              <span class="font-semibold text-zinc-300">WAU</span>
+              <span id="eng-wau-latest" class="text-zinc-500"></span>
+            </div>
+            <p class="text-[11px] text-zinc-500 mb-2">Per week: used a dapp &ge; 2&times; in the trailing 2 weeks.</p>
+            <div id="eng-wau"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/js/dashboard.js"></script>
+</body>
+</html>
