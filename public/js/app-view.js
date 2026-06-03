@@ -339,6 +339,18 @@ const AppView = {
 
   renderGroupChatTab() {
     const content = document.getElementById('app-content');
+
+    // (#3) First-arrival framing: name what Group Chat is for. Group chat
+    // is rarely empty (system messages), so a permanent banner would be
+    // clutter — show it once per browser, then it disappears.
+    const gcAppName = (AppView.appData && AppView.appData.name) ? AppView.appData.name : 'this app';
+    let gcIntroHtml = '';
+    try {
+      if (!localStorage.getItem('usernode_seen_gc_intro')) {
+        gcIntroHtml = `<div class="mx-3 mt-2 px-3 py-2 rounded-lg bg-violet-500/10 border border-violet-500/20 text-xs text-zinc-600 dark:text-zinc-300">This is where everyone using <span class="font-medium">${escapeHtml(gcAppName)}</span> talks and votes on proposed changes to it.</div>`;
+        localStorage.setItem('usernode_seen_gc_intro', '1');
+      }
+    } catch { /* private-mode / disabled storage: just skip the intro */ }
     // Layout mirrors dev-chat's session view: a vertical column for
     // the cross-cutting strips (vote panel here / session header
     // there), then a flex-row body that holds the chat pane on the
@@ -372,6 +384,7 @@ const AppView = {
 
         <div class="gc-tab-body flex-1 flex min-h-0">
           <div class="gc-chat-pane flex-1 flex flex-col min-h-0">
+            ${gcIntroHtml}
             <!-- Messages -->
             <div id="gc-messages" class="flex-1 overflow-y-auto py-2 space-y-0.5"></div>
 
@@ -674,6 +687,18 @@ const AppView = {
         merged.length && `${merged.length} merged`,
       ].filter(Boolean).join(' · ');
 
+      // (3) Just-in-time teaching: the first time a viewer sees open PRs
+      // in the vote panel, explain what a vote actually does. Gated on a
+      // localStorage flag so it teaches once, then gets out of the way —
+      // "onboarding that's indistinguishable from using the app".
+      let voteHintHtml = '';
+      try {
+        if (promoted.length && !localStorage.getItem('usernode_seen_vote_hint')) {
+          voteHintHtml = `<div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 italic">These are proposed changes. When a majority of the app's active users vote yes, the change merges and goes live for everyone.</div>`;
+          localStorage.setItem('usernode_seen_vote_hint', '1');
+        }
+      } catch { /* private-mode / disabled storage: just skip the hint */ }
+
       let bodyHtml = '';
 
       // Users tile — first piece of the new dashboard. activeUsers is
@@ -685,8 +710,8 @@ const AppView = {
       // sub-line tells the current user whether they're counted and,
       // if not, how to qualify.
       const viewerStatusHtml = viewerActive
-        ? `<div class="text-xs mt-1 text-emerald-600 dark:text-emerald-400">&check; You're counted as an active user.</div>`
-        : `<div class="text-xs mt-1 text-zinc-500 dark:text-zinc-400">Spend at least 1 minute on the App tab to be counted.</div>`;
+        ? `<div class="text-xs mt-1 text-emerald-600 dark:text-emerald-400">&check; You're a voting user of this app — your vote helps decide which changes ship.</div>`
+        : `<div class="text-xs mt-1 text-zinc-500 dark:text-zinc-400">Spend a minute on the App tab to become a voting user — then you help decide which changes ship.</div>`;
       bodyHtml += `
         <div class="mb-3">
           <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 font-medium">Users</div>
@@ -703,7 +728,7 @@ const AppView = {
         // (title row + controls row). On sm+ we drop the dividers via
         // `sm:divide-y-0` so the original single-row list stays visually
         // unchanged. Same pattern on every list section below.
-        bodyHtml += `<div class="mb-2"><div class="text-xs text-zinc-500 mb-1 font-medium">Open PRs <span class="text-zinc-600 font-normal">(need ${majority}/${activeUsers} votes to merge)</span>${lockedHint}</div><div class="divide-y divide-zinc-200 dark:divide-zinc-800 sm:divide-y-0 border-y border-zinc-200 dark:border-zinc-800 sm:border-y-0">`;
+        bodyHtml += `<div class="mb-2"><div class="text-xs text-zinc-500 mb-1 font-medium">Open PRs <span class="text-zinc-600 font-normal">(need ${majority}/${activeUsers} votes to merge)</span>${lockedHint}</div>${voteHintHtml}<div class="divide-y divide-zinc-200 dark:divide-zinc-800 sm:divide-y-0 border-y border-zinc-200 dark:border-zinc-800 sm:border-y-0">`;
         for (const pr of promoted) {
           const yesCount = parseInt(pr.yes_count);
           const isMerging = pr.status === 'merging';
@@ -911,6 +936,11 @@ const AppView = {
             </div>`;
         }
         bodyHtml += '</div></div>';
+      } else {
+        // (#2) Empty vote panel → teach the Dev-Chat ↔ voting connection,
+        // the single most important link in the loop. Shown whenever no
+        // PR is currently up for a vote.
+        bodyHtml += `<div class="mb-2"><div class="text-xs text-zinc-500 dark:text-zinc-400">No changes are up for a vote right now. Got an idea? Open <span class="font-medium text-emerald-600 dark:text-emerald-400">Dev Chat</span> and describe it.</div></div>`;
       }
 
       // Pill: fixed title on the left ("App information and activity")

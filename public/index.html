@@ -219,7 +219,7 @@
       <button id="notifications-mark-all" class="text-xs text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 disabled:opacity-40" disabled>Mark all read</button>
     </div>
     <div id="notifications-list" class="flex-1 overflow-y-auto"></div>
-    <div id="notifications-empty" class="hidden px-4 py-6 text-sm text-zinc-500 text-center">No notifications yet.</div>
+    <div id="notifications-empty" class="hidden px-4 py-6 text-sm text-zinc-500 text-center">You'll get pinged here when someone proposes a change to an app you use.</div>
   </div>
 
   <!-- Developer console (slide-up panel, anchored to bottom) -->
@@ -264,6 +264,11 @@
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z"/></svg>
         <span id="staging-dev-console-badge" class="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"></span>
       </button>
+    </div>
+    <!-- Explains why this change isn't live yet — a common point of
+         confusion the first time someone previews their own PR. -->
+    <div class="px-4 py-1.5 bg-violet-500/10 border-b border-violet-500/20 text-xs text-zinc-400 shrink-0">
+      Private preview — only you can see this until the app's users vote your change in.
     </div>
     <iframe id="staging-iframe" class="flex-1 border-0" style="background:#08080f"></iframe>
   </div>

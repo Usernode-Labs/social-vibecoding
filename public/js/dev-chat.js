@@ -1796,10 +1796,14 @@ const DevChat = {
     if (DevChat.sessions.length === 0) {
       container.innerHTML = `
         <div class="text-center px-6 py-12">
-          <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-1">No dev sessions yet.</p>
+          <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">Want to change this app? Just ask.</p>
+          <p class="text-xs text-zinc-500 dark:text-zinc-400 mb-3 max-w-xs mx-auto">
+            Describe what you'd like different in plain English — an AI writes the code and opens a
+            real pull request. No coding required. The app's users then vote it in.
+          </p>
           <p class="text-xs text-zinc-500 dark:text-zinc-500">
             Hit <span class="font-medium text-emerald-600 dark:text-emerald-400">+ New Session</span>
-            above to ask Claude to make changes.
+            above to start, e.g. <span class="italic">"make the header dark blue"</span>.
           </p>
         </div>`;
       return;
@@ -2140,7 +2144,7 @@ const DevChat = {
               <textarea
                 id="dc-input"
                 rows="1"
-                placeholder="Ask the AI to make changes..."
+                placeholder="Describe a change in plain English — e.g. &quot;add a dark mode toggle&quot;. No coding needed."
                 autocomplete="off"
                 class="dc-textarea flex-1 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent resize-none"
               ></textarea>
