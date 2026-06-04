@@ -367,7 +367,7 @@ const DevChat = {
         const name = btn.dataset.name || 'this session';
         const ok = await ConfirmModal.show({
           title: `Archive "${name}"?`,
-          message: "This closes the PR and frees the slot. You can Unarchive it later from the app's session list (Claude's memory is kept for a while).",
+          message: "This closes the PR and frees the slot. You can Unarchive it later from the app's session list (chat memory is kept for 30 days).",
           confirmLabel: 'Archive',
           danger: true,
         });
@@ -1883,7 +1883,7 @@ const DevChat = {
         const name = btn.dataset.name || 'this session';
         const ok = await ConfirmModal.show({
           title: `Archive "${name}"?`,
-          message: "This closes the PR and frees the slot. You can Unarchive it later to restore it (Claude's memory is kept for a while).",
+          message: "This closes the PR and frees the slot. You can Unarchive it later to restore it (chat memory is kept for 30 days).",
           confirmLabel: 'Archive',
           danger: true,
         });
