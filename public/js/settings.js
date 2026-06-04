@@ -121,9 +121,10 @@
       this._renderAdminSection();
       this._clearStatus();
       this.modal.classList.remove('hidden');
-      if (!this.state.hasApiKey) {
-        setTimeout(() => document.getElementById('settings-api-key').focus(), 0);
-      }
+      // Intentionally do NOT auto-focus the API key field here. On mobile,
+      // focusing an input on open immediately pops the on-screen keyboard,
+      // which is jarring when the user just wanted to view settings. Let the
+      // keyboard appear only when the user taps a field that needs it.
     },
 
     _renderDevConsoleSection() {
