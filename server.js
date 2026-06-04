@@ -43,6 +43,72 @@ const app = express();
 // One hop (Caddy) in front of us — enables accurate req.ip for rate limits.
 app.set('trust proxy', 1);
 
+// ── Explorer API passthrough ───────────────────────────────────────────────
+// The mobile app's in-webview "Transaction Log" panel resolves the explorer
+// against the origin it is loaded from and calls
+// `GET /explorer-api/active_chain` + `POST /explorer-api/<chain>/transactions`
+// (usernode flutter `dapp_webview_screen.dart`). On the per-dApp subdomains
+// the dapp template server (usernode-dapp-homepage/server.js `proxyExplorer`)
+// proxies that prefix to the explorer; on the launcher origin the path used to
+// fall through the JWT gate and 302 to /login.html, so the webview got HTML
+// back and `jsonDecode` threw "Explorer fetch failed". Mounting the same
+// public passthrough here — before the JSON body parser so the raw body
+// streams through, and before authMiddleware so it isn't redirected — makes
+// the panel work without an app redeploy. Matches the documented
+// PUBLIC_PREFIXES = ['/explorer-api/'] convention (src/prompts/app-conventions.md).
+const EXPLORER_UPSTREAM =
+  process.env.EXPLORER_UPSTREAM || 'testnet-explorer.usernodelabs.org';
+const EXPLORER_UPSTREAM_BASE = process.env.EXPLORER_UPSTREAM_BASE || '/api';
+const EXPLORER_USE_HTTP = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01]))/.test(
+  EXPLORER_UPSTREAM.replace(/:\d+$/, '')
+);
+
+app.use('/explorer-api', (req, res) => {
+  const transport = EXPLORER_USE_HTTP ? require('http') : require('https');
+  // req.url is the path *after* the /explorer-api mount point, e.g.
+  // "/active_chain" or "/<chain>/transactions" (query string preserved).
+  const subPath = req.url.replace(/^\/+/, '');
+  const upstreamPath = `${EXPLORER_UPSTREAM_BASE}/${subPath}`;
+  const [hostname, portStr] = EXPLORER_UPSTREAM.split(':');
+  const port = portStr ? Number(portStr) : EXPLORER_USE_HTTP ? 80 : 443;
+
+  const chunks = [];
+  req.on('data', (c) => chunks.push(c));
+  req.on('end', () => {
+    const bodyBuf = chunks.length ? Buffer.concat(chunks) : null;
+    const upReq = transport.request(
+      {
+        hostname,
+        port,
+        path: upstreamPath,
+        method: req.method,
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json',
+          ...(bodyBuf ? { 'content-length': bodyBuf.length } : {}),
+        },
+      },
+      (upRes) => {
+        const rChunks = [];
+        upRes.on('data', (c) => rChunks.push(c));
+        upRes.on('end', () => {
+          res.writeHead(upRes.statusCode || 502, {
+            'content-type': upRes.headers['content-type'] || 'application/json',
+            'access-control-allow-origin': '*',
+          });
+          res.end(Buffer.concat(rChunks));
+        });
+      }
+    );
+    upReq.on('error', (err) => {
+      log.error('explorer-proxy', 'upstream error', { err: err.message });
+      res.status(502).type('text/plain').send(`Explorer proxy error: ${err.message}`);
+    });
+    if (bodyBuf) upReq.write(bodyBuf);
+    upReq.end();
+  });
+});
+
 // Skip the global JSON parser for the Anthropic-proxy path so the proxy
 // can mount its own parser with a 32MB limit (matching Anthropic's
 // actual request-size cap). With the default 100kb limit a normal CC
