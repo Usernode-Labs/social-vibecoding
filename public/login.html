@@ -39,14 +39,12 @@
 
       <!-- Options when pubkey is not linked -->
       <div id="wallet-options" class="hidden space-y-3">
-        <button id="btn-link-existing" class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white">
-          Login
-        </button>
-        <button id="btn-register-new" class="w-full rounded-lg border border-zinc-300 dark:border-zinc-600 hover:border-zinc-400 dark:hover:border-zinc-500 px-4 py-2 font-medium transition-colors text-zinc-700 dark:text-zinc-200">
+        <button id="btn-register-new" class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white">
           Register
         </button>
-        <p class="text-sm text-center text-zinc-400">Your wallet is not linked to an account yet.</p>
-        <p id="wallet-detected-pubkey" class="text-[11px] text-center text-zinc-500 font-mono break-all px-2"></p>
+        <p class="text-sm text-center text-zinc-500 dark:text-zinc-400">
+          Already created an account on the WebUI? Link your account <a id="btn-link-existing" href="#" class="text-violet-400 hover:text-violet-300">here →</a>
+        </p>
       </div>
 
       <!-- Link existing account form -->
@@ -253,8 +251,6 @@
           registerLink.classList.add('hidden');
           showOnly(walletSignIn);
         } else {
-          const pubkeyDisplay = document.getElementById('wallet-detected-pubkey');
-          if (pubkeyDisplay) pubkeyDisplay.textContent = 'Detected: ' + walletPubkey;
           // Unlinked wallet in the native app: only offer the link/register
           // options. The username/password form and activation-code link
           // below are noise here, so keep them hidden.
@@ -327,7 +323,7 @@
     });
 
     // Option buttons
-    document.getElementById('btn-link-existing').addEventListener('click', () => showOnly(walletLinkForm));
+    document.getElementById('btn-link-existing').addEventListener('click', (e) => { e.preventDefault(); showOnly(walletLinkForm); });
     document.getElementById('btn-register-new').addEventListener('click', () => showOnly(walletRegisterForm));
     document.getElementById('btn-link-back').addEventListener('click', () => showOnly(walletOptions));
     document.getElementById('btn-register-back').addEventListener('click', () => showOnly(walletOptions));
