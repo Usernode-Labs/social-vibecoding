@@ -415,6 +415,56 @@ const DevChat = {
     }
   },
 
+  // Re-sync the open session's server-side status and, if it was auto-
+  // paused while we held it open, resume it. This closes the stale-client
+  // gap behind "Active session not found": the sweeper flips an idle
+  // 'active' session to 'paused' after ~5 min, and a backgrounded tab
+  // stops heartbeating — but /activity can't revive a 'paused' row, and
+  // the local currentSession.status is still 'active', so the next chat
+  // send 404s. Calling this on refocus (and as a chat-send retry) heals
+  // it the same way openSession's auto-resume does.
+  //
+  // Returns true when the session is now active/promoted (resumable),
+  // false otherwise. `silent` suppresses the user-facing alert so a
+  // transient failure on every refocus doesn't nag.
+  async _resumeCurrentSessionIfPaused({ silent = false } = {}) {
+    const s = DevChat.currentSession;
+    if (!s || !s.id) return false;
+    const sessionId = s.id;
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}`);
+      if (!res.ok) return false;
+      const { session } = await res.json();
+      if (!session) return false;
+
+      // Already active/promoted — just keep the local copy in sync.
+      if (session.status !== 'paused') {
+        if (DevChat.currentSession && DevChat.currentSession.id === sessionId) {
+          DevChat.currentSession.status = session.status;
+        }
+        return ['active', 'promoted'].includes(session.status);
+      }
+
+      const rr = await fetch(`/api/sessions/${sessionId}/resume`, { method: 'POST' });
+      if (rr.ok) {
+        if (DevChat.currentSession && DevChat.currentSession.id === sessionId) {
+          DevChat.currentSession.status = 'active';
+        }
+        DevChat._refreshSessionListsAfterMutation().catch(() => {});
+        return true;
+      }
+      if (!silent) {
+        const data = await rr.json().catch(() => ({}));
+        alert(data.error || 'Could not resume this session right now. Try again in a moment.');
+      }
+      return false;
+    } catch {
+      // Network blip — leave local state as-is; the caller decides what to
+      // surface (the chat-send path still shows its own error on retry).
+      return false;
+    }
+  },
+
   // Activity heartbeat. While a session is open and the browser tab is
   // visible, ping the server (~every 60s) so last_activity_at stays
   // fresh. That's what lets the server's auto-pause timer run on a short
@@ -433,8 +483,15 @@ const DevChat = {
     };
     if (!DevChat._heartbeatVisHandler) {
       // Bump immediately on regaining visibility so a just-refocused
-      // session isn't caught by the next sweep tick.
-      DevChat._heartbeatVisHandler = () => { if (document.visibilityState === 'visible') beat(); };
+      // session isn't caught by the next sweep tick. If the session was
+      // already auto-paused while the tab was hidden (>5 min), the bump
+      // alone can't revive it — /activity only touches active/promoted
+      // rows — so also re-sync and resume so the next send doesn't 404.
+      DevChat._heartbeatVisHandler = () => {
+        if (document.visibilityState !== 'visible') return;
+        beat();
+        DevChat._resumeCurrentSessionIfPaused({ silent: true });
+      };
       document.addEventListener('visibilitychange', DevChat._heartbeatVisHandler);
     }
     if (DevChat._heartbeatTimer) return;
@@ -578,12 +635,30 @@ const DevChat = {
     DevChat._abortController = new AbortController();
 
     try {
-      const res = await fetch(`/api/sessions/${DevChat.currentSession.id}/chat`, {
+      const sessionId = DevChat.currentSession.id;
+      const postChat = () => fetch(`/api/sessions/${sessionId}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message, model }),
         signal: DevChat._abortController.signal,
       });
+
+      let res = await postChat();
+
+      // The session may have been auto-paused while we held it open (the
+      // sweeper flips idle 'active' → 'paused' after ~5 min; a backgrounded
+      // tab stops heartbeating). The chat route 404s with "Active session
+      // not found" in that case. Transparently resume and retry once so the
+      // user never sees it — same heal as the refocus path above.
+      if (res.status === 404) {
+        const peek = await res.clone().json().catch(() => ({}));
+        if (/active session not found/i.test(peek?.error || '')) {
+          const resumed = await DevChat._resumeCurrentSessionIfPaused({ silent: true });
+          if (resumed && DevChat.currentSession && DevChat.currentSession.id === sessionId) {
+            res = await postChat();
+          }
+        }
+      }
 
       if (res.status === 429) {
         const data = await res.json();
