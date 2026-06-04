@@ -62,6 +62,20 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
+// The platform is never a dapp in "mock mode". The shared usernode-bridge
+// auto-detects mock mode by probing `GET /__mock/enabled` and treating ANY
+// 200 as "use the local-dev /__mock/* endpoints". Our SPA catch-all
+// (`app.get('*')` below) answers that probe with index.html + 200, which
+// fools the bridge into routing `sendTransaction` to `/__mock/sendTransaction`
+// — an endpoint we don't implement — so the POST 404s and surfaces the
+// misleading "Mock API not enabled" error on the wallet register flow.
+// Explicitly 404 the whole mock namespace (before authMiddleware so it's
+// authoritative for anonymous + authenticated callers alike) so the bridge
+// correctly concludes mock is off and uses the native transport.
+app.all('/__mock/*', (_req, res) => {
+  res.status(404).json({ error: 'mock mode not available on the platform' });
+});
+
 // Lightweight endpoint polled by the header "platform version" pill
 // (public/js/app.js → renderPlatformVersionPill). Four pieces of
 // information packaged together so the client only needs one fetch:
