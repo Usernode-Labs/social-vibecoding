@@ -956,6 +956,8 @@ const AppView = {
               <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-emerald-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
               <span ${mergedQuoteAttrs}>${mergedLabel}</span>
               <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
+                ${AppView.voteCountPill(pr, majority)}
+                ${AppView.voteButtonsHtml(pr, { collapseVoted: true })}
                 <span class="text-xs text-zinc-600">${date}</span>
                 ${undoUI}
                 ${kudosBtn}
