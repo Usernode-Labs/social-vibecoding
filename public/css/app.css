@@ -571,6 +571,17 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   color: #10b981;
   white-space: nowrap;
 }
+/* Settled "✓ Merged" badge — same slot as the merging badge, shown after a
+   PR lands so the row's voting info stays put. */
+.gc-merged-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #8b5cf6;
+  white-space: nowrap;
+}
 /* Row text tint by the viewer's vote status: faded once they've voted,
    full-strength purple while their vote is still outstanding so unvoted
    activity rows draw the eye. */

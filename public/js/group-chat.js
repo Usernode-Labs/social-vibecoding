@@ -815,9 +815,10 @@ const GroupChat = {
     if (!st) return null;
     let pr = sid ? (st.bySession && st.bySession[sid]) : null;
     if (!pr && prNum) pr = (st.byPrNumber && st.byPrNumber[prNum]) || (st.bySession && st.bySession[prNum]);
-    // 'merging' rows stay resolvable so the tally pill + "You voted X" don't
-    // vanish mid-merge — a "Merging…" badge is appended alongside instead.
-    return pr && (pr.status === 'promoted' || pr.status === 'merging') ? pr : null;
+    // 'merging' AND 'merged' rows stay resolvable so the tally pill + "You
+    // voted X" don't vanish during or after a merge — a "Merging…"/"Merged"
+    // badge is appended alongside instead.
+    return pr && (pr.status === 'promoted' || pr.status === 'merging' || pr.status === 'merged') ? pr : null;
   },
 
   // Inner HTML for a resolved votable PR: the live "yes / majority" count
@@ -828,9 +829,12 @@ const GroupChat = {
     const st = (typeof AppView !== 'undefined' && AppView.voteState) || {};
     // collapseVoted: in the chat, a cast vote collapses to a "You voted X"
     // box (the drawer keeps the full set so it stays re-castable there).
-    // A "Merging…" badge is appended (not substituted) once the PR is merging.
-    const merging = pr.status === 'merging' ? AppView.mergingBadgeHtml() : '';
-    return AppView.voteCountPill(pr, st.majority) + AppView.voteButtonsHtml(pr, { collapseVoted: true }) + merging;
+    // A "Merging…"/"Merged" badge is appended (not substituted) once the PR
+    // crosses the threshold, so the pill + "You voted X" survive the merge.
+    let badge = '';
+    if (pr.status === 'merging') badge = AppView.mergingBadgeHtml();
+    else if (pr.status === 'merged') badge = AppView.mergedBadgeHtml();
+    return AppView.voteCountPill(pr, st.majority) + AppView.voteButtonsHtml(pr, { collapseVoted: true }) + badge;
   },
 
   // Row text-color class from the viewer's vote status: faded once voted,

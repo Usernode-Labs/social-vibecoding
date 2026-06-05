@@ -352,8 +352,15 @@ function voteRoutes(config) {
       // (Undo is now a single direct action that opens a revert PR, so
       // there are no separate undo-vote tallies to surface.)
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.user_id, u.username, cs.created_at,
+        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.user_id, cs.status, u.username, cs.created_at,
            cs.revert_of_session_id,
+           -- Vote tally + per-viewer vote carried through so the group-chat
+           -- activity row can keep its "x / y" pill and "You voted X" box
+           -- after the PR merges (status='merged'), rather than the controls
+           -- vanishing. Mirrors the /promoted subqueries.
+           (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') as yes_count,
+           (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'no') as no_count,
+           (SELECT vote FROM pr_votes WHERE session_id = cs.id AND user_id = $2) as my_vote,
            (SELECT COUNT(*)::int FROM pr_kudos WHERE session_id = cs.id) as kudos_count,
            (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)) as my_kudos,
            rv.id        as revert_session_id,

@@ -645,18 +645,28 @@ const AppView = {
       const promoted = promotedData.promoted;
       const activeUsers = promotedData.activeUsers || 1;
       const majority = promotedData.majority || 1;
+      // Merged sessions are read up-front (not just for the "Merged" panel
+      // section below) so they can be folded into voteState — this keeps the
+      // group-chat activity row's "x / y" pill + "You voted X" box alive
+      // after a PR merges, with a "Merged" badge instead of the controls
+      // disappearing. /merged now carries status + yes/no/my_vote for this.
+      const merged = mergedRes.ok ? (await mergedRes.json()).merged : [];
       // Shared snapshot for the inline vote buttons rendered on group-chat
       // "promoted / voted" activity rows (see group-chat.js). Keyed by
       // session id; rebuilt on every panel reload so the inline buttons
       // track the panel exactly (live counts, my_vote, votable status).
+      // Promoted/merging come first; merged rows fill in any sessions not
+      // already present so an open PR's live row always wins over its
+      // merged snapshot.
+      const voteRows = [...(merged || []), ...(promoted || [])];
       AppView.voteState = {
-        bySession: Object.fromEntries((promoted || []).map((pr) => [String(pr.id), pr])),
+        bySession: Object.fromEntries(voteRows.map((pr) => [String(pr.id), pr])),
         // Also index by GitHub PR number so group-chat activity rows that
         // predate the metadata.vote tag (or any row, as a fallback) can be
         // matched from the "PR #N" in their text. pr_number is unique per
-        // app, and /promoted is already app-scoped, so this is unambiguous.
+        // app, and the endpoints are app-scoped, so this is unambiguous.
         byPrNumber: Object.fromEntries(
-          (promoted || []).filter((pr) => pr.pr_number != null).map((pr) => [String(pr.pr_number), pr])
+          voteRows.filter((pr) => pr.pr_number != null).map((pr) => [String(pr.pr_number), pr])
         ),
         majority,
         activeUsers,
@@ -691,7 +701,6 @@ const AppView = {
       const allIssues = issuesData.issues || [];
       const renameProposals = allIssues.filter((i) => i.kind === 'rename');
       const issues = allIssues.filter((i) => i.kind !== 'rename');
-      const merged = mergedRes.ok ? (await mergedRes.json()).merged : [];
 
       // Activity-only summary (excludes the Users tile, which is
       // always present and isn't really "activity"). Empty when
@@ -1140,6 +1149,13 @@ const AppView = {
     return `<span class="gc-merging-badge"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Merging…</span>`;
   },
 
+  // "Merged" badge — the settled counterpart of the merging badge, shown
+  // next to the (now read-only) tally pill / "You voted X" box on group-chat
+  // rows after a PR lands so the voting info doesn't disappear.
+  mergedBadgeHtml() {
+    return `<span class="gc-merged-badge">✓ Merged</span>`;
+  },
+
   voteButtonsHtml(pr, opts) {
     if (!pr) return '';
     // Group-chat inline rows pass { collapseVoted: true }: once the viewer
@@ -1151,6 +1167,10 @@ const AppView = {
       const choice = pr.my_vote === 'yes' ? 'Yes' : 'No';
       return `<span class="gc-vote-voted-box gc-vote-voted-box-${pr.my_vote}">You voted ${choice}</span>`;
     }
+    // In the chat, a merging/merged PR has closed voting — don't render live
+    // (now no-op) Yes/No buttons for someone who never voted; the pill +
+    // status badge already convey the outcome.
+    if (opts && opts.collapseVoted && pr.status !== 'promoted') return '';
     const preview = pr.staging_url
       ? `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStaging('${pr.staging_url}')">Preview</button>`
       : '';
