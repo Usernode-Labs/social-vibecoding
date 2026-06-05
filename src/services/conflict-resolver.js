@@ -1,213 +1,221 @@
 const log = require('./logger');
 const github = require('./github');
-const llm = require('./llm');
-const docker = require('./docker');
-const stagingService = require('./staging');
 const limits = require('./limits');
+const { runSyncMain } = require('./sync-main');
 const { getPool } = require('../db/pool');
 
-const CONFLICT_RESOLVER_MODEL = 'claude-sonnet-4-20250514';
+// GitHub computes PR mergeability asynchronously: for a few seconds
+// after the base branch (main) changes it returns `mergeable: null`
+// while a background job recomputes. The old resolver checked once,
+// immediately, un-awaited, and treated `null` as "nothing to do" — so
+// it almost always no-op'd right after a merge. We now poll until the
+// value settles before deciding.
+const MERGEABLE_POLL_TRIES = parseInt(process.env.CONFLICT_MERGEABLE_POLL_TRIES, 10) || 6;
+// Env-overridable so tests can drop it to 0 (the default 2s × up to 5
+// sleeps would make the suite crawl).
+const MERGEABLE_POLL_DELAY_MS = Number.isFinite(parseInt(process.env.CONFLICT_MERGEABLE_POLL_DELAY_MS, 10))
+  ? parseInt(process.env.CONFLICT_MERGEABLE_POLL_DELAY_MS, 10)
+  : 2000;
 
+function parseRepo(repoUrl) {
+  const [, owner, repo] = (repoUrl || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/) || [];
+  return owner && repo ? { owner, repo } : null;
+}
+
+// Poll GitHub until it has computed PR mergeability. Returns the final
+// boolean (`true` mergeable / `false` conflicting) or `null` if it
+// never settled within the budget. Throws are surfaced to the caller.
+async function pollMergeable(owner, repo, prNumber) {
+  const octokit = await github.getInstallationOctokit(owner);
+  for (let i = 0; i < MERGEABLE_POLL_TRIES; i++) {
+    const { data: pr } = await octokit.request(
+      'GET /repos/{owner}/{repo}/pulls/{pull_number}',
+      { owner, repo, pull_number: prNumber }
+    );
+    if (pr.mergeable === true || pr.mergeable === false) return pr.mergeable;
+    if (i < MERGEABLE_POLL_TRIES - 1) {
+      await new Promise((r) => setTimeout(r, MERGEABLE_POLL_DELAY_MS));
+    }
+  }
+  return null;
+}
+
+// Re-fetch a session joined with its app so callers always work from a
+// fresh row (status / behind_main / votes may have moved since the
+// trigger fired).
+async function loadSession(pool, sessionId) {
+  const { rows } = await pool.query(
+    `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.name AS app_name
+     FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
+     WHERE cs.id = $1`,
+    [sessionId]
+  );
+  return rows[0] || null;
+}
+
+// Post-merge sweep: for every OTHER promoted PR on the same app, sync it
+// with main (worker git-merge + Claude-on-markers) and, if it's already
+// approved, retry the merge. Fired (un-awaited) from checkAndMerge after
+// a successful merge, and from the drift poller after an out-of-band
+// main move.
 async function checkAndResolveConflicts(config, mergedSession) {
   const pool = getPool(config);
 
-  // Find other promoted sessions for the same app that might now conflict
   const { rows: conflictCandidates } = await pool.query(
-    `SELECT cs.*, a.slug as app_slug, a.repo_url, a.name as app_name
+    `SELECT cs.id
      FROM chat_sessions cs
-     JOIN apps a ON cs.app_id = a.id
      WHERE cs.app_id = $1 AND cs.status = 'promoted' AND cs.id != $2`,
-    [mergedSession.app_id, mergedSession.id]
+    [mergedSession.app_id, mergedSession.id || 0]
   );
 
   if (!conflictCandidates.length) return;
 
-  for (const session of conflictCandidates) {
-    await resolveIfConflicted(config, pool, session, mergedSession);
+  // Sequential: each candidate may spin a worker (real git merge). Doing
+  // them in parallel would stampede the docker host the same way the
+  // drift poller avoids.
+  for (const { id } of conflictCandidates) {
+    try {
+      await resolveAndMaybeRetry(config, { sessionId: id });
+    } catch (err) {
+      log.error('conflict', 'resolveAndMaybeRetry failed', { sessionId: id, err: err.message });
+    }
   }
 }
 
-async function resolveIfConflicted(config, pool, session, mergedSession) {
-  if (!github.isEnabled() || !session.repo_url) return;
-
-  const [, owner, repo] = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-  if (!owner || !repo) return;
-
+// Decide whether a promoted PR's branch actually needs to be integrated
+// with main. True when we have a recorded drift (behind_main > 0) or
+// GitHub reports a real conflict once its mergeability computation
+// settles. Returning false means "leave it alone".
+async function needsIntegration(session, repo) {
+  if ((session.behind_main || 0) > 0) return true;
   try {
-    // octokit.request rather than .rest.* — @octokit/app's installation
-    // Octokit is a bare core instance without the rest-endpoint-methods
-    // plugin, so .rest is undefined and every .rest.foo.bar call here
-    // used to TypeError silently inside the surrounding catch (i.e.
-    // automatic conflict resolution was a no-op since the @octokit/app
-    // upgrade). The {+name} form keeps `/` characters in path params
-    // (refs, file paths, branch-named tree_shas) un-encoded.
-    const octokit = await github.getInstallationOctokit(owner);
-    const { data: pr } = await octokit.request(
-      'GET /repos/{owner}/{repo}/pulls/{pull_number}',
-      { owner, repo, pull_number: session.pr_number }
-    );
-
-    if (pr.mergeable === true || pr.mergeable === null) {
-      return; // No conflict or GitHub hasn't computed yet
-    }
-
-    log.info('conflict', 'Conflict detected, attempting resolution', {
-      sessionId: session.id, pr: session.pr_number,
-    });
-
-    // Get the conflicting diff
-    const { data: diff } = await octokit.request(
-      'GET /repos/{owner}/{repo}/pulls/{pull_number}',
-      {
-        owner, repo, pull_number: session.pr_number,
-        mediaType: { format: 'diff' },
-      }
-    );
-
-    // Get main branch files for context
-    const { data: mainTree } = await octokit.request(
-      'GET /repos/{owner}/{repo}/git/trees/{+tree_sha}',
-      { owner, repo, tree_sha: 'main', recursive: 'true' }
-    );
-
-    const mainFiles = [];
-    for (const file of mainTree.tree.filter((f) => f.type === 'blob' && f.size < 50000).slice(0, 15)) {
-      try {
-        const { data } = await octokit.request(
-          'GET /repos/{owner}/{repo}/contents/{+path}',
-          { owner, repo, path: file.path, ref: 'main' }
-        );
-        if (data.encoding === 'base64') {
-          mainFiles.push(`--- ${file.path} ---\n${Buffer.from(data.content, 'base64').toString('utf8')}`);
-        }
-      } catch {}
-    }
-
-    // Get branch files
-    const { data: branchTree } = await octokit.request(
-      'GET /repos/{owner}/{repo}/git/trees/{+tree_sha}',
-      { owner, repo, tree_sha: session.branch_name, recursive: 'true' }
-    );
-
-    const branchFiles = [];
-    for (const file of branchTree.tree.filter((f) => f.type === 'blob' && f.size < 50000).slice(0, 15)) {
-      try {
-        const { data } = await octokit.request(
-          'GET /repos/{owner}/{repo}/contents/{+path}',
-          { owner, repo, path: file.path, ref: session.branch_name }
-        );
-        if (data.encoding === 'base64') {
-          branchFiles.push(`--- ${file.path} ---\n${Buffer.from(data.content, 'base64').toString('utf8')}`);
-        }
-      } catch {}
-    }
-
-    // Ask Claude to resolve
-    const systemPrompt = `You are resolving a git merge conflict. The PR branch needs to be updated to merge cleanly with main.
-
-Current main branch files:
-${mainFiles.join('\n\n')}
-
-Current PR branch files:
-${branchFiles.join('\n\n')}
-
-The PR diff:
-${typeof diff === 'string' ? diff.substring(0, 10000) : ''}
-
-Output the resolved files that need to change on the PR branch to merge cleanly with main. Use the format:
-\`\`\`filepath:path/to/file.js
-// complete resolved file contents
-\`\`\`
-
-Only fix the conflict — do NOT change behavior or add features. Keep the intent of both the main branch changes and the PR branch changes.`;
-
-    if (!llm.isEnabled()) {
-      log.warn('conflict', 'LLM not available for conflict resolution');
-      return;
-    }
-
-    // Charge the conflict-resolver Sonnet call to the user who just
-    // merged the PR that caused the conflict. The merging user is the
-    // one who triggered this work, so it's their daily cap that gates
-    // it. If they're already over their cap, skip the auto-resolution
-    // and tell the affected session's group chat — the conflicting PR
-    // owner can then either merge main themselves or wait for the cap
-    // to reset.
-    const budgetCheck = await limits.checkBudget(pool, mergedSession.user_id);
-    if (budgetCheck.error) {
-      log.info('conflict', 'Skipped — merging user over daily cap', {
-        sessionId: session.id, mergedBy: mergedSession.user_id, reason: budgetCheck.error,
-      });
-      try {
-        const { sendSystemMessage } = require('./ws');
-        await sendSystemMessage(pool, session.app_id,
-          `Auto-conflict-resolution skipped on PR #${session.pr_number}: the merging user has hit their daily LLM limit. Resolve manually or rebase against main.`,
-          'conflict'
-        );
-      } catch (err) {
-        log.warn('conflict', 'Failed to post skip notice to group chat', { err: err.message });
-      }
-      return;
-    }
-
-    const result = await llm.streamChat({
-      messages: [{ role: 'user', content: 'Please resolve the merge conflicts in this PR.' }],
-      systemPrompt,
-      model: CONFLICT_RESOLVER_MODEL,
-    });
-
-    // Debit the merging user for the resolver's token spend. We do this
-    // even when extraction fails below — the API call still happened
-    // and the platform paid for it.
-    if (result?.usage) {
-      const costCents = llm.estimateCostCents(result.usage, CONFLICT_RESOLVER_MODEL);
-      await pool.query(
-        `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
-         ON CONFLICT (user_id, date) DO UPDATE SET total_cost_cents = llm_usage.total_cost_cents + EXCLUDED.total_cost_cents`,
-        [mergedSession.user_id, costCents]
-      );
-    }
-
-    // Extract file changes from the response
-    const fileRegex = /```filepath:([\w/.]+)\n([\s\S]*?)```/g;
-    const files = [];
-    let match;
-    while ((match = fileRegex.exec(result.text)) !== null) {
-      files.push({ path: match[1], content: match[2] });
-    }
-
-    if (files.length === 0) {
-      log.warn('conflict', 'No files extracted from conflict resolution response');
-      return;
-    }
-
-    // Push resolved files to the PR branch
-    await github.pushFiles(owner, repo, files, {
-      branch: session.branch_name,
-      message: 'Auto-resolve merge conflicts',
-    });
-
-    // Rebuild staging
-    const { rows: appRows } = await pool.query('SELECT * FROM apps WHERE id = $1', [session.app_id]);
-    if (appRows[0]) {
-      const latestRef = await octokit.request(
-        'GET /repos/{owner}/{repo}/git/ref/{+ref}',
-        { owner, repo, ref: `heads/${session.branch_name}` }
-      );
-      const commitHash = latestRef.data.object.sha;
-
-      const stagingResult = await stagingService.buildAndDeployStaging(config, session, appRows[0], commitHash);
-
-      await pool.query(
-        `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
-        [stagingResult.containerId, stagingResult.stagingUrl, session.id]
-      );
-    }
-
-    log.info('conflict', 'Conflict resolved and staging rebuilt', { sessionId: session.id });
+    const mergeable = await pollMergeable(repo.owner, repo.repo, session.pr_number);
+    return mergeable === false;
   } catch (err) {
-    log.error('conflict', 'Conflict resolution failed', { sessionId: session.id, err: err.message });
+    log.warn('conflict', 'pollMergeable failed; falling back to behind_main', {
+      sessionId: session.id, pr: session.pr_number, err: err.message,
+    });
+    return false;
   }
 }
 
-module.exports = { checkAndResolveConflicts };
+// Sync one promoted PR with main via the worker, and — if it integrates
+// cleanly and the PR is already approved — retry the merge.
+//
+// `target` is either { session } (a pre-loaded joined row) or
+// { sessionId } (we'll load it). Returns a small status object; never
+// throws (logs + group-chat on failure).
+async function resolveAndMaybeRetry(config, target) {
+  const pool = getPool(config);
+  let session = target.session || null;
+  if (!session) {
+    session = await loadSession(pool, target.sessionId);
+    if (!session) return { ok: false, reason: 'session_not_found' };
+  }
+
+  if (!github.isEnabled() || !session.repo_url || !session.pr_number) {
+    return { ok: false, reason: 'github_disabled_or_no_pr' };
+  }
+  if (session.status !== 'promoted') {
+    // Only promoted PRs are candidates — anything else (active, merging,
+    // merged) is either not up for a vote or already in flight.
+    return { ok: false, reason: `status_${session.status}` };
+  }
+
+  const repo = parseRepo(session.repo_url);
+  if (!repo) return { ok: false, reason: 'unparseable_repo' };
+
+  let integration;
+  try {
+    integration = await needsIntegration(session, repo);
+  } catch (err) {
+    log.error('conflict', 'needsIntegration threw', { sessionId: session.id, err: err.message });
+    return { ok: false, reason: 'needs_integration_error' };
+  }
+  if (!integration) return { ok: true, reason: 'no_conflict' };
+
+  log.info('conflict', 'Conflict detected, syncing PR with main', {
+    sessionId: session.id, pr: session.pr_number,
+  });
+
+  // The worker sync charges the session owner (their BYOK key, or the
+  // platform proxy). Gate on their daily cap so a runaway conflict
+  // loop can't blow the budget; surface the skip in group chat so the
+  // owner knows to sync manually or wait for the cap to reset.
+  const budgetCheck = await limits.checkBudget(pool, session.user_id);
+  if (budgetCheck.error) {
+    log.info('conflict', 'Skipped — session owner over daily cap', {
+      sessionId: session.id, ownerId: session.user_id, reason: budgetCheck.error,
+    });
+    await postGroupMessage(pool, session,
+      `Auto-conflict-resolution skipped on PR #${session.pr_number}: the PR owner has hit their daily LLM limit. Resolve manually via "Sync with main" or wait for the cap to reset.`
+    );
+    return { ok: false, reason: 'over_budget' };
+  }
+
+  let sync;
+  try {
+    sync = await runSyncMain(config, pool, session.id, { sessionRow: session });
+  } catch (err) {
+    log.error('conflict', 'runSyncMain threw', { sessionId: session.id, err: err.message });
+    await postGroupMessage(pool, session,
+      `Couldn't auto-resolve conflicts on PR #${session.pr_number} (sync failed: ${err.message}). Try "Sync with main" from the session's dev-chat.`
+    );
+    return { ok: false, reason: 'sync_threw' };
+  }
+
+  if (sync.syncResult === 'conflict') {
+    const owner = session.user_id ? `<@${session.user_id}>` : 'the session owner';
+    await postGroupMessage(pool, session,
+      `PR #${session.pr_number} couldn't be auto-merged with main — Claude couldn't resolve the conflicts. ${owner}: open the session's dev-chat to resolve it.`
+    );
+    return { ok: false, reason: 'unresolved_conflict' };
+  }
+
+  // Synced cleanly (clean | resolved | already_synced) → branch is no
+  // longer behind. Re-attempt the merge for an already-approved PR.
+  // Pass autoResolve:false so checkAndMerge's own conflict paths don't
+  // re-trigger us — bounds the resolve+retry to a single cycle.
+  const fresh = await loadSession(pool, session.id);
+  if (!fresh || fresh.status !== 'promoted') {
+    return { ok: true, reason: 'synced_no_longer_promoted', syncResult: sync.syncResult };
+  }
+
+  let mergeResult;
+  try {
+    const { checkAndMerge } = require('../routes/votes');
+    mergeResult = await checkAndMerge(config, pool, fresh, { autoResolve: false });
+  } catch (err) {
+    log.error('conflict', 'retry checkAndMerge threw', { sessionId: session.id, err: err.message });
+    return { ok: true, reason: 'synced_retry_threw', syncResult: sync.syncResult };
+  }
+
+  if (mergeResult?.merged) {
+    try {
+      const { pushVoteUpdate } = require('./ws');
+      pushVoteUpdate({ sessionId: fresh.id, appSlug: fresh.app_slug, merged: true });
+    } catch (_) { /* ws non-fatal */ }
+    return { ok: true, reason: 'synced_and_merged', syncResult: sync.syncResult };
+  }
+
+  // Synced but not merged — almost always "not enough yes votes yet".
+  // Leave a breadcrumb so the group knows the conflict is cleared and
+  // only votes are outstanding.
+  if (typeof mergeResult?.yesCount === 'number' && typeof mergeResult?.needed === 'number') {
+    await postGroupMessage(pool, fresh,
+      `PR #${fresh.pr_number} is now synced with main and conflict-free — ${mergeResult.yesCount}/${mergeResult.needed} yes votes needed to merge.`
+    );
+  }
+  return { ok: true, reason: 'synced_awaiting_votes', syncResult: sync.syncResult };
+}
+
+async function postGroupMessage(pool, session, content) {
+  try {
+    const { sendSystemMessage } = require('./ws');
+    await sendSystemMessage(pool, session.app_id, content, 'conflict');
+  } catch (err) {
+    log.warn('conflict', 'Failed to post group-chat message', { sessionId: session?.id, err: err.message });
+  }
+}
+
+module.exports = { checkAndResolveConflicts, resolveAndMaybeRetry, pollMergeable };

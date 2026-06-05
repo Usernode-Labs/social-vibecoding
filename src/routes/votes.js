@@ -4,7 +4,7 @@ const log = require('../services/logger');
 const github = require('../services/github');
 const staging = require('../services/staging');
 const docker = require('../services/docker');
-const { checkAndResolveConflicts } = require('../services/conflict-resolver');
+const { checkAndResolveConflicts, resolveAndMaybeRetry } = require('../services/conflict-resolver');
 const { sendSystemMessage, pushNotificationToUser } = require('../services/ws');
 const { getActiveUserStats, isUserActive } = require('../services/active-users');
 const notifications = require('../services/notifications');
@@ -530,7 +530,12 @@ function voteRoutes(config) {
 // merge. `options.forceBy` is the admin user object (id, username) used
 // for the "merged by <admin> overriding vote" chat message.
 async function checkAndMerge(config, pool, session, options = {}) {
-  const { force = false, forceBy = null } = options;
+  // `options.autoResolve` (default true): when a merge is blocked by a
+  // conflict / behind-main, kick off the worker-based auto-resolver
+  // (sync with main + retry). The resolver re-invokes checkAndMerge with
+  // autoResolve:false so its own conflict paths don't re-trigger the
+  // resolver — this bounds the resolve+retry to a single cycle.
+  const { force = false, forceBy = null, autoResolve = true } = options;
   const { active: activeCount, majority } = await getActiveUserStats(pool, session.app_id);
 
   const { rows: yesRows } = await pool.query(
@@ -575,12 +580,24 @@ async function checkAndMerge(config, pool, session, options = {}) {
         ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
       await sendSystemMessage(pool, session.app_id,
-        `${label} can't merge yet — the branch is ${session.behind_main} commit${session.behind_main === 1 ? '' : 's'} behind main. ${owner}: open the session's dev-chat and click "Sync with main", then we'll retry the merge.`,
+        `${label} is ${session.behind_main} commit${session.behind_main === 1 ? '' : 's'} behind main — syncing automatically and will retry the merge. ${owner}: you can also resolve it from the session's dev-chat.`,
         'system'
       );
       log.info('votes', 'Merge blocked: branch behind main', {
         sessionId: session.id, behind: session.behind_main,
       });
+      // Auto-heal: sync the branch with main (worker git-merge +
+      // Claude-on-markers) and retry the merge. The PR keeps its votes
+      // because the sync push doesn't go through the vote-resetting
+      // dev-turn path. Fire-and-forget so the voter's request returns
+      // immediately.
+      if (autoResolve) {
+        resolveAndMaybeRetry(config, { session }).catch((err) => {
+          log.error('votes', 'Auto-resolve (behind_main) failed', {
+            sessionId: session.id, err: err.message,
+          });
+        });
+      }
       return { merged: false, yesCount, needed: majority, behindMain: session.behind_main };
     }
   }
@@ -815,9 +832,19 @@ async function checkAndMerge(config, pool, session, options = {}) {
         ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
       await sendSystemMessage(pool, session.app_id,
-        `${label} can't merge — GitHub says the branch has conflicts with main. ${owner}: open the session's dev-chat and click "Sync with main", then we'll retry the merge.`,
+        `${label} hit a conflict with main — syncing automatically and will retry the merge. ${owner}: you can also resolve it from the session's dev-chat.`,
         'system'
       );
+      // Auto-heal the conflict the same way the behind_main gate does.
+      // autoResolve guards against the resolver's own retry re-entering
+      // this path (it calls checkAndMerge with autoResolve:false).
+      if (autoResolve) {
+        resolveAndMaybeRetry(config, { session }).catch((e) => {
+          log.error('votes', 'Auto-resolve (merge conflict) failed', {
+            sessionId: session.id, err: e.message,
+          });
+        });
+      }
     } else {
       await sendSystemMessage(pool, session.app_id,
         `Failed to merge PR #${session.pr_number || session.id}: ${err.message}`,
@@ -1107,4 +1134,9 @@ async function createRevertPR({ session, mergeSha, repoOwner, repoName, deciderU
   }
 }
 
-module.exports = { voteRoutes };
+// checkAndMerge is exported (in addition to voteRoutes) so the
+// auto-conflict-resolver can re-attempt a merge for an already-approved
+// PR after it syncs cleanly with main. Consumers should lazy-require
+// this module from inside a function to avoid the votes <-> conflict-
+// resolver circular-require load-order trap.
+module.exports = { voteRoutes, checkAndMerge };

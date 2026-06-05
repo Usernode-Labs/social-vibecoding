@@ -1,5 +1,12 @@
 const log = require('./logger');
 
+// Single source of truth for the default chat model. Callers that don't
+// pass an explicit `model` fall back to this, so bumping the platform's
+// default model is a one-line change here rather than a grep-and-replace
+// across hardcoded slugs (which is how the conflict-resolver previously
+// pinned a stale model).
+const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
+
 let Anthropic;
 let client;
 
@@ -58,7 +65,7 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
   if (!activeClient) throw new Error('LLM not initialized');
 
   const params = {
-    model: model || 'claude-sonnet-4-20250514',
+    model: model || DEFAULT_MODEL,
     max_tokens: 8192,
     system: systemPrompt,
     messages,
@@ -228,4 +235,4 @@ Author: ${username || 'unknown'}`;
   return { title, body, usage: resp.usage, model };
 }
 
-module.exports = { init, isEnabled, getSystemPrompt, streamChat, estimateCostCents, generatePrMetadata };
+module.exports = { init, isEnabled, getSystemPrompt, streamChat, estimateCostCents, generatePrMetadata, DEFAULT_MODEL };

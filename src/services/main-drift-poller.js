@@ -36,6 +36,7 @@ const { getPool } = require('../db/pool');
 const github = require('./github');
 const staging = require('./staging');
 const { broadcastGlobal } = require('./ws');
+const { checkAndResolveConflicts } = require('./conflict-resolver');
 
 // 5 minutes default. GitHub's rest API has a 5000 req/hr limit per token,
 // so even with ~100 imported apps polling every minute we'd be at ~6000
@@ -144,6 +145,13 @@ async function checkAndRedeployOne(config, pool, app) {
       });
     } catch (_) { /* ws failures are non-fatal */ }
     log.info('drift-poller', 'Drift redeploy succeeded', { slug: app.slug, sha: (sha || '').slice(0, 7) });
+    // main moved out-of-band (direct push / bot commit). Any promoted PR
+    // on this app may now conflict — sweep them through the worker-based
+    // resolver (sync + retry). Fire-and-forget so the poll loop isn't
+    // blocked behind per-PR worker turns.
+    checkAndResolveConflicts(config, { app_id: app.id }).catch((err) => {
+      log.error('drift-poller', 'Post-drift conflict resolution failed', { slug: app.slug, err: err.message });
+    });
     return { status: 'redeployed', slug: app.slug, from: app.main_sha, to: sha || remoteSha };
   } catch (err) {
     log.error('drift-poller', 'Drift redeploy failed', { slug: app.slug, err: err.message });

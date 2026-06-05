@@ -19,9 +19,15 @@ const models = require('../services/models');
 const limits = require('../services/limits');
 const events = require('../services/events');
 const { chatLimiter } = require('../middleware/rate-limits');
+// runSyncMain + persistBehindMain now live in services/sync-main.js so
+// the conflict-resolver can drive a sync turn without a route-requires-
+// route cycle. Re-exported below for backwards compatibility.
+const { runSyncMain, persistBehindMain } = require('../services/sync-main');
 
-// Track sessions with active Claude Code workers
-const activeWorkers = new Set();
+// Track sessions with active Claude Code workers. The Set lives in a
+// shared module so services/sync-main.js writes to the same instance
+// the chat handler and server.js's drain logic read.
+const { activeWorkers, getActiveWorkerCount } = require('../services/active-workers');
 
 // Per-session stop handles, populated while a chat turn is in flight.
 // Shape: { abort: AbortController, workerName: string|null, phase: 'mayor1'|'cc'|'mayor2', stopped: boolean }
@@ -32,11 +38,8 @@ const activeWorkers = new Set();
 // pushed a commit + opened a PR and we just want the summary to finish.
 const stopRegistry = new Map();
 
-// Expose the in-flight worker set size so the main server can wait for
-// active chats to finish before forcefully tearing down containers.
-function getActiveWorkerCount() {
-  return activeWorkers.size;
-}
+// getActiveWorkerCount is imported from services/active-workers and
+// re-exported at the bottom of this module (server.js imports it here).
 
 // Daily LLM-spend caps used to live as hardcoded constants here. They
 // now live in the platform_settings table (admin-tunable) and are read
@@ -82,155 +85,10 @@ function extractSpecSnippet(content, title) {
   return lines.slice(start).join('\n').slice(0, 280);
 }
 
-// #8: persist the latest behind-origin/main count for a session and
-// broadcast a session_update so the dev-chat banner refreshes live.
-// No-op (with logging) if the write fails — drift accounting is
-// best-effort; the next turn will refresh it.
-async function persistBehindMain(pool, session, behind) {
-  try {
-    const n = Number.isFinite(behind) ? Math.max(0, behind) : 0;
-    await pool.query(
-      'UPDATE chat_sessions SET behind_main = $1 WHERE id = $2',
-      [n, session.id]
-    );
-    try {
-      const { pushSessionUpdate } = require('../services/ws');
-      pushSessionUpdate({
-        action: 'behind_main',
-        sessionId: session.id,
-        appSlug: session.app_slug || null,
-        behindMain: n,
-      });
-    } catch (_) { /* ws failures are non-fatal */ }
-  } catch (err) {
-    log.warn('sessions', 'persistBehindMain failed', { sessionId: session?.id, err: err.message });
-  }
-}
+// runSyncMain + persistBehindMain moved to services/sync-main.js (see
+// the require at the top of this file). They're re-exported below so
+// any external importer keeps working.
 
-// #8: dispatch a MODE=sync worker turn for the given session. Used by
-// both POST /api/sessions/:id/sync-main (explicit user click) and the
-// silent auto-trigger inside POST /resume. Idempotent / safe to call
-// when nothing's behind (the worker short-circuits with
-// sync_result=already_synced).
-//
-// Returns an object the route can serialise verbatim:
-//   { ok: true, syncResult, behind, sha, pushOk, message }
-// Throws on infrastructure errors (image build, ensureWorker) — the
-// route catches and 500s; the background caller in /resume catches
-// and warns.
-async function runSyncMain(config, pool, sessionId, { sessionRow } = {}) {
-  let session = sessionRow;
-  if (!session) {
-    const { rows } = await pool.query(
-      `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
-       FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
-       WHERE cs.id = $1`,
-      [sessionId]
-    );
-    if (!rows.length) throw new Error('Session not found');
-    session = rows[0];
-  }
-
-  if (!session.repo_url) {
-    throw new Error('Session has no repo_url; cannot sync');
-  }
-  const m = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-  if (!m) throw new Error(`Unparseable repo_url: ${session.repo_url}`);
-  const [, repoOwner, repoName] = m;
-
-  // Look up the owner's BYOK key (matches the build-turn flow).
-  // Sync turns charge to the session owner — they're the one who
-  // benefits from the integration. If decryption fails the worker
-  // falls back to the platform proxy via WORKER_JWT just like build
-  // turns do.
-  let userApiKey = null;
-  try {
-    const { rows: keyRows } = await pool.query(
-      'SELECT anthropic_key_enc FROM users WHERE id = $1',
-      [session.user_id]
-    );
-    if (keyRows[0]?.anthropic_key_enc) {
-      const secrets = require('../services/secrets');
-      userApiKey = secrets.decrypt(keyRows[0].anthropic_key_enc, config.jwtSecret);
-    }
-  } catch (_) { userApiKey = null; }
-
-  await worker.ensureWorkerImage();
-  await worker.ensureWorker(session.id, {
-    repoOwner,
-    repoName,
-    branchName: session.branch_name,
-    anthropicApiKey: userApiKey || null,
-    onProgress: () => {},
-  });
-
-  activeWorkers.add(session.id);
-  let result;
-  try {
-    result = await worker.execInWorker(session.id, {
-      mode: 'sync',
-      prompt: '(sync turn — see MODE=sync block in run-cc.sh)',
-      // Use a small fast model — the prompt is short and the task is
-      // mechanical. The route's caller doesn't get to pick.
-      model: 'claude-sonnet-4-6',
-      commitMsg: '',
-      // Don't pass cc_session_id — we don't want sync turns polluting
-      // the session's main CC conversation thread.
-      resumeSessionId: null,
-      branchName: session.branch_name,
-      anthropicApiKey: userApiKey || null,
-      onProgress: () => {},
-    });
-  } finally {
-    activeWorkers.delete(session.id);
-  }
-
-  // Persist the new behind count regardless of outcome (a failed
-  // sync still teaches us how stale we are).
-  await persistBehindMain(pool, session, result.behind || 0);
-
-  const syncResult = result.syncResult || (result.exitCode === 0 ? 'clean' : 'conflict');
-  let message;
-  switch (syncResult) {
-    case 'already_synced':
-      message = 'Already up to date with main — nothing to merge.';
-      break;
-    case 'clean':
-      message = `Merged main cleanly. Pushed ${result.sha ? result.sha.slice(0, 7) : 'merge commit'}.`;
-      break;
-    case 'resolved':
-      message = `Claude resolved merge conflicts with main and pushed ${result.sha ? result.sha.slice(0, 7) : 'the merge commit'}.`;
-      break;
-    case 'conflict':
-    default:
-      message = 'Tried to sync with main but Claude couldn\'t resolve the conflicts. The branch is unchanged; try again or resolve locally.';
-      break;
-  }
-
-  // Drop a system note into the session chat so the user has a
-  // breadcrumb on refresh.
-  try {
-    await pool.query(
-      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-       VALUES ($1, 'system', $2, $3)`,
-      [session.id, message, JSON.stringify({ syncMain: { syncResult, behind: result.behind || 0, sha: result.sha || null } })]
-    );
-  } catch (_) { /* non-fatal */ }
-
-  return {
-    ok: syncResult !== 'conflict',
-    syncResult,
-    behind: result.behind || 0,
-    sha: result.sha || null,
-    pushOk: !!result.pushOk,
-    message,
-  };
-}
-
-// #8: persist the latest behind-origin/main count for a session and
-// broadcast a session_update so the dev-chat banner refreshes live.
-// No-op (with logging) if the write fails — drift accounting is
-// best-effort; the next turn will refresh it.
 async function loadSessionSpec(pool, sessionId) {
   const { rows } = await pool.query(
     'SELECT spec_md FROM chat_sessions WHERE id = $1',
@@ -3072,4 +2930,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain };
