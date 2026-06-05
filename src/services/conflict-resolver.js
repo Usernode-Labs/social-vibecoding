@@ -17,6 +17,25 @@ const MERGEABLE_POLL_DELAY_MS = Number.isFinite(parseInt(process.env.CONFLICT_ME
   ? parseInt(process.env.CONFLICT_MERGEABLE_POLL_DELAY_MS, 10)
   : 2000;
 
+// Post-sync gate: after the worker pushes the integration commit (or for
+// an already-clean branch) we must wait for GitHub to report
+// `mergeable === true` BEFORE calling pulls.merge. Right after a push,
+// GitHub flips mergeable to null while it recomputes; merging in that
+// window 405s with "Pull Request has merge conflicts" even though the
+// branch is clean. This is exactly the 405 we hit on the first #25/#26
+// run. A longer, true-only wait closes it.
+const MERGEABLE_TRUE_TRIES = parseInt(process.env.CONFLICT_MERGEABLE_TRUE_TRIES, 10) || 8;
+const MERGEABLE_TRUE_DELAY_MS = Number.isFinite(parseInt(process.env.CONFLICT_MERGEABLE_TRUE_DELAY_MS, 10))
+  ? parseInt(process.env.CONFLICT_MERGEABLE_TRUE_DELAY_MS, 10)
+  : 2500;
+// Give GitHub a beat to invalidate the pre-push mergeable cache before
+// we start polling, so we don't read a stale `true`.
+const MERGEABLE_AFTER_PUSH_INITIAL_MS = Number.isFinite(parseInt(process.env.CONFLICT_MERGEABLE_AFTER_PUSH_INITIAL_MS, 10))
+  ? parseInt(process.env.CONFLICT_MERGEABLE_AFTER_PUSH_INITIAL_MS, 10)
+  : 2000;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 function parseRepo(repoUrl) {
   const [, owner, repo] = (repoUrl || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/) || [];
   return owner && repo ? { owner, repo } : null;
@@ -34,7 +53,31 @@ async function pollMergeable(owner, repo, prNumber) {
     );
     if (pr.mergeable === true || pr.mergeable === false) return pr.mergeable;
     if (i < MERGEABLE_POLL_TRIES - 1) {
-      await new Promise((r) => setTimeout(r, MERGEABLE_POLL_DELAY_MS));
+      await sleep(MERGEABLE_POLL_DELAY_MS);
+    }
+  }
+  return null;
+}
+
+// Wait specifically for `mergeable === true` (clean) before a merge
+// attempt. Returns true (clean), false (GitHub still sees a real
+// conflict), or null (never finished recomputing within budget — caller
+// should NOT merge, to avoid the null-window 405). `afterPush` adds a
+// short initial delay so we don't read the stale pre-push value.
+async function waitForMergeableTrue(owner, repo, prNumber, { afterPush = false } = {}) {
+  const octokit = await github.getInstallationOctokit(owner);
+  if (afterPush && MERGEABLE_AFTER_PUSH_INITIAL_MS > 0) {
+    await sleep(MERGEABLE_AFTER_PUSH_INITIAL_MS);
+  }
+  for (let i = 0; i < MERGEABLE_TRUE_TRIES; i++) {
+    const { data: pr } = await octokit.request(
+      'GET /repos/{owner}/{repo}/pulls/{pull_number}',
+      { owner, repo, pull_number: prNumber }
+    );
+    if (pr.mergeable === true) return true;
+    if (pr.mergeable === false) return false;
+    if (i < MERGEABLE_TRUE_TRIES - 1) {
+      await sleep(MERGEABLE_TRUE_DELAY_MS);
     }
   }
   return null;
@@ -82,25 +125,11 @@ async function checkAndResolveConflicts(config, mergedSession) {
   }
 }
 
-// Decide whether a promoted PR's branch actually needs to be integrated
-// with main. True when we have a recorded drift (behind_main > 0) or
-// GitHub reports a real conflict once its mergeability computation
-// settles. Returning false means "leave it alone".
-async function needsIntegration(session, repo) {
-  if ((session.behind_main || 0) > 0) return true;
-  try {
-    const mergeable = await pollMergeable(repo.owner, repo.repo, session.pr_number);
-    return mergeable === false;
-  } catch (err) {
-    log.warn('conflict', 'pollMergeable failed; falling back to behind_main', {
-      sessionId: session.id, pr: session.pr_number, err: err.message,
-    });
-    return false;
-  }
-}
-
-// Sync one promoted PR with main via the worker, and — if it integrates
-// cleanly and the PR is already approved — retry the merge.
+// Sync one promoted PR with main via the worker when it's drifted /
+// conflicting, then — once GitHub confirms the branch is mergeable —
+// re-attempt the merge for an already-approved PR. Also merges an
+// already-clean approved PR that was left stuck (e.g. a prior merge
+// 405'd in GitHub's post-push mergeable-recompute window).
 //
 // `target` is either { session } (a pre-loaded joined row) or
 // { sessionId } (we'll load it). Returns a small status object; never
@@ -125,60 +154,108 @@ async function resolveAndMaybeRetry(config, target) {
   const repo = parseRepo(session.repo_url);
   if (!repo) return { ok: false, reason: 'unparseable_repo' };
 
-  let integration;
+  // Decide whether a worker sync is needed: recorded drift, or GitHub
+  // currently reporting a real conflict (mergeable === false) once its
+  // computation settles.
+  let mergeable0;
   try {
-    integration = await needsIntegration(session, repo);
+    mergeable0 = await pollMergeable(repo.owner, repo.repo, session.pr_number);
   } catch (err) {
-    log.error('conflict', 'needsIntegration threw', { sessionId: session.id, err: err.message });
-    return { ok: false, reason: 'needs_integration_error' };
+    log.warn('conflict', 'pollMergeable failed', { sessionId: session.id, err: err.message });
+    mergeable0 = null;
   }
-  if (!integration) return { ok: true, reason: 'no_conflict' };
+  const behind = session.behind_main || 0;
+  const needsSync = behind > 0 || mergeable0 === false;
 
-  log.info('conflict', 'Conflict detected, syncing PR with main', {
-    sessionId: session.id, pr: session.pr_number,
-  });
+  let didSync = false;
+  let syncResult = null;
 
-  // The worker sync charges the session owner (their BYOK key, or the
-  // platform proxy). Gate on their daily cap so a runaway conflict
-  // loop can't blow the budget; surface the skip in group chat so the
-  // owner knows to sync manually or wait for the cap to reset.
-  const budgetCheck = await limits.checkBudget(pool, session.user_id);
-  if (budgetCheck.error) {
-    log.info('conflict', 'Skipped — session owner over daily cap', {
-      sessionId: session.id, ownerId: session.user_id, reason: budgetCheck.error,
+  if (needsSync) {
+    log.info('conflict', 'Conflict/drift detected, syncing PR with main', {
+      sessionId: session.id, pr: session.pr_number, behind, mergeable0,
     });
-    await postGroupMessage(pool, session,
-      `Auto-conflict-resolution skipped on PR #${session.pr_number}: the PR owner has hit their daily LLM limit. Resolve manually via "Sync with main" or wait for the cap to reset.`
-    );
-    return { ok: false, reason: 'over_budget' };
+
+    // The worker sync charges the session owner (their BYOK key, or the
+    // platform proxy). Gate on their daily cap so a runaway conflict
+    // loop can't blow the budget; surface the skip in group chat so the
+    // owner knows to sync manually or wait for the cap to reset.
+    const budgetCheck = await limits.checkBudget(pool, session.user_id);
+    if (budgetCheck.error) {
+      log.info('conflict', 'Skipped — session owner over daily cap', {
+        sessionId: session.id, ownerId: session.user_id, reason: budgetCheck.error,
+      });
+      await postGroupMessage(pool, session,
+        `Auto-conflict-resolution skipped on PR #${session.pr_number}: the PR owner has hit their daily LLM limit. Resolve manually via "Sync with main" or wait for the cap to reset.`
+      );
+      return { ok: false, reason: 'over_budget' };
+    }
+
+    let sync;
+    try {
+      sync = await runSyncMain(config, pool, session.id, { sessionRow: session });
+    } catch (err) {
+      log.error('conflict', 'runSyncMain threw', { sessionId: session.id, err: err.message });
+      await postGroupMessage(pool, session,
+        `Couldn't auto-resolve conflicts on PR #${session.pr_number} (sync failed: ${err.message}). Try "Sync with main" from the session's dev-chat.`
+      );
+      return { ok: false, reason: 'sync_threw' };
+    }
+    didSync = true;
+    syncResult = sync.syncResult;
+
+    if (sync.syncResult === 'conflict') {
+      const owner = session.user_id ? `<@${session.user_id}>` : 'the session owner';
+      await postGroupMessage(pool, session,
+        `PR #${session.pr_number} couldn't be auto-merged with main — Claude couldn't resolve the conflicts. ${owner}: open the session's dev-chat to resolve it.`
+      );
+      return { ok: false, reason: 'unresolved_conflict' };
+    }
+  } else if (mergeable0 !== true) {
+    // No recorded drift and GitHub never settled to a definite state
+    // (null). Nothing actionable — don't risk a 405 on an unknown state.
+    return { ok: true, reason: 'no_conflict' };
   }
 
-  let sync;
+  // Before retrying the merge, wait for GitHub to confirm the branch is
+  // mergeable. After our sync push it returns mergeable:null for a few
+  // seconds; merging in that window 405s even though the branch is
+  // clean (the failure mode on the first #25/#26 run).
+  let mergeableNow;
   try {
-    sync = await runSyncMain(config, pool, session.id, { sessionRow: session });
+    mergeableNow = await waitForMergeableTrue(repo.owner, repo.repo, session.pr_number, { afterPush: didSync });
   } catch (err) {
-    log.error('conflict', 'runSyncMain threw', { sessionId: session.id, err: err.message });
-    await postGroupMessage(pool, session,
-      `Couldn't auto-resolve conflicts on PR #${session.pr_number} (sync failed: ${err.message}). Try "Sync with main" from the session's dev-chat.`
-    );
-    return { ok: false, reason: 'sync_threw' };
+    log.warn('conflict', 'waitForMergeableTrue failed', { sessionId: session.id, err: err.message });
+    mergeableNow = null;
   }
 
-  if (sync.syncResult === 'conflict') {
-    const owner = session.user_id ? `<@${session.user_id}>` : 'the session owner';
-    await postGroupMessage(pool, session,
-      `PR #${session.pr_number} couldn't be auto-merged with main — Claude couldn't resolve the conflicts. ${owner}: open the session's dev-chat to resolve it.`
-    );
-    return { ok: false, reason: 'unresolved_conflict' };
+  if (mergeableNow === false) {
+    // GitHub still sees a real conflict (shouldn't happen right after a
+    // resolved sync, but bail cleanly rather than 405).
+    if (didSync) {
+      const owner = session.user_id ? `<@${session.user_id}>` : 'the session owner';
+      await postGroupMessage(pool, session,
+        `PR #${session.pr_number} still conflicts with main after an auto-sync. ${owner}: open the session's dev-chat to resolve it.`
+      );
+    }
+    return { ok: false, reason: 'still_conflicting', syncResult };
+  }
+  if (mergeableNow !== true) {
+    // null: GitHub hasn't finished recomputing within our budget. Don't
+    // risk the null-window 405 — the next vote or drift sweep retries.
+    if (didSync) {
+      await postGroupMessage(pool, session,
+        `PR #${session.pr_number} is synced with main and conflict-free — GitHub is still finalizing mergeability, the merge will complete on the next vote or sweep.`
+      );
+    }
+    return { ok: true, reason: 'mergeable_recompute_pending', syncResult };
   }
 
-  // Synced cleanly (clean | resolved | already_synced) → branch is no
-  // longer behind. Re-attempt the merge for an already-approved PR.
-  // Pass autoResolve:false so checkAndMerge's own conflict paths don't
+  // mergeable === true → re-attempt the merge for an approved PR. Pass
+  // autoResolve:false so checkAndMerge's own conflict paths don't
   // re-trigger us — bounds the resolve+retry to a single cycle.
   const fresh = await loadSession(pool, session.id);
   if (!fresh || fresh.status !== 'promoted') {
-    return { ok: true, reason: 'synced_no_longer_promoted', syncResult: sync.syncResult };
+    return { ok: true, reason: 'no_longer_promoted', syncResult };
   }
 
   let mergeResult;
@@ -187,7 +264,7 @@ async function resolveAndMaybeRetry(config, target) {
     mergeResult = await checkAndMerge(config, pool, fresh, { autoResolve: false });
   } catch (err) {
     log.error('conflict', 'retry checkAndMerge threw', { sessionId: session.id, err: err.message });
-    return { ok: true, reason: 'synced_retry_threw', syncResult: sync.syncResult };
+    return { ok: true, reason: 'retry_threw', syncResult };
   }
 
   if (mergeResult?.merged) {
@@ -195,18 +272,18 @@ async function resolveAndMaybeRetry(config, target) {
       const { pushVoteUpdate } = require('./ws');
       pushVoteUpdate({ sessionId: fresh.id, appSlug: fresh.app_slug, merged: true });
     } catch (_) { /* ws non-fatal */ }
-    return { ok: true, reason: 'synced_and_merged', syncResult: sync.syncResult };
+    return { ok: true, reason: didSync ? 'synced_and_merged' : 'merged', syncResult };
   }
 
-  // Synced but not merged — almost always "not enough yes votes yet".
-  // Leave a breadcrumb so the group knows the conflict is cleared and
-  // only votes are outstanding.
-  if (typeof mergeResult?.yesCount === 'number' && typeof mergeResult?.needed === 'number') {
+  // Not merged — almost always "not enough yes votes yet". Only announce
+  // when we actually synced, so the post-merge sibling sweep doesn't spam
+  // vote-status lines for every clean-but-unapproved promoted PR.
+  if (didSync && typeof mergeResult?.yesCount === 'number' && typeof mergeResult?.needed === 'number') {
     await postGroupMessage(pool, fresh,
       `PR #${fresh.pr_number} is now synced with main and conflict-free — ${mergeResult.yesCount}/${mergeResult.needed} yes votes needed to merge.`
     );
   }
-  return { ok: true, reason: 'synced_awaiting_votes', syncResult: sync.syncResult };
+  return { ok: true, reason: didSync ? 'synced_awaiting_votes' : 'awaiting_votes', syncResult };
 }
 
 async function postGroupMessage(pool, session, content) {
