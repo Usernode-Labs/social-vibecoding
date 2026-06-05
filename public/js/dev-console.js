@@ -191,6 +191,8 @@ const DevConsole = {
     const stagingBtn = document.getElementById('staging-dev-console-btn');
     if (btn) btn.classList.toggle('hidden', !show);
     if (stagingBtn) stagingBtn.classList.toggle('hidden', !show);
+    const drawerRow = document.getElementById('drawer-row-dev-console');
+    if (drawerRow) drawerRow.classList.toggle('hidden', !show);
 
     if (!show && DevConsole.panelOpen) DevConsole.hide();
   },
@@ -233,7 +235,7 @@ const DevConsole = {
   _updateBadge() {
     const label = DevConsole.unseenErrors > 99 ? '99+' : String(DevConsole.unseenErrors);
     const show = DevConsole.unseenErrors > 0;
-    for (const id of ['dev-console-badge', 'staging-dev-console-badge']) {
+    for (const id of ['dev-console-badge', 'staging-dev-console-badge', 'drawer-badge-dev-console']) {
       const badge = document.getElementById(id);
       if (!badge) continue;
       if (show) {
