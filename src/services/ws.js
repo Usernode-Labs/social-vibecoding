@@ -464,12 +464,17 @@ async function getReactionsForMessages(pool, messageIds) {
   return out;
 }
 
-async function sendSystemMessage(pool, appId, content, msgType = 'system') {
+// `metadata` is an optional plain object persisted to chat_messages.metadata
+// (JSONB) and echoed on the live broadcast. Used e.g. by the vote-activity
+// lines (promote / vote cast) to carry { vote: { sessionId, prNumber } } so
+// the group-chat client can render live vote buttons inline on the row.
+async function sendSystemMessage(pool, appId, content, msgType = 'system', metadata = null) {
   const { rows } = await pool.query(
-    `INSERT INTO chat_messages (app_id, content, msg_type)
-     VALUES ($1, $2, $3)
+    `INSERT INTO chat_messages (app_id, content, msg_type, metadata)
+     VALUES ($1, $2, $3, $4)
      RETURNING id, created_at`,
-    [appId, content, msgType]
+    // metadata is NOT NULL DEFAULT '{}', so always pass a JSON object.
+    [appId, content, msgType, JSON.stringify(metadata || {})]
   );
 
   broadcast(appId, {
@@ -479,6 +484,7 @@ async function sendSystemMessage(pool, appId, content, msgType = 'system') {
     username: null,
     content,
     msgType,
+    ...(metadata ? { metadata } : {}),
     createdAt: rows[0].created_at,
   });
 }

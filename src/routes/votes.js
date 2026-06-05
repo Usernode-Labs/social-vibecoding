@@ -67,7 +67,10 @@ function voteRoutes(config) {
         : `PR #${session.pr_number || session.id}`;
       await sendSystemMessage(pool, session.app_id,
         `${req.user.username} promoted ${promoLabel} for voting`,
-        'vote'
+        'vote',
+        // Lets the group-chat client render live vote buttons inline on
+        // this activity row (see group-chat.js renderMessageHtml).
+        { vote: { sessionId: session.id, prNumber: session.pr_number || null } }
       );
 
       const { pushSessionUpdate } = require('../services/ws');
@@ -184,7 +187,10 @@ function voteRoutes(config) {
         : `PR #${session.pr_number || session.id}`;
       await sendSystemMessage(pool, session.app_id,
         `${req.user.username} voted ${vote} on ${voteLabel}`,
-        'vote'
+        'vote',
+        // Lets the group-chat client render live vote buttons inline on
+        // this activity row (see group-chat.js renderMessageHtml).
+        { vote: { sessionId: session.id, prNumber: session.pr_number || null } }
       );
 
       // Broadcast the new tally *before* we try to merge, and respond

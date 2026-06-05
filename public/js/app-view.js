@@ -645,6 +645,22 @@ const AppView = {
       const promoted = promotedData.promoted;
       const activeUsers = promotedData.activeUsers || 1;
       const majority = promotedData.majority || 1;
+      // Shared snapshot for the inline vote buttons rendered on group-chat
+      // "promoted / voted" activity rows (see group-chat.js). Keyed by
+      // session id; rebuilt on every panel reload so the inline buttons
+      // track the panel exactly (live counts, my_vote, votable status).
+      AppView.voteState = {
+        bySession: Object.fromEntries((promoted || []).map((pr) => [String(pr.id), pr])),
+        // Also index by GitHub PR number so group-chat activity rows that
+        // predate the metadata.vote tag (or any row, as a fallback) can be
+        // matched from the "PR #N" in their text. pr_number is unique per
+        // app, and /promoted is already app-scoped, so this is unambiguous.
+        byPrNumber: Object.fromEntries(
+          (promoted || []).filter((pr) => pr.pr_number != null).map((pr) => [String(pr.pr_number), pr])
+        ),
+        majority,
+        activeUsers,
+      };
       // Whether the current viewer is in the active set for this app
       // (per src/services/active-users.js). Surfaced as a one-line
       // status on the Users dashboard tile.
@@ -744,7 +760,6 @@ const AppView = {
         // unchanged. Same pattern on every list section below.
         bodyHtml += `<div class="mb-2"><div class="text-xs text-zinc-500 mb-1 font-medium">Open PRs <span class="text-zinc-600 font-normal">(need ${majority}/${activeUsers} votes to merge)</span>${lockedHint}</div>${voteHintHtml}<div class="divide-y divide-zinc-200 dark:divide-zinc-800 sm:divide-y-0 border-y border-zinc-200 dark:border-zinc-800 sm:border-y-0">`;
         for (const pr of promoted) {
-          const yesCount = parseInt(pr.yes_count);
           const isMerging = pr.status === 'merging';
           // Prefer the LLM-generated PR title when present; fall back
           // to the original "by <user>" label so old rows (pre-pr_title)
@@ -802,11 +817,9 @@ const AppView = {
           // home-card admin actions: App.user?.isAdmin only — the
           // "View as non-admin" tool already masks this client-side
           // (see app.js).
-          const adminMergeBtn = App.user?.isAdmin
-            ? `<button class="gc-vote-btn gc-vote-btn-admin"
-                title="Admin: merge this PR right now, bypassing the vote majority"
-                onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
-            : '';
+          // Preview / Yes / No / Admin-merge buttons come from the shared
+          // AppView.voteButtonsHtml so the panel and the inline group-chat
+          // activity-row buttons stay byte-identical.
           // #15: make the PR title tap-to-quote into group chat. A clean
           // text snapshot rides along in data-* so the composer/preview
           // doesn't have to re-parse the labelText HTML.
@@ -841,11 +854,8 @@ const AppView = {
               <span ${prQuoteAttrs}>${labelText}</span>
               <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
                 ${unvotedBadge}
-                <span class="text-xs text-zinc-500">${yesCount}/${majority}</span>
-                ${pr.staging_url ? `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStaging('${pr.staging_url}')">Preview</button>` : ''}
-                <button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}" onclick="AppView.castVote(${pr.id}, 'yes')">Yes (${pr.yes_count})</button>
-                <button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}" onclick="AppView.castVote(${pr.id}, 'no')">No (${pr.no_count})</button>
-                ${adminMergeBtn}
+                ${AppView.voteCountPill(pr, majority)}
+                ${AppView.voteButtonsHtml(pr)}
                 ${kudosBtn}
               </div>
             </div>`;
@@ -994,6 +1004,14 @@ const AppView = {
         ${lockNotice}
         <div id="gc-panel-body" class="${AppView.panelOpen ? '' : 'hidden'} mt-2">${bodyHtml}</div>`;
 
+      // Keep the inline vote buttons on group-chat activity rows in sync
+      // with the panel we just rebuilt (covers the "chat rendered before
+      // the panel finished fetching" race on first open, and every live
+      // vote/session update that reloads the panel).
+      if (typeof GroupChat !== 'undefined' && GroupChat.refreshVoteControls) {
+        GroupChat.refreshVoteControls();
+      }
+
       // Add a faint border to the sticky header once the panel scrolls,
       // so it visually separates from content sliding underneath it.
       const stickyEl = document.getElementById('gc-panel-sticky');
@@ -1095,6 +1113,62 @@ const AppView = {
     } finally {
       AppView._voteInFlight.delete(key);
     }
+  },
+
+  // Core PR voting controls (Preview / Yes / No / Admin-merge) as an HTML
+  // string. Shared by the vote panel rows and the inline buttons on
+  // group-chat activity rows (group-chat.js) so the two never diverge.
+  // Expects a `pr` row from /promoted (id, status, staging_url, my_vote,
+  // yes_count, no_count). Admin merge only renders for admins.
+  // Rounded "yes / majority" tally pill, white-filled with a state-colored
+  // outline: purple while neither side has enough votes, green once Yes hits
+  // majority, red once No hits it. Shared by the vote panel rows and the
+  // inline group-chat activity rows so the two never diverge.
+  voteCountPill(pr, majority) {
+    if (!pr) return '';
+    const maj = majority || 1;
+    const yes = parseInt(pr.yes_count) || 0;
+    const no = parseInt(pr.no_count) || 0;
+    const state = yes >= maj ? 'yes' : no >= maj ? 'no' : 'pending';
+    let fills;
+    if (state === 'yes' || state === 'no') {
+      // Finalized: a side reached majority — the whole pill fills solid with
+      // the winning side's color (green = Yes, red = No).
+      fills = `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-${state}"></span>`;
+    } else {
+      // In progress: top stripe = Yes share, bottom stripe = No share, each a
+      // fraction of the majority threshold, filling left→right.
+      const yesPct = Math.min(100, (yes / maj) * 100);
+      const noPct = Math.min(100, (no / maj) * 100);
+      fills = `<span class="gc-vote-fill gc-vote-fill-yes" style="width:${yesPct}%"></span>`
+        + `<span class="gc-vote-fill gc-vote-fill-no" style="width:${noPct}%"></span>`;
+    }
+    return `<span class="gc-vote-count gc-vote-count-${state}">`
+      + fills
+      + `<span class="gc-vote-count-label">${yes} / ${maj}</span>`
+      + `</span>`;
+  },
+
+  voteButtonsHtml(pr, opts) {
+    if (!pr) return '';
+    // Group-chat inline rows pass { collapseVoted: true }: once the viewer
+    // has voted, the whole control set is replaced by a single read-only
+    // "You voted X" box. The activity drawer passes nothing, so it keeps the
+    // full Preview/Yes/No/Admin-merge set (with the chosen side highlighted)
+    // so voters can re-cast or preview after voting.
+    if (opts && opts.collapseVoted && (pr.my_vote === 'yes' || pr.my_vote === 'no')) {
+      const choice = pr.my_vote === 'yes' ? 'Yes' : 'No';
+      return `<span class="gc-vote-voted-box gc-vote-voted-box-${pr.my_vote}">You voted ${choice}</span>`;
+    }
+    const preview = pr.staging_url
+      ? `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStaging('${pr.staging_url}')">Preview</button>`
+      : '';
+    const adminMerge = App.user?.isAdmin
+      ? `<button class="gc-vote-btn gc-vote-btn-admin" title="Admin: merge this PR right now, bypassing the vote majority" onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
+      : '';
+    const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}" onclick="AppView.castVote(${pr.id}, 'yes')">Yes (${pr.yes_count})</button>`;
+    const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}" onclick="AppView.castVote(${pr.id}, 'no')">No (${pr.no_count})</button>`;
+    return preview + yesBtn + noBtn + adminMerge;
   },
 
   // Admin force-merge: bypass the active-user vote majority entirely

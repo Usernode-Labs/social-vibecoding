@@ -499,6 +499,73 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 }
 .gc-vote-btn-admin:hover { background: rgba(245, 158, 11, 0.15); }
 .gc-vote-active { background: var(--bg-tertiary); font-weight: 600; }
+/* Read-only "You voted X" box shown in place of the buttons once the viewer
+   has cast a vote. Tinted by their choice (green = yes, red = no). */
+.gc-vote-voted-box {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: #fff;
+  border: 1.5px solid currentColor;
+}
+.gc-vote-voted-box-yes { color: #22c55e; }
+.gc-vote-voted-box-no { color: #ef4444; }
+
+/* Inline vote buttons rendered on a "promoted / voted" group-chat
+ * activity row. Sits right after the row text; wraps onto its own line
+ * on narrow screens. Empty (no buttons) once the PR leaves the votable
+ * set, in which case it collapses to nothing. */
+.gc-vote-inline {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+.gc-vote-inline:empty { display: none; }
+/* Live "yes / majority" tally shown ahead of the inline buttons, in a
+   little boxed pill to match the buttons / "You voted X" box. */
+.gc-vote-count {
+  position: relative;
+  display: inline-block;
+  overflow: hidden;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: #fff;
+  border: 1.5px solid currentColor;
+  white-space: nowrap;
+}
+/* Outline color by tally state: purple = not enough votes yet,
+   green = Yes reached majority, red = No reached majority. */
+.gc-vote-count-pending { color: #7c3aed; }
+.gc-vote-count-yes { color: #22c55e; }
+.gc-vote-count-no { color: #ef4444; }
+/* Proportional fill stripes: top = Yes share, bottom = No share, each a
+   fraction of majority, filling left→right behind the label. */
+.gc-vote-fill {
+  position: absolute;
+  left: 0;
+  height: 50%;
+  pointer-events: none;
+}
+.gc-vote-fill-yes { top: 0; background: rgba(34, 197, 94, 0.40); }
+.gc-vote-fill-no { bottom: 0; background: rgba(239, 68, 68, 0.40); }
+/* Finalized: one side hit majority, so the whole pill fills with its color. */
+.gc-vote-fill-full { top: 0; width: 100%; height: 100%; }
+.gc-vote-fill-full-yes { background: rgba(34, 197, 94, 0.40); }
+.gc-vote-fill-full-no { background: rgba(239, 68, 68, 0.40); }
+.gc-vote-count-label { position: relative; z-index: 1; color: #1f2937; }
+/* Row text tint by the viewer's vote status: faded once they've voted,
+   full-strength purple while their vote is still outstanding so unvoted
+   activity rows draw the eye. */
+.gc-msg-vote.gc-vote-voted .gc-msg-system-text { color: var(--accent-light); }
+.gc-msg-vote.gc-vote-unvoted .gc-msg-system-text { color: var(--accent); font-weight: 600; }
 
 /* ── Developer console ─────────────────────────────────── */
 

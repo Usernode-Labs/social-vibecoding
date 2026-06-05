@@ -738,8 +738,21 @@ const GroupChat = {
     }
 
     if (isSystem || isVote) {
-      return `<div class="gc-msg-system ${isVote ? 'gc-msg-vote' : ''}" data-msg-id="${msg.id || ''}">` +
+      // Vote-activity rows (promote / vote cast) render live vote buttons
+      // inline next to the text — wired to the same AppView.castVote /
+      // castAdminMerge / swapToStaging the vote panel uses. We always emit
+      // the wrapper (carrying the precise metadata session id when present
+      // AND the "PR #N" parsed from the text) so refreshVoteControls() can
+      // fill it once AppView.voteState is ready — even when the chat
+      // renders before the vote panel finishes its first fetch.
+      const inlineControls = isVote ? GroupChat._voteControlsHtml(msg) : '';
+      // Tint the row text by the viewer's vote status on this PR: faded
+      // (--accent-light) once they've voted, full-strength (--accent) while
+      // their vote is still outstanding, so unvoted rows draw the eye.
+      const voteRowClass = isVote ? GroupChat._rowVoteClass(GroupChat._resolvePr(...GroupChat._voteRef(msg))) : '';
+      return `<div class="gc-msg-system ${isVote ? 'gc-msg-vote' : ''}${voteRowClass ? ' ' + voteRowClass : ''}" data-msg-id="${msg.id || ''}">` +
         `<span class="gc-msg-system-text">${escapeHtml(msg.content)}</span>` +
+        inlineControls +
         GroupChat._renderReactAddBtn(msg) +
         GroupChat._renderReactionsHtml(msg) +
         `</div>`;
@@ -760,6 +773,91 @@ const GroupChat = {
         <div class="gc-msg-content">${renderWithMentions(msg.content)}</div>
         ${GroupChat._renderReactionsHtml(msg)}
       </div>`;
+  },
+
+  // Inline vote buttons for a "promoted / voted" activity row. State comes
+  // from AppView.voteState (populated by AppView.loadVotePanel), so the
+  // buttons reflect live counts / my_vote and collapse to nothing once the
+  // PR leaves the votable set (merged / closed). The wrapper carries
+  // data-session-id so refreshVoteControls() can re-fill it in place when
+  // votes change, without re-rendering the whole chat.
+  // Wrapper for a vote-activity row. Carries the precise metadata session
+  // id (new server) when present AND the "PR #N" parsed from the row text,
+  // so the buttons can be (re)resolved against AppView.voteState at fill
+  // time. data-session-id / data-pr-number let refreshVoteControls() patch
+  // it in place without re-rendering the chat.
+  _voteControlsHtml(msg) {
+    const [sid, prNum] = GroupChat._voteRef(msg);
+    if (sid === '' && prNum === '') return '';
+    return `<span class="gc-vote-inline" data-vote-controls data-session-id="${sid}" data-pr-number="${prNum}">`
+      + GroupChat._voteInnerHtml(GroupChat._resolvePr(sid, prNum))
+      + `</span>`;
+  },
+
+  // [sessionId, prNumber] ref for a vote-activity row: the precise metadata
+  // session id (new server) when present, plus the "PR #N" parsed from the
+  // row text (works for older rows that predate the metadata tag).
+  _voteRef(msg) {
+    const meta = (msg.metadata || msg.meta || {}).vote;
+    const sid = meta && meta.sessionId != null ? String(meta.sessionId) : '';
+    const m = /PR #(\d+)/.exec(msg.content || '');
+    return [sid, m ? m[1] : ''];
+  },
+
+  // Resolve a (sessionId, prNumber) ref to the live PR in AppView.voteState,
+  // or null when it isn't currently votable ('merging'/merged/closed → no
+  // longer in the promoted set, mirroring the vote panel). Prefers the
+  // session id; falls back to PR number, then to treating the parsed number
+  // as a session id (the label uses pr_number || session.id when no PR
+  // number exists yet).
+  _resolvePr(sid, prNum) {
+    const st = (typeof AppView !== 'undefined' && AppView.voteState) || null;
+    if (!st) return null;
+    let pr = sid ? (st.bySession && st.bySession[sid]) : null;
+    if (!pr && prNum) pr = (st.byPrNumber && st.byPrNumber[prNum]) || (st.bySession && st.bySession[prNum]);
+    return pr && pr.status === 'promoted' ? pr : null;
+  },
+
+  // Inner HTML for a resolved votable PR: the live "yes / majority" count
+  // followed by the vote buttons. Empty when the PR isn't votable, so the
+  // wrapper collapses and the row falls back to a plain activity line.
+  _voteInnerHtml(pr) {
+    if (!pr || typeof AppView.voteButtonsHtml !== 'function') return '';
+    const st = (typeof AppView !== 'undefined' && AppView.voteState) || {};
+    // collapseVoted: in the chat, a cast vote collapses to a "You voted X"
+    // box (the drawer keeps the full set so it stays re-castable there).
+    return AppView.voteCountPill(pr, st.majority) + AppView.voteButtonsHtml(pr, { collapseVoted: true });
+  },
+
+  // Row text-color class from the viewer's vote status: faded once voted,
+  // full-strength while their vote is outstanding. '' for non-votable rows
+  // (keeps the default --accent vote-line color).
+  _rowVoteClass(pr) {
+    if (!pr) return '';
+    return pr.my_vote === 'yes' || pr.my_vote === 'no' ? 'gc-vote-voted' : 'gc-vote-unvoted';
+  },
+
+  // Re-fill every inline vote-control wrapper from the current
+  // AppView.voteState. Called by AppView.loadVotePanel after it reloads on
+  // a vote/session update (and on first open, covering the race where the
+  // chat renders before the panel finishes fetching), so the inline
+  // buttons + count + row tint track the panel. A PR no longer in the
+  // votable set yields empty controls and the row falls back to a plain
+  // activity line.
+  refreshVoteControls() {
+    document.querySelectorAll('#gc-messages [data-vote-controls]').forEach((el) => {
+      const pr = GroupChat._resolvePr(
+        el.getAttribute('data-session-id') || '',
+        el.getAttribute('data-pr-number') || ''
+      );
+      el.innerHTML = GroupChat._voteInnerHtml(pr);
+      const row = el.closest('.gc-msg-vote');
+      if (row) {
+        row.classList.remove('gc-vote-voted', 'gc-vote-unvoted');
+        const cls = GroupChat._rowVoteClass(pr);
+        if (cls) row.classList.add(cls);
+      }
+    });
   },
 
   // #15: the quote block shown on a message that is itself a reply. Click
