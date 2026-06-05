@@ -528,91 +528,126 @@ async function recoverStuckMerges(config) {
   }
 }
 
-// Recover sessions where CC finished but post-processing didn't complete
+// Rebuild the staging preview for a single session that has a branch +
+// commits ahead of main but a NULL staging_url. Shared by the startup
+// recovery sweep (recoverSessions) and the periodic sweeper's staging-heal
+// pass (Pass 3) so the two never drift apart.
+//
+// Returns 'built' on success, 'skipped' when there's nothing to do (no
+// owner/repo, no bot token, branch not ahead of main), or throws on a
+// genuine build failure (caller logs + decides whether to retry).
+//
+// Creates a PR only when one is missing — the active-session recovery case
+// where CC finished but post-processing died before opening the PR.
+// 'promoted'/'merging' sessions always already have one, so that branch is
+// a no-op for them. On success it pings BOTH the dev-chat tail
+// (broadcastGlobal session_event) AND the group-chat vote panel
+// (pushSessionUpdate) so the Preview button reappears on the PR card
+// without anyone needing to reload.
+async function rebuildSessionStaging({ config, pool, session, reason }) {
+  const staging = require('./src/services/staging');
+  const ghub = require('./src/services/github');
+  const { broadcastGlobal, pushSessionUpdate } = require('./src/services/ws');
+
+  const [, owner, repo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  if (!owner || !repo) return 'skipped';
+
+  const pat = process.env.GITHUB_BOT_TOKEN;
+  if (!pat) return 'skipped';
+
+  const { Octokit } = await import('@octokit/rest');
+  const ok = new Octokit({ auth: pat });
+
+  // Only build when the branch actually carries work — a branch level with
+  // (or behind) main has nothing to preview.
+  let compare;
+  try {
+    const { data } = await ok.rest.repos.compareCommits({
+      owner, repo, base: 'main', head: session.branch_name,
+    });
+    compare = data;
+  } catch { return 'skipped'; }
+
+  if (compare.ahead_by === 0) return 'skipped';
+
+  log.info('server', 'Rebuilding staging preview', {
+    sessionId: session.id, status: session.status, branch: session.branch_name,
+    aheadBy: compare.ahead_by, reason,
+  });
+
+  const commitHash = compare.commits[compare.commits.length - 1]?.sha || 'latest';
+  const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
+
+  // Create PR if missing (active-session recovery only).
+  if (!session.pr_number) {
+    try {
+      const pr = await ghub.createPR(owner, repo, {
+        branch: session.branch_name,
+        title: `Changes on ${session.branch_name}`,
+        body: `Recovered dev session via Usernode`,
+      });
+      await pool.query(
+        `UPDATE chat_sessions SET pr_number = $1, pr_url = $2 WHERE id = $3`,
+        [pr.number, pr.html_url, session.id]
+      );
+      session.pr_number = pr.number;
+      session.pr_url = pr.html_url;
+    } catch {}
+  }
+
+  const stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
+  await pool.query(
+    `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
+    [stagingResult.containerId, stagingResult.stagingUrl, session.id]
+  );
+
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+     VALUES ($1, 'system', $2, $3)`,
+    [
+      session.id,
+      reason === 'startup' ? 'Staging recovered after restart' : 'Staging preview rebuilt',
+      JSON.stringify({ stagingUrl: stagingResult.stagingUrl }),
+    ]
+  );
+
+  broadcastGlobal({
+    type: 'session_event', sessionId: session.id,
+    event: 'staging_ready', url: stagingResult.stagingUrl,
+  });
+  pushSessionUpdate({ action: 'staging_ready', sessionId: session.id, appSlug: session.app_slug });
+
+  log.info('server', 'Staging preview rebuilt', { sessionId: session.id, url: stagingResult.stagingUrl, reason });
+  return 'built';
+}
+
+// Recover sessions where CC finished but post-processing didn't complete,
+// AND promoted PRs whose staging preview was reclaimed by the staging GC.
+//
+// The second case is the recoverable tail of a real gap: the staging GC
+// (server.js sweeper Pass 2 → teardownStagingForSession) nulls staging_url
+// for idle sessions, but the promote path never rebuilds staging and this
+// recovery historically only scanned 'active'. So a promoted PR that lost
+// its preview stayed previewless forever — the group-chat vote card
+// rendered Yes/No/Admin-merge but no Preview button (gated on staging_url
+// in app-view.js). Including 'promoted' here heals those on the next
+// startup; the sweeper's Pass 3 heals them live without a restart.
 async function recoverSessions(config) {
   const { getPool } = require('./src/db/pool');
-  const staging = require('./src/services/staging');
-  const docker = require('./src/services/docker');
-  const ghub = require('./src/services/github');
-  const { broadcastGlobal } = require('./src/services/ws');
   const pool = getPool(config);
 
-  // Find active sessions that have a branch but no staging URL
   const { rows } = await pool.query(
     `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
      FROM chat_sessions cs
      JOIN apps a ON cs.app_id = a.id
-     WHERE cs.status = 'active' AND cs.branch_name IS NOT NULL AND cs.staging_url IS NULL`
+     WHERE cs.status IN ('active', 'promoted')
+       AND cs.branch_name IS NOT NULL
+       AND cs.staging_url IS NULL`
   );
 
   for (const session of rows) {
     try {
-      const [, owner, repo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-      if (!owner || !repo) continue;
-
-      // Check if the branch has commits ahead of main
-      const octokit = await ghub.getInstallationOctokit(owner).catch(() => null);
-      const pat = process.env.GITHUB_BOT_TOKEN;
-      if (!pat) continue;
-
-      const { Octokit } = await import('@octokit/rest');
-      const ok = new Octokit({ auth: pat });
-
-      let compare;
-      try {
-        const { data } = await ok.rest.repos.compareCommits({
-          owner, repo, base: 'main', head: session.branch_name,
-        });
-        compare = data;
-      } catch { continue; }
-
-      if (compare.ahead_by === 0) continue;
-
-      log.info('server', 'Recovering session — building staging', {
-        sessionId: session.id, branch: session.branch_name, aheadBy: compare.ahead_by,
-      });
-
-      const commitHash = compare.commits[compare.commits.length - 1]?.sha || 'latest';
-      const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
-
-      // Create PR if missing
-      if (!session.pr_number) {
-        try {
-          const pr = await ghub.createPR(owner, repo, {
-            branch: session.branch_name,
-            title: `Changes on ${session.branch_name}`,
-            body: `Recovered dev session via Usernode`,
-          });
-          await pool.query(
-            `UPDATE chat_sessions SET pr_number = $1, pr_url = $2 WHERE id = $3`,
-            [pr.number, pr.html_url, session.id]
-          );
-          session.pr_number = pr.number;
-          session.pr_url = pr.html_url;
-        } catch {}
-      }
-
-      // Build staging
-      const stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
-      await pool.query(
-        `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
-        [stagingResult.containerId, stagingResult.stagingUrl, session.id]
-      );
-
-      // Save a status message
-      await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-         VALUES ($1, 'system', $2, $3)`,
-        [session.id, 'Staging recovered after restart', JSON.stringify({ stagingUrl: stagingResult.stagingUrl })]
-      );
-
-      // Notify via WebSocket
-      broadcastGlobal({
-        type: 'session_event', sessionId: session.id,
-        event: 'staging_ready', url: stagingResult.stagingUrl,
-      });
-
-      log.info('server', 'Session recovered', { sessionId: session.id, url: stagingResult.stagingUrl });
+      await rebuildSessionStaging({ config, pool, session, reason: 'startup' });
     } catch (err) {
       log.warn('server', 'Failed to recover session', { sessionId: session.id, err: err.message });
     }
@@ -906,6 +941,17 @@ function startIdleEvictionSweeper() {
 // promoted distinction).
 let sessionSweeperHandle = null;
 
+// Per-session throttle for the sweeper's staging-heal pass (Pass 3). Maps
+// sessionId -> last rebuild-attempt epoch ms so a promoted PR whose build
+// keeps failing (missing secret, broken manifest) isn't rebuilt on every
+// 60s tick. Entries are dropped once a build succeeds; the set is bounded
+// by the (small) number of promoted sessions currently missing staging.
+const stagingHealAttempts = new Map();
+const STAGING_HEAL_COOLDOWN_MS = parseInt(
+  process.env.STAGING_HEAL_COOLDOWN_MS || String(10 * 60 * 1000),
+  10
+);
+
 function startSessionAutoPauseSweeper(config) {
   if (sessionSweeperHandle) return;
   if (!config.sessionAutopauseIdleMs || config.sessionAutopauseIdleMs <= 0) {
@@ -971,6 +1017,46 @@ function startSessionAutoPauseSweeper(config) {
       } catch (err) {
         log.warn('server', 'Staging GC sweep failed', { err: err.message });
       }
+    }
+
+    // Pass 3: staging heal. The flip side of Pass 2 — rebuild the staging
+    // preview for promoted/merging sessions that have lost it (GC'd while
+    // 'active'/'paused' before promotion, or reclaimed by an older GC that
+    // didn't yet exclude promoted). Their preview backs the group's PR
+    // vote, so a missing staging_url renders the vote card with no Preview
+    // button (gated on staging_url in app-view.js). recoverSessions() heals
+    // these on startup; this keeps them healed live without a restart.
+    // Per-session cooldown so a persistently failing build (missing secret,
+    // broken manifest) doesn't rebuild on every tick; LIMIT keeps the
+    // (heavy: docker build + pg clone) work bounded per sweep.
+    try {
+      const { rows } = await pool.query(
+        `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
+         FROM chat_sessions cs
+         JOIN apps a ON cs.app_id = a.id
+         WHERE cs.status IN ('promoted', 'merging')
+           AND cs.branch_name IS NOT NULL
+           AND cs.staging_url IS NULL
+         ORDER BY cs.promoted_at ASC NULLS FIRST
+         LIMIT 5`
+      );
+      for (const session of rows) {
+        if (worker.isInFlight(session.id)) continue;
+        const last = stagingHealAttempts.get(session.id) || 0;
+        if (Date.now() - last < STAGING_HEAL_COOLDOWN_MS) continue;
+        // Stamp the attempt BEFORE the (minutes-long) build so a later
+        // tick won't kick off a duplicate concurrent rebuild for the same
+        // session while this one is still in flight.
+        stagingHealAttempts.set(session.id, Date.now());
+        try {
+          const result = await rebuildSessionStaging({ config, pool, session, reason: 'heal' });
+          if (result === 'built') stagingHealAttempts.delete(session.id);
+        } catch (err) {
+          log.warn('server', 'Staging heal failed', { sessionId: session.id, err: err.message });
+        }
+      }
+    } catch (err) {
+      log.warn('server', 'Staging heal sweep failed', { err: err.message });
     }
   }, config.sessionSweepIntervalMs).unref();
 }
