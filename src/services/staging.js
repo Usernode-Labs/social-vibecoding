@@ -211,7 +211,42 @@ async function teardownStaging(session, app) {
   log.info('staging', 'Staging torn down', { sessionId: session.id });
 }
 
+// Per-app rebuild serialization. Every prod-rebuild caller (dev-chat
+// merge, post-merge sibling sweep, drift poller, manual check-updates,
+// issues auto-fix) funnels through rebuildProduction. When two of them
+// fire for the SAME app close together — e.g. PR #25 and #26 both
+// merging within a minute, each kicking off its own rebuild — their
+// `stopAndRemove(name)` / `runContainer(name)` calls interleave and the
+// second `docker run` 405s with "container name is already in use"
+// (exactly the failure that left whiteboard #26 merged-on-GitHub but
+// not-marked-merged). The platform is a single Node process, so an
+// in-process promise chain keyed by slug is sufficient: concurrent
+// rebuilds of one app run one-at-a-time, each cloning the latest main
+// and converging on HEAD. Different apps still rebuild in parallel.
+const _rebuildChains = new Map(); // slug -> Promise (rejection-swallowing tail)
+
+function serializeRebuild(slug, fn) {
+  const prev = _rebuildChains.get(slug) || Promise.resolve();
+  // Run after the predecessor settles, regardless of whether it
+  // succeeded — one app's failed rebuild must not block the next one.
+  const result = prev.then(() => fn(), () => fn());
+  // The stored tail never rejects, so the next waiter's `.then` always
+  // runs and an unhandled rejection is never parked on the chain.
+  const tail = result.then(() => {}, () => {});
+  _rebuildChains.set(slug, tail);
+  // Self-clean the map once we're the last link, so idle apps don't leak
+  // entries. Guard the identity check so a newer rebuild isn't dropped.
+  tail.finally(() => {
+    if (_rebuildChains.get(slug) === tail) _rebuildChains.delete(slug);
+  });
+  return result; // callers still get the real containerId/sha or the real error
+}
+
 async function rebuildProduction(config, app) {
+  return serializeRebuild(app.slug, () => rebuildProductionInner(config, app));
+}
+
+async function rebuildProductionInner(config, app) {
   const containerName = `usernode-app-${app.slug}`;
   const imageName = `usernode-app-${app.slug}:latest`;
 

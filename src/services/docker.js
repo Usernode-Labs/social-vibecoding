@@ -38,10 +38,32 @@ async function runContainer(name, { image, env = {}, port, memory = APP_MEMORY, 
     image,
   ];
 
-  const { stdout } = await execFileAsync('docker', args, { timeout: 60000 });
-  const containerId = stdout.trim();
-  log.info('docker', 'Container started', { name, id: containerId.substring(0, 12) });
-  return containerId;
+  try {
+    const { stdout } = await execFileAsync('docker', args, { timeout: 60000 });
+    const containerId = stdout.trim();
+    log.info('docker', 'Container started', { name, id: containerId.substring(0, 12) });
+    return containerId;
+  } catch (err) {
+    // Defense-in-depth against a name collision: if a container with this
+    // name still exists (a prior `stopAndRemove` raced, an aborted rebuild
+    // left a half-removed container, or two rebuild paths interleaved),
+    // docker fails with "The container name "/x" is already in use". The
+    // root-cause serialization lives in staging.rebuildProduction; this
+    // retry just makes runContainer self-healing so a stray name never
+    // bricks a deploy. Force-remove and try exactly once more.
+    const msg = String((err && (err.stderr || err.message)) || '');
+    if (/is already in use/i.test(msg)) {
+      log.warn('docker', 'Container name in use; removing stale container and retrying', { name });
+      await execFileAsync('docker', ['rm', '-f', name], { timeout: 10000 }).catch(() => {});
+      const { stdout } = await execFileAsync('docker', args, { timeout: 60000 });
+      const containerId = stdout.trim();
+      log.info('docker', 'Container started (after name-conflict retry)', {
+        name, id: containerId.substring(0, 12),
+      });
+      return containerId;
+    }
+    throw err;
+  }
 }
 
 async function getHostPort(nameOrId, containerPort) {

@@ -134,7 +134,33 @@ async function checkAndResolveConflicts(config, mergedSession) {
 // `target` is either { session } (a pre-loaded joined row) or
 // { sessionId } (we'll load it). Returns a small status object; never
 // throws (logs + group-chat on failure).
+//
+// Per-session coalescing: this is fired from multiple places that can
+// overlap on the SAME session — an explicit trigger and the post-merge
+// sibling sweep, or two sweeps from back-to-back merges. Two concurrent
+// resolves for one session both call runSyncMain(id), and the second
+// hits the worker's "a turn is already in flight for session N" guard
+// (the exact error seen on the whiteboard #26 run). We dedupe by
+// sessionId so concurrent callers share one in-flight resolve (and thus
+// one worker turn / one merge attempt) and receive the same result.
+const _inFlightResolves = new Map(); // sessionId -> Promise<result>
+
 async function resolveAndMaybeRetry(config, target) {
+  const sessionId = target.sessionId != null ? target.sessionId : target.session?.id;
+  if (sessionId != null && _inFlightResolves.has(sessionId)) {
+    return _inFlightResolves.get(sessionId);
+  }
+  const p = resolveAndMaybeRetryInner(config, target);
+  if (sessionId != null) {
+    _inFlightResolves.set(sessionId, p);
+    p.finally(() => {
+      if (_inFlightResolves.get(sessionId) === p) _inFlightResolves.delete(sessionId);
+    });
+  }
+  return p;
+}
+
+async function resolveAndMaybeRetryInner(config, target) {
   const pool = getPool(config);
   let session = target.session || null;
   if (!session) {
