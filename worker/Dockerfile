@@ -4,7 +4,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl wget ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @anthropic-ai/claude-code
+# Cache-bust the Claude Code install so the worker tracks the latest CLI
+# instead of freezing at whatever version was current when this layer was
+# first built. ensureWorkerImage() passes today's date as
+# CLAUDE_CODE_CACHE_BUST, so the layer is reused within a calendar day and
+# re-pulls `latest` on the first build of each new day. Stale CLIs are the
+# cause of "thinking.type.enabled is not supported for this model" 400s on
+# newer models (Sonnet 4.6 / Opus 4.8), which require thinking.type.adaptive.
+ARG CLAUDE_CODE_CACHE_BUST=unset
+RUN echo "claude-code cache bust: ${CLAUDE_CODE_CACHE_BUST}" \
+  && npm install -g @anthropic-ai/claude-code
 
 COPY worker-run.sh   /usr/local/bin/worker-run.sh
 COPY run-cc.sh       /usr/local/bin/run-cc.sh

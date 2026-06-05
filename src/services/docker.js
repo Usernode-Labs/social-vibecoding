@@ -8,11 +8,16 @@ const APP_MEMORY = '256m';
 const APP_CPUS = '0.5';
 const SHARED_NETWORK = process.env.DOCKER_NETWORK || 'shared-web';
 
-async function buildImage(contextPath, tag) {
-  log.info('docker', 'Building image', { context: contextPath, tag });
-  await execFileAsync('docker', ['build', '-t', tag, contextPath], {
-    timeout: 5 * 60 * 1000,
-  });
+async function buildImage(contextPath, tag, buildArgs = {}) {
+  const buildArgFlags = Object.entries(buildArgs).flatMap(
+    ([k, v]) => ['--build-arg', `${k}=${v}`]
+  );
+  log.info('docker', 'Building image', { context: contextPath, tag, buildArgs });
+  await execFileAsync(
+    'docker',
+    ['build', ...buildArgFlags, '-t', tag, contextPath],
+    { timeout: 5 * 60 * 1000 }
+  );
   log.info('docker', 'Image built', { tag });
 }
 

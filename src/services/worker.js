@@ -266,10 +266,22 @@ async function ensureWorkerImage() {
   // Always build; Docker's layer cache makes this fast when nothing's
   // changed, and crucially picks up edits to worker-run.sh / run-cc.sh
   // without requiring a manual `docker rmi`.
+  //
+  // CLAUDE_CODE_CACHE_BUST (today's UTC date) busts the
+  // `npm install -g @anthropic-ai/claude-code` layer once per calendar
+  // day so the worker tracks the latest CLI. Without this, that layer is
+  // cached indefinitely and the worker freezes at a stale CLI version —
+  // newer models (Sonnet 4.6 / Opus 4.8) then 400 with
+  // "thinking.type.enabled is not supported for this model" because the
+  // old CLI emits the legacy thinking shape. Day-granular so steady-state
+  // session bootstraps stay cache-fast (no per-session npm reinstall).
   const path = require('path');
   const workerDir = path.join(__dirname, '../../worker');
-  log.info('worker', 'Building worker image', { dir: workerDir });
-  await docker.buildImage(workerDir, WORKER_IMAGE);
+  const cacheBust = new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
+  log.info('worker', 'Building worker image', { dir: workerDir, cacheBust });
+  await docker.buildImage(workerDir, WORKER_IMAGE, {
+    CLAUDE_CODE_CACHE_BUST: cacheBust,
+  });
 }
 
 // Docker-volume name used to persist Claude Code's on-disk session
