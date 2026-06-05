@@ -561,6 +561,16 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .gc-vote-fill-full-yes { background: rgba(34, 197, 94, 0.40); }
 .gc-vote-fill-full-no { background: rgba(239, 68, 68, 0.40); }
 .gc-vote-count-label { position: relative; z-index: 1; color: #1f2937; }
+/* "Merging…" badge shown next to the vote controls while a PR is merging. */
+.gc-merging-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #10b981;
+  white-space: nowrap;
+}
 /* Row text tint by the viewer's vote status: faded once they've voted,
    full-strength purple while their vote is still outstanding so unvoted
    activity rows draw the eye. */

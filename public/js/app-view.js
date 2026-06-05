@@ -779,27 +779,9 @@ const AppView = {
               ? `${escapeHtml(pr.pr_title)} <span class="text-zinc-500">· ${escapeHtml(pr.username)}</span>`
               : `by ${escapeHtml(pr.username)}`;
           }
-          if (isMerging) {
-            // Threshold crossed; the merge pipeline (GitHub merge +
-            // prod rebuild + staging teardown) is in flight. Keep the
-            // row visible with a spinner so it doesn't look like the
-            // PR got lost between "majority reached" and "merged".
-            //
-            // Mobile layout: controls wrapped in a basis-full + sm:contents
-            // group so they take their own row below ~640px and the title
-            // gets the full first row. See open-PR row below for the
-            // canonical comment on this pattern.
-            bodyHtml += `
-              <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1 opacity-70">
-                <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-violet-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
-                <span class="text-xs text-zinc-300 flex-1 min-w-0 truncate">${labelText}</span>
-                <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
-                  <span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>
-                  <span class="text-xs text-emerald-400">Merging…</span>
-                </div>
-              </div>`;
-            continue;
-          }
+          // While merging is in flight we keep the full row (tally pill +
+          // vote controls) so none of the voting info vanishes; a "Merging…"
+          // badge is appended alongside instead of replacing everything.
           // Kudos button piggybacks on the same PR row. The vote
           // panel/PR card already carries kudos_count + my_kudos from
           // the /promoted query (extended in routes/votes.js); we
@@ -848,14 +830,16 @@ const AppView = {
           const unvotedBadge = isUnvoted
             ? `<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 shrink-0" title="You haven't voted on this yet"><span class="relative flex h-1.5 w-1.5"><span class="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75 animate-ping"></span><span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-violet-500"></span></span>Vote</span>`
             : '';
+          const mergingBadge = isMerging ? AppView.mergingBadgeHtml() : '';
           bodyHtml += `
-            <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1"${isUnvoted ? ' data-unvoted="1"' : ''}>
+            <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''}>
               <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-violet-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
               <span ${prQuoteAttrs}>${labelText}</span>
               <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
                 ${unvotedBadge}
                 ${AppView.voteCountPill(pr, majority)}
                 ${AppView.voteButtonsHtml(pr)}
+                ${mergingBadge}
                 ${kudosBtn}
               </div>
             </div>`;
@@ -1147,6 +1131,13 @@ const AppView = {
       + fills
       + `<span class="gc-vote-count-label">${yes} / ${maj}</span>`
       + `</span>`;
+  },
+
+  // "Merging…" badge shown alongside (not instead of) the vote controls
+  // once a PR crosses the threshold and the merge pipeline is in flight.
+  // Shared by the vote panel rows and the inline group-chat rows.
+  mergingBadgeHtml() {
+    return `<span class="gc-merging-badge"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Merging…</span>`;
   },
 
   voteButtonsHtml(pr, opts) {
