@@ -406,14 +406,26 @@ function sessionRoutes(config) {
         pool, sessionId, userId: req.user.id, reason: 'manual',
       });
       if (!paused) {
-        // Either it doesn't exist, isn't ours, or is already paused/archived.
-        // Surface a soft 200 if it's already paused so the UI can no-op the
-        // button click; treat anything else as not found.
+        // Either it doesn't exist, isn't ours, or is already paused/archived,
+        // or it's a promoted session (which pauseSession deliberately refuses
+        // to demote so its PR stays up for vote).
         const { rows: check } = await pool.query(
           `SELECT id, status FROM chat_sessions WHERE id = $1 AND user_id = $2`,
           [sessionId, req.user.id]
         );
+        // Soft 200 if it's already paused so the UI can no-op the button click.
         if (check[0] && check[0].status === 'paused') return res.json({ ok: true, alreadyPaused: true });
+        // Promoted: honor the user's intent to free the warm worker (same
+        // teardown pauseSession does for 'active'), but leave status =
+        // 'promoted' so the PR keeps showing its voting buttons and stays
+        // votable. The vote endpoint and cast-vote handler key off the
+        // promoted status, so flipping it here would silently pull the PR
+        // from the vote — exactly the bug we're fixing.
+        if (check[0] && check[0].status === 'promoted') {
+          workerProgress.clear(sessionId);
+          await worker.destroyWorker(worker.workerContainerName(sessionId)).catch(() => {});
+          return res.json({ ok: true, keptPromoted: true });
+        }
         return res.status(404).json({ error: 'Session not found or cannot be paused' });
       }
       res.json({ ok: true });
