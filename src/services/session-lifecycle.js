@@ -60,9 +60,16 @@ async function pauseSession({ pool, sessionId, userId = null, reason = 'manual' 
     ownerClause = ' AND user_id = $2';
   }
 
+  // Only 'active' sessions are demoted to 'paused'. A 'promoted' session
+  // must keep its status so its PR stays up for vote — pausing the
+  // proposer's worker must not yank the PR out of the vote (the vote
+  // endpoint and cast-vote handler key off status IN ('promoted','merging')).
+  // This mirrors the auto-pause sweeper and LRU eviction, which already
+  // refuse to pause promoted sessions. The manual /pause endpoint handles
+  // the worker teardown for promoted sessions itself (see routes/sessions.js).
   const { rows } = await pool.query(
     `UPDATE chat_sessions SET status = 'paused'
-     WHERE id = $1${ownerClause} AND status IN ('active', 'promoted')
+     WHERE id = $1${ownerClause} AND status = 'active'
      RETURNING id`,
     params
   );
