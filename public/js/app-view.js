@@ -328,7 +328,7 @@ const AppView = {
     // user doesn't need a second tiny dot duplicating it inside the
     // commit chip.
     return `
-      <a href="${href}" target="_blank" rel="noopener" class="app-version-pill" title="${escapeAttr(tip)}">
+      <a href="${href}" target="_blank" rel="noopener noreferrer" class="app-version-pill" title="${escapeAttr(tip)}">
         ${quiet ? '' : '<span class="app-version-pill-dot"></span>'}
         <span class="app-version-pill-label">
           ${slugPart}
@@ -842,7 +842,7 @@ const AppView = {
           const mergingBadge = isMerging ? AppView.mergingBadgeHtml() : '';
           bodyHtml += `
             <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''}>
-              <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-violet-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
+              <a href="${pr.pr_url || '#'}" target="_blank" rel="noopener noreferrer" class="text-xs text-violet-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
               <span ${prQuoteAttrs}>${labelText}</span>
               <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
                 ${unvotedBadge}
@@ -943,7 +943,7 @@ const AppView = {
                 ? `Revert merging (PR#${rpr})`
                 : `Revert in vote · PR#${rpr}`;
             const linkHref = pr.revert_pr_url || '#';
-            undoUI = `<a href="${linkHref}" target="_blank" class="text-xs text-amber-500 hover:text-amber-400 font-medium">${label}</a>`;
+            undoUI = `<a href="${linkHref}" target="_blank" rel="noopener noreferrer" class="text-xs text-amber-500 hover:text-amber-400 font-medium">${label}</a>`;
           } else {
             undoUI = `
               <button class="gc-vote-btn gc-vote-btn-undo"
@@ -953,7 +953,7 @@ const AppView = {
 
           bodyHtml += `
             <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
-              <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-emerald-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
+              <a href="${pr.pr_url || '#'}" target="_blank" rel="noopener noreferrer" class="text-xs text-emerald-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
               <span ${mergedQuoteAttrs}>${mergedLabel}</span>
               <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
                 ${AppView.voteCountPill(pr, majority)}

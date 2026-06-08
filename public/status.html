@@ -404,7 +404,7 @@ function renderApps(apps) {
       const stagingState = s.staging?.state || (s.stagingDriftWarning ? 'missing' : 'creating');
       const stagingLabel = s.staging?.state || (s.stagingDriftWarning ? 'drift' : 'pending');
       const stagingStats = s.staging?.stats ? `<span class="mono text-zinc-500 ml-2">${h(s.staging.stats.mem)} · ${h(s.staging.stats.cpu)}</span>` : '';
-      const prLink = s.prUrl ? `<a href="${h(s.prUrl)}" target="_blank" class="text-violet-400 hover:underline">PR #${s.prNumber}</a>` : '<span class="text-zinc-500">no PR</span>';
+      const prLink = s.prUrl ? `<a href="${h(s.prUrl)}" target="_blank" rel="noopener noreferrer" class="text-violet-400 hover:underline">PR #${s.prNumber}</a>` : '<span class="text-zinc-500">no PR</span>';
       const prTitle = s.prTitle ? `<span class="text-zinc-300 ml-2 truncate">${h(s.prTitle)}</span>` : '';
       const stagingResolved = s.stagingUrl ? resolveDevHost(s.stagingUrl) : '';
       const stagingLink = s.stagingUrl ? `<a href="${h(stagingResolved)}" target="_blank" class="text-violet-400 hover:underline mono text-xs break-all">${h(stagingResolved)}</a>` : '';
@@ -454,7 +454,7 @@ function renderApps(apps) {
               ${statePill(prodState, `prod: ${prodLabel}`)}
             </div>
             <div class="text-xs text-zinc-500 mt-1 flex items-center gap-3 flex-wrap">
-              ${a.repoUrl ? `<a href="${h(a.repoUrl)}" target="_blank" class="hover:text-violet-400 mono">${h(repoHost)}</a>` : ''}
+              ${a.repoUrl ? `<a href="${h(a.repoUrl)}" target="_blank" rel="noopener noreferrer" class="hover:text-violet-400 mono">${h(repoHost)}</a>` : ''}
               <span>by @${h(a.createdBy || 'unknown')}</span>
               <span>${a.openSessions} session${a.openSessions === 1 ? '' : 's'}</span>
               <span>${a.openIssues} issue${a.openIssues === 1 ? '' : 's'}</span>

@@ -175,7 +175,7 @@ const App = {
     const shortSha = runningSha.slice(0, 7);
     const href = `${repoUrl.replace(/\/$/, '')}/commit/${runningSha}`;
     slot.innerHTML = `
-      <a href="${href}" target="_blank" rel="noopener" class="app-version-pill" title="Platform commit ${shortSha}">
+      <a href="${href}" target="_blank" rel="noopener noreferrer" class="app-version-pill" title="Platform commit ${shortSha}">
         <span class="app-version-pill-dot"></span>
         <span class="app-version-pill-label">${namePart}${shortSha}</span>
       </a>`;
