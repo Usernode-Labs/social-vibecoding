@@ -722,11 +722,20 @@ async function execInWorker(sessionId, {
   // it would break LLM access entirely. Build mode keeps both: the
   // commit/push block in run-cc.sh runs, and usernode-push needs the
   // JWT to push the session branch.
+  // ISSUES_JWT is a read-only, session-scoped token for the usernode-issues
+  // CLI (GET /api/internal/sessions/:id/issues). It's the SAME minted JWT as
+  // WORKER_JWT but handed over under a distinct env var so scout — which
+  // never gets WORKER_JWT, and so cannot push — can still read public
+  // issues. Both modes get it; usernode-push remains gated on WORKER_JWT.
   const secretEnv = mode === 'scout'
-    ? { ANTHROPIC_API_KEY: useProxy ? workerJwt : anthropicApiKey }
+    ? {
+        ANTHROPIC_API_KEY: useProxy ? workerJwt : anthropicApiKey,
+        ISSUES_JWT: workerJwt,
+      }
     : {
         ANTHROPIC_API_KEY: useProxy ? workerJwt : anthropicApiKey,
         WORKER_JWT: workerJwt,
+        ISSUES_JWT: workerJwt,
       };
   const safeEnv = {
     PROMPT: prompt,

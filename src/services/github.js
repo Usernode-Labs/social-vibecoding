@@ -16,6 +16,20 @@ function safeMention(s) {
 const installationCache = new Map();
 const CACHE_TTL_MS = 30 * 60 * 1000;
 
+// Anonymous GitHub REST needs a User-Agent or it 403s every request.
+const GITHUB_USER_AGENT = 'usernode-platform';
+
+// Read-only open-issues fetch (fetchPublicIssues) tunables. The 5-minute
+// cache is the primary defense against GitHub's 60-req/hr/IP anonymous
+// limit — all three agent surfaces (Mayor tool, scout, build) resolve
+// through one function, so they share one cache entry per repo. The page
+// ceiling bounds worst-case work for a repo with thousands of issues.
+const issuesCache = new Map();
+const ISSUES_CACHE_TTL_MS = 5 * 60 * 1000;
+const ISSUES_MAX_PAGES = 10;          // 10 * 100 = up to 1000 open issues
+const ISSUE_BODY_MAX = 500;           // chars before we truncate the body
+const ISSUES_FETCH_TIMEOUT_MS = 8000; // per-page request timeout
+
 async function init(config) {
   if (!config.githubAppId || !config.githubPrivateKey) {
     log.warn('github', 'GitHub App credentials not configured — GitHub features disabled');
@@ -404,6 +418,119 @@ async function fetchPublicRepoInfo(owner, repo) {
   }
 }
 
+// Parse the `rel="next"` URL out of a GitHub `Link` response header so we
+// can walk the issues pagination chain. Returns null when there's no next
+// page (i.e. we've reached the last page).
+function parseNextLink(linkHeader) {
+  if (!linkHeader) return null;
+  for (const part of linkHeader.split(',')) {
+    const m = part.match(/<([^>]+)>\s*;\s*rel="next"/);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+// Reduce a raw GitHub issue object to the compact, agent-friendly shape the
+// list_github_issues tool returns. Labels collapse to bare names; bodies are
+// truncated so a few verbose issues can't blow up the model's context.
+function normalizeIssue(raw) {
+  let body = typeof raw.body === 'string' ? raw.body : '';
+  if (body.length > ISSUE_BODY_MAX) body = `${body.slice(0, ISSUE_BODY_MAX)}…`;
+  const labels = Array.isArray(raw.labels)
+    ? raw.labels.map((l) => (typeof l === 'string' ? l : l && l.name)).filter(Boolean)
+    : [];
+  return {
+    number: raw.number,
+    title: raw.title || '',
+    body,
+    labels,
+    updatedAt: raw.updated_at || null,
+    htmlUrl: raw.html_url || null,
+  };
+}
+
+// Read-only, anonymous fetch of a PUBLIC repo's OPEN issues. Powers the
+// `list_github_issues` tool on all three agent surfaces (the Mayor's
+// Anthropic tool directly; scout + build via the worker's usernode-issues
+// CLI → GET /api/internal/sessions/:id/issues, which calls this).
+//
+// NEVER throws and NEVER returns null: every failure mode resolves to a
+// well-formed `{ issues, truncatedList, note }` so callers can hand the
+// result straight back to the model without special-casing. Notes:
+//   - 'rate limited'        anonymous 60/hr exhausted (returns stale cache
+//                           contents when we have them)
+//   - 'issues unavailable'  404 (private or nonexistent — treated the same
+//                           since we assume public)
+//   - 'fetch failed'        network error / timeout / unexpected payload
+// Success returns `{ issues, truncatedList }` (no note). truncatedList is
+// true when the repo has more open issues than the page ceiling allows.
+async function fetchPublicIssues(owner, repo) {
+  const cacheKey = `${owner}/${repo}`;
+  const cached = issuesCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.result;
+
+  let url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`
+    + '/issues?state=open&per_page=100&sort=updated&direction=desc';
+  const collected = [];
+  let page = 0;
+  let truncatedList = false;
+
+  try {
+    while (url && page < ISSUES_MAX_PAGES) {
+      page += 1;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), ISSUES_FETCH_TIMEOUT_MS);
+      let resp;
+      try {
+        resp = await fetch(url, {
+          headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': GITHUB_USER_AGENT },
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+
+      // Rate limited: anonymous quota is per-IP and shared across all apps
+      // on the host. Fall back to whatever we last cached (even if expired)
+      // rather than returning an empty list that reads as "no issues".
+      if ((resp.status === 403 && resp.headers.get('x-ratelimit-remaining') === '0') || resp.status === 429) {
+        log.warn('github', 'Issue fetch rate-limited', { repo: cacheKey });
+        const stale = issuesCache.get(cacheKey);
+        if (stale) return { ...stale.result, note: 'rate limited' };
+        return { issues: [], truncatedList: false, note: 'rate limited' };
+      }
+      if (resp.status === 404) {
+        return { issues: [], truncatedList: false, note: 'issues unavailable' };
+      }
+      if (!resp.ok) {
+        return { issues: [], truncatedList: false, note: 'fetch failed' };
+      }
+
+      const batch = await resp.json();
+      if (!Array.isArray(batch)) {
+        return { issues: [], truncatedList: false, note: 'fetch failed' };
+      }
+      for (const item of batch) {
+        // The /issues endpoint returns PRs too; drop anything carrying a
+        // pull_request field so only real issues reach the agent.
+        if (item && item.pull_request) continue;
+        if (item) collected.push(normalizeIssue(item));
+      }
+      url = parseNextLink(resp.headers.get('link'));
+    }
+    // We stopped with a next page still pending → repo has more open issues
+    // than our ceiling; flag the list as partial.
+    if (url) truncatedList = true;
+
+    const result = { issues: collected, truncatedList };
+    issuesCache.set(cacheKey, { result, expiresAt: Date.now() + ISSUES_CACHE_TTL_MS });
+    return result;
+  } catch (err) {
+    log.warn('github', 'Issue fetch failed', { repo: cacheKey, err: err.message });
+    return { issues: [], truncatedList: false, note: 'fetch failed' };
+  }
+}
+
 module.exports = {
   init,
   isEnabled,
@@ -427,4 +554,5 @@ module.exports = {
   verifyBotAccess,
   checkRepoPublic,
   fetchPublicRepoInfo,
+  fetchPublicIssues,
 };
