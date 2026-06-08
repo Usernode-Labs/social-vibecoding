@@ -37,13 +37,19 @@ async function getJSON(url) {
 function renderCounters(o) {
   const dollars = (c) => `$${(Number(c || 0) / 100).toFixed(2)}`;
   const cards = [
-    { label: 'Total users', value: fmtInt(o.users.total) },
+    { label: 'Total users (all time)', value: fmtInt(o.users.total) },
     { label: 'New (7d)', value: fmtInt(o.users.new_week) },
     { label: 'New (30d)', value: fmtInt(o.users.new_month) },
-    { label: 'WAU / MAU', value: `${fmtInt(o.wau)} / ${fmtInt(o.mau)}` },
+    // WAU and MAU are two independent counts (distinct users active in the
+    // last 7 vs 30 days), not a ratio — the "|" keeps that clear.
+    { label: 'WAU | MAU', value: `${fmtInt(o.wau)} | ${fmtInt(o.mau)}` },
     { label: 'Apps', value: fmtInt(o.appsTotal) },
-    { label: 'Promoted PRs', value: fmtInt(o.prs.promoted) },
-    { label: 'Merged PRs', value: fmtInt(o.prs.merged) },
+    // Live count of sessions currently in promoted/merging (not lifetime).
+    { label: 'Promoted (open)', value: fmtInt(o.prs.promoted) },
+    // Lifetime count of sessions that ever recorded a promoted_at.
+    { label: 'Promoted PRs (all time)', value: fmtInt(o.prs.promoted_all_time) },
+    { label: 'Merged PRs (all time)', value: fmtInt(o.prs.merged) },
+    { label: 'Kudos given (all time)', value: fmtInt(o.kudosTotal) },
     { label: 'LLM spend today', value: dollars(o.llmSpendTodayCents) },
   ];
   document.getElementById('counters').innerHTML = cards.map((c) => `
@@ -105,19 +111,33 @@ function renderFunnels(f) {
   ]);
 }
 
+// Horizontal gridlines for a chart of height H drawn over usable height
+// (H - pad). `steps` evenly spaced lines from baseline to top. Uses
+// currentColor at low opacity so it adapts to light/dark theme.
+function gridLines(W, H, steps, pad) {
+  let out = '';
+  for (let i = 0; i <= steps; i++) {
+    const y = (H - (i / steps) * (H - pad)).toFixed(1);
+    out += `<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="currentColor" stroke-opacity="0.12" stroke-width="0.5" />`;
+  }
+  return out;
+}
+
 // ── Mini bar chart (growth) ───────────────────────────────────
-function barChart(values, labels, color) {
+// opts.grid → draw horizontal gridlines behind the bars.
+function barChart(values, labels, color, opts = {}) {
   const max = Math.max(1, ...values);
-  const W = 320, H = 90, n = values.length;
+  const W = 320, H = 90, n = values.length, pad = 14;
   const bw = n > 0 ? (W / n) : W;
+  const grid = opts.grid ? gridLines(W, H, 4, pad) : '';
   const bars = values.map((v, i) => {
-    const h = Math.round((v / max) * (H - 14));
+    const h = Math.round((v / max) * (H - pad));
     const x = i * bw;
     const y = H - h;
     return `<rect x="${(x + 1).toFixed(1)}" y="${y}" width="${Math.max(1, bw - 2).toFixed(1)}" height="${h}" fill="${color}" rx="1">
       <title>${esc(labels[i])}: ${v}</title></rect>`;
   }).join('');
-  return `<svg viewBox="0 0 ${W} ${H}" class="w-full" preserveAspectRatio="none" style="height:90px">${bars}</svg>`;
+  return `<svg viewBox="0 0 ${W} ${H}" class="w-full text-zinc-500" preserveAspectRatio="none" style="height:90px">${grid}${bars}</svg>`;
 }
 
 function renderGrowth(g) {
@@ -138,7 +158,7 @@ function renderGrowth(g) {
           <span class="text-zinc-300">${esc(s.label)}</span>
           <span class="text-zinc-500">${fmtInt(total)} total</span>
         </div>
-        ${barChart(vals, labels, s.color)}
+        ${barChart(vals, labels, s.color, { grid: true })}
         <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
           <span>${esc(labels[0] || '')}</span>
           <span>${esc(labels[labels.length - 1] || '')}</span>
@@ -193,6 +213,7 @@ function renderStickiness(rows) {
   const mau = rows.map((r) => Number(r.mau) || 0);
   const max = Math.max(1, ...mau, ...wau);
   const W = 640, H = 120, n = rows.length;
+  const grid = gridLines(W, H, 4, 16);
   const step = n > 1 ? W / (n - 1) : W;
   const line = (vals, color) => {
     const pts = vals.map((v, i) => `${(i * step).toFixed(1)},${(H - (v / max) * (H - 16)).toFixed(1)}`).join(' ');
@@ -209,8 +230,8 @@ function renderStickiness(rows) {
       <span><span class="inline-block w-3 h-0.5 align-middle" style="background:#8b5cf6"></span> WAU</span>
       <span><span class="inline-block w-3 h-0.5 align-middle" style="background:#60a5fa"></span> MAU (28d)</span>
     </div>
-    <svg viewBox="0 0 ${W} ${H}" class="w-full" style="height:120px">
-      ${line(mau, '#60a5fa')}${line(wau, '#8b5cf6')}${dots}
+    <svg viewBox="0 0 ${W} ${H}" class="w-full text-zinc-500" style="height:120px">
+      ${grid}${line(mau, '#60a5fa')}${line(wau, '#8b5cf6')}${dots}
     </svg>
     <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
       <span>${esc(labels[0] || '')}</span>
@@ -227,7 +248,7 @@ function renderEngagement(e) {
 
   const block = (containerId, latestId, vals, color) => {
     document.getElementById(containerId).innerHTML = `
-      ${barChart(vals, labels, color)}
+      ${barChart(vals, labels, color, { grid: true })}
       <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
         <span>${esc(labels[0] || '')}</span>
         <span>${esc(labels[labels.length - 1] || '')}</span>
@@ -239,6 +260,119 @@ function renderEngagement(e) {
 
   block('eng-dau', 'eng-dau-latest', dau, '#8b5cf6');
   block('eng-wau', 'eng-wau-latest', wau, '#34d399');
+}
+
+// ── Top users by dev sessions started ─────────────────────────
+// Descending left-to-right bars, one per user. Labels rotate under each
+// bar (truncated); exact username + count live in the hover tooltip.
+function renderTopUsers(d) {
+  const users = d.users || [];
+  const el = document.getElementById('top-users');
+  if (!users.length) {
+    el.innerHTML = '<p class="text-sm text-zinc-500">Not enough data yet.</p>';
+    return;
+  }
+  const vals = users.map((u) => Number(u.sessions) || 0);
+  const max = Math.max(1, ...vals);
+  const H = 200, topPad = 14, botPad = 52; // room for value + rotated label
+  const plot = H - topPad - botPad;
+  const bw = 26; // per-bar slot
+  const W = users.length * bw;
+  const grid = (() => {
+    let out = '';
+    for (let i = 0; i <= 4; i++) {
+      const y = (topPad + (i / 4) * plot).toFixed(1);
+      out += `<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="currentColor" stroke-opacity="0.12" stroke-width="0.5" />`;
+    }
+    return out;
+  })();
+  const bars = users.map((u, i) => {
+    const v = vals[i];
+    const h = Math.round((v / max) * plot);
+    const x = i * bw;
+    const y = topPad + (plot - h);
+    const cx = x + bw / 2;
+    const short = u.name.length > 10 ? u.name.slice(0, 9) + '…' : u.name;
+    return `
+      <rect x="${(x + 3).toFixed(1)}" y="${y}" width="${bw - 6}" height="${h}" fill="#8b5cf6" rx="2">
+        <title>${esc(u.name)}: ${v} session${v === 1 ? '' : 's'}</title>
+      </rect>
+      <text x="${cx}" y="${y - 3}" text-anchor="middle" font-size="9" fill="currentColor" class="text-zinc-400">${v}</text>
+      <text x="${cx}" y="${H - botPad + 12}" text-anchor="end" font-size="9" fill="currentColor"
+            class="text-zinc-400" transform="rotate(-55 ${cx} ${H - botPad + 12})">${esc(short)}</text>`;
+  }).join('');
+  el.innerHTML = `
+    <div class="overflow-x-auto">
+      <svg viewBox="0 0 ${W} ${H}" style="height:200px;min-width:${W}px" class="text-zinc-500">
+        ${grid}${bars}
+      </svg>
+    </div>`;
+}
+
+// ── Kudos giving distribution (weekly) ────────────────────────
+// One stacked bar per week. Segments = number of users who gave exactly
+// 0/1/2/3/4/5 kudos that week (0 = registered users who gave none). The
+// current (most recent) week is marked in the axis labels.
+function renderKudos(d) {
+  const weeks = d.weeks || [];
+  const el = document.getElementById('kudos-weekly');
+  if (!weeks.length) {
+    el.innerHTML = '<p class="text-sm text-zinc-500">Not enough data yet.</p>';
+    return;
+  }
+  // 0 first (drawn at the bottom, muted); 1..5 stacked above in a ramp.
+  const segs = [
+    { key: 'g0', label: '0', color: '#3f3f5a' },
+    { key: 'g1', label: '1', color: '#c4b5fd' },
+    { key: 'g2', label: '2', color: '#a78bfa' },
+    { key: 'g3', label: '3', color: '#8b5cf6' },
+    { key: 'g4', label: '4', color: '#7c3aed' },
+    { key: 'g5', label: '5', color: '#5b21b6' },
+  ];
+  const totals = weeks.map((w) => segs.reduce((a, s) => a + (Number(w[s.key]) || 0), 0));
+  const max = Math.max(1, ...totals);
+  const W = 640, H = 180, topPad = 14, botPad = 18, n = weeks.length;
+  const plot = H - topPad - botPad;
+  const bw = W / n;
+  const grid = (() => {
+    let out = '';
+    for (let i = 0; i <= 4; i++) {
+      const y = (topPad + (i / 4) * plot).toFixed(1);
+      out += `<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="currentColor" stroke-opacity="0.12" stroke-width="0.5" />`;
+    }
+    return out;
+  })();
+  const labels = weeks.map((w) => weekLabel(w.wk));
+  const bars = weeks.map((w, i) => {
+    let acc = 0; // running height from baseline, in value units
+    const x = i * bw;
+    const segRects = segs.map((s) => {
+      const v = Number(w[s.key]) || 0;
+      if (v <= 0) return '';
+      const h = (v / max) * plot;
+      const yBottom = topPad + plot - (acc / max) * plot;
+      acc += v;
+      const y = yBottom - h;
+      return `<rect x="${(x + 1).toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(1, bw - 2).toFixed(1)}" height="${h.toFixed(1)}" fill="${s.color}">
+        <title>${esc(labels[i])} — ${v} user${v === 1 ? '' : 's'} gave ${s.label} kudo${s.label === '1' ? '' : 's'}</title></rect>`;
+    }).join('');
+    return segRects;
+  }).join('');
+  const legend = segs.slice().reverse().map((s) =>
+    `<span class="inline-flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm" style="background:${s.color}"></span>${s.label}</span>`
+  ).join('');
+  const lastLabel = labels[labels.length - 1] || '';
+  el.innerHTML = `
+    <div class="flex flex-wrap items-center gap-3 text-xs text-zinc-400 mb-2">
+      <span class="text-zinc-500">Kudos given that week:</span>${legend}
+    </div>
+    <svg viewBox="0 0 ${W} ${H}" class="w-full text-zinc-500" preserveAspectRatio="none" style="height:180px">
+      ${grid}${bars}
+    </svg>
+    <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
+      <span>${esc(labels[0] || '')}</span>
+      <span>${esc(lastLabel)} (current)</span>
+    </div>`;
 }
 
 // ── Bootstrap ─────────────────────────────────────────────────
@@ -289,17 +423,21 @@ async function init() {
   wireCohortButtons();
 
   try {
-    const [overview, growth, retention, engagement] = await Promise.all([
+    const [overview, growth, retention, engagement, topUsers, kudos] = await Promise.all([
       getJSON('/api/admin/analytics/overview'),
       getJSON('/api/admin/analytics/growth'),
       getJSON('/api/admin/analytics/retention'),
       getJSON('/api/admin/analytics/engagement'),
+      getJSON('/api/admin/analytics/top-users'),
+      getJSON('/api/admin/analytics/kudos'),
     ]);
     renderCounters(overview);
     renderGrowth(growth);
     renderRetention(retention);
     renderStickiness(retention.stickiness);
     renderEngagement(engagement);
+    renderTopUsers(topUsers);
+    renderKudos(kudos);
     await loadFunnels();
   } catch (err) {
     if (err.forbidden) { showGate('Admin access required.'); return; }
