@@ -97,6 +97,18 @@ async function loadSessionSpec(pool, sessionId) {
   return (rows[0] && rows[0].spec_md) || '';
 }
 
+// Build the inline spec-preview snippet (F8): cap length but cut on a
+// whitespace boundary so we don't slice through a word or an inline
+// markdown construct, then append an ellipsis.
+function buildSpecPreview(content, max = 400) {
+  const text = typeof content === 'string' ? content : '';
+  if (text.length <= max) return text;
+  let cut = text.slice(0, max);
+  const bound = Math.max(cut.lastIndexOf(' '), cut.lastIndexOf('\n'));
+  if (bound > max * 0.8) cut = cut.slice(0, bound);
+  return `${cut}…`;
+}
+
 // #27: freeze the current spec content as a new immutable version in
 // chat_session_specs and return its version number. Every spec mutation
 // (write_spec / edit_spec / scout) calls this and tags its inline spec
@@ -1843,7 +1855,10 @@ const WRITE_SPEC_TOOL = {
           'The full new contents of the spec doc. Markdown formatted; pick sections that fit the task '
           + '(Goal, Screens, Data Model, Edge Cases, etc.). Prefer decisions over questions: only add a '
           + '"Questions" section for items that genuinely block implementation; put non-blocking notes '
-          + 'under "Considerations" or "Deferred work" instead.',
+          + 'under "Considerations" or "Deferred work" instead. '
+          + 'The spec renders as standard CommonMark: if a fenced code block must itself contain a '
+          + 'triple-backtick fence, wrap the outer block in a four-backtick fence so the inner fence does '
+          + 'not close it early and break the rest of the doc.',
       },
     },
     required: ['content'],
@@ -1881,7 +1896,10 @@ const EDIT_SPEC_TOOL = {
         type: 'string',
         description:
           'Replacement content. Empty string deletes the matched section. '
-          + 'To add new content next to an existing section, include the original old_text inside new_text.',
+          + 'To add new content next to an existing section, include the original old_text inside new_text. '
+          + 'Markdown rendered as standard CommonMark: if new_text adds a fenced code block that itself '
+          + 'contains a triple-backtick fence, wrap the outer block in a four-backtick fence so it does not '
+          + 'close early.',
       },
     },
     required: ['old_text', 'new_text'],
@@ -1991,7 +2009,7 @@ async function runWriteSpecTool({ pool, session, send, sendStatus, toolInput }) 
 
   const lineCount = content.split('\n').length;
   const charCount = content.length;
-  const preview = content.length > 400 ? `${content.substring(0, 400)}…` : content;
+  const preview = buildSpecPreview(content);
 
   // #27: freeze this draft so the inline card opens its own content.
   const specVersion = await snapshotSessionSpec(pool, session.id, content);
@@ -2092,7 +2110,7 @@ async function runEditSpecTool({ pool, session, send, sendStatus, toolInput }) {
   const removedLines = oldText.split('\n').length;
   const addedLines = newText.split('\n').length;
   const lineDelta = afterLines - beforeLines;
-  const preview = updated.length > 400 ? `${updated.substring(0, 400)}…` : updated;
+  const preview = buildSpecPreview(updated);
 
   // #27: freeze this edited spec so the inline card opens its own content.
   const specVersion = await snapshotSessionSpec(pool, session.id, updated);
@@ -2152,6 +2170,8 @@ Your job is to investigate this repo and produce a MARKDOWN SPEC for the change.
 - Grounded in real file evidence — reference actual file paths and current behaviour, not guesses.
 - Structured with sensible headings (e.g. Goal, Affected Screens, Data Model, Edge Cases). Pick whatever sections fit the task; one size does not fit all.
 - Specific enough that a coding agent could implement it without re-doing your investigation, but NOT a literal diff or code block.
+
+The spec is rendered as markdown in a viewer that follows standard CommonMark fencing. If you include a fenced code block that ITSELF contains a triple-backtick fence (common when quoting markdown examples or the platform's \`\`\`filepath:...\`\`\` output convention), wrap the OUTER block in a four-backtick fence (\`\`\`\`) — a longer fence can safely contain shorter ones. Otherwise the inner \`\`\` closes the block early and the rest of the spec renders broken. When in doubt, prefer fewer/inline code samples over deeply nested fences.
 
 Do NOT pad the spec with open questions. Only include a "Questions" section for things that genuinely BLOCK implementation — decisions the coding agent cannot reasonably make on its own and that would change what gets built. Make a sensible default choice wherever you can and state it, rather than asking. Non-blocking items — things worth noting but not required to answer before building — belong under "Considerations" (trade-offs, assumptions, things to keep in mind) or "Deferred work" (out-of-scope or follow-up items), NOT as questions.
 
@@ -2281,7 +2301,7 @@ Your final assistant message must be ONLY the markdown spec — no preamble, no 
       );
 
       const lineCount = ccText.split('\n').length;
-      const preview = ccText.length > 400 ? `${ccText.substring(0, 400)}…` : ccText;
+      const preview = buildSpecPreview(ccText);
       // #27: freeze the scout's draft so the inline card opens its own content.
       const specVersion = await snapshotSessionSpec(pool, session.id, ccText);
       await sendStatus(
@@ -3065,4 +3085,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview };

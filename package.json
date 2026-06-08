@@ -9,6 +9,9 @@
     "dev": "node --watch server.js",
     "test": "node --test tests/*.test.js"
   },
+  "devDependencies": {
+    "marked": "15.0.12"
+  },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.89.0",
     "@octokit/app": "^15.1.2",

@@ -153,8 +153,10 @@ html, body {
 
 /* ── Markdown ──────────────────────────────────────────── */
 
-.dc-h3 { font-size: 15px; font-weight: 600; margin: 12px 0 4px; color: var(--text-primary); }
-.dc-h4 { font-size: 14px; font-weight: 600; margin: 10px 0 4px; color: var(--text-secondary); }
+/* Distinct heading levels (F3): # → dc-h3, ## → dc-h4, ###+ → dc-h5. */
+.dc-h3 { font-size: 17px; font-weight: 700; margin: 14px 0 4px; color: var(--text-primary); }
+.dc-h4 { font-size: 15px; font-weight: 600; margin: 12px 0 4px; color: var(--text-primary); }
+.dc-h5 { font-size: 13px; font-weight: 600; margin: 10px 0 3px; color: var(--text-secondary); text-transform: none; }
 
 .dc-msg-content a { color: var(--accent); text-decoration: underline; word-break: break-all; }
 .dc-msg-content a:hover { color: var(--accent-light); }
@@ -207,9 +209,31 @@ html, body {
 .dc-ul { list-style: disc; padding-left: 20px; margin: 6px 0; }
 .dc-ol li, .dc-ul li { margin: 2px 0; }
 
-.dc-msg-content table { border-collapse: collapse; margin: 6px 0; width: 100%; font-size: 13px; }
-.dc-msg-content th, .dc-msg-content td { border: 1px solid var(--border-light); padding: 4px 8px; text-align: left; }
-.dc-msg-content th { font-weight: 600; color: var(--text-primary); background: var(--bg-code-header); }
+/* GFM task items (F4): non-interactive ☐ / ✓ marker, no list bullet. */
+.dc-task-item { list-style: none; margin-left: -16px; }
+.dc-task-check { display: inline-block; width: 1em; color: var(--text-muted); font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+.dc-task-check.dc-task-checked { color: var(--accent); }
+
+/* Tables (F1): styled by class, not by .dc-msg-content ancestry, so they
+   render identically in chat, the spec preview snippet, and the viewer. */
+.dc-table { border-collapse: collapse; margin: 8px 0; width: 100%; font-size: 13px; display: block; overflow-x: auto; }
+.dc-table th, .dc-table td { border: 1px solid var(--border-light); padding: 4px 8px; text-align: left; }
+.dc-table th { font-weight: 600; color: var(--text-primary); background: var(--bg-code-header); }
+
+/* Fallback when marked / DOMPurify fail to load (F7). */
+.dc-md-fallback-notice { font-size: 11px; color: var(--text-muted); margin: 0 0 4px; font-style: italic; }
+.dc-md-fallback {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-code);
+  background: var(--bg-code);
+  padding: 12px;
+  border-radius: 8px;
+  margin: 4px 0 8px;
+}
 .dc-msg-content del { text-decoration: line-through; }
 .dc-msg-content hr { border: none; border-top: 1px solid var(--border-light); margin: 12px 0; }
 
@@ -1233,6 +1257,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .dc-spec-preview-snippet > :last-child  { margin-bottom: 0; }
 .dc-spec-preview-snippet .dc-h3,
 .dc-spec-preview-snippet .dc-h4,
+.dc-spec-preview-snippet .dc-h5,
 .dc-spec-preview-snippet .dc-p,
 .dc-spec-preview-snippet .dc-ul,
 .dc-spec-preview-snippet .dc-ol {
@@ -1240,6 +1265,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 }
 .dc-spec-preview-snippet .dc-h3 { font-size: 13px; }
 .dc-spec-preview-snippet .dc-h4 { font-size: 12px; }
+.dc-spec-preview-snippet .dc-h5 { font-size: 12px; }
 .dc-spec-preview-snippet .dc-code-block,
 .dc-spec-preview-snippet .dc-code-header { display: none; }
 
@@ -1362,7 +1388,8 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .dc-spec-viewer-body > :first-child { margin-top: 0; }
 .dc-spec-viewer-body > :last-child  { margin-bottom: 0; }
 .dc-spec-viewer-body .dc-h3 { margin: 16px 0 6px; }
-.dc-spec-viewer-body .dc-h4 { margin: 12px 0 4px; }
+.dc-spec-viewer-body .dc-h4 { margin: 14px 0 5px; }
+.dc-spec-viewer-body .dc-h5 { margin: 12px 0 4px; }
 .dc-spec-viewer-body .dc-p,
 .dc-spec-viewer-body .dc-ul,
 .dc-spec-viewer-body .dc-ol { margin: 6px 0; }

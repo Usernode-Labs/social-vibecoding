@@ -1469,9 +1469,15 @@ const DevChat = {
           const sTs = msg.created_at ? new Date(msg.created_at).getTime() : '';
           const sId = msg.id || msg._slug || '';
           const lineCount = msg.specLines || (msg.specPreview.split('\n').length);
-          const snippet = msg.specPreview.length > 200
-            ? msg.specPreview.slice(0, 200) + '…'
-            : msg.specPreview;
+          // F8: truncate on a whitespace boundary so we don't slice through
+          // the middle of a word or an inline-formatting run.
+          let snippet = msg.specPreview;
+          if (snippet.length > 200) {
+            let cut = snippet.slice(0, 200);
+            const bound = Math.max(cut.lastIndexOf(' '), cut.lastIndexOf('\n'));
+            if (bound > 160) cut = cut.slice(0, bound);
+            snippet = cut + '…';
+          }
           const versionAttr = msg.specVersion != null ? msg.specVersion : 'latest';
           const headerLabel = msg.specVersion != null
             ? `Spec v${msg.specVersion} · ${lineCount} lines`
@@ -1483,7 +1489,7 @@ const DevChat = {
                 <span class="dc-spec-preview-title">${escapeHtml(headerLabel)}</span>
                 <span class="dc-spec-preview-cta">View full spec →</span>
               </div>
-              <div class="dc-spec-preview-snippet">${DevChat.renderMarkdown(snippet)}</div>
+              <div class="dc-spec-preview-snippet">${DevChat.renderMarkdown(snippet, { breaks: false })}</div>
             </div>`;
         }
         if (msg.ccLog) {
@@ -1681,12 +1687,25 @@ const DevChat = {
     });
   },
 
-  renderMarkdown(text) {
+  // Render markdown to sanitized HTML.
+  //   opts.breaks — when true (default) soft single newlines become <br>
+  //     (desirable for chat). Spec surfaces pass { breaks: false } so a
+  //     prose spec keeps standard markdown paragraph semantics instead of
+  //     getting a <br> on every wrapped line (F5).
+  renderMarkdown(text, opts = {}) {
     if (!text) return '';
 
+    const breaks = opts.breaks !== undefined ? opts.breaks : true;
+
+    // F7: if the markdown libs failed to load (CDN blocked, SRI mismatch,
+    // offline native shell), don't flatten the doc into <br>-joined text —
+    // that hides fences and headings and reads exactly like "markdown is
+    // broken". Show the raw source in a <pre> (whitespace + fences intact)
+    // behind a small notice so the degradation is obvious and diagnosable.
     if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
-      return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-        .replace(/\n/g, '<br>');
+      const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return `<div class="dc-md-fallback-notice">Rich text formatting is unavailable right now — showing raw markdown.</div>`
+        + `<pre class="dc-md-fallback">${escaped}</pre>`;
     }
 
     if (!DevChat._markdownReady) {
@@ -1716,11 +1735,15 @@ const DevChat = {
           html({ text }) {
             return esc(text);
           },
+          // F3: real heading hierarchy. # → h3 (largest), ## → h4,
+          // ### and deeper → h5, so a spec's title, sections and
+          // subsections are visually distinct instead of all collapsing
+          // into one or two levels.
           heading({ tokens, depth }) {
             const inner = this.parser.parseInline(tokens);
-            return depth <= 2
-              ? `<h3 class="dc-h3">${inner}</h3>`
-              : `<h4 class="dc-h4">${inner}</h4>`;
+            const tag = depth === 1 ? 'h3' : depth === 2 ? 'h4' : 'h5';
+            const cls = depth === 1 ? 'dc-h3' : depth === 2 ? 'dc-h4' : 'dc-h5';
+            return `<${tag} class="${cls}">${inner}</${tag}>`;
           },
           blockquote({ tokens }) {
             const body = this.parser.parse(tokens);
@@ -1736,6 +1759,37 @@ const DevChat = {
               body += this.listitem(item);
             }
             return `<${tag} class="${cls}"${startAttr}>${body}</${tag}>`;
+          },
+          // F4: GFM task items. marked's default emits an <input
+          // type=checkbox>, which DOMPurify strips (input isn't allowed),
+          // leaving a bare bullet. Render a non-interactive span marker
+          // instead so checklists in specs keep their ☐ / ✓ state.
+          listitem(item) {
+            const body = this.parser.parse(item.tokens, !!item.loose);
+            if (item.task) {
+              const mark = item.checked
+                ? '<span class="dc-task-check dc-task-checked" aria-hidden="true">&#10003;</span> '
+                : '<span class="dc-task-check" aria-hidden="true">&#9744;</span> ';
+              return `<li class="dc-task-item">${mark}${body}</li>`;
+            }
+            return `<li>${body}</li>`;
+          },
+          // F1: tag the table with dc-table so it can be styled globally
+          // (the old .dc-msg-content table rules never reached the spec
+          // viewer or preview snippet). Alignment attributes are
+          // intentionally dropped — DOMPurify strips them anyway — so cells
+          // left-align by default.
+          table(token) {
+            let header = '';
+            for (const cell of token.header) header += this.tablecell(cell);
+            let body = '';
+            for (const row of token.rows) {
+              let rowHtml = '';
+              for (const cell of row) rowHtml += this.tablecell(cell);
+              body += this.tablerow({ text: rowHtml });
+            }
+            return `<table class="dc-table"><thead>${this.tablerow({ text: header })}</thead>`
+              + `${body ? `<tbody>${body}</tbody>` : ''}</table>`;
           },
           paragraph({ tokens }) {
             return `<p class="dc-p">${this.parser.parseInline(tokens)}</p>`;
@@ -1767,13 +1821,16 @@ const DevChat = {
       DevChat._markdownReady = true;
     }
 
-    const html = marked.parse(text);
+    // breaks is overridden per-call (the global default set above is true);
+    // the registered renderers persist regardless of the per-parse options.
+    const html = marked.parse(text, { breaks });
 
     return DOMPurify.sanitize(html, {
-      ALLOWED_TAGS: ['a', 'b', 'strong', 'i', 'em', 'code', 'pre', 'h3', 'h4',
+      ALLOWED_TAGS: ['a', 'b', 'strong', 'i', 'em', 'code', 'pre', 'h3', 'h4', 'h5',
         'p', 'br', 'ol', 'ul', 'li', 'div', 'span', 'table', 'thead', 'tbody',
         'tr', 'th', 'td', 'hr', 'del'],
-      ALLOWED_ATTR: ['class', 'href', 'target', 'rel'],
+      // 'start' keeps non-1 ordered lists numbering correctly (F2).
+      ALLOWED_ATTR: ['class', 'href', 'target', 'rel', 'start'],
       ALLOW_DATA_ATTR: false,
     });
   },
@@ -2585,7 +2642,7 @@ const DevChat = {
     const bodyHtml = DevChat.specViewer.isLoading && !displayContent
       ? `<div class="p-4 text-sm text-zinc-500">Loading spec…</div>`
       : displayContent
-        ? `<div class="dc-spec-viewer-body">${DevChat.renderMarkdown(displayContent)}</div>`
+        ? `<div class="dc-spec-viewer-body">${DevChat.renderMarkdown(displayContent, { breaks: false })}</div>`
         : `<div class="p-4 text-sm text-zinc-500">No spec yet. Ask the AI to draft one.</div>`;
 
     // Spec planning and building are two separate steps: drafting a spec
