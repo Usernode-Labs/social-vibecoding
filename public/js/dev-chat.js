@@ -59,10 +59,10 @@ const DevChat = {
   specViewer: {
     open: false,
     sessionId: null,           // session this state belongs to (guards stale loads)
-    draftContent: '',          // current spec_md from GET /api/sessions/:id/spec
+    draftContent: '',          // latest spec_md from GET /api/sessions/:id/spec (always == latest version's content)
     versions: [],              // [{ version, built_at, commit_sha, pr_number, shared_to_group_at, ... }]
-    viewVersion: 'draft',      // 'draft' or a number
-    viewVersionContent: null,  // cached content for a non-draft selection
+    viewVersion: 'latest',     // 'latest' (follow the highest version) or a specific version number
+    viewVersionContent: null,  // cached content for a non-latest selection
     isLoading: false,
   },
 
@@ -149,10 +149,9 @@ const DevChat = {
       sessionId: null,
       draftContent: '',
       versions: [],
-      viewVersion: 'draft',
+      viewVersion: 'latest',
       viewVersionContent: null,
       isLoading: false,
-      isSaving: false,
     };
   },
 
@@ -534,7 +533,7 @@ const DevChat = {
       if (DevChat._readSpecViewerOpen(sessionId)) {
         DevChat.specViewer.open = true;
         DevChat.specViewer.sessionId = sessionId;
-        DevChat.specViewer.viewVersion = 'draft';
+        DevChat.specViewer.viewVersion = 'latest';
         DevChat.specViewer.viewVersionContent = null;
         // Don't await — caller's renderChatView shouldn't block on
         // the fetch. _loadSpecViewer calls _renderSpecViewer when it
@@ -1108,9 +1107,10 @@ const DevChat = {
     // The status event for this same write already pushed an inline
     // preview card into the timeline (see the case 'status' arms),
     // which is the user-facing surface. The only thing left to do
-    // here is keep the side viewer in sync if the user happens to
-    // have it open on the live draft.
-    if (DevChat.specViewer.open && DevChat.specViewer.viewVersion === 'draft') {
+    // here is keep the side viewer in sync if the user is following
+    // the latest version — a write creates a new highest version, and
+    // the 'latest' sentinel should advance to it on reload.
+    if (DevChat.specViewer.open && DevChat.specViewer.viewVersion === 'latest') {
       DevChat._loadSpecViewer({ force: true });
     }
   },
@@ -1472,7 +1472,7 @@ const DevChat = {
           const snippet = msg.specPreview.length > 200
             ? msg.specPreview.slice(0, 200) + '…'
             : msg.specPreview;
-          const versionAttr = msg.specVersion != null ? msg.specVersion : 'draft';
+          const versionAttr = msg.specVersion != null ? msg.specVersion : 'latest';
           const headerLabel = msg.specVersion != null
             ? `Spec v${msg.specVersion} · ${lineCount} lines`
             : `Spec drafted · ${lineCount} lines`;
@@ -2478,9 +2478,11 @@ const DevChat = {
   // ones — the layout switch is pure CSS (see app.css), the JS just
   // toggles state + re-renders.
 
-  // Open the viewer for a specific version ('draft' for the live
-  // spec_md, or a numeric version string/number for a frozen snapshot).
-  // Triggers a network fetch for the live draft + version metadata,
+  // Open the viewer for a specific version ('latest' to follow the
+  // highest version, or a numeric version string/number for an older
+  // frozen snapshot). Legacy inline cards from before per-change
+  // versioning carry 'draft' — treat that as 'latest' for back-compat.
+  // Triggers a network fetch for the latest content + version metadata,
   // and a second fetch for the selected frozen version's content if
   // needed. Safe to call when already open (just reloads).
   openSpecViewer(version) {
@@ -2488,7 +2490,7 @@ const DevChat = {
     const sid = DevChat.currentSession.id;
     DevChat.specViewer.open = true;
     DevChat.specViewer.sessionId = sid;
-    DevChat.specViewer.viewVersion = (version === 'draft' || version == null) ? 'draft' : version;
+    DevChat.specViewer.viewVersion = (version === 'draft' || version === 'latest' || version == null) ? 'latest' : version;
     DevChat.specViewer.viewVersionContent = null;
     DevChat._writeSpecViewerOpen(sid, true);
     DevChat.renderChatView();
@@ -2502,9 +2504,9 @@ const DevChat = {
     DevChat.renderChatView();
   },
 
-  // Fetch the current spec_md draft + frozen-version metadata. Called
+  // Fetch the latest spec content + frozen-version metadata. Called
   // when the viewer opens and whenever a spec_updated SSE event lands
-  // while the viewer is showing the live draft.
+  // while the viewer is following the latest version.
   async _loadSpecViewer(opts = {}) {
     const session = DevChat.currentSession;
     if (!session) return;
@@ -2536,41 +2538,48 @@ const DevChat = {
     if (!pane || !DevChat.currentSession) return;
     if (!DevChat.specViewer.open) return;
 
-    const versions = DevChat.specViewer.versions;
-    const isDraft = DevChat.specViewer.viewVersion === 'draft';
-    const displayContent = isDraft
+    // Numbered versions are the single spec surface now (#69). The
+    // dropdown lists v1…vN; the highest is the live latest and its
+    // content is byte-identical to chat_sessions.spec_md, which we
+    // already have cached in `draftContent` (no extra fetch needed).
+    // 'latest' is a sentinel that follows the highest version as new
+    // ones are auto-created on each Mayor spec edit.
+    const versions = DevChat.specViewer.versions; // DESC sorted
+    const hasVersions = versions.length > 0;
+    const latest = hasVersions ? versions[0] : null;
+
+    let selectedVersion;
+    if (DevChat.specViewer.viewVersion === 'latest') {
+      selectedVersion = latest;
+    } else {
+      selectedVersion = versions.find((v) => String(v.version) === String(DevChat.specViewer.viewVersion)) || latest;
+    }
+    const isLatest = !!(selectedVersion && latest && selectedVersion.version === latest.version);
+
+    // Latest content lives in draftContent (== spec_md); older versions
+    // are lazily fetched into viewVersionContent.
+    const displayContent = (isLatest || !hasVersions)
       ? DevChat.specViewer.draftContent
       : (DevChat.specViewer.viewVersionContent || '');
 
-    const versionOptions = [
-      `<option value="draft" ${isDraft ? 'selected' : ''}>Draft (live)</option>`,
-      ...versions.map((v) => {
-        const built = v.built_at ? new Date(v.built_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-        const sel = !isDraft && String(DevChat.specViewer.viewVersion) === String(v.version) ? 'selected' : '';
-        return `<option value="${v.version}" ${sel}>v${v.version}${built ? ` · ${built}` : ''}${v.pr_number ? ` · PR #${v.pr_number}` : ''}</option>`;
-      }),
-    ].join('');
+    const versionOptions = versions.map((v) => {
+      const built = v.built_at ? new Date(v.built_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+      const isThisLatest = latest && v.version === latest.version;
+      // The latest option carries the 'latest' value so re-selecting it
+      // resumes following new versions; older options carry their number.
+      const optValue = isThisLatest ? 'latest' : String(v.version);
+      const sel = selectedVersion && v.version === selectedVersion.version ? 'selected' : '';
+      const label = `v${v.version}${isThisLatest ? ' (latest)' : ''}${built ? ` · ${built}` : ''}${v.pr_number ? ` · PR #${v.pr_number}` : ''}`;
+      return `<option value="${optValue}" ${sel}>${label}</option>`;
+    }).join('');
 
-    // Header actions, varying by which version is selected:
-    //   draft → [Save version] enabled + [Share to group] disabled
-    //           with "Save first to share it" tooltip. Showing the
-    //           disabled share button (rather than hiding it) is
-    //           deliberate — it makes the two-step path visible up
-    //           front instead of revealing a new button after save.
-    //   vN    → [Save version] hidden (saving means snapshotting the
-    //           draft, which isn't what's selected) + [Share to group]
-    //           enabled (or "Shared" disabled if already shared).
-    const isSaving = !!DevChat.specViewer.isSaving;
-    const draftEmpty = !displayContent || !displayContent.trim();
-    const saveBtnHtml = isDraft
-      ? `<button id="dc-spec-viewer-save" class="dc-spec-action-btn" ${draftEmpty || isSaving ? 'disabled' : ''} title="${draftEmpty ? 'Spec is empty — ask the AI to draft it first' : 'Save the live draft as a numbered version'}">${isSaving ? 'Saving…' : 'Save version'}</button>`
-      : '';
-    const selectedVersion = isDraft
-      ? null
-      : versions.find((v) => String(v.version) === String(DevChat.specViewer.viewVersion));
+    // Header action: [Share to group] for the selected version (any
+    // version is shareable now — the redundant draft/Save-version step
+    // was removed in #69). Disabled + "Shared" once already posted.
+    const isEmpty = !displayContent || !displayContent.trim();
     const alreadyShared = !!(selectedVersion && selectedVersion.shared_to_group_at);
-    const shareBtnHtml = isDraft
-      ? `<button class="dc-spec-action-btn" disabled title="Save a version first to share it">Share to group</button>`
+    const shareBtnHtml = (!selectedVersion || isEmpty)
+      ? `<button class="dc-spec-action-btn" disabled title="No spec version to share yet">Share to group</button>`
       : `<button id="dc-spec-viewer-share" class="dc-spec-action-btn" ${alreadyShared ? 'disabled' : ''} title="${alreadyShared ? 'Already shared to group chat' : 'Post a card linking to this spec in the group chat'}">${alreadyShared ? 'Shared' : 'Share to group'}</button>`;
 
     const bodyHtml = DevChat.specViewer.isLoading && !displayContent
@@ -2583,18 +2592,18 @@ const DevChat = {
     // does NOT build anything. Make the handoff explicit so a finished
     // spec doesn't read as a finished change (there is no in-UI build
     // button — the user asks the Mayor in chat). Only shown while viewing
-    // a non-empty draft, where the next action is to dispatch a build.
-    const buildHintHtml = isDraft && !draftEmpty
+    // the non-empty latest version, where the next action is to dispatch
+    // a build.
+    const buildHintHtml = isLatest && !isEmpty
       ? `<div class="dc-spec-viewer-build-hint">This is a plan, not a built change. Ready? Ask the AI in chat to build it.</div>`
       : '';
 
     pane.innerHTML = `
       <div class="dc-spec-viewer-header">
-        <select id="dc-spec-viewer-version" class="text-xs rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1">
-          ${versionOptions}
+        <select id="dc-spec-viewer-version" class="text-xs rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1" ${hasVersions ? '' : 'disabled'}>
+          ${hasVersions ? versionOptions : '<option>No versions yet</option>'}
         </select>
         <span class="flex-1"></span>
-        ${saveBtnHtml}
         ${shareBtnHtml}
         <button id="dc-spec-viewer-close" class="dc-spec-viewer-close" aria-label="Close spec viewer">×</button>
       </div>
@@ -2613,21 +2622,18 @@ const DevChat = {
     const closeBtn = pane.querySelector('#dc-spec-viewer-close');
     if (closeBtn) closeBtn.addEventListener('click', () => DevChat.closeSpecViewer());
 
-    const saveBtn = pane.querySelector('#dc-spec-viewer-save');
-    if (saveBtn) saveBtn.addEventListener('click', () => DevChat._saveSpecVersion());
-
     const shareBtn = pane.querySelector('#dc-spec-viewer-share');
-    if (shareBtn) shareBtn.addEventListener('click', () => DevChat._shareSpecVersion(DevChat.specViewer.viewVersion));
+    if (shareBtn && selectedVersion) shareBtn.addEventListener('click', () => DevChat._shareSpecVersion(selectedVersion.version));
 
-    // Lazy-fetch frozen content when a non-draft version is selected
-    // and we don't have it cached.
-    if (!isDraft && !DevChat.specViewer.viewVersionContent) {
-      DevChat._loadSpecVersion(DevChat.specViewer.viewVersion).catch(() => {});
+    // Lazy-fetch frozen content when an older (non-latest) version is
+    // selected and we don't have it cached.
+    if (selectedVersion && !isLatest && !DevChat.specViewer.viewVersionContent) {
+      DevChat._loadSpecVersion(selectedVersion.version).catch(() => {});
     }
   },
 
   _switchSpecViewerVersion(value) {
-    DevChat.specViewer.viewVersion = value === 'draft' ? 'draft' : value;
+    DevChat.specViewer.viewVersion = value === 'latest' ? 'latest' : value;
     DevChat.specViewer.viewVersionContent = null;
     DevChat._renderSpecViewer();
   },
@@ -2650,7 +2656,7 @@ const DevChat = {
   },
 
   async _shareSpecVersion(version) {
-    if (!DevChat.currentSession || version === 'draft') return;
+    if (!DevChat.currentSession || version === 'draft' || version === 'latest' || version == null) return;
     const sid = DevChat.currentSession.id;
     try {
       const resp = await fetch(`/api/sessions/${sid}/specs/${version}/share`, {
@@ -2665,55 +2671,6 @@ const DevChat = {
       DevChat._renderSpecViewer();
     } catch (err) {
       console.warn('shareSpecVersion failed:', err);
-    }
-  },
-
-  // Snapshot the live draft as a new immutable version. Triggered by
-  // [Save version] in the viewer footer when viewing the draft. The
-  // server is authoritative — it reads chat_sessions.spec_md at the
-  // moment of the request, so we don't bother sending the body. After
-  // the response we refresh the versions list and switch the
-  // dropdown to the new version (or to the deduped existing version
-  // if a rapid double-click hit a no-op insert).
-  async _saveSpecVersion() {
-    if (!DevChat.currentSession) return;
-    if (DevChat.specViewer.viewVersion !== 'draft') return;
-    if (DevChat.specViewer.isSaving) return;
-
-    const sid = DevChat.currentSession.id;
-    DevChat.specViewer.isSaving = true;
-    DevChat._renderSpecViewer();
-
-    try {
-      const resp = await fetch(`/api/sessions/${sid}/specs`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      if (!resp.ok) {
-        const data = await resp.json().catch(() => ({}));
-        console.warn('saveSpecVersion failed:', data.error || `HTTP ${resp.status}`);
-        return;
-      }
-      const data = await resp.json();
-
-      // Refresh versions list so the new row shows up in the dropdown
-      // (also resyncs draftContent in case it shifted server-side).
-      await DevChat._loadSpecViewer({ force: true });
-      if (!DevChat.currentSession || DevChat.currentSession.id !== sid) return;
-
-      // Switch to the saved version. We can pre-populate
-      // viewVersionContent from draftContent because the server just
-      // copied spec_md → chat_session_specs.content verbatim, so the
-      // bytes are identical and we save a redundant /specs/:version
-      // round-trip.
-      DevChat.specViewer.viewVersion = data.version;
-      DevChat.specViewer.viewVersionContent = DevChat.specViewer.draftContent;
-      DevChat._renderSpecViewer();
-    } catch (err) {
-      console.warn('saveSpecVersion failed:', err);
-    } finally {
-      DevChat.specViewer.isSaving = false;
-      DevChat._renderSpecViewer();
     }
   },
 };

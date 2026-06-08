@@ -1894,6 +1894,42 @@ html.in-native-webview #header-title {
   .app-version-pill--deploying .app-version-pill-label {
     display: none;
   }
+
+  /* Header icons that move into the slide-out drawer at narrow widths. */
+  #leaderboard-btn,
+  #dev-console-btn,
+  #app-github-link,
+  #app-share-btn,
+  #feedback-btn,
+  #settings-btn {
+    display: none !important;
+  }
+
+  /* Hamburger trigger: hidden via Tailwind `hidden` class by default;
+     this rule makes it visible at the mobile breakpoint. */
+  #header-menu-btn {
+    display: inline-flex !important;
+  }
+}
+
+/* Slide-out drawer panel transition. The panel starts off-screen to
+   the right; adding `data-open` slides it into view. The overlay
+   fades in on the same timer via the sibling rule below. */
+#header-menu-panel {
+  transform: translateX(100%);
+}
+#header-menu-panel[data-open] {
+  transform: translateX(0);
+}
+.header-menu-panel-transition {
+  transition: transform 200ms ease-out;
+}
+#header-menu-overlay {
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+}
+#header-menu-overlay[data-open] {
+  opacity: 1;
 }
 
 /* Create-app modal: segmented "Create new | Import existing" toggle.

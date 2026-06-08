@@ -212,15 +212,22 @@ const Leaderboard = {
       const initial = (who[0] || '?').toUpperCase();
       const prsMerged = row.prs_merged || 0;
       const kudosOnUnmerged = row.kudos_received_prs_unmerged || 0;
+      // Headline score = kudos earned on MERGED PRs. This is what the
+      // leaderboard now ranks by (issue #59), so the big badge shows it
+      // rather than total kudos across all PRs.
+      const mergedKudos = row.kudos_received_prs_merged || 0;
       // prs_merged is all-time (no merge timestamp to window by), so only
       // show it in the all-time view to avoid implying a weekly figure.
+      // Kept as a secondary detail now that ranking is by kudos, not
+      // merge count.
       const mergedMeta = (Leaderboard.window === 'all' && prsMerged > 0)
         ? `<span class="text-zinc-400">\u00b7</span><span>${prsMerged} merged</span>`
         : '';
-      // Footnote on the kudos badge: how many of those kudos are on PRs
-      // that haven't landed yet. Only meaningful when > 0.
+      // Footnote on the kudos badge: how many additional kudos sit on
+      // PRs that haven't landed yet (and so don't count toward the
+      // ranking score). Only meaningful when > 0.
       const unmergedKudosNote = kudosOnUnmerged > 0
-        ? `<span class="shrink-0 text-[11px] text-amber-600 dark:text-amber-400" title="Kudos on PRs that haven\u2019t merged yet">${kudosOnUnmerged} on unmerged</span>`
+        ? `<span class="shrink-0 text-[11px] text-amber-600 dark:text-amber-400" title="Kudos on PRs that haven\u2019t merged yet \u2014 not counted toward ranking">+${kudosOnUnmerged} on unmerged</span>`
         : '';
       return `
         <div class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-800">
@@ -234,9 +241,9 @@ const Leaderboard = {
             </div>
           </div>
           ${unmergedKudosNote}
-          <div class="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-900/30 border border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300 text-sm font-semibold">
+          <div class="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-900/30 border border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300 text-sm font-semibold" title="Kudos earned on merged PRs">
             <span aria-hidden="true">\u{1F44F}</span>
-            <span>${row.kudos_received}</span>
+            <span>${mergedKudos}</span>
           </div>
         </div>`;
     }).join('');

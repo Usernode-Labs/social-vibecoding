@@ -122,6 +122,58 @@ function internalRoutes(_config) {
     }
   );
 
+  // Read-only: list the session repo's OPEN GitHub issues. Backs the
+  // worker's usernode-issues CLI (scout + build), giving Claude Code the
+  // same list_github_issues capability the Mayor has in-process. Anonymous
+  // public fetch with no credentials — caching, pagination, and PR-filtering
+  // all live in github.fetchPublicIssues. GET because it mutates nothing;
+  // accepts the session-scoped ISSUES_JWT via the same internalAuth gate.
+  router.get(
+    '/api/internal/sessions/:sessionId/issues',
+    internalAuth,
+    pushLimiter,
+    async (req, res) => {
+      const sessionId = parseInt(req.params.sessionId, 10);
+      if (!Number.isFinite(sessionId)) {
+        return res.status(400).json({ ok: false, code: 'bad_session_id' });
+      }
+      if (req.workerSession.sessionId !== sessionId) {
+        log.warn('internal-api', 'Session mismatch between JWT and route (issues)', {
+          jwt: req.workerSession.sessionId, route: sessionId,
+        });
+        return res.status(403).json({ ok: false, code: 'session_mismatch' });
+      }
+
+      let repoUrl = '';
+      try {
+        const { rows } = await pool.query(
+          `SELECT a.repo_url
+             FROM chat_sessions cs
+             JOIN apps a ON a.id = cs.app_id
+            WHERE cs.id = $1`,
+          [sessionId]
+        );
+        if (!rows.length) {
+          return res.status(404).json({ ok: false, code: 'session_not_found' });
+        }
+        repoUrl = rows[0].repo_url || '';
+      } catch (err) {
+        log.error('internal-api', 'Issues session lookup failed', { sessionId, err: err.message });
+        return res.status(500).json({ ok: false, code: 'db_error' });
+      }
+
+      // Same .git-tolerant parse the push route uses. No repo → return the
+      // well-formed empty-with-note shape so the agent gets a clean answer.
+      const parsed = repoUrl.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+      if (!parsed) {
+        return res.json({ ok: true, issues: [], truncatedList: false, note: 'no repo' });
+      }
+      const [, owner, repo] = parsed;
+      const result = await github.fetchPublicIssues(owner, repo);
+      return res.json({ ok: true, ...result });
+    }
+  );
+
   // PR creation endpoint. Today's `git push` path doesn't strictly
   // need a worker-callable PR endpoint (the platform's sessions route
   // creates PRs as part of the per-turn finalization flow), but

@@ -102,11 +102,10 @@ async function loadSessionSpec(pool, sessionId) {
 // (write_spec / edit_spec / scout) calls this and tags its inline spec
 // preview card with the returned version, so clicking an OLDER card
 // opens exactly the content it represented — instead of always falling
-// back to the live draft (which only ever showed the most recent spec).
-// The version sequence is shared with the user's manual "Save version"
-// button (POST /specs); both use MAX(version)+1. Best-effort: returns
-// null on failure so the card falls back to the live draft (the prior,
-// pre-#27 behavior) rather than blocking the spec edit.
+// back to the latest spec. Since #69 retired the manual "Save version"
+// route, this is the SOLE writer of new rows in chat_session_specs;
+// it uses MAX(version)+1. Best-effort: returns null on failure so the
+// card falls back to the latest spec rather than blocking the edit.
 async function snapshotSessionSpec(pool, sessionId, content) {
   try {
     const { rows } = await pool.query(
@@ -406,14 +405,26 @@ function sessionRoutes(config) {
         pool, sessionId, userId: req.user.id, reason: 'manual',
       });
       if (!paused) {
-        // Either it doesn't exist, isn't ours, or is already paused/archived.
-        // Surface a soft 200 if it's already paused so the UI can no-op the
-        // button click; treat anything else as not found.
+        // Either it doesn't exist, isn't ours, or is already paused/archived,
+        // or it's a promoted session (which pauseSession deliberately refuses
+        // to demote so its PR stays up for vote).
         const { rows: check } = await pool.query(
           `SELECT id, status FROM chat_sessions WHERE id = $1 AND user_id = $2`,
           [sessionId, req.user.id]
         );
+        // Soft 200 if it's already paused so the UI can no-op the button click.
         if (check[0] && check[0].status === 'paused') return res.json({ ok: true, alreadyPaused: true });
+        // Promoted: honor the user's intent to free the warm worker (same
+        // teardown pauseSession does for 'active'), but leave status =
+        // 'promoted' so the PR keeps showing its voting buttons and stays
+        // votable. The vote endpoint and cast-vote handler key off the
+        // promoted status, so flipping it here would silently pull the PR
+        // from the vote — exactly the bug we're fixing.
+        if (check[0] && check[0].status === 'promoted') {
+          workerProgress.clear(sessionId);
+          await worker.destroyWorker(worker.workerContainerName(sessionId)).catch(() => {});
+          return res.json({ ok: true, keptPromoted: true });
+        }
         return res.status(404).json({ error: 'Session not found or cannot be paused' });
       }
       res.json({ ok: true });
@@ -804,20 +815,88 @@ function sessionRoutes(config) {
         // models sometimes ignore prose constraints, so we
         // belt-and-suspenders it server-side.
         const specEditTool = currentSpec.trim() ? EDIT_SPEC_TOOL : WRITE_SPEC_TOOL;
-        const tools = isWorkerBusy ? [] : [DISPATCH_TOOL, DISPATCH_SCOUT_TOOL, specEditTool];
+        // list_github_issues stays available even when a worker is busy:
+        // it's read-only and cheap, and reading the tracker while a build
+        // runs is a legitimate chat action. The dispatch/spec tools remain
+        // gated by isWorkerBusy as before.
+        const tools = isWorkerBusy
+          ? [LIST_GITHUB_ISSUES_TOOL]
+          : [DISPATCH_TOOL, DISPATCH_SCOUT_TOOL, specEditTool, LIST_GITHUB_ISSUES_TOOL];
 
         setPhase('mayor1');
         let mayor1;
+        // The conversation we feed the Mayor. list_github_issues is a
+        // read-only DATA tool: when the Mayor calls it, we resolve it
+        // in-process, append the issues as a tool_result, and re-invoke so
+        // the Mayor reasons with them in the SAME turn. This loop drains
+        // issue-calls out BEFORE the terminal-tool (dispatch/spec) selection
+        // below, so in the common case mayor1.rawContent carries no dangling
+        // list_github_issues tool_use into phase-2.
+        let mayorConvo = messages;
+        let issuesIters = 0;
         try {
-          mayor1 = await llm.streamChat({
-            messages,
-            systemPrompt: mayorPrompt,
-            model: selectedModel,
-            tools,
-            signal: stopHandle.abort.signal,
-            onToken: (text) => send('token', { text }),
-            apiKey: userApiKey,
-          });
+          for (;;) {
+            mayor1 = await llm.streamChat({
+              messages: mayorConvo,
+              systemPrompt: mayorPrompt,
+              model: selectedModel,
+              tools,
+              signal: stopHandle.abort.signal,
+              onToken: (text) => send('token', { text }),
+              apiKey: userApiKey,
+            });
+
+            const issuesCalls = mayor1.toolUses.filter((t) => t.name === 'list_github_issues');
+            // Parallel tool use is enabled, so the Mayor may emit
+            // list_github_issues ALONGSIDE a terminal tool in one response.
+            // If a terminal tool is present we must NOT re-invoke here: the
+            // re-invocation only answers the issues tool_use, leaving the
+            // terminal tool_use dangling -> Anthropic 400. Break instead and
+            // let the phase-2 wrap-up resolve every tool_use (it already
+            // re-fetches any stray list_github_issues).
+            const hasTerminalTool = mayor1.toolUses.some((t) =>
+              t.name === 'dispatch_claude_code'
+              || t.name === 'dispatch_scout'
+              || t.name === 'edit_spec'
+              || t.name === 'write_spec');
+            if (!issuesCalls.length || hasTerminalTool || issuesIters >= MAYOR_ISSUES_MAX_ITERS) break;
+            issuesIters += 1;
+
+            // Bill each intermediate data-tool turn — the Anthropic call
+            // happened and is invoiced whether or not it produced text.
+            // (The final iteration's spend is billed by the existing
+            // phase-1 accounting just below the loop.)
+            if (mayor1.usage) {
+              const dataCost = llm.estimateCostCents(mayor1.usage, selectedModel);
+              if (!userApiKey && dataCost) {
+                await pool.query(
+                  `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
+                   ON CONFLICT (user_id, date) DO UPDATE SET total_cost_cents = llm_usage.total_cost_cents + EXCLUDED.total_cost_cents`,
+                  [req.user.id, dataCost]
+                );
+              }
+              send('usage', { costCents: dataCost, model: selectedModel, byok: !!userApiKey });
+            }
+
+            await sendStatus("Reading the repo's open GitHub issues...");
+            const issuesResults = await Promise.all(
+              issuesCalls.map(() => resolveGithubIssuesToolResult(repoOwner, repoName))
+            );
+            mayorConvo = [
+              ...mayorConvo,
+              // Verbatim assistant content (incl. the tool_use blocks) so the
+              // tool_result ids resolve, exactly like the phase-2 round-trip.
+              { role: 'assistant', content: mayor1.rawContent },
+              {
+                role: 'user',
+                content: issuesCalls.map((tc, i) => ({
+                  type: 'tool_result',
+                  tool_use_id: tc.id,
+                  content: issuesResults[i],
+                })),
+              },
+            ];
+          }
         } catch (err) {
           if (stopHandle.stopped) {
             // User hit stop during phase-1. Mayor never got to finish a
@@ -1035,21 +1114,47 @@ function sessionRoutes(config) {
         // so it can summarize what actually happened. `tool_choice: none`
         // prevents it from calling another tool (which would also hit
         // the `activeWorkers` race check or accidentally re-dispatch).
+        //
+        // Base on mayorConvo (not the original `messages`) so any
+        // list_github_issues round-trips resolved above stay in context for
+        // the wrap-up. Answer EVERY tool_use in the final assistant turn —
+        // not just the terminal one we ran: if the Mayor combined a
+        // list_github_issues call with a terminal tool (or hit the issues
+        // loop cap), a leftover tool_use would otherwise dangle and Anthropic
+        // would 400 the wrap-up. The terminal tool gets the real result; any
+        // stray list_github_issues gets a fresh fetch; anything else gets a
+        // benign skip note.
+        const phase2ToolResults = [];
+        for (const tu of mayor1.toolUses) {
+          if (tu.id === activeToolCall.id) {
+            phase2ToolResults.push({
+              type: 'tool_result',
+              tool_use_id: tu.id,
+              content: toolResult.toolResultText,
+              ...(toolResult.isError ? { is_error: true } : {}),
+            });
+          } else if (tu.name === 'list_github_issues') {
+            phase2ToolResults.push({
+              type: 'tool_result',
+              tool_use_id: tu.id,
+              content: await resolveGithubIssuesToolResult(repoOwner, repoName),
+            });
+          } else {
+            phase2ToolResults.push({
+              type: 'tool_result',
+              tool_use_id: tu.id,
+              content: 'Skipped — only one action runs per turn.',
+              is_error: true,
+            });
+          }
+        }
         const followUpMessages = [
-          ...messages,
+          ...mayorConvo,
           // Anthropic requires the assistant turn to be the VERBATIM
           // content blocks we got back, including the tool_use block —
           // otherwise the tool_result's tool_use_id doesn't resolve.
           { role: 'assistant', content: mayor1.rawContent },
-          {
-            role: 'user',
-            content: [{
-              type: 'tool_result',
-              tool_use_id: activeToolCall.id,
-              content: toolResult.toolResultText,
-              ...(toolResult.isError ? { is_error: true } : {}),
-            }],
-          },
+          { role: 'user', content: phase2ToolResults },
         ];
 
         // Phase-2 is intentionally NOT abortable — CC has already
@@ -1151,20 +1256,25 @@ function sessionRoutes(config) {
 
   // ===== Spec stage endpoints =====
   //
-  // The session has a live spec_md draft (overwritten by Mayor's
-  // write_spec / edit_spec / dispatch_scout) and an append-only history
-  // in chat_session_specs. A version is frozen on every spec mutation
-  // (#27, via snapshotSessionSpec) so each inline spec card can reopen
-  // its own content, plus whenever the user clicks "Save version".
-  // The dev-chat UI surfaces the live draft in a read-only side-panel
-  // viewer (see DevChat.specViewer in public/js/dev-chat.js); the user
-  // ships the spec by asking the Mayor to dispatch the coding agent in
-  // chat — there is no in-UI "Build from spec" button.
+  // The session has a working buffer (chat_sessions.spec_md, overwritten
+  // by Mayor's write_spec / edit_spec / dispatch_scout) and an append-
+  // only history of immutable numbered versions in chat_session_specs.
+  // A version is frozen on every spec mutation (#27, via
+  // snapshotSessionSpec), so spec_md is always byte-identical to the
+  // latest version. Numbered versions (v1…vN) are the single spec
+  // surface the dev-chat viewer presents (#69 removed the separate
+  // "Draft (live)" entry and the manual "Save version" step); spec_md
+  // is kept purely as the in-process anchor buffer for edit_spec and as
+  // a theme signal for PR metadata. The dev-chat UI surfaces the spec
+  // in a read-only side-panel viewer (see DevChat.specViewer in
+  // public/js/dev-chat.js); the user ships it by asking the Mayor to
+  // dispatch the coding agent in chat — there is no in-UI "Build from
+  // spec" button.
   //
-  // Read-only fetch of the live draft. Returns metadata for past
-  // versions so the dev-chat can populate its version selector without
-  // a second round-trip; full content of past versions comes from
-  // GET /specs/:version below.
+  // Read-only fetch returning the latest spec content (spec_md, == the
+  // latest version) plus metadata for every past version so the dev-chat
+  // can populate its version selector without a second round-trip; full
+  // content of older versions comes from GET /specs/:version below.
   router.get('/api/sessions/:id/spec', async (req, res) => {
     try {
       const { rows: sessionRows } = await pool.query(
@@ -1237,81 +1347,15 @@ function sessionRoutes(config) {
     }
   });
 
-  // POST /api/sessions/:id/specs
-  //   Save the current chat_sessions.spec_md draft as a new immutable
-  //   row in chat_session_specs. Triggered by the user clicking
-  //   "Save version" in the spec viewer — the only writer of new rows
-  //   in this table now (the legacy /build-spec route was removed in
-  //   favor of letting the Mayor handle dispatches from chat).
-  //
-  //   Idempotent against rapid double-click: if the immediately-
-  //   preceding version's content is byte-identical to the current
-  //   draft, returns that existing row instead of inserting a
-  //   duplicate. We compare ONLY against the most recent version, not
-  //   the entire history, so the legitimate "AI rewrote, I reverted,
-  //   I save again" flow still produces a fresh row at vN+1 carrying
-  //   the same bytes as some earlier vK.
-  //
-  //   commit_sha and pr_number stay NULL — manually-saved rows aren't
-  //   pinned to a git commit. Old rows from the legacy /build-spec
-  //   route still carry their populated values; co-existence is fine
-  //   and the UI degrades gracefully (PR link omitted when null).
-  router.post('/api/sessions/:id/specs', async (req, res) => {
-    const sessionId = parseInt(req.params.id, 10);
-    if (Number.isNaN(sessionId)) return res.status(400).json({ error: 'Bad session id' });
-
-    try {
-      const { rows: sessionRows } = await pool.query(
-        `SELECT cs.id, cs.spec_md
-         FROM chat_sessions cs
-         WHERE cs.id = $1 AND cs.user_id = $2`,
-        [sessionId, req.user.id]
-      );
-      if (!sessionRows.length) return res.status(404).json({ error: 'Session not found' });
-
-      const content = sessionRows[0].spec_md || '';
-      if (!content.trim()) {
-        return res.status(400).json({ error: 'Cannot save an empty draft' });
-      }
-
-      const { rows: latestRows } = await pool.query(
-        `SELECT version, content, built_at, shared_to_group_at
-         FROM chat_session_specs
-         WHERE session_id = $1
-         ORDER BY version DESC
-         LIMIT 1`,
-        [sessionId]
-      );
-      if (latestRows.length && latestRows[0].content === content) {
-        return res.json({
-          version: latestRows[0].version,
-          built_at: latestRows[0].built_at,
-          char_count: content.length,
-          shared_to_group_at: latestRows[0].shared_to_group_at,
-          deduped: true,
-        });
-      }
-
-      const nextVersion = latestRows.length ? latestRows[0].version + 1 : 1;
-      const { rows: insertedRows } = await pool.query(
-        `INSERT INTO chat_session_specs (session_id, version, content)
-         VALUES ($1, $2, $3)
-         RETURNING version, built_at`,
-        [sessionId, nextVersion, content]
-      );
-
-      res.json({
-        version: insertedRows[0].version,
-        built_at: insertedRows[0].built_at,
-        char_count: content.length,
-        shared_to_group_at: null,
-        deduped: false,
-      });
-    } catch (err) {
-      log.error('sessions', 'Failed to save spec version', { message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
+  // (#69) The manual POST /api/sessions/:id/specs "Save version" route
+  // was retired. Every Mayor spec mutation (write_spec / edit_spec /
+  // scout) already auto-freezes an immutable numbered version via
+  // snapshotSessionSpec(), so the live spec_md is always byte-identical
+  // to the latest chat_session_specs row. The old route just re-snapped
+  // that same content and almost always hit its own dedup branch — a
+  // no-op. snapshotSessionSpec() is now the sole writer of new versions;
+  // the dev-chat spec viewer shares any numbered version directly with
+  // no save step in between.
 
   // Share a frozen spec snapshot into the app's group chat. The group
   // chat renders the message as a "spec card" with a snippet + view-
@@ -1795,6 +1839,44 @@ const EDIT_SPEC_TOOL = {
   },
 };
 
+// Read-only data tool. Unlike the dispatch/spec tools (which are terminal
+// actions), this just FETCHES the repo's open GitHub issues and feeds them
+// back so the Mayor can reason with them in the same turn. Available on
+// every Mayor turn (even while a worker is busy — it's cheap and read-only).
+// Scout + build reach the identical capability via the worker's
+// usernode-issues CLI; nothing about issues is injected into any prompt.
+const LIST_GITHUB_ISSUES_TOOL = {
+  name: 'list_github_issues',
+  description:
+    "List the OPEN GitHub issues on this app's repository (read-only). "
+    + 'Returns JSON `{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }` — '
+    + 'pull requests are excluded and long bodies are truncated. '
+    + 'Call this when the user mentions the issue tracker, asks what issues or bugs are filed, '
+    + 'or when planning work that may already be reported, so your reply is grounded in real issues. '
+    + 'It only READS issues — it cannot create, comment on, edit, or close them. Takes no input.',
+  input_schema: {
+    type: 'object',
+    properties: {},
+  },
+};
+
+// Cap on how many consecutive list_github_issues fetches we'll service
+// within a single Mayor turn before forcing the model to move on. Bounds
+// the worst case where the model loops on the data tool instead of acting.
+const MAYOR_ISSUES_MAX_ITERS = 3;
+
+// Resolve a list_github_issues tool call to the JSON string we hand back as
+// tool_result content. Owner/repo come straight from apps.repo_url; when
+// they're absent we return the well-formed empty-with-note shape rather
+// than erroring. github.fetchPublicIssues never throws.
+async function resolveGithubIssuesToolResult(repoOwner, repoName) {
+  if (!repoOwner || !repoName) {
+    return JSON.stringify({ issues: [], truncatedList: false, note: 'no repo' });
+  }
+  const result = await github.fetchPublicIssues(repoOwner, repoName);
+  return JSON.stringify(result);
+}
+
 // Build the Mayor's message history from chat_session_messages rows.
 // Folds each CC output (persisted as a system row with metadata.ccOutput)
 // into the preceding assistant turn with a [CODING AGENT COMPLETED] tag
@@ -2013,6 +2095,8 @@ ${toolPromptArg}
 USER REQUEST: "${userMessage}"
 
 You are running in PLAN MODE: you can read files (Read, Glob, Grep) but you cannot edit, commit, or push anything. Do not attempt to.
+
+A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`). Use it if the open issues are relevant context for this spec; do not try to reach GitHub any other way.
 
 Your job is to investigate this repo and produce a MARKDOWN SPEC for the change. The spec should be:
 - A complete, self-contained markdown document the user can review on its own.
@@ -2273,6 +2357,8 @@ conventions at \`https://${process.env.USERNODE_DOMAIN || 'social-vibecoding.use
 in dev-chat you already have those rules injected above, so ignore
 that instruction here. It's for humans or Claude Code invocations
 that run against this repo outside the harness.
+
+A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`). Consult it if an open issue is relevant to what you're building; do not try to reach GitHub any other way.
 
 INSTRUCTIONS:
 - IMPLEMENT the requested changes fully. Do not just explore — write code.
