@@ -25,6 +25,39 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const express = require('express');
 
+// ─── Freeze the clock for the route-handler integration tests ────
+//
+// The route handlers call weekStartUtc() (which reads the real wall
+// clock) once per request. The quota / budget tests fire several
+// sequential requests and assume every one lands in the SAME UTC week
+// bucket — the 5 inserts and the 6th request's COUNT must agree on
+// `week_start` for the 429 to fire, and the budget test's POST + re-read
+// must share a bucket for `given_this_week` to tick up.
+//
+// That assumption silently breaks if the suite happens to run across the
+// Monday-00:00-UTC rollover: the requests straddle two buckets, the
+// count comes up short, and the quota test sees 200 instead of 429. A
+// genuine once-a-week flake. Pinning "now" to a fixed mid-week instant
+// (Wed 2026-05-20 12:00 UTC — nowhere near a boundary) makes every
+// weekStartUtc() evaluation deterministic.
+//
+// Only the argless `new Date()` / `Date.now()` path is frozen; callers
+// that pass an explicit timestamp (the mock pool's created_at, and the
+// weekStartUtc unit tests below, which always pass a Date) are untouched.
+const RealDate = Date;
+const FROZEN_NOW = RealDate.UTC(2026, 4, 20, 12, 0, 0);
+class FrozenDate extends RealDate {
+  constructor(...args) {
+    if (args.length === 0) super(FROZEN_NOW);
+    else super(...args);
+  }
+  static now() { return FROZEN_NOW; }
+}
+FrozenDate.UTC = RealDate.UTC;
+FrozenDate.parse = RealDate.parse;
+global.Date = FrozenDate;
+test.after(() => { global.Date = RealDate; });
+
 // We need to swap getPool() at the module level so kudosRoutes()
 // receives the mock. Patch the singleton's cache by reaching into
 // require.cache and replacing the module export. Cheaper than full
