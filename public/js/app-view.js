@@ -68,6 +68,12 @@ const AppView = {
     }
 
     await AppView.refreshToken();
+    // Kick off a short, generative background track so each open feels a
+    // little different. The control + persistence live in AppMusic. The
+    // open is triggered by a user click, which satisfies most browsers'
+    // autoplay gesture requirement; AppMusic also resumes on first
+    // interaction if the AudioContext starts suspended.
+    if (window.AppMusic) AppMusic.start();
     AppView.startActivityTracking(slug);
     AppView.startTokenRefresh();
     if (window.DevConsole) DevConsole.setCurrentApp(slug);
@@ -86,6 +92,7 @@ const AppView = {
   close() {
     AppView.stopActivityTracking();
     AppView.stopTokenRefresh();
+    if (window.AppMusic) AppMusic.stop();
     GroupChat.disconnect();
     // Drop any in-memory dev-chat session state belonging to the app
     // we're leaving. Without this, opening a different app and clicking
