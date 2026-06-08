@@ -15,9 +15,16 @@ function productionHostname(slug) {
   return `${slug}.${USERNODE_DOMAIN}`;
 }
 
-function stagingHostname(slug, username, commitHash) {
-  const shortHash = commitHash.substring(0, 6);
-  return `${slug}--${username}--${shortHash}.${USERNODE_DOMAIN}`;
+// Staging preview hostname. Stable per session (no commit hash): the label
+// is `<slug>--s<sessionId>`, so every redeploy of a session reuses the same
+// hostname and therefore the same TLS cert. (Embedding the commit hash here
+// previously minted a brand-new hostname — and a brand-new ACME cert — on
+// every redeploy, which is what exhausted Let's Encrypt's 50-cert/week/domain
+// limit once real traffic arrived.) The Caddy `map` strips the `s` and routes
+// `s<id>` -> `usernode-staging-<slug>--<id>`, matching the container name the
+// platform already assigns. `sessionLabel` is `s${session.id}`.
+function stagingHostname(slug, sessionLabel) {
+  return `${slug}--${sessionLabel}.${USERNODE_DOMAIN}`;
 }
 
 module.exports = {

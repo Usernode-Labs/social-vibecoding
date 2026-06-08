@@ -3089,7 +3089,7 @@ CMD ["node", "server.js"]
   // No Caddy route to register — the wildcard site maps this hostname to
   // `containerName` (usernode-staging-<slug>--<id>) and issues TLS
   // on-demand. See Caddyfile + services/caddy.js.
-  const hostname = caddy.stagingHostname(app.slug, `s${session.id}`, hash);
+  const hostname = caddy.stagingHostname(app.slug, `s${session.id}`);
 
   const stagingUrl = hostPort
     ? `http://localhost:${hostPort}`

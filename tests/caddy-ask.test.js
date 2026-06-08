@@ -15,6 +15,7 @@ process.env.USERNODE_DOMAIN = process.env.USERNODE_DOMAIN || 'social-vibecoding.
 const DOMAIN = process.env.USERNODE_DOMAIN;
 
 const { isKnownHost } = require('../src/routes/internal');
+const caddy = require('../src/services/caddy');
 
 // Minimal pg-Pool stub. Apps keyed by slug, staging sessions keyed by
 // their exact stored staging_url. Records every query so tests can assert
@@ -52,7 +53,22 @@ test('refuses an unknown production app slug', async () => {
   assert.equal(await isKnownHost(pool, `nope-123456.${DOMAIN}`), false);
 });
 
-test('approves a staging host that matches a session staging_url exactly', async () => {
+test('stagingHostname is stable per session (no commit hash)', () => {
+  // The hostname must depend only on slug + session label so redeploys of
+  // the same session reuse the same hostname (and thus the same cert).
+  assert.equal(
+    caddy.stagingHostname('whiteboard-0d337f', 's42'),
+    `whiteboard-0d337f--s42.${DOMAIN}`,
+  );
+});
+
+test('approves a stable (hashless) staging host matching staging_url', async () => {
+  const host = caddy.stagingHostname('whiteboard-0d337f', 's42');
+  const pool = makePool({ stagingUrls: [`https://${host}`] });
+  assert.equal(await isKnownHost(pool, host), true);
+});
+
+test('approves a legacy hashed staging host that matches staging_url exactly', async () => {
   const host = `whiteboard-0d337f--s42--642297.${DOMAIN}`;
   const pool = makePool({ stagingUrls: [`https://${host}`] });
   assert.equal(await isKnownHost(pool, host), true);

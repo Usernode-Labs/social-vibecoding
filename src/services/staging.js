@@ -167,7 +167,7 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
     // wildcard site in the Caddyfile maps this hostname straight to the
     // staging container (usernode-staging-<slug>--<id>) and issues TLS
     // on-demand, so having the container up + named is enough to serve it.
-    const hostname = caddy.stagingHostname(app.slug, `s${session.id}`, commitHash);
+    const hostname = caddy.stagingHostname(app.slug, `s${session.id}`);
 
     // See routes/apps.js for why we don't key off DOCKER_NETWORK anymore.
     const isLocalDev = process.env.NODE_ENV === 'development' || process.env.USERNODE_LOCAL_DEV === '1';

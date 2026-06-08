@@ -22,22 +22,36 @@ services:
       - "443:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      # caddy-data holds the on-demand-issued Let's Encrypt certs + ACME
-      # account state. Persist it so restarts/deploys reuse existing certs
-      # instead of re-issuing (which would risk Let's Encrypt rate limits).
-      # There is no shared route-config volume any more: the wildcard site
-      # in the Caddyfile maps hostnames to container names dynamically, so
-      # adding/removing an app or preview needs no Caddy-side state.
+      # caddy-data holds the on-demand-issued certs + ACME account state
+      # (ZeroSSL primary, Let's Encrypt fallback). Persist it so
+      # restarts/deploys reuse existing certs instead of re-issuing (which
+      # would risk ACME rate limits). There is no shared route-config volume
+      # any more: the wildcard site in the Caddyfile maps hostnames to
+      # container names dynamically, so adding/removing an app or preview
+      # needs no Caddy-side state.
       - caddy-data:/data
       - caddy-config:/config
     environment:
       # Caddyfile uses {$USERNODE_DOMAIN} substitution for the main
       # vhost. Must be set in Caddy's process env at config-load time.
       USERNODE_DOMAIN: ${USERNODE_DOMAIN}
+      # ZeroSSL ACME EAB (External Account Binding) credentials, consumed by
+      # the `cert_issuer acme https://acme.zerossl.com/...` block in the
+      # Caddyfile. Derived once from the ZeroSSL API key (see Caddyfile note)
+      # and reusable. ZeroSSL is the primary issuer; LE (no creds needed) is
+      # the fallback. Empty is fine for local/self-host — Caddy falls through
+      # to LE. (ZEROSSL_API_KEY is no longer read by Caddy; kept in .env only
+      # for regenerating EAB creds if they're ever revoked.)
+      ZEROSSL_EAB_KID: ${ZEROSSL_EAB_KID:-}
+      ZEROSSL_EAB_HMAC: ${ZEROSSL_EAB_HMAC:-}
     networks:
       - usernode-net
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:2019/config/"]
+      # Probe the admin API on the IPv4 loopback explicitly. The admin
+      # endpoint binds 127.0.0.1:2019 only, but the container also has IPv6,
+      # so `localhost` resolves to ::1 first and the probe gets "connection
+      # refused" — leaving caddy perpetually `unhealthy` despite serving fine.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]
       interval: 30s
       timeout: 5s
       retries: 3

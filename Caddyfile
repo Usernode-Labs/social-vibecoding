@@ -11,21 +11,45 @@
 #   single wildcard site maps the hostname to the target container *name*
 #   deterministically:
 #
-#     myapp.<domain>                  -> usernode-app-myapp        (prod app)
-#     myapp--s42--ab12cd.<domain>     -> usernode-staging-myapp--42 (PR preview)
+#     myapp.<domain>              -> usernode-app-myapp        (prod app)
+#     myapp--s42.<domain>         -> usernode-staging-myapp--42 (PR preview)
 #
 #   Those are exactly the container names the platform already gives its
 #   containers (services/staging.js + app-creator.js), and Caddy reaches
 #   them by name on the shared `usernode-net` Docker network. Adding or
 #   removing a preview is now just starting/stopping a container — there
 #   is no Caddy state to mutate, so nothing to race on and nothing to heal.
+#   (Older previews used a trailing `--<commitHash>` segment; the map below
+#   still accepts it so in-flight URLs keep routing during the transition.)
 #
 # TLS: certs are issued On-Demand (lazily, on first request to a hostname)
 # rather than eagerly per registered route. The `ask` endpoint below lets
-# the platform veto unknown hostnames so we don't burn Let's Encrypt
-# issuance quota for `usernodelabs.org` on arbitrary `*.‹domain›` probes.
-# DNS for *.<USERNODE_DOMAIN> must resolve to this VPS.
+# the platform veto unknown hostnames so we don't burn ACME issuance quota
+# on arbitrary `*.‹domain›` probes. DNS for *.<USERNODE_DOMAIN> must resolve
+# to this VPS.
 {
+	# ACME issuers, tried in order. ZeroSSL is primary because Let's
+	# Encrypt enforces a hard limit of 50 certs per registered domain per
+	# 168h — and with one on-demand cert per preview subdomain, the growing
+	# fleet blew past it (HTTP 429 → handshakes hang → "can't load preview").
+	#
+	# NOTE: this must be ZeroSSL's *ACME* endpoint, not the `zerossl`
+	# issuer. `cert_issuer zerossl <api_key>` drives ZeroSSL's REST API
+	# (api.zerossl.com, HTTP_CSR_HASH validation) which is capped at 3 free
+	# certs and failed validation here. The ACME directory below has no
+	# weekly cap (fair-use only), issues 90-day certs free, and validates
+	# over HTTP-01 — the same challenge LE used successfully on this host.
+	# EAB (External Account Binding) credentials tie ACME orders to our
+	# ZeroSSL account; they're derived once from the API key
+	# (`POST https://api.zerossl.com/acme/eab-credentials`) and are reusable.
+	# Let's Encrypt stays as the fallback for when its rolling window frees
+	# up. See services/caddy.js + docs for the per-session-stable hostname
+	# change that also cuts issuance churn.
+	cert_issuer acme https://acme.zerossl.com/v2/DV90 {
+		eab {$ZEROSSL_EAB_KID} {$ZEROSSL_EAB_HMAC}
+	}
+	cert_issuer acme
+
 	# On-demand TLS gate. Before issuing a cert for a hostname Caddy has
 	# never seen, it GETs http://usernode:3000/__caddy/ask?domain=<host>;
 	# a 2xx authorizes issuance, anything else refuses. The platform
@@ -55,13 +79,15 @@
 	}
 
 	# Derive the upstream container name from the leftmost DNS label.
-	# Staging is checked first because its label (slug--sID--hash) also
-	# satisfies the broader prod-app pattern. Slugs never contain `--`
-	# (the sanitizer collapses runs of non-alphanumerics to a single
-	# `-`), so `--sID--` reliably separates the slug from the staging
-	# suffix and the hash content is irrelevant to the container name.
+	# Staging is checked first because its label (slug--sID) also satisfies
+	# the broader prod-app pattern. Slugs never contain `--` (the sanitizer
+	# collapses runs of non-alphanumerics to a single `-`), so `--sID`
+	# reliably separates the slug from the staging suffix. The optional
+	# `(?:--[a-z0-9]+)?` matches the legacy `--<commitHash>` suffix so older
+	# preview URLs keep routing to the (stable) container during transition;
+	# either way only the session id maps to the container name.
 	map {host} {upstream} {
-		~^([a-z0-9-]+?)--s(\d+)--[a-z0-9]+\. usernode-staging-${1}--${2}
+		~^([a-z0-9-]+?)--s(\d+)(?:--[a-z0-9]+)?\. usernode-staging-${1}--${2}
 		~^([a-z0-9-]+)\. usernode-app-${1}
 		default usernode
 	}
