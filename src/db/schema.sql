@@ -275,6 +275,28 @@ CREATE INDEX IF NOT EXISTS chat_sessions_archived_idx ON chat_sessions(status, a
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS merged_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS chat_sessions_merged_at_idx ON chat_sessions(merged_at);
 
+-- #58: snapshot the vote threshold that was in effect at the moment a PR
+-- merged. The "majority" needed to merge is computed live from the active-
+-- user set (services/active-users.js getActiveUserStats) and is never
+-- otherwise persisted, so the merged-PR vote pill used to be rendered
+-- against the *current* majority — its denominator drifted as the app's
+-- active-user count changed ("3 / 3" at merge could later read "3 / 5").
+-- These two columns freeze the at-merge numbers so the pill (and a
+-- tooltip) can show the true historical threshold:
+--   votes_required        = the majority threshold needed to merge
+--   active_users_at_merge = the active-user count the threshold was
+--                           derived from (the "/ M" denominator context)
+-- Both set in routes/votes.js checkAndMerge() at the moment the PR lands
+-- (vote-driven, admin force-merge, and revert-PR paths all flow through
+-- there). NULL for rows merged before these columns existed; the boot-time
+-- backfill in db/migrate.js reconstructs them from the merge announcement
+-- message's "(yes/active votes)" figure where possible, and the frontend
+-- falls back to the live majority for any that remain NULL. Covered by the
+-- table-level staging:private comment, so they are scrubbed from staging
+-- clones with the rest of the row.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS votes_required        INTEGER;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS active_users_at_merge INTEGER;
+
 CREATE TABLE IF NOT EXISTS chat_session_specs (
   id                  SERIAL PRIMARY KEY,
   session_id          INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,

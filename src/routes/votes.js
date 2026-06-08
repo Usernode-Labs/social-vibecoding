@@ -354,6 +354,13 @@ function voteRoutes(config) {
       const { rows } = await pool.query(
         `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.user_id, cs.status, u.username, cs.created_at,
            cs.revert_of_session_id,
+           -- #58: the vote threshold + active-user count snapshotted at merge
+           -- time. The merged-PR pill renders against votes_required (falling
+           -- back to the live majority for legacy rows where it's NULL), and a
+           -- tooltip surfaces "needed N of M active users at merge time" when
+           -- both are present.
+           cs.votes_required,
+           cs.active_users_at_merge,
            -- Vote tally + per-viewer vote carried through so the group-chat
            -- activity row can keep its "x / y" pill and "You voted X" box
            -- after the PR merges (status='merged'), rather than the controls
@@ -722,11 +729,19 @@ async function checkAndMerge(config, pool, session, options = {}) {
     // Teardown staging
     await staging.teardownStaging(session, app);
 
+    // #58: snapshot the vote threshold + active-user count in effect at
+    // this merge, so the merged-PR pill shows the historical "yes / N"
+    // instead of drifting with the live majority. majority/activeCount come
+    // from getActiveUserStats() at the top of this function. COALESCE keeps
+    // any earlier snapshot (defensive; the promoted→merging claim already
+    // guarantees a single merge transition).
     await pool.query(
       `UPDATE chat_sessions SET status = 'merged', merged_at = NOW(),
-                                merge_commit_sha = COALESCE($2, merge_commit_sha)
+                                merge_commit_sha = COALESCE($2, merge_commit_sha),
+                                votes_required = COALESCE(votes_required, $3),
+                                active_users_at_merge = COALESCE(active_users_at_merge, $4)
        WHERE id = $1`,
-      [session.id, mergeCommitSha]
+      [session.id, mergeCommitSha, majority, activeCount]
     );
 
     // pr_merged is the terminal stage of the PR-promotion funnel and the
