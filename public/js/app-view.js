@@ -844,6 +844,7 @@ const AppView = {
             <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''}>
               <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-violet-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
               <span ${prQuoteAttrs}>${labelText}</span>
+              ${AppView.closesPillHtml(pr)}
               <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
                 ${unvotedBadge}
                 ${AppView.voteCountPill(pr, majority)}
@@ -955,6 +956,7 @@ const AppView = {
             <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
               <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-emerald-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
               <span ${mergedQuoteAttrs}>${mergedLabel}</span>
+              ${AppView.closesPillHtml(pr)}
               <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
                 ${AppView.voteCountPill(pr, majority)}
                 ${AppView.voteButtonsHtml(pr, { collapseVoted: true })}
@@ -1168,6 +1170,56 @@ const AppView = {
   // rows after a PR lands so the voting info doesn't disappear.
   mergedBadgeHtml() {
     return `<span class="gc-merged-badge">✓ Merged</span>`;
+  },
+
+  // #80: derive the GitHub issue URL for issue #N from a PR's html_url
+  // (https://github.com/<owner>/<repo>/pull/<prNumber>) by swapping the
+  // `/pull/<n>` segment for `/issues/<issueNumber>`. Returns '' when the
+  // PR url is missing or doesn't look like a GitHub PR url so callers can
+  // skip rendering a dead link.
+  issueUrlFromPrUrl(prUrl, issueNumber) {
+    if (!prUrl || !Number.isInteger(issueNumber) || issueNumber <= 0) return '';
+    const out = prUrl.replace(/\/pull\/\d+(?=$|[/?#])/, `/issues/${issueNumber}`);
+    // No substitution happened → not a recognizable PR url; bail rather
+    // than linking to a /pull/ page for an issue.
+    return out === prUrl ? '' : out;
+  },
+
+  // #80: "Closes #N" / "Closed #N" pills for the GitHub issues a PR closes.
+  // Reads `linked_issues` (Postgres INTEGER[], populated in #75 and written
+  // into the PR body as `Closes #N` by src/services/pr-metadata.js). Wording
+  // follows the canonical merge check used elsewhere: status === 'merged'
+  // is the only merged state, everything else ('promoted'/'merging'/'active'/
+  // 'paused') reads as still-open. One independently-clickable pill per
+  // issue, each opening the issue on GitHub in a new tab (#61). Renders
+  // nothing when there are no linked issues or no usable PR url.
+  closesPillHtml(pr) {
+    if (!pr || !pr.pr_url) return '';
+    // Sanitize defensively (mirror prMetadata.sanitizeIssueNumbers): drop
+    // anything that isn't a positive integer, dedupe, sort ascending.
+    const raw = Array.isArray(pr.linked_issues) ? pr.linked_issues : [];
+    const seen = new Set();
+    const nums = [];
+    for (const v of raw) {
+      const n = typeof v === 'number' ? v : Number(v);
+      if (Number.isInteger(n) && n > 0 && !seen.has(n)) { seen.add(n); nums.push(n); }
+    }
+    if (!nums.length) return '';
+    nums.sort((a, b) => a - b);
+
+    const merged = pr.status === 'merged';
+    const verb = merged ? 'Closed' : 'Closes';
+    // Match the PR-number link tint at each site: emerald for merged,
+    // violet for open.
+    const cls = merged
+      ? 'inline-flex items-center text-[0.65rem] font-medium font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20'
+      : 'inline-flex items-center text-[0.65rem] font-medium font-mono px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 hover:bg-violet-500/20';
+
+    return nums.map((n) => {
+      const href = AppView.issueUrlFromPrUrl(pr.pr_url, n);
+      if (!href) return '';
+      return `<a href="${href}" target="_blank" rel="noopener" class="${cls}" title="${verb} issue #${n} on GitHub">${verb} #${n}</a>`;
+    }).join(' ');
   },
 
   voteButtonsHtml(pr, opts) {
