@@ -21,7 +21,99 @@ async function migrate(config) {
   await seedAdmin(pool, config);
   await seedSelfApp(pool, config);
   await backfillEvents(pool);
+  await backfillVotesRequired(pool);
   await migrateAppDbsToPerRole(pool, config);
+}
+
+// #58: one-shot, idempotent backfill of votes_required / active_users_at_merge
+// for merged PRs that predate those columns. The at-merge vote threshold is
+// computed live (services/active-users.js) and was never persisted, so the
+// only historical record of "how many votes were required when this PR
+// merged" is the free-text merge announcement posted to group chat by
+// routes/votes.js checkAndMerge():
+//
+//   "PR #<ref> ... merged and deployed! (<yes>/<active> votes)"
+//   "PR #<ref> ... force-merged by admin <name> (<yes>/<active> vote(s) at the time)"
+//
+// We parse the "(yes/active)" figure out of that message, take <active> as the
+// at-merge active-user count, and reconstruct the threshold as
+// floor(active/2)+1 — exactly getActiveUserStats()'s majority formula.
+//
+// Idempotent by construction: only rows with votes_required IS NULL are
+// considered, and each fill is COALESCE-guarded, so a normal boot (already
+// snapshotted, or already backfilled) scans nothing or no-ops. Rows whose
+// announcement can't be found/parsed stay NULL and keep the live-majority
+// fallback in the UI — non-regressive.
+async function backfillVotesRequired(pool) {
+  let sessions;
+  try {
+    ({ rows: sessions } = await pool.query(
+      `SELECT id, app_id, pr_number FROM chat_sessions
+        WHERE status = 'merged' AND votes_required IS NULL`
+    ));
+  } catch (err) {
+    // e.g. the column doesn't exist yet on a partial/older schema — the
+    // ALTER in schema.sql should have run first, but never abort boot here.
+    log.warn('db', 'votes_required backfill skipped (query failed)', { err: err.message });
+    return;
+  }
+
+  if (!sessions.length) {
+    log.debug('db', 'No merged rows need votes_required backfill');
+    return;
+  }
+
+  log.info('db', 'Backfilling votes_required for merged PRs...', {
+    candidates: sessions.length,
+  });
+
+  let filled = 0;
+  for (const s of sessions) {
+    // The announcement label uses `pr_number || session.id` as the PR ref.
+    const ref = s.pr_number || s.id;
+    try {
+      // Find the merge announcement for this PR. The word-boundary regex
+      // (`(^|[^0-9])PR #<ref>([^0-9]|$)`) stops "PR #1" from matching
+      // "PR #12", and the two LIKEs restrict to merge/force-merge lines
+      // (promote / vote / revert messages also mention the PR ref but
+      // carry neither phrase).
+      const { rows: msgs } = await pool.query(
+        `SELECT content FROM chat_messages
+          WHERE app_id = $1 AND msg_type = 'system'
+            AND content ~ $2
+            AND (content LIKE '%merged and deployed!%'
+                 OR content LIKE '%force-merged by admin%')
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [s.app_id, `(^|[^0-9])PR #${ref}([^0-9]|$)`]
+      );
+      if (!msgs.length) continue;
+
+      const m = /\((\d+)\s*\/\s*(\d+)\s+vote/.exec(msgs[0].content);
+      if (!m) continue;
+      const activeAtMerge = parseInt(m[2], 10);
+      if (!Number.isFinite(activeAtMerge) || activeAtMerge < 1) continue;
+      const votesRequired = Math.floor(activeAtMerge / 2) + 1;
+
+      await pool.query(
+        `UPDATE chat_sessions
+            SET votes_required = COALESCE(votes_required, $2),
+                active_users_at_merge = COALESCE(active_users_at_merge, $3)
+          WHERE id = $1`,
+        [s.id, votesRequired, activeAtMerge]
+      );
+      filled += 1;
+    } catch (err) {
+      // One bad row must not abort the backfill or boot.
+      log.warn('db', 'votes_required backfill row failed', {
+        sessionId: s.id, err: err.message,
+      });
+    }
+  }
+
+  log.info('db', 'votes_required backfill complete', {
+    filled, scanned: sessions.length,
+  });
 }
 
 // One-shot backfill of the append-only `events` analytics log from the

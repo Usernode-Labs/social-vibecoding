@@ -1121,10 +1121,22 @@ const AppView = {
   // inline group-chat activity rows so the two never diverge.
   voteCountPill(pr, majority) {
     if (!pr) return '';
-    const maj = majority || 1;
+    // #58: for merged PRs prefer the threshold snapshotted at merge time
+    // (votes_required) so the denominator reflects history rather than the
+    // live majority. Open PRs (and legacy merged rows with no snapshot) fall
+    // back to the live majority passed in.
+    const snap = parseInt(pr.votes_required);
+    const hasSnap = Number.isFinite(snap) && snap > 0;
+    const maj = hasSnap ? snap : (majority || 1);
     const yes = parseInt(pr.yes_count) || 0;
     const no = parseInt(pr.no_count) || 0;
     const state = yes >= maj ? 'yes' : no >= maj ? 'no' : 'pending';
+    // #58: when both at-merge figures are present, surface the historical
+    // context as a hover tooltip on the pill. Only merged rows carry these.
+    const activeAtMerge = parseInt(pr.active_users_at_merge);
+    const titleAttr = (hasSnap && Number.isFinite(activeAtMerge) && activeAtMerge > 0)
+      ? ` title="needed ${snap} of ${activeAtMerge} active users at merge time"`
+      : '';
     let fills;
     if (state === 'yes' || state === 'no') {
       // Finalized: a side reached majority — the whole pill fills solid with
@@ -1138,7 +1150,7 @@ const AppView = {
       fills = `<span class="gc-vote-fill gc-vote-fill-yes" style="width:${yesPct}%"></span>`
         + `<span class="gc-vote-fill gc-vote-fill-no" style="width:${noPct}%"></span>`;
     }
-    return `<span class="gc-vote-count gc-vote-count-${state}">`
+    return `<span class="gc-vote-count gc-vote-count-${state}"${titleAttr}>`
       + fills
       + `<span class="gc-vote-count-label">${yes} / ${maj}</span>`
       + `</span>`;
