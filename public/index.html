@@ -642,6 +642,11 @@
        feature script that wants a "really?" gate (dev-chat archive,
        future settings/home destructive actions). -->
   <script src="/js/confirm-modal.js"></script>
+  <!-- Routes GitHub link taps to the device browser inside the mobile
+       app's webview (issue #61 mobile follow-up). Delegated, so it covers
+       every GitHub anchor incl. JS-rendered PR links. Loaded after
+       confirm-modal.js so it can use the webview-safe confirm. -->
+  <script src="/js/github-links.js"></script>
   <script src="/js/settings.js"></script>
   <script src="/js/group-chat.js"></script>
   <script src="/js/dev-chat.js"></script>
