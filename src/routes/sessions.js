@@ -3086,9 +3086,10 @@ CMD ["node", "server.js"]
 
   // Get the host port for local dev access
   const hostPort = await docker.getHostPort(containerName, 3000);
+  // No Caddy route to register — the wildcard site maps this hostname to
+  // `containerName` (usernode-staging-<slug>--<id>) and issues TLS
+  // on-demand. See Caddyfile + services/caddy.js.
   const hostname = caddy.stagingHostname(app.slug, `s${session.id}`, hash);
-
-  await caddy.registerRoute(hostname, containerName, 3000).catch(() => {});
 
   const stagingUrl = hostPort
     ? `http://localhost:${hostPort}`

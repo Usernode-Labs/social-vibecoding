@@ -1,47 +1,15 @@
-const fs = require('fs/promises');
-const log = require('./logger');
-const { execFileAsync } = require('./docker');
+// Hostname helpers for the platform's public URLs.
+//
+// Routing + TLS are handled entirely by Caddy via a single wildcard site
+// (see Caddyfile): the hostname is mapped to a container name
+// deterministically and certs are issued on-demand. The platform no
+// longer writes per-host route blocks or runs `caddy reload`, so the old
+// registerRoute/removeRoute/reloadCaddy functions (and the shared-file
+// read-modify-write race that silently dropped routes) are gone. These
+// two builders remain the single source of truth for the hostnames the
+// Caddy `map` in the Caddyfile expects to see.
 
-const USERNODE_CONF_PATH = process.env.USERNODE_CONF_PATH || '/etc/caddy/usernode.conf';
 const USERNODE_DOMAIN = process.env.USERNODE_DOMAIN || 'social-vibecoding.usernodelabs.org';
-
-async function registerRoute(hostname, containerName, port) {
-  const routeBlock = `\n${hostname} {\n    reverse_proxy ${containerName}:${port}\n}\n`;
-
-  let existing = '';
-  try { existing = await fs.readFile(USERNODE_CONF_PATH, 'utf8'); } catch {}
-
-  if (!existing.includes(hostname)) {
-    await fs.writeFile(USERNODE_CONF_PATH, existing + routeBlock);
-  }
-
-  await reloadCaddy();
-  log.info('caddy', 'Route registered', { hostname });
-}
-
-async function removeRoute(hostname) {
-  try {
-    let conf = await fs.readFile(USERNODE_CONF_PATH, 'utf8');
-    const escaped = hostname.replace(/\./g, '\\.');
-    const regex = new RegExp(`\\n?${escaped} \\{[^}]*\\}\\n?`, 'g');
-    conf = conf.replace(regex, '\n');
-    await fs.writeFile(USERNODE_CONF_PATH, conf);
-    await reloadCaddy();
-    log.info('caddy', 'Route removed', { hostname });
-  } catch (err) {
-    log.warn('caddy', 'Failed to remove route', { hostname, err: err.message });
-  }
-}
-
-async function reloadCaddy() {
-  try {
-    await execFileAsync('docker', ['exec', 'caddy', 'caddy', 'reload', '--config', '/etc/caddy/Caddyfile'], {
-      timeout: 10000,
-    });
-  } catch (err) {
-    log.warn('caddy', 'Caddy reload failed', { err: err.message });
-  }
-}
 
 function productionHostname(slug) {
   return `${slug}.${USERNODE_DOMAIN}`;
@@ -53,9 +21,6 @@ function stagingHostname(slug, username, commitHash) {
 }
 
 module.exports = {
-  registerRoute,
-  removeRoute,
-  reloadCaddy,
   productionHostname,
   stagingHostname,
   USERNODE_DOMAIN,

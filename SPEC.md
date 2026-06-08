@@ -114,9 +114,9 @@ The template is a stripped-down recipe-bot: Node.js/Express + single HTML page +
 ## Networking
 
 - Wildcard DNS: `*.usernode` A record in Hetzner DNS → VPS IP
-- **Caddy on-demand TLS**: certs are fetched automatically on first request to each new hostname (~2s delay on first hit); no wildcard cert or custom Caddy build needed
+- **Caddy on-demand TLS**: certs are fetched automatically on first request to each new hostname (~2s delay on first hit); no wildcard cert or custom Caddy build needed. A single wildcard site gates issuance via an `ask` endpoint (`/__caddy/ask`) so only real apps / live staging previews can trigger an ACME order.
 - Caddy reverse proxy routes requests to the appropriate container based on subdomain
-- Dynamic route registration: platform writes to a Caddy config file and triggers reload (same pattern as pr-bot's `staging.conf`)
+- Dynamic routing without per-host config: a single wildcard site (`*.<USERNODE_DOMAIN>`) maps each hostname to its container name (`<slug>.<domain>` → `usernode-app-<slug>`, `<slug>--s<id>--<hash>.<domain>` → `usernode-staging-<slug>--<id>`). The platform writes no route blocks and triggers no reload — starting/stopping a container is all that's needed. (This replaced the old write-a-conf-file-and-reload approach, whose unsynchronized read-modify-write on a shared file silently dropped routes and produced "secure connection failed" on previews.)
 
 ---
 

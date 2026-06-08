@@ -755,9 +755,10 @@ function appRoutes(config) {
         await docker.stopAndRemove(`usernode-app-${app.slug}`).catch(() => {});
       }
 
-      // Remove Caddy route
-      const hostname = caddy.productionHostname(app.slug);
-      await caddy.removeRoute(hostname).catch(() => {});
+      // No Caddy route to remove — the wildcard site maps hostnames to
+      // container names dynamically, so removing the container above
+      // takes the app offline. The on-demand cert lingers harmlessly and
+      // the ask endpoint stops vouching once the app row is deleted below.
 
       // Drop app database
       const dbManager = require('../services/db-manager');

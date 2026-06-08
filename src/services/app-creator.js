@@ -192,11 +192,10 @@ async function createApp(config, appRow) {
     // 6. Wait for health
     await docker.waitForHealthy(containerName, 3000, '/health');
 
-    // 7. Register Caddy route (may fail in local dev — that's ok)
+    // 7. No Caddy route to register — the wildcard site maps
+    // `<slug>.<domain>` to `containerName` (usernode-app-<slug>) and
+    // issues TLS on-demand. See Caddyfile + services/caddy.js.
     const hostname = caddy.productionHostname(slug);
-    await caddy.registerRoute(hostname, containerName, 3000).catch((err) => {
-      log.warn('app-creator', 'Caddy route registration failed (ok in local dev)', { err: err.message });
-    });
 
     // 8. Determine the app's accessible URL
     // See routes/apps.js for why we don't key off DOCKER_NETWORK anymore.

@@ -776,8 +776,9 @@ is real, so all session-gated routes work.
 **What's deliberately broken in self-staging:**
 
 - Spawning child apps from inside a staging clone (no Docker socket
-  mount, on purpose).
-- Caddy route registration from inside staging (no socket).
+  mount, on purpose). (Routing itself needs no per-host Caddy action any
+  more — the wildcard site maps hostnames to container names — so the
+  only gap here is that a staging clone can't start the containers.)
 - Reading `deploy-status.json` (host-mounted file the staging container
   doesn't see).
 - `/api/auth/login` against any cloned account (passwords scrubbed —

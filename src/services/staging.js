@@ -163,9 +163,11 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
     // 6. Wait for health
     await docker.waitForHealthy(containerName, 3000, '/health');
 
-    // 7. Register Caddy route + determine accessible URL
+    // 7. Determine accessible URL. No Caddy route to register: the
+    // wildcard site in the Caddyfile maps this hostname straight to the
+    // staging container (usernode-staging-<slug>--<id>) and issues TLS
+    // on-demand, so having the container up + named is enough to serve it.
     const hostname = caddy.stagingHostname(app.slug, `s${session.id}`, commitHash);
-    await caddy.registerRoute(hostname, containerName, 3000).catch(() => {});
 
     // See routes/apps.js for why we don't key off DOCKER_NETWORK anymore.
     const isLocalDev = process.env.NODE_ENV === 'development' || process.env.USERNODE_LOCAL_DEV === '1';
@@ -193,13 +195,11 @@ async function teardownStaging(session, app) {
     await docker.stopAndRemove(session.staging_container_id).catch(() => {});
   }
 
-  // Remove Caddy route
-  if (session.staging_url) {
-    try {
-      const hostname = new URL(session.staging_url).hostname;
-      await caddy.removeRoute(hostname);
-    } catch {}
-  }
+  // No Caddy route to remove — the wildcard site maps hostnames to
+  // container names dynamically, so stopping the container above is what
+  // takes the preview offline. The on-demand cert stays cached in Caddy
+  // harmlessly; the ask endpoint stops vouching for the host once the
+  // caller nulls staging_url.
 
   // Drop staging database
   if (app) {
@@ -351,23 +351,13 @@ async function rebuildProductionInner(config, app) {
 
     await docker.waitForHealthy(containerName, 3000, '/health');
 
-    // Ensure the Caddy route exists. The from-scratch path
-    // (`app-creator.js`) registers it after waitForHealthy, but rebuilds
-    // hit a different code path: imported repos that go through
-    // `awaiting_secrets` reach production exclusively via this function,
-    // which historically never registered the route — so the container
-    // came up healthy but no public hostname pointed at it, producing a
-    // "Secure Connection Failed" SSL error on the iframe load. Calling
-    // registerRoute here is idempotent (caddy.js short-circuits if the
-    // hostname is already in /etc/caddy/runtime/usernode.conf), so reruns
-    // from the drift poller, manual redeploys, and merges are safe; the
-    // first rebuild that observes a missing block self-heals it.
-    const hostname = caddy.productionHostname(app.slug);
-    await caddy.registerRoute(hostname, containerName, 3000).catch((err) => {
-      log.warn('staging', 'Caddy route registration failed (ok in local dev)', {
-        app: app.slug, err: err.message,
-      });
-    });
+    // No Caddy route to register. The wildcard site in the Caddyfile
+    // maps `<slug>.<domain>` straight to this container
+    // (usernode-app-<slug>) and issues TLS on-demand, so a healthy,
+    // correctly-named container is automatically reachable. This closed
+    // the old "Secure Connection Failed" class of bug where a rebuild
+    // came up healthy but its per-host route block was missing or got
+    // clobbered by a concurrent conf rewrite.
 
     log.info('staging', 'Production rebuilt', { app: app.slug, sha: mainSha });
     succeeded = true;

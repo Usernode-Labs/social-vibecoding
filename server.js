@@ -621,17 +621,39 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   return 'built';
 }
 
-// Recover sessions where CC finished but post-processing didn't complete,
-// AND promoted PRs whose staging preview was reclaimed by the staging GC.
+// Does a promoted/merging session need its staging preview (re)built?
 //
-// The second case is the recoverable tail of a real gap: the staging GC
-// (server.js sweeper Pass 2 → teardownStagingForSession) nulls staging_url
-// for idle sessions, but the promote path never rebuilds staging and this
-// recovery historically only scanned 'active'. So a promoted PR that lost
-// its preview stayed previewless forever — the group-chat vote card
-// rendered Yes/No/Admin-merge but no Preview button (gated on staging_url
-// in app-view.js). Including 'promoted' here heals those on the next
-// startup; the sweeper's Pass 3 heals them live without a restart.
+// Two failure shapes leave a vote card without a working preview:
+//   1. staging_url IS NULL — GC reclaimed it (or it was GC'd before
+//      promotion). The Preview button is hidden (gated on staging_url).
+//   2. staging_url is set but the staging container is gone — the
+//      Preview button renders but the hostname has no upstream, so the
+//      iframe 502s / fails to connect. (Pre-wildcard-Caddy this also
+//      surfaced as "secure connection failed" when the per-host route
+//      was dropped; routing is now container-name based so the only
+//      remaining cause is a missing/stopped container.)
+// Both are healable by a rebuild. We deliberately do NOT rebuild on a
+// merely-unhealthy-but-running container (that's a 502, an app bug, not
+// a missing preview) to avoid churn.
+async function stagingNeedsRebuild(session) {
+  if (!session.staging_url) return true;
+  if (!session.staging_container_id) return true;
+  const docker = require('./src/services/docker');
+  const status = await docker.getContainerStatus(session.staging_container_id);
+  return status !== 'running';
+}
+
+// Recover sessions where CC finished but post-processing didn't complete,
+// AND promoted/merging PRs whose staging preview is missing or dead.
+//
+// The staging gap: GC (sweeper Pass 2 → teardownStagingForSession) nulls
+// staging_url for idle sessions, and a container can also be lost
+// independently (host restart that didn't bring it back, manual cleanup,
+// crash). Either way a promoted PR's group-chat vote card loses its
+// working preview. recoverSessions heals these on startup; the sweeper's
+// Pass 3 heals them live without a restart. The liveness check
+// (stagingNeedsRebuild) means healthy, still-running previews are left
+// untouched — only genuinely broken ones are rebuilt.
 async function recoverSessions(config) {
   const { getPool } = require('./src/db/pool');
   const pool = getPool(config);
@@ -640,13 +662,13 @@ async function recoverSessions(config) {
     `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
      FROM chat_sessions cs
      JOIN apps a ON cs.app_id = a.id
-     WHERE cs.status IN ('active', 'promoted')
-       AND cs.branch_name IS NOT NULL
-       AND cs.staging_url IS NULL`
+     WHERE cs.status IN ('active', 'promoted', 'merging')
+       AND cs.branch_name IS NOT NULL`
   );
 
   for (const session of rows) {
     try {
+      if (!(await stagingNeedsRebuild(session))) continue;
       await rebuildSessionStaging({ config, pool, session, reason: 'startup' });
     } catch (err) {
       log.warn('server', 'Failed to recover session', { sessionId: session.id, err: err.message });
@@ -1020,15 +1042,18 @@ function startSessionAutoPauseSweeper(config) {
     }
 
     // Pass 3: staging heal. The flip side of Pass 2 — rebuild the staging
-    // preview for promoted/merging sessions that have lost it (GC'd while
-    // 'active'/'paused' before promotion, or reclaimed by an older GC that
-    // didn't yet exclude promoted). Their preview backs the group's PR
-    // vote, so a missing staging_url renders the vote card with no Preview
-    // button (gated on staging_url in app-view.js). recoverSessions() heals
-    // these on startup; this keeps them healed live without a restart.
-    // Per-session cooldown so a persistently failing build (missing secret,
-    // broken manifest) doesn't rebuild on every tick; LIMIT keeps the
-    // (heavy: docker build + pg clone) work bounded per sweep.
+    // preview for promoted/merging sessions whose preview is missing or
+    // dead. Two shapes (see stagingNeedsRebuild): staging_url IS NULL
+    // (GC'd before/after promotion → no Preview button, gated on
+    // staging_url in app-view.js), OR staging_url set but the container
+    // is gone (Preview renders but the iframe can't connect). Their
+    // preview backs the group's PR vote, so either way it must come back.
+    // recoverSessions() heals these on startup; this keeps them healed
+    // live without a restart. We over-fetch candidates and gate each on a
+    // cheap liveness check, rebuilding at most a few per sweep so healthy
+    // previews are never rebuilt and the heavy (docker build + pg clone)
+    // work stays bounded. Per-session cooldown so a persistently failing
+    // build (missing secret, broken manifest) doesn't retry every tick.
     try {
       const { rows } = await pool.query(
         `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
@@ -1036,18 +1061,22 @@ function startSessionAutoPauseSweeper(config) {
          JOIN apps a ON cs.app_id = a.id
          WHERE cs.status IN ('promoted', 'merging')
            AND cs.branch_name IS NOT NULL
-           AND cs.staging_url IS NULL
          ORDER BY cs.promoted_at ASC NULLS FIRST
-         LIMIT 5`
+         LIMIT 50`
       );
+      const MAX_HEALS_PER_SWEEP = 5;
+      let healed = 0;
       for (const session of rows) {
+        if (healed >= MAX_HEALS_PER_SWEEP) break;
         if (worker.isInFlight(session.id)) continue;
+        if (!(await stagingNeedsRebuild(session))) continue;
         const last = stagingHealAttempts.get(session.id) || 0;
         if (Date.now() - last < STAGING_HEAL_COOLDOWN_MS) continue;
         // Stamp the attempt BEFORE the (minutes-long) build so a later
         // tick won't kick off a duplicate concurrent rebuild for the same
         // session while this one is still in flight.
         stagingHealAttempts.set(session.id, Date.now());
+        healed++;
         try {
           const result = await rebuildSessionStaging({ config, pool, session, reason: 'heal' });
           if (result === 'built') stagingHealAttempts.delete(session.id);

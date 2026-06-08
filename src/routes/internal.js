@@ -7,6 +7,42 @@ const { internalAuth } = require('../middleware/internal-auth');
 const log = require('../services/logger');
 const worker = require('../services/worker');
 const github = require('../services/github');
+const { USERNODE_DOMAIN } = require('../services/caddy');
+
+// On-demand-TLS gate for Caddy. Caddy GETs this before issuing a Let's
+// Encrypt cert for a hostname it has never seen (see Caddyfile's
+// `on_demand_tls { ask ... }`). We approve a host iff it maps to a real
+// app row (`<slug>.<domain>`) or a live staging session whose stored
+// staging_url is exactly that host (`<slug>--s<id>--<hash>.<domain>`).
+// Everything else is refused so random `*.<domain>` probes can't burn
+// Let's Encrypt issuance quota for the registered domain.
+async function isKnownHost(pool, rawDomain) {
+  const domain = String(rawDomain || '').trim().toLowerCase().replace(/:\d+$/, '');
+  if (!domain) return false;
+  // The apex is served by its own (non-on-demand) site, but allow it
+  // defensively so a stray on-demand handshake for it never gets stuck.
+  if (domain === USERNODE_DOMAIN) return true;
+
+  const suffix = '.' + USERNODE_DOMAIN;
+  if (!domain.endsWith(suffix)) return false;
+  const label = domain.slice(0, -suffix.length);
+  // Only single-level subdomains are routable (the wildcard matches one
+  // label); reject anything with a further dot.
+  if (!label || label.includes('.')) return false;
+
+  // Production app: leftmost label is the app slug. (Staging labels carry
+  // a `--s<id>--<hash>` suffix and so never collide with a real slug.)
+  const appHit = await pool.query('SELECT 1 FROM apps WHERE slug = $1 LIMIT 1', [label]);
+  if (appHit.rowCount) return true;
+
+  // Staging preview: must match a session's current staging_url exactly,
+  // so we don't vouch for stale (superseded) preview hostnames.
+  const stagingHit = await pool.query(
+    'SELECT 1 FROM chat_sessions WHERE staging_url = $1 LIMIT 1',
+    ['https://' + domain]
+  );
+  return stagingHit.rowCount > 0;
+}
 
 // Worker → platform internal API surface.
 //
@@ -33,6 +69,25 @@ const github = require('../services/github');
 function internalRoutes(_config) {
   const router = Router();
   const pool = getPool(_config);
+
+  // Caddy on-demand-TLS permission check. Public (called by Caddy from
+  // inside the Docker network, before any cert exists), GET, no side
+  // effects. 200 authorizes issuance; 404 refuses. Keep it cheap — Caddy
+  // caches the decision per host, and the lookups are single-row indexed
+  // probes.
+  router.get('/__caddy/ask', async (req, res) => {
+    const domain = req.query.domain;
+    try {
+      const ok = await isKnownHost(pool, domain);
+      if (ok) return res.status(200).send('ok');
+      log.warn('internal-api', 'Caddy ask refused unknown host', { domain });
+      return res.status(404).send('unknown host');
+    } catch (err) {
+      // Fail closed: a DB blip must not let arbitrary hosts mint certs.
+      log.error('internal-api', 'Caddy ask check failed', { domain, err: err.message });
+      return res.status(503).send('unavailable');
+    }
+  });
 
   const pushLimiter = rateLimit({
     windowMs: 60 * 1000,
@@ -239,4 +294,4 @@ function internalRoutes(_config) {
   return router;
 }
 
-module.exports = { internalRoutes };
+module.exports = { internalRoutes, isKnownHost };
