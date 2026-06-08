@@ -344,20 +344,24 @@ function kudosRoutes(config) {
   // --------------------------------------------------------------
   // GET /api/leaderboard/users?window=all|week&limit=N
   // Lists ALL users (not just those who've received kudos), ranked by
-  // PRs merged, then kudos received on merged PRs, then total kudos.
-  // Rooted at `users` with LEFT JOINs so a user with zero kudos still
-  // shows up. `limit` is optional — omit it to return every user.
+  // total kudos received on their MERGED PRs (highest first), then by
+  // PRs merged, then by most-recent kudos as a final tiebreaker.
+  // (Issue #59: kudos earned, not raw merge count, is the headline
+  // metric.) Rooted at `users` with LEFT JOINs so a user with zero
+  // kudos still shows up. `limit` is optional — omit it to return
+  // every user.
   //
   // Per-row stats:
   //   kudos_received              — total kudos on the user's PRs (window-filtered)
   //   prs_kudosed                 — distinct PRs of theirs that got any kudos
-  //   kudos_received_prs_merged   — kudos on PRs now 'merged' (window-filtered)
+  //   kudos_received_prs_merged   — kudos on PRs now 'merged' (window-filtered).
+  //                                 The PRIMARY sort key and the headline score.
   //   kudos_received_prs_unmerged — kudos on PRs not 'merged' (window-filtered)
-  //   prs_merged                  — count of the user's PRs that landed, and the
-  //                                 primary sort key. ALL-TIME regardless of
-  //                                 window: chat_sessions has no merge timestamp,
-  //                                 only a 'merged' status, so there's nothing to
-  //                                 window it by.
+  //   prs_merged                  — count of the user's PRs that landed; now a
+  //                                 secondary sort key / detail. ALL-TIME
+  //                                 regardless of window: chat_sessions has no
+  //                                 merge timestamp, only a 'merged' status, so
+  //                                 there's nothing to window it by.
   // --------------------------------------------------------------
   router.get('/api/leaderboard/users', async (req, res) => {
     // Public endpoint (see PUBLIC_PATHS in middleware/auth.js) — no
@@ -394,8 +398,8 @@ function kudosRoutes(config) {
            LEFT JOIN chat_sessions cs ON cs.user_id = u.id
            LEFT JOIN pr_kudos pk ON pk.session_id = cs.id ${kudosWindow}
            GROUP BY u.id, u.username
-           ORDER BY prs_merged DESC,
-                    kudos_received_prs_merged DESC,
+           ORDER BY kudos_received_prs_merged DESC,
+                    prs_merged DESC,
                     kudos_received DESC,
                     last_kudos_at DESC NULLS LAST,
                     u.username ASC
