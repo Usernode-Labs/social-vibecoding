@@ -165,7 +165,7 @@ function sessionRoutes(config) {
     try {
       const { rows } = await pool.query(
         `SELECT cs.id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
-                cs.status, cs.created_at,
+                cs.status, cs.linked_issues, cs.created_at,
                 a.slug AS app_slug, a.name AS app_name
          FROM chat_sessions cs
          JOIN apps a ON cs.app_id = a.id
@@ -201,7 +201,7 @@ function sessionRoutes(config) {
       if (!appRows.length) return res.status(404).json({ error: 'App not found' });
 
       const { rows } = await pool.query(
-        `SELECT id, branch_name, pr_number, pr_url, pr_title, staging_url, status, behind_main, created_at
+        `SELECT id, branch_name, pr_number, pr_url, pr_title, staging_url, status, linked_issues, behind_main, created_at
          FROM chat_sessions
          WHERE app_id = $1 AND user_id = $2
          ORDER BY created_at DESC`,
