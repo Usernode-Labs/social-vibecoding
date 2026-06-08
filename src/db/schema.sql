@@ -247,6 +247,16 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ 
 -- Supports the sweeper's "active + idle past threshold" scan.
 CREATE INDEX IF NOT EXISTS chat_sessions_activity_idx ON chat_sessions(status, last_activity_at);
 
+-- GitHub issue linkage (#75): the open issues this session's work addresses,
+-- declared by the Mayor via dispatch_claude_code / dispatch_scout's
+-- `addresses_issues` arg. Accumulates (union) across turns. pr-metadata.js
+-- appends a `Closes #N` line per number to the PR body so merging the PR
+-- auto-closes the issue. `pr_linked_issues_applied` snapshots what was last
+-- written to the live PR body so the existing-PR update path can detect a
+-- changed linkage even when the title is unchanged.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS linked_issues             INTEGER[] NOT NULL DEFAULT '{}';
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_linked_issues_applied  INTEGER[] NOT NULL DEFAULT '{}';
+
 -- Stale-promoted-PR policy + reversible archive.
 --   promoted_at       : when the session was proposed to the group. With
 --                       the latest pr_votes timestamp this gives the

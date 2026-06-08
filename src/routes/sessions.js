@@ -1034,6 +1034,35 @@ function sessionRoutes(config) {
         // lands in a fresh bubble below the CC status/progress events.
         send('assistant_message_end', {});
 
+        // Persist any GitHub issues the Mayor declared this dispatch
+        // addresses (#75). Union with the session's existing linkage so the
+        // set grows across turns; pr-metadata.js turns each number into a
+        // `Closes #N` line in the PR body. Only scout/build dispatches carry
+        // this arg. Best-effort: a failure here must not block the build.
+        if (toolKind === 'scout' || toolKind === 'build') {
+          const declared = prMetadata.sanitizeIssueNumbers(activeToolCall.input?.addresses_issues);
+          if (declared.length) {
+            try {
+              const { rows: liRows } = await pool.query(
+                `SELECT linked_issues FROM chat_sessions WHERE id = $1`,
+                [session.id]
+              );
+              const existing = prMetadata.sanitizeIssueNumbers(liRows[0] && liRows[0].linked_issues);
+              const merged = prMetadata.sanitizeIssueNumbers([...existing, ...declared]);
+              const changed = merged.length !== existing.length || merged.some((n, i) => n !== existing[i]);
+              if (changed) {
+                await pool.query(
+                  `UPDATE chat_sessions SET linked_issues = $1 WHERE id = $2`,
+                  [merged, session.id]
+                );
+                session.linked_issues = merged;
+              }
+            } catch (err) {
+              log.warn('sessions', 'Failed to persist linked issues', { err: err.message, sessionId: session.id });
+            }
+          }
+        }
+
         // --- Run the chosen tool ---
         let toolResult;
         if (toolKind === 'write_spec') {
@@ -1738,6 +1767,16 @@ const DISPATCH_TOOL = {
           + 'in this dispatch: what to change, where, and the expected user-visible behavior. '
           + 'Do NOT include code. Roughly 1-4 sentences.',
       },
+      addresses_issues: {
+        type: 'array',
+        items: { type: 'integer' },
+        description:
+          'OPTIONAL. The numbers of OPEN GitHub issues this dispatch concretely fixes or implements. '
+          + 'Populate ONLY with issues you have actually seen via list_github_issues AND have deliberately '
+          + "decided this work resolves — never guess, never auto-match by keyword, and omit it entirely for "
+          + 'tangentially-related issues. Each number listed becomes a `Closes #N` line in the PR body, so the '
+          + 'issue auto-closes when the PR merges. Numbers accumulate across turns; pass only the ones newly relevant.',
+      },
     },
     required: ['prompt'],
   },
@@ -1765,6 +1804,16 @@ const DISPATCH_SCOUT_TOOL = {
           'Instructions for the scout. Should describe what to investigate and what shape the resulting spec should take '
           + '(e.g. "Read the relevant files for the leaderboard and draft a markdown spec covering screens, data model, '
           + 'and edge cases for adding realtime updates"). 1-3 sentences.',
+      },
+      addresses_issues: {
+        type: 'array',
+        items: { type: 'integer' },
+        description:
+          'OPTIONAL. The numbers of OPEN GitHub issues this work concretely addresses. '
+          + 'Populate ONLY with issues you have actually seen via list_github_issues AND have deliberately '
+          + "decided this work resolves — never guess, never auto-match by keyword, and omit it for tangential issues. "
+          + 'Each number becomes a `Closes #N` line in the PR body so the issue auto-closes on merge. '
+          + 'Numbers accumulate across turns; pass only the ones newly relevant.',
       },
     },
     required: ['prompt'],

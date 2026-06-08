@@ -4,6 +4,35 @@ const log = require('./logger');
 const llm = require('./llm');
 const github = require('./github');
 
+// Coerce an arbitrary array of "issue numbers" into a clean, deduped,
+// ascending list of positive integers (#75). Defensive against malformed
+// input from the Mayor's tool call or stale DB rows: anything that isn't a
+// positive integer (NaN, <= 0, floats, strings, null) is silently dropped.
+// Number() (not parseInt) is used so "75abc"/"75.5" don't sneak through.
+function sanitizeIssueNumbers(arr) {
+  if (!Array.isArray(arr)) return [];
+  const set = new Set();
+  for (const v of arr) {
+    const n = typeof v === 'number' ? v : Number(v);
+    if (Number.isInteger(n) && n > 0) set.add(n);
+  }
+  return Array.from(set).sort((a, b) => a - b);
+}
+
+// Build the GitHub closing-keyword block for a PR body: one `Closes #N`
+// line per issue, already sanitized + sorted. Empty string when there are
+// no linked issues, so the body is byte-identical to the legacy output.
+function buildClosingBlock(issues) {
+  return sanitizeIssueNumbers(issues).map((n) => `Closes #${n}`).join('\n');
+}
+
+// Order-independent equality for two sanitized issue-number lists.
+function sameIssueSet(a, b) {
+  const x = sanitizeIssueNumbers(a);
+  const y = sanitizeIssueNumbers(b);
+  return x.length === y.length && x.every((n, i) => n === y[i]);
+}
+
 // Generate a PR title + body from the user's latest message and
 // Claude Code's own summary of what it built. Shared by:
 //  - the normal dev-turn path in routes/sessions.js (SSE-backed)
@@ -14,9 +43,14 @@ const github = require('./github');
 // to the legacy template so PR creation is never blocked on LLM
 // availability. `usage` is undefined when the fallback fires (no API
 // call was made) so callers can skip debiting in that case.
-async function generatePrMetadata({ userMessage, ccSummary, requests, summaries, specs, username, apiKey }) {
+async function generatePrMetadata({ userMessage, ccSummary, requests, summaries, specs, username, apiKey, closingBlock }) {
+  // `closingBlock` (#75) is the deterministic `Closes #N` text. It is
+  // inserted between the body and the footer and is deliberately NOT fed
+  // into the LLM prompt below, so the model can never drop, duplicate, or
+  // paraphrase the closing keywords.
+  const suffix = closingBlock ? `\n\n${closingBlock}` : '';
   const fallbackTitle = `${username}'s changes`;
-  const fallbackBody = `Dev session by ${username} via Usernode`;
+  const fallbackBody = `Dev session by ${username} via Usernode${suffix}`;
 
   // When the caller passes a user's own key (BYOK, #30) we can hit the
   // Anthropic API even if the server has no admin key configured, so
@@ -37,7 +71,7 @@ async function generatePrMetadata({ userMessage, ccSummary, requests, summaries,
     });
     return {
       title: meta.title,
-      body: `${meta.body}\n\n---\n_Dev session by ${username} via Usernode_`,
+      body: `${meta.body}${suffix}\n\n---\n_Dev session by ${username} via Usernode_`,
       usage: meta.usage,
       model: meta.model,
     };
@@ -65,7 +99,7 @@ async function generatePrMetadata({ userMessage, ccSummary, requests, summaries,
 //                 may run ahead of what's actually built), so the prompt
 //                 leans on requests/summaries for the concrete changes.
 async function gatherSessionContext(pool, sessionId, currentCcSummary) {
-  const ctx = { requests: [], summaries: [], specs: [] };
+  const ctx = { requests: [], summaries: [], specs: [], linkedIssues: [], appliedIssues: [] };
   if (pool && sessionId != null) {
     try {
       const { rows } = await pool.query(
@@ -101,11 +135,17 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
         if (c) specTexts.push(c);
       }
       const { rows: liveRows } = await pool.query(
-        `SELECT spec_md FROM chat_sessions WHERE id = $1`,
+        `SELECT spec_md, linked_issues, pr_linked_issues_applied FROM chat_sessions WHERE id = $1`,
         [sessionId]
       );
       const live = (liveRows[0] && liveRows[0].spec_md ? String(liveRows[0].spec_md) : '').trim();
       if (live) specTexts.push(live);
+
+      // Issue linkage (#75). Read from the DB by id so BOTH call sites
+      // (sessions.js dev-turn and server.js orphan recovery) pick it up
+      // regardless of what columns they SELECT'd onto the session object.
+      ctx.linkedIssues = sanitizeIssueNumbers(liveRows[0] && liveRows[0].linked_issues);
+      ctx.appliedIssues = sanitizeIssueNumbers(liveRows[0] && liveRows[0].pr_linked_issues_applied);
 
       const seen = new Set();
       for (const s of specTexts) {
@@ -143,12 +183,21 @@ async function applyPrMetadata({
 
   // Build cumulative context across all of this PR's turns. Falls back to
   // the single current turn when no history is available.
-  const { requests, summaries, specs } = await gatherSessionContext(pool, session && session.id, ccSummary);
+  const { requests, summaries, specs, linkedIssues, appliedIssues } = await gatherSessionContext(pool, session && session.id, ccSummary);
+
+  // Deterministic `Closes #N` block (#75), regenerated from the linked set
+  // on every turn so it's always current and never doubled.
+  const closingBlock = buildClosingBlock(linkedIssues);
 
   const meta = await generatePrMetadata({
-    userMessage, ccSummary, requests, summaries, specs, username, apiKey,
+    userMessage, ccSummary, requests, summaries, specs, username, apiKey, closingBlock,
   });
   const { title: prTitle, body: prBody } = meta;
+
+  // Whether the linked-issue set drifted from what's reflected in the live
+  // PR body. Drives the existing-PR update gate below so a newly-linked
+  // issue reaches GitHub even when the title is unchanged.
+  const issuesChanged = !sameIssueSet(linkedIssues, appliedIssues);
 
   // Debit the platform Haiku call to the session owner. Skip when
   // BYOK is in effect (user's own key paid for it) or the fallback
@@ -178,8 +227,8 @@ async function applyPrMetadata({
       session.pr_url = pr.html_url;
       session.pr_title = prTitle;
       await pool.query(
-        `UPDATE chat_sessions SET pr_number = $1, pr_url = $2, pr_title = $3 WHERE id = $4`,
-        [pr.number, pr.html_url, prTitle, session.id]
+        `UPDATE chat_sessions SET pr_number = $1, pr_url = $2, pr_title = $3, pr_linked_issues_applied = $4 WHERE id = $5`,
+        [pr.number, pr.html_url, prTitle, linkedIssues, session.id]
       );
       if (broadcast) broadcast('pr_created', { prNumber: pr.number, prUrl: pr.html_url, prTitle });
       return { prNumber: pr.number, prUrl: pr.html_url, prTitle };
@@ -189,8 +238,10 @@ async function applyPrMetadata({
     }
   }
 
-  // Existing PR: only hit GitHub if the title actually changed.
-  if (prTitle === session.pr_title) {
+  // Existing PR: hit GitHub if the title changed OR the linked-issue set
+  // changed (#75) — the latter case would otherwise be skipped on a
+  // title-unchanged turn, leaving the new `Closes #N` line off the PR body.
+  if (prTitle === session.pr_title && !issuesChanged) {
     return { prNumber: session.pr_number, prUrl: session.pr_url, prTitle: session.pr_title };
   }
 
@@ -201,8 +252,8 @@ async function applyPrMetadata({
     });
     session.pr_title = prTitle;
     await pool.query(
-      `UPDATE chat_sessions SET pr_title = $1 WHERE id = $2`,
-      [prTitle, session.id]
+      `UPDATE chat_sessions SET pr_title = $1, pr_linked_issues_applied = $2 WHERE id = $3`,
+      [prTitle, linkedIssues, session.id]
     );
     if (broadcast) broadcast('pr_updated', { prNumber: session.pr_number, prUrl: session.pr_url, prTitle });
     return { prNumber: session.pr_number, prUrl: session.pr_url, prTitle };
@@ -212,4 +263,4 @@ async function applyPrMetadata({
   }
 }
 
-module.exports = { generatePrMetadata, applyPrMetadata };
+module.exports = { generatePrMetadata, applyPrMetadata, sanitizeIssueNumbers, buildClosingBlock };
