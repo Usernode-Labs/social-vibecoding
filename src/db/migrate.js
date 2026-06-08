@@ -22,8 +22,70 @@ async function migrate(config) {
   await seedSelfApp(pool, config);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
+  // Must run BEFORE backfillOrphanedSpecDrafts: unwrapping spec_md after that
+  // freezes a wrapped version would leave the frozen copy wrapped while the
+  // live buffer is clean, churning a new version on every boot.
+  await backfillFenceWrappedSpecs(pool);
   await backfillOrphanedSpecDrafts(pool);
   await migrateAppDbsToPerRole(pool, config);
+}
+
+// One-shot, idempotent backfill that unwraps specs a scout/spec-author LLM
+// stored fully enclosed in a single ```markdown … ``` fence — which made the
+// whole spec render as one big code block instead of formatted markdown
+// (session 153; 11 sessions at time of writing). The conservative unwrap can't
+// be expressed in pure SQL, so we read the spec rows, run each through
+// stripSpecWrapperFence(), and write back only the ones that actually change.
+// Covers BOTH the live buffer (chat_sessions.spec_md — what the viewer shows
+// as "latest") and the frozen history (chat_session_specs.content — what older
+// version cards open). Row counts here are tiny (≈ one per session), so a full
+// scan is cheaper than escaping a backtick LIKE prefilter and is robust to
+// leading whitespace.
+//
+// Idempotent by construction: once unwrapped, a value no longer opens with a
+// strippable wrapper, so stripSpecWrapperFence() returns it unchanged and no
+// UPDATE fires on subsequent boots.
+async function backfillFenceWrappedSpecs(pool) {
+  const { stripSpecWrapperFence } = require('../services/spec-format');
+  let liveFixed = 0;
+  let versionFixed = 0;
+  try {
+    const { rows: live } = await pool.query(
+      `SELECT id, spec_md FROM chat_sessions
+        WHERE spec_md IS NOT NULL AND length(btrim(spec_md)) > 0`
+    );
+    for (const row of live) {
+      const unwrapped = stripSpecWrapperFence(row.spec_md);
+      if (unwrapped !== row.spec_md) {
+        await pool.query('UPDATE chat_sessions SET spec_md = $1 WHERE id = $2', [unwrapped, row.id]);
+        liveFixed++;
+      }
+    }
+
+    const { rows: versions } = await pool.query(
+      `SELECT session_id, version, content FROM chat_session_specs
+        WHERE content IS NOT NULL AND length(btrim(content)) > 0`
+    );
+    for (const row of versions) {
+      const unwrapped = stripSpecWrapperFence(row.content);
+      if (unwrapped !== row.content) {
+        await pool.query(
+          'UPDATE chat_session_specs SET content = $1 WHERE session_id = $2 AND version = $3',
+          [unwrapped, row.session_id, row.version]
+        );
+        versionFixed++;
+      }
+    }
+  } catch (err) {
+    log.warn('db', 'fence-wrapped spec backfill skipped (query failed)', { err: err.message });
+    return;
+  }
+
+  if (liveFixed || versionFixed) {
+    log.info('db', 'Unwrapped fence-wrapped specs', { liveFixed, versionFixed });
+  } else {
+    log.debug('db', 'No fence-wrapped specs to backfill');
+  }
 }
 
 // #69: one-shot, idempotent backfill that freezes any orphaned live spec

@@ -109,6 +109,12 @@ function buildSpecPreview(content, max = 400) {
   return `${cut}…`;
 }
 
+// Unwrap a whole-document ```markdown fence a scout/spec-author LLM sometimes
+// emits around the entire spec (see src/services/spec-format.js for the why
+// and the conservative rules). Re-exported below so existing importers and
+// tests can keep requiring it from this module.
+const { stripSpecWrapperFence } = require('../services/spec-format');
+
 // #27: freeze the current spec content as a new immutable version in
 // chat_session_specs and return its version number. Every spec mutation
 // (write_spec / edit_spec / scout) calls this and tags its inline spec
@@ -1856,6 +1862,8 @@ const WRITE_SPEC_TOOL = {
           + '(Goal, Screens, Data Model, Edge Cases, etc.). Prefer decisions over questions: only add a '
           + '"Questions" section for items that genuinely block implementation; put non-blocking notes '
           + 'under "Considerations" or "Deferred work" instead. '
+          + 'Pass RAW markdown — do NOT wrap the whole spec in a code fence (no leading ```markdown / trailing ```), '
+          + 'or it renders as one big code block. '
           + 'The spec renders as standard CommonMark: if a fenced code block must itself contain a '
           + 'triple-backtick fence, wrap the outer block in a four-backtick fence so the inner fence does '
           + 'not close it early and break the rest of the doc.',
@@ -1993,7 +2001,7 @@ function buildMayorMessages(history) {
 // open Spec panel re-renders live. Returns a tool_result summary the
 // phase-2 wrap-up will narrate to the user.
 async function runWriteSpecTool({ pool, session, send, sendStatus, toolInput }) {
-  const content = typeof toolInput?.content === 'string' ? toolInput.content : '';
+  const content = stripSpecWrapperFence(typeof toolInput?.content === 'string' ? toolInput.content : '');
   if (!content.trim()) {
     await sendStatus('write_spec was called with empty content; the spec was not updated.');
     return {
@@ -2098,7 +2106,9 @@ async function runEditSpecTool({ pool, session, send, sendStatus, toolInput }) {
   }
 
   const matchIdx = currentSpec.indexOf(oldText);
-  const updated = currentSpec.slice(0, matchIdx) + newText + currentSpec.slice(matchIdx + oldText.length);
+  const updated = stripSpecWrapperFence(
+    currentSpec.slice(0, matchIdx) + newText + currentSpec.slice(matchIdx + oldText.length)
+  );
 
   await pool.query(
     'UPDATE chat_sessions SET spec_md = $1 WHERE id = $2',
@@ -2175,7 +2185,9 @@ The spec is rendered as markdown in a viewer that follows standard CommonMark fe
 
 Do NOT pad the spec with open questions. Only include a "Questions" section for things that genuinely BLOCK implementation — decisions the coding agent cannot reasonably make on its own and that would change what gets built. Make a sensible default choice wherever you can and state it, rather than asking. Non-blocking items — things worth noting but not required to answer before building — belong under "Considerations" (trade-offs, assumptions, things to keep in mind) or "Deferred work" (out-of-scope or follow-up items), NOT as questions.
 
-Your final assistant message must be ONLY the markdown spec — no preamble, no "I'll investigate...", no "Here's the spec:". The host captures that final message verbatim and stores it as the session's spec doc.`;
+Your final assistant message must be ONLY the markdown spec — no preamble, no "I'll investigate...", no "Here's the spec:". The host captures that final message verbatim and stores it as the session's spec doc.
+
+CRITICAL: Output the spec as RAW markdown. Do NOT wrap your whole response in a code fence — no leading \`\`\`markdown line and no trailing \`\`\`. A whole-document fence makes the spec render as one big code block instead of formatted markdown. Fences are only for actual code/quoted snippets INSIDE the spec.`;
 
   // Ensure the long-lived worker is warm before exec'ing run-cc.sh inside
   // it. Cold-start cost (clone + checkout + sleep wrapper) is paid here on
@@ -2277,7 +2289,7 @@ Your final assistant message must be ONLY the markdown spec — no preamble, no 
       return { toolResultText: summaryParts.join('\n\n') || 'Stopped.', isError: true };
     }
 
-    const ccText = (result.lastResultText || '').trim();
+    const ccText = stripSpecWrapperFence((result.lastResultText || '').trim());
 
     if (result.fatalError) {
       isError = true;
@@ -3085,4 +3097,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, stripSpecWrapperFence };
