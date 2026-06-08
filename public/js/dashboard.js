@@ -11,6 +11,49 @@ function esc(s) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// ── Hover tooltip ─────────────────────────────────────────────
+// Native SVG <title> tooltips are slow and only fire over the painted
+// bar, so columns with a short/zero bar feel "dead". Instead each chart
+// lays a full-height transparent hover rect over every column tagged with
+// data-tip-id, and we look the rich HTML up from this store on hover. The
+// floating div follows the cursor and flips to stay on-screen.
+const tipStore = {};
+function ensureTip() {
+  let t = document.getElementById('dc-tip');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'dc-tip';
+    t.style.cssText = 'position:fixed;z-index:50;pointer-events:none;display:none;max-width:260px;';
+    t.className = 'rounded-md bg-zinc-900 text-zinc-100 text-xs px-2 py-1.5 shadow-lg border border-zinc-700';
+    document.body.appendChild(t);
+  }
+  return t;
+}
+// Wire mouse-following tooltips on a container via event delegation. The
+// container element survives innerHTML swaps, so binding once is enough;
+// the dataset guard makes repeat calls no-ops.
+function attachTooltip(container) {
+  if (!container || container.dataset.tipBound) return;
+  container.dataset.tipBound = '1';
+  const tip = ensureTip();
+  container.addEventListener('mousemove', (e) => {
+    const el = e.target.closest('[data-tip-id]');
+    const html = el && tipStore[el.dataset.tipId];
+    if (!html) { tip.style.display = 'none'; return; }
+    tip.innerHTML = html;
+    tip.style.display = 'block';
+    const pad = 14;
+    const r = tip.getBoundingClientRect();
+    let x = e.clientX + pad;
+    let y = e.clientY + pad;
+    if (x + r.width > window.innerWidth) x = e.clientX - r.width - pad;
+    if (y + r.height > window.innerHeight) y = e.clientY - r.height - pad;
+    tip.style.left = `${Math.max(4, x)}px`;
+    tip.style.top = `${Math.max(4, y)}px`;
+  });
+  container.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+}
+
 // Short "Mar 3" style label for a week-start. The API returns these as
 // 'YYYY-MM-DD' text; we also tolerate full ISO strings / Date objects so
 // a stray value can never render as "Invalid Date".
@@ -293,13 +336,16 @@ function renderTopUsers(d) {
     const y = topPad + (plot - h);
     const cx = x + bw / 2;
     const short = u.name.length > 10 ? u.name.slice(0, 9) + '…' : u.name;
+    const tipId = `top-${i}`;
+    tipStore[tipId] = `<div class="font-semibold">${esc(u.name)}</div>
+      <div class="text-zinc-300">#${i + 1} · ${v} dev session${v === 1 ? '' : 's'}</div>`;
     return `
-      <rect x="${(x + 3).toFixed(1)}" y="${y}" width="${bw - 6}" height="${h}" fill="#8b5cf6" rx="2">
-        <title>${esc(u.name)}: ${v} session${v === 1 ? '' : 's'}</title>
-      </rect>
+      <rect x="${(x + 3).toFixed(1)}" y="${y}" width="${bw - 6}" height="${h}" fill="#8b5cf6" rx="2"></rect>
       <text x="${cx}" y="${y - 3}" text-anchor="middle" font-size="9" fill="currentColor" class="text-zinc-400">${v}</text>
       <text x="${cx}" y="${H - botPad + 12}" text-anchor="end" font-size="9" fill="currentColor"
-            class="text-zinc-400" transform="rotate(-55 ${cx} ${H - botPad + 12})">${esc(short)}</text>`;
+            class="text-zinc-400" transform="rotate(-55 ${cx} ${H - botPad + 12})">${esc(short)}</text>
+      <rect class="dc-hover" x="${x.toFixed(1)}" y="${topPad}" width="${bw.toFixed(1)}" height="${plot}"
+            fill="#8b5cf6" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></rect>`;
   }).join('');
   el.innerHTML = `
     <div class="overflow-x-auto">
@@ -307,6 +353,7 @@ function renderTopUsers(d) {
         ${grid}${bars}
       </svg>
     </div>`;
+  attachTooltip(el);
 }
 
 // ── Kudos giving distribution (weekly) ────────────────────────
@@ -343,6 +390,7 @@ function renderKudos(d) {
     return out;
   })();
   const labels = weeks.map((w) => weekLabel(w.wk));
+  const isCurrent = (i) => i === weeks.length - 1;
   const bars = weeks.map((w, i) => {
     let acc = 0; // running height from baseline, in value units
     const x = i * bw;
@@ -353,10 +401,24 @@ function renderKudos(d) {
       const yBottom = topPad + plot - (acc / max) * plot;
       acc += v;
       const y = yBottom - h;
-      return `<rect x="${(x + 1).toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(1, bw - 2).toFixed(1)}" height="${h.toFixed(1)}" fill="${s.color}">
-        <title>${esc(labels[i])} — ${v} user${v === 1 ? '' : 's'} gave ${s.label} kudo${s.label === '1' ? '' : 's'}</title></rect>`;
+      return `<rect x="${(x + 1).toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(1, bw - 2).toFixed(1)}" height="${h.toFixed(1)}" fill="${s.color}"></rect>`;
     }).join('');
-    return segRects;
+
+    // Per-week breakdown tooltip covering the full column height.
+    const n5 = Number(w.g5) || 0, n4 = Number(w.g4) || 0, n3 = Number(w.g3) || 0;
+    const n2 = Number(w.g2) || 0, n1 = Number(w.g1) || 0, n0 = Number(w.g0) || 0;
+    const totalKudos = n5 * 5 + n4 * 4 + n3 * 3 + n2 * 2 + n1;
+    const givers = n5 + n4 + n3 + n2 + n1;
+    const row = (label, n) => `<div class="flex justify-between gap-3"><span class="text-zinc-400">${label}</span><span>${n}</span></div>`;
+    const tipId = `kudos-${i}`;
+    tipStore[tipId] = `<div class="font-semibold mb-1">${esc(labels[i])}${isCurrent(i) ? ' (current)' : ''}</div>
+      <div class="mb-1">${totalKudos} kudo${totalKudos === 1 ? '' : 's'} from ${givers} giver${givers === 1 ? '' : 's'}</div>
+      <div class="text-[11px] leading-tight">
+        ${row('gave 5', n5)}${row('gave 4', n4)}${row('gave 3', n3)}${row('gave 2', n2)}${row('gave 1', n1)}${row('gave 0', n0)}
+      </div>`;
+    const overlay = `<rect class="dc-hover" x="${x.toFixed(1)}" y="${topPad}" width="${bw.toFixed(1)}" height="${plot}"
+      fill="#8b5cf6" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></rect>`;
+    return segRects + overlay;
   }).join('');
   const legend = segs.slice().reverse().map((s) =>
     `<span class="inline-flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm" style="background:${s.color}"></span>${s.label}</span>`
@@ -373,6 +435,7 @@ function renderKudos(d) {
       <span>${esc(labels[0] || '')}</span>
       <span>${esc(lastLabel)} (current)</span>
     </div>`;
+  attachTooltip(el);
 }
 
 // ── Bootstrap ─────────────────────────────────────────────────

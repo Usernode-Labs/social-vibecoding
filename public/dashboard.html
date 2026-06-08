@@ -18,6 +18,12 @@
       document.documentElement.classList.remove('dark');
     }
   </script>
+  <style>
+    /* Transparent per-column hover targets in the SVG charts. The faint
+       fill on hover indicates which column the tooltip is describing. */
+    .dc-hover { cursor: pointer; }
+    .dc-hover:hover { fill-opacity: 0.10 !important; }
+  </style>
 </head>
 <body class="bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 min-h-screen p-6">
   <div class="max-w-5xl mx-auto">
