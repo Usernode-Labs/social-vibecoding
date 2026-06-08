@@ -26,6 +26,23 @@ function buildClosingBlock(issues) {
   return sanitizeIssueNumbers(issues).map((n) => `Closes #${n}`).join('\n');
 }
 
+// Extract the issue numbers a PR body declares it closes via GitHub's
+// closing keywords (close/closes/closed, fix/fixes/fixed, resolve/resolves/
+// resolved), optionally followed by a colon, e.g. "Closes #75", "fixed: #80".
+// Returns a sanitized (deduped, sorted, positive-int) list. Used by the
+// migrate-time backfill to recover linked_issues for PRs whose bodies carry
+// closing keywords but predate the #75 linkage plumbing. Cross-repo
+// references ("owner/repo#12") are deliberately ignored — linked_issues only
+// models same-repo issues, which is all the pill renders.
+function parseClosingKeywords(body) {
+  if (typeof body !== 'string' || !body) return [];
+  const re = /(?<![A-Za-z0-9_/-])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b\s*:?\s+#(\d+)\b/gi;
+  const found = [];
+  let m;
+  while ((m = re.exec(body)) !== null) found.push(Number(m[1]));
+  return sanitizeIssueNumbers(found);
+}
+
 // Order-independent equality for two sanitized issue-number lists.
 function sameIssueSet(a, b) {
   const x = sanitizeIssueNumbers(a);
@@ -263,4 +280,4 @@ async function applyPrMetadata({
   }
 }
 
-module.exports = { generatePrMetadata, applyPrMetadata, sanitizeIssueNumbers, buildClosingBlock };
+module.exports = { generatePrMetadata, applyPrMetadata, sanitizeIssueNumbers, buildClosingBlock, parseClosingKeywords };

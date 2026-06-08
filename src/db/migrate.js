@@ -27,7 +27,101 @@ async function migrate(config) {
   // live buffer is clean, churning a new version on every boot.
   await backfillFenceWrappedSpecs(pool);
   await backfillOrphanedSpecDrafts(pool);
+  await backfillLinkedIssuesFromPrBodies(pool);
   await migrateAppDbsToPerRole(pool, config);
+}
+
+// One-shot, idempotent backfill that recovers chat_sessions.linked_issues for
+// PRs whose bodies carry GitHub closing keywords (Closes/Fixes/Resolves #N)
+// but predate the #75/#79 linkage plumbing — so the "Closes #N" pills (#80/#82)
+// render on historical PR cards instead of only on brand-new sessions.
+//
+// PR bodies aren't stored locally, so we fetch each candidate once from GitHub
+// (owner/repo resolved from apps.repo_url) and parse the closing keywords. To
+// avoid re-fetching every boot, each processed session is flagged via
+// chat_sessions.linked_issues_backfilled — including the ones whose body had
+// no keywords (so they're not retried forever). A PR we couldn't fetch (network
+// blip, deleted repo, perms) is left UNflagged so a later boot retries it; the
+// set is bounded so that self-heals without churn.
+//
+// Best-effort throughout: every fetch/update is individually guarded and a
+// failure never aborts boot. Sessions that already have linked_issues are
+// excluded by the query (cheap, no network) and need no flag.
+async function backfillLinkedIssuesFromPrBodies(pool) {
+  const github = require('../services/github');
+  const prMetadata = require('../services/pr-metadata');
+
+  if (typeof github.isEnabled === 'function' && !github.isEnabled()) {
+    log.debug('db', 'linked-issues backfill skipped (github disabled)');
+    return;
+  }
+
+  let rows;
+  try {
+    ({ rows } = await pool.query(
+      `SELECT cs.id, cs.pr_number, a.repo_url
+         FROM chat_sessions cs
+         JOIN apps a ON a.id = cs.app_id
+        WHERE cs.pr_number IS NOT NULL
+          AND cs.linked_issues_backfilled = false
+          AND COALESCE(array_length(cs.linked_issues, 1), 0) = 0`
+    ));
+  } catch (err) {
+    log.warn('db', 'linked-issues backfill skipped (query failed)', { err: err.message });
+    return;
+  }
+  if (!rows.length) {
+    log.debug('db', 'No PRs need linked-issues backfill');
+    return;
+  }
+
+  let scanned = 0;
+  let populated = 0;
+  for (const row of rows) {
+    const [, owner, repo] = (row.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+    if (!owner || !repo) continue; // can't resolve repo → leave unflagged
+
+    let body;
+    try {
+      const pr = await github.getPR(owner, repo, row.pr_number);
+      body = pr && pr.body ? String(pr.body) : '';
+    } catch (err) {
+      // Leave unflagged so a later boot retries; bounded by the candidate set.
+      log.debug('db', 'linked-issues backfill: PR fetch failed', {
+        sessionId: row.id, repo: `${owner}/${repo}`, pr: row.pr_number, err: err.message,
+      });
+      continue;
+    }
+    scanned++;
+
+    const issues = prMetadata.parseClosingKeywords(body);
+    try {
+      if (issues.length) {
+        await pool.query(
+          `UPDATE chat_sessions SET linked_issues = $1, linked_issues_backfilled = true WHERE id = $2`,
+          [issues, row.id]
+        );
+        populated++;
+      } else {
+        await pool.query(
+          `UPDATE chat_sessions SET linked_issues_backfilled = true WHERE id = $1`,
+          [row.id]
+        );
+      }
+    } catch (err) {
+      log.warn('db', 'linked-issues backfill: update failed', { sessionId: row.id, err: err.message });
+    }
+  }
+
+  if (scanned) {
+    log.info('db', 'Backfilled linked issues from PR bodies', {
+      candidates: rows.length, scanned, populated,
+    });
+  } else {
+    log.debug('db', 'linked-issues backfill: no PRs successfully scanned this pass', {
+      candidates: rows.length,
+    });
+  }
 }
 
 // One-shot, idempotent backfill that unwraps specs a scout/spec-author LLM

@@ -225,6 +225,18 @@ async function mergePR(owner, repo, prNumber) {
   return data;
 }
 
+// Fetch a single PR (body, state, merged flag, …). Used by the
+// linked-issues backfill to parse closing keywords out of historical PR
+// bodies that predate the #75/#79 linkage plumbing.
+async function getPR(owner, repo, prNumber) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.pulls.get({
+    owner, repo,
+    pull_number: prNumber,
+  });
+  return data;
+}
+
 async function createIssue(owner, repo, { title, body }) {
   const octokit = await getOctokit(owner);
   const { data } = await octokit.rest.issues.create({
@@ -546,6 +558,7 @@ module.exports = {
   closePR,
   reopenPR,
   mergePR,
+  getPR,
   createIssue,
   getCloneUrl,
   safeMention,

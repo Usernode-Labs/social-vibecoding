@@ -256,6 +256,11 @@ CREATE INDEX IF NOT EXISTS chat_sessions_activity_idx ON chat_sessions(status, l
 -- changed linkage even when the title is unchanged.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS linked_issues             INTEGER[] NOT NULL DEFAULT '{}';
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_linked_issues_applied  INTEGER[] NOT NULL DEFAULT '{}';
+-- One-shot marker for the migrate-time backfill that recovers linked_issues
+-- from historical PR bodies (closing keywords) predating the #75 plumbing.
+-- Set true once a session's PR has been fetched + parsed so PRs without
+-- closing keywords aren't re-fetched from GitHub on every boot.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS linked_issues_backfilled  BOOLEAN NOT NULL DEFAULT false;
 
 -- Stale-promoted-PR policy + reversible archive.
 --   promoted_at       : when the session was proposed to the group. With
