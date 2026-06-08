@@ -22,7 +22,63 @@ async function migrate(config) {
   await seedSelfApp(pool, config);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
+  await backfillOrphanedSpecDrafts(pool);
   await migrateAppDbsToPerRole(pool, config);
+}
+
+// #69: one-shot, idempotent backfill that freezes any orphaned live spec
+// buffer as a numbered version. Background: the dev-chat spec viewer used
+// to surface chat_sessions.spec_md as a separate "Draft (live)" entry,
+// distinct from the numbered versions in chat_session_specs. #69 removes
+// that draft surface — numbered versions (v1…vN) become the only spec
+// the viewer shows. For sessions created after #27 (auto-snapshot on
+// every spec mutation) spec_md is always byte-identical to the latest
+// version, so nothing is lost. But PRE-#27 sessions could have edited
+// spec_md after the last manual "Save version", leaving the live buffer
+// newer than any frozen version — that content would become unreachable
+// once the draft view is gone.
+//
+// This snapshots each such session's current spec_md as MAX(version)+1 so
+// every session's latest content is reachable as a numbered version, then
+// the default-to-latest viewer shows it. Forward-only (insert-only, no
+// drops/renames) per the platform self-edit rule.
+//
+// Idempotent by construction: after one run each affected session's latest
+// version content equals spec_md, so the `latest.content <> cs.spec_md`
+// guard excludes it on every subsequent boot — a normal boot inserts
+// nothing.
+async function backfillOrphanedSpecDrafts(pool) {
+  let res;
+  try {
+    res = await pool.query(
+      `INSERT INTO chat_session_specs (session_id, version, content)
+         SELECT cs.id, COALESCE(latest.max_version, 0) + 1, cs.spec_md
+           FROM chat_sessions cs
+           LEFT JOIN LATERAL (
+             SELECT version AS max_version, content
+               FROM chat_session_specs s
+              WHERE s.session_id = cs.id
+              ORDER BY version DESC
+              LIMIT 1
+           ) latest ON TRUE
+          WHERE cs.spec_md IS NOT NULL
+            AND length(btrim(cs.spec_md)) > 0
+            AND (latest.content IS NULL OR latest.content <> cs.spec_md)`
+    );
+  } catch (err) {
+    // Never abort boot over a backfill; the ALTERs in schema.sql run first
+    // so the columns/table exist, but stay defensive regardless.
+    log.warn('db', 'orphaned spec draft backfill skipped (query failed)', { err: err.message });
+    return;
+  }
+
+  if (res.rowCount) {
+    log.info('db', 'Froze orphaned live spec drafts as numbered versions', {
+      inserted: res.rowCount,
+    });
+  } else {
+    log.debug('db', 'No orphaned live spec drafts to backfill');
+  }
 }
 
 // #58: one-shot, idempotent backfill of votes_required / active_users_at_merge
