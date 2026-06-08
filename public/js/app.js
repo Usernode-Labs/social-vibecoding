@@ -576,6 +576,8 @@ const App = {
         // running yet. Now that we have a URL, surface it.
         const shareBtn = document.getElementById('app-share-btn');
         if (shareBtn) shareBtn.classList.remove('hidden');
+        const drawerShareRow = document.getElementById('drawer-row-share');
+        if (drawerShareRow) drawerShareRow.classList.remove('hidden');
         AppView.refreshToken().then(() => {
           // Re-check the tab — the user may have switched to group/dev
           // chat while refreshToken() was in flight. Without this guard
@@ -757,10 +759,87 @@ const App = {
     }
   },
 
+  // Slide-out navigation drawer for ≤640px viewports.
+  HeaderMenu: {
+    open() {
+      const panel = document.getElementById('header-menu-panel');
+      const overlay = document.getElementById('header-menu-overlay');
+      const btn = document.getElementById('header-menu-btn');
+      if (!panel) return;
+      // Sync the BYOK dot state at open time.
+      const byokSrc = document.getElementById('settings-byok-dot');
+      const byokDst = document.getElementById('drawer-byok-dot');
+      if (byokSrc && byokDst) {
+        byokDst.classList.toggle('hidden', byokSrc.classList.contains('hidden'));
+      }
+      overlay.classList.remove('hidden');
+      // Force a reflow so the transition fires (element was display:none).
+      overlay.getBoundingClientRect();
+      overlay.setAttribute('data-open', '');
+      panel.setAttribute('data-open', '');
+      btn.setAttribute('aria-expanded', 'true');
+      btn.setAttribute('aria-label', 'Close menu');
+      const closeBtn = document.getElementById('header-menu-close');
+      if (closeBtn) closeBtn.focus();
+    },
+    close() {
+      const panel = document.getElementById('header-menu-panel');
+      const overlay = document.getElementById('header-menu-overlay');
+      const btn = document.getElementById('header-menu-btn');
+      if (!panel) return;
+      panel.removeAttribute('data-open');
+      overlay.removeAttribute('data-open');
+      btn.setAttribute('aria-expanded', 'false');
+      btn.setAttribute('aria-label', 'Open menu');
+      // Hide overlay after the slide-out transition finishes.
+      setTimeout(() => overlay.classList.add('hidden'), 200);
+    },
+    init() {
+      const btn = document.getElementById('header-menu-btn');
+      if (!btn) return;
+      btn.addEventListener('click', () => App.HeaderMenu.open());
+      document.getElementById('header-menu-close')
+        .addEventListener('click', () => App.HeaderMenu.close());
+      document.getElementById('header-menu-overlay')
+        .addEventListener('click', () => App.HeaderMenu.close());
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          const panel = document.getElementById('header-menu-panel');
+          if (panel && panel.hasAttribute('data-open')) App.HeaderMenu.close();
+        }
+      });
+      // Drawer row actions — each closes the menu after triggering its action.
+      document.getElementById('drawer-row-leaderboard')
+        .addEventListener('click', () => App.HeaderMenu.close());
+      document.getElementById('drawer-row-dev-console')
+        .addEventListener('click', () => {
+          App.HeaderMenu.close();
+          if (window.DevConsole) DevConsole.toggle();
+        });
+      document.getElementById('drawer-row-share')
+        .addEventListener('click', () => {
+          App.HeaderMenu.close();
+          if (window.AppView) AppView.openShareModal();
+        });
+      document.getElementById('drawer-row-feedback')
+        .addEventListener('click', () => {
+          App.HeaderMenu.close();
+          // Reuse the existing feedback button click to avoid duplicating logic.
+          document.getElementById('feedback-btn').click();
+        });
+      document.getElementById('drawer-row-settings')
+        .addEventListener('click', () => {
+          App.HeaderMenu.close();
+          document.getElementById('settings-btn').click();
+        });
+    },
+  },
+
   bindEvents() {
     // Note: the "Create new app" entry point lives in the home feed
     // now (see Home.wireCreateButtons) — no static header button to
     // bind here anymore.
+    App.HeaderMenu.init();
     document.getElementById('create-cancel').addEventListener('click', App.hideCreateModal);
     document.getElementById('create-modal').addEventListener('click', (e) => {
       if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) App.hideCreateModal();
@@ -993,6 +1072,10 @@ const App = {
     document.getElementById('back-btn').classList.remove('hidden');
     document.getElementById('app-github-link').classList.add('hidden');
     document.getElementById('app-share-btn').classList.add('hidden');
+    const _drg = document.getElementById('drawer-row-github');
+    const _drs = document.getElementById('drawer-row-share');
+    if (_drg) _drg.classList.add('hidden');
+    if (_drs) _drs.classList.add('hidden');
     App.setHeaderTitle('Kudos leaderboard');
     App._inLeaderboard = true;
     if (window.Leaderboard?.open) Leaderboard.open();
@@ -1260,6 +1343,8 @@ const App = {
     if (ghLink && AppView.appData?.repo_url) {
       ghLink.href = AppView.appData.repo_url;
       ghLink.classList.remove('hidden');
+      const drg = document.getElementById('drawer-row-github');
+      if (drg) { drg.href = AppView.appData.repo_url; drg.classList.remove('hidden'); }
     }
     // Show Share button only for apps that have a real running URL.
     // Apps in `creating`/`error`/`awaiting_secrets` have no URL to share;
@@ -1267,6 +1352,8 @@ const App = {
     const shareBtn = document.getElementById('app-share-btn');
     if (shareBtn && AppView.appData?.status === 'running' && AppView.appData?.url) {
       shareBtn.classList.remove('hidden');
+      const drs = document.getElementById('drawer-row-share');
+      if (drs) drs.classList.remove('hidden');
     }
     // The App tab iframes appData.url, which doesn't resolve for the self-
     // hosted platform row (no per-slug subdomain). Land on Group Chat
@@ -1285,6 +1372,10 @@ const App = {
     document.getElementById('back-btn').classList.add('hidden');
     document.getElementById('app-github-link').classList.add('hidden');
     document.getElementById('app-share-btn').classList.add('hidden');
+    const _drgH = document.getElementById('drawer-row-github');
+    const _drsH = document.getElementById('drawer-row-share');
+    if (_drgH) _drgH.classList.add('hidden');
+    if (_drsH) _drsH.classList.add('hidden');
     App.setHeaderTitle('dApps');
     document.getElementById('app-content').innerHTML = '';
     App.updateHash();
