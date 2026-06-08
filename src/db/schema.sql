@@ -219,16 +219,20 @@ CREATE TABLE IF NOT EXISTS pr_undo_votes (
 );
 CREATE INDEX IF NOT EXISTS pr_undo_votes_session_idx ON pr_undo_votes(session_id);
 
--- Spec-stage: per-session live markdown spec doc + version history.
--- spec_md is the live draft (written by the Mayor's write_spec tool or
--- by a scout dispatch — user hand-edits via PUT /spec were dropped).
--- chat_session_specs holds frozen snapshots: rows are inserted by the
--- user clicking "Save version" in the spec viewer (POST /api/sessions/:id/specs),
--- which copies the current spec_md verbatim. Old sessions also have
--- rows from the now-removed /build-spec route — those carry commit_sha
--- and pr_number; manually-saved rows leave both NULL and the UI
--- degrades gracefully (no PR link rendered). shared_to_group_at is
--- set when the user posts a snapshot into the app's group chat.
+-- Spec-stage: per-session markdown spec doc + version history.
+-- spec_md is the working buffer (written by the Mayor's write_spec tool
+-- or by a scout dispatch — user hand-edits via PUT /spec were dropped).
+-- chat_session_specs holds the immutable numbered versions (v1…vN) that
+-- are the single spec surface the dev-chat viewer presents (#69). Rows
+-- are inserted automatically by snapshotSessionSpec() on every spec
+-- mutation (#27), so spec_md is always byte-identical to the latest
+-- version. The manual "Save version" route (POST /api/sessions/:id/specs)
+-- was retired in #69 — it only ever re-snapped that same content.
+-- Old sessions also have rows from the now-removed /build-spec route —
+-- those carry commit_sha and pr_number; auto-snapshotted rows leave both
+-- NULL and the UI degrades gracefully (no PR link rendered).
+-- shared_to_group_at is set when the user posts a version into the
+-- app's group chat.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS spec_md TEXT NOT NULL DEFAULT '';
 
 -- Session auto-pause: persisted "last interacted with" timestamp. Bumped

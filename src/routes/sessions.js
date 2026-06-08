@@ -102,11 +102,10 @@ async function loadSessionSpec(pool, sessionId) {
 // (write_spec / edit_spec / scout) calls this and tags its inline spec
 // preview card with the returned version, so clicking an OLDER card
 // opens exactly the content it represented — instead of always falling
-// back to the live draft (which only ever showed the most recent spec).
-// The version sequence is shared with the user's manual "Save version"
-// button (POST /specs); both use MAX(version)+1. Best-effort: returns
-// null on failure so the card falls back to the live draft (the prior,
-// pre-#27 behavior) rather than blocking the spec edit.
+// back to the latest spec. Since #69 retired the manual "Save version"
+// route, this is the SOLE writer of new rows in chat_session_specs;
+// it uses MAX(version)+1. Best-effort: returns null on failure so the
+// card falls back to the latest spec rather than blocking the edit.
 async function snapshotSessionSpec(pool, sessionId, content) {
   try {
     const { rows } = await pool.query(
@@ -1257,20 +1256,25 @@ function sessionRoutes(config) {
 
   // ===== Spec stage endpoints =====
   //
-  // The session has a live spec_md draft (overwritten by Mayor's
-  // write_spec / edit_spec / dispatch_scout) and an append-only history
-  // in chat_session_specs. A version is frozen on every spec mutation
-  // (#27, via snapshotSessionSpec) so each inline spec card can reopen
-  // its own content, plus whenever the user clicks "Save version".
-  // The dev-chat UI surfaces the live draft in a read-only side-panel
-  // viewer (see DevChat.specViewer in public/js/dev-chat.js); the user
-  // ships the spec by asking the Mayor to dispatch the coding agent in
-  // chat — there is no in-UI "Build from spec" button.
+  // The session has a working buffer (chat_sessions.spec_md, overwritten
+  // by Mayor's write_spec / edit_spec / dispatch_scout) and an append-
+  // only history of immutable numbered versions in chat_session_specs.
+  // A version is frozen on every spec mutation (#27, via
+  // snapshotSessionSpec), so spec_md is always byte-identical to the
+  // latest version. Numbered versions (v1…vN) are the single spec
+  // surface the dev-chat viewer presents (#69 removed the separate
+  // "Draft (live)" entry and the manual "Save version" step); spec_md
+  // is kept purely as the in-process anchor buffer for edit_spec and as
+  // a theme signal for PR metadata. The dev-chat UI surfaces the spec
+  // in a read-only side-panel viewer (see DevChat.specViewer in
+  // public/js/dev-chat.js); the user ships it by asking the Mayor to
+  // dispatch the coding agent in chat — there is no in-UI "Build from
+  // spec" button.
   //
-  // Read-only fetch of the live draft. Returns metadata for past
-  // versions so the dev-chat can populate its version selector without
-  // a second round-trip; full content of past versions comes from
-  // GET /specs/:version below.
+  // Read-only fetch returning the latest spec content (spec_md, == the
+  // latest version) plus metadata for every past version so the dev-chat
+  // can populate its version selector without a second round-trip; full
+  // content of older versions comes from GET /specs/:version below.
   router.get('/api/sessions/:id/spec', async (req, res) => {
     try {
       const { rows: sessionRows } = await pool.query(
@@ -1343,81 +1347,15 @@ function sessionRoutes(config) {
     }
   });
 
-  // POST /api/sessions/:id/specs
-  //   Save the current chat_sessions.spec_md draft as a new immutable
-  //   row in chat_session_specs. Triggered by the user clicking
-  //   "Save version" in the spec viewer — the only writer of new rows
-  //   in this table now (the legacy /build-spec route was removed in
-  //   favor of letting the Mayor handle dispatches from chat).
-  //
-  //   Idempotent against rapid double-click: if the immediately-
-  //   preceding version's content is byte-identical to the current
-  //   draft, returns that existing row instead of inserting a
-  //   duplicate. We compare ONLY against the most recent version, not
-  //   the entire history, so the legitimate "AI rewrote, I reverted,
-  //   I save again" flow still produces a fresh row at vN+1 carrying
-  //   the same bytes as some earlier vK.
-  //
-  //   commit_sha and pr_number stay NULL — manually-saved rows aren't
-  //   pinned to a git commit. Old rows from the legacy /build-spec
-  //   route still carry their populated values; co-existence is fine
-  //   and the UI degrades gracefully (PR link omitted when null).
-  router.post('/api/sessions/:id/specs', async (req, res) => {
-    const sessionId = parseInt(req.params.id, 10);
-    if (Number.isNaN(sessionId)) return res.status(400).json({ error: 'Bad session id' });
-
-    try {
-      const { rows: sessionRows } = await pool.query(
-        `SELECT cs.id, cs.spec_md
-         FROM chat_sessions cs
-         WHERE cs.id = $1 AND cs.user_id = $2`,
-        [sessionId, req.user.id]
-      );
-      if (!sessionRows.length) return res.status(404).json({ error: 'Session not found' });
-
-      const content = sessionRows[0].spec_md || '';
-      if (!content.trim()) {
-        return res.status(400).json({ error: 'Cannot save an empty draft' });
-      }
-
-      const { rows: latestRows } = await pool.query(
-        `SELECT version, content, built_at, shared_to_group_at
-         FROM chat_session_specs
-         WHERE session_id = $1
-         ORDER BY version DESC
-         LIMIT 1`,
-        [sessionId]
-      );
-      if (latestRows.length && latestRows[0].content === content) {
-        return res.json({
-          version: latestRows[0].version,
-          built_at: latestRows[0].built_at,
-          char_count: content.length,
-          shared_to_group_at: latestRows[0].shared_to_group_at,
-          deduped: true,
-        });
-      }
-
-      const nextVersion = latestRows.length ? latestRows[0].version + 1 : 1;
-      const { rows: insertedRows } = await pool.query(
-        `INSERT INTO chat_session_specs (session_id, version, content)
-         VALUES ($1, $2, $3)
-         RETURNING version, built_at`,
-        [sessionId, nextVersion, content]
-      );
-
-      res.json({
-        version: insertedRows[0].version,
-        built_at: insertedRows[0].built_at,
-        char_count: content.length,
-        shared_to_group_at: null,
-        deduped: false,
-      });
-    } catch (err) {
-      log.error('sessions', 'Failed to save spec version', { message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
+  // (#69) The manual POST /api/sessions/:id/specs "Save version" route
+  // was retired. Every Mayor spec mutation (write_spec / edit_spec /
+  // scout) already auto-freezes an immutable numbered version via
+  // snapshotSessionSpec(), so the live spec_md is always byte-identical
+  // to the latest chat_session_specs row. The old route just re-snapped
+  // that same content and almost always hit its own dedup branch — a
+  // no-op. snapshotSessionSpec() is now the sole writer of new versions;
+  // the dev-chat spec viewer shares any numbered version directly with
+  // no save step in between.
 
   // Share a frozen spec snapshot into the app's group chat. The group
   // chat renders the message as a "spec card" with a snippet + view-
