@@ -32,6 +32,9 @@
     }
   </script>
   <script src="https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs/qrcode.min.js"></script>
+  <!-- marked + DOMPurify power renderMarkdown() in dev-chat.js. SRI hashes
+       below verified against the pinned npm dist files (sha384). If either
+       script fails to load, renderMarkdown falls back to a raw <pre> view. -->
   <script src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js" integrity="sha384-948ahk4ZmxYVYOc+rxN1H2gM1EJ2Duhp7uHtZ4WSLkV4Vtx5MUqnV+l7u9B+jFv+" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.4/dist/purify.min.js" integrity="sha384-ljaibG+rFiOlF9Y2x5ulbWhmu7GWQMKeAPHRiLXj0iozfwSIrIs1Ud1WeQ0Z+FqY" crossorigin="anonymous"></script>
   <link rel="stylesheet" href="/css/app.css">
