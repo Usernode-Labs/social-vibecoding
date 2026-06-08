@@ -836,7 +836,19 @@ function sessionRoutes(config) {
             });
 
             const issuesCalls = mayor1.toolUses.filter((t) => t.name === 'list_github_issues');
-            if (!issuesCalls.length || issuesIters >= MAYOR_ISSUES_MAX_ITERS) break;
+            // Parallel tool use is enabled, so the Mayor may emit
+            // list_github_issues ALONGSIDE a terminal tool in one response.
+            // If a terminal tool is present we must NOT re-invoke here: the
+            // re-invocation only answers the issues tool_use, leaving the
+            // terminal tool_use dangling -> Anthropic 400. Break instead and
+            // let the phase-2 wrap-up resolve every tool_use (it already
+            // re-fetches any stray list_github_issues).
+            const hasTerminalTool = mayor1.toolUses.some((t) =>
+              t.name === 'dispatch_claude_code'
+              || t.name === 'dispatch_scout'
+              || t.name === 'edit_spec'
+              || t.name === 'write_spec');
+            if (!issuesCalls.length || hasTerminalTool || issuesIters >= MAYOR_ISSUES_MAX_ITERS) break;
             issuesIters += 1;
 
             // Bill each intermediate data-tool turn — the Anthropic call
