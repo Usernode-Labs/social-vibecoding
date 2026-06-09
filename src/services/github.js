@@ -152,6 +152,26 @@ async function pushFiles(owner, repo, files, { branch = 'main', message = 'Initi
   return newCommit;
 }
 
+// Read a single file's decoded text contents from a repo at `ref`
+// (default the repo's default branch). Returns the string, or null when
+// the file doesn't exist (404) so callers can branch on "create vs
+// edit" without try/catch noise. Other errors propagate.
+async function getFileContent(owner, repo, filePath, ref) {
+  const octokit = await getOctokit(owner);
+  try {
+    const params = { owner, repo, path: filePath };
+    if (ref) params.ref = ref;
+    const { data } = await octokit.rest.repos.getContent(params);
+    // getContent returns an array for directories; a file has a base64
+    // `content` field we decode to UTF-8.
+    if (Array.isArray(data) || typeof data.content !== 'string') return null;
+    return Buffer.from(data.content, data.encoding || 'base64').toString('utf-8');
+  } catch (err) {
+    if (err.status === 404) return null;
+    throw err;
+  }
+}
+
 async function createBranch(owner, repo, branchName) {
   const octokit = await getOctokit(owner);
   const { data: ref } = await octokit.rest.git.getRef({ owner, repo, ref: 'heads/main' });
@@ -552,6 +572,7 @@ module.exports = {
   getInstallationToken,
   createRepo,
   pushFiles,
+  getFileContent,
   createBranch,
   createPR,
   updatePR,

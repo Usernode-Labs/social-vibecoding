@@ -10,7 +10,7 @@ const appSecrets = require('../services/app-secrets');
 const appManifest = require('../services/app-manifest');
 const staging = require('../services/staging');
 const { drainGuard } = require('../services/lifecycle');
-const { appCreateLimiter } = require('../middleware/rate-limits');
+const { appCreateLimiter, issueCreateLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 
 // Local-dev URL fallback ("http://localhost:<hostport>" instead of the
@@ -688,6 +688,122 @@ function appRoutes(config) {
       res.json(result);
     } catch (err) {
       log.error('apps', 'Manual drift check failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: err.message || 'Internal server error' });
+    }
+  });
+
+  // Rename an app by opening a PR that edits (or creates) the top-level
+  // `name` field in the repo's dapp.json. The rename does NOT take effect
+  // immediately — the PR drops into the existing vote panel as a promoted
+  // chat_sessions row and, when it reaches majority and merges, the prod
+  // rebuild re-reads dapp.json and reconciles apps.name (see
+  // services/app-manifest.js reconcileAppName + staging.rebuildProduction).
+  // This replaces the old issue-based rename proposal in routes/issues.js.
+  router.post('/api/apps/:slug/rename', drainGuard, issueCreateLimiter, async (req, res) => {
+    const newName = typeof req.body?.newName === 'string' ? req.body.newName.trim() : '';
+    if (!newName) {
+      return res.status(400).json({ error: 'newName is required' });
+    }
+    if (newName.length < 3) {
+      return res.status(400).json({ error: 'Name must be at least 3 characters' });
+    }
+    if (newName.length > appManifest.MAX_APP_NAME_LENGTH) {
+      return res.status(400).json({
+        error: `Name must be ${appManifest.MAX_APP_NAME_LENGTH} characters or fewer`,
+      });
+    }
+
+    try {
+      const { rows: appRows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
+      if (!appRows.length) return res.status(404).json({ error: 'App not found' });
+      const app = appRows[0];
+
+      if (newName.toLowerCase() === (app.name || '').toLowerCase()) {
+        return res.status(400).json({ error: 'App is already named that' });
+      }
+
+      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+        return res.status(503).json({
+          error: 'Renames need GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+        });
+      }
+      if (!app.repo_url) {
+        return res.status(400).json({ error: 'App has no GitHub repository to open a PR against' });
+      }
+      const [, owner, repo] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+      if (!owner || !repo) {
+        return res.status(400).json({ error: 'Could not parse the app repository URL' });
+      }
+
+      // Build the updated dapp.json. Preserve existing fields when the
+      // file is present + parseable; create a minimal manifest when it's
+      // missing (legacy apps predating the manifest). A malformed file is
+      // already treated as empty by the deploy reader, so falling back to
+      // a fresh object there is safe.
+      let manifestObj = { secrets: [] };
+      const existing = await github.getFileContent(owner, repo, appManifest.MANIFEST_FILENAME, 'main');
+      if (existing != null) {
+        try {
+          const parsed = JSON.parse(existing);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) manifestObj = parsed;
+        } catch {
+          log.warn('apps', 'Existing dapp.json unparseable; writing fresh manifest', { slug: app.slug });
+        }
+      }
+      manifestObj.name = newName;
+      const updatedContent = `${JSON.stringify(manifestObj, null, 2)}\n`;
+
+      // Fresh branch off main. The timestamp suffix avoids collisions if
+      // a prior rename attempt left a stale branch on the remote.
+      const branch = `rename/${app.slug}-${Date.now()}`;
+      await github.createBranch(owner, repo, branch);
+      await github.pushFiles(
+        owner, repo,
+        [{ path: appManifest.MANIFEST_FILENAME, content: updatedContent }],
+        { branch, message: `Rename to "${newName}"` }
+      );
+
+      const prTitle = `Rename to "${newName}"`;
+      const prBody =
+        `${req.user.username} (via Usernode) proposed renaming "${app.name}" to "${newName}".\n\n` +
+        `This PR updates the \`name\` field in \`dapp.json\`. It still needs a regular ` +
+        `merge vote to land — vote in the app's group chat panel. The new name applies ` +
+        `automatically once the PR merges and the app redeploys.`;
+      const prData = await github.createPR(owner, repo, { branch, title: prTitle, body: prBody });
+
+      // Drop the rename PR straight into the vote panel as a promoted
+      // session, mirroring the revert-PR flow (routes/votes.js).
+      const { rows: sessRows } = await pool.query(
+        `INSERT INTO chat_sessions
+           (app_id, user_id, branch_name, pr_number, pr_url, pr_title, status)
+         VALUES ($1, $2, $3, $4, $5, $6, 'promoted')
+         RETURNING id`,
+        [app.id, req.user.id, branch, prData.number, prData.html_url, prTitle]
+      );
+      const sessionId = sessRows[0].id;
+
+      const { sendSystemMessage, pushVoteUpdate } = require('../services/ws');
+      const { getActiveUserStats } = require('../services/active-users');
+      const { active: activeUsers, majority } = await getActiveUserStats(pool, app.id);
+      await sendSystemMessage(pool, app.id,
+        `${req.user.username} proposed renaming to "${newName}". Opened PR #${prData.number} — needs ${majority}/${activeUsers} votes to land.`,
+        'vote',
+        { vote: { sessionId, prNumber: prData.number } }
+      ).catch((err) => log.warn('apps', 'Rename chat msg failed', { err: err.message }));
+
+      pushVoteUpdate({ sessionId, appSlug: app.slug, merged: false });
+
+      log.info('apps', 'Rename PR opened', {
+        slug: app.slug, prNumber: prData.number, newName, by: req.user.username,
+      });
+      res.status(201).json({
+        ok: true,
+        sessionId,
+        prNumber: prData.number,
+        prUrl: prData.html_url,
+      });
+    } catch (err) {
+      log.error('apps', 'Rename PR failed', { slug: req.params.slug, message: err.message });
       res.status(500).json({ error: err.message || 'Internal server error' });
     }
   });

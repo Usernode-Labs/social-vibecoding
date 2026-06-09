@@ -11,15 +11,12 @@ const staging = require('../services/staging');
 const { encrypt, decrypt } = require('../services/secrets');
 const { issueCreateLimiter } = require('../middleware/rate-limits');
 
-const VALID_KINDS = ['general', 'rename', 'secret_change'];
-const MAX_APP_NAME_LENGTH = 64;
+// Renames are no longer an issue kind — they open a dapp.json `name` PR
+// via POST /api/apps/:slug/rename (see src/routes/apps.js). The vote-apply
+// path below (maybeApplyRenameProposal) is retained only so any rename
+// issues already open at rollout can still resolve.
+const VALID_KINDS = ['general', 'secret_change'];
 const MAX_SECRET_VALUE_LENGTH = 4096;
-
-// Caps on concurrent open rename proposals per app. The per-user cap stops
-// one user from flooding a group chat with rename votes; the per-app cap
-// keeps the voting UI readable.
-const MAX_OPEN_RENAMES_PER_USER = 1;
-const MAX_OPEN_RENAMES_PER_APP = 3;
 
 function issueRoutes(config) {
   const router = Router();
@@ -123,55 +120,6 @@ function issueRoutes(config) {
           `${req.user.username} (via Usernode) proposed ${
             action === 'delete' ? 'removing' : 'setting'
           } the env var "${key}". Auto-applies + redeploys when a majority of active users vote up.`;
-      } else if (kind === 'rename') {
-        const newName = typeof payload?.newName === 'string' ? payload.newName.trim() : '';
-        if (!newName) return res.status(400).json({ error: 'payload.newName is required for rename proposals' });
-        if (newName.length > MAX_APP_NAME_LENGTH) {
-          return res.status(400).json({ error: `New name must be ${MAX_APP_NAME_LENGTH} characters or fewer` });
-        }
-        if (newName.toLowerCase() === app.name.toLowerCase()) {
-          return res.status(400).json({ error: 'App is already named that' });
-        }
-
-        // Reject duplicate open rename proposals for the same target name.
-        const { rows: dupe } = await pool.query(
-          `SELECT id FROM issues
-           WHERE app_id = $1 AND kind = 'rename' AND status = 'open'
-             AND LOWER(payload->>'newName') = LOWER($2)
-           LIMIT 1`,
-          [app.id, newName]
-        );
-        if (dupe.length) {
-          return res.status(409).json({ error: 'A rename proposal with that name is already open' });
-        }
-
-        // Cap open rename proposals: 1 per user per app, 3 per app total.
-        const { rows: capRows } = await pool.query(
-          `SELECT
-             COUNT(*) FILTER (WHERE kind = 'rename' AND status = 'open') AS app_open,
-             COUNT(*) FILTER (WHERE kind = 'rename' AND status = 'open' AND created_by = $2) AS user_open
-           FROM issues WHERE app_id = $1`,
-          [app.id, req.user.id]
-        );
-        const appOpen = parseInt(capRows[0].app_open, 10) || 0;
-        const userOpen = parseInt(capRows[0].user_open, 10) || 0;
-        if (userOpen >= MAX_OPEN_RENAMES_PER_USER) {
-          return res.status(409).json({
-            error: 'You already have an open rename proposal for this app',
-          });
-        }
-        if (appOpen >= MAX_OPEN_RENAMES_PER_APP) {
-          return res.status(409).json({
-            error: `This app has reached the max of ${MAX_OPEN_RENAMES_PER_APP} open rename proposals`,
-          });
-        }
-
-        payload = { newName };
-        title = `Rename to "${newName}"`;
-        // No `@` prefix — this renders on github.com and would ping whoever
-        // happens to own that GitHub handle.
-        description = description?.trim() ||
-          `${req.user.username} (via Usernode) proposed renaming "${app.name}" to "${newName}". Auto-applies when a majority of active users vote up.`;
       } else {
         if (!title?.trim()) return res.status(400).json({ error: 'Title required' });
         title = title.trim();
@@ -202,9 +150,7 @@ function issueRoutes(config) {
       );
 
       let chatPrefix;
-      if (kind === 'rename') {
-        chatPrefix = `${req.user.username} proposed renaming to "${payload.newName}"`;
-      } else if (kind === 'secret_change') {
+      if (kind === 'secret_change') {
         chatPrefix = payload.action === 'delete'
           ? `${req.user.username} proposed removing secret ${payload.key}`
           : `${req.user.username} proposed setting secret ${payload.key}`;

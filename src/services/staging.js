@@ -352,6 +352,15 @@ async function rebuildProductionInner(config, app) {
       `UPDATE apps SET manifest_snapshot = $1 WHERE id = $2`,
       [JSON.stringify(manifest), app.id]
     );
+
+    // dapp.json's top-level `name` takes precedence over the platform
+    // name. Reconciling here is what makes a merged rename PR (which
+    // edits dapp.json's name and triggers this rebuild) actually apply
+    // the new display name — no rename-specific apply code needed.
+    // No-op when the manifest carries no name; best-effort so a rename
+    // hiccup never fails the rebuild.
+    await appManifest.reconcileAppName(prodPool, app, manifest)
+      .catch((err) => log.warn('staging', 'Name reconcile failed', { app: app.slug, err: err.message }));
     const stored = await appSecrets.getRawValues(prodPool, app.id, config.jwtSecret);
     const merge = appSecrets.mergeForDeploy(
       manifest, stored, appSecrets.platformDefaultsFromEnv()

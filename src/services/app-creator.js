@@ -150,6 +150,13 @@ async function createApp(config, appRow) {
       [JSON.stringify(manifest), appId]
     );
 
+    // dapp.json's top-level `name` takes precedence over the platform
+    // name: reconcile apps.name to it now (no-op when the manifest
+    // carries no name). Best-effort — a rename hiccup must not fail
+    // app creation.
+    await appManifest.reconcileAppName(pool, { id: appId, slug, name }, manifest)
+      .catch((err) => log.warn('app-creator', 'Name reconcile failed', { appId, err: err.message }));
+
     const storedValues = await appSecrets.getRawValues(pool, appId, config.jwtSecret);
     const merge = appSecrets.mergeForDeploy(
       manifest, storedValues, appSecrets.platformDefaultsFromEnv()
