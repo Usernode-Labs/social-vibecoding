@@ -386,9 +386,6 @@ const Notifications = {
       // regardless of count. Only app-less ("general") notifications fall
       // back to a plain leaf row when there's a single one.
       if (g.items.length === 1 && g.appId == null) {
-        // Single app-less ("General") notification renders as a plain leaf
-        // row. Its violet left line comes from renderRow itself (#103), so
-        // no group-wrapper line is needed here.
         entries.push(renderRow(g.items[0]));
         continue;
       }
@@ -503,10 +500,7 @@ function unreadDot(isUnread) {
 function renderGroup(g, isExpanded) {
   const appLine = escapeHtml(g.appName || 'General');
   const hasUnread = g.unreadCount > 0;
-  // Subtle background tint for group headers with unread activity. The
-  // violet left accent line lives on each row (see renderRow), not the
-  // header, so this is purely a background cue.
-  const accent = hasUnread ? 'bg-violet-500/5' : '';
+  const accent = hasUnread ? 'bg-violet-500/5 border-l-2 border-violet-500' : 'border-l-2 border-transparent';
   const chevron = isExpanded ? '▾' : '▸'; // ▾ / ▸
   // Just the number, centered in a fixed-size pill (no "new" wording).
   // Unread groups show the unread count in the violet accent pill; fully
@@ -539,8 +533,6 @@ function renderGroup(g, isExpanded) {
     ${markReadBtn}
   </div>`;
 
-  // #103: no group-wrapper accent line — the violet left line now lives on
-  // each row (see renderRow). Collapsed groups render just the header.
   if (!isExpanded) return header;
 
   // Expanded: reveal up to `visible` leaves (default GROUP_LEAF_CAP, grown
@@ -559,8 +551,6 @@ function renderGroup(g, isExpanded) {
     // All loaded leaves shown, but older pages may add more to this group.
     more = `<button data-group-showmore="${escapeHtml(g.key)}" class="${btnCls}">Show more →</button>`;
   }
-  // Expanded: header followed by its leaf rows (each carrying its own
-  // violet left line via renderRow) and the inline "Show more" button.
   return `${header}<div class="pl-2 bg-zinc-50/50 dark:bg-zinc-950/30">${leaves}${more}</div>`;
 }
 
@@ -586,15 +576,10 @@ function previewText(n) {
 }
 
 function renderRow(n) {
-  // #103: every row carries the violet left accent line, read or unread,
-  // so a notification never "loses its line" when marked read. ONLY the
-  // background tint is read-conditional (unread = tinted, read = plain);
-  // the unread dot added below is the other read/unread cue. The old
-  // far-left group-wrapper line was removed so there's exactly one violet
-  // line per row, flush against the row content.
-  const unreadCls = n.readAt
-    ? 'border-l-2 border-violet-500'
-    : 'bg-violet-500/5 border-l-2 border-violet-500';
+  // #103: keep the violet left line on every row, read or unread, so a
+  // notification never "loses its line" when read. Only the background
+  // tint stays unread-conditional (the unread dot below is the other cue).
+  const unreadCls = n.readAt ? 'border-l-2 border-violet-500' : 'bg-violet-500/5 border-l-2 border-violet-500';
   const appLine = n.appName ? escapeHtml(n.appName) : 'app';
   const who = n.sourceUsername ? escapeHtml(n.sourceUsername) : 'someone';
   // Leading unread dot (or an equal-width spacer when read) on the meta
