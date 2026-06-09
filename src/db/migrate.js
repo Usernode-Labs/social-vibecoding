@@ -641,9 +641,84 @@ async function seedStagingNotifications(pool, config) {
     inserted++;
   }
 
+  // Multi-app fixtures (#84 grouping): the self-app block above gives ONE
+  // app with many notifications; here we add a few OTHER apps so the
+  // grouped/collapsed view has realistic multi-app data to render. The
+  // first other app gets two notifications (a collapsible multi-item
+  // group); the remaining ones get a single notification each (which the
+  // UI renders as a plain leaf row). Same idempotency pattern as above:
+  // fixture chat-message content + the notification's (kind, message)
+  // tuple are checked before every insert.
+  const { rows: otherApps } = await pool.query(
+    `SELECT id, slug, name FROM apps
+      WHERE slug <> $1
+      ORDER BY id ASC
+      LIMIT 3`,
+    [config.selfAppSlug]
+  );
+
+  let multiAppInserted = 0;
+  for (let i = 0; i < otherApps.length; i++) {
+    const app = otherApps[i];
+    const appName = app.name || app.slug;
+    // First other app: two notifications -> a multi-item (collapsible)
+    // group. Others: one notification each -> a single leaf row.
+    const specs = i === 0
+      ? [
+          { kind: 'mention', content: `[staging fixture] @${target.username} take a look at this in ${appName}`, minutesAgo: 5 },
+          { kind: 'reply', content: `[staging fixture] reply target message in ${appName}`, minutesAgo: 4 },
+        ]
+      : [
+          { kind: 'mention', content: `[staging fixture] @${target.username} mentioned in ${appName}`, minutesAgo: 5 - i },
+        ];
+
+    for (const spec of specs) {
+      // Upsert the fixture chat message this notification points at, so
+      // the dropdown row renders a real snippet + a working deep link.
+      let chatMessageId;
+      const { rows: existingMsg } = await pool.query(
+        'SELECT id FROM chat_messages WHERE app_id = $1 AND content = $2 LIMIT 1',
+        [app.id, spec.content]
+      );
+      if (existingMsg.length) {
+        chatMessageId = existingMsg[0].id;
+      } else {
+        const { rows } = await pool.query(
+          `INSERT INTO chat_messages (app_id, user_id, content, msg_type, created_at)
+           VALUES ($1, $2, $3, 'message', NOW() - ($4::int * INTERVAL '1 minute'))
+           RETURNING id`,
+          [app.id, source.id, spec.content, spec.minutesAgo + 1]
+        );
+        chatMessageId = rows[0].id;
+      }
+
+      const { rows: existingNotif } = await pool.query(
+        `SELECT id FROM notifications
+          WHERE user_id = $1
+            AND app_id = $2
+            AND kind = $3
+            AND COALESCE(chat_message_id, -1) = COALESCE($4::int, -1)
+          LIMIT 1`,
+        [target.id, app.id, spec.kind, chatMessageId]
+      );
+      if (existingNotif.length) continue;
+
+      await pool.query(
+        `INSERT INTO notifications
+           (user_id, app_id, chat_message_id, source_user_id, kind, created_at)
+         VALUES
+           ($1, $2, $3, $4, $5, NOW() - ($6::int * INTERVAL '1 minute'))`,
+        [target.id, app.id, chatMessageId, source.id, spec.kind, spec.minutesAgo]
+      );
+      multiAppInserted++;
+    }
+  }
+
   log.info('db', 'Staging notification fixtures seeded', {
     targetUser: target.username,
     inserted,
+    multiAppInserted,
+    otherApps: otherApps.length,
   });
 }
 
