@@ -212,6 +212,11 @@
       const list = document.getElementById('user-list');
       list.innerHTML = '';
 
+      // Used to disable the Admin toggle for the sole remaining admin —
+      // the server enforces the same rule (last-admin guard), this is the
+      // matching UX affordance.
+      const adminCount = users.filter((u) => u.is_admin).length;
+
       for (const user of users) {
         const el = document.createElement('div');
         el.className = 'p-4 flex items-center gap-4';
@@ -221,6 +226,33 @@
           : user.is_admin ? '' : '';
 
         const costToday = (parseFloat(user.cost_today_cents || 0) / 100).toFixed(2);
+
+        // Admin grant/revoke toggle. Disabled for the current user's own
+        // row (self-lockout) and for the last remaining admin — both also
+        // enforced server-side on POST /api/admin/users/:id/is-admin.
+        const isAdmin = !!user.is_admin;
+        const isSelf = !!user.is_self;
+        const isLastAdmin = isAdmin && adminCount <= 1;
+        const adminToggleDisabled = isSelf || isLastAdmin;
+        let adminToggleTitle;
+        if (isSelf) {
+          adminToggleTitle = "You can't change your own admin status.";
+        } else if (isLastAdmin) {
+          adminToggleTitle = "Can't revoke the last admin.";
+        } else if (isAdmin) {
+          adminToggleTitle = 'This user is an admin. Click to revoke.';
+        } else {
+          adminToggleTitle = 'This user is not an admin. Click to grant.';
+        }
+        const adminToggleHtml = `
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-zinc-400">Admin</span>
+            <label class="ios-switch" title="${adminToggleTitle}">
+              <input type="checkbox" class="admin-toggle-cb" data-user-id="${user.id}"
+                ${isAdmin ? 'checked' : ''} ${adminToggleDisabled ? 'disabled' : ''}>
+              <span class="track"></span>
+            </label>
+          </div>`;
 
         const canCreate = !!user.can_create_apps;
         const toggleHtml = `
@@ -253,10 +285,11 @@
 
         el.innerHTML = `
           <div class="flex-1">
-            <div class="font-medium">${escapeHtml(user.username)}${user.is_admin ? ' <span class="text-xs text-violet-400 ml-1">admin</span>' : ''}</div>
+            <div class="font-medium">${escapeHtml(user.username)}</div>
             <div class="text-sm text-zinc-500">$${costToday} spent today ${codeInfo}</div>
           </div>
           ${limitHtml}
+          ${adminToggleHtml}
           ${toggleHtml}
           ${!user.is_admin ? `<button data-delete-id="${user.id}" class="text-red-400 hover:text-red-300 text-sm delete-btn">Delete</button>` : ''}
         `;
@@ -312,6 +345,35 @@
         inp.addEventListener('blur', commit);
         inp.addEventListener('keydown', (e) => {
           if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
+        });
+      });
+
+      list.querySelectorAll('.admin-toggle-cb').forEach((cb) => {
+        cb.addEventListener('change', async () => {
+          const userId = cb.dataset.userId;
+          const next = cb.checked;
+          cb.disabled = true;
+          try {
+            const res = await fetch(`/api/admin/users/${userId}/is-admin`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ isAdmin: next }),
+            });
+            if (!res.ok) {
+              const data = await res.json().catch(() => ({}));
+              cb.checked = !next;
+              alert(data.error || `Toggle failed (HTTP ${res.status})`);
+              return;
+            }
+            // Re-render so the admin badge logic, last-admin disabling, and
+            // the Delete-button visibility (hidden for admins) all refresh.
+            await loadUsers();
+          } catch (err) {
+            cb.checked = !next;
+            alert(`Toggle failed: ${err.message}`);
+          } finally {
+            cb.disabled = false;
+          }
         });
       });
 

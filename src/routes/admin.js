@@ -66,12 +66,14 @@ function adminRoutes(config) {
       const { rows } = await pool.query(
         `SELECT u.id, u.username, u.is_admin, u.can_create_apps, u.created_at,
                 u.daily_limit_cents,
+                (u.id = $1) AS is_self,
                 ac.code as activation_code,
                 COALESCE(lu.total_cost_cents, 0) as cost_today_cents
          FROM users u
          LEFT JOIN activation_codes ac ON ac.used_by = u.id
          LEFT JOIN llm_usage lu ON lu.user_id = u.id AND lu.date = CURRENT_DATE
-         ORDER BY u.created_at ASC`
+         ORDER BY u.created_at ASC`,
+        [req.user.id]
       );
       res.json(rows);
     } catch (err) {
@@ -106,6 +108,80 @@ function adminRoutes(config) {
       res.json({ ok: true, canCreateApps: rows[0].can_create_apps });
     } catch (err) {
       log.error('admin', 'App-creation toggle failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Grant / revoke admin status (see users.is_admin in schema.sql).
+  // Multiple admins are supported; admin is read live on every request
+  // (src/middleware/auth.js), so toggling takes effect on the target's
+  // next request — no session invalidation needed.
+  //
+  // Two server-authoritative guardrails on REVOKE (mirrored in the UI for
+  // UX only):
+  //   - You can't revoke your own admin status (self-lockout).
+  //   - You can't revoke the last admin (the platform must always have
+  //     at least one). Enforced with a guarded UPDATE whose WHERE clause
+  //     re-counts admins atomically, closing the check-then-act race where
+  //     two admins revoke each other concurrently.
+  router.post('/api/admin/users/:id/is-admin', async (req, res) => {
+    const userId = parseInt(req.params.id, 10);
+    const { isAdmin } = req.body || {};
+    if (!Number.isFinite(userId)) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+    if (typeof isAdmin !== 'boolean') {
+      return res.status(400).json({ error: 'isAdmin (boolean) required in body' });
+    }
+
+    if (!isAdmin && userId === req.user.id) {
+      return res.status(400).json({ error: "You can't revoke your own admin status." });
+    }
+
+    try {
+      if (isAdmin) {
+        const { rows } = await pool.query(
+          `UPDATE users SET is_admin = TRUE WHERE id = $1
+           RETURNING id, username, is_admin`,
+          [userId]
+        );
+        if (!rows.length) return res.status(404).json({ error: 'User not found' });
+        log.info('admin', 'Admin status toggled', {
+          id: rows[0].id, username: rows[0].username,
+          isAdmin: rows[0].is_admin, by: req.user.username,
+        });
+        return res.json({ ok: true, isAdmin: rows[0].is_admin });
+      }
+
+      // Revoke: guarded update only succeeds while >1 admin remains.
+      const { rows } = await pool.query(
+        `UPDATE users SET is_admin = FALSE
+         WHERE id = $1
+           AND (SELECT COUNT(*) FROM users WHERE is_admin = TRUE) > 1
+         RETURNING id, username, is_admin`,
+        [userId]
+      );
+      if (!rows.length) {
+        // Distinguish "no such user" from "would remove the last admin"
+        // so the caller gets an actionable error.
+        const { rows: existing } = await pool.query(
+          'SELECT id, is_admin FROM users WHERE id = $1',
+          [userId]
+        );
+        if (!existing.length) return res.status(404).json({ error: 'User not found' });
+        if (!existing[0].is_admin) {
+          // Already not an admin — idempotent no-op.
+          return res.json({ ok: true, isAdmin: false });
+        }
+        return res.status(400).json({ error: "Can't revoke the last admin." });
+      }
+      log.info('admin', 'Admin status toggled', {
+        id: rows[0].id, username: rows[0].username,
+        isAdmin: rows[0].is_admin, by: req.user.username,
+      });
+      res.json({ ok: true, isAdmin: rows[0].is_admin });
+    } catch (err) {
+      log.error('admin', 'Admin toggle failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
