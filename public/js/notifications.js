@@ -271,7 +271,10 @@ const Notifications = {
   _onItemClick(id) {
     const item = Notifications.items.find((n) => n.id === id);
     if (!item) return;
-    Notifications.hide();
+    // Deliberately do NOT hide the drawer here: it stays open over the
+    // navigated-to view so the user can keep clicking through other
+    // notifications. The drawer only dismisses via outside-click or the
+    // explicit close button.
     Notifications._markOneRead(id);
     if (item.appSlug) {
       // Both mention and kudos notifications land on the app's group
