@@ -204,6 +204,29 @@ async function countUnread(pool, userId) {
   return rows[0]?.c || 0;
 }
 
+// Auto-dismiss the vote-actionable notifications a user has for a given PR
+// (chat_sessions row) once they've cast a vote on it — the "come vote on
+// this PR" nudge has served its purpose. Marks read (read_at = NOW())
+// rather than deleting, matching the rest of the notification system.
+//
+// Scoped to `pr_proposed` (the vote-request nudge) and `stale_pr` (the
+// author's going-quiet warning) by default — both are resolved by voting.
+// `kudos` is deliberately excluded: it reports kudos received and has
+// nothing to do with the act of voting. The WHERE read_at IS NULL guard
+// keeps it idempotent, so re-votes / already-read rows are no-ops.
+// Returns the number of rows actually cleared so callers can decide
+// whether to fan out a cross-tab refresh.
+async function markReadForSession(pool, userId, sessionId, { kinds = ['pr_proposed', 'stale_pr'] } = {}) {
+  if (!userId || !sessionId) return 0;
+  const { rowCount } = await pool.query(
+    `UPDATE notifications
+        SET read_at = NOW()
+      WHERE user_id = $1 AND session_id = $2 AND kind = ANY($3) AND read_at IS NULL`,
+    [userId, sessionId, kinds]
+  );
+  return rowCount || 0;
+}
+
 async function markRead(pool, userId, { id, all = false } = {}) {
   if (all) {
     await pool.query(
@@ -255,6 +278,7 @@ module.exports = {
   listForUser,
   countUnread,
   markRead,
+  markReadForSession,
   serialize,
 };
 

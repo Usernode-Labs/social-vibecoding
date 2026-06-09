@@ -494,6 +494,12 @@ const App = {
           case 'notification_new':
             if (window.Notifications) Notifications.handleIncoming(data.notification);
             break;
+          case 'notifications_changed':
+            // Server cleared/changed this user's notifications elsewhere
+            // (e.g. another tab cast a vote and the PR nudge was dismissed).
+            // Re-pull so this tab's badge + list stay in sync.
+            if (window.Notifications) Notifications.refresh?.();
+            break;
           case 'app_version_changed':
             // #21: a PR just merged and prod was rebuilt. If the user
             // is currently on this app's App tab, refresh the commit
