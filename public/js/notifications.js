@@ -355,14 +355,7 @@ const Notifications = {
       g.items.push(n);
       if (!n.readAt) g.unreadCount += 1;
     }
-    // Unread-first: groups with any unread float to the top, preserving
-    // the most-recent-activity-first order within each bucket (stable
-    // partition). This is a pure view ordering — `items` stays
-    // newest-first so the keyset pagination cursor is unaffected.
-    const groups = [...byKey.values()];
-    const withUnread = groups.filter((g) => g.unreadCount > 0);
-    const allRead = groups.filter((g) => g.unreadCount === 0);
-    return [...withUnread, ...allRead];
+    return [...byKey.values()];
   },
 
   _renderList() {
@@ -503,12 +496,6 @@ function unreadDot(isUnread) {
 function renderGroup(g, isExpanded) {
   const appLine = escapeHtml(g.appName || 'General');
   const hasUnread = g.unreadCount > 0;
-  // Unread-first display order within the group (stable: newest-first is
-  // preserved inside each bucket). Pure view transform — g.items stays
-  // newest-first so the global keyset cursor is unaffected.
-  const ordered = hasUnread
-    ? g.items.filter((n) => !n.readAt).concat(g.items.filter((n) => n.readAt))
-    : g.items;
   const accent = hasUnread ? 'bg-violet-500/5 border-l-2 border-violet-500' : 'border-l-2 border-transparent';
   const chevron = isExpanded ? '▾' : '▸'; // ▾ / ▸
   // Just the number, centered in a fixed-size pill (no "new" wording).
@@ -520,9 +507,7 @@ function renderGroup(g, isExpanded) {
   // Unread dot next to the app name, matching the per-leaf dot.
   const headerDot = hasUnread ? unreadDot(true) : '';
 
-  // Preview the newest unread item when there is one (it sits first in
-  // `ordered`), so the collapsed header surfaces unread content.
-  const latest = ordered[0];
+  const latest = g.items[0];
   const preview = `${previewText(latest)} · ${relativeTime(latest.createdAt)}`;
 
   const markReadBtn = hasUnread
@@ -549,10 +534,10 @@ function renderGroup(g, isExpanded) {
   // Expanded: reveal up to `visible` leaves (default GROUP_LEAF_CAP, grown
   // by inline "Show more" clicks), then an inline pagination button.
   const visible = Notifications.revealed.get(g.key) || GROUP_LEAF_CAP;
-  const shown = ordered.slice(0, visible);
+  const shown = g.items.slice(0, visible);
   const leaves = shown.map((n) => renderRow(n)).join('');
   let more = '';
-  const localRemaining = ordered.length - shown.length;
+  const localRemaining = g.items.length - shown.length;
   const btnCls = 'w-full text-left px-3 py-2 text-xs text-violet-500 hover:text-violet-400 border-b border-zinc-200 dark:border-zinc-800';
   if (localRemaining > 0) {
     // More already-loaded leaves to reveal in place.
