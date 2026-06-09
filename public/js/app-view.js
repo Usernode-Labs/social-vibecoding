@@ -1297,12 +1297,16 @@ const AppView = {
     if (AppView._voteInFlight.has(key)) return;
     AppView._voteInFlight.add(key);
     try {
-      await fetch(`/api/sessions/${sessionId}/vote`, {
+      const res = await fetch(`/api/sessions/${sessionId}/vote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ vote }),
       });
       if (AppView.appData) AppView.loadVotePanel(AppView.appData.slug);
+      // Only refresh notifications once the backend confirms the vote — the
+      // server clears this PR's nudge as a side effect, so re-pull to drop it
+      // from the unread badge. Never optimistic: skip on a non-ok response.
+      if (res.ok) window.Notifications?.refresh?.();
     } catch {}
     finally {
       AppView._voteInFlight.delete(key);
