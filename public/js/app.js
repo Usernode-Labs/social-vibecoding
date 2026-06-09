@@ -934,7 +934,10 @@ const App = {
     // "This app" button is only enabled when an app with a repo is open,
     // so this stays 'platform' on home/leaderboard. Reset on each open.
     let feedbackTarget = 'platform';
-    const activeTargetClasses = ['bg-violet-600', 'text-white', 'border-violet-600'];
+    // The selected option uses a darker violet on hover so it keeps its
+    // active look; the unselected option uses the neutral zinc hover.
+    const activeTargetClasses = ['bg-violet-600', 'text-white', 'border-violet-600', 'hover:bg-violet-500'];
+    const inactiveHoverClasses = ['hover:bg-zinc-100', 'dark:hover:bg-zinc-800'];
     const disabledTargetClasses = ['opacity-40', 'cursor-not-allowed'];
     // Toggle the active styling between the two buttons. Enabled/disabled
     // state of the "This app" button is owned by the open handler.
@@ -946,6 +949,12 @@ const App = {
       activeTargetClasses.forEach((c) => {
         feedbackTargetApp.classList.toggle(c, onApp);
         feedbackTargetPlatform.classList.toggle(c, !onApp);
+      });
+      // The neutral hover only applies to the unselected option, so the
+      // selected one doesn't get its violet overridden on hover.
+      inactiveHoverClasses.forEach((c) => {
+        feedbackTargetApp.classList.toggle(c, !onApp);
+        feedbackTargetPlatform.classList.toggle(c, onApp);
       });
       // Move the caret under the selected option.
       feedbackCaretApp.classList.toggle('hidden', !onApp);
