@@ -5,6 +5,14 @@ const { adminMiddleware } = require('../middleware/admin');
 const log = require('../services/logger');
 const limits = require('../services/limits');
 
+// Fixed app-wide key for pg_advisory_xact_lock, dedicated to admin-status
+// mutations (revoke-admin and delete-user). Any code path that could drop
+// the admin count must take this lock inside its transaction so the
+// "at least one admin must remain" invariant is checked and committed
+// atomically — two concurrent revokes/deletes can't both observe >1 admin
+// and race to zero. The number is arbitrary but must stay stable.
+const ADMIN_MUTATION_LOCK = 991001;
+
 function adminRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -121,9 +129,10 @@ function adminRoutes(config) {
   // UX only):
   //   - You can't revoke your own admin status (self-lockout).
   //   - You can't revoke the last admin (the platform must always have
-  //     at least one). Enforced with a guarded UPDATE whose WHERE clause
-  //     re-counts admins atomically, closing the check-then-act race where
-  //     two admins revoke each other concurrently.
+  //     at least one). Enforced inside a transaction that takes the
+  //     ADMIN_MUTATION_LOCK advisory lock, then counts admins and performs
+  //     the UPDATE atomically — two concurrent revokes can't both observe
+  //     >1 admin and race to zero.
   router.post('/api/admin/users/:id/is-admin', async (req, res) => {
     const userId = parseInt(req.params.id, 10);
     const { isAdmin } = req.body || {};
@@ -138,8 +147,9 @@ function adminRoutes(config) {
       return res.status(400).json({ error: "You can't revoke your own admin status." });
     }
 
-    try {
-      if (isAdmin) {
+    // Grant needs no lock — it only ever increases the admin count.
+    if (isAdmin) {
+      try {
         const { rows } = await pool.query(
           `UPDATE users SET is_admin = TRUE WHERE id = $1
            RETURNING id, username, is_admin`,
@@ -151,38 +161,59 @@ function adminRoutes(config) {
           isAdmin: rows[0].is_admin, by: req.user.username,
         });
         return res.json({ ok: true, isAdmin: rows[0].is_admin });
+      } catch (err) {
+        log.error('admin', 'Admin toggle failed', { message: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+    }
+
+    // Revoke: serialize on the advisory lock, re-count admins, and update
+    // inside one transaction so the last-admin invariant holds under
+    // concurrency.
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock($1)', [ADMIN_MUTATION_LOCK]);
+
+      const { rows: existing } = await client.query(
+        'SELECT id, is_admin FROM users WHERE id = $1',
+        [userId]
+      );
+      if (!existing.length) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'User not found' });
+      }
+      if (!existing[0].is_admin) {
+        // Already not an admin — idempotent no-op.
+        await client.query('ROLLBACK');
+        return res.json({ ok: true, isAdmin: false });
       }
 
-      // Revoke: guarded update only succeeds while >1 admin remains.
-      const { rows } = await pool.query(
-        `UPDATE users SET is_admin = FALSE
-         WHERE id = $1
-           AND (SELECT COUNT(*) FROM users WHERE is_admin = TRUE) > 1
+      const { rows: countRows } = await client.query(
+        'SELECT COUNT(*)::int AS n FROM users WHERE is_admin = TRUE'
+      );
+      if (countRows[0].n <= 1) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: "Can't revoke the last admin." });
+      }
+
+      const { rows } = await client.query(
+        `UPDATE users SET is_admin = FALSE WHERE id = $1
          RETURNING id, username, is_admin`,
         [userId]
       );
-      if (!rows.length) {
-        // Distinguish "no such user" from "would remove the last admin"
-        // so the caller gets an actionable error.
-        const { rows: existing } = await pool.query(
-          'SELECT id, is_admin FROM users WHERE id = $1',
-          [userId]
-        );
-        if (!existing.length) return res.status(404).json({ error: 'User not found' });
-        if (!existing[0].is_admin) {
-          // Already not an admin — idempotent no-op.
-          return res.json({ ok: true, isAdmin: false });
-        }
-        return res.status(400).json({ error: "Can't revoke the last admin." });
-      }
+      await client.query('COMMIT');
       log.info('admin', 'Admin status toggled', {
         id: rows[0].id, username: rows[0].username,
         isAdmin: rows[0].is_admin, by: req.user.username,
       });
       res.json({ ok: true, isAdmin: rows[0].is_admin });
     } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
       log.error('admin', 'Admin toggle failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    } finally {
+      client.release();
     }
   });
 
@@ -193,16 +224,43 @@ function adminRoutes(config) {
       return res.status(400).json({ error: 'Cannot delete yourself' });
     }
 
+    // Deleting drops the admin count just like a revoke, so it takes the
+    // same advisory lock / transaction and enforces the last-admin
+    // invariant server-side — even though the UI hides Delete for admins,
+    // a direct API call must not be able to zero out the admins.
+    const client = await pool.connect();
     try {
-      const result = await pool.query('DELETE FROM users WHERE id = $1', [userId]);
-      if (result.rowCount === 0) {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock($1)', [ADMIN_MUTATION_LOCK]);
+
+      const { rows: existing } = await client.query(
+        'SELECT id, is_admin FROM users WHERE id = $1',
+        [userId]
+      );
+      if (!existing.length) {
+        await client.query('ROLLBACK');
         return res.status(404).json({ error: 'User not found' });
       }
+      if (existing[0].is_admin) {
+        const { rows: countRows } = await client.query(
+          'SELECT COUNT(*)::int AS n FROM users WHERE is_admin = TRUE'
+        );
+        if (countRows[0].n <= 1) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: "Can't delete the last admin." });
+        }
+      }
+
+      await client.query('DELETE FROM users WHERE id = $1', [userId]);
+      await client.query('COMMIT');
       log.info('admin', 'User deleted', { id: userId, by: req.user.username });
       res.json({ ok: true });
     } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
       log.error('admin', 'Delete user failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    } finally {
+      client.release();
     }
   });
 
