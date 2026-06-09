@@ -62,16 +62,14 @@ test('stagingHostname is stable per session (no commit hash)', () => {
   );
 });
 
-test('warmCert is a safe no-op for empty/invalid hostnames', () => {
-  // Guard path must not throw and must not fire a request/callback when
-  // there's nothing to warm (e.g. local-dev http URLs never call it, but
-  // defensively an empty value should be inert).
-  let called = false;
-  const onResult = () => { called = true; };
-  assert.doesNotThrow(() => caddy.warmCert('', { onResult }));
-  assert.doesNotThrow(() => caddy.warmCert(undefined, { onResult }));
-  assert.doesNotThrow(() => caddy.warmCert(null, { onResult }));
-  assert.equal(called, false);
+test('warmCert resolves ok=false (no network) for empty/invalid hostnames', async () => {
+  // Guard path must resolve (never reject/hang) and report not-ready without
+  // attempting a connection, so the deploy path can `await` it unconditionally.
+  for (const bad of ['', undefined, null]) {
+    const r = await caddy.warmCert(bad);
+    assert.equal(r.ok, false);
+    assert.ok(r.error instanceof Error);
+  }
 });
 
 test('approves a stable (hashless) staging host matching staging_url', async () => {

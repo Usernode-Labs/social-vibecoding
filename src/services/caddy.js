@@ -36,42 +36,61 @@ function stagingHostname(slug, sessionLabel) {
 // a blank/black page (it's before any HTML loads). We trigger issuance
 // proactively by opening one TLS connection to Caddy with the hostname as
 // the SNI — Caddy treats it like any other first hit and issues + caches the
-// cert (good ~90 days), so the human's first visit is instant.
+// cert (good ~90 days). The handshake/request resolves only once the cert
+// exists and Caddy can proxy upstream, so awaiting it is a reliable "the
+// preview link actually works now" signal — the deploy path awaits it
+// (bounded) before exposing the preview button, so users never click a cold
+// link.
 //
-// Fire-and-forget by design: never throws and is not awaited, so a slow or
-// failed warm can't delay or fail a deploy (the cert still issues lazily on
-// first visit as before — this only removes the cold-start wait). No-op
-// unless given an https hostname; local-dev maps previews to
-// http://localhost:<port> with no Caddy in front, so there's nothing to warm.
-// Caddy is reached by its container name on the shared docker network
-// (override with CADDY_HOST); `rejectUnauthorized` is off because the cert
-// is literally being minted during the handshake.
-function warmCert(hostname, { onResult, timeoutMs = 150000 } = {}) {
-  if (!hostname || typeof hostname !== 'string') return;
-  const done = (err, code) => { if (typeof onResult === 'function') onResult(err, code); };
-  let settled = false;
-  const finish = (err, code) => { if (settled) return; settled = true; done(err, code); };
-  try {
-    const req = https.request({
-      host: process.env.CADDY_HOST || 'caddy',
-      port: 443,
-      method: 'GET',
-      path: '/',
-      servername: hostname,
-      headers: { Host: hostname },
-      rejectUnauthorized: false,
-      timeout: timeoutMs,
-    }, (res) => {
-      res.resume(); // drain so the socket frees
-      res.on('end', () => finish(null, res.statusCode));
-      res.on('error', (err) => finish(err));
-    });
-    req.on('timeout', () => req.destroy(new Error(`warmCert timeout after ${timeoutMs}ms`)));
-    req.on('error', (err) => finish(err));
-    req.end();
-  } catch (err) {
-    finish(err);
-  }
+// Returns a Promise that ALWAYS resolves (never rejects) to
+// `{ ok, code, error }`:
+//   - ok=true,  code=<http status>  → cert issued, Caddy responded
+//   - ok=false, error=<Error>       → timed out / network error / no-op
+// Fire-and-forget callers can ignore the promise; the internal `timeoutMs`
+// bounds the wait either way, so a slow/failed warm can never hang or fail a
+// deploy (the cert still issues lazily on first visit, exactly as before —
+// this only removes the cold-start wait). No-op (resolves ok=false) unless
+// given an https hostname; local-dev maps previews to http://localhost:<port>
+// with no Caddy in front, so there's nothing to warm. Caddy is reached by its
+// container name on the shared docker network (override with CADDY_HOST);
+// `rejectUnauthorized` is off because the cert is literally being minted
+// during the handshake.
+function warmCert(hostname, { onResult, timeoutMs = 120000 } = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (err, code) => {
+      if (settled) return;
+      settled = true;
+      if (typeof onResult === 'function') {
+        try { onResult(err, code); } catch { /* callback errors are not our problem */ }
+      }
+      resolve({ ok: !err, code, error: err || null });
+    };
+    if (!hostname || typeof hostname !== 'string') {
+      return finish(new Error('warmCert: no hostname'));
+    }
+    try {
+      const req = https.request({
+        host: process.env.CADDY_HOST || 'caddy',
+        port: 443,
+        method: 'GET',
+        path: '/',
+        servername: hostname,
+        headers: { Host: hostname },
+        rejectUnauthorized: false,
+        timeout: timeoutMs,
+      }, (res) => {
+        res.resume(); // drain so the socket frees
+        res.on('end', () => finish(null, res.statusCode));
+        res.on('error', (err) => finish(err));
+      });
+      req.on('timeout', () => req.destroy(new Error(`warmCert timeout after ${timeoutMs}ms`)));
+      req.on('error', (err) => finish(err));
+      req.end();
+    } catch (err) {
+      finish(err);
+    }
+  });
 }
 
 module.exports = {

@@ -177,19 +177,26 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
       if (hostPort) stagingUrl = `http://localhost:${hostPort}`;
     }
 
-    log.info('staging', 'Staging deployed', { sessionId: session.id, url: stagingUrl });
-
-    // Pre-warm the on-demand TLS cert in the background so the first human
-    // visit isn't a blank page while ZeroSSL validates (~60-90s). No-op in
-    // local-dev (http://localhost:<port>). Fire-and-forget — never awaited.
+    // Pre-warm the on-demand TLS cert BEFORE returning, so callers only
+    // persist staging_url / emit `staging_ready` (which is what reveals the
+    // preview button) once the link actually works. Otherwise the button
+    // appears the instant the container is healthy, but the first click hits
+    // a cold hostname and hangs ~60-90s on ZeroSSL validation, showing a
+    // blank page. The "Building staging preview…" spinner stays up during
+    // this wait. Bounded so a slow/failed warm never blocks the deploy: on
+    // timeout we proceed anyway and the cert just issues lazily on first hit
+    // (the old behavior). No-op in local-dev (http://localhost:<port>).
     if (stagingUrl.startsWith('https://')) {
-      caddy.warmCert(hostname, {
-        onResult: (err, code) =>
-          err
-            ? log.warn('staging', 'Cert pre-warm failed (will issue lazily on first visit)', { sessionId: session.id, hostname, err: err.message })
-            : log.info('staging', 'Cert pre-warmed', { sessionId: session.id, hostname, code }),
-      });
+      log.info('staging', 'Pre-warming TLS cert before exposing preview', { sessionId: session.id, hostname });
+      const warm = await caddy.warmCert(hostname);
+      if (warm.ok) {
+        log.info('staging', 'Cert pre-warmed', { sessionId: session.id, hostname, code: warm.code });
+      } else {
+        log.warn('staging', 'Cert pre-warm did not complete; preview may be slow on first hit', { sessionId: session.id, hostname, err: warm.error?.message });
+      }
     }
+
+    log.info('staging', 'Staging deployed', { sessionId: session.id, url: stagingUrl });
 
     return { containerId, stagingUrl, hostname };
   } catch (err) {
