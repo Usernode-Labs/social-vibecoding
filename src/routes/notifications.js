@@ -30,8 +30,30 @@ function notificationsRoutes(config) {
 
   router.post('/api/notifications/read', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
-    const { id, all } = req.body || {};
+    const { id, all, chat_message_id: chatMessageId } = req.body || {};
     try {
+      // `{ chat_message_id }` is the in-chat "click a dotted message" path:
+      // clear the user's unread mention/reply/reaction notification(s) for
+      // that one message. Falls through to the existing single-id / all
+      // behavior otherwise.
+      if (chatMessageId != null) {
+        const cleared = await notifications.markReadForMessage(
+          pool, req.user.id, Number(chatMessageId)
+        );
+        const unread = await notifications.countUnread(pool, req.user.id);
+        // Sync this user's other tabs (bell badge + the same message's dot
+        // in another open chat tab) only when something actually changed.
+        if (cleared > 0) {
+          try {
+            const { pushNotificationToUser } = require('../services/ws');
+            pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
+          } catch (err) {
+            log.warn('notifications', 'cross-tab push failed', { message: err.message });
+          }
+        }
+        return res.json({ unread, cleared });
+      }
+
       await notifications.markRead(pool, req.user.id, { id, all: !!all });
       const unread = await notifications.countUnread(pool, req.user.id);
       res.json({ unread });
