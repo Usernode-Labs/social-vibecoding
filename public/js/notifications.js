@@ -27,11 +27,14 @@ const GROUP_LEAF_CAP = 10;
 // How close to the bottom (px) before we prefetch the next page.
 const LOAD_MORE_THRESHOLD = 64;
 // #103: vertical left accent line (blockquote `>` affordance) applied to
-// every notification group so each app's header + rows read as one
-// cohesive block "hanging off" the line. Thin violet border matching the
-// per-app count pill, with a small left indent so content sits just
-// inside the line rather than butting against it.
-const GROUP_ACCENT_LINE = 'border-l-2 border-violet-500 pl-1.5';
+// every notification group — read and unread alike — so each app's
+// header + rows read as one cohesive block "hanging off" the line.
+// Backed by the `.notif-group-accent` rule in css/app.css (a thin violet
+// left border + small indent) rather than Tailwind `border-l-2
+// border-violet-500` utilities: the drawer is built via innerHTML and the
+// Tailwind Play CDN doesn't reliably JIT-generate that utility combo for
+// dynamically-injected nodes, which left read-only groups with no line.
+const GROUP_ACCENT_LINE = 'notif-group-accent';
 
 const Notifications = {
   items: [],   // newest-first; the single source of truth
