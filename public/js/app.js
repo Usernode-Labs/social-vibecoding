@@ -925,6 +925,52 @@ const App = {
     const feedbackText = document.getElementById('feedback-text');
     const feedbackBtn = document.getElementById('feedback-submit');
     const feedbackStatus = document.getElementById('feedback-status');
+    const feedbackTargetApp = document.getElementById('feedback-target-app');
+    const feedbackTargetPlatform = document.getElementById('feedback-target-platform');
+    const feedbackCaretApp = document.getElementById('feedback-caret-app');
+    const feedbackCaretPlatform = document.getElementById('feedback-caret-platform');
+
+    // Currently selected feedback target ('app' or 'platform'). The
+    // "This app" button is only enabled when an app with a repo is open,
+    // so this stays 'platform' on home/leaderboard. Reset on each open.
+    let feedbackTarget = 'platform';
+    // The selected option uses a darker violet on hover so it keeps its
+    // active look; the unselected option uses the neutral zinc hover.
+    const activeTargetClasses = ['bg-violet-600', 'text-white', 'border-violet-600', 'hover:bg-violet-500'];
+    const inactiveHoverClasses = ['hover:bg-zinc-100', 'dark:hover:bg-zinc-800'];
+    const disabledTargetClasses = ['opacity-40', 'cursor-not-allowed'];
+    // Toggle the active styling between the two buttons. Enabled/disabled
+    // state of the "This app" button is owned by the open handler.
+    const setFeedbackTarget = (target) => {
+      feedbackTarget = target;
+      const onApp = target === 'app';
+      feedbackTargetApp.setAttribute('aria-checked', onApp ? 'true' : 'false');
+      feedbackTargetPlatform.setAttribute('aria-checked', onApp ? 'false' : 'true');
+      activeTargetClasses.forEach((c) => {
+        feedbackTargetApp.classList.toggle(c, onApp);
+        feedbackTargetPlatform.classList.toggle(c, !onApp);
+      });
+      // The neutral hover only applies to the unselected option, so the
+      // selected one doesn't get its violet overridden on hover.
+      inactiveHoverClasses.forEach((c) => {
+        feedbackTargetApp.classList.toggle(c, !onApp);
+        feedbackTargetPlatform.classList.toggle(c, onApp);
+      });
+      // Move the caret under the selected option.
+      feedbackCaretApp.classList.toggle('hidden', !onApp);
+      feedbackCaretPlatform.classList.toggle('hidden', onApp);
+    };
+    // Enable or gray-out the "This app" option. When disabled it stays
+    // visible (so users see both choices) but isn't clickable/selectable.
+    const setAppTargetEnabled = (enabled) => {
+      feedbackTargetApp.disabled = !enabled;
+      feedbackTargetApp.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+      disabledTargetClasses.forEach((c) => feedbackTargetApp.classList.toggle(c, !enabled));
+    };
+    feedbackTargetApp.addEventListener('click', () => {
+      if (!feedbackTargetApp.disabled) setFeedbackTarget('app');
+    });
+    feedbackTargetPlatform.addEventListener('click', () => setFeedbackTarget('platform'));
 
     const submitFeedback = async () => {
       const text = feedbackText.value.trim();
@@ -936,14 +982,21 @@ const App = {
       if (feedbackBtn.disabled) return;
       feedbackBtn.disabled = true; feedbackBtn.textContent = 'Submitting...';
       try {
+        // Capture the target + slug at submit time so navigating away
+        // while the modal is open can't retarget an in-flight request.
+        const target = feedbackTarget;
+        const body = { description: text, target };
+        if (target === 'app') body.appSlug = App.currentApp;
         const res = await fetch('/api/feedback', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ description: text }),
+          body: JSON.stringify(body),
         });
         const data = await res.json();
         if (res.ok) {
-          feedbackStatus.textContent = 'Thanks! Issue filed.';
+          feedbackStatus.textContent = target === 'app'
+            ? `Thanks! Filed against ${AppView?.appData?.name || 'this app'}.`
+            : 'Thanks! Filed against Social Vibecoding.';
           feedbackStatus.className = 'text-sm mt-2 text-emerald-400';
           feedbackStatus.classList.remove('hidden');
           feedbackText.value = '';
@@ -975,6 +1028,26 @@ const App = {
       feedbackText.disabled = false;
       feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
       feedbackStatus.classList.add('hidden');
+
+      // "This app" is only selectable when an app with a real repo is
+      // open. Otherwise the button stays visible but grayed-out/disabled
+      // so users can still see both choices, and we default to platform.
+      const appData = (typeof AppView !== 'undefined' && AppView.appData) || null;
+      const repoUrl = appData?.repo_url || '';
+      const canTargetApp = !!App.currentApp
+        && App.currentTab === 'app'
+        && /github\.com\/[^/]+\/[^/]+/.test(repoUrl);
+      if (canTargetApp) {
+        feedbackTargetApp.textContent = appData?.name ? `This app (${appData.name})` : 'This app';
+        setAppTargetEnabled(true);
+        // Default to the app the user is looking at — most likely intent.
+        setFeedbackTarget('app');
+      } else {
+        feedbackTargetApp.textContent = 'No app open';
+        setAppTargetEnabled(false);
+        setFeedbackTarget('platform');
+      }
+
       feedbackText.focus();
     });
     document.getElementById('feedback-cancel').addEventListener('click', () => {

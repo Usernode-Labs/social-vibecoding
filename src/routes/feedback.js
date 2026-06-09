@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const log = require('../services/logger');
 const llm = require('../services/llm');
+const github = require('../services/github');
 const { getPool } = require('../db/pool');
 
 // Derive `owner/repo` from a github.com URL. We do this at module
@@ -25,7 +26,7 @@ function feedbackRoutes(config) {
   const { owner: feedbackOwner, repo: feedbackRepo } = parseGitHubRepo(config.platformRepoUrl);
 
   router.post('/api/feedback', async (req, res) => {
-    const { description } = req.body;
+    const { description, appSlug } = req.body;
     if (!description || typeof description !== 'string' || description.trim().length === 0) {
       return res.status(400).json({ error: 'Description is required' });
     }
@@ -33,9 +34,46 @@ function feedbackRoutes(config) {
       return res.status(400).json({ error: 'Description too long (max 2000 chars)' });
     }
 
+    // Normalise the feedback target. Anything other than the explicit
+    // 'app' opt-in falls back to platform feedback (today's behaviour).
+    const target = req.body.target === 'app' ? 'app' : 'platform';
+
     const pat = process.env.GITHUB_BOT_TOKEN;
     if (!pat) {
       return res.status(503).json({ error: 'GitHub token not configured' });
+    }
+
+    // Resolve the destination repo up front so we fail fast (before
+    // spending a Haiku call on title generation) when the app target is
+    // unusable. `appContext` is non-null only for app-targeted feedback.
+    let issueOwner = feedbackOwner;
+    let issueRepo = feedbackRepo;
+    let appContext = null;
+    if (target === 'app') {
+      if (!appSlug || typeof appSlug !== 'string') {
+        return res.status(400).json({ error: 'appSlug is required for app feedback' });
+      }
+      if (!github.isEnabled()) {
+        return res.status(503).json({ error: 'GitHub token not configured' });
+      }
+      let appRow;
+      try {
+        const { rows } = await pool.query('SELECT name, repo_url FROM apps WHERE slug = $1', [appSlug]);
+        appRow = rows[0];
+      } catch (err) {
+        log.error('feedback', 'App lookup failed', { message: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+      if (!appRow) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+      const [, owner, repo] = (appRow.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+      if (!owner || !repo) {
+        return res.status(409).json({ error: 'This app has no repository yet — try platform feedback' });
+      }
+      issueOwner = owner;
+      issueRepo = repo;
+      appContext = { slug: appSlug, name: appRow.name };
     }
 
     const source = req.user?.isAdmin ? 'usernode admin' : `usernode user (${req.user?.username || 'unknown'})`;
@@ -87,7 +125,30 @@ function feedbackRoutes(config) {
         } catch {}
       }
 
-      const ghRes = await fetch(`https://api.github.com/repos/${feedbackOwner}/${feedbackRepo}/issues`, {
+      // App-targeted feedback files into the app's own repo, which the
+      // bot reaches through the GitHub App installation (same path as
+      // routes/issues.js) rather than the platform PAT — the PAT isn't
+      // guaranteed to have access to every app repo.
+      if (target === 'app') {
+        const body = `**Source:** ${source}\n**App:** ${appContext.name} (${appContext.slug})\n\n${description.trim()}`;
+        let issue;
+        try {
+          issue = await github.createIssue(issueOwner, issueRepo, { title, body });
+        } catch (err) {
+          log.error('feedback', 'App GitHub issue creation failed', {
+            repo: `${issueOwner}/${issueRepo}`,
+            message: err.message,
+          });
+          // Never silently reroute to the platform repo — the user
+          // explicitly chose this app. Surface an actionable hint.
+          return res.status(502).json({
+            error: "Failed to create GitHub issue: couldn't file to this app's repo — the bot may not be installed on it",
+          });
+        }
+        return res.json({ url: issue.html_url, title });
+      }
+
+      const ghRes = await fetch(`https://api.github.com/repos/${issueOwner}/${issueRepo}/issues`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
