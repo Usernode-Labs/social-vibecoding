@@ -173,7 +173,23 @@ async function createPrProposedNotifications(pool, { appId, sessionId, proposerI
 // so we join both tables and the FE renderer picks the right one based on
 // `kind`. Both joins are LEFT so mentions still render fine without a
 // session and kudos still render fine without a message.
-async function listForUser(pool, userId, { limit = 30 } = {}) {
+//
+// Pagination (scroll-to-load-more): pass `before = { createdAt, id }` to
+// fetch the page strictly older than that cursor. We compare the
+// `(created_at, id)` tuple so rows sharing a `created_at` don't get
+// skipped or repeated across page boundaries — the id is a stable
+// tiebreak. Ordering + the keyset comparison ride the existing
+// idx_notifications_user_recent index on (user_id, created_at DESC).
+async function listForUser(pool, userId, { limit = 100, before = null } = {}) {
+  const params = [userId];
+  let cursorClause = '';
+  if (before && before.createdAt && before.id != null) {
+    params.push(before.createdAt, before.id);
+    // $2 = cursor created_at, $3 = cursor id.
+    cursorClause = `AND (n.created_at, n.id) < ($2, $3)`;
+  }
+  params.push(limit);
+  const limitIdx = params.length; // last param is the limit
   const { rows } = await pool.query(
     `SELECT n.id, n.kind, n.read_at, n.created_at,
             n.app_id, a.slug AS app_slug, a.name AS app_name,
@@ -189,9 +205,10 @@ async function listForUser(pool, userId, { limit = 30 } = {}) {
      LEFT JOIN chat_sessions cs ON cs.id = n.session_id
      LEFT JOIN users su ON su.id = n.source_user_id
      WHERE n.user_id = $1
-     ORDER BY n.created_at DESC
-     LIMIT $2`,
-    [userId, limit]
+     ${cursorClause}
+     ORDER BY n.created_at DESC, n.id DESC
+     LIMIT $${limitIdx}`,
+    params
   );
   return rows;
 }
@@ -300,6 +317,25 @@ async function unreadMessageIdsForUser(pool, userId, messageIds) {
   return new Set(rows.map((r) => r.chat_message_id));
 }
 
+// Per-app mark-read — backs the notifications dropdown's per-group
+// "Mark read" affordance (#84 grouping). Clears every unread
+// notification this user has for one app, regardless of kind, in a
+// single round-trip. Unlike markReadForAction (which is scoped to a
+// fixed set of kinds tied to a user action), this is a deliberate
+// "I've seen everything from this app" gesture, so it spans all kinds.
+// Idempotent via the read_at IS NULL guard; returns rows cleared so the
+// route can decide whether to fan out a cross-tab refresh.
+async function markReadForApp(pool, userId, appId) {
+  if (!userId || !appId) return 0;
+  const { rowCount } = await pool.query(
+    `UPDATE notifications
+        SET read_at = NOW()
+      WHERE user_id = $1 AND app_id = $2 AND read_at IS NULL`,
+    [userId, appId]
+  );
+  return rowCount || 0;
+}
+
 async function markRead(pool, userId, { id, all = false } = {}) {
   if (all) {
     await pool.query(
@@ -329,6 +365,7 @@ function serialize(row) {
     kind: row.kind,
     readAt: row.read_at,
     createdAt: row.created_at,
+    appId: row.app_id,
     appSlug: row.app_slug,
     appName: row.app_name,
     chatMessageId: row.chat_message_id,
@@ -353,6 +390,7 @@ module.exports = {
   markRead,
   markReadForSession,
   markReadForAction,
+  markReadForApp,
   markReadForMessage,
   unreadMessageIdsForUser,
   ACTION_COMPLETIONS,

@@ -188,6 +188,57 @@ function makeMockPool(initial = {}) {
         .map((k) => ({ created_at: k.created_at, username: `u${k.giver_user_id}`, user_id: k.giver_user_id }));
       return { rows };
     }
+    // ------------ Leaderboard: users (with kudos_given map) ------------
+    // Mirrors the GET /api/leaderboard/users query: received-side
+    // aggregates keyed off each user's authored sessions, plus the new
+    // given-side `kudos_given` {week_start: count} map (capped at 5).
+    // Window is detected from the SQL: the `gk.week_start = $N` filter
+    // is only present when window=week, and its value is params[0].
+    if (/FROM users u[\s\S]*kudos_given/i.test(s)) {
+      const isWeek = /gk\.week_start = \$/.test(s);
+      const weekStart = isWeek ? params[0] : null;
+      const hasLimit = /LIMIT \$/i.test(s);
+      const limit = hasLimit ? params[params.length - 1] : null;
+      const inWindow = (k) => !isWeek || k.week_start === weekStart;
+      const statusOf = new Map([...state.sessions.values()].map((cs) => [cs.id, cs.status]));
+
+      const rows = [];
+      for (const [uid, u] of state.users) {
+        const authored = [...state.sessions.values()]
+          .filter((cs) => cs.user_id === uid)
+          .map((cs) => cs.id);
+        const received = state.kudos.filter(
+          (k) => authored.includes(k.session_id) && inWindow(k)
+        );
+        // Given-side: group this user's kudos by week, cap each at 5.
+        const byWeek = {};
+        for (const k of state.kudos) {
+          if (k.giver_user_id !== uid || !inWindow(k)) continue;
+          byWeek[k.week_start] = (byWeek[k.week_start] || 0) + 1;
+        }
+        const kudos_given = {};
+        for (const wk of Object.keys(byWeek)) kudos_given[wk] = Math.min(byWeek[wk], 5);
+
+        rows.push({
+          user_id: uid,
+          username: u.username,
+          kudos_received: received.length,
+          prs_kudosed: new Set(received.map((k) => k.session_id)).size,
+          kudos_received_prs_merged: received.filter((k) => statusOf.get(k.session_id) === 'merged').length,
+          kudos_received_prs_unmerged: received.filter((k) => statusOf.get(k.session_id) !== 'merged').length,
+          prs_merged: authored.filter((sid) => statusOf.get(sid) === 'merged').length,
+          last_kudos_at: received.map((k) => k.created_at).sort().pop() || null,
+          kudos_given,
+        });
+      }
+      rows.sort((a, b) =>
+        b.kudos_received_prs_merged - a.kudos_received_prs_merged ||
+        b.prs_merged - a.prs_merged ||
+        b.kudos_received - a.kudos_received ||
+        (a.username < b.username ? -1 : a.username > b.username ? 1 : 0)
+      );
+      return { rows: hasLimit ? rows.slice(0, limit) : rows };
+    }
     throw new Error(`unhandled mock SQL: ${s.slice(0, 80)}`);
   }
 
@@ -383,6 +434,83 @@ test('GET kudos-budget reports remaining count', async () => {
     budget = await (await fetch(`${baseUrl}/api/me/kudos-budget`)).json();
     assert.equal(budget.given_this_week, 1);
     assert.equal(budget.remaining, 4);
+  } finally {
+    await close();
+  }
+});
+
+// ─── 3. leaderboard/users: kudos_given map ────────────────────
+//
+// The clock is frozen at Wed 2026-05-20 12:00 UTC, so the current
+// week bucket (weekStartUtc()) is the Monday 2026-05-18.
+
+// Seed a pool with three users and a giver (bob) who gave kudos across
+// two weeks — including an over-cap week to exercise the LEAST(.,5).
+function seedGivenPool() {
+  const pool = makeMockPool({
+    users: [
+      [1, { username: 'alice' }],
+      [2, { username: 'bob' }],
+      [3, { username: 'carol' }],
+    ],
+  });
+  // bob (id 2) gave 3 kudos in the prior week and 6 in the current week
+  // (one above the cap, to prove it's clamped to 5). carol (id 3) gave
+  // nothing.
+  const prior = '2026-05-11';
+  const current = '2026-05-18';
+  let sid = 100;
+  for (let i = 0; i < 3; i++) {
+    pool.state.kudos.push({ id: sid, session_id: sid, giver_user_id: 2, week_start: prior, created_at: '2026-05-12T00:00:00.000Z' });
+    sid++;
+  }
+  for (let i = 0; i < 6; i++) {
+    pool.state.kudos.push({ id: sid, session_id: sid, giver_user_id: 2, week_start: current, created_at: '2026-05-19T00:00:00.000Z' });
+    sid++;
+  }
+  return pool;
+}
+
+test('leaderboard/users: kudos_given is a multi-week map (window=all), capped at 5', async () => {
+  const pool = seedGivenPool();
+  const { baseUrl, close } = await startTestServer(pool);
+  try {
+    const data = await (await fetch(`${baseUrl}/api/leaderboard/users?window=all`)).json();
+    assert.equal(data.window, 'all');
+    assert.equal(data.weekStart, null);
+    const bob = data.items.find((r) => r.username === 'bob');
+    assert.deepEqual(bob.kudos_given, { '2026-05-11': 3, '2026-05-18': 5 });
+  } finally {
+    await close();
+  }
+});
+
+test('leaderboard/users: kudos_given holds at most the current week (window=week)', async () => {
+  const pool = seedGivenPool();
+  const { baseUrl, close } = await startTestServer(pool);
+  try {
+    const data = await (await fetch(`${baseUrl}/api/leaderboard/users?window=week`)).json();
+    assert.equal(data.window, 'week');
+    assert.equal(data.weekStart, '2026-05-18');
+    const bob = data.items.find((r) => r.username === 'bob');
+    // Only the current week bucket survives the window filter; still capped.
+    assert.deepEqual(bob.kudos_given, { '2026-05-18': 5 });
+  } finally {
+    await close();
+  }
+});
+
+test('leaderboard/users: a user who gave nothing gets an empty map', async () => {
+  const pool = seedGivenPool();
+  const { baseUrl, close } = await startTestServer(pool);
+  try {
+    const all = await (await fetch(`${baseUrl}/api/leaderboard/users?window=all`)).json();
+    const carol = all.items.find((r) => r.username === 'carol');
+    assert.deepEqual(carol.kudos_given, {});
+    const week = await (await fetch(`${baseUrl}/api/leaderboard/users?window=week`)).json();
+    // bob gave none in... he did give this week; check alice (gave nothing ever)
+    const aliceWeek = week.items.find((r) => r.username === 'alice');
+    assert.deepEqual(aliceWeek.kudos_given, {});
   } finally {
     await close();
   }
