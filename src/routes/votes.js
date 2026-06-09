@@ -175,6 +175,24 @@ function voteRoutes(config) {
         );
       }
 
+      // Auto-dismiss this voter's PR notifications for this session now that
+      // the vote is recorded in the DB (i.e. confirmed, not optimistic). Runs
+      // before the `unchanged` early-return below so a re-vote still ensures
+      // the nudge is cleared, and it's idempotent (clears only unread rows).
+      // Non-fatal: a notification hiccup must never 500 a successful vote.
+      try {
+        const cleared = await notifications.markReadForSession(pool, req.user.id, session.id);
+        if (cleared > 0) {
+          // Fan out to the voter's OTHER tabs/devices so their unread badge
+          // syncs without a manual refresh; the acting tab refreshes itself.
+          pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
+        }
+      } catch (err) {
+        log.warn('votes', 'notification auto-dismiss failed', {
+          sessionId: session.id, userId: req.user.id, err: err.message,
+        });
+      }
+
       if (unchanged) {
         log.debug('votes', 'Vote unchanged, skipping broadcast+merge', {
           sessionId: session.id, userId: req.user.id, vote,
