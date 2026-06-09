@@ -21,6 +21,14 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS anthropic_key_last4  VARCHAR(8);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS can_create_apps BOOLEAN NOT NULL DEFAULT FALSE;
 UPDATE users SET can_create_apps = TRUE WHERE is_admin = TRUE AND can_create_apps = FALSE;
 
+-- is_admin is now mutable from the admin panel (grant/revoke toggle in
+-- public/admin.html → POST /api/admin/users/:id/is-admin). The column is
+-- nullable (DEFAULT FALSE, declared at the top of the table) so legacy
+-- rows could hold NULL; normalize to FALSE so the last-admin guard's
+-- `COUNT(*) WHERE is_admin = TRUE` and every `is_admin = TRUE` read treat
+-- NULL and FALSE identically. Idempotent — safe to run every boot.
+UPDATE users SET is_admin = FALSE WHERE is_admin IS NULL;
+
 -- Usernode wallet linking: pubkey is the on-chain identity once linked;
 -- token + expiry gate the QR-based linking flow.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS usernode_pubkey          VARCHAR(255);
