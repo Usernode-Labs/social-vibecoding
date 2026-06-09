@@ -376,15 +376,29 @@ function kudosRoutes(config) {
       // WHERE) so users/sessions are preserved even when they have no
       // kudos in the window — only the kudos aggregates get scoped.
       let kudosWindow = '';
+      // The `kudos_given` LATERAL (below) reuses the same week_start
+      // param when scoping to the current week, so capture its index.
+      let givenWindow = '';
       if (windowArg === 'week') {
         params.push(weekStart);
         kudosWindow = `AND pk.week_start = $${params.length}`;
+        givenWindow = `AND gk.week_start = $${params.length}`;
       }
       let limitClause = '';
       if (hasLimit) {
         params.push(clampLimit(req.query.limit));
         limitClause = `LIMIT $${params.length}`;
       }
+      // `kudos_given` is a GIVEN-side metric (rows where the user is the
+      // giver), orthogonal to every other column here (all RECEIVED-side,
+      // keyed off the user's authored sessions). Folding it into the main
+      // GROUP BY would cross-multiply the two fan-outs and corrupt the
+      // received counts, so it's computed in an independent LEFT JOIN
+      // LATERAL that builds a {week_start: count} JSON map per user.
+      // Counts are clamped to the weekly quota with LEAST(..., ${WEEKLY_KUDOS_LIMIT})
+      // so the documented give-time race (overshoot by ≤1) never surfaces
+      // a value above the cap. Uses idx_pr_kudos_giver_week. COALESCE
+      // turns the no-rows case (jsonb_object_agg → NULL) into '{}'.
       const { rows } = await pool.query(
         `SELECT u.id AS user_id,
                 u.username,
@@ -393,11 +407,25 @@ function kudosRoutes(config) {
                 COUNT(pk.id) FILTER (WHERE cs.status = 'merged')::int AS kudos_received_prs_merged,
                 COUNT(pk.id) FILTER (WHERE cs.status <> 'merged')::int AS kudos_received_prs_unmerged,
                 COUNT(DISTINCT cs.id) FILTER (WHERE cs.status = 'merged')::int AS prs_merged,
-                MAX(pk.created_at) AS last_kudos_at
+                MAX(pk.created_at) AS last_kudos_at,
+                kg.kudos_given
            FROM users u
            LEFT JOIN chat_sessions cs ON cs.user_id = u.id
            LEFT JOIN pr_kudos pk ON pk.session_id = cs.id ${kudosWindow}
-           GROUP BY u.id, u.username
+           LEFT JOIN LATERAL (
+             SELECT COALESCE(
+                      jsonb_object_agg(g.week_start::text, g.c),
+                      '{}'::jsonb
+                    ) AS kudos_given
+               FROM (
+                 SELECT gk.week_start,
+                        LEAST(COUNT(*), ${WEEKLY_KUDOS_LIMIT})::int AS c
+                   FROM pr_kudos gk
+                   WHERE gk.giver_user_id = u.id ${givenWindow}
+                   GROUP BY gk.week_start
+               ) g
+           ) kg ON true
+           GROUP BY u.id, u.username, kg.kudos_given
            ORDER BY kudos_received_prs_merged DESC,
                     prs_merged DESC,
                     kudos_received DESC,
