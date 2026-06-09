@@ -27,6 +27,10 @@ function renameBranchName(slug) {
   return `rename/${slug}-${Date.now()}`;
 }
 
+function renamePrTitle(newName) {
+  return `Rename to "${newName}"`;
+}
+
 /**
  * Open a rename PR for `app` targeting `newName`. The caller owns
  * user-facing validation (length, name-differs, GitHub-enabled) and
@@ -70,7 +74,7 @@ async function createRenamePR(config, pool, app, newName, actor) {
     { branch, message: `Rename to "${newName}"` }
   );
 
-  const prTitle = `Rename to "${newName}"`;
+  const prTitle = renamePrTitle(newName);
   // safeMention is applied inside github.createPR; the actor.username
   // and names flow into the body verbatim here.
   const prBody =
@@ -155,18 +159,35 @@ async function createRenamePR(config, pool, app, newName, actor) {
   return { sessionId, prNumber: prData.number, prUrl: prData.html_url, branch };
 }
 
-// True when the app already has a rename PR in flight (a promoted/merging
-// chat_sessions row on a `rename/*` branch). Used by the migration to stay
-// idempotent across reboots — a second pass won't double-open.
-async function appHasOpenRenamePr(pool, appId) {
+// Returns a matching rename PR session for the same target name. Used by
+// the migration to stay idempotent without collapsing distinct legacy
+// rename proposals for the same app into one PR.
+async function findRenamePrForName(pool, appId, newName) {
   const { rows } = await pool.query(
-    `SELECT 1 FROM chat_sessions
+    `SELECT id, pr_number, pr_url FROM chat_sessions
       WHERE app_id = $1 AND status IN ('promoted', 'merging')
         AND branch_name LIKE 'rename/%'
+        AND pr_title = $2
+      ORDER BY id DESC
       LIMIT 1`,
-    [appId]
+    [appId, renamePrTitle(newName)]
   );
-  return rows.length > 0;
+  return rows[0] || null;
+}
+
+async function restoreIssueVotesToPr(pool, issueId, sessionId) {
+  const { rowCount } = await pool.query(
+    `INSERT INTO pr_votes (session_id, user_id, vote, created_at)
+       SELECT $2, iv.user_id,
+              CASE iv.vote WHEN 'up' THEN 'yes' WHEN 'down' THEN 'no' END,
+              iv.created_at
+         FROM issue_votes iv
+        WHERE iv.issue_id = $1
+          AND iv.vote IN ('up', 'down')
+      ON CONFLICT (session_id, user_id) DO NOTHING`,
+    [issueId, sessionId]
+  );
+  return rowCount;
 }
 
 /**
@@ -175,10 +196,12 @@ async function appHasOpenRenamePr(pool, appId) {
  * best-effort close the GitHub issue + close the DB issue row so the
  * legacy backlog drains and repos' issue trackers stay clean.
  *
- * Idempotency: an app that already has an open rename PR is NOT re-opened
- * — we just drain its lingering issue row. A single failing app (GitHub
- * disabled, no bot access, unparseable repo) logs and continues rather
- * than aborting the batch. No-op when GitHub isn't configured.
+ * Idempotency: a rename issue whose exact target name already has an open
+ * rename PR is not re-opened; its old issue votes are copied onto that PR.
+ * Distinct rename issues for the same app still become distinct PRs so the
+ * vote surface preserves all in-flight proposals. A single failing app
+ * (GitHub disabled, no bot access, unparseable repo) logs and continues
+ * rather than aborting the batch. No-op when GitHub isn't configured.
  */
 async function migrateOpenRenameIssues(config, pool) {
   if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
@@ -229,18 +252,31 @@ async function migrateOpenRenameIssues(config, pool) {
       const actor = { id: issue.created_by || null, username: issue.created_by_username || 'Usernode' };
 
       const alreadyNamed = newName.toLowerCase() === (issue.name || '').toLowerCase();
-      const hasOpenRenamePr = await appHasOpenRenamePr(pool, issue.app_id);
+      let renameSession = alreadyNamed ? null : await findRenamePrForName(pool, issue.app_id, newName);
 
-      if (!alreadyNamed && !hasOpenRenamePr) {
-        await createRenamePR(config, pool, app, newName, actor);
+      if (!alreadyNamed && !renameSession) {
+        renameSession = await createRenamePR(config, pool, app, newName, actor);
         migrated++;
       } else {
-        // Nothing to open (name already applied, or a rename PR is already
-        // in flight) — just drain this lingering issue row below.
+        // Nothing new to open (name already applied, or this exact target
+        // rename PR is already in flight) — just drain this lingering issue
+        // row below after restoring its votes when a PR exists.
         log.info('rename-pr', 'Rename PR already open / name already applied; draining issue only', {
-          issueId: issue.id, slug: issue.slug, alreadyNamed, hasOpenRenamePr,
+          issueId: issue.id, slug: issue.slug, alreadyNamed,
+          existingSessionId: renameSession?.sessionId || renameSession?.id || null,
         });
         skipped++;
+      }
+
+      const sessionId = renameSession?.sessionId || renameSession?.id || null;
+      const prNumber = renameSession?.prNumber || renameSession?.pr_number || null;
+      if (sessionId) {
+        const copiedVotes = await restoreIssueVotesToPr(pool, issue.id, sessionId);
+        if (copiedVotes > 0) {
+          log.info('rename-pr', 'Restored issue votes to rename PR', {
+            issueId: issue.id, sessionId, copiedVotes,
+          });
+        }
       }
 
       // Best-effort: close the GitHub issue + close the DB row so it leaves
@@ -255,7 +291,11 @@ async function migrateOpenRenameIssues(config, pool) {
         `UPDATE issues SET status = 'closed',
             payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
           WHERE id = $1 AND status = 'open'`,
-        [issue.id, JSON.stringify({ migratedToPrAt: new Date().toISOString() })]
+        [issue.id, JSON.stringify({
+          migratedToPrAt: new Date().toISOString(),
+          ...(sessionId ? { migratedToPrSessionId: sessionId } : {}),
+          ...(prNumber ? { migratedToPrNumber: prNumber } : {}),
+        })]
       ).catch((err) => log.warn('rename-pr', 'Could not close migrated rename issue row', {
         issueId: issue.id, err: err.message,
       }));
@@ -274,4 +314,9 @@ async function migrateOpenRenameIssues(config, pool) {
   return { migrated, skipped };
 }
 
-module.exports = { createRenamePR, migrateOpenRenameIssues, appHasOpenRenamePr };
+module.exports = {
+  createRenamePR,
+  migrateOpenRenameIssues,
+  findRenamePrForName,
+  restoreIssueVotesToPr,
+};
