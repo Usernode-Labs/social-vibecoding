@@ -927,6 +927,8 @@ const App = {
     const feedbackStatus = document.getElementById('feedback-status');
     const feedbackTargetApp = document.getElementById('feedback-target-app');
     const feedbackTargetPlatform = document.getElementById('feedback-target-platform');
+    const feedbackCaretApp = document.getElementById('feedback-caret-app');
+    const feedbackCaretPlatform = document.getElementById('feedback-caret-platform');
 
     // Currently selected feedback target ('app' or 'platform'). The
     // "This app" button is only enabled when an app with a repo is open,
@@ -945,6 +947,9 @@ const App = {
         feedbackTargetApp.classList.toggle(c, onApp);
         feedbackTargetPlatform.classList.toggle(c, !onApp);
       });
+      // Move the caret under the selected option.
+      feedbackCaretApp.classList.toggle('hidden', !onApp);
+      feedbackCaretPlatform.classList.toggle('hidden', onApp);
     };
     // Enable or gray-out the "This app" option. When disabled it stays
     // visible (so users see both choices) but isn't clickable/selectable.
@@ -1029,7 +1034,7 @@ const App = {
         // Default to the app the user is looking at — most likely intent.
         setFeedbackTarget('app');
       } else {
-        feedbackTargetApp.textContent = 'This app';
+        feedbackTargetApp.textContent = 'No app open';
         setAppTargetEnabled(false);
         setFeedbackTarget('platform');
       }
