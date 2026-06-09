@@ -26,6 +26,12 @@ const EXPANDED_STORAGE_KEY = 'notif_expanded_groups_v1';
 const GROUP_LEAF_CAP = 10;
 // How close to the bottom (px) before we prefetch the next page.
 const LOAD_MORE_THRESHOLD = 64;
+// #103: vertical left accent line (blockquote `>` affordance) applied to
+// every notification group so each app's header + rows read as one
+// cohesive block "hanging off" the line. Thin violet border matching the
+// per-app count pill, with a small left indent so content sits just
+// inside the line rather than butting against it.
+const GROUP_ACCENT_LINE = 'border-l-2 border-violet-500 pl-1.5';
 
 const Notifications = {
   items: [],   // newest-first; the single source of truth
@@ -386,7 +392,10 @@ const Notifications = {
       // regardless of count. Only app-less ("general") notifications fall
       // back to a plain leaf row when there's a single one.
       if (g.items.length === 1 && g.appId == null) {
-        entries.push(renderRow(g.items[0]));
+        // Single app-less ("General") notification renders as a plain leaf
+        // row, but still gets the same left accent line (#103) so every
+        // top-level entry in the drawer looks uniform.
+        entries.push(`<div class="${GROUP_ACCENT_LINE}">${renderRow(g.items[0])}</div>`);
         continue;
       }
       entries.push(renderGroup(g, Notifications.expanded.has(g.key)));
@@ -500,7 +509,12 @@ function unreadDot(isUnread) {
 function renderGroup(g, isExpanded) {
   const appLine = escapeHtml(g.appName || 'General');
   const hasUnread = g.unreadCount > 0;
-  const accent = hasUnread ? 'bg-violet-500/5 border-l-2 border-violet-500' : 'border-l-2 border-transparent';
+  // Subtle background tint for groups with unread activity. The violet
+  // left accent line itself is rendered by the GROUP_ACCENT_LINE wrapper
+  // below for EVERY group (read or unread), so it no longer lives on the
+  // header — that keeps the line spanning the full group instead of just
+  // the header row.
+  const accent = hasUnread ? 'bg-violet-500/5' : '';
   const chevron = isExpanded ? '▾' : '▸'; // ▾ / ▸
   // Just the number, centered in a fixed-size pill (no "new" wording).
   // Unread groups show the unread count in the violet accent pill; fully
@@ -533,7 +547,9 @@ function renderGroup(g, isExpanded) {
     ${markReadBtn}
   </div>`;
 
-  if (!isExpanded) return header;
+  // Wrap collapsed groups in the accent-line container so the violet line
+  // runs down the (single) header row.
+  if (!isExpanded) return `<div class="${GROUP_ACCENT_LINE}">${header}</div>`;
 
   // Expanded: reveal up to `visible` leaves (default GROUP_LEAF_CAP, grown
   // by inline "Show more" clicks), then an inline pagination button.
@@ -551,7 +567,10 @@ function renderGroup(g, isExpanded) {
     // All loaded leaves shown, but older pages may add more to this group.
     more = `<button data-group-showmore="${escapeHtml(g.key)}" class="${btnCls}">Show more →</button>`;
   }
-  return `${header}<div class="pl-2 bg-zinc-50/50 dark:bg-zinc-950/30">${leaves}${more}</div>`;
+  // Expanded: the accent line spans the full group — header through the
+  // last revealed leaf (and the inline "Show more" button) — so the whole
+  // block reads as one app.
+  return `<div class="${GROUP_ACCENT_LINE}">${header}<div class="pl-2 bg-zinc-50/50 dark:bg-zinc-950/30">${leaves}${more}</div></div>`;
 }
 
 // Footer row used both as the scroll sentinel and the empty/has-more hint.
