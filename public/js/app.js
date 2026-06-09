@@ -925,6 +925,30 @@ const App = {
     const feedbackText = document.getElementById('feedback-text');
     const feedbackBtn = document.getElementById('feedback-submit');
     const feedbackStatus = document.getElementById('feedback-status');
+    const feedbackTargetApp = document.getElementById('feedback-target-app');
+    const feedbackTargetPlatform = document.getElementById('feedback-target-platform');
+
+    // Currently selected feedback target ('app' or 'platform'). The
+    // "This app" button is only enabled when an app with a repo is open,
+    // so this stays 'platform' on home/leaderboard. Reset on each open.
+    let feedbackTarget = 'platform';
+    const activeTargetClasses = ['bg-violet-600', 'text-white', 'border-violet-600'];
+    // Toggle the active styling between the two buttons. Visibility of the
+    // "This app" button is owned by the open handler, not this function.
+    const setFeedbackTarget = (target) => {
+      feedbackTarget = target;
+      const onApp = target === 'app';
+      feedbackTargetApp.setAttribute('aria-checked', onApp ? 'true' : 'false');
+      feedbackTargetPlatform.setAttribute('aria-checked', onApp ? 'false' : 'true');
+      activeTargetClasses.forEach((c) => {
+        feedbackTargetApp.classList.toggle(c, onApp);
+        feedbackTargetPlatform.classList.toggle(c, !onApp);
+      });
+    };
+    feedbackTargetApp.addEventListener('click', () => {
+      if (!feedbackTargetApp.classList.contains('hidden')) setFeedbackTarget('app');
+    });
+    feedbackTargetPlatform.addEventListener('click', () => setFeedbackTarget('platform'));
 
     const submitFeedback = async () => {
       const text = feedbackText.value.trim();
@@ -936,14 +960,21 @@ const App = {
       if (feedbackBtn.disabled) return;
       feedbackBtn.disabled = true; feedbackBtn.textContent = 'Submitting...';
       try {
+        // Capture the target + slug at submit time so navigating away
+        // while the modal is open can't retarget an in-flight request.
+        const target = feedbackTarget;
+        const body = { description: text, target };
+        if (target === 'app') body.appSlug = App.currentApp;
         const res = await fetch('/api/feedback', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ description: text }),
+          body: JSON.stringify(body),
         });
         const data = await res.json();
         if (res.ok) {
-          feedbackStatus.textContent = 'Thanks! Issue filed.';
+          feedbackStatus.textContent = target === 'app'
+            ? `Thanks! Filed against ${AppView?.appData?.name || 'this app'}.`
+            : 'Thanks! Filed against Social Vibecoding.';
           feedbackStatus.className = 'text-sm mt-2 text-emerald-400';
           feedbackStatus.classList.remove('hidden');
           feedbackText.value = '';
@@ -975,6 +1006,24 @@ const App = {
       feedbackText.disabled = false;
       feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
       feedbackStatus.classList.add('hidden');
+
+      // "This app" is only an option when an app with a real repo is
+      // open. Otherwise hide it and force platform feedback.
+      const appData = (typeof AppView !== 'undefined' && AppView.appData) || null;
+      const repoUrl = appData?.repo_url || '';
+      const canTargetApp = !!App.currentApp
+        && App.currentTab === 'app'
+        && /github\.com\/[^/]+\/[^/]+/.test(repoUrl);
+      if (canTargetApp) {
+        feedbackTargetApp.textContent = appData?.name ? `This app (${appData.name})` : 'This app';
+        feedbackTargetApp.classList.remove('hidden');
+        // Default to the app the user is looking at — most likely intent.
+        setFeedbackTarget('app');
+      } else {
+        feedbackTargetApp.classList.add('hidden');
+        setFeedbackTarget('platform');
+      }
+
       feedbackText.focus();
     });
     document.getElementById('feedback-cancel').addEventListener('click', () => {
