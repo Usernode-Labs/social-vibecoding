@@ -1516,6 +1516,11 @@ const DevChat = {
         if (msg.stagingUrl) {
           const stgTs = msg.created_at ? new Date(msg.created_at).getTime() : '';
           const stgId = msg.id || msg._slug || '';
+          // Once the PR merges (or is mid-merge), the merge path tears down
+          // the staging container, so this historical preview link is dead —
+          // clicking it lands on a 502/blank page. Disable it instead, with a
+          // tooltip pointing the user at the now-live app.
+          const previewGone = !!session && (session.status === 'merged' || session.status === 'merging' || !!session.merged_at);
           return `
             <div class="dc-status-line"><span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span> ${msg.content} <span style="font-size:9px;opacity:0.4;margin-left:auto">${stgId} ${stgTs}</span></div>
             <div class="dc-pr-card" id="dc-pr-card">
@@ -1526,7 +1531,9 @@ const DevChat = {
                 <span style="font-size:9px;opacity:0.4;margin-left:8px">${stgId} ${stgTs}</span>
               </div>
               <div class="dc-pr-card-actions">
-                <button class="dc-pr-btn dc-pr-btn-preview" onclick="AppView.swapToStaging('${msg.stagingUrl}')">Preview staging</button>
+                ${previewGone
+                  ? `<button class="dc-pr-btn dc-pr-btn-preview" disabled title="Preview removed after merge — this change is now live in the app">Preview staging</button>`
+                  : `<button class="dc-pr-btn dc-pr-btn-preview" onclick="AppView.swapToStaging('${msg.stagingUrl}')">Preview staging</button>`}
                 ${session?.pr_url ? `<a href="${session.pr_url}" target="_blank" class="dc-pr-btn dc-pr-btn-preview" style="text-decoration:none">View on GitHub</a>` : ''}
                 ${session?.pr_number && session?.status === 'active' ? `<button class="dc-pr-btn dc-pr-btn-promote" onclick="DevChat.promotePR()">Propose to group</button>` : ''}
                 ${session?.status === 'promoted' ? '<span class="text-xs" style="color:var(--accent)">Proposed!</span>' : ''}

@@ -347,6 +347,14 @@ html, body {
   border: 1px solid var(--border);
 }
 .dc-pr-btn-preview:hover { background: var(--bg-tertiary); }
+/* Merged sessions: the staging container is gone, so the preview link is
+   dead. Render it visibly inert (muted + not-allowed) instead of clickable. */
+.dc-pr-btn-preview:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  color: var(--text-muted);
+}
+.dc-pr-btn-preview:disabled:hover { background: var(--bg-secondary); }
 
 .dc-pr-btn-promote { background: #7c3aed; color: white; }
 .dc-pr-btn-promote:hover { background: #6d28d9; }
