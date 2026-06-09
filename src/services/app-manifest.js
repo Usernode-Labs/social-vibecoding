@@ -61,15 +61,31 @@ const RESERVED_KEYS = new Set([
 
 const KEY_RE = /^[A-Z][A-Z0-9_]{0,127}$/;
 
+// Bounds for the optional top-level `name` field (see readName). Matches
+// the rename flow's MAX_APP_NAME_LENGTH so a hand-written manifest name
+// can't outrun the apps.name column or the rename UI's validation.
+const MAX_APP_NAME_LENGTH = 64;
+const MIN_APP_NAME_LENGTH = 1;
+
+// Normalize a raw top-level `name` into a trimmed string or null. Anything
+// that isn't a string, is empty after trimming, or busts the length bound
+// resolves to null — i.e. "no manifest name", so the platform name (the
+// apps.name column) stays the effective display name. Never throws.
+function readName(parsed) {
+  const raw = typeof parsed?.name === 'string' ? parsed.name.trim() : '';
+  if (raw.length < MIN_APP_NAME_LENGTH || raw.length > MAX_APP_NAME_LENGTH) return null;
+  return raw;
+}
+
 function read(cloneDir) {
   const filePath = path.join(cloneDir, MANIFEST_FILENAME);
   let raw;
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
-    if (err.code === 'ENOENT') return { secrets: [] };
+    if (err.code === 'ENOENT') return { name: null, secrets: [] };
     log.warn('app-manifest', 'Read failed (treating as empty)', { filePath, err: err.message });
-    return { secrets: [] };
+    return { name: null, secrets: [] };
   }
 
   let parsed;
@@ -77,7 +93,7 @@ function read(cloneDir) {
     parsed = JSON.parse(raw);
   } catch (err) {
     log.warn('app-manifest', 'Parse failed (treating as empty)', { filePath, err: err.message });
-    return { secrets: [] };
+    return { name: null, secrets: [] };
   }
 
   const secretsIn = Array.isArray(parsed?.secrets) ? parsed.secrets : [];
@@ -113,7 +129,59 @@ function read(cloneDir) {
     });
   }
 
-  return { secrets };
+  return { name: readName(parsed), secrets };
 }
 
-module.exports = { read, RESERVED_KEYS, KEY_RE, MANIFEST_FILENAME };
+/**
+ * Write-through name resolution. Given a freshly-read manifest and the
+ * app row it was read for, reconcile `apps.name` to the manifest's
+ * top-level `name` when one is present and differs (case-sensitively)
+ * from the stored name. This is how a `dapp.json` name takes precedence
+ * over the platform name: it's resolved once, at deploy time, so the
+ * large surface of display sites that read `apps.name` directly keeps
+ * working unchanged.
+ *
+ * No-op (returns false) when the manifest carries no name — existing
+ * apps with no `name` in `dapp.json` keep their platform name exactly.
+ * Broadcasts the existing `app_update` `renamed` event on a real change
+ * so connected clients update live (public/js/app.js handleAppUpdate).
+ *
+ * Best-effort and self-contained: a DB or WS hiccup here must never
+ * fail the deploy that called it, so callers fire-and-log.
+ */
+async function reconcileAppName(pool, app, manifest) {
+  const manifestName = manifest && typeof manifest.name === 'string' ? manifest.name : null;
+  if (!manifestName) return false;
+  const oldName = app.name || '';
+  if (manifestName === oldName) return false;
+
+  await pool.query('UPDATE apps SET name = $1 WHERE id = $2', [manifestName, app.id]);
+  log.info('app-manifest', 'Reconciled app name from dapp.json', {
+    appId: app.id, slug: app.slug, oldName, newName: manifestName,
+  });
+
+  try {
+    const { pushAppUpdate } = require('./ws');
+    pushAppUpdate({
+      action: 'renamed',
+      appId: app.id,
+      slug: app.slug,
+      oldName,
+      newName: manifestName,
+    });
+  } catch (err) {
+    log.warn('app-manifest', 'Rename broadcast failed', { appId: app.id, err: err.message });
+  }
+  return true;
+}
+
+module.exports = {
+  read,
+  readName,
+  reconcileAppName,
+  RESERVED_KEYS,
+  KEY_RE,
+  MANIFEST_FILENAME,
+  MAX_APP_NAME_LENGTH,
+  MIN_APP_NAME_LENGTH,
+};

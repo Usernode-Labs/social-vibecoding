@@ -1439,25 +1439,29 @@ const AppView = {
     if (next === current) return showError('New app name must differ from the current one');
 
     submitBtn.disabled = true;
-    submitBtn.textContent = 'Proposing...';
+    submitBtn.textContent = 'Opening PR...';
     try {
-      const res = await fetch(`/api/apps/${AppView.appData.slug}/issues`, {
+      // Renames now open a PR that edits dapp.json's `name` field; it
+      // lands through the normal merge-vote pipeline (the new name applies
+      // when the PR merges and the app redeploys). See
+      // POST /api/apps/:slug/rename in src/routes/apps.js.
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/rename`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind: 'rename', payload: { newName: next } }),
+        body: JSON.stringify({ newName: next }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        showError(data.error || 'Failed to propose rename');
+        showError(data.error || 'Failed to open rename PR');
         return;
       }
       AppView.closeRenameModal();
       AppView.loadVotePanel(AppView.appData.slug);
     } catch {
-      showError('Network error while proposing rename');
+      showError('Network error while opening rename PR');
     } finally {
       submitBtn.disabled = false;
-      submitBtn.textContent = 'Propose';
+      submitBtn.textContent = 'Open PR';
     }
   },
 

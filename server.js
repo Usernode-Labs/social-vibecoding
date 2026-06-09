@@ -353,6 +353,16 @@ async function start() {
     log.warn('server', 'private-repo audit failed', { err: err.message });
   });
 
+  // One-time, idempotent: convert any open legacy rename *issues* into
+  // rename PRs (the new dapp.json-name flow), then close the issues so
+  // the backlog drains. Runs after github.init so it can actually open
+  // PRs; no-op when GitHub isn't configured. Non-blocking + guarded
+  // per-app so one failing repo doesn't hold up boot or the batch.
+  const { migrateOpenRenameIssues } = require('./src/services/rename-pr');
+  migrateOpenRenameIssues(config, getPool(config)).catch((err) => {
+    log.warn('server', 'rename-issue migration failed', { err: err.message });
+  });
+
   worker.ensureWorkerImage().catch((err) => {
     log.warn('server', 'Worker image build deferred', { err: err.message });
   });

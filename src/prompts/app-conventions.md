@@ -216,6 +216,7 @@ Manifest shape:
 
 ```json
 {
+  "name": "My Cool App",
   "secrets": [
     {
       "key": "STRIPE_SECRET_KEY",
@@ -232,6 +233,22 @@ Manifest shape:
   ]
 }
 ```
+
+### Top-level `name` — the app's display name
+
+`dapp.json` may carry an optional top-level `"name"` string (1–64
+characters). It is the **source of truth for the app's display name**
+and takes precedence over the platform-stored name. On every
+production deploy the platform reads it and reconciles the app's
+display name to it; when `name` is absent, the existing platform name
+is left untouched (a clean no-op for legacy apps).
+
+Because the name lives in the repo, **renaming an app is just a PR
+that edits this field**. The platform's "Rename" button opens exactly
+such a PR (creating `dapp.json` if the repo doesn't have one yet); the
+rename takes effect when that PR is voted in, merged, and redeployed —
+not before. Don't add code that mutates the display name through any
+other channel; edit `dapp.json`'s `name` and let the deploy apply it.
 
 Per-field rules:
 

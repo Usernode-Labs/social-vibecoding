@@ -8,9 +8,10 @@ const github = require('../services/github');
 const driftPoller = require('../services/main-drift-poller');
 const appSecrets = require('../services/app-secrets');
 const appManifest = require('../services/app-manifest');
+const renamePr = require('../services/rename-pr');
 const staging = require('../services/staging');
 const { drainGuard } = require('../services/lifecycle');
-const { appCreateLimiter } = require('../middleware/rate-limits');
+const { appCreateLimiter, issueCreateLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 
 // Local-dev URL fallback ("http://localhost:<hostport>" instead of the
@@ -688,6 +689,68 @@ function appRoutes(config) {
       res.json(result);
     } catch (err) {
       log.error('apps', 'Manual drift check failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: err.message || 'Internal server error' });
+    }
+  });
+
+  // Rename an app by opening a PR that edits (or creates) the top-level
+  // `name` field in the repo's dapp.json. The rename does NOT take effect
+  // immediately — the PR drops into the existing vote panel as a promoted
+  // chat_sessions row and, when it reaches majority and merges, the prod
+  // rebuild re-reads dapp.json and reconciles apps.name (see
+  // services/app-manifest.js reconcileAppName + staging.rebuildProduction).
+  // This replaces the old issue-based rename proposal in routes/issues.js.
+  router.post('/api/apps/:slug/rename', drainGuard, issueCreateLimiter, async (req, res) => {
+    const newName = typeof req.body?.newName === 'string' ? req.body.newName.trim() : '';
+    if (!newName) {
+      return res.status(400).json({ error: 'newName is required' });
+    }
+    if (newName.length < 3) {
+      return res.status(400).json({ error: 'Name must be at least 3 characters' });
+    }
+    if (newName.length > appManifest.MAX_APP_NAME_LENGTH) {
+      return res.status(400).json({
+        error: `Name must be ${appManifest.MAX_APP_NAME_LENGTH} characters or fewer`,
+      });
+    }
+
+    try {
+      const { rows: appRows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
+      if (!appRows.length) return res.status(404).json({ error: 'App not found' });
+      const app = appRows[0];
+
+      if (newName.toLowerCase() === (app.name || '').toLowerCase()) {
+        return res.status(400).json({ error: 'App is already named that' });
+      }
+
+      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+        return res.status(503).json({
+          error: 'Renames need GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+        });
+      }
+      if (!app.repo_url) {
+        return res.status(400).json({ error: 'App has no GitHub repository to open a PR against' });
+      }
+      const repoMatch = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/);
+      if (!repoMatch) {
+        return res.status(400).json({ error: 'Could not parse the app repository URL' });
+      }
+
+      // Open the rename PR + promoted vote session via the shared helper
+      // (services/rename-pr.js) — the exact same code path the boot
+      // migration uses to drain legacy rename issues.
+      const result = await renamePr.createRenamePR(
+        config, pool, app, newName, { id: req.user.id, username: req.user.username }
+      );
+
+      res.status(201).json({
+        ok: true,
+        sessionId: result.sessionId,
+        prNumber: result.prNumber,
+        prUrl: result.prUrl,
+      });
+    } catch (err) {
+      log.error('apps', 'Rename PR failed', { slug: req.params.slug, message: err.message });
       res.status(500).json({ error: err.message || 'Internal server error' });
     }
   });
