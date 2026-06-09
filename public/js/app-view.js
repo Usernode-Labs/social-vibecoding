@@ -453,6 +453,15 @@ const AppView = {
       GroupChat.sendTyping();
     });
 
+    // #87: @mention autocomplete. Re-attaches on every tab mount (the
+    // input is a fresh DOM node each time). Its capture-phase keydown
+    // handler intercepts Enter/Tab/Arrows/Escape while the dropdown is
+    // open, so the form submit + the Escape-clears-reply handler below
+    // only see those keys once the dropdown is closed.
+    if (typeof MentionAutocomplete !== 'undefined') {
+      MentionAutocomplete.attach(gcInput, slugForDraft);
+    }
+
     // #15: Escape clears a staged reply quote (when the input is empty so
     // we don't fight other Escape semantics mid-typing).
     gcInput.addEventListener('keydown', (e) => {

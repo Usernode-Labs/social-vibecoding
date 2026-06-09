@@ -1445,8 +1445,306 @@ function renderWithMentions(raw) {
   });
 }
 
+// ── #87: @mention autocomplete ─────────────────────────────────────────
+//
+// Composer dropdown that opens when the user types `@` in #gc-input and
+// suggests usernames participating in this app's chat. Self-contained:
+// the only integration points are MentionAutocomplete.attach() (called
+// from AppView.renderGroupChatTab when the input is (re)created) and the
+// shared `escapeHtml` helper above.
+//
+// Matching parity is the whole game (see spec): the trigger regex and the
+// inserted text MUST use the same character class the server's MENTION_RE
+// (`src/services/notifications.js`) recognizes — `[A-Za-z0-9_]`, length
+// 1..32, only when the `@` is preceded by a non-word char or start. A
+// suggestion that inserts a string the server won't parse as a mention is
+// worse than no autocomplete, so both ends derive from MENTION_CHARS.
+const MentionAutocomplete = {
+  // Character class shared with the server-side mention parser.
+  MENTION_CHARS: 'A-Za-z0-9_',
+  MAX_LEN: 32,
+  // How many filtered names to keep (the menu scrolls; CSS caps the
+  // visible height). Plenty for prefix-filtered participant lists.
+  MAX_RESULTS: 50,
+  // Cache freshness: a stale list only means a just-joined user isn't
+  // suggested yet, which is fine. Re-fetch when older than this.
+  CACHE_TTL_MS: 2 * 60 * 1000,
+
+  _cacheBySlug: new Map(), // slug -> { users: [username...], fetchedAt }
+  _input: null,
+  _slug: null,
+  _menu: null,
+  _items: [],     // currently-shown usernames
+  _active: -1,    // highlighted index into _items
+  _open: false,
+  _tokenStart: -1, // index of the `@` in input.value for the active token
+  _composing: false,
+  _dismissBound: null,
+
+  get _triggerRe() {
+    // Anchored to the caret: boundary (start or non-word char), `@`, then
+    // up to MAX_LEN mention chars, end-of-substring.
+    return new RegExp(
+      `(^|[^${this.MENTION_CHARS}])@([${this.MENTION_CHARS}]{0,${this.MAX_LEN}})$`
+    );
+  },
+
+  // Wire (or re-wire) the controller onto a freshly-rendered composer.
+  // Idempotent per element; called on every group-chat tab mount.
+  attach(input, slug) {
+    if (!input) return;
+    MentionAutocomplete._input = input;
+    MentionAutocomplete._slug = slug;
+    MentionAutocomplete._loadCandidates(slug);
+
+    if (input._gcMentionBound) return;
+    input._gcMentionBound = true;
+
+    input.addEventListener('compositionstart', () => { MentionAutocomplete._composing = true; });
+    input.addEventListener('compositionend', () => {
+      MentionAutocomplete._composing = false;
+      MentionAutocomplete._sync();
+    });
+    input.addEventListener('input', () => MentionAutocomplete._sync());
+    input.addEventListener('click', () => MentionAutocomplete._sync());
+    input.addEventListener('keyup', (e) => {
+      // The keys we manage in the capture-phase keydown handler don't
+      // change the token; skip re-detecting on their keyup.
+      if (['ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'Escape'].includes(e.key)) return;
+      MentionAutocomplete._sync();
+    });
+    // Capture phase so we win over the composer's own keydown handler and
+    // the form's implicit Enter-submit while the menu is open.
+    input.addEventListener('keydown', (e) => MentionAutocomplete._onKeydown(e), true);
+    input.addEventListener('blur', () => {
+      // Defer so a mousedown on a menu option (which we preventDefault to
+      // keep focus) can run first.
+      setTimeout(() => { if (document.activeElement !== input) MentionAutocomplete.close(); }, 0);
+    });
+  },
+
+  async _loadCandidates(slug) {
+    if (!slug) return;
+    const cached = MentionAutocomplete._cacheBySlug.get(slug);
+    if (cached && (Date.now() - cached.fetchedAt) < MentionAutocomplete.CACHE_TTL_MS) return;
+    try {
+      const res = await fetch(`/api/apps/${slug}/mention-suggestions`);
+      if (!res.ok) return;
+      const { users } = await res.json();
+      const names = Array.isArray(users)
+        ? users.map((u) => (u && u.username) || '').filter(Boolean)
+        : [];
+      MentionAutocomplete._cacheBySlug.set(slug, { users: names, fetchedAt: Date.now() });
+      // If the user already has an open `@token` while we were fetching,
+      // refresh the menu now that we have data.
+      if (MentionAutocomplete._input === document.activeElement) MentionAutocomplete._sync();
+    } catch { /* offline / transient — next keystroke retries via TTL */ }
+  },
+
+  _candidates() {
+    const c = MentionAutocomplete._cacheBySlug.get(MentionAutocomplete._slug);
+    return (c && c.users) || [];
+  },
+
+  // Detect an active mention token immediately before the caret.
+  // Returns { start, query } or null.
+  _detectToken() {
+    const input = MentionAutocomplete._input;
+    if (!input) return null;
+    const caret = input.selectionStart;
+    if (caret == null || caret !== input.selectionEnd) return null; // ignore ranges
+    const before = input.value.slice(0, caret);
+    const m = before.match(MentionAutocomplete._triggerRe);
+    if (!m) return null;
+    const query = m[2];
+    const start = m.index + m[1].length; // index of the `@`
+    return { start, query };
+  },
+
+  _filter(query) {
+    const q = query.toLowerCase();
+    const out = [];
+    for (const name of MentionAutocomplete._candidates()) {
+      if (!q || name.toLowerCase().startsWith(q)) {
+        out.push(name);
+        if (out.length >= MentionAutocomplete.MAX_RESULTS) break;
+      }
+    }
+    return out;
+  },
+
+  // Re-evaluate the token under the caret and open/close/refresh the menu.
+  _sync() {
+    if (MentionAutocomplete._composing) return;
+    const token = MentionAutocomplete._detectToken();
+    if (!token) { MentionAutocomplete.close(); return; }
+    const items = MentionAutocomplete._filter(token.query);
+    if (!items.length) { MentionAutocomplete.close(); return; }
+    MentionAutocomplete._tokenStart = token.start;
+    MentionAutocomplete._items = items;
+    // Keep a valid highlighted row; reset to the top when the set changes.
+    MentionAutocomplete._active = 0;
+    MentionAutocomplete._render();
+  },
+
+  _ensureMenu() {
+    if (MentionAutocomplete._menu) return MentionAutocomplete._menu;
+    const menu = document.createElement('div');
+    menu.id = 'gc-mention-menu';
+    menu.className = 'gc-mention-menu hidden';
+    menu.setAttribute('role', 'listbox');
+    // mousedown (not click) so we can preventDefault and keep the input
+    // focused — a blur-then-click would close the menu before the click.
+    menu.addEventListener('mousedown', (e) => {
+      const opt = e.target.closest('.gc-mention-option');
+      if (!opt) return;
+      e.preventDefault();
+      MentionAutocomplete.accept(opt.dataset.username);
+    });
+    document.body.appendChild(menu);
+    MentionAutocomplete._menu = menu;
+    return menu;
+  },
+
+  _render() {
+    const menu = MentionAutocomplete._ensureMenu();
+    const me = (App.user?.username || '').toLowerCase();
+    menu.innerHTML = MentionAutocomplete._items.map((name, i) => {
+      const isMe = name.toLowerCase() === me;
+      const active = i === MentionAutocomplete._active ? ' gc-mention-option-active' : '';
+      return `<div class="gc-mention-option${active}" role="option" data-username="${escapeHtml(name)}" data-index="${i}">` +
+        `<span class="gc-mention-option-at">@</span>${escapeHtml(name)}` +
+        (isMe ? `<span class="gc-mention-option-you">you</span>` : '') +
+        `</div>`;
+    }).join('');
+
+    if (!MentionAutocomplete._open) {
+      menu.classList.remove('hidden');
+      MentionAutocomplete._open = true;
+      MentionAutocomplete._bindDismiss();
+    }
+    MentionAutocomplete._position();
+  },
+
+  // Anchor above the composer (input lives at the bottom of the pane),
+  // flipping below if it would clip the top. Matches the input width.
+  _position() {
+    const input = MentionAutocomplete._input;
+    const menu = MentionAutocomplete._menu;
+    if (!input || !menu) return;
+    const r = input.getBoundingClientRect();
+    menu.style.left = `${r.left}px`;
+    menu.style.width = `${r.width}px`;
+    const h = menu.offsetHeight || 0;
+    let top = r.top - h - 4;
+    if (top < 8) top = Math.min(r.bottom + 4, window.innerHeight - h - 8);
+    menu.style.top = `${top}px`;
+  },
+
+  _bindDismiss() {
+    if (MentionAutocomplete._dismissBound) return;
+    MentionAutocomplete._dismissBound = (e) => {
+      if (e.type === 'scroll') { MentionAutocomplete.close(); return; }
+      if (MentionAutocomplete._menu && MentionAutocomplete._menu.contains(e.target)) return;
+      if (e.target === MentionAutocomplete._input) return;
+      MentionAutocomplete.close();
+    };
+    document.addEventListener('mousedown', MentionAutocomplete._dismissBound, true);
+    const msgs = document.getElementById('gc-messages');
+    if (msgs) msgs.addEventListener('scroll', MentionAutocomplete._dismissBound, true);
+  },
+
+  close() {
+    if (!MentionAutocomplete._open) return;
+    MentionAutocomplete._open = false;
+    MentionAutocomplete._active = -1;
+    MentionAutocomplete._items = [];
+    MentionAutocomplete._tokenStart = -1;
+    if (MentionAutocomplete._menu) {
+      MentionAutocomplete._menu.classList.add('hidden');
+      MentionAutocomplete._menu.innerHTML = '';
+    }
+    if (MentionAutocomplete._dismissBound) {
+      document.removeEventListener('mousedown', MentionAutocomplete._dismissBound, true);
+      const msgs = document.getElementById('gc-messages');
+      if (msgs) msgs.removeEventListener('scroll', MentionAutocomplete._dismissBound, true);
+      MentionAutocomplete._dismissBound = null;
+    }
+  },
+
+  _move(delta) {
+    const n = MentionAutocomplete._items.length;
+    if (!n) return;
+    MentionAutocomplete._active = (MentionAutocomplete._active + delta + n) % n;
+    const menu = MentionAutocomplete._menu;
+    if (!menu) return;
+    menu.querySelectorAll('.gc-mention-option').forEach((el, i) => {
+      el.classList.toggle('gc-mention-option-active', i === MentionAutocomplete._active);
+      if (i === MentionAutocomplete._active) el.scrollIntoView({ block: 'nearest' });
+    });
+  },
+
+  // Capture-phase keydown. Consumes the event (preventing the composer's
+  // own handler + the form's Enter-submit) only when the menu is open and
+  // the key is one we own.
+  _onKeydown(e) {
+    if (!MentionAutocomplete._open) return;
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault(); e.stopPropagation(); MentionAutocomplete._move(1); break;
+      case 'ArrowUp':
+        e.preventDefault(); e.stopPropagation(); MentionAutocomplete._move(-1); break;
+      case 'Enter':
+      case 'Tab': {
+        const name = MentionAutocomplete._items[MentionAutocomplete._active];
+        if (name) {
+          e.preventDefault(); e.stopPropagation();
+          MentionAutocomplete.accept(name);
+        }
+        break;
+      }
+      case 'Escape':
+        e.preventDefault(); e.stopPropagation(); MentionAutocomplete.close(); break;
+      default:
+        break;
+    }
+  },
+
+  // Replace the active `@token` with `@username ` (trailing space), keep
+  // within maxlength, restore the caret, and fire a synthetic `input`
+  // event so the composer's own handlers (draft persistence + typing
+  // indicator) run exactly as if the user typed it.
+  accept(username) {
+    const input = MentionAutocomplete._input;
+    if (!input || !username || MentionAutocomplete._tokenStart < 0) { MentionAutocomplete.close(); return; }
+    const caret = input.selectionStart;
+    const value = input.value;
+    const before = value.slice(0, MentionAutocomplete._tokenStart);
+    const after = value.slice(caret);
+    const insert = `@${username} `;
+    const next = before + insert + after;
+
+    const max = parseInt(input.getAttribute('maxlength') || '0', 10);
+    if (max && next.length > max) {
+      // Wouldn't fit — leave the user's text untouched rather than
+      // silently truncating their message.
+      MentionAutocomplete.close();
+      return;
+    }
+
+    input.value = next;
+    const pos = (before + insert).length;
+    input.setSelectionRange(pos, pos);
+    MentionAutocomplete.close();
+    input.focus();
+    // Run the existing #gc-input `input` listener (draft save + sendTyping).
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  },
+};
+
 // Expose on window so app.js's WS dispatcher can reconcile the in-chat
 // unread dots on notification events. (A top-level `const` is a lexical
 // global accessible by bare name within the realm, but is NOT a property
 // of `window` — mirror the `window.Notifications` pattern explicitly.)
 window.GroupChat = GroupChat;
+window.MentionAutocomplete = MentionAutocomplete;
