@@ -45,11 +45,31 @@ test('does NOT unwrap when content follows the first closing fence', () => {
   assert.equal(stripSpecWrapperFence(doc), doc);
 });
 
-test('does NOT unwrap an ambiguous 3-backtick wrapper with inner 3-backtick fences (F6)', () => {
-  // Inner ``` closes the first block early; boundary is ambiguous, so we bail
-  // and leave it for the four-backtick author guidance to prevent upstream.
-  const doc = '```markdown\n# Spec\n\n```js\nconst x = 1;\n```\n\nmore spec\n```';
+test('unwraps a 3-backtick markdown wrapper with a BALANCED inner 3-backtick block (sessions 106/151)', () => {
+  // The whole doc is wrapped in ```markdown and contains one complete inner
+  // ```js…``` block. The wrapper closer is the document's last line and the
+  // inner fences balance, so the boundary is unambiguous → unwrap.
+  const inner = '# Spec\n\n```js\nconst x = 1;\n```\n\nmore spec';
+  const doc = '```markdown\n' + inner + '\n```';
+  assert.equal(stripSpecWrapperFence(doc), inner);
+});
+
+test('does NOT unwrap when an inner fence is left unbalanced', () => {
+  // After pairing inner fences we are still "inside" a block at the last line,
+  // so the document's final ``` was closing that inner block, not the wrapper.
+  const doc = '```markdown\n# Spec\n\n```js\nconst x = 1;\n```';
   assert.equal(stripSpecWrapperFence(doc), doc);
+});
+
+test('unwraps a ```filepath:SPEC.md file-emission wrapper (session 230)', () => {
+  const wrapped = '```filepath:SPEC.md\n' + SPEC + '\n```';
+  assert.equal(stripSpecWrapperFence(wrapped), SPEC);
+});
+
+test('unwraps a bare markdown-file-path wrapper but not a non-markdown one', () => {
+  assert.equal(stripSpecWrapperFence('```notes.md\n' + SPEC + '\n```'), SPEC);
+  const json = '```filepath:data.json\n{"a":1}\n```';
+  assert.equal(stripSpecWrapperFence(json), json);
 });
 
 test('unwraps a 4-backtick wrapper that legitimately contains inner 3-backtick fences', () => {
