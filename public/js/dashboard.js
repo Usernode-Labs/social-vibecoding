@@ -448,6 +448,56 @@ function renderKudos(d) {
   attachTooltip(el);
 }
 
+// ── Daily spend (last 30 days) ────────────────────────────────
+// One vertical bar per calendar day. Each bar carries a full-height
+// transparent hover overlay (data-tip-id) so even $0 days are hoverable
+// and show their amount — the same pattern renderTopUsers/renderKudos use.
+function renderSpend(d) {
+  const days = d.days || [];
+  const el = document.getElementById('spend');
+  if (!days.length) {
+    el.innerHTML = '<p class="text-sm text-zinc-500">Not enough data yet.</p>';
+    return;
+  }
+  const dollars = (c) => `$${(Number(c || 0) / 100).toFixed(2)}`;
+  const labels = days.map((x) => weekLabel(x.day));
+  const vals = days.map((x) => Number(x.cents) || 0);
+  const max = Math.max(1, ...vals);
+  const W = 640, H = 180, topPad = 14, botPad = 18, n = days.length;
+  const plot = H - topPad - botPad;
+  const bw = W / n;
+  const grid = (() => {
+    let out = '';
+    for (let i = 0; i <= 4; i++) {
+      const y = (topPad + (i / 4) * plot).toFixed(1);
+      out += `<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="currentColor" stroke-opacity="0.12" stroke-width="0.5" />`;
+    }
+    return out;
+  })();
+  const bars = days.map((x, i) => {
+    const v = vals[i];
+    const h = (v / max) * plot;
+    const barX = i * bw;
+    const y = topPad + plot - h;
+    const tipId = `spend-${i}`;
+    tipStore[tipId] = `<div class="font-semibold">${esc(labels[i])}</div>
+      <div class="text-zinc-300">${dollars(v)}</div>`;
+    const bar = `<rect x="${(barX + 1).toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(1, bw - 2).toFixed(1)}" height="${Math.max(0, h).toFixed(1)}" fill="#8b5cf6"></rect>`;
+    const overlay = `<rect class="dc-hover" x="${barX.toFixed(1)}" y="${topPad}" width="${bw.toFixed(1)}" height="${plot}"
+      fill="#8b5cf6" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></rect>`;
+    return bar + overlay;
+  }).join('');
+  el.innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" class="w-full text-zinc-500" preserveAspectRatio="none" style="height:180px">
+      ${grid}${bars}
+    </svg>
+    <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
+      <span>${esc(labels[0] || '')}</span>
+      <span>${esc(labels[labels.length - 1] || '')} (today)</span>
+    </div>`;
+  attachTooltip(el);
+}
+
 // ── Bootstrap ─────────────────────────────────────────────────
 let currentCohort = 'all';
 
@@ -496,8 +546,9 @@ async function init() {
   wireCohortButtons();
 
   try {
-    const [overview, growth, retention, engagement, topUsers, kudos] = await Promise.all([
+    const [overview, spend, growth, retention, engagement, topUsers, kudos] = await Promise.all([
       getJSON('/api/admin/analytics/overview'),
+      getJSON('/api/admin/analytics/spend'),
       getJSON('/api/admin/analytics/growth'),
       getJSON('/api/admin/analytics/retention'),
       getJSON('/api/admin/analytics/engagement'),
@@ -505,6 +556,7 @@ async function init() {
       getJSON('/api/admin/analytics/kudos'),
     ]);
     renderCounters(overview);
+    renderSpend(spend);
     renderGrowth(growth);
     renderRetention(retention);
     renderStickiness(retention.stickiness);
