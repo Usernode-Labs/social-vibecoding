@@ -380,8 +380,12 @@ const Notifications = {
     // first or after the last.
     const entries = [];
     for (const g of groups) {
-      if (g.items.length === 1) {
-        // Single-notification app: plain leaf row, no group chrome.
+      // App-associated notifications ALWAYS render under their app group
+      // header (header + dot + expand/pagination chrome), even when the
+      // app only has one notification — so the layout is consistent
+      // regardless of count. Only app-less ("general") notifications fall
+      // back to a plain leaf row when there's a single one.
+      if (g.items.length === 1 && g.appId == null) {
         entries.push(renderRow(g.items[0]));
         continue;
       }
