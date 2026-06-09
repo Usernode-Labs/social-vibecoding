@@ -1737,6 +1737,10 @@ function sessionRoutes(config) {
             `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
             [result.containerId, result.stagingUrl, session.id]
           );
+          // Warm the cert only after staging_url is persisted (Caddy's `ask`
+          // gate keys off it); otherwise the warm is refused and the first
+          // click hits a cold hostname.
+          await staging.warmStagingCert(session, result.hostname, result.stagingUrl);
         })
         .catch((err) => {
           log.error('sessions', 'Staging deploy failed', { sessionId: session.id, err: err.message });
@@ -2666,6 +2670,13 @@ INSTRUCTIONS:
           [stagingResult.containerId, stagingResult.stagingUrl, session.id]
         );
 
+        // Pre-warm the TLS cert now that staging_url is persisted (so Caddy's
+        // on-demand `ask` gate will approve the host) and BEFORE emitting
+        // `staging_ready` (which reveals the preview button). Otherwise the
+        // first click pays the ~60-90s ZeroSSL cold-start. Bounded; never
+        // blocks the deploy.
+        await staging.warmStagingCert(session, stagingResult.hostname, stagingResult.stagingUrl);
+
         stagingUrl = stagingResult.stagingUrl;
         await sendStatus('Staging deployed!', { stagingUrl });
         send('staging_ready', { url: stagingUrl });
@@ -3095,15 +3106,10 @@ CMD ["node", "server.js"]
     ? `http://localhost:${hostPort}`
     : `https://${hostname}`;
 
-  // Pre-warm the on-demand TLS cert before returning so the preview link is
-  // ready when its button appears (see buildAndDeployStaging in
-  // services/staging.js for the full rationale). Bounded; no-op in local-dev.
-  if (stagingUrl.startsWith('https://')) {
-    const warm = await caddy.warmCert(hostname);
-    if (!warm.ok) {
-      log.warn('staging', 'Cert pre-warm did not complete; preview may be slow on first hit', { sessionId: session.id, hostname, err: warm.error?.message });
-    }
-  }
+  // TLS pre-warm happens in the caller (staging.warmStagingCert) AFTER the
+  // session's staging_url is persisted — Caddy's on-demand `ask` gate keys
+  // off that row, so warming here would be refused. See staging.js for the
+  // full ordering rationale.
 
   return { containerId, stagingUrl, hostname };
 }

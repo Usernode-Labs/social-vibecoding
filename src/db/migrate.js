@@ -20,6 +20,7 @@ async function migrate(config) {
 
   await seedAdmin(pool, config);
   await seedSelfApp(pool, config);
+  await seedStagingNotifications(pool, config);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
   // Must run BEFORE backfillOrphanedSpecDrafts: unwrapping spec_md after that
@@ -500,6 +501,149 @@ async function seedSelfApp(pool, config) {
     slug: config.selfAppSlug,
     sha: sha ? sha.slice(0, 7) : '(none)',
     secretsDeclared: manifest.secrets.length,
+  });
+}
+
+// Staging clones intentionally TRUNCATE table-level `staging:private`
+// tables, including `notifications`, so production social data never leaks
+// into a preview. For the platform self-app, that made notification UI work
+// hard to test in staging. Seed a tiny, synthetic set after the privacy pass
+// has already run. Idempotent on restart: every row is keyed off fixture
+// message/session content and checked before insert.
+async function seedStagingNotifications(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username, is_admin
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 2`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging notification fixtures skipped: no users');
+    return;
+  }
+
+  const target = userRows.find((u) => u.is_admin) || userRows[0];
+  const source = userRows.find((u) => u.id !== target.id) || target;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging notification fixtures skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const messageIds = {};
+  for (const [key, content] of Object.entries({
+    mention: `[staging fixture] Mention notification for @${target.username}`,
+    reply: '[staging fixture] Reply notification target message',
+    reaction: '[staging fixture] Reaction notification target message',
+  })) {
+    const { rows: existing } = await pool.query(
+      'SELECT id FROM chat_messages WHERE app_id = $1 AND content = $2 LIMIT 1',
+      [appId, content]
+    );
+    if (existing.length) {
+      messageIds[key] = existing[0].id;
+      continue;
+    }
+    const { rows } = await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, created_at)
+       VALUES ($1, $2, $3, 'message', NOW() - ($4::int * INTERVAL '1 minute'))
+       RETURNING id`,
+      [appId, source.id, content, key === 'mention' ? 18 : key === 'reply' ? 16 : 14]
+    );
+    messageIds[key] = rows[0].id;
+  }
+
+  const fixtureBranch = 'staging-fixture/notifications';
+  let sessionId;
+  const { rows: sessionRows } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, fixtureBranch]
+  );
+  if (sessionRows.length) {
+    sessionId = sessionRows[0].id;
+  } else {
+    const { rows } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_number, pr_title, status, created_at)
+       VALUES
+         ($1, $2, $3, 9001, 'Staging fixture PR for notification testing', 'promoted',
+          NOW() - INTERVAL '12 minutes')
+       RETURNING id`,
+      [appId, source.id, fixtureBranch]
+    );
+    sessionId = rows[0].id;
+  }
+
+  const fixtures = [
+    { kind: 'mention', chatMessageId: messageIds.mention, sourceUserId: source.id, minutesAgo: 11 },
+    { kind: 'reply', chatMessageId: messageIds.reply, sourceUserId: source.id, minutesAgo: 10 },
+    {
+      kind: 'reaction',
+      chatMessageId: messageIds.reaction,
+      sourceUserId: source.id,
+      detail: '👀',
+      minutesAgo: 9,
+    },
+    { kind: 'pr_proposed', sessionId, sourceUserId: source.id, minutesAgo: 8 },
+    { kind: 'stale_pr', sessionId, sourceUserId: null, minutesAgo: 7 },
+    {
+      kind: 'kudos',
+      sessionId,
+      sourceUserId: source.id,
+      readAt: true,
+      minutesAgo: 6,
+    },
+  ];
+
+  let inserted = 0;
+  for (const f of fixtures) {
+    const { rows: existing } = await pool.query(
+      `SELECT id FROM notifications
+        WHERE user_id = $1
+          AND app_id = $2
+          AND kind = $3
+          AND COALESCE(chat_message_id, -1) = COALESCE($4::int, -1)
+          AND COALESCE(session_id, -1) = COALESCE($5::int, -1)
+        LIMIT 1`,
+      [target.id, appId, f.kind, f.chatMessageId || null, f.sessionId || null]
+    );
+    if (existing.length) continue;
+
+    await pool.query(
+      `INSERT INTO notifications
+         (user_id, app_id, chat_message_id, session_id, source_user_id,
+          kind, detail, read_at, created_at)
+       VALUES
+         ($1, $2, $3, $4, $5, $6, $7,
+          CASE WHEN $8::boolean THEN NOW() - INTERVAL '1 minute' ELSE NULL END,
+          NOW() - ($9::int * INTERVAL '1 minute'))`,
+      [
+        target.id,
+        appId,
+        f.chatMessageId || null,
+        f.sessionId || null,
+        f.sourceUserId,
+        f.kind,
+        f.detail || null,
+        !!f.readAt,
+        f.minutesAgo,
+      ]
+    );
+    inserted++;
+  }
+
+  log.info('db', 'Staging notification fixtures seeded', {
+    targetUser: target.username,
+    inserted,
   });
 }
 
