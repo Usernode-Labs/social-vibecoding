@@ -229,18 +229,29 @@ async function teardownStaging(session, app) {
     await docker.stopAndRemove(session.staging_container_id).catch(() => {});
   }
 
-  // No Caddy route to remove — the wildcard site maps hostnames to
-  // container names dynamically, so stopping the container above is what
-  // takes the preview offline. The on-demand cert stays cached in Caddy
-  // harmlessly; the ask endpoint stops vouching for the host once the
-  // caller nulls staging_url.
-
-  // Drop staging database
+  // Drop staging database. Derive the name from the still-in-memory
+  // staging_url *before* we null the column below.
   if (app) {
     const commitHash = session.staging_url?.match(/--(\w{6})\./)?.[1] || '000000';
     const stagingDbNameStr = dbManager.stagingDbName(app.slug, `s${session.id}`, commitHash);
     await dbManager.dropDatabase(stagingDbNameStr).catch(() => {});
   }
+
+  // Stop vouching for the now-dead hostname. Caddy's on-demand `ask` gate
+  // (routes/internal.js isKnownHost) approves a staging host iff
+  // chat_sessions.staging_url still equals it. Leaving it populated after the
+  // container is gone makes Caddy keep (re)issuing/renewing certs for a dead
+  // upstream and lets stale preview links resolve to a 502 instead of a clean
+  // refusal. Nulling it here — the single chokepoint every teardown caller
+  // (merge, archive, idle-reclaim) funnels through — frees those certs from
+  // renewal churn and makes the gate refuse the host. (No Caddy route to
+  // remove: the wildcard site maps hostnames to container names dynamically,
+  // so stopping the container is what takes the preview offline; the cached
+  // cert expires on its own.)
+  await getPool().query(
+    `UPDATE chat_sessions SET staging_url = NULL, staging_container_id = NULL WHERE id = $1`,
+    [session.id]
+  ).catch((err) => log.warn('staging', 'Failed to clear staging_url on teardown', { sessionId: session.id, err: err.message }));
 
   log.info('staging', 'Staging torn down', { sessionId: session.id });
 }
