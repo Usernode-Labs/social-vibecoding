@@ -359,10 +359,17 @@ const Notifications = {
       const id = Number(el.getAttribute('data-notif-id'));
       el.addEventListener('click', () => Notifications._onItemClick(id));
     });
-    // Group header expand/collapse toggles.
+    // Group header expand/collapse toggles. stopPropagation so the
+    // document-level outside-click handler doesn't see this click: the
+    // toggle re-renders the list (detaching this button), after which the
+    // bubbled click's target is no longer inside the panel and the panel
+    // would otherwise be wrongly dismissed.
     list.querySelectorAll('[data-group-toggle]').forEach((el) => {
       const key = el.getAttribute('data-group-toggle');
-      el.addEventListener('click', () => Notifications._toggleGroup(key));
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        Notifications._toggleGroup(key);
+      });
     });
     // Per-group "Mark read".
     list.querySelectorAll('[data-group-markread]').forEach((el) => {
@@ -418,9 +425,12 @@ function renderGroup(g, isExpanded) {
   const hasUnread = g.unreadCount > 0;
   const accent = hasUnread ? 'bg-violet-500/5 border-l-2 border-violet-500' : 'border-l-2 border-transparent';
   const chevron = isExpanded ? '▾' : '▸'; // ▾ / ▸
+  // Just the number, centered in a fixed-size pill (no "new" wording).
+  // Unread groups show the unread count in the violet accent pill; fully
+  // read groups show the total in a muted pill.
   const countBadge = hasUnread
-    ? `<span class="text-[0.65rem] font-bold text-white bg-violet-500 rounded-full px-1.5 py-0.5">${g.unreadCount} new</span>`
-    : `<span class="text-[0.65rem] font-medium text-zinc-500 dark:text-zinc-400 bg-zinc-200 dark:bg-zinc-800 rounded-full px-1.5 py-0.5">${g.items.length}</span>`;
+    ? `<span class="inline-flex items-center justify-center min-w-[1.1rem] h-[1.1rem] px-1 text-[0.65rem] font-bold leading-none text-white bg-violet-500 rounded-full">${g.unreadCount}</span>`
+    : `<span class="inline-flex items-center justify-center min-w-[1.1rem] h-[1.1rem] px-1 text-[0.65rem] font-medium leading-none text-zinc-500 dark:text-zinc-400 bg-zinc-200 dark:bg-zinc-800 rounded-full">${g.items.length}</span>`;
 
   const latest = g.items[0];
   const preview = `${previewText(latest)} · ${relativeTime(latest.createdAt)}`;
