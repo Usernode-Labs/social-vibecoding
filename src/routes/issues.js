@@ -10,6 +10,15 @@ const appSecrets = require('../services/app-secrets');
 const staging = require('../services/staging');
 const { encrypt, decrypt } = require('../services/secrets');
 const { issueCreateLimiter } = require('../middleware/rate-limits');
+const events = require('../services/events');
+const { weekStartUtc, countWeeklyAllowanceUsed, WEEKLY_KUDOS_LIMIT } = require('./kudos');
+
+// Pull owner/repo out of a stored repo_url. Same shape used across the
+// codebase (e.g. the rename-apply path below, routes/votes.js).
+function parseOwnerRepo(repoUrl) {
+  const [, owner, repo] = (repoUrl || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  return owner && repo ? { owner, repo } : null;
+}
 
 // Renames are no longer an issue kind — they open a dapp.json `name` PR
 // via POST /api/apps/:slug/rename (see src/routes/apps.js). The vote-apply
@@ -244,6 +253,194 @@ function issueRoutes(config) {
       res.json({ ok: true, renamed, secretChanged });
     } catch (err) {
       log.error('issues', 'Vote failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ----------------------------------------------------------------
+  // GET /api/apps/:slug/github-issues
+  //
+  // Lists the repo's OPEN GitHub issues (via github.fetchPublicIssues —
+  // anonymous, cached, never-throws) for the "Open Issues" activity-panel
+  // section. Augments each issue with this app's OPEN-bounty count and a
+  // per-viewer `my_bounty` flag, plus the viewer's remaining weekly kudos
+  // allowance so the FE can disable the "Give kudos" button when the shared
+  // budget is spent. Distinct from the platform-internal `issues` table
+  // (governance proposals) listed by GET /api/apps/:slug/issues above.
+  // ----------------------------------------------------------------
+  router.get('/api/apps/:slug/github-issues', async (req, res) => {
+    try {
+      const { rows: appRows } = await pool.query(
+        'SELECT id, repo_url FROM apps WHERE slug = $1', [req.params.slug]
+      );
+      if (!appRows.length) return res.status(404).json({ error: 'App not found' });
+      const app = appRows[0];
+
+      const parsed = parseOwnerRepo(app.repo_url);
+      if (!github.isEnabled() || !parsed) {
+        return res.json({ issues: [], truncatedList: false, note: 'unavailable' });
+      }
+
+      // fetchPublicIssues never throws and never returns null; on any
+      // failure mode it returns { issues:[], truncatedList:false, note }.
+      const result = await github.fetchPublicIssues(parsed.owner, parsed.repo);
+
+      // Open-bounty tallies for this app, keyed by issue number, in one
+      // round-trip. BOOL_OR gives the viewer's own-open-bounty flag.
+      const { rows: bountyRows } = await pool.query(
+        `SELECT github_issue_number AS n,
+                COUNT(*)::int AS cnt,
+                BOOL_OR(giver_user_id = $2) AS mine
+           FROM issue_bounties
+          WHERE app_id = $1 AND status = 'open'
+          GROUP BY github_issue_number`,
+        [app.id, req.user.id]
+      );
+      const byNumber = new Map(bountyRows.map((r) => [r.n, r]));
+
+      const issues = (result.issues || []).map((issue) => {
+        const b = byNumber.get(issue.number);
+        return {
+          ...issue,
+          bounty_count: b ? b.cnt : 0,
+          my_bounty: b ? !!b.mine : false,
+        };
+      });
+
+      const used = await countWeeklyAllowanceUsed(pool, req.user.id, weekStartUtc());
+      const myRemaining = Math.max(0, WEEKLY_KUDOS_LIMIT - used);
+
+      res.json({
+        issues,
+        truncatedList: !!result.truncatedList,
+        ...(result.note ? { note: result.note } : {}),
+        myRemaining,
+        limit: WEEKLY_KUDOS_LIMIT,
+      });
+    } catch (err) {
+      log.error('issues', 'Failed to list GitHub issues', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ----------------------------------------------------------------
+  // POST /api/apps/:slug/issues/:number/bounty
+  //
+  // Place a "Give kudos" bounty on a GitHub issue. A bounty is a symbolic
+  // off-chain pledge (no tokens) that debits the giver's SHARED weekly kudos
+  // allowance (the same 5/week cap PR kudos uses, counted across both
+  // ledgers). When a merged PR closes this issue, the open bounty is awarded
+  // to that PR's author (see routes/votes.js checkAndMerge).
+  //
+  // Status codes:
+  //   200 ok        — bounty recorded; body carries { remaining, limit }
+  //   400 bad input — non-positive issue number
+  //   404 not_found — app doesn't exist
+  //   409 conflict  — viewer already has an open bounty on this issue
+  //   429 too_many  — shared weekly kudos allowance exhausted
+  // ----------------------------------------------------------------
+  router.post('/api/apps/:slug/issues/:number/bounty', async (req, res) => {
+    const issueNumber = parseInt(req.params.number, 10);
+    if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+      return res.status(400).json({ error: 'Invalid issue number' });
+    }
+
+    try {
+      const { rows: appRows } = await pool.query(
+        'SELECT id, slug, repo_url FROM apps WHERE slug = $1', [req.params.slug]
+      );
+      if (!appRows.length) return res.status(404).json({ error: 'App not found' });
+      const app = appRows[0];
+
+      // Verify :number is a CURRENTLY OPEN GitHub issue on this repo BEFORE
+      // spending quota, inserting a row, or posting chat noise. Otherwise a
+      // user could bounty a closed/nonexistent issue and a later PR carrying
+      // `Closes #N` would award that fake/stale bounty. fetchPublicIssues
+      // never throws and surfaces degraded fetches via a `note`; if we can't
+      // positively confirm the issue is open (closed, nonexistent, or GitHub
+      // unavailable) we refuse and change nothing.
+      const parsed = parseOwnerRepo(app.repo_url);
+      if (!github.isEnabled() || !parsed) {
+        return res.status(422).json({
+          error: 'Cannot verify the issue right now — GitHub is unavailable for this app.',
+        });
+      }
+      const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
+      if (ghResult.note) {
+        // 'rate limited' / 'issues unavailable' / 'fetch failed' — no
+        // positive confirmation the issue is open.
+        return res.status(422).json({
+          error: "Couldn't confirm this issue is open right now. Try again in a moment.",
+        });
+      }
+      const isOpen = (ghResult.issues || []).some((i) => i.number === issueNumber);
+      if (!isOpen) {
+        return res.status(404).json({
+          error: `Issue #${issueNumber} isn't an open issue on this repo.`,
+        });
+      }
+
+      const weekStart = weekStartUtc();
+
+      // Shared weekly allowance check. Same bounded race as the PR-kudos
+      // give path (two parallel POSTs could each pass and overshoot by ≤1);
+      // not security-critical, documented there.
+      const used = await countWeeklyAllowanceUsed(pool, req.user.id, weekStart);
+      if (used >= WEEKLY_KUDOS_LIMIT) {
+        return res.status(429).json({
+          error: `Weekly kudos quota exceeded (${WEEKLY_KUDOS_LIMIT}/week). Resets every Monday 00:00 UTC.`,
+          remaining: 0,
+          limit: WEEKLY_KUDOS_LIMIT,
+        });
+      }
+
+      let inserted;
+      try {
+        const { rows } = await pool.query(
+          `INSERT INTO issue_bounties (app_id, github_issue_number, giver_user_id, week_start, status)
+           VALUES ($1, $2, $3, $4, 'open')
+           RETURNING id, created_at`,
+          [app.id, issueNumber, req.user.id, weekStart]
+        );
+        inserted = rows[0];
+      } catch (err) {
+        // Partial unique index on open bounties → already pledged.
+        if (err.code === '23505') {
+          return res.status(409).json({ error: 'You already placed a bounty on this issue' });
+        }
+        throw err;
+      }
+
+      events.record(pool, {
+        type: events.EVENT_TYPES.BOUNTY_CREATED,
+        userId: req.user.id,
+        appId: app.id,
+        metadata: { issueNumber },
+      });
+
+      // Open-bounty count for this issue after the insert, for live FE update.
+      const { rows: countRows } = await pool.query(
+        `SELECT COUNT(*)::int AS c FROM issue_bounties
+          WHERE app_id = $1 AND github_issue_number = $2 AND status = 'open'`,
+        [app.id, issueNumber]
+      );
+      const bountyCount = countRows[0]?.c || 0;
+
+      await sendSystemMessage(pool, app.id,
+        `${req.user.username} placed a bounty (kudos) on issue #${issueNumber}`,
+        'system'
+      ).catch((err) => log.warn('issues', 'Bounty chat message failed', { err: err.message }));
+
+      pushIssueUpdate({
+        action: 'bounty', appSlug: app.slug, appId: app.id,
+        issueNumber, bountyCount,
+      });
+
+      const remaining = Math.max(0, WEEKLY_KUDOS_LIMIT - (used + 1));
+      log.info('issues', 'Bounty created', { appId: app.id, issueNumber, giverId: req.user.id, remaining });
+      res.json({ ok: true, bountyId: inserted.id, bountyCount, remaining, limit: WEEKLY_KUDOS_LIMIT });
+    } catch (err) {
+      log.error('issues', 'Bounty create failed', { issueNumber, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

@@ -111,6 +111,7 @@ function makeMockPool(initial = {}) {
     sessions: new Map(initial.sessions || []),
     users: new Map(initial.users || []),
     kudos: [], // array of { session_id, giver_user_id, week_start }
+    bounties: [], // array of { app_id, github_issue_number, giver_user_id, week_start }
     notifications: [],
     nextId: 1,
   };
@@ -129,6 +130,22 @@ function makeMockPool(initial = {}) {
     if (/^\s*SELECT id FROM chat_sessions WHERE id = \$1\s*$/i.test(s)) {
       const id = params[0];
       return { rows: state.sessions.has(id) ? [{ id }] : [] };
+    }
+    // ------------ Combined weekly allowance (pr_kudos + issue_bounties) ------------
+    // countWeeklyAllowanceUsed: the give-quota + budget endpoints now draw
+    // from a shared cap across both ledgers. Matched specifically on the
+    // bounty subquery's `giver_user_id = $1 AND week_start = $2` predicate so
+    // this DOESN'T also catch the leaderboard/users query (whose awarded-
+    // bounty LATERAL filters on awarded_user_id, not giver_user_id).
+    if (/FROM issue_bounties\s+WHERE giver_user_id = \$1 AND week_start = \$2/i.test(s)) {
+      const [userId, weekStart] = params;
+      const k = state.kudos.filter(
+        (x) => x.giver_user_id === userId && x.week_start === weekStart
+      ).length;
+      const b = state.bounties.filter(
+        (x) => x.giver_user_id === userId && x.week_start === weekStart
+      ).length;
+      return { rows: [{ c: k + b }] };
     }
     // ------------ Count this week ------------
     if (/SELECT COUNT\(\*\)::int AS c FROM pr_kudos[\s\S]*giver_user_id = \$1 AND week_start = \$2/i.test(s)) {

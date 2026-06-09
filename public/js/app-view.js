@@ -6,6 +6,15 @@ const AppView = {
   activeSeconds: 0,
   iframeFocused: false,
 
+  // Open Issues section state. `_ghIssues` caches the last-fetched GitHub
+  // issue list (with bounty_count/my_bounty) so "Show 5 more" and the
+  // give-bounty optimistic update can re-render the section without a
+  // refetch. `_ghIssuesShown` is how many of them are currently visible.
+  _ghIssues: [],
+  _ghIssuesMeta: { truncatedList: false, note: null, repoUrl: null, myRemaining: null },
+  _ghIssuesShown: 5,
+  _bountyInFlight: new Set(),
+
   _INFO_PANEL_OPEN_KEY_PREFIX: 'gc-info-panel-open-v1:',
   // Persisted height of the "App information and activity" panel,
   // stored as a percentage (10–90) of the group-chat container so it
@@ -644,10 +653,11 @@ const AppView = {
     AppView.panelOpen = AppView._readInfoPanelOpen(slug);
 
     try {
-      const [promotedRes, issuesRes, mergedRes] = await Promise.all([
+      const [promotedRes, issuesRes, mergedRes, ghIssuesRes] = await Promise.all([
         fetch(`/api/apps/${slug}/promoted`),
         fetch(`/api/apps/${slug}/issues`),
         fetch(`/api/apps/${slug}/merged`),
+        fetch(`/api/apps/${slug}/github-issues`),
       ]);
 
       const promotedData = promotedRes.ok ? await promotedRes.json() : { promoted: [] };
@@ -711,6 +721,21 @@ const AppView = {
       const renameProposals = allIssues.filter((i) => i.kind === 'rename');
       const issues = allIssues.filter((i) => i.kind !== 'rename');
 
+      // Open GitHub issues (the repo's issues, distinct from the internal
+      // governance `issues` above). Cached on AppView so "Show 5 more" and
+      // the give-bounty optimistic update re-render without a refetch. Reset
+      // the visible count to the first page on every full panel reload.
+      const ghIssuesData = ghIssuesRes.ok ? await ghIssuesRes.json() : { issues: [] };
+      AppView._ghIssues = Array.isArray(ghIssuesData.issues) ? ghIssuesData.issues : [];
+      AppView._ghIssuesMeta = {
+        truncatedList: !!ghIssuesData.truncatedList,
+        note: ghIssuesData.note || null,
+        repoUrl: (AppView.appData && AppView.appData.repo_url) || null,
+        myRemaining: typeof ghIssuesData.myRemaining === 'number' ? ghIssuesData.myRemaining : null,
+      };
+      AppView._ghIssuesShown = 5;
+      const ghIssues = AppView._ghIssues;
+
       // Activity-only summary (excludes the Users tile, which is
       // always present and isn't really "activity"). Empty when
       // nothing's happening so the pill stays clean.
@@ -718,6 +743,7 @@ const AppView = {
         promoted.length && `${promoted.length} open PR${promoted.length > 1 ? 's' : ''}`,
         renameProposals.length && `${renameProposals.length} rename proposal${renameProposals.length > 1 ? 's' : ''}`,
         issues.length && `${issues.length} issue${issues.length > 1 ? 's' : ''}`,
+        ghIssues.length && `${ghIssues.length} open issue${ghIssues.length > 1 ? 's' : ''}`,
         merged.length && `${merged.length} merged`,
       ].filter(Boolean).join(' · ');
 
@@ -901,6 +927,13 @@ const AppView = {
         }
         bodyHtml += '</div></div>';
       }
+
+      // Open Issues — the repo's open GitHub issues, with a per-issue
+      // "Give kudos" (bounty) + "Create PR" (seeded dev chat) action.
+      // Placed strictly between Open PRs and Merged. Rendered via a helper
+      // (also called by showMoreIssues / giveIssueBounty for in-place
+      // re-render) into a stable wrapper so paging doesn't reload the panel.
+      bodyHtml += `<div id="gc-open-issues" class="mb-2">${AppView._renderOpenIssuesInner()}</div>`;
 
       // Note: the "Propose rename" trigger lives in the dev-chat tab's
       // Edit section now (see renderDevChatTab) — keeping the group
@@ -1119,6 +1152,154 @@ const AppView = {
     } finally {
       AppView._voteInFlight.delete(key);
     }
+  },
+
+  // ---- Open Issues section ------------------------------------------------
+
+  // Build the inner HTML for the Open Issues section from the cached
+  // AppView._ghIssues list. Rendered once inside loadVotePanel's bodyHtml and
+  // re-rendered in place (into #gc-open-issues) by showMoreIssues /
+  // giveIssueBounty so paging + optimistic bounty updates need no refetch.
+  _renderOpenIssuesInner() {
+    const issues = AppView._ghIssues || [];
+    const meta = AppView._ghIssuesMeta || {};
+    const heading = `<div class="text-xs text-zinc-500 mb-1 font-medium">Open Issues</div>`;
+
+    // Degraded / empty states. A `note` means fetchPublicIssues couldn't
+    // return a live list (rate limited / unavailable / fetch failed); show a
+    // muted line rather than an error toast.
+    if (!issues.length) {
+      const msg = meta.note
+        ? "Couldn't load open issues right now."
+        : 'No open issues.';
+      return `${heading}<div class="text-xs text-zinc-500 dark:text-zinc-400">${msg}</div>`;
+    }
+
+    const shown = Math.min(AppView._ghIssuesShown || 5, issues.length);
+    const budgetSpent = meta.myRemaining === 0;
+
+    let html = `${heading}<div class="divide-y divide-zinc-200 dark:divide-zinc-800 sm:divide-y-0 border-y border-zinc-200 dark:border-zinc-800 sm:border-y-0">`;
+    for (let i = 0; i < shown; i++) {
+      const issue = issues[i];
+      const n = issue.number;
+      const href = issue.htmlUrl || '#';
+      const label = issue.labels && issue.labels.length
+        ? `<span class="text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-zinc-500/10 text-zinc-500">${escapeHtml(issue.labels[0])}</span>`
+        : '';
+      const bountyPill = issue.bounty_count
+        ? `<span class="inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500" title="Kudos bounties pledged on this issue">&#9733; ${issue.bounty_count}</span>`
+        : '';
+      // "Give kudos" disables once the viewer has an open bounty here or has
+      // spent their shared weekly allowance.
+      const kudosDisabled = issue.my_bounty || budgetSpent;
+      const kudosTitle = issue.my_bounty
+        ? 'You already placed a bounty on this issue'
+        : (budgetSpent ? 'Weekly kudos allowance spent' : 'Pledge a kudos bounty — paid to whoever\'s merged PR closes this issue');
+      const kudosBtn = `<button class="gc-vote-btn"${kudosDisabled ? ' disabled' : ''} title="${kudosTitle}" onclick="AppView.giveIssueBounty(${n})">${issue.my_bounty ? '&#9733; Bountied' : 'Give kudos'}</button>`;
+      const createBtn = `<button class="gc-vote-btn" title="Start a dev chat to solve this issue" onclick="AppView.createPrForIssue(${n})">Create PR</button>`;
+
+      html += `
+        <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
+          <a href="${href}" target="_blank" rel="noopener" class="text-xs text-violet-400 font-mono hover:underline">#${n}</a>
+          <span class="text-xs text-zinc-300 flex-1 min-w-0 truncate" title="${escapeHtml(issue.title)}">${escapeHtml(issue.title)}</span>
+          ${label}
+          ${bountyPill}
+          <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
+            ${kudosBtn}
+            ${createBtn}
+          </div>
+        </div>`;
+    }
+    html += '</div>';
+
+    // Paging footer: "Show 5 more" while local items remain; once all
+    // fetched issues are shown but the repo has more than the fetch ceiling
+    // (truncatedList), link out to GitHub rather than implying completeness.
+    if (shown < issues.length) {
+      html += `<div class="mt-1"><button class="gc-vote-btn" onclick="AppView.showMoreIssues()">Show 5 more</button></div>`;
+    } else if (meta.truncatedList && meta.repoUrl) {
+      const issuesUrl = `${meta.repoUrl.replace(/\.git$/, '').replace(/\/$/, '')}/issues`;
+      html += `<div class="mt-1"><a href="${issuesUrl}" target="_blank" rel="noopener" class="text-xs text-violet-400 hover:underline">More open issues on GitHub &rarr;</a></div>`;
+    }
+    return html;
+  },
+
+  // Re-render just the Open Issues section in place (no panel reload).
+  _rerenderOpenIssues() {
+    const el = document.getElementById('gc-open-issues');
+    if (el) el.innerHTML = AppView._renderOpenIssuesInner();
+  },
+
+  // "Show 5 more" — bump the visible count and re-render. Pure client-side
+  // paging over the already-fetched list; repeatable.
+  showMoreIssues() {
+    AppView._ghIssuesShown = (AppView._ghIssuesShown || 5) + 5;
+    AppView._rerenderOpenIssues();
+  },
+
+  // "Give kudos" — pledge a bounty on a GitHub issue. Debits the shared
+  // weekly kudos allowance server-side; optimistically bumps the local count
+  // and disables the button on success.
+  async giveIssueBounty(issueNumber) {
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug) return;
+    const key = `bounty:${issueNumber}`;
+    if (AppView._bountyInFlight.has(key)) return;
+    AppView._bountyInFlight.add(key);
+    try {
+      const resp = await fetch(`/api/apps/${slug}/issues/${issueNumber}/bounty`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        alert(data.error || `Couldn't place bounty (HTTP ${resp.status}).`);
+        return;
+      }
+      // Reflect the new state locally: mark this issue bountied, set its
+      // count from the server, and update the remaining-allowance gate.
+      const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
+      if (issue) {
+        issue.my_bounty = true;
+        issue.bounty_count = typeof data.bountyCount === 'number' ? data.bountyCount : (issue.bounty_count || 0) + 1;
+      }
+      if (typeof data.remaining === 'number') AppView._ghIssuesMeta.myRemaining = data.remaining;
+      AppView._rerenderOpenIssues();
+    } catch (err) {
+      alert(`Couldn't place bounty: ${err.message}`);
+    } finally {
+      AppView._bountyInFlight.delete(key);
+    }
+  },
+
+  // "Create PR" — spin up a fresh dev chat for this issue and seed the first
+  // turn with the issue's number/title/body so the Mayor links it
+  // (addresses_issues → linked_issues → `Closes #N`) and solves it. Mirrors
+  // DevChat.startNewChange's create→open→render flow, then sends the seed.
+  async createPrForIssue(issueNumber) {
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug || typeof DevChat === 'undefined') return;
+    const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
+
+    const session = await DevChat.createSession(slug);
+    if (!session) return; // createSession already alerts (cap reached / error)
+
+    // Land on the Dev Chat tab focused on the new session. switchTab
+    // ('individual-chat') → renderDevChatTab(sessionId) opens the session,
+    // renders the chat view, and syncs the hash for us.
+    if (typeof App !== 'undefined' && App.switchTab) {
+      await App.switchTab('individual-chat', session.id);
+    }
+
+    // Seed the first turn so the Mayor links the issue (addresses_issues →
+    // linked_issues → `Closes #N`) and solves it. Naming the number is what
+    // drives the merge-time bounty payout.
+    const title = issue ? issue.title : '';
+    const body = issue && issue.body ? `\n\n${issue.body}` : '';
+    const seed =
+      `Please implement GitHub issue #${issueNumber}: "${title}".${body}\n\n`
+      + `Open a PR that closes this issue (include "Closes #${issueNumber}" so it links and closes the issue on merge).`;
+    if (typeof DevChat.sendMessage === 'function') DevChat.sendMessage(seed);
   },
 
   // Core PR voting controls (Preview / Yes / No / Admin-merge) as an HTML

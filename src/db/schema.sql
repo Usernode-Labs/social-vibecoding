@@ -566,6 +566,44 @@ CREATE INDEX IF NOT EXISTS idx_pr_kudos_giver_week  ON pr_kudos (giver_user_id, 
 CREATE INDEX IF NOT EXISTS idx_pr_kudos_created     ON pr_kudos (created_at DESC);
 COMMENT ON TABLE pr_kudos IS 'staging:private';
 
+-- Issue bounties — a "Give kudos" pledge placed on a GitHub issue from the
+-- Open Issues activity-panel section. A bounty is a SYMBOLIC off-chain
+-- ledger entry (no tokens, no on-chain transfer): pledging it debits the
+-- giver's shared weekly kudos allowance (the same 5/week cap pr_kudos
+-- enforces, counted across BOTH tables — see src/routes/kudos.js). When a
+-- merged PR closes the issue (via its chat_sessions.linked_issues link),
+-- the open bounty flips to 'awarded' and is credited to that PR's author —
+-- see the payout block in routes/votes.js checkAndMerge.
+--
+-- Keyed by (app_id, github_issue_number) — NOT the internal `issues` table —
+-- because the Open Issues section lists the repo's GitHub issues, which may
+-- have no internal proposal row. staging:private for the same reason as
+-- pr_kudos: row-level (giver, issue) attribution is privacy-flavored social
+-- data. (A private table may FK public tables; only the reverse is barred.)
+CREATE TABLE IF NOT EXISTS issue_bounties (
+  id                   SERIAL PRIMARY KEY,
+  app_id               INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  github_issue_number  INTEGER NOT NULL,
+  giver_user_id        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  week_start           DATE NOT NULL,
+  status               VARCHAR(16) NOT NULL DEFAULT 'open',
+  awarded_session_id   INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL,
+  awarded_user_id      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  awarded_at           TIMESTAMPTZ,
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- One OPEN bounty per (app, issue, giver). A partial unique index keeps the
+-- constraint scoped to status='open' so a giver can re-pledge after a prior
+-- bounty of theirs has already been awarded/voided.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_issue_bounties_open_uniq
+  ON issue_bounties (app_id, github_issue_number, giver_user_id)
+  WHERE status = 'open';
+CREATE INDEX IF NOT EXISTS idx_issue_bounties_issue
+  ON issue_bounties (app_id, github_issue_number, status);
+CREATE INDEX IF NOT EXISTS idx_issue_bounties_giver_week
+  ON issue_bounties (giver_user_id, week_start);
+COMMENT ON TABLE issue_bounties IS 'staging:private';
+
 -- Per-user app favorites. Personal shortcut — starred apps appear in a
 -- dedicated section above the main grid on the home screen. No effect
 -- on visibility or permissions for other users. Not staging:private
