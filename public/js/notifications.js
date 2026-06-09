@@ -359,17 +359,21 @@ const Notifications = {
     // Keep persisted expansion tidy: drop apps that have no notifs now.
     Notifications._pruneExpanded(new Set(groups.map((g) => g.key)));
 
-    const parts = [];
+    // One HTML chunk per top-level entry (an app group or a single-notif
+    // leaf row), joined by a stronger divider so apps are easy to tell
+    // apart. The divider only goes *between* entries — never before the
+    // first or after the last.
+    const entries = [];
     for (const g of groups) {
       if (g.items.length === 1) {
         // Single-notification app: plain leaf row, no group chrome.
-        parts.push(renderRow(g.items[0]));
+        entries.push(renderRow(g.items[0]));
         continue;
       }
-      parts.push(renderGroup(g, Notifications.expanded.has(g.key)));
+      entries.push(renderGroup(g, Notifications.expanded.has(g.key)));
     }
-    parts.push(renderLoadMore());
-    list.innerHTML = parts.join('');
+    const APP_DIVIDER = '<div role="separator" class="border-t-2 border-zinc-200 dark:border-zinc-700"></div>';
+    list.innerHTML = entries.join(APP_DIVIDER) + renderLoadMore();
 
     // Leaf-row clicks (standalone single-item rows + leaves inside an
     // expanded group).
