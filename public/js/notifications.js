@@ -7,16 +7,39 @@
 //  - handleIncoming() is called by app.js when a `notification_new`
 //    WS event arrives — updates the in-memory list, badge, and dropdown
 //    if open.
-//  - clicking an item navigates to the app's group-chat tab and marks
-//    that one read.
+//  - clicking a leaf item navigates to the app's group-chat tab and
+//    marks that one read.
+//
+// #84 grouping: `items` stays the single newest-first source of truth.
+// The dropdown renders a PURE TRANSFORM of it (_groupByApp) — one
+// collapsed header row per app with a count + latest-notification
+// preview, expandable to reveal the per-kind leaf rows. Single-item
+// apps render as a plain leaf row (no group chrome). Expansion state is
+// persisted to localStorage and survives refreshes. Scrolling near the
+// bottom loads older pages via the keyset cursor (nextBefore/hasMore).
+
+const EXPANDED_STORAGE_KEY = 'notif_expanded_groups_v1';
+// Per-expanded-group leaf cap — keeps the DOM bounded for very chatty
+// apps. Beyond this we render a "+N more" link into the app's group chat.
+const GROUP_LEAF_CAP = 10;
+// How close to the bottom (px) before we prefetch the next page.
+const LOAD_MORE_THRESHOLD = 64;
 
 const Notifications = {
-  items: [],   // newest-first
+  items: [],   // newest-first; the single source of truth
   unread: 0,
   open: false,
-  MAX: 30,
+  // Pagination cursor for scroll-to-load-more.
+  nextBefore: null,  // { createdAt, id } | null
+  hasMore: false,
+  loading: false,
+  // Set<string> of expanded group keys (appId as string, or 'general').
+  expanded: new Set(),
+  _scrollWired: false,
 
   init() {
+    Notifications._loadExpanded();
+
     const btn = document.getElementById('notifications-btn');
     if (btn) btn.addEventListener('click', Notifications.toggle);
 
@@ -33,20 +56,92 @@ const Notifications = {
       Notifications.hide();
     });
 
+    Notifications._wireScroll();
     Notifications.refresh();
   },
 
+  // --- expansion persistence -------------------------------------------
+
+  _loadExpanded() {
+    try {
+      const raw = localStorage.getItem(EXPANDED_STORAGE_KEY);
+      const arr = raw ? JSON.parse(raw) : [];
+      Notifications.expanded = new Set(Array.isArray(arr) ? arr.map(String) : []);
+    } catch {
+      Notifications.expanded = new Set();
+    }
+  },
+
+  _saveExpanded() {
+    try {
+      localStorage.setItem(
+        EXPANDED_STORAGE_KEY,
+        JSON.stringify([...Notifications.expanded])
+      );
+    } catch { /* storage may be unavailable; non-fatal */ }
+  },
+
+  // Drop persisted expansion entries for apps that no longer have any
+  // notifications, so the store doesn't grow unbounded over time.
+  _pruneExpanded(liveKeys) {
+    let changed = false;
+    for (const key of [...Notifications.expanded]) {
+      if (!liveKeys.has(key)) {
+        Notifications.expanded.delete(key);
+        changed = true;
+      }
+    }
+    if (changed) Notifications._saveExpanded();
+  },
+
+  // --- fetching --------------------------------------------------------
+
   async refresh() {
     try {
-      const res = await fetch('/api/notifications');
+      const res = await fetch('/api/notifications?limit=100');
       if (!res.ok) return;
       const data = await res.json();
       Notifications.items = Array.isArray(data.notifications) ? data.notifications : [];
       Notifications.unread = data.unread || 0;
+      Notifications.hasMore = !!data.hasMore;
+      Notifications.nextBefore = data.nextBefore || null;
       Notifications._renderBadge();
       if (Notifications.open) Notifications._renderList();
     } catch (err) {
       console.warn('[notifications] refresh failed', err);
+    }
+  },
+
+  async loadMore() {
+    if (Notifications.loading || !Notifications.hasMore || !Notifications.nextBefore) return;
+    Notifications.loading = true;
+    Notifications._renderLoadingState();
+    try {
+      const { createdAt, id } = Notifications.nextBefore;
+      const params = new URLSearchParams({
+        limit: '100',
+        before: String(createdAt),
+        before_id: String(id),
+      });
+      const res = await fetch(`/api/notifications?${params.toString()}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const incoming = Array.isArray(data.notifications) ? data.notifications : [];
+      // Append, deduping on id (a concurrent prepend could overlap).
+      const seen = new Set(Notifications.items.map((n) => n.id));
+      for (const n of incoming) {
+        if (!seen.has(n.id)) {
+          Notifications.items.push(n);
+          seen.add(n.id);
+        }
+      }
+      Notifications.hasMore = !!data.hasMore;
+      Notifications.nextBefore = data.nextBefore || null;
+      if (Notifications.open) Notifications._renderList();
+    } catch (err) {
+      console.warn('[notifications] loadMore failed', err);
+    } finally {
+      Notifications.loading = false;
     }
   },
 
@@ -59,16 +154,10 @@ const Notifications = {
       Notifications.items[existing] = notif;
     } else {
       Notifications.items.unshift(notif);
-      if (Notifications.items.length > Notifications.MAX) {
-        Notifications.items.length = Notifications.MAX;
-      }
     }
     if (!notif.readAt) Notifications.unread += 1;
     Notifications._renderBadge();
     if (Notifications.open) Notifications._renderList();
-
-    // Title prefix update happens via _renderBadge above — gives the
-    // tab a visible unread count even when the dropdown is closed.
   },
 
   toggle() {
@@ -91,6 +180,8 @@ const Notifications = {
     Notifications.open = false;
   },
 
+  // --- mark read -------------------------------------------------------
+
   async markAllRead() {
     if (Notifications.unread === 0) return;
     try {
@@ -111,6 +202,40 @@ const Notifications = {
       Notifications._renderList();
     } catch (err) {
       console.warn('[notifications] markAllRead failed', err);
+    }
+  },
+
+  // Per-group "Mark read": clears every unread notification for one app
+  // in a single round-trip via the /read { app_id } branch.
+  async _markGroupRead(groupKey, appId) {
+    const numericAppId = (appId != null && appId !== '') ? Number(appId) : null;
+    // No backend scope for the synthetic "general" (null-app) bucket —
+    // fall back to clearing its leaves by id.
+    if (numericAppId == null || Number.isNaN(numericAppId)) {
+      const ids = Notifications.items
+        .filter((n) => groupKeyFor(n) === groupKey && !n.readAt)
+        .map((n) => n.id);
+      for (const id of ids) await Notifications._markOneRead(id);
+      Notifications._renderList();
+      return;
+    }
+    try {
+      const res = await fetch('/api/notifications/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ app_id: numericAppId }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      Notifications.unread = data.unread || 0;
+      const now = new Date().toISOString();
+      Notifications.items = Notifications.items.map((n) =>
+        (groupKeyFor(n) === groupKey && !n.readAt) ? { ...n, readAt: now } : n
+      );
+      Notifications._renderBadge();
+      Notifications._renderList();
+    } catch (err) {
+      console.warn('[notifications] markGroupRead failed', err);
     }
   },
 
@@ -146,6 +271,15 @@ const Notifications = {
     }
   },
 
+  _toggleGroup(groupKey) {
+    if (Notifications.expanded.has(groupKey)) Notifications.expanded.delete(groupKey);
+    else Notifications.expanded.add(groupKey);
+    Notifications._saveExpanded();
+    Notifications._renderList();
+  },
+
+  // --- rendering -------------------------------------------------------
+
   _renderBadge() {
     const badge = document.getElementById('notifications-badge');
     if (!badge) return;
@@ -166,24 +300,184 @@ const Notifications = {
     else document.title = base;
   },
 
+  // Pure transform: items (newest-first) -> ordered groups. The first
+  // time an app is seen is its newest notification, so insertion order
+  // already yields most-recent-activity-first group ordering.
+  _groupByApp() {
+    const byKey = new Map();
+    for (const n of Notifications.items) {
+      const key = groupKeyFor(n);
+      let g = byKey.get(key);
+      if (!g) {
+        g = {
+          key,
+          appId: n.appId != null ? n.appId : null,
+          appName: n.appName || 'General',
+          appSlug: n.appSlug || null,
+          items: [],
+          unreadCount: 0,
+        };
+        byKey.set(key, g);
+      }
+      g.items.push(n);
+      if (!n.readAt) g.unreadCount += 1;
+    }
+    return [...byKey.values()];
+  },
+
   _renderList() {
     const list = document.getElementById('notifications-list');
     const empty = document.getElementById('notifications-empty');
     if (!list || !empty) return;
+
     if (Notifications.items.length === 0) {
       list.innerHTML = '';
       empty.classList.remove('hidden');
       return;
     }
     empty.classList.add('hidden');
-    list.innerHTML = Notifications.items.map((n) => renderRow(n)).join('');
+
+    const groups = Notifications._groupByApp();
+    // Keep persisted expansion tidy: drop apps that have no notifs now.
+    Notifications._pruneExpanded(new Set(groups.map((g) => g.key)));
+
+    const parts = [];
+    for (const g of groups) {
+      if (g.items.length === 1) {
+        // Single-notification app: plain leaf row, no group chrome.
+        parts.push(renderRow(g.items[0]));
+        continue;
+      }
+      parts.push(renderGroup(g, Notifications.expanded.has(g.key)));
+    }
+    parts.push(renderLoadMore());
+    list.innerHTML = parts.join('');
+
+    // Leaf-row clicks (standalone single-item rows + leaves inside an
+    // expanded group).
     list.querySelectorAll('[data-notif-id]').forEach((el) => {
       const id = Number(el.getAttribute('data-notif-id'));
       el.addEventListener('click', () => Notifications._onItemClick(id));
     });
+    // Group header expand/collapse toggles.
+    list.querySelectorAll('[data-group-toggle]').forEach((el) => {
+      const key = el.getAttribute('data-group-toggle');
+      el.addEventListener('click', () => Notifications._toggleGroup(key));
+    });
+    // Per-group "Mark read".
+    list.querySelectorAll('[data-group-markread]').forEach((el) => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        Notifications._markGroupRead(
+          el.getAttribute('data-group-markread'),
+          el.getAttribute('data-app-id')
+        );
+      });
+    });
+    // "+N more in <app>" → land on the app's group chat for full history.
+    list.querySelectorAll('[data-group-more]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const slug = el.getAttribute('data-group-more');
+        Notifications.hide();
+        if (slug) window.location.hash = `#app/${slug}/group-chat`;
+      });
+    });
+  },
+
+  // Re-render just the load-more footer's spinner without rebuilding the
+  // whole list (called when a fetch starts).
+  _renderLoadingState() {
+    const footer = document.getElementById('notifications-loadmore');
+    if (footer) footer.textContent = 'Loading…';
+  },
+
+  _wireScroll() {
+    if (Notifications._scrollWired) return;
+    const list = document.getElementById('notifications-list');
+    if (!list) return;
+    list.addEventListener('scroll', () => {
+      if (!Notifications.hasMore || Notifications.loading) return;
+      const nearBottom =
+        list.scrollTop + list.clientHeight >= list.scrollHeight - LOAD_MORE_THRESHOLD;
+      if (nearBottom) Notifications.loadMore();
+    });
+    Notifications._scrollWired = true;
   },
 
 };
+
+// Stable group key for a notification: the app id when present, else a
+// synthetic 'general' bucket so app-less notifications are never dropped.
+function groupKeyFor(n) {
+  return n && n.appId != null ? String(n.appId) : 'general';
+}
+
+// Collapsed/expanded group header + (when expanded) its leaf rows.
+function renderGroup(g, isExpanded) {
+  const appLine = escapeHtml(g.appName || 'General');
+  const hasUnread = g.unreadCount > 0;
+  const accent = hasUnread ? 'bg-violet-500/5 border-l-2 border-violet-500' : 'border-l-2 border-transparent';
+  const chevron = isExpanded ? '▾' : '▸'; // ▾ / ▸
+  const countBadge = hasUnread
+    ? `<span class="text-[0.65rem] font-bold text-white bg-violet-500 rounded-full px-1.5 py-0.5">${g.unreadCount} new</span>`
+    : `<span class="text-[0.65rem] font-medium text-zinc-500 dark:text-zinc-400 bg-zinc-200 dark:bg-zinc-800 rounded-full px-1.5 py-0.5">${g.items.length}</span>`;
+
+  const latest = g.items[0];
+  const preview = `${previewText(latest)} · ${relativeTime(latest.createdAt)}`;
+
+  const markReadBtn = hasUnread
+    ? `<button data-group-markread="${escapeHtml(g.key)}" data-app-id="${g.appId != null ? g.appId : ''}"
+         class="shrink-0 text-[0.7rem] text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 px-1.5 py-1">Mark read</button>`
+    : '';
+
+  const header = `<div class="flex items-stretch border-b border-zinc-200 dark:border-zinc-800 ${accent}">
+    <button data-group-toggle="${escapeHtml(g.key)}" aria-expanded="${isExpanded}"
+      class="flex-1 min-w-0 text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors">
+      <div class="flex items-center gap-1.5 mb-0.5">
+        <span aria-hidden="true" class="text-zinc-400 dark:text-zinc-500">${chevron}</span>
+        <span class="font-medium text-zinc-800 dark:text-zinc-200 truncate">${appLine}</span>
+        ${countBadge}
+      </div>
+      <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate pl-5">${escapeHtml(preview)}</div>
+    </button>
+    ${markReadBtn}
+  </div>`;
+
+  if (!isExpanded) return header;
+
+  // Expanded: leaf rows (capped) + optional "+N more" link.
+  const shown = g.items.slice(0, GROUP_LEAF_CAP);
+  const leaves = shown.map((n) => renderRow(n)).join('');
+  let more = '';
+  const overflow = g.items.length - shown.length;
+  if (overflow > 0) {
+    more = `<button data-group-more="${escapeHtml(g.appSlug || '')}"
+      class="w-full text-left px-3 py-2 text-xs text-violet-500 hover:text-violet-400 border-b border-zinc-200 dark:border-zinc-800">
+      +${overflow} more in ${appLine} →</button>`;
+  }
+  return `${header}<div class="pl-2 bg-zinc-50/50 dark:bg-zinc-950/30">${leaves}${more}</div>`;
+}
+
+// Footer row used both as the scroll sentinel and the empty/has-more hint.
+function renderLoadMore() {
+  if (!Notifications.hasMore) return '';
+  return `<div id="notifications-loadmore" class="px-3 py-2.5 text-center text-xs text-zinc-500 dark:text-zinc-400">Scroll for older…</div>`;
+}
+
+// One-line summary used in a collapsed group header. Mirrors the per-kind
+// verbs used by renderRow's full rows.
+function previewText(n) {
+  const who = n.sourceUsername ? `@${n.sourceUsername}` : 'someone';
+  switch (n.kind) {
+    case 'kudos':       return `\u{1F44F} ${who} gave kudos to your PR`;
+    case 'reaction':    return `${n.detail || '❤️'} ${who} reacted to your message`;
+    case 'stale_pr':    return `⏳ Your PR is going stale`;
+    case 'pr_proposed': return `\u{1F5F3}️ ${who} proposed a PR to vote on`;
+    case 'reply':       return `${who} replied to you`;
+    case 'mention':     return `${who} mentioned you`;
+    default:            return who;
+  }
+}
 
 function renderRow(n) {
   const unreadCls = n.readAt ? '' : 'bg-violet-500/5 border-l-2 border-violet-500';
@@ -212,7 +506,7 @@ function renderRow(n) {
   // Reaction rows lead with the emoji someone reacted with, then preview
   // the message they reacted to.
   if (n.kind === 'reaction') {
-    const emoji = n.detail || '\u2764\uFE0F';
+    const emoji = n.detail || '❤️';
     const reactSnippet = (n.messageContent || '').slice(0, 140);
     return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1">
@@ -235,7 +529,7 @@ function renderRow(n) {
       : (n.prNumber ? `PR #${n.prNumber}` : 'your PR');
     return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1">
-        <span aria-hidden="true">\u23F3</span>
+        <span aria-hidden="true">⏳</span>
         <span>Your PR in</span>
         <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
         <span>is going stale — it'll auto-archive soon without votes</span>
@@ -254,7 +548,7 @@ function renderRow(n) {
       : (n.prNumber ? `PR #${n.prNumber}` : 'a PR');
     return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1">
-        <span aria-hidden="true">\u{1F5F3}\uFE0F</span>
+        <span aria-hidden="true">\u{1F5F3}️</span>
         <span class="font-medium text-zinc-800 dark:text-zinc-200">@${who}</span>
         <span>proposed a PR to vote on in</span>
         <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
