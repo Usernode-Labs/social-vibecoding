@@ -347,10 +347,38 @@ function issueRoutes(config) {
 
     try {
       const { rows: appRows } = await pool.query(
-        'SELECT id, slug FROM apps WHERE slug = $1', [req.params.slug]
+        'SELECT id, slug, repo_url FROM apps WHERE slug = $1', [req.params.slug]
       );
       if (!appRows.length) return res.status(404).json({ error: 'App not found' });
       const app = appRows[0];
+
+      // Verify :number is a CURRENTLY OPEN GitHub issue on this repo BEFORE
+      // spending quota, inserting a row, or posting chat noise. Otherwise a
+      // user could bounty a closed/nonexistent issue and a later PR carrying
+      // `Closes #N` would award that fake/stale bounty. fetchPublicIssues
+      // never throws and surfaces degraded fetches via a `note`; if we can't
+      // positively confirm the issue is open (closed, nonexistent, or GitHub
+      // unavailable) we refuse and change nothing.
+      const parsed = parseOwnerRepo(app.repo_url);
+      if (!github.isEnabled() || !parsed) {
+        return res.status(422).json({
+          error: 'Cannot verify the issue right now — GitHub is unavailable for this app.',
+        });
+      }
+      const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
+      if (ghResult.note) {
+        // 'rate limited' / 'issues unavailable' / 'fetch failed' — no
+        // positive confirmation the issue is open.
+        return res.status(422).json({
+          error: "Couldn't confirm this issue is open right now. Try again in a moment.",
+        });
+      }
+      const isOpen = (ghResult.issues || []).some((i) => i.number === issueNumber);
+      if (!isOpen) {
+        return res.status(404).json({
+          error: `Issue #${issueNumber} isn't an open issue on this repo.`,
+        });
+      }
 
       const weekStart = weekStartUtc();
 

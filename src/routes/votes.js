@@ -308,8 +308,15 @@ function voteRoutes(config) {
            -- (session_id, giver_user_id) UNIQUE constraint makes EXISTS
            -- a single-index probe; COUNT runs against the per-session
            -- index added in schema.sql.
-           (SELECT COUNT(*)::int FROM pr_kudos WHERE session_id = cs.id) as kudos_count,
-           (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)) as my_kudos,
+           -- kudos_count folds in any issue bounties AWARDED to this PR on
+           -- merge (a bounty resolves into kudos credit for the closing PR's
+           -- author), so the count matches the leaderboards. my_kudos is
+           -- likewise true if the viewer either gave a PR kudos OR pledged a
+           -- bounty that was awarded to this PR.
+           ((SELECT COUNT(*)::int FROM pr_kudos WHERE session_id = cs.id)
+             + (SELECT COUNT(*)::int FROM issue_bounties WHERE awarded_session_id = cs.id AND status = 'awarded')) as kudos_count,
+           (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)
+                 OR EXISTS(SELECT 1 FROM issue_bounties WHERE awarded_session_id = cs.id AND status = 'awarded' AND giver_user_id = $2)) as my_kudos,
            -- #11: revert_of_session_id is non-null on PRs that are
            -- themselves a git-revert of an earlier merged PR. The
            -- vote panel uses this to render a Revert label
@@ -386,8 +393,15 @@ function voteRoutes(config) {
            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') as yes_count,
            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'no') as no_count,
            (SELECT vote FROM pr_votes WHERE session_id = cs.id AND user_id = $2) as my_vote,
-           (SELECT COUNT(*)::int FROM pr_kudos WHERE session_id = cs.id) as kudos_count,
-           (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)) as my_kudos,
+           -- kudos_count folds in any issue bounties AWARDED to this PR on
+           -- merge (a bounty resolves into kudos credit for the closing PR's
+           -- author), so the count matches the leaderboards. my_kudos is
+           -- likewise true if the viewer either gave a PR kudos OR pledged a
+           -- bounty that was awarded to this PR.
+           ((SELECT COUNT(*)::int FROM pr_kudos WHERE session_id = cs.id)
+             + (SELECT COUNT(*)::int FROM issue_bounties WHERE awarded_session_id = cs.id AND status = 'awarded')) as kudos_count,
+           (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)
+                 OR EXISTS(SELECT 1 FROM issue_bounties WHERE awarded_session_id = cs.id AND status = 'awarded' AND giver_user_id = $2)) as my_kudos,
            rv.id        as revert_session_id,
            rv.pr_number as revert_pr_number,
            rv.pr_url    as revert_pr_url,

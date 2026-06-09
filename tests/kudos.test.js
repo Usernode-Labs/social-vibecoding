@@ -133,9 +133,11 @@ function makeMockPool(initial = {}) {
     }
     // ------------ Combined weekly allowance (pr_kudos + issue_bounties) ------------
     // countWeeklyAllowanceUsed: the give-quota + budget endpoints now draw
-    // from a shared cap across both ledgers. Matches the query carrying both
-    // FROM pr_kudos and FROM issue_bounties.
-    if (/FROM pr_kudos[\s\S]*FROM issue_bounties/i.test(s)) {
+    // from a shared cap across both ledgers. Matched specifically on the
+    // bounty subquery's `giver_user_id = $1 AND week_start = $2` predicate so
+    // this DOESN'T also catch the leaderboard/users query (whose awarded-
+    // bounty LATERAL filters on awarded_user_id, not giver_user_id).
+    if (/FROM issue_bounties\s+WHERE giver_user_id = \$1 AND week_start = \$2/i.test(s)) {
       const [userId, weekStart] = params;
       const k = state.kudos.filter(
         (x) => x.giver_user_id === userId && x.week_start === weekStart

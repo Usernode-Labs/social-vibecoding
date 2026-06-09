@@ -76,22 +76,39 @@ async function countWeeklyAllowanceUsed(pool, userId, weekStart) {
 // COUNT(*) directly for performance — the full giver list only
 // loads when the hover popover requests it).
 async function loadKudosForSession(pool, sessionId, viewerUserId) {
+  // Direct PR kudos UNION ALL the issue bounties that were AWARDED to this PR
+  // on merge — a bounty resolves into kudos credit for the closing PR's
+  // author, so both surface as kudos here (matching the leaderboards and the
+  // card counts). LEFT JOIN on the bounty side so an awarded bounty whose
+  // giver was since deleted (giver_user_id → NULL) still counts; it just
+  // can't be attributed to a username in the popover.
   const { rows } = await pool.query(
-    `SELECT pk.created_at, u.username, u.id AS user_id
-       FROM pr_kudos pk
-       JOIN users u ON u.id = pk.giver_user_id
-       WHERE pk.session_id = $1
-       ORDER BY pk.created_at ASC`,
+    `SELECT created_at, username, user_id FROM (
+       SELECT pk.created_at, u.username, u.id AS user_id
+         FROM pr_kudos pk
+         JOIN users u ON u.id = pk.giver_user_id
+        WHERE pk.session_id = $1
+       UNION ALL
+       SELECT ib.awarded_at AS created_at, bu.username, ib.giver_user_id AS user_id
+         FROM issue_bounties ib
+         LEFT JOIN users bu ON bu.id = ib.giver_user_id
+        WHERE ib.awarded_session_id = $1 AND ib.status = 'awarded'
+     ) k
+     ORDER BY created_at ASC NULLS LAST`,
     [sessionId]
   );
   const count = rows.length;
   const myKudos = viewerUserId
     ? rows.some((r) => r.user_id === viewerUserId)
     : false;
-  const givers = rows.map((r) => ({
-    username: r.username,
-    createdAt: r.created_at,
-  }));
+  // Only rows with a resolvable username make the giver list; a deleted-user
+  // bounty still counts above but has no name to show.
+  const givers = rows
+    .filter((r) => r.username)
+    .map((r) => ({
+      username: r.username,
+      createdAt: r.created_at,
+    }));
   return { count, givers, my_kudos: myKudos };
 }
 
@@ -330,19 +347,35 @@ function kudosRoutes(config) {
       // Window filter is a single WHERE clause; rest of the query is
       // identical. Using parameterized window arg rather than
       // string-interpolating column names — safe.
-      const where = windowArg === 'week' ? `WHERE pk.week_start = $1` : '';
+      const where = windowArg === 'week' ? `WHERE c.week_start = $1` : '';
       const params = windowArg === 'week' ? [weekStart, limit] : [limit];
       const limitParamIdx = windowArg === 'week' ? '$2' : '$1';
+      // `credit` unifies the two kudos sources per PR: direct PR kudos and
+      // issue bounties AWARDED to the PR on merge. Bounties get a week_start
+      // derived from awarded_at with the same Monday-00:00-UTC bucketing as
+      // weekStartUtc(), so the ?window=week filter lines up. Rooting the
+      // aggregate at this union (not pr_kudos) means a PR credited only by an
+      // awarded bounty still appears on the board.
       const { rows } = await pool.query(
-        `SELECT cs.id AS session_id,
+        `WITH credit AS (
+           SELECT pk.session_id, pk.created_at, pk.week_start
+             FROM pr_kudos pk
+           UNION ALL
+           SELECT ib.awarded_session_id AS session_id,
+                  ib.awarded_at AS created_at,
+                  date_trunc('week', ib.awarded_at AT TIME ZONE 'UTC')::date AS week_start
+             FROM issue_bounties ib
+            WHERE ib.status = 'awarded' AND ib.awarded_session_id IS NOT NULL
+         )
+         SELECT cs.id AS session_id,
                 cs.pr_number, cs.pr_url, cs.pr_title, cs.status,
                 cs.created_at AS session_created_at,
                 u.id AS author_id, u.username AS author_username,
                 a.slug AS app_slug, a.name AS app_name,
                 COUNT(*)::int AS kudos_count,
-                MAX(pk.created_at) AS last_kudos_at
-           FROM pr_kudos pk
-           JOIN chat_sessions cs ON cs.id = pk.session_id
+                MAX(c.created_at) AS last_kudos_at
+           FROM credit c
+           JOIN chat_sessions cs ON cs.id = c.session_id
            JOIN apps a ON a.id = cs.app_id
            LEFT JOIN users u ON u.id = cs.user_id
            ${where}
@@ -400,10 +433,14 @@ function kudosRoutes(config) {
       // The `kudos_given` LATERAL (below) reuses the same week_start
       // param when scoping to the current week, so capture its index.
       let givenWindow = '';
+      // The awarded-bounty LATERAL (below) scopes by awarded_at, bucketed to
+      // the same Monday-00:00-UTC week as weekStartUtc(), reusing the param.
+      let bountyWindow = '';
       if (windowArg === 'week') {
         params.push(weekStart);
         kudosWindow = `AND pk.week_start = $${params.length}`;
         givenWindow = `AND gk.week_start = $${params.length}`;
+        bountyWindow = `AND date_trunc('week', ib.awarded_at AT TIME ZONE 'UTC')::date = $${params.length}`;
       }
       let limitClause = '';
       if (hasLimit) {
@@ -421,14 +458,22 @@ function kudosRoutes(config) {
       // a value above the cap. Uses idx_pr_kudos_giver_week. COALESCE
       // turns the no-rows case (jsonb_object_agg → NULL) into '{}'.
       const { rows } = await pool.query(
+        // `ab` (awarded bounties) is RECEIVED-side credit that resolves on
+        // merge: a bounty awarded to a user IS kudos on a merged PR. It's
+        // computed in its own LATERAL (one scalar per user) so it can't
+        // cross-multiply the pk fan-out, then ADDED into kudos_received and
+        // kudos_received_prs_merged (every awarded bounty is merged credit).
+        // prs_kudosed / kudos_received_prs_unmerged stay pr_kudos-only by
+        // design (a bounty is never unmerged credit). last_kudos_at folds in
+        // the most recent award so recency tiebreaks stay correct.
         `SELECT u.id AS user_id,
                 u.username,
-                COUNT(pk.id)::int AS kudos_received,
+                (COUNT(pk.id) + COALESCE(ab.received, 0))::int AS kudos_received,
                 COUNT(DISTINCT pk.session_id)::int AS prs_kudosed,
-                COUNT(pk.id) FILTER (WHERE cs.status = 'merged')::int AS kudos_received_prs_merged,
+                (COUNT(pk.id) FILTER (WHERE cs.status = 'merged') + COALESCE(ab.received, 0))::int AS kudos_received_prs_merged,
                 COUNT(pk.id) FILTER (WHERE cs.status <> 'merged')::int AS kudos_received_prs_unmerged,
                 COUNT(DISTINCT cs.id) FILTER (WHERE cs.status = 'merged')::int AS prs_merged,
-                MAX(pk.created_at) AS last_kudos_at,
+                GREATEST(MAX(pk.created_at), ab.last_at) AS last_kudos_at,
                 kg.kudos_given
            FROM users u
            LEFT JOIN chat_sessions cs ON cs.user_id = u.id
@@ -446,7 +491,12 @@ function kudosRoutes(config) {
                    GROUP BY gk.week_start
                ) g
            ) kg ON true
-           GROUP BY u.id, u.username, kg.kudos_given
+           LEFT JOIN LATERAL (
+             SELECT COUNT(*)::int AS received, MAX(ib.awarded_at) AS last_at
+               FROM issue_bounties ib
+              WHERE ib.awarded_user_id = u.id AND ib.status = 'awarded' ${bountyWindow}
+           ) ab ON true
+           GROUP BY u.id, u.username, kg.kudos_given, ab.received, ab.last_at
            ORDER BY kudos_received_prs_merged DESC,
                     prs_merged DESC,
                     kudos_received DESC,
