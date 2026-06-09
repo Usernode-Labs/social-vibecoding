@@ -337,8 +337,18 @@ function renderTopUsers(d) {
     const cx = x + bw / 2;
     const short = u.name.length > 10 ? u.name.slice(0, 9) + '…' : u.name;
     const tipId = `top-${i}`;
+    const producedPr = Number(u.produced_pr) || 0;
+    const promoted = Number(u.promoted) || 0;
+    const receivedVote = Number(u.received_vote) || 0;
+    const merged = Number(u.merged) || 0;
+    const tipRow = (label, n) =>
+      `<div class="flex justify-between gap-3 text-zinc-400"><span>${label}</span><span class="text-zinc-300">${n}</span></div>`;
     tipStore[tipId] = `<div class="font-semibold">${esc(u.name)}</div>
-      <div class="text-zinc-300">#${i + 1} · ${v} dev session${v === 1 ? '' : 's'}</div>`;
+      <div class="text-zinc-300 mb-1">#${i + 1} · ${v} dev session${v === 1 ? '' : 's'}</div>
+      ${tipRow('Produced a PR', producedPr)}
+      ${tipRow('Promoted to group', promoted)}
+      ${tipRow('Received a vote', receivedVote)}
+      ${tipRow('Merged', merged)}`;
     return `
       <rect x="${(x + 3).toFixed(1)}" y="${y}" width="${bw - 6}" height="${h}" fill="#8b5cf6" rx="2"></rect>
       <text x="${cx}" y="${y - 3}" text-anchor="middle" font-size="9" fill="currentColor" class="text-zinc-400">${v}</text>

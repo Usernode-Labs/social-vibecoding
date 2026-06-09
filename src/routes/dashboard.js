@@ -446,7 +446,14 @@ function dashboardRoutes(config) {
   router.get('/api/admin/analytics/top-users', async (_req, res) => {
     try {
       const { rows } = await pool.query(
-        `SELECT u.username AS name, COUNT(cs.id)::int AS sessions
+        `SELECT u.username AS name,
+                COUNT(cs.id)::int AS sessions,
+                COUNT(*) FILTER (WHERE cs.pr_number IS NOT NULL)::int AS produced_pr,
+                COUNT(*) FILTER (WHERE cs.promoted_at IS NOT NULL
+                                   OR cs.status IN ('promoted','merging','merged'))::int AS promoted,
+                COUNT(*) FILTER (WHERE EXISTS (
+                          SELECT 1 FROM pr_votes pv WHERE pv.session_id = cs.id))::int AS received_vote,
+                COUNT(*) FILTER (WHERE cs.status = 'merged')::int AS merged
            FROM users u
            JOIN chat_sessions cs ON cs.user_id = u.id
           GROUP BY u.id, u.username
