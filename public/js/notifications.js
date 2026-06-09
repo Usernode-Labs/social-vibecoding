@@ -26,15 +26,6 @@ const EXPANDED_STORAGE_KEY = 'notif_expanded_groups_v1';
 const GROUP_LEAF_CAP = 10;
 // How close to the bottom (px) before we prefetch the next page.
 const LOAD_MORE_THRESHOLD = 64;
-// #103: vertical left accent line (blockquote `>` affordance) applied to
-// every notification group — read and unread alike — so each app's
-// header + rows read as one cohesive block "hanging off" the line.
-// Backed by the `.notif-group-accent` rule in css/app.css (a thin violet
-// left border + small indent) rather than Tailwind `border-l-2
-// border-violet-500` utilities: the drawer is built via innerHTML and the
-// Tailwind Play CDN doesn't reliably JIT-generate that utility combo for
-// dynamically-injected nodes, which left read-only groups with no line.
-const GROUP_ACCENT_LINE = 'notif-group-accent';
 
 const Notifications = {
   items: [],   // newest-first; the single source of truth
@@ -396,9 +387,9 @@ const Notifications = {
       // back to a plain leaf row when there's a single one.
       if (g.items.length === 1 && g.appId == null) {
         // Single app-less ("General") notification renders as a plain leaf
-        // row, but still gets the same left accent line (#103) so every
-        // top-level entry in the drawer looks uniform.
-        entries.push(`<div class="${GROUP_ACCENT_LINE}">${renderRow(g.items[0])}</div>`);
+        // row. Its violet left line comes from renderRow itself (#103), so
+        // no group-wrapper line is needed here.
+        entries.push(renderRow(g.items[0]));
         continue;
       }
       entries.push(renderGroup(g, Notifications.expanded.has(g.key)));
@@ -512,11 +503,9 @@ function unreadDot(isUnread) {
 function renderGroup(g, isExpanded) {
   const appLine = escapeHtml(g.appName || 'General');
   const hasUnread = g.unreadCount > 0;
-  // Subtle background tint for groups with unread activity. The violet
-  // left accent line itself is rendered by the GROUP_ACCENT_LINE wrapper
-  // below for EVERY group (read or unread), so it no longer lives on the
-  // header — that keeps the line spanning the full group instead of just
-  // the header row.
+  // Subtle background tint for group headers with unread activity. The
+  // violet left accent line lives on each row (see renderRow), not the
+  // header, so this is purely a background cue.
   const accent = hasUnread ? 'bg-violet-500/5' : '';
   const chevron = isExpanded ? '▾' : '▸'; // ▾ / ▸
   // Just the number, centered in a fixed-size pill (no "new" wording).
@@ -550,9 +539,9 @@ function renderGroup(g, isExpanded) {
     ${markReadBtn}
   </div>`;
 
-  // Wrap collapsed groups in the accent-line container so the violet line
-  // runs down the (single) header row.
-  if (!isExpanded) return `<div class="${GROUP_ACCENT_LINE}">${header}</div>`;
+  // #103: no group-wrapper accent line — the violet left line now lives on
+  // each row (see renderRow). Collapsed groups render just the header.
+  if (!isExpanded) return header;
 
   // Expanded: reveal up to `visible` leaves (default GROUP_LEAF_CAP, grown
   // by inline "Show more" clicks), then an inline pagination button.
@@ -570,10 +559,9 @@ function renderGroup(g, isExpanded) {
     // All loaded leaves shown, but older pages may add more to this group.
     more = `<button data-group-showmore="${escapeHtml(g.key)}" class="${btnCls}">Show more →</button>`;
   }
-  // Expanded: the accent line spans the full group — header through the
-  // last revealed leaf (and the inline "Show more" button) — so the whole
-  // block reads as one app.
-  return `<div class="${GROUP_ACCENT_LINE}">${header}<div class="pl-2 bg-zinc-50/50 dark:bg-zinc-950/30">${leaves}${more}</div></div>`;
+  // Expanded: header followed by its leaf rows (each carrying its own
+  // violet left line via renderRow) and the inline "Show more" button.
+  return `${header}<div class="pl-2 bg-zinc-50/50 dark:bg-zinc-950/30">${leaves}${more}</div>`;
 }
 
 // Footer row used both as the scroll sentinel and the empty/has-more hint.
@@ -598,13 +586,15 @@ function previewText(n) {
 }
 
 function renderRow(n) {
-  // #103: the left accent line is owned by the group wrapper
-  // (.notif-group-accent), which spans the full group read or unread —
-  // so rows must NOT carry their own read-conditional left border, or a
-  // row visibly "loses its line" when marked read. Unread rows keep only
-  // the background tint (the unread dot, added below, is the other cue);
-  // read rows stay plain.
-  const unreadCls = n.readAt ? '' : 'bg-violet-500/5';
+  // #103: every row carries the violet left accent line, read or unread,
+  // so a notification never "loses its line" when marked read. ONLY the
+  // background tint is read-conditional (unread = tinted, read = plain);
+  // the unread dot added below is the other read/unread cue. The old
+  // far-left group-wrapper line was removed so there's exactly one violet
+  // line per row, flush against the row content.
+  const unreadCls = n.readAt
+    ? 'border-l-2 border-violet-500'
+    : 'bg-violet-500/5 border-l-2 border-violet-500';
   const appLine = n.appName ? escapeHtml(n.appName) : 'app';
   const who = n.sourceUsername ? escapeHtml(n.sourceUsername) : 'someone';
   // Leading unread dot (or an equal-width spacer when read) on the meta
