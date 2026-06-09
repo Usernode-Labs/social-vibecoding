@@ -24,6 +24,12 @@ const GITHUB_USER_AGENT = 'usernode-platform';
 // limit — all three agent surfaces (Mayor tool, scout, build) resolve
 // through one function, so they share one cache entry per repo. The page
 // ceiling bounds worst-case work for a repo with thousands of issues.
+//
+// Freshness on the "Open Issues" panel doesn't rely on this TTL: when a PR
+// merges through the platform (routes/votes.js checkAndMerge) the closed
+// issues are known from session.linked_issues, so the merge path busts this
+// entry via invalidateIssuesCache() and broadcasts a refresh. The TTL is the
+// backstop for closes that don't go through a platform merge.
 const issuesCache = new Map();
 const ISSUES_CACHE_TTL_MS = 5 * 60 * 1000;
 const ISSUES_MAX_PAGES = 10;          // 10 * 100 = up to 1000 open issues
@@ -577,6 +583,27 @@ async function fetchPublicIssues(owner, repo) {
   }
 }
 
+// Drop the cached open-issues list for a repo so the next fetchPublicIssues
+// call re-reads from GitHub. Called from the merge path (routes/votes.js
+// checkAndMerge) when a PR that closed one or more issues lands, so the
+// "Open Issues" panel reflects the change on the next refresh instead of
+// waiting out ISSUES_CACHE_TTL_MS. Case-insensitive match on owner/repo
+// because GitHub treats those as case-insensitive while the cache key
+// preserves whatever casing the caller passed. No-op when the repo has no
+// cache entry. Returns true if an entry was deleted.
+function invalidateIssuesCache(owner, repo) {
+  if (!owner || !repo) return false;
+  const target = `${owner}/${repo}`.toLowerCase();
+  for (const key of issuesCache.keys()) {
+    if (key.toLowerCase() === target) {
+      issuesCache.delete(key);
+      log.debug('github', 'Invalidated open-issues cache', { repo: key });
+      return true;
+    }
+  }
+  return false;
+}
+
 module.exports = {
   init,
   isEnabled,
@@ -604,4 +631,5 @@ module.exports = {
   checkRepoPublic,
   fetchPublicRepoInfo,
   fetchPublicIssues,
+  invalidateIssuesCache,
 };

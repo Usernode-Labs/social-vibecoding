@@ -888,6 +888,34 @@ async function checkAndMerge(config, pool, session, options = {}) {
       log.warn('votes', 'Bounty payout failed', { sessionId: session.id, err: err.message });
     }
 
+    // Keep the "Open Issues" panel honest. A merged PR carrying `Closes #N`
+    // has just closed those issues on GitHub, but the panel reads
+    // github.fetchPublicIssues (cached, state=open) and nothing else learns
+    // the issue closed — so without this the closed issue lingers until the
+    // cache TTL expires AND something separately triggers a panel reload.
+    // Bust this repo's open-issues cache and broadcast a refresh so every
+    // client viewing the app's group chat refetches (App.handleIssueUpdate →
+    // AppView.loadVotePanel). Use the same repo_url regex as parseOwnerRepo
+    // (routes/issues.js) so the invalidated key matches the cached one.
+    // Best-effort and post-merge — a failure here must never fail the merge.
+    try {
+      const [, ghOwner, ghRepo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+      if (ghOwner && ghRepo) {
+        github.invalidateIssuesCache(ghOwner, ghRepo);
+        const { pushIssueUpdate } = require('../services/ws');
+        pushIssueUpdate({
+          action: 'github_synced',
+          appSlug: session.app_slug,
+          appId: session.app_id,
+          source: 'pr_merged',
+        });
+      }
+    } catch (err) {
+      log.warn('votes', 'Open-issues refresh after merge failed', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+
     // Chat session is done — no further turns will reference CC memory,
     // so drop the persistent `.claude` volume.
     try {
