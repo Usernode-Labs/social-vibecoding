@@ -1183,9 +1183,10 @@ const AppView = {
       const issue = issues[i];
       const n = issue.number;
       const href = issue.htmlUrl || '#';
-      const label = issue.labels && issue.labels.length
-        ? `<span class="text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-zinc-500/10 text-zinc-500">${escapeHtml(issue.labels[0])}</span>`
-        : '';
+      // The GitHub label pill is intentionally not rendered for now — every
+      // open issue currently carries the same `usernode` label, so the badge
+      // added noise without distinguishing rows. See _renderOpenIssuesInner
+      // history if label display is reintroduced.
       const bountyPill = issue.bounty_count
         ? `<span class="inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500" title="Kudos bounties pledged on this issue">&#9733; ${issue.bounty_count}</span>`
         : '';
@@ -1202,7 +1203,6 @@ const AppView = {
         <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
           <a href="${href}" target="_blank" rel="noopener" class="text-xs text-violet-400 font-mono hover:underline">#${n}</a>
           <span class="text-xs text-zinc-300 flex-1 min-w-0 truncate" title="${escapeHtml(issue.title)}">${escapeHtml(issue.title)}</span>
-          ${label}
           ${bountyPill}
           <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
             ${kudosBtn}
