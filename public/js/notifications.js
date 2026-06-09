@@ -281,7 +281,16 @@ const Notifications = {
       // chat. Mentions originate there; kudos's PR is rendered in the
       // group-chat tab's vote panel (Open PRs / Merged), where the
       // user can scroll to it and reciprocate if they want.
-      window.location.hash = `#app/${item.appSlug}/group-chat`;
+      //
+      // Navigate via App.openAppTab rather than assigning location.hash:
+      // a same-value hash assignment fires no `hashchange`, so clicking a
+      // notification for the app/tab already on screen wouldn't re-render.
+      // openAppTab always renders (and keeps the URL in sync internally).
+      if (typeof App !== 'undefined' && App.openAppTab) {
+        App.openAppTab(item.appSlug, 'group-chat');
+      } else {
+        window.location.hash = `#app/${item.appSlug}/group-chat`;
+      }
     }
   },
 
