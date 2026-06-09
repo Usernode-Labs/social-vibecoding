@@ -54,9 +54,14 @@ async function countKudosGivenThisWeek(pool, userId, weekStart) {
 // per week. Both the PR-kudos give endpoint and the issue-bounty endpoint
 // (src/routes/issues.js) gate on this combined figure. One round-trip across
 // both ledgers; uses idx_pr_kudos_giver_week + idx_issue_bounties_giver_week.
-// Every pledged bounty — even one later awarded or voided — still consumed a
-// slice of the allowance that week, so issue_bounties is counted regardless
-// of status.
+//
+// A pledged bounty normally keeps consuming its slot whatever its outcome
+// (open → awarded), but a VOIDED bounty is refunded: it no longer counts
+// against the limit. The only thing that voids a bounty is the self-kudos
+// guard at merge time (routes/votes.js resolveIssueBounty) — when a user
+// pledged on an issue their own PR then closed. That void is a system-imposed
+// outcome the pledger can't avoid, so the slot is returned for them to spend
+// on someone else's PR. Hence the `status <> 'voided'` filter below.
 async function countWeeklyAllowanceUsed(pool, userId, weekStart) {
   const { rows } = await pool.query(
     `SELECT
@@ -64,7 +69,8 @@ async function countWeeklyAllowanceUsed(pool, userId, weekStart) {
           WHERE giver_user_id = $1 AND week_start = $2)
        +
        (SELECT COUNT(*) FROM issue_bounties
-          WHERE giver_user_id = $1 AND week_start = $2) AS c`,
+          WHERE giver_user_id = $1 AND week_start = $2
+            AND status <> 'voided') AS c`,
     [userId, weekStart]
   );
   return parseInt(rows[0]?.c, 10) || 0;

@@ -142,8 +142,12 @@ function makeMockPool(initial = {}) {
       const k = state.kudos.filter(
         (x) => x.giver_user_id === userId && x.week_start === weekStart
       ).length;
+      // Voided self-bounties are refunded — they don't count against the
+      // weekly allowance (mirrors the `status <> 'voided'` filter in
+      // countWeeklyAllowanceUsed).
       const b = state.bounties.filter(
         (x) => x.giver_user_id === userId && x.week_start === weekStart
+          && x.status !== 'voided'
       ).length;
       return { rows: [{ c: k + b }] };
     }
@@ -554,6 +558,17 @@ function makeBountyPool(bounties) {
     : b === null || b === undefined ? true : a !== b);
   async function query(sql, params = []) {
     const s = String(sql);
+    // Combined weekly-allowance count (countWeeklyAllowanceUsed): pr_kudos
+    // (none in this pool) + non-voided issue_bounties for the user/week. The
+    // `status <> 'voided'` filter is what refunds a voided self-bounty.
+    if (/FROM issue_bounties\s+WHERE giver_user_id = \$1 AND week_start = \$2/i.test(s)) {
+      const [userId, weekStart] = params;
+      const c = state.bounties.filter(
+        (b) => b.giver_user_id === userId && b.week_start === weekStart
+          && b.status !== 'voided'
+      ).length;
+      return { rows: [{ c }] };
+    }
     // Award: status='awarded' WHERE ... AND giver_user_id IS DISTINCT FROM $2
     if (/UPDATE issue_bounties[\s\S]*status = 'awarded'[\s\S]*IS DISTINCT FROM/i.test(s)) {
       const [sessionId, awardeeUserId, appId, issueNumber] = params;
@@ -638,4 +653,43 @@ test('resolveIssueBounty: deleted PR author (null awardee) still awards normally
   assert.deepEqual(awarded.map((r) => r.id), [100]);
   assert.equal(voided.length, 0, 'no void pass runs when there is no PR author');
   assert.equal(pool.state.bounties[0].status, 'awarded');
+});
+
+test('voiding a self-bounty refunds the weekly allowance slot', async () => {
+  const { resolveIssueBounty } = require('../src/routes/votes');
+  const { countWeeklyAllowanceUsed } = require('../src/routes/kudos');
+  const week = '2026-05-18';
+  // U (id 1) pledged a bounty on their own issue this week → 1 slot used.
+  const pool = makeBountyPool([
+    { id: 100, app_id: 1, github_issue_number: 7, giver_user_id: 1, week_start: week, status: 'open', awarded_user_id: null, awarded_session_id: null },
+  ]);
+  assert.equal(await countWeeklyAllowanceUsed(pool, 1, week), 1,
+    'open self-bounty consumes a slot at pledge time');
+
+  // U authors the PR that closes the issue → self-bounty is voided.
+  const { voided } = await resolveIssueBounty(pool, {
+    appId: 1, sessionId: 50, awardeeUserId: 1, issueNumber: 7,
+  });
+  assert.equal(voided.length, 1);
+
+  // The slot is reclaimed: usage drops back to 0, free to spend elsewhere.
+  assert.equal(await countWeeklyAllowanceUsed(pool, 1, week), 0,
+    'voided self-bounty no longer counts against the weekly limit');
+});
+
+test('weekly allowance: a voided self-bounty refund does not leak to other users/weeks', async () => {
+  const { countWeeklyAllowanceUsed } = require('../src/routes/kudos');
+  const week = '2026-05-18';
+  const pool = makeBountyPool([
+    // U's voided self-bounty (refunded) ...
+    { id: 100, app_id: 1, github_issue_number: 7, giver_user_id: 1, week_start: week, status: 'voided', awarded_user_id: null, awarded_session_id: 50 },
+    // ... U's still-open bounty on another issue (counts) ...
+    { id: 101, app_id: 1, github_issue_number: 8, giver_user_id: 1, week_start: week, status: 'open', awarded_user_id: null, awarded_session_id: null },
+    // ... and another user's awarded bounty (counts toward THEIR limit).
+    { id: 102, app_id: 1, github_issue_number: 9, giver_user_id: 2, week_start: week, status: 'awarded', awarded_user_id: 1, awarded_session_id: 60 },
+  ]);
+  assert.equal(await countWeeklyAllowanceUsed(pool, 1, week), 1,
+    'U: only the still-open bounty counts; the voided one is refunded');
+  assert.equal(await countWeeklyAllowanceUsed(pool, 2, week), 1,
+    'other user: their awarded bounty still counts');
 });
