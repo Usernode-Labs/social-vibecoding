@@ -31,6 +31,8 @@ const EVENT_TYPES = Object.freeze({
   PR_OPENED: 'pr_opened',
   PR_PROMOTED: 'pr_promoted',
   PR_MERGED: 'pr_merged',
+  BOUNTY_CREATED: 'bounty_created',
+  BOUNTY_AWARDED: 'bounty_awarded',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

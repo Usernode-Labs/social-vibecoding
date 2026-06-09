@@ -49,6 +49,27 @@ async function countKudosGivenThisWeek(pool, userId, weekStart) {
   return rows[0]?.c || 0;
 }
 
+// The SHARED weekly "give" allowance: PR kudos + issue bounties draw from the
+// same WEEKLY_KUDOS_LIMIT pool, so a user can't exceed 5 total combined gives
+// per week. Both the PR-kudos give endpoint and the issue-bounty endpoint
+// (src/routes/issues.js) gate on this combined figure. One round-trip across
+// both ledgers; uses idx_pr_kudos_giver_week + idx_issue_bounties_giver_week.
+// Every pledged bounty — even one later awarded or voided — still consumed a
+// slice of the allowance that week, so issue_bounties is counted regardless
+// of status.
+async function countWeeklyAllowanceUsed(pool, userId, weekStart) {
+  const { rows } = await pool.query(
+    `SELECT
+       (SELECT COUNT(*) FROM pr_kudos
+          WHERE giver_user_id = $1 AND week_start = $2)
+       +
+       (SELECT COUNT(*) FROM issue_bounties
+          WHERE giver_user_id = $1 AND week_start = $2) AS c`,
+    [userId, weekStart]
+  );
+  return parseInt(rows[0]?.c, 10) || 0;
+}
+
 // Fetch the kudos count + giver usernames + my_kudos flag for a
 // session. Used both by `GET /api/sessions/:id/kudos` and by the
 // in-line subqueries on /promoted and /merged (though those use
@@ -139,7 +160,7 @@ function kudosRoutes(config) {
       // parallel requests. Bounded, rare, not security-critical; the
       // alternative is a per-user advisory lock which adds complexity
       // for a near-zero-impact race. Documented in the plan.
-      const given = await countKudosGivenThisWeek(pool, req.user.id, weekStart);
+      const given = await countWeeklyAllowanceUsed(pool, req.user.id, weekStart);
       if (given >= WEEKLY_KUDOS_LIMIT) {
         return res.status(429).json({
           error: `Weekly kudos quota exceeded (${WEEKLY_KUDOS_LIMIT}/week). Resets every Monday 00:00 UTC.`,
@@ -281,7 +302,7 @@ function kudosRoutes(config) {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     try {
       const weekStart = weekStartUtc();
-      const given = await countKudosGivenThisWeek(pool, req.user.id, weekStart);
+      const given = await countWeeklyAllowanceUsed(pool, req.user.id, weekStart);
       const remaining = Math.max(0, WEEKLY_KUDOS_LIMIT - given);
       res.json({
         given_this_week: given,
@@ -465,6 +486,7 @@ module.exports = {
   // kudos button at all.
   weekStartUtc,
   countKudosGivenThisWeek,
+  countWeeklyAllowanceUsed,
   loadKudosForSession,
   WEEKLY_KUDOS_LIMIT,
   ELIGIBLE_STATES,

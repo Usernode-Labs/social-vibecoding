@@ -778,6 +778,49 @@ async function checkAndMerge(config, pool, session, options = {}) {
       },
     });
 
+    // Award any open issue bounties to this PR's author. A bounty pledged
+    // via the Open Issues panel ("Give kudos") is a symbolic off-chain
+    // credit; when a merged PR closes the issue (declared through the
+    // session's linked_issues → `Closes #N` in the PR body) the bounty flips
+    // 'open' → 'awarded'. Idempotent (only status='open' rows transition, so
+    // a later PR closing the same issue finds none) and best-effort — a
+    // failure here must never roll back or fail the merge, same as the CC
+    // volume teardown below.
+    try {
+      const linked = Array.isArray(session.linked_issues) ? session.linked_issues : [];
+      const seen = new Set();
+      for (const raw of linked) {
+        const n = Number(raw);
+        if (!Number.isInteger(n) || n <= 0 || seen.has(n)) continue;
+        seen.add(n);
+        const { rows: awarded } = await pool.query(
+          `UPDATE issue_bounties
+              SET status = 'awarded',
+                  awarded_session_id = $1,
+                  awarded_user_id = $2,
+                  awarded_at = NOW()
+            WHERE app_id = $3 AND github_issue_number = $4 AND status = 'open'
+            RETURNING id`,
+          [session.id, session.user_id || null, session.app_id, n]
+        );
+        if (!awarded.length) continue;
+        events.record(pool, {
+          type: events.EVENT_TYPES.BOUNTY_AWARDED,
+          userId: session.user_id || null,
+          appId: session.app_id,
+          sessionId: session.id,
+          metadata: { issueNumber: n, prNumber: session.pr_number || null, count: awarded.length },
+        });
+        const recipient = session.user_id ? `<@${session.user_id}>` : 'the author';
+        await sendSystemMessage(pool, session.app_id,
+          `Bounty on issue #${n} (${awarded.length} kudos) awarded to ${recipient} — PR #${session.pr_number || session.id} merged`,
+          'system'
+        ).catch(() => {});
+      }
+    } catch (err) {
+      log.warn('votes', 'Bounty payout failed', { sessionId: session.id, err: err.message });
+    }
+
     // Chat session is done — no further turns will reference CC memory,
     // so drop the persistent `.claude` volume.
     try {
