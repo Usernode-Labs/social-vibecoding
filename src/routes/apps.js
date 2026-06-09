@@ -8,6 +8,7 @@ const github = require('../services/github');
 const driftPoller = require('../services/main-drift-poller');
 const appSecrets = require('../services/app-secrets');
 const appManifest = require('../services/app-manifest');
+const renamePr = require('../services/rename-pr');
 const staging = require('../services/staging');
 const { drainGuard } = require('../services/lifecycle');
 const { appCreateLimiter, issueCreateLimiter } = require('../middleware/rate-limits');
@@ -730,126 +731,24 @@ function appRoutes(config) {
       if (!app.repo_url) {
         return res.status(400).json({ error: 'App has no GitHub repository to open a PR against' });
       }
-      const [, owner, repo] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-      if (!owner || !repo) {
+      const repoMatch = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/);
+      if (!repoMatch) {
         return res.status(400).json({ error: 'Could not parse the app repository URL' });
       }
 
-      // Build the updated dapp.json. Preserve existing fields when the
-      // file is present + parseable; create a minimal manifest when it's
-      // missing (legacy apps predating the manifest). A malformed file is
-      // already treated as empty by the deploy reader, so falling back to
-      // a fresh object there is safe.
-      let manifestObj = { secrets: [] };
-      const existing = await github.getFileContent(owner, repo, appManifest.MANIFEST_FILENAME, 'main');
-      if (existing != null) {
-        try {
-          const parsed = JSON.parse(existing);
-          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) manifestObj = parsed;
-        } catch {
-          log.warn('apps', 'Existing dapp.json unparseable; writing fresh manifest', { slug: app.slug });
-        }
-      }
-      manifestObj.name = newName;
-      const updatedContent = `${JSON.stringify(manifestObj, null, 2)}\n`;
-
-      // Fresh branch off main. The timestamp suffix avoids collisions if
-      // a prior rename attempt left a stale branch on the remote.
-      const branch = `rename/${app.slug}-${Date.now()}`;
-      await github.createBranch(owner, repo, branch);
-      await github.pushFiles(
-        owner, repo,
-        [{ path: appManifest.MANIFEST_FILENAME, content: updatedContent }],
-        { branch, message: `Rename to "${newName}"` }
+      // Open the rename PR + promoted vote session via the shared helper
+      // (services/rename-pr.js) — the exact same code path the boot
+      // migration uses to drain legacy rename issues.
+      const result = await renamePr.createRenamePR(
+        config, pool, app, newName, { id: req.user.id, username: req.user.username }
       );
 
-      const prTitle = `Rename to "${newName}"`;
-      const prBody =
-        `${req.user.username} (via Usernode) proposed renaming "${app.name}" to "${newName}".\n\n` +
-        `This PR updates the \`name\` field in \`dapp.json\`. It still needs a regular ` +
-        `merge vote to land — vote in the app's group chat panel. The new name applies ` +
-        `automatically once the PR merges and the app redeploys.`;
-      const prData = await github.createPR(owner, repo, { branch, title: prTitle, body: prBody });
-
-      // Drop the rename PR straight into the vote panel as a promoted
-      // session. We mirror the normal promote path (POST
-      // /api/sessions/:id/promote in routes/votes.js) so a rename PR
-      // behaves like any other promoted PR: set promoted_at (anchors the
-      // stale-PR sweeper), emit the pr_promoted analytics event, and fan
-      // out pr_proposed voter-nudge notifications below.
-      const { rows: sessRows } = await pool.query(
-        `INSERT INTO chat_sessions
-           (app_id, user_id, branch_name, pr_number, pr_url, pr_title, status, promoted_at)
-         VALUES ($1, $2, $3, $4, $5, $6, 'promoted', NOW())
-         RETURNING id`,
-        [app.id, req.user.id, branch, prData.number, prData.html_url, prTitle]
-      );
-      const sessionId = sessRows[0].id;
-
-      const { sendSystemMessage, pushVoteUpdate, pushNotificationToUser } = require('../services/ws');
-      const notifications = require('../services/notifications');
-      const { getActiveUserStats } = require('../services/active-users');
-      const { active: activeUsers, majority } = await getActiveUserStats(pool, app.id);
-      await sendSystemMessage(pool, app.id,
-        `${req.user.username} proposed renaming to "${newName}". Opened PR #${prData.number} — needs ${majority}/${activeUsers} votes to land.`,
-        'vote',
-        { vote: { sessionId, prNumber: prData.number } }
-      ).catch((err) => log.warn('apps', 'Rename chat msg failed', { err: err.message }));
-
-      pushVoteUpdate({ sessionId, appSlug: app.slug, merged: false });
-
-      // pr_promoted is the funnel stage the PR-promotion analytics read;
-      // emit it so rename PRs count like every other promoted PR.
-      events.record(pool, {
-        type: events.EVENT_TYPES.PR_PROMOTED,
-        userId: req.user.id,
-        appId: app.id,
-        sessionId,
-        metadata: { prNumber: prData.number, rename: true },
-      });
-
-      log.info('apps', 'Rename PR opened', {
-        slug: app.slug, prNumber: prData.number, newName, by: req.user.username,
-      });
       res.status(201).json({
         ok: true,
-        sessionId,
-        prNumber: prData.number,
-        prUrl: prData.html_url,
+        sessionId: result.sessionId,
+        prNumber: result.prNumber,
+        prUrl: result.prUrl,
       });
-
-      // Vote-request fan-out — same as the normal promote path. Non-fatal
-      // + post-response: the rename PR is already open, so a notification
-      // hiccup must not fail the request. Pings the app's active users +
-      // creator + favoriters (minus the proposer) so the right people come
-      // vote, de-duped per session.
-      try {
-        const notifRows = await notifications.createPrProposedNotifications(pool, {
-          appId: app.id,
-          sessionId,
-          proposerId: req.user.id,
-        });
-        for (const row of notifRows) {
-          pushNotificationToUser(row.user_id, {
-            type: 'notification_new',
-            notification: notifications.serialize({
-              ...row,
-              app_slug: app.slug,
-              app_name: app.name,
-              pr_title: prTitle,
-              pr_number: prData.number,
-              source_username: req.user.username,
-            }),
-          });
-        }
-        if (notifRows.length) {
-          log.info('apps', 'Rename PR-proposed notifications sent', {
-            sessionId, count: notifRows.length,
-          });
-        }
-      } catch (err) {
-        log.warn('apps', 'Rename pr_proposed notify failed', { sessionId, err: err.message });
-      }
     } catch (err) {
       log.error('apps', 'Rename PR failed', { slug: req.params.slug, message: err.message });
       res.status(500).json({ error: err.message || 'Internal server error' });

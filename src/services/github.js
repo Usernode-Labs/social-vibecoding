@@ -257,6 +257,20 @@ async function getPR(owner, repo, prNumber) {
   return data;
 }
 
+// Close an issue. Goes through getOctokit (PAT-preferred) so we get a
+// real @octokit/rest instance with `.rest.issues.update`. Used by the
+// rename-issue → rename-PR migration to retire the legacy issue once its
+// PR is open (mirrors how maybeApplyRenameProposal closes the issue when
+// a rename vote lands).
+async function closeIssue(owner, repo, issueNumber) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.issues.update({
+    owner, repo, issue_number: issueNumber, state: 'closed',
+  });
+  log.info('github', 'Issue closed', { repo: `${owner}/${repo}`, issue: issueNumber });
+  return data;
+}
+
 async function createIssue(owner, repo, { title, body }) {
   const octokit = await getOctokit(owner);
   const { data } = await octokit.rest.issues.create({
@@ -581,6 +595,7 @@ module.exports = {
   mergePR,
   getPR,
   createIssue,
+  closeIssue,
   getCloneUrl,
   safeMention,
   parseGithubUrl,
