@@ -576,7 +576,10 @@ function previewText(n) {
 }
 
 function renderRow(n) {
-  const unreadCls = n.readAt ? '' : 'bg-violet-500/5 border-l-2 border-violet-500';
+  // #103: keep the violet left line on every row, read or unread, so a
+  // notification never "loses its line" when read. Only the background
+  // tint stays unread-conditional (the unread dot below is the other cue).
+  const unreadCls = n.readAt ? 'border-l-2 border-violet-500' : 'bg-violet-500/5 border-l-2 border-violet-500';
   const appLine = n.appName ? escapeHtml(n.appName) : 'app';
   const who = n.sourceUsername ? escapeHtml(n.sourceUsername) : 'someone';
   // Leading unread dot (or an equal-width spacer when read) on the meta
