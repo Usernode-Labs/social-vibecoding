@@ -933,8 +933,9 @@ const App = {
     // so this stays 'platform' on home/leaderboard. Reset on each open.
     let feedbackTarget = 'platform';
     const activeTargetClasses = ['bg-violet-600', 'text-white', 'border-violet-600'];
-    // Toggle the active styling between the two buttons. Visibility of the
-    // "This app" button is owned by the open handler, not this function.
+    const disabledTargetClasses = ['opacity-40', 'cursor-not-allowed'];
+    // Toggle the active styling between the two buttons. Enabled/disabled
+    // state of the "This app" button is owned by the open handler.
     const setFeedbackTarget = (target) => {
       feedbackTarget = target;
       const onApp = target === 'app';
@@ -945,8 +946,15 @@ const App = {
         feedbackTargetPlatform.classList.toggle(c, !onApp);
       });
     };
+    // Enable or gray-out the "This app" option. When disabled it stays
+    // visible (so users see both choices) but isn't clickable/selectable.
+    const setAppTargetEnabled = (enabled) => {
+      feedbackTargetApp.disabled = !enabled;
+      feedbackTargetApp.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+      disabledTargetClasses.forEach((c) => feedbackTargetApp.classList.toggle(c, !enabled));
+    };
     feedbackTargetApp.addEventListener('click', () => {
-      if (!feedbackTargetApp.classList.contains('hidden')) setFeedbackTarget('app');
+      if (!feedbackTargetApp.disabled) setFeedbackTarget('app');
     });
     feedbackTargetPlatform.addEventListener('click', () => setFeedbackTarget('platform'));
 
@@ -1007,8 +1015,9 @@ const App = {
       feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
       feedbackStatus.classList.add('hidden');
 
-      // "This app" is only an option when an app with a real repo is
-      // open. Otherwise hide it and force platform feedback.
+      // "This app" is only selectable when an app with a real repo is
+      // open. Otherwise the button stays visible but grayed-out/disabled
+      // so users can still see both choices, and we default to platform.
       const appData = (typeof AppView !== 'undefined' && AppView.appData) || null;
       const repoUrl = appData?.repo_url || '';
       const canTargetApp = !!App.currentApp
@@ -1016,11 +1025,12 @@ const App = {
         && /github\.com\/[^/]+\/[^/]+/.test(repoUrl);
       if (canTargetApp) {
         feedbackTargetApp.textContent = appData?.name ? `This app (${appData.name})` : 'This app';
-        feedbackTargetApp.classList.remove('hidden');
+        setAppTargetEnabled(true);
         // Default to the app the user is looking at — most likely intent.
         setFeedbackTarget('app');
       } else {
-        feedbackTargetApp.classList.add('hidden');
+        feedbackTargetApp.textContent = 'This app';
+        setAppTargetEnabled(false);
         setFeedbackTarget('platform');
       }
 

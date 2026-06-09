@@ -443,12 +443,13 @@
       <h2 class="text-lg font-bold mb-4">Send Feedback</h2>
       <!-- Target toggle: file this feedback against the app being viewed
            or against the Social Vibecoding platform. The "This app" button
-           is shown only when an app with a repo is open (see app.js). -->
+           is always visible but rendered disabled/grayed-out when no app
+           with a repo is open (see app.js). -->
       <div id="feedback-target" class="flex gap-2 mb-3" role="radiogroup" aria-label="Feedback target">
         <button type="button" role="radio" aria-checked="false" data-feedback-target="app" id="feedback-target-app"
-          class="hidden flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">This app</button>
+          class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">This app</button>
         <button type="button" role="radio" aria-checked="true" data-feedback-target="platform" id="feedback-target-platform"
-          class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Social Vibecoding</button>
+          class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Social Vibecoding Platform</button>
       </div>
       <textarea id="feedback-text" rows="4" maxlength="2000" placeholder="Describe the issue or suggestion..."
         class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 resize-none"></textarea>
