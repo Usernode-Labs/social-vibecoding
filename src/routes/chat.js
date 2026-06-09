@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const models = require('../services/models');
+const { listActiveUserIds } = require('../services/active-users');
 
 function chatRoutes(config) {
   const router = Router();
@@ -84,6 +85,67 @@ function chatRoutes(config) {
       res.json({ messages });
     } catch (err) {
       log.error('chat', 'Failed to load messages', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // @mention autocomplete candidate set for one app's group chat (#87).
+  // Returns the union of:
+  //   1. distinct authors of this app's chat messages,
+  //   2. the app's active users (same definition that gates voting,
+  //      so suggestions match who can actually act on a mention),
+  //   3. the app creator.
+  // De-duplicated, alphabetical, capped. The client caches this once per
+  // app mount and filters by prefix locally; usernames are returned in
+  // canonical casing so the inserted @mention renders correctly. Auth is
+  // enforced by the global JWT gate (this is a GET under /api/).
+  router.get('/api/apps/:slug/mention-suggestions', async (req, res) => {
+    try {
+      const { rows: appRows } = await pool.query(
+        'SELECT id, created_by FROM apps WHERE slug = $1',
+        [req.params.slug]
+      );
+      if (appRows.length === 0) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+      const appId = appRows[0].id;
+      const createdBy = appRows[0].created_by;
+
+      // Active-user ids, via the shared definition. Non-fatal: if this
+      // lookup fails we still return chat authors + creator.
+      let activeIds = [];
+      try {
+        activeIds = await listActiveUserIds(pool, appId);
+      } catch (err) {
+        log.warn('chat', 'active-user lookup failed for mentions', { message: err.message });
+      }
+
+      const ids = [...new Set([
+        ...activeIds,
+        ...(createdBy != null ? [createdBy] : []),
+      ])];
+
+      // Sort case-insensitively (by lowercased username) so uppercase
+      // names don't all sort before lowercase ones; the returned value
+      // keeps the canonical/original casing. LOWER(u.username) must be in
+      // the SELECT list because SELECT DISTINCT requires ORDER BY
+      // expressions to appear there.
+      const { rows } = await pool.query(
+        `SELECT DISTINCT u.username, LOWER(u.username) AS sort_name
+           FROM users u
+          WHERE u.id = ANY($2::int[])
+             OR u.id IN (
+               SELECT m.user_id FROM chat_messages m
+                WHERE m.app_id = $1 AND m.user_id IS NOT NULL
+             )
+          ORDER BY sort_name
+          LIMIT 500`,
+        [appId, ids]
+      );
+
+      res.json({ users: rows.map((r) => ({ username: r.username })) });
+    } catch (err) {
+      log.error('chat', 'Failed to load mention suggestions', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
