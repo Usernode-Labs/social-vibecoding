@@ -125,15 +125,20 @@ function chatRoutes(config) {
         ...(createdBy != null ? [createdBy] : []),
       ])];
 
+      // Sort case-insensitively (by lowercased username) so uppercase
+      // names don't all sort before lowercase ones; the returned value
+      // keeps the canonical/original casing. LOWER(u.username) must be in
+      // the SELECT list because SELECT DISTINCT requires ORDER BY
+      // expressions to appear there.
       const { rows } = await pool.query(
-        `SELECT DISTINCT u.username
+        `SELECT DISTINCT u.username, LOWER(u.username) AS sort_name
            FROM users u
           WHERE u.id = ANY($2::int[])
              OR u.id IN (
                SELECT m.user_id FROM chat_messages m
                 WHERE m.app_id = $1 AND m.user_id IS NOT NULL
              )
-          ORDER BY u.username
+          ORDER BY sort_name
           LIMIT 500`,
         [appId, ids]
       );
