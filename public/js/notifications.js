@@ -598,7 +598,13 @@ function previewText(n) {
 }
 
 function renderRow(n) {
-  const unreadCls = n.readAt ? '' : 'bg-violet-500/5 border-l-2 border-violet-500';
+  // #103: the left accent line is owned by the group wrapper
+  // (.notif-group-accent), which spans the full group read or unread —
+  // so rows must NOT carry their own read-conditional left border, or a
+  // row visibly "loses its line" when marked read. Unread rows keep only
+  // the background tint (the unread dot, added below, is the other cue);
+  // read rows stay plain.
+  const unreadCls = n.readAt ? '' : 'bg-violet-500/5';
   const appLine = n.appName ? escapeHtml(n.appName) : 'app';
   const who = n.sourceUsername ? escapeHtml(n.sourceUsername) : 'someone';
   // Leading unread dot (or an equal-width spacer when read) on the meta
