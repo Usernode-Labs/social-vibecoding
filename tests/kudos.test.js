@@ -142,8 +142,12 @@ function makeMockPool(initial = {}) {
       const k = state.kudos.filter(
         (x) => x.giver_user_id === userId && x.week_start === weekStart
       ).length;
+      // Voided self-bounties are refunded — they don't count against the
+      // weekly allowance (mirrors the `status <> 'voided'` filter in
+      // countWeeklyAllowanceUsed).
       const b = state.bounties.filter(
         (x) => x.giver_user_id === userId && x.week_start === weekStart
+          && x.status !== 'voided'
       ).length;
       return { rows: [{ c: k + b }] };
     }
@@ -531,4 +535,161 @@ test('leaderboard/users: a user who gave nothing gets an empty map', async () =>
   } finally {
     await close();
   }
+});
+
+// ─── 4. Issue-bounty self-award guard (resolveIssueBounty) ───────
+//
+// Regression coverage for the self-kudos loophole: a user could pledge a
+// bounty on an open issue and then author the PR that closes it, awarding
+// the bounty to themselves. resolveIssueBounty (extracted from votes.js
+// checkAndMerge) must VOID the pledger's own bounty rather than award it,
+// while still awarding everyone else's bounty on the same issue to the PR
+// author. Mirrors the direct PR-kudos 403 self-kudos check.
+
+// Minimal mock pool that faithfully implements the two UPDATE statements
+// resolveIssueBounty issues, over an in-memory `bounties` array. Each bounty
+// row: { id, app_id, github_issue_number, giver_user_id, status,
+//        awarded_user_id, awarded_session_id }.
+function makeBountyPool(bounties) {
+  const state = { bounties };
+  // a IS DISTINCT FROM b — NULL is a comparable value (NULL vs non-null is
+  // distinct; NULL vs NULL is not).
+  const distinct = (a, b) => (a === null || a === undefined ? b !== null && b !== undefined
+    : b === null || b === undefined ? true : a !== b);
+  async function query(sql, params = []) {
+    const s = String(sql);
+    // Combined weekly-allowance count (countWeeklyAllowanceUsed): pr_kudos
+    // (none in this pool) + non-voided issue_bounties for the user/week. The
+    // `status <> 'voided'` filter is what refunds a voided self-bounty.
+    if (/FROM issue_bounties\s+WHERE giver_user_id = \$1 AND week_start = \$2/i.test(s)) {
+      const [userId, weekStart] = params;
+      const c = state.bounties.filter(
+        (b) => b.giver_user_id === userId && b.week_start === weekStart
+          && b.status !== 'voided'
+      ).length;
+      return { rows: [{ c }] };
+    }
+    // Award: status='awarded' WHERE ... AND giver_user_id IS DISTINCT FROM $2
+    if (/UPDATE issue_bounties[\s\S]*status = 'awarded'[\s\S]*IS DISTINCT FROM/i.test(s)) {
+      const [sessionId, awardeeUserId, appId, issueNumber] = params;
+      const hit = state.bounties.filter((b) =>
+        b.app_id === appId && b.github_issue_number === issueNumber &&
+        b.status === 'open' && distinct(b.giver_user_id ?? null, awardeeUserId ?? null));
+      for (const b of hit) {
+        b.status = 'awarded';
+        b.awarded_user_id = awardeeUserId ?? null;
+        b.awarded_session_id = sessionId;
+      }
+      return { rows: hit.map((b) => ({ id: b.id })) };
+    }
+    // Void: status='voided' WHERE ... AND giver_user_id = $4
+    if (/UPDATE issue_bounties[\s\S]*status = 'voided'/i.test(s)) {
+      const [sessionId, appId, issueNumber, giverUserId] = params;
+      const hit = state.bounties.filter((b) =>
+        b.app_id === appId && b.github_issue_number === issueNumber &&
+        b.status === 'open' && b.giver_user_id === giverUserId);
+      for (const b of hit) {
+        b.status = 'voided';
+        b.awarded_session_id = sessionId;
+        // awarded_user_id intentionally left untouched (stays null).
+      }
+      return { rows: hit.map((b) => ({ id: b.id })) };
+    }
+    throw new Error(`unhandled bounty mock SQL: ${s.slice(0, 60)}`);
+  }
+  return { query, state };
+}
+
+test('resolveIssueBounty: self-pledged bounty is voided, not awarded', async () => {
+  const { resolveIssueBounty } = require('../src/routes/votes');
+  // Author U (id 1) pledged bounty #100 on issue 7; another user (id 2) also
+  // pledged #200 on the same issue. U authors the closing PR (session 50).
+  const pool = makeBountyPool([
+    { id: 100, app_id: 1, github_issue_number: 7, giver_user_id: 1, status: 'open', awarded_user_id: null, awarded_session_id: null },
+    { id: 200, app_id: 1, github_issue_number: 7, giver_user_id: 2, status: 'open', awarded_user_id: null, awarded_session_id: null },
+  ]);
+  const { awarded, voided } = await resolveIssueBounty(pool, {
+    appId: 1, sessionId: 50, awardeeUserId: 1, issueNumber: 7,
+  });
+  // Other user's bounty awards to U; U's own bounty voids.
+  assert.deepEqual(awarded.map((r) => r.id), [200]);
+  assert.deepEqual(voided.map((r) => r.id), [100]);
+  const self = pool.state.bounties.find((b) => b.id === 100);
+  const other = pool.state.bounties.find((b) => b.id === 200);
+  assert.equal(self.status, 'voided');
+  assert.equal(self.awarded_user_id, null, 'voided self-bounty earns no credit');
+  assert.equal(self.awarded_session_id, 50, 'voided row records session for audit');
+  assert.equal(other.status, 'awarded');
+  assert.equal(other.awarded_user_id, 1, 'other pledger credits the PR author');
+});
+
+test('resolveIssueBounty: U gains no received-kudos credit from their own bounty', async () => {
+  const { resolveIssueBounty } = require('../src/routes/votes');
+  // Only a self-pledged bounty exists on the issue.
+  const pool = makeBountyPool([
+    { id: 100, app_id: 1, github_issue_number: 7, giver_user_id: 1, status: 'open', awarded_user_id: null, awarded_session_id: null },
+  ]);
+  const { awarded, voided } = await resolveIssueBounty(pool, {
+    appId: 1, sessionId: 50, awardeeUserId: 1, issueNumber: 7,
+  });
+  assert.equal(awarded.length, 0, 'no award emitted (so no BOUNTY_AWARDED event / chat noise)');
+  assert.equal(voided.length, 1);
+  // Leaderboard credits via `awarded_user_id = u.id AND status = 'awarded'`;
+  // a voided row matches neither, so U's kudos_received is unaffected.
+  const credited = pool.state.bounties.filter(
+    (b) => b.status === 'awarded' && b.awarded_user_id === 1
+  );
+  assert.equal(credited.length, 0);
+});
+
+test('resolveIssueBounty: deleted PR author (null awardee) still awards normally', async () => {
+  const { resolveIssueBounty } = require('../src/routes/votes');
+  const pool = makeBountyPool([
+    { id: 100, app_id: 1, github_issue_number: 7, giver_user_id: 2, status: 'open', awarded_user_id: null, awarded_session_id: null },
+  ]);
+  const { awarded, voided } = await resolveIssueBounty(pool, {
+    appId: 1, sessionId: 50, awardeeUserId: null, issueNumber: 7,
+  });
+  assert.deepEqual(awarded.map((r) => r.id), [100]);
+  assert.equal(voided.length, 0, 'no void pass runs when there is no PR author');
+  assert.equal(pool.state.bounties[0].status, 'awarded');
+});
+
+test('voiding a self-bounty refunds the weekly allowance slot', async () => {
+  const { resolveIssueBounty } = require('../src/routes/votes');
+  const { countWeeklyAllowanceUsed } = require('../src/routes/kudos');
+  const week = '2026-05-18';
+  // U (id 1) pledged a bounty on their own issue this week → 1 slot used.
+  const pool = makeBountyPool([
+    { id: 100, app_id: 1, github_issue_number: 7, giver_user_id: 1, week_start: week, status: 'open', awarded_user_id: null, awarded_session_id: null },
+  ]);
+  assert.equal(await countWeeklyAllowanceUsed(pool, 1, week), 1,
+    'open self-bounty consumes a slot at pledge time');
+
+  // U authors the PR that closes the issue → self-bounty is voided.
+  const { voided } = await resolveIssueBounty(pool, {
+    appId: 1, sessionId: 50, awardeeUserId: 1, issueNumber: 7,
+  });
+  assert.equal(voided.length, 1);
+
+  // The slot is reclaimed: usage drops back to 0, free to spend elsewhere.
+  assert.equal(await countWeeklyAllowanceUsed(pool, 1, week), 0,
+    'voided self-bounty no longer counts against the weekly limit');
+});
+
+test('weekly allowance: a voided self-bounty refund does not leak to other users/weeks', async () => {
+  const { countWeeklyAllowanceUsed } = require('../src/routes/kudos');
+  const week = '2026-05-18';
+  const pool = makeBountyPool([
+    // U's voided self-bounty (refunded) ...
+    { id: 100, app_id: 1, github_issue_number: 7, giver_user_id: 1, week_start: week, status: 'voided', awarded_user_id: null, awarded_session_id: 50 },
+    // ... U's still-open bounty on another issue (counts) ...
+    { id: 101, app_id: 1, github_issue_number: 8, giver_user_id: 1, week_start: week, status: 'open', awarded_user_id: null, awarded_session_id: null },
+    // ... and another user's awarded bounty (counts toward THEIR limit).
+    { id: 102, app_id: 1, github_issue_number: 9, giver_user_id: 2, week_start: week, status: 'awarded', awarded_user_id: 1, awarded_session_id: 60 },
+  ]);
+  assert.equal(await countWeeklyAllowanceUsed(pool, 1, week), 1,
+    'U: only the still-open bounty counts; the voided one is refunded');
+  assert.equal(await countWeeklyAllowanceUsed(pool, 2, week), 1,
+    'other user: their awarded bounty still counts');
 });

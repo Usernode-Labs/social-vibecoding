@@ -568,6 +568,56 @@ function voteRoutes(config) {
 // races against any concurrent vote-driven merge, so we won't double-
 // merge. `options.forceBy` is the admin user object (id, username) used
 // for the "merged by <admin> overriding vote" chat message.
+// Resolve open issue bounties for a single closed issue when a PR merges.
+//
+// A bounty pledged via the Open Issues panel ("Give kudos") flips 'open' →
+// 'awarded' and credits the merged PR's author — EXCEPT a bounty whose
+// pledger IS that author, which would be self-kudos (the same thing the
+// direct PR-kudos give path refuses with a 403; see routes/kudos.js). The
+// awardee isn't known until merge, so the self-check lives here: self-pledged
+// rows are 'voided' instead — not left 'open', because the issue is now
+// closed on GitHub and no later PR will close it again, so an open row would
+// linger forever and keep inflating the issue's open-bounty count. Voided
+// rows keep awarded_session_id/awarded_at for audit but no awarded_user_id,
+// so they earn no leaderboard credit. The pledger's weekly allowance slot is
+// still forfeited (no refund) — every pledged bounty consumes a slot.
+//
+// `IS DISTINCT FROM` keeps a NULL giver (deleted pledger) and a NULL awardee
+// (deleted PR author) on the award path. Self-voiding only runs when the PR
+// has an author. Returns { awarded, voided } id arrays. Extracted from
+// checkAndMerge so the self-bounty guard is unit-testable without driving the
+// whole merge pipeline.
+async function resolveIssueBounty(pool, { appId, sessionId, awardeeUserId, issueNumber }) {
+  const { rows: awarded } = await pool.query(
+    `UPDATE issue_bounties
+        SET status = 'awarded',
+            awarded_session_id = $1,
+            awarded_user_id = $2,
+            awarded_at = NOW()
+      WHERE app_id = $3 AND github_issue_number = $4 AND status = 'open'
+        AND giver_user_id IS DISTINCT FROM $2
+      RETURNING id`,
+    [sessionId, awardeeUserId || null, appId, issueNumber]
+  );
+
+  let voided = [];
+  if (awardeeUserId) {
+    const { rows } = await pool.query(
+      `UPDATE issue_bounties
+          SET status = 'voided',
+              awarded_session_id = $1,
+              awarded_at = NOW()
+        WHERE app_id = $2 AND github_issue_number = $3 AND status = 'open'
+          AND giver_user_id = $4
+        RETURNING id`,
+      [sessionId, appId, issueNumber, awardeeUserId]
+    );
+    voided = rows;
+  }
+
+  return { awarded, voided };
+}
+
 async function checkAndMerge(config, pool, session, options = {}) {
   // `options.autoResolve` (default true): when a merge is blocked by a
   // conflict / behind-main, kick off the worker-based auto-resolver
@@ -792,14 +842,14 @@ async function checkAndMerge(config, pool, session, options = {}) {
       },
     });
 
-    // Award any open issue bounties to this PR's author. A bounty pledged
-    // via the Open Issues panel ("Give kudos") is a symbolic off-chain
-    // credit; when a merged PR closes the issue (declared through the
-    // session's linked_issues → `Closes #N` in the PR body) the bounty flips
-    // 'open' → 'awarded'. Idempotent (only status='open' rows transition, so
-    // a later PR closing the same issue finds none) and best-effort — a
-    // failure here must never roll back or fail the merge, same as the CC
-    // volume teardown below.
+    // Resolve any open issue bounties for the issues this PR closes (declared
+    // through the session's linked_issues → `Closes #N` in the PR body).
+    // Bounties pledged by OTHER users flip 'open' → 'awarded' and credit this
+    // PR's author; a bounty the author pledged on their own resolved issue is
+    // 'voided' instead (self-kudos guard — see resolveIssueBounty). Idempotent
+    // (only status='open' rows transition, so a later PR closing the same
+    // issue finds none) and best-effort — a failure here must never roll back
+    // or fail the merge, same as the CC volume teardown below.
     try {
       const linked = Array.isArray(session.linked_issues) ? session.linked_issues : [];
       const seen = new Set();
@@ -807,16 +857,19 @@ async function checkAndMerge(config, pool, session, options = {}) {
         const n = Number(raw);
         if (!Number.isInteger(n) || n <= 0 || seen.has(n)) continue;
         seen.add(n);
-        const { rows: awarded } = await pool.query(
-          `UPDATE issue_bounties
-              SET status = 'awarded',
-                  awarded_session_id = $1,
-                  awarded_user_id = $2,
-                  awarded_at = NOW()
-            WHERE app_id = $3 AND github_issue_number = $4 AND status = 'open'
-            RETURNING id`,
-          [session.id, session.user_id || null, session.app_id, n]
-        );
+        const { awarded, voided } = await resolveIssueBounty(pool, {
+          appId: session.app_id,
+          sessionId: session.id,
+          awardeeUserId: session.user_id || null,
+          issueNumber: n,
+        });
+        if (voided.length) {
+          log.info('votes', 'Self-bounty voided on merge', {
+            sessionId: session.id, issueNumber: n, count: voided.length,
+          });
+        }
+        // Only announce / record genuine awards; a purely self-voided issue
+        // produces no "awarded" chat noise or event.
         if (!awarded.length) continue;
         events.record(pool, {
           type: events.EVENT_TYPES.BOUNTY_AWARDED,
@@ -1229,4 +1282,4 @@ async function createRevertPR({ session, mergeSha, repoOwner, repoName, deciderU
 // PR after it syncs cleanly with main. Consumers should lazy-require
 // this module from inside a function to avoid the votes <-> conflict-
 // resolver circular-require load-order trap.
-module.exports = { voteRoutes, checkAndMerge };
+module.exports = { voteRoutes, checkAndMerge, resolveIssueBounty };
