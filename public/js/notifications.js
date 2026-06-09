@@ -251,6 +251,17 @@ const Notifications = {
   },
 
   async _markOneRead(id) {
+    // Optimistically mark read in-memory and re-render the open drawer
+    // right away: the unread dot disappears and unread-first sorting
+    // updates live, instead of waiting for the network round-trip (which
+    // is why a clicked item used to stay unread until close/reopen).
+    const item = Notifications.items.find((n) => n.id === id);
+    if (item && !item.readAt) {
+      item.readAt = new Date().toISOString();
+      if (Notifications.unread > 0) Notifications.unread -= 1;
+      Notifications._renderBadge();
+      if (Notifications.open) Notifications._renderList();
+    }
     try {
       const res = await fetch('/api/notifications/read', {
         method: 'POST',
@@ -259,9 +270,8 @@ const Notifications = {
       });
       if (!res.ok) return;
       const data = await res.json();
+      // Reconcile with the server's authoritative unread count.
       Notifications.unread = data.unread || 0;
-      const item = Notifications.items.find((n) => n.id === id);
-      if (item && !item.readAt) item.readAt = new Date().toISOString();
       Notifications._renderBadge();
     } catch (err) {
       console.warn('[notifications] markOneRead failed', err);
