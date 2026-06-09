@@ -336,6 +336,26 @@ async function handleMessage(pool, client, msg) {
       } catch (err) {
         log.warn('ws', 'mention notify failed', { err: err.message });
       }
+
+      // Posting a message in this app's group chat is the "I've engaged
+      // with this thread" action: clear every unread mention/reply/reaction
+      // notification this user has for this app (the reply-clears-all
+      // behavior). Confirmed in the DB, idempotent, and non-fatal — a
+      // notification hiccup must never affect the chat send. On >=1 row
+      // cleared, fan out notifications_changed so the sender's bell badge +
+      // other tabs (and their chat dots) re-sync.
+      try {
+        const cleared = await notifications.markReadForAction(
+          pool, client.user.id, 'message_sent', client.appId
+        );
+        if (cleared > 0) {
+          pushNotificationToUser(client.user.id, { type: 'notifications_changed' });
+        }
+      } catch (err) {
+        log.warn('ws', 'message_sent auto-dismiss failed', {
+          appId: client.appId, userId: client.user.id, err: err.message,
+        });
+      }
       break;
     }
 

@@ -63,6 +63,24 @@ function chatRoutes(config) {
         log.warn('chat', 'reaction hydrate failed', { message: err.message });
       }
 
+      // Per-message unread dot: flag any message this user has an unread
+      // mention/reply/reaction notification for, so the chat renders a dot
+      // next to it. Live messages (over the WS) can't yet carry this flag,
+      // so the dot is driven by this loaded-history flag plus client-side
+      // reconciliation on notifications_changed. Non-fatal: a failure here
+      // must never break loading the chat.
+      if (req.user) {
+        try {
+          const notifications = require('../services/notifications');
+          const unreadIds = await notifications.unreadMessageIdsForUser(
+            pool, req.user.id, messages.map((m) => m.id)
+          );
+          for (const m of messages) m.has_unread_notification = unreadIds.has(m.id);
+        } catch (err) {
+          log.warn('chat', 'unread-dot hydrate failed', { message: err.message });
+        }
+      }
+
       res.json({ messages });
     } catch (err) {
       log.error('chat', 'Failed to load messages', { message: err.message });
