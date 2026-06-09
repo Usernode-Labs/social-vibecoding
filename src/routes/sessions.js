@@ -3095,6 +3095,18 @@ CMD ["node", "server.js"]
     ? `http://localhost:${hostPort}`
     : `https://${hostname}`;
 
+  // Pre-warm the on-demand TLS cert in the background so the first human
+  // visit isn't a blank page while ZeroSSL validates (~60-90s). No-op in
+  // local-dev (http://localhost:<port>). Fire-and-forget — never awaited.
+  if (stagingUrl.startsWith('https://')) {
+    caddy.warmCert(hostname, {
+      onResult: (err, code) =>
+        err
+          ? log.warn('staging', 'Cert pre-warm failed (will issue lazily on first visit)', { sessionId: session.id, hostname, err: err.message })
+          : log.info('staging', 'Cert pre-warmed', { sessionId: session.id, hostname, code }),
+    });
+  }
+
   return { containerId, stagingUrl, hostname };
 }
 

@@ -9,6 +9,8 @@
 // two builders remain the single source of truth for the hostnames the
 // Caddy `map` in the Caddyfile expects to see.
 
+const https = require('https');
+
 const USERNODE_DOMAIN = process.env.USERNODE_DOMAIN || 'social-vibecoding.usernodelabs.org';
 
 function productionHostname(slug) {
@@ -27,8 +29,54 @@ function stagingHostname(slug, sessionLabel) {
   return `${slug}--${sessionLabel}.${USERNODE_DOMAIN}`;
 }
 
+// Pre-warm a hostname's on-demand TLS certificate at deploy time so a real
+// user never lands on a cold hostname. On the first-ever request to a new
+// hostname Caddy issues the cert lazily; with ZeroSSL ACME that validation
+// takes ~60-90s, during which the TLS handshake hangs and the browser shows
+// a blank/black page (it's before any HTML loads). We trigger issuance
+// proactively by opening one TLS connection to Caddy with the hostname as
+// the SNI — Caddy treats it like any other first hit and issues + caches the
+// cert (good ~90 days), so the human's first visit is instant.
+//
+// Fire-and-forget by design: never throws and is not awaited, so a slow or
+// failed warm can't delay or fail a deploy (the cert still issues lazily on
+// first visit as before — this only removes the cold-start wait). No-op
+// unless given an https hostname; local-dev maps previews to
+// http://localhost:<port> with no Caddy in front, so there's nothing to warm.
+// Caddy is reached by its container name on the shared docker network
+// (override with CADDY_HOST); `rejectUnauthorized` is off because the cert
+// is literally being minted during the handshake.
+function warmCert(hostname, { onResult, timeoutMs = 150000 } = {}) {
+  if (!hostname || typeof hostname !== 'string') return;
+  const done = (err, code) => { if (typeof onResult === 'function') onResult(err, code); };
+  let settled = false;
+  const finish = (err, code) => { if (settled) return; settled = true; done(err, code); };
+  try {
+    const req = https.request({
+      host: process.env.CADDY_HOST || 'caddy',
+      port: 443,
+      method: 'GET',
+      path: '/',
+      servername: hostname,
+      headers: { Host: hostname },
+      rejectUnauthorized: false,
+      timeout: timeoutMs,
+    }, (res) => {
+      res.resume(); // drain so the socket frees
+      res.on('end', () => finish(null, res.statusCode));
+      res.on('error', (err) => finish(err));
+    });
+    req.on('timeout', () => req.destroy(new Error(`warmCert timeout after ${timeoutMs}ms`)));
+    req.on('error', (err) => finish(err));
+    req.end();
+  } catch (err) {
+    finish(err);
+  }
+}
+
 module.exports = {
   productionHostname,
   stagingHostname,
+  warmCert,
   USERNODE_DOMAIN,
 };
