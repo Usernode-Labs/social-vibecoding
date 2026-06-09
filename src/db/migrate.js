@@ -661,16 +661,29 @@ async function seedStagingNotifications(pool, config) {
   for (let i = 0; i < otherApps.length; i++) {
     const app = otherApps[i];
     const appName = app.name || app.slug;
-    // First other app: two notifications -> a multi-item (collapsible)
-    // group. Others: one notification each -> a single leaf row.
-    const specs = i === 0
-      ? [
-          { kind: 'mention', content: `[staging fixture] @${target.username} take a look at this in ${appName}`, minutesAgo: 5 },
-          { kind: 'reply', content: `[staging fixture] reply target message in ${appName}`, minutesAgo: 4 },
-        ]
-      : [
-          { kind: 'mention', content: `[staging fixture] @${target.username} mentioned in ${appName}`, minutesAgo: 5 - i },
-        ];
+    // First other app: an over-the-limit group (>GROUP_LEAF_CAP, which is
+    // 10 in the drawer) so the inline "Show more" pagination control is
+    // exercised. Mixed read/unread so unread-first ordering is visible
+    // too. Each row gets unique content -> a distinct fixture chat message
+    // -> a distinct (kind, chat_message_id) idempotency key, so reboots
+    // never duplicate or drift. Others: one notification each -> a single
+    // leaf row.
+    let specs;
+    if (i === 0) {
+      specs = [];
+      for (let k = 0; k < 15; k++) {
+        specs.push({
+          kind: k % 2 === 0 ? 'mention' : 'reply',
+          content: `[staging fixture] ${appName} pagination row ${k + 1} for @${target.username}`,
+          minutesAgo: 20 - k,   // staggered, newest-first
+          readAt: k % 3 === 0,  // ~1/3 read, rest unread
+        });
+      }
+    } else {
+      specs = [
+        { kind: 'mention', content: `[staging fixture] @${target.username} mentioned in ${appName}`, minutesAgo: 5 - i },
+      ];
+    }
 
     for (const spec of specs) {
       // Upsert the fixture chat message this notification points at, so
@@ -705,10 +718,12 @@ async function seedStagingNotifications(pool, config) {
 
       await pool.query(
         `INSERT INTO notifications
-           (user_id, app_id, chat_message_id, source_user_id, kind, created_at)
+           (user_id, app_id, chat_message_id, source_user_id, kind, read_at, created_at)
          VALUES
-           ($1, $2, $3, $4, $5, NOW() - ($6::int * INTERVAL '1 minute'))`,
-        [target.id, app.id, chatMessageId, source.id, spec.kind, spec.minutesAgo]
+           ($1, $2, $3, $4, $5,
+            CASE WHEN $6::boolean THEN NOW() - INTERVAL '1 minute' ELSE NULL END,
+            NOW() - ($7::int * INTERVAL '1 minute'))`,
+        [target.id, app.id, chatMessageId, source.id, spec.kind, !!spec.readAt, spec.minutesAgo]
       );
       multiAppInserted++;
     }

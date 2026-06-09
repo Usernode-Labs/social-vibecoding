@@ -19,8 +19,10 @@
 // bottom loads older pages via the keyset cursor (nextBefore/hasMore).
 
 const EXPANDED_STORAGE_KEY = 'notif_expanded_groups_v1';
-// Per-expanded-group leaf cap — keeps the DOM bounded for very chatty
-// apps. Beyond this we render a "+N more" link into the app's group chat.
+// Per-expanded-group leaf cap — initial number of leaves shown for an
+// expanded group, and the increment for each inline "Show more" click.
+// Beyond this the group renders an inline pagination button that reveals
+// the next page of already-loaded leaves in place (no navigation away).
 const GROUP_LEAF_CAP = 10;
 // How close to the bottom (px) before we prefetch the next page.
 const LOAD_MORE_THRESHOLD = 64;
@@ -35,6 +37,10 @@ const Notifications = {
   loading: false,
   // Set<string> of expanded group keys (appId as string, or 'general').
   expanded: new Set(),
+  // Map<string, number> of group key -> how many leaves to reveal for
+  // that group. Ephemeral (not persisted): resets on reload so the
+  // drawer opens compact. An absent key means the default GROUP_LEAF_CAP.
+  revealed: new Map(),
   _scrollWired: false,
 
   init() {
@@ -92,6 +98,11 @@ const Notifications = {
       }
     }
     if (changed) Notifications._saveExpanded();
+    // Reveal counts are ephemeral, but still drop entries for apps with
+    // no notifications so the map doesn't grow unbounded over a session.
+    for (const key of [...Notifications.revealed.keys()]) {
+      if (!liveKeys.has(key)) Notifications.revealed.delete(key);
+    }
   },
 
   // --- fetching --------------------------------------------------------
@@ -322,7 +333,14 @@ const Notifications = {
       g.items.push(n);
       if (!n.readAt) g.unreadCount += 1;
     }
-    return [...byKey.values()];
+    // Unread-first: groups with any unread float to the top, preserving
+    // the most-recent-activity-first order within each bucket (stable
+    // partition). This is a pure view ordering — `items` stays
+    // newest-first so the keyset pagination cursor is unaffected.
+    const groups = [...byKey.values()];
+    const withUnread = groups.filter((g) => g.unreadCount > 0);
+    const allRead = groups.filter((g) => g.unreadCount === 0);
+    return [...withUnread, ...allRead];
   },
 
   _renderList() {
@@ -381,14 +399,33 @@ const Notifications = {
         );
       });
     });
-    // "+N more in <app>" → land on the app's group chat for full history.
-    list.querySelectorAll('[data-group-more]').forEach((el) => {
-      el.addEventListener('click', () => {
-        const slug = el.getAttribute('data-group-more');
-        Notifications.hide();
-        if (slug) window.location.hash = `#app/${slug}/group-chat`;
+    // Inline "Show more" → reveal the next page of leaves for this group
+    // in place (no navigation away). stopPropagation so the outside-click
+    // dismiss doesn't fire when the re-render detaches this button.
+    list.querySelectorAll('[data-group-showmore]').forEach((el) => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        Notifications._showMoreGroup(el.getAttribute('data-group-showmore'));
       });
     });
+  },
+
+  // Reveal one more page (GROUP_LEAF_CAP) of leaves for a group. If every
+  // already-loaded leaf is shown but more pages exist server-side, bump
+  // the intended reveal and pull the next cross-app page; loadMore()
+  // re-renders on completion, so the freshly-arrived leaves appear.
+  _showMoreGroup(key) {
+    if (!key) return;
+    const g = Notifications._groupByApp().find((x) => x.key === key);
+    const current = Notifications.revealed.get(key) || GROUP_LEAF_CAP;
+    const loaded = g ? g.items.length : 0;
+    if (current < loaded) {
+      Notifications.revealed.set(key, current + GROUP_LEAF_CAP);
+      Notifications._renderList();
+    } else if (Notifications.hasMore) {
+      Notifications.revealed.set(key, current + GROUP_LEAF_CAP);
+      Notifications.loadMore();
+    }
   },
 
   // Re-render just the load-more footer's spinner without rebuilding the
@@ -419,10 +456,26 @@ function groupKeyFor(n) {
   return n && n.appId != null ? String(n.appId) : 'general';
 }
 
+// Unread indicator dot. When unread it's a solid violet dot carrying an
+// accessible "Unread" label; when read it's an equal-width invisible
+// spacer so read/unread rows stay horizontally aligned (no jitter when a
+// row is marked read live).
+function unreadDot(isUnread) {
+  return isUnread
+    ? '<span role="img" aria-label="Unread" class="inline-block w-1.5 h-1.5 rounded-full bg-violet-500 align-middle mr-1.5 shrink-0"></span>'
+    : '<span aria-hidden="true" class="inline-block w-1.5 h-1.5 align-middle mr-1.5 shrink-0"></span>';
+}
+
 // Collapsed/expanded group header + (when expanded) its leaf rows.
 function renderGroup(g, isExpanded) {
   const appLine = escapeHtml(g.appName || 'General');
   const hasUnread = g.unreadCount > 0;
+  // Unread-first display order within the group (stable: newest-first is
+  // preserved inside each bucket). Pure view transform — g.items stays
+  // newest-first so the global keyset cursor is unaffected.
+  const ordered = hasUnread
+    ? g.items.filter((n) => !n.readAt).concat(g.items.filter((n) => n.readAt))
+    : g.items;
   const accent = hasUnread ? 'bg-violet-500/5 border-l-2 border-violet-500' : 'border-l-2 border-transparent';
   const chevron = isExpanded ? '▾' : '▸'; // ▾ / ▸
   // Just the number, centered in a fixed-size pill (no "new" wording).
@@ -431,8 +484,12 @@ function renderGroup(g, isExpanded) {
   const countBadge = hasUnread
     ? `<span class="inline-flex items-center justify-center min-w-[1.1rem] h-[1.1rem] px-1 text-[0.65rem] font-bold leading-none text-white bg-violet-500 rounded-full">${g.unreadCount}</span>`
     : `<span class="inline-flex items-center justify-center min-w-[1.1rem] h-[1.1rem] px-1 text-[0.65rem] font-medium leading-none text-zinc-500 dark:text-zinc-400 bg-zinc-200 dark:bg-zinc-800 rounded-full">${g.items.length}</span>`;
+  // Unread dot next to the app name, matching the per-leaf dot.
+  const headerDot = hasUnread ? unreadDot(true) : '';
 
-  const latest = g.items[0];
+  // Preview the newest unread item when there is one (it sits first in
+  // `ordered`), so the collapsed header surfaces unread content.
+  const latest = ordered[0];
   const preview = `${previewText(latest)} · ${relativeTime(latest.createdAt)}`;
 
   const markReadBtn = hasUnread
@@ -445,6 +502,7 @@ function renderGroup(g, isExpanded) {
       class="flex-1 min-w-0 text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors">
       <div class="flex items-center gap-1.5 mb-0.5">
         <span aria-hidden="true" class="text-zinc-400 dark:text-zinc-500">${chevron}</span>
+        ${headerDot}
         <span class="font-medium text-zinc-800 dark:text-zinc-200 truncate">${appLine}</span>
         ${countBadge}
       </div>
@@ -455,15 +513,21 @@ function renderGroup(g, isExpanded) {
 
   if (!isExpanded) return header;
 
-  // Expanded: leaf rows (capped) + optional "+N more" link.
-  const shown = g.items.slice(0, GROUP_LEAF_CAP);
+  // Expanded: reveal up to `visible` leaves (default GROUP_LEAF_CAP, grown
+  // by inline "Show more" clicks), then an inline pagination button.
+  const visible = Notifications.revealed.get(g.key) || GROUP_LEAF_CAP;
+  const shown = ordered.slice(0, visible);
   const leaves = shown.map((n) => renderRow(n)).join('');
   let more = '';
-  const overflow = g.items.length - shown.length;
-  if (overflow > 0) {
-    more = `<button data-group-more="${escapeHtml(g.appSlug || '')}"
-      class="w-full text-left px-3 py-2 text-xs text-violet-500 hover:text-violet-400 border-b border-zinc-200 dark:border-zinc-800">
-      +${overflow} more in ${appLine} →</button>`;
+  const localRemaining = ordered.length - shown.length;
+  const btnCls = 'w-full text-left px-3 py-2 text-xs text-violet-500 hover:text-violet-400 border-b border-zinc-200 dark:border-zinc-800';
+  if (localRemaining > 0) {
+    // More already-loaded leaves to reveal in place.
+    const next = Math.min(GROUP_LEAF_CAP, localRemaining);
+    more = `<button data-group-showmore="${escapeHtml(g.key)}" class="${btnCls}">Show ${next} more →</button>`;
+  } else if (Notifications.hasMore) {
+    // All loaded leaves shown, but older pages may add more to this group.
+    more = `<button data-group-showmore="${escapeHtml(g.key)}" class="${btnCls}">Show more →</button>`;
   }
   return `${header}<div class="pl-2 bg-zinc-50/50 dark:bg-zinc-950/30">${leaves}${more}</div>`;
 }
@@ -493,6 +557,9 @@ function renderRow(n) {
   const unreadCls = n.readAt ? '' : 'bg-violet-500/5 border-l-2 border-violet-500';
   const appLine = n.appName ? escapeHtml(n.appName) : 'app';
   const who = n.sourceUsername ? escapeHtml(n.sourceUsername) : 'someone';
+  // Leading unread dot (or an equal-width spacer when read) on the meta
+  // line, so unread rows are unmistakable beyond the background accent.
+  const dot = unreadDot(!n.readAt);
 
   // Kudos rows have no chat-message body; they show the PR title (or
   // "PR #N" if the PR has no LLM-generated title yet) and a small 👏
@@ -503,6 +570,7 @@ function renderRow(n) {
       : (n.prNumber ? `PR #${n.prNumber}` : 'your PR');
     return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1">
+        ${dot}
         <span aria-hidden="true">\u{1F44F}</span>
         <span class="font-medium text-zinc-800 dark:text-zinc-200">@${who}</span>
         <span>gave kudos to your PR in</span>
@@ -520,6 +588,7 @@ function renderRow(n) {
     const reactSnippet = (n.messageContent || '').slice(0, 140);
     return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1">
+        ${dot}
         <span aria-hidden="true">${escapeHtml(emoji)}</span>
         <span class="font-medium text-zinc-800 dark:text-zinc-200">@${who}</span>
         <span>reacted to your message in</span>
@@ -539,6 +608,7 @@ function renderRow(n) {
       : (n.prNumber ? `PR #${n.prNumber}` : 'your PR');
     return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1">
+        ${dot}
         <span aria-hidden="true">⏳</span>
         <span>Your PR in</span>
         <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
@@ -558,6 +628,7 @@ function renderRow(n) {
       : (n.prNumber ? `PR #${n.prNumber}` : 'a PR');
     return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1">
+        ${dot}
         <span aria-hidden="true">\u{1F5F3}️</span>
         <span class="font-medium text-zinc-800 dark:text-zinc-200">@${who}</span>
         <span>proposed a PR to vote on in</span>
@@ -574,6 +645,7 @@ function renderRow(n) {
     : (n.kind === 'reply' ? 'replied to you in' : 'in');
   return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
     <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1">
+      ${dot}
       <span class="font-medium text-zinc-800 dark:text-zinc-200">@${who}</span>
       ${kindText}
       <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
