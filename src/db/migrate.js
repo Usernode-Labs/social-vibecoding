@@ -473,8 +473,12 @@ async function seedSelfApp(pool, config) {
 
   // Single UPSERT keyed on slug. Insert covers fresh-DB; the DO UPDATE
   // covers every subsequent boot so main_sha and manifest_snapshot
-  // reflect the running build.
-  await pool.query(
+  // reflect the running build. The insert seeds name='Usernode'; the
+  // DO UPDATE deliberately does NOT touch name — the reconcile below is
+  // the single place the self-app display name is resolved from
+  // dapp.json (so a merged self-app rename PR actually applies on the
+  // post-deploy reboot, same as child apps do in rebuildProduction).
+  const { rows: selfRows } = await pool.query(
     `INSERT INTO apps
        (name, slug, repo_url, container_id, status, self_hosted,
         main_sha, last_deploy_at, manifest_snapshot)
@@ -488,7 +492,8 @@ async function seedSelfApp(pool, config) {
        self_hosted       = TRUE,
        main_sha          = COALESCE(EXCLUDED.main_sha, apps.main_sha),
        last_deploy_at    = NOW(),
-       manifest_snapshot = EXCLUDED.manifest_snapshot`,
+       manifest_snapshot = EXCLUDED.manifest_snapshot
+     RETURNING id, slug, name`,
     [
       config.selfAppSlug,
       config.platformRepoUrl,
@@ -496,6 +501,13 @@ async function seedSelfApp(pool, config) {
       manifestJson,
     ]
   );
+
+  // dapp.json's top-level `name` takes precedence over the platform name.
+  // Best-effort — a rename hiccup must not fail boot/migration.
+  if (selfRows.length) {
+    await appManifest.reconcileAppName(pool, selfRows[0], manifest)
+      .catch((err) => log.warn('db', 'Self-app name reconcile failed', { err: err.message }));
+  }
 
   log.info('db', 'Self-app row seeded', {
     slug: config.selfAppSlug,
