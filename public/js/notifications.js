@@ -398,10 +398,17 @@ const Notifications = {
     list.innerHTML = entries.join(APP_DIVIDER) + renderLoadMore();
 
     // Leaf-row clicks (standalone single-item rows + leaves inside an
-    // expanded group).
+    // expanded group). stopPropagation so the document-level outside-click
+    // handler doesn't see this click: _onItemClick marks the item read and
+    // re-renders the list (detaching this row), after which the bubbled
+    // click's target is no longer inside the panel and the drawer would
+    // otherwise be wrongly dismissed.
     list.querySelectorAll('[data-notif-id]').forEach((el) => {
       const id = Number(el.getAttribute('data-notif-id'));
-      el.addEventListener('click', () => Notifications._onItemClick(id));
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        Notifications._onItemClick(id);
+      });
     });
     // Group header expand/collapse toggles. stopPropagation so the
     // document-level outside-click handler doesn't see this click: the
