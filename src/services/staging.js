@@ -177,24 +177,14 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
       if (hostPort) stagingUrl = `http://localhost:${hostPort}`;
     }
 
-    // Pre-warm the on-demand TLS cert BEFORE returning, so callers only
-    // persist staging_url / emit `staging_ready` (which is what reveals the
-    // preview button) once the link actually works. Otherwise the button
-    // appears the instant the container is healthy, but the first click hits
-    // a cold hostname and hangs ~60-90s on ZeroSSL validation, showing a
-    // blank page. The "Building staging preview…" spinner stays up during
-    // this wait. Bounded so a slow/failed warm never blocks the deploy: on
-    // timeout we proceed anyway and the cert just issues lazily on first hit
-    // (the old behavior). No-op in local-dev (http://localhost:<port>).
-    if (stagingUrl.startsWith('https://')) {
-      log.info('staging', 'Pre-warming TLS cert before exposing preview', { sessionId: session.id, hostname });
-      const warm = await caddy.warmCert(hostname);
-      if (warm.ok) {
-        log.info('staging', 'Cert pre-warmed', { sessionId: session.id, hostname, code: warm.code });
-      } else {
-        log.warn('staging', 'Cert pre-warm did not complete; preview may be slow on first hit', { sessionId: session.id, hostname, err: warm.error?.message });
-      }
-    }
+    // NOTE: TLS pre-warm intentionally does NOT happen here. Caddy's
+    // on-demand `ask` gate (routes/internal.js isKnownHost) only approves a
+    // staging host once chat_sessions.staging_url already equals it — and
+    // that row is persisted by the *caller*, after this function returns.
+    // Warming here would race ahead of the persist, get refused by `ask`,
+    // and fail the handshake in milliseconds (leaving the cold-start it was
+    // meant to prevent). The caller pre-warms via warmStagingCert() right
+    // after persisting staging_url and before revealing the preview button.
 
     log.info('staging', 'Staging deployed', { sessionId: session.id, url: stagingUrl });
 
@@ -204,6 +194,31 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
     // Cleanup on failure
     await docker.stopAndRemove(containerName).catch(() => {});
     throw err;
+  }
+}
+
+// Pre-warm the on-demand TLS cert for a freshly-deployed staging host so a
+// real user never lands on a cold hostname (first hit otherwise hangs ~60-90s
+// on ZeroSSL validation, showing a blank/black page).
+//
+// CRITICAL ordering contract: call this only AFTER the session's staging_url
+// has been persisted to chat_sessions. Caddy's on-demand `ask` gate
+// (routes/internal.js isKnownHost) approves a staging host iff
+// chat_sessions.staging_url already equals it. If warmed before the persist,
+// `ask` refuses (404), Caddy aborts the TLS handshake, and warmCert fails in
+// milliseconds — leaving exactly the cold-start this is meant to prevent.
+//
+// Bounded by warmCert's internal timeout and always resolves, so a slow/failed
+// warm never blocks or fails a deploy (the cert still issues lazily on first
+// hit, the old behavior). No-op for local-dev http URLs.
+async function warmStagingCert(session, hostname, stagingUrl) {
+  if (!hostname || !stagingUrl || !stagingUrl.startsWith('https://')) return;
+  log.info('staging', 'Pre-warming TLS cert before exposing preview', { sessionId: session.id, hostname });
+  const warm = await caddy.warmCert(hostname);
+  if (warm.ok) {
+    log.info('staging', 'Cert pre-warmed', { sessionId: session.id, hostname, code: warm.code });
+  } else {
+    log.warn('staging', 'Cert pre-warm did not complete; preview may be slow on first hit', { sessionId: session.id, hostname, err: warm.error?.message });
   }
 }
 
@@ -403,6 +418,7 @@ async function rebuildProductionInner(config, app) {
 
 module.exports = {
   buildAndDeployStaging,
+  warmStagingCert,
   teardownStaging,
   rebuildProduction,
   MissingSecretsError,
