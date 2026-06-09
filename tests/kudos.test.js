@@ -532,3 +532,110 @@ test('leaderboard/users: a user who gave nothing gets an empty map', async () =>
     await close();
   }
 });
+
+// ─── 4. Issue-bounty self-award guard (resolveIssueBounty) ───────
+//
+// Regression coverage for the self-kudos loophole: a user could pledge a
+// bounty on an open issue and then author the PR that closes it, awarding
+// the bounty to themselves. resolveIssueBounty (extracted from votes.js
+// checkAndMerge) must VOID the pledger's own bounty rather than award it,
+// while still awarding everyone else's bounty on the same issue to the PR
+// author. Mirrors the direct PR-kudos 403 self-kudos check.
+
+// Minimal mock pool that faithfully implements the two UPDATE statements
+// resolveIssueBounty issues, over an in-memory `bounties` array. Each bounty
+// row: { id, app_id, github_issue_number, giver_user_id, status,
+//        awarded_user_id, awarded_session_id }.
+function makeBountyPool(bounties) {
+  const state = { bounties };
+  // a IS DISTINCT FROM b — NULL is a comparable value (NULL vs non-null is
+  // distinct; NULL vs NULL is not).
+  const distinct = (a, b) => (a === null || a === undefined ? b !== null && b !== undefined
+    : b === null || b === undefined ? true : a !== b);
+  async function query(sql, params = []) {
+    const s = String(sql);
+    // Award: status='awarded' WHERE ... AND giver_user_id IS DISTINCT FROM $2
+    if (/UPDATE issue_bounties[\s\S]*status = 'awarded'[\s\S]*IS DISTINCT FROM/i.test(s)) {
+      const [sessionId, awardeeUserId, appId, issueNumber] = params;
+      const hit = state.bounties.filter((b) =>
+        b.app_id === appId && b.github_issue_number === issueNumber &&
+        b.status === 'open' && distinct(b.giver_user_id ?? null, awardeeUserId ?? null));
+      for (const b of hit) {
+        b.status = 'awarded';
+        b.awarded_user_id = awardeeUserId ?? null;
+        b.awarded_session_id = sessionId;
+      }
+      return { rows: hit.map((b) => ({ id: b.id })) };
+    }
+    // Void: status='voided' WHERE ... AND giver_user_id = $4
+    if (/UPDATE issue_bounties[\s\S]*status = 'voided'/i.test(s)) {
+      const [sessionId, appId, issueNumber, giverUserId] = params;
+      const hit = state.bounties.filter((b) =>
+        b.app_id === appId && b.github_issue_number === issueNumber &&
+        b.status === 'open' && b.giver_user_id === giverUserId);
+      for (const b of hit) {
+        b.status = 'voided';
+        b.awarded_session_id = sessionId;
+        // awarded_user_id intentionally left untouched (stays null).
+      }
+      return { rows: hit.map((b) => ({ id: b.id })) };
+    }
+    throw new Error(`unhandled bounty mock SQL: ${s.slice(0, 60)}`);
+  }
+  return { query, state };
+}
+
+test('resolveIssueBounty: self-pledged bounty is voided, not awarded', async () => {
+  const { resolveIssueBounty } = require('../src/routes/votes');
+  // Author U (id 1) pledged bounty #100 on issue 7; another user (id 2) also
+  // pledged #200 on the same issue. U authors the closing PR (session 50).
+  const pool = makeBountyPool([
+    { id: 100, app_id: 1, github_issue_number: 7, giver_user_id: 1, status: 'open', awarded_user_id: null, awarded_session_id: null },
+    { id: 200, app_id: 1, github_issue_number: 7, giver_user_id: 2, status: 'open', awarded_user_id: null, awarded_session_id: null },
+  ]);
+  const { awarded, voided } = await resolveIssueBounty(pool, {
+    appId: 1, sessionId: 50, awardeeUserId: 1, issueNumber: 7,
+  });
+  // Other user's bounty awards to U; U's own bounty voids.
+  assert.deepEqual(awarded.map((r) => r.id), [200]);
+  assert.deepEqual(voided.map((r) => r.id), [100]);
+  const self = pool.state.bounties.find((b) => b.id === 100);
+  const other = pool.state.bounties.find((b) => b.id === 200);
+  assert.equal(self.status, 'voided');
+  assert.equal(self.awarded_user_id, null, 'voided self-bounty earns no credit');
+  assert.equal(self.awarded_session_id, 50, 'voided row records session for audit');
+  assert.equal(other.status, 'awarded');
+  assert.equal(other.awarded_user_id, 1, 'other pledger credits the PR author');
+});
+
+test('resolveIssueBounty: U gains no received-kudos credit from their own bounty', async () => {
+  const { resolveIssueBounty } = require('../src/routes/votes');
+  // Only a self-pledged bounty exists on the issue.
+  const pool = makeBountyPool([
+    { id: 100, app_id: 1, github_issue_number: 7, giver_user_id: 1, status: 'open', awarded_user_id: null, awarded_session_id: null },
+  ]);
+  const { awarded, voided } = await resolveIssueBounty(pool, {
+    appId: 1, sessionId: 50, awardeeUserId: 1, issueNumber: 7,
+  });
+  assert.equal(awarded.length, 0, 'no award emitted (so no BOUNTY_AWARDED event / chat noise)');
+  assert.equal(voided.length, 1);
+  // Leaderboard credits via `awarded_user_id = u.id AND status = 'awarded'`;
+  // a voided row matches neither, so U's kudos_received is unaffected.
+  const credited = pool.state.bounties.filter(
+    (b) => b.status === 'awarded' && b.awarded_user_id === 1
+  );
+  assert.equal(credited.length, 0);
+});
+
+test('resolveIssueBounty: deleted PR author (null awardee) still awards normally', async () => {
+  const { resolveIssueBounty } = require('../src/routes/votes');
+  const pool = makeBountyPool([
+    { id: 100, app_id: 1, github_issue_number: 7, giver_user_id: 2, status: 'open', awarded_user_id: null, awarded_session_id: null },
+  ]);
+  const { awarded, voided } = await resolveIssueBounty(pool, {
+    appId: 1, sessionId: 50, awardeeUserId: null, issueNumber: 7,
+  });
+  assert.deepEqual(awarded.map((r) => r.id), [100]);
+  assert.equal(voided.length, 0, 'no void pass runs when there is no PR author');
+  assert.equal(pool.state.bounties[0].status, 'awarded');
+});
