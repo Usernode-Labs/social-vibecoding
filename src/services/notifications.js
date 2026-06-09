@@ -204,6 +204,102 @@ async function countUnread(pool, userId) {
   return rows[0]?.c || 0;
 }
 
+// "Action-completed" registry — the reusable auto-dismiss mechanism.
+//
+// Each entry names a moment in the app where some user action resolves a
+// set of notification kinds, and which notifications column scopes that
+// action's target. Adding a new auto-dismiss is a one-line entry here plus
+// a call to markReadForAction() at the action site — no new bespoke
+// function per trigger.
+//
+//   vote_cast    — user voted on a PR; clears the vote-request nudge
+//                  (pr_proposed) + the author's going-quiet warning
+//                  (stale_pr) for that PR. Scoped by session_id.
+//                  Triggered in src/routes/votes.js after the vote upsert.
+//   message_sent — user posted a message in an app's group chat; clears
+//                  every unread chat-actionable notification (mention /
+//                  reply / reaction) they have for that app. Scoped by
+//                  app_id. Triggered in src/services/ws.js on chat send.
+//
+// `kudos` is deliberately excluded from both: it reports kudos received
+// and is resolved by clicking its own dropdown row, not by voting or
+// posting. `scope` is the notifications column name — it comes from this
+// hardcoded table, never from request input, so there is no
+// SQL-injection surface in markReadForAction's interpolation.
+const ACTION_COMPLETIONS = {
+  vote_cast: { kinds: ['pr_proposed', 'stale_pr'], scope: 'session_id' },
+  message_sent: { kinds: ['mention', 'reply', 'reaction'], scope: 'app_id' },
+};
+
+// The scope columns the registry is allowed to target. A defensive
+// allowlist so a typo in ACTION_COMPLETIONS can never widen the set of
+// interpolatable column names beyond these two.
+const SCOPE_COLUMNS = new Set(['session_id', 'app_id']);
+
+// Generic auto-dismiss primitive. Marks read (read_at = NOW(), never
+// deletes — matching the rest of the system) every unread notification
+// for `userId` whose registry-scoped column equals `scopeId` and whose
+// kind is one the `action` resolves. The WHERE read_at IS NULL guard
+// keeps it idempotent, so re-fires (re-votes, reconnect storms,
+// already-read rows) are cheap no-ops. Returns the number of rows
+// actually cleared so callers can decide whether to fan out a cross-tab
+// refresh.
+async function markReadForAction(pool, userId, action, scopeId) {
+  const def = ACTION_COMPLETIONS[action];
+  if (!def) throw new Error(`unknown notification action: ${action}`);
+  if (!SCOPE_COLUMNS.has(def.scope)) throw new Error(`bad scope column: ${def.scope}`);
+  if (!userId || !scopeId) return 0;
+  const { rowCount } = await pool.query(
+    `UPDATE notifications
+        SET read_at = NOW()
+      WHERE user_id = $1 AND ${def.scope} = $2 AND kind = ANY($3) AND read_at IS NULL`,
+    [userId, scopeId, def.kinds]
+  );
+  return rowCount || 0;
+}
+
+// Thin back-compat wrapper so src/routes/votes.js keeps calling the
+// session-scoped vote dismiss unchanged.
+async function markReadForSession(pool, userId, sessionId) {
+  return markReadForAction(pool, userId, 'vote_cast', sessionId);
+}
+
+// Clear a single notification by the chat message it points at — the
+// in-chat "click a dotted message" path. Scoped to the requesting user
+// and to the chat-actionable kinds so clicking a message can't clear an
+// unrelated kind that happens to reference it. Idempotent via WHERE
+// read_at IS NULL; returns rows cleared.
+async function markReadForMessage(pool, userId, chatMessageId) {
+  if (!userId || !chatMessageId) return 0;
+  const { rowCount } = await pool.query(
+    `UPDATE notifications
+        SET read_at = NOW()
+      WHERE user_id = $1 AND chat_message_id = $2
+        AND kind = ANY($3) AND read_at IS NULL`,
+    [userId, chatMessageId, ACTION_COMPLETIONS.message_sent.kinds]
+  );
+  return rowCount || 0;
+}
+
+// Given a page of chat message ids, return the subset that currently have
+// an unread chat-actionable notification for `userId` — so the messages
+// endpoint can flag which rows render an unread dot. Returns a Set of ids.
+async function unreadMessageIdsForUser(pool, userId, messageIds) {
+  if (!userId || !Array.isArray(messageIds) || messageIds.length === 0) {
+    return new Set();
+  }
+  const { rows } = await pool.query(
+    `SELECT DISTINCT chat_message_id
+       FROM notifications
+      WHERE user_id = $1
+        AND chat_message_id = ANY($2::int[])
+        AND kind = ANY($3)
+        AND read_at IS NULL`,
+    [userId, messageIds, ACTION_COMPLETIONS.message_sent.kinds]
+  );
+  return new Set(rows.map((r) => r.chat_message_id));
+}
+
 async function markRead(pool, userId, { id, all = false } = {}) {
   if (all) {
     await pool.query(
@@ -255,6 +351,11 @@ module.exports = {
   listForUser,
   countUnread,
   markRead,
+  markReadForSession,
+  markReadForAction,
+  markReadForMessage,
+  unreadMessageIdsForUser,
+  ACTION_COMPLETIONS,
   serialize,
 };
 

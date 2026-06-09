@@ -555,6 +555,10 @@ const GroupChat = {
       if (!GroupChat._isCleanTap(e)) return;
       const row = e.target.closest(ROW_SEL);
       if (!row || !container.contains(row)) return;
+      // Clicking a dotted message clears just that message's unread
+      // mention/reply/reaction notification.
+      const rowId = parseInt(row.dataset.msgId || '', 10);
+      if (rowId) GroupChat._clearMessageDot(rowId);
       const quote = GroupChat._quoteFromRow(row);
       if (quote) GroupChat.setQuote(quote);
     });
@@ -717,6 +721,71 @@ const GroupChat = {
     GroupChat._closeReactionBar();
   },
 
+  // ── per-message unread dot ──────────────────────────────────────────
+
+  // Dot markup for a message this user has an unread mention/reply/
+  // reaction notification for. Driven by the server's
+  // has_unread_notification flag on loaded history; live messages never
+  // carry it (a brand-new message can't yet have a notification for you).
+  _unreadDotHtml(msg) {
+    if (!msg || !msg.has_unread_notification) return '';
+    return `<span class="gc-unread-dot" data-unread-dot="${msg.id || ''}" aria-label="Unread mention"></span>`;
+  },
+
+  // Clear the dot for one message (the "click a dotted message" path):
+  // optimistically drop it locally, then confirm read on the server by
+  // chat_message_id. Other tabs reconcile via the notifications_changed
+  // broadcast the server fans out. No-op if the message has no dot.
+  _clearMessageDot(messageId) {
+    const msg = GroupChat.messages.find((m) => String(m.id) === String(messageId));
+    if (!msg || !msg.has_unread_notification) return;
+    msg.has_unread_notification = false;
+    const dot = document.querySelector(`[data-unread-dot="${messageId}"]`);
+    if (dot) dot.remove();
+    fetch('/api/notifications/read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_message_id: Number(messageId) }),
+    }).then((res) => {
+      // Only sync the bell badge once the backend confirms — never
+      // optimistically. The dot is already gone locally above.
+      if (res.ok) window.Notifications?.refresh?.();
+    }).catch(() => {});
+  },
+
+  // Reconcile dots from the current notifications list (window.Notifications
+  // .items). Called on notification_new (a mention arrived while viewing)
+  // and notifications_changed (something was cleared — e.g. this user sent
+  // a message and the reply-clears-all fired, or another tab cleared one).
+  // Operates only over messages the list actually references, so older
+  // dotted messages outside the capped list aren't wrongly touched: a
+  // referenced message's dot becomes (readAt == null).
+  reconcileDotsFromNotifications() {
+    const items = (window.Notifications && Notifications.items) || [];
+    if (!Array.isArray(items)) return;
+    const KINDS = new Set(['mention', 'reply', 'reaction']);
+    const state = new Map(); // chatMessageId -> isUnread
+    for (const n of items) {
+      if (!n || !KINDS.has(n.kind) || n.chatMessageId == null) continue;
+      // A later (newer) item wins; items are newest-first, so only set if
+      // not already seen.
+      if (!state.has(n.chatMessageId)) state.set(n.chatMessageId, !n.readAt);
+    }
+    for (const msg of GroupChat.messages) {
+      if (!state.has(msg.id)) continue;
+      const unread = state.get(msg.id);
+      if (!!msg.has_unread_notification === unread) continue;
+      msg.has_unread_notification = unread;
+      const existing = document.querySelector(`[data-unread-dot="${msg.id}"]`);
+      if (unread && !existing) {
+        const row = document.querySelector(`.gc-msg[data-msg-id="${msg.id}"] .gc-msg-header`);
+        if (row) row.insertAdjacentHTML('afterbegin', GroupChat._unreadDotHtml(msg));
+      } else if (!unread && existing) {
+        existing.remove();
+      }
+    }
+  },
+
   renderMessageHtml(msg) {
     const time = new Date(msg.createdAt || msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const username = msg.username || 'System';
@@ -765,6 +834,7 @@ const GroupChat = {
     return `
       <div class="gc-msg ${isSelf ? 'gc-msg-self' : ''}" data-msg-id="${msg.id || ''}" data-username="${escapeHtml(username)}">
         <div class="gc-msg-header">
+          ${GroupChat._unreadDotHtml(msg)}
           <span class="gc-msg-username ${isSelf ? 'gc-msg-username-self' : ''}">${escapeHtml(username)}</span>
           <span class="gc-msg-time">${time}</span>
           ${GroupChat._renderReactAddBtn(msg)}
@@ -1374,3 +1444,9 @@ function renderWithMentions(raw) {
     return `${pre}<span class="${cls}">@${name}</span>`;
   });
 }
+
+// Expose on window so app.js's WS dispatcher can reconcile the in-chat
+// unread dots on notification events. (A top-level `const` is a lexical
+// global accessible by bare name within the realm, but is NOT a property
+// of `window` — mirror the `window.Notifications` pattern explicitly.)
+window.GroupChat = GroupChat;

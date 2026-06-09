@@ -709,6 +709,21 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 
 .gc-msg-username-self { color: var(--accent); }
 
+/* Per-message unread dot: a message this user has an unread mention/
+   reply/reaction notification for. Sits at the front of the header;
+   tapping the message clears it (POST /api/notifications/read with the
+   chat_message_id). Removed in place once cleared. */
+.gc-unread-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: 0 0 auto;
+  align-self: center;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
 .gc-msg-time {
   font-size: 11px;
   color: var(--text-muted);
