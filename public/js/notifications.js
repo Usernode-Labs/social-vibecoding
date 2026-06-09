@@ -19,8 +19,10 @@
 // bottom loads older pages via the keyset cursor (nextBefore/hasMore).
 
 const EXPANDED_STORAGE_KEY = 'notif_expanded_groups_v1';
-// Per-expanded-group leaf cap — keeps the DOM bounded for very chatty
-// apps. Beyond this we render a "+N more" link into the app's group chat.
+// Per-expanded-group leaf cap — initial number of leaves shown for an
+// expanded group, and the increment for each inline "Show more" click.
+// Beyond this the group renders an inline pagination button that reveals
+// the next page of already-loaded leaves in place (no navigation away).
 const GROUP_LEAF_CAP = 10;
 // How close to the bottom (px) before we prefetch the next page.
 const LOAD_MORE_THRESHOLD = 64;
@@ -35,6 +37,10 @@ const Notifications = {
   loading: false,
   // Set<string> of expanded group keys (appId as string, or 'general').
   expanded: new Set(),
+  // Map<string, number> of group key -> how many leaves to reveal for
+  // that group. Ephemeral (not persisted): resets on reload so the
+  // drawer opens compact. An absent key means the default GROUP_LEAF_CAP.
+  revealed: new Map(),
   _scrollWired: false,
 
   init() {
@@ -92,6 +98,11 @@ const Notifications = {
       }
     }
     if (changed) Notifications._saveExpanded();
+    // Reveal counts are ephemeral, but still drop entries for apps with
+    // no notifications so the map doesn't grow unbounded over a session.
+    for (const key of [...Notifications.revealed.keys()]) {
+      if (!liveKeys.has(key)) Notifications.revealed.delete(key);
+    }
   },
 
   // --- fetching --------------------------------------------------------
@@ -240,6 +251,17 @@ const Notifications = {
   },
 
   async _markOneRead(id) {
+    // Optimistically mark read in-memory and re-render the open drawer
+    // right away: the unread dot disappears and unread-first sorting
+    // updates live, instead of waiting for the network round-trip (which
+    // is why a clicked item used to stay unread until close/reopen).
+    const item = Notifications.items.find((n) => n.id === id);
+    if (item && !item.readAt) {
+      item.readAt = new Date().toISOString();
+      if (Notifications.unread > 0) Notifications.unread -= 1;
+      Notifications._renderBadge();
+      if (Notifications.open) Notifications._renderList();
+    }
     try {
       const res = await fetch('/api/notifications/read', {
         method: 'POST',
@@ -248,9 +270,8 @@ const Notifications = {
       });
       if (!res.ok) return;
       const data = await res.json();
+      // Reconcile with the server's authoritative unread count.
       Notifications.unread = data.unread || 0;
-      const item = Notifications.items.find((n) => n.id === id);
-      if (item && !item.readAt) item.readAt = new Date().toISOString();
       Notifications._renderBadge();
     } catch (err) {
       console.warn('[notifications] markOneRead failed', err);
@@ -260,14 +281,26 @@ const Notifications = {
   _onItemClick(id) {
     const item = Notifications.items.find((n) => n.id === id);
     if (!item) return;
-    Notifications.hide();
+    // Deliberately do NOT hide the drawer here: it stays open over the
+    // navigated-to view so the user can keep clicking through other
+    // notifications. The drawer only dismisses via outside-click or the
+    // explicit close button.
     Notifications._markOneRead(id);
     if (item.appSlug) {
       // Both mention and kudos notifications land on the app's group
       // chat. Mentions originate there; kudos's PR is rendered in the
       // group-chat tab's vote panel (Open PRs / Merged), where the
       // user can scroll to it and reciprocate if they want.
-      window.location.hash = `#app/${item.appSlug}/group-chat`;
+      //
+      // Navigate via App.openAppTab rather than assigning location.hash:
+      // a same-value hash assignment fires no `hashchange`, so clicking a
+      // notification for the app/tab already on screen wouldn't re-render.
+      // openAppTab always renders (and keeps the URL in sync internally).
+      if (typeof App !== 'undefined' && App.openAppTab) {
+        App.openAppTab(item.appSlug, 'group-chat');
+      } else {
+        window.location.hash = `#app/${item.appSlug}/group-chat`;
+      }
     }
   },
 
@@ -341,23 +374,38 @@ const Notifications = {
     // Keep persisted expansion tidy: drop apps that have no notifs now.
     Notifications._pruneExpanded(new Set(groups.map((g) => g.key)));
 
-    const parts = [];
+    // One HTML chunk per top-level entry (an app group or a single-notif
+    // leaf row), joined by a stronger divider so apps are easy to tell
+    // apart. The divider only goes *between* entries — never before the
+    // first or after the last.
+    const entries = [];
     for (const g of groups) {
-      if (g.items.length === 1) {
-        // Single-notification app: plain leaf row, no group chrome.
-        parts.push(renderRow(g.items[0]));
+      // App-associated notifications ALWAYS render under their app group
+      // header (header + dot + expand/pagination chrome), even when the
+      // app only has one notification — so the layout is consistent
+      // regardless of count. Only app-less ("general") notifications fall
+      // back to a plain leaf row when there's a single one.
+      if (g.items.length === 1 && g.appId == null) {
+        entries.push(renderRow(g.items[0]));
         continue;
       }
-      parts.push(renderGroup(g, Notifications.expanded.has(g.key)));
+      entries.push(renderGroup(g, Notifications.expanded.has(g.key)));
     }
-    parts.push(renderLoadMore());
-    list.innerHTML = parts.join('');
+    const APP_DIVIDER = '<div role="separator" class="border-t-2 border-zinc-200 dark:border-zinc-700"></div>';
+    list.innerHTML = entries.join(APP_DIVIDER) + renderLoadMore();
 
     // Leaf-row clicks (standalone single-item rows + leaves inside an
-    // expanded group).
+    // expanded group). stopPropagation so the document-level outside-click
+    // handler doesn't see this click: _onItemClick marks the item read and
+    // re-renders the list (detaching this row), after which the bubbled
+    // click's target is no longer inside the panel and the drawer would
+    // otherwise be wrongly dismissed.
     list.querySelectorAll('[data-notif-id]').forEach((el) => {
       const id = Number(el.getAttribute('data-notif-id'));
-      el.addEventListener('click', () => Notifications._onItemClick(id));
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        Notifications._onItemClick(id);
+      });
     });
     // Group header expand/collapse toggles. stopPropagation so the
     // document-level outside-click handler doesn't see this click: the
@@ -381,14 +429,33 @@ const Notifications = {
         );
       });
     });
-    // "+N more in <app>" → land on the app's group chat for full history.
-    list.querySelectorAll('[data-group-more]').forEach((el) => {
-      el.addEventListener('click', () => {
-        const slug = el.getAttribute('data-group-more');
-        Notifications.hide();
-        if (slug) window.location.hash = `#app/${slug}/group-chat`;
+    // Inline "Show more" → reveal the next page of leaves for this group
+    // in place (no navigation away). stopPropagation so the outside-click
+    // dismiss doesn't fire when the re-render detaches this button.
+    list.querySelectorAll('[data-group-showmore]').forEach((el) => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        Notifications._showMoreGroup(el.getAttribute('data-group-showmore'));
       });
     });
+  },
+
+  // Reveal one more page (GROUP_LEAF_CAP) of leaves for a group. If every
+  // already-loaded leaf is shown but more pages exist server-side, bump
+  // the intended reveal and pull the next cross-app page; loadMore()
+  // re-renders on completion, so the freshly-arrived leaves appear.
+  _showMoreGroup(key) {
+    if (!key) return;
+    const g = Notifications._groupByApp().find((x) => x.key === key);
+    const current = Notifications.revealed.get(key) || GROUP_LEAF_CAP;
+    const loaded = g ? g.items.length : 0;
+    if (current < loaded) {
+      Notifications.revealed.set(key, current + GROUP_LEAF_CAP);
+      Notifications._renderList();
+    } else if (Notifications.hasMore) {
+      Notifications.revealed.set(key, current + GROUP_LEAF_CAP);
+      Notifications.loadMore();
+    }
   },
 
   // Re-render just the load-more footer's spinner without rebuilding the
@@ -419,6 +486,16 @@ function groupKeyFor(n) {
   return n && n.appId != null ? String(n.appId) : 'general';
 }
 
+// Unread indicator dot. When unread it's a solid violet dot carrying an
+// accessible "Unread" label; when read it's an equal-width invisible
+// spacer so read/unread rows stay horizontally aligned (no jitter when a
+// row is marked read live).
+function unreadDot(isUnread) {
+  return isUnread
+    ? '<span role="img" aria-label="Unread" class="inline-block w-1.5 h-1.5 rounded-full bg-violet-500 align-middle mr-1.5 shrink-0"></span>'
+    : '<span aria-hidden="true" class="inline-block w-1.5 h-1.5 align-middle mr-1.5 shrink-0"></span>';
+}
+
 // Collapsed/expanded group header + (when expanded) its leaf rows.
 function renderGroup(g, isExpanded) {
   const appLine = escapeHtml(g.appName || 'General');
@@ -431,6 +508,8 @@ function renderGroup(g, isExpanded) {
   const countBadge = hasUnread
     ? `<span class="inline-flex items-center justify-center min-w-[1.1rem] h-[1.1rem] px-1 text-[0.65rem] font-bold leading-none text-white bg-violet-500 rounded-full">${g.unreadCount}</span>`
     : `<span class="inline-flex items-center justify-center min-w-[1.1rem] h-[1.1rem] px-1 text-[0.65rem] font-medium leading-none text-zinc-500 dark:text-zinc-400 bg-zinc-200 dark:bg-zinc-800 rounded-full">${g.items.length}</span>`;
+  // Unread dot next to the app name, matching the per-leaf dot.
+  const headerDot = hasUnread ? unreadDot(true) : '';
 
   const latest = g.items[0];
   const preview = `${previewText(latest)} · ${relativeTime(latest.createdAt)}`;
@@ -445,6 +524,7 @@ function renderGroup(g, isExpanded) {
       class="flex-1 min-w-0 text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors">
       <div class="flex items-center gap-1.5 mb-0.5">
         <span aria-hidden="true" class="text-zinc-400 dark:text-zinc-500">${chevron}</span>
+        ${headerDot}
         <span class="font-medium text-zinc-800 dark:text-zinc-200 truncate">${appLine}</span>
         ${countBadge}
       </div>
@@ -455,15 +535,21 @@ function renderGroup(g, isExpanded) {
 
   if (!isExpanded) return header;
 
-  // Expanded: leaf rows (capped) + optional "+N more" link.
-  const shown = g.items.slice(0, GROUP_LEAF_CAP);
+  // Expanded: reveal up to `visible` leaves (default GROUP_LEAF_CAP, grown
+  // by inline "Show more" clicks), then an inline pagination button.
+  const visible = Notifications.revealed.get(g.key) || GROUP_LEAF_CAP;
+  const shown = g.items.slice(0, visible);
   const leaves = shown.map((n) => renderRow(n)).join('');
   let more = '';
-  const overflow = g.items.length - shown.length;
-  if (overflow > 0) {
-    more = `<button data-group-more="${escapeHtml(g.appSlug || '')}"
-      class="w-full text-left px-3 py-2 text-xs text-violet-500 hover:text-violet-400 border-b border-zinc-200 dark:border-zinc-800">
-      +${overflow} more in ${appLine} →</button>`;
+  const localRemaining = g.items.length - shown.length;
+  const btnCls = 'w-full text-left px-3 py-2 text-xs text-violet-500 hover:text-violet-400 border-b border-zinc-200 dark:border-zinc-800';
+  if (localRemaining > 0) {
+    // More already-loaded leaves to reveal in place.
+    const next = Math.min(GROUP_LEAF_CAP, localRemaining);
+    more = `<button data-group-showmore="${escapeHtml(g.key)}" class="${btnCls}">Show ${next} more →</button>`;
+  } else if (Notifications.hasMore) {
+    // All loaded leaves shown, but older pages may add more to this group.
+    more = `<button data-group-showmore="${escapeHtml(g.key)}" class="${btnCls}">Show more →</button>`;
   }
   return `${header}<div class="pl-2 bg-zinc-50/50 dark:bg-zinc-950/30">${leaves}${more}</div>`;
 }
@@ -493,6 +579,9 @@ function renderRow(n) {
   const unreadCls = n.readAt ? '' : 'bg-violet-500/5 border-l-2 border-violet-500';
   const appLine = n.appName ? escapeHtml(n.appName) : 'app';
   const who = n.sourceUsername ? escapeHtml(n.sourceUsername) : 'someone';
+  // Leading unread dot (or an equal-width spacer when read) on the meta
+  // line, so unread rows are unmistakable beyond the background accent.
+  const dot = unreadDot(!n.readAt);
 
   // Kudos rows have no chat-message body; they show the PR title (or
   // "PR #N" if the PR has no LLM-generated title yet) and a small 👏
@@ -503,6 +592,7 @@ function renderRow(n) {
       : (n.prNumber ? `PR #${n.prNumber}` : 'your PR');
     return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1">
+        ${dot}
         <span aria-hidden="true">\u{1F44F}</span>
         <span class="font-medium text-zinc-800 dark:text-zinc-200">@${who}</span>
         <span>gave kudos to your PR in</span>
@@ -520,6 +610,7 @@ function renderRow(n) {
     const reactSnippet = (n.messageContent || '').slice(0, 140);
     return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1">
+        ${dot}
         <span aria-hidden="true">${escapeHtml(emoji)}</span>
         <span class="font-medium text-zinc-800 dark:text-zinc-200">@${who}</span>
         <span>reacted to your message in</span>
@@ -539,6 +630,7 @@ function renderRow(n) {
       : (n.prNumber ? `PR #${n.prNumber}` : 'your PR');
     return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1">
+        ${dot}
         <span aria-hidden="true">⏳</span>
         <span>Your PR in</span>
         <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
@@ -558,6 +650,7 @@ function renderRow(n) {
       : (n.prNumber ? `PR #${n.prNumber}` : 'a PR');
     return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1">
+        ${dot}
         <span aria-hidden="true">\u{1F5F3}️</span>
         <span class="font-medium text-zinc-800 dark:text-zinc-200">@${who}</span>
         <span>proposed a PR to vote on in</span>
@@ -574,6 +667,7 @@ function renderRow(n) {
     : (n.kind === 'reply' ? 'replied to you in' : 'in');
   return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
     <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1">
+      ${dot}
       <span class="font-medium text-zinc-800 dark:text-zinc-200">@${who}</span>
       ${kindText}
       <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>

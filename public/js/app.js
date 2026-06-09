@@ -1491,6 +1491,29 @@ const App = {
 
     App.updateHash();
   },
+
+  // Explicit navigation entry point for in-app deep links (e.g. clicking
+  // a notification) that must render even when the target route equals
+  // the current one. Unlike assigning `location.hash`, this never relies
+  // on a `hashchange` event firing — a same-value hash assignment fires
+  // nothing, which is why notification clicks to the app/tab you're
+  // already viewing used to do nothing. Mirrors restoreFromHash's
+  // app/tab dispatch, plus a force-rerender branch for same app+tab.
+  openAppTab(slug, tab, opts) {
+    if (!slug) return;
+    const sessionId = opts && opts.sessionId != null ? opts.sessionId : null;
+    if (App.currentApp !== slug) {
+      App.navigateToApp(slug, tab, sessionId);
+    } else if (App.currentTab !== tab) {
+      App.switchTab(tab, sessionId);
+    } else {
+      // Same app AND same tab: re-invoke the render so the content
+      // refreshes (reloads group-chat messages, etc.). switchTab is
+      // idempotent — it re-renders and calls updateHash (a no-op when
+      // the hash already matches).
+      App.switchTab(tab, sessionId);
+    }
+  },
 };
 
 window.App = App;
