@@ -307,12 +307,22 @@
     return [];
   }
 
+  function attachMatchedTx(sendResult, matchedTx) {
+    if (!matchedTx) return sendResult;
+    if (sendResult == null) return { queued: true, tx: matchedTx };
+    if (typeof sendResult !== "object") return sendResult;
+    if (sendResult.tx) return sendResult;
+    sendResult.tx = matchedTx;
+    return sendResult;
+  }
+
   function extractTxId(sendResult) {
     if (!sendResult) return null;
     var candidates = [];
     if (typeof sendResult === "string") candidates.push(sendResult);
     if (typeof sendResult === "object") {
       candidates.push(
+        sendResult.tx_id,
         sendResult.txid,
         sendResult.txId,
         sendResult.hash,
@@ -322,6 +332,7 @@
       );
       if (sendResult.tx && typeof sendResult.tx === "object") {
         candidates.push(
+          sendResult.tx.tx_id,
           sendResult.tx.id,
           sendResult.tx.txid,
           sendResult.tx.txId,
@@ -369,8 +380,70 @@
     return null;
   }
 
+  // ── Native ack helper ─────────────────────────────────────────────────
+  //
+  // When the bridge confirms a tx is on-chain, notify the Flutter host so it
+  // can stamp the "dapp observed" latency separately from its own polling.
+  var _observedTxIds = {};
+  function _notifyNativeTxObserved(txId, matched) {
+    if (typeof txId !== "string") return;
+    var trimmed = txId.trim();
+    if (!trimmed) return;
+    if (_observedTxIds[trimmed]) return;
+    _observedTxIds[trimmed] = true;
+
+    var channel = window.Usernode;
+    if (
+      !channel ||
+      typeof channel !== "object" ||
+      typeof channel.postMessage !== "function"
+    ) {
+      return;
+    }
+
+    var blockHeight = null;
+    var blockTimestampMs = null;
+    if (matched && typeof matched === "object") {
+      var bh = matched.block_height;
+      if (typeof bh === "number" && Number.isFinite(bh)) blockHeight = bh;
+      var ts = matched.timestamp_ms != null
+        ? matched.timestamp_ms
+        : matched.block_timestamp_ms;
+      if (typeof ts === "number" && Number.isFinite(ts)) {
+        blockTimestampMs = ts;
+      } else if (typeof ts === "string" && ts.trim()) {
+        var parsed = Date.parse(ts);
+        if (!Number.isNaN(parsed)) blockTimestampMs = parsed;
+      }
+    }
+
+    try {
+      channel.postMessage(
+        JSON.stringify({
+          method: "txObserved",
+          id: "tx_observed_" + trimmed,
+          args: {
+            tx_id: trimmed,
+            observed_at_ms: Date.now(),
+            block_height: blockHeight,
+            block_timestamp_ms: blockTimestampMs,
+          },
+        })
+      );
+    } catch (e) {
+      console.warn("[usernode-bridge] tx_observed emit failed:", e);
+    }
+  }
+
+  window.usernode.acknowledgeTransaction = function acknowledgeTransaction(
+    txId
+  ) {
+    _notifyNativeTxObserved(txId);
+  };
+
   function txMatches(tx, expected) {
     if (!tx || typeof tx !== "object") return false;
+    if (!expected || typeof expected !== "object") return false;
 
     if (expected.txId) {
       var txIdCandidates = [
@@ -407,9 +480,207 @@
     return true;
   }
 
+  // ── Inclusion transports ──────────────────────────────────────────────
+  //
+  // Dapps can set window.usernode.serverCacheUrl to their server-side
+  // createAppStateCache mount. The bridge then confirms sends against that
+  // sidecar-fed cache instead of each client polling the explorer directly.
+  function _serverCacheUrl(opts) {
+    if (opts && typeof opts.serverCacheUrl === "string" && opts.serverCacheUrl) {
+      return opts.serverCacheUrl;
+    }
+    var u = window.usernode && window.usernode.serverCacheUrl;
+    return typeof u === "string" && u ? u : null;
+  }
+
+  function _fetchInclusionPage(query, opts) {
+    var base = _serverCacheUrl(opts);
+    if (!base) return window.getTransactions(query);
+    return fetch(base + "/getTransactions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(query || {}),
+      credentials: "same-origin",
+    }).then(function (resp) {
+      if (!resp.ok) {
+        return resp.text().then(function (text) {
+          throw new Error(
+            "server-cache getTransactions failed (" + resp.status + "): " + text
+          );
+        });
+      }
+      return resp.json();
+    });
+  }
+
+  function _ensureClientId() {
+    if (window.usernode && window.usernode._clientId) {
+      return window.usernode._clientId;
+    }
+    var id = randomHex(8);
+    window.usernode = window.usernode || {};
+    window.usernode._clientId = id;
+    return id;
+  }
+
   function waitForTransactionVisible(expected, opts) {
     var timeoutMs =
-      opts && typeof opts.timeoutMs === "number" ? opts.timeoutMs : 20000;
+      opts && typeof opts.timeoutMs === "number" ? opts.timeoutMs : 180000;
+
+    var sseAvailable =
+      _serverCacheUrl(opts) &&
+      typeof window.EventSource !== "undefined" &&
+      !(opts && opts.forcePolling);
+
+    if (!sseAvailable) {
+      return _waitViaPolling(expected, opts);
+    }
+
+    return _waitViaSse(expected, timeoutMs, opts).then(
+      function (matched) {
+        _notifyNativeTxObserved(
+          extractTxId(matched) || (expected && expected.txId),
+          matched
+        );
+        return matched;
+      },
+      function (err) {
+        if (err && err._fallbackToPolling) {
+          console.log(
+            "[usernode-bridge] SSE waitForTx failed (" + err.reason +
+            "), falling back to polling"
+          );
+          return _waitViaPolling(expected, opts);
+        }
+        return Promise.reject(err);
+      }
+    );
+  }
+
+  function _waitViaSse(expected, timeoutMs, opts) {
+    return new Promise(function (resolve, reject) {
+      var clientId = _ensureClientId();
+      var params = new URLSearchParams();
+      if (expected.from_pubkey) params.set("sender", expected.from_pubkey);
+      if (expected.destination_pubkey)
+        params.set("recipient", expected.destination_pubkey);
+      if (expected.memo != null) params.set("memo", expected.memo);
+      if (expected.txId) params.set("txId", expected.txId);
+      if (typeof expected.minCreatedAtMs === "number")
+        params.set("minCreatedAtMs", String(expected.minCreatedAtMs));
+      params.set("timeoutMs", String(timeoutMs));
+      params.set("clientId", clientId);
+
+      var url = _serverCacheUrl(opts) + "/waitForTx?" + params.toString();
+      var startedAt = Date.now();
+      var es;
+      try {
+        es = new EventSource(url, { withCredentials: false });
+      } catch (e) {
+        var initErr = new Error("EventSource constructor failed: " + e.message);
+        initErr._fallbackToPolling = true;
+        initErr.reason = "constructor-failed";
+        return reject(initErr);
+      }
+
+      var receivedMessage = false;
+      var settled = false;
+
+      function settle(fn) {
+        if (settled) return;
+        settled = true;
+        try { es.close(); } catch (_) {}
+        fn();
+      }
+
+      es.addEventListener("matched", function (e) {
+        receivedMessage = true;
+        var tx = null;
+        try { tx = JSON.parse(e.data); } catch (_) {}
+        settle(function () {
+          console.log(
+            "[usernode-bridge] tx matched via SSE in " +
+            (Date.now() - startedAt) + "ms"
+          );
+          resolve(tx);
+        });
+      });
+
+      es.addEventListener("timeout", function () {
+        receivedMessage = true;
+        settle(function () {
+          var details = [
+            expected.txId ? "txId=" + expected.txId : null,
+            expected.memo != null ? "memo=" + expected.memo : null,
+          ].filter(Boolean).join(", ");
+          var err = new Error(
+            "Timed out waiting for transaction to appear (" + timeoutMs +
+            "ms via server-cache SSE" + (details ? ", " + details : "") + ")"
+          );
+          reject(err);
+        });
+      });
+
+      es.onerror = function () {
+        if (settled) return;
+        if (receivedMessage) return;
+        settle(function () {
+          var err = new Error("SSE connection error");
+          err._fallbackToPolling = true;
+          err.reason = "connection-error";
+          reject(err);
+        });
+      };
+    });
+  }
+
+  function _openPassiveSseTelemetry(expected, opts) {
+    if (opts && opts.forcePolling) return;
+    if (!_serverCacheUrl(opts)) return;
+    if (typeof window.EventSource === "undefined") return;
+
+    var hasNarrowing = !!(
+      (expected.txId) ||
+      (expected.from_pubkey) ||
+      (expected.destination_pubkey) ||
+      (expected.memo != null)
+    );
+    if (!hasNarrowing) return;
+
+    var timeoutMs =
+      opts && typeof opts.timeoutMs === "number" ? opts.timeoutMs : 180000;
+    var clientId = _ensureClientId();
+
+    var params = new URLSearchParams();
+    if (expected.from_pubkey) params.set("sender", expected.from_pubkey);
+    if (expected.destination_pubkey)
+      params.set("recipient", expected.destination_pubkey);
+    if (expected.memo != null) params.set("memo", expected.memo);
+    if (expected.txId) params.set("txId", expected.txId);
+    if (typeof expected.minCreatedAtMs === "number")
+      params.set("minCreatedAtMs", String(expected.minCreatedAtMs));
+    params.set("timeoutMs", String(timeoutMs));
+    params.set("clientId", clientId);
+
+    var url = _serverCacheUrl(opts) + "/waitForTx?" + params.toString();
+    var es;
+    try { es = new EventSource(url, { withCredentials: false }); }
+    catch (_) { return; }
+
+    var closed = false;
+    function close() {
+      if (closed) return;
+      closed = true;
+      try { es.close(); } catch (_) {}
+    }
+    es.addEventListener("matched", close);
+    es.addEventListener("timeout", close);
+    es.onerror = close;
+  }
+
+  function _waitViaPolling(expected, opts) {
+    var timeoutMs =
+      opts && typeof opts.timeoutMs === "number" ? opts.timeoutMs : 180000;
     var pollIntervalMs =
       opts && typeof opts.pollIntervalMs === "number" ? opts.pollIntervalMs : 750;
     var limit = opts && typeof opts.limit === "number" ? opts.limit : 50;
@@ -423,24 +694,29 @@
       query.sender = expected.from_pubkey;
     }
 
+    var transportLabel = _serverCacheUrl(opts) ? "server-cache" : "getTransactions";
     var startedAt = Date.now();
     var attempt = 0;
 
     function poll() {
       attempt++;
-      return window.getTransactions(query).then(function (resp) {
+      return _fetchInclusionPage(query, opts).then(function (resp) {
         var items = normalizeTransactionsResponse(resp);
         var found = null;
         for (var i = 0; i < items.length; i++) {
           if (txMatches(items[i], expected)) { found = items[i]; break; }
         }
         if (found) {
-          console.log("[usernode-bridge] tx found after", attempt, "polls,", Date.now() - startedAt, "ms");
+          console.log("[usernode-bridge] tx found after", attempt, "polls,", Date.now() - startedAt, "ms (via " + transportLabel + ")");
+          _notifyNativeTxObserved(
+            extractTxId(found) || (expected && expected.txId),
+            found
+          );
           return found;
         }
 
         if (attempt <= 3 || attempt % 10 === 0) {
-          console.log("[usernode-bridge] waitForTx poll #" + attempt + ", " + items.length + " items, no match yet");
+          console.log("[usernode-bridge] waitForTx poll #" + attempt + ", " + items.length + " items, no match yet (via " + transportLabel + ")");
         }
 
         if (Date.now() - startedAt >= timeoutMs) {
@@ -450,12 +726,12 @@
           ]
             .filter(Boolean)
             .join(", ");
-          console.warn("[usernode-bridge] waitForTx timed out. expected:", JSON.stringify(expected));
+          console.warn("[usernode-bridge] waitForTx timed out (via " + transportLabel + "). expected:", JSON.stringify(expected));
           if (items.length > 0) {
             console.warn("[usernode-bridge] last poll sample (first item):", JSON.stringify(items[0]));
           }
           throw new Error(
-            "Timed out waiting for transaction to appear in getTransactions (" + timeoutMs + "ms, " + attempt + " polls" + (details ? ", " + details : "") + ")"
+            "Timed out waiting for transaction to appear (" + timeoutMs + "ms, " + attempt + " polls via " + transportLabel + (details ? ", " + details : "") + ")"
           );
         }
         return sleep(pollIntervalMs).then(poll);
@@ -3095,7 +3371,21 @@
         var sendFailed = sendResult && (sendResult.error || sendResult.queued === false);
         var shouldWait =
           !sendFailed && (!opts || opts.waitForInclusion == null ? true : !!opts.waitForInclusion);
-        if (!shouldWait) return sendResult;
+        if (!shouldWait) {
+          if (!sendFailed) {
+            window.getNodeAddress().then(function (from) {
+              _openPassiveSseTelemetry({
+                txId: extractTxId(sendResult),
+                minCreatedAtMs: startedAt,
+                memo: memo == null ? null : String(memo),
+                destination_pubkey: destination_pubkey == null ? null : String(destination_pubkey),
+                from_pubkey: from ? String(from).trim() : null,
+                amount: amount,
+              }, opts);
+            }).catch(function () {});
+          }
+          return sendResult;
+        }
         return window.getNodeAddress().then(function (from) {
           var txId = extractTxId(sendResult);
           return waitForTransactionVisible({
@@ -3105,7 +3395,9 @@
             destination_pubkey: destination_pubkey == null ? null : String(destination_pubkey),
             from_pubkey: from ? String(from).trim() : null,
             amount: amount,
-          }, opts).then(function () { return sendResult; });
+          }, opts).then(function (matchedTx) {
+            return attachMatchedTx(sendResult, matchedTx);
+          });
         });
       });
     }
@@ -3145,7 +3437,21 @@
         }
         var shouldWait =
           !sendFailed && (!opts || opts.waitForInclusion == null ? true : !!opts.waitForInclusion);
-        if (!shouldWait) return sendResult;
+        if (!shouldWait) {
+          if (!sendFailed) {
+            window.getNodeAddress().then(function (from) {
+              _openPassiveSseTelemetry({
+                txId: extractTxId(sendResult),
+                minCreatedAtMs: startedAt,
+                memo: memo == null ? null : String(memo),
+                destination_pubkey: destination_pubkey == null ? null : String(destination_pubkey),
+                from_pubkey: from ? String(from).trim() : null,
+                amount: amount,
+              }, opts);
+            }).catch(function () {});
+          }
+          return sendResult;
+        }
         return window.getNodeAddress().then(function (from) {
           var txId = extractTxId(sendResult);
           return waitForTransactionVisible({
@@ -3155,11 +3461,8 @@
             destination_pubkey: destination_pubkey == null ? null : String(destination_pubkey),
             from_pubkey: from ? String(from).trim() : null,
             amount: amount,
-          }, opts).then(function (tx) {
-            // Attach the matched on-chain tx so callers see the same
-            // { queued: true, tx: <tx> } shape that QR mode provides.
-            if (tx) sendResult.tx = tx;
-            return sendResult;
+          }, opts).then(function (matchedTx) {
+            return attachMatchedTx(sendResult, matchedTx);
           });
         });
       });
@@ -3191,7 +3494,19 @@
         var sendFailed = sendResult && sendResult.queued === false;
         var shouldWait =
           !sendFailed && (!opts || opts.waitForInclusion == null ? true : !!opts.waitForInclusion);
-        if (!shouldWait) return sendResult;
+        if (!shouldWait) {
+          if (!sendFailed) {
+            _openPassiveSseTelemetry({
+              txId: extractTxId(sendResult),
+              minCreatedAtMs: startedAt,
+              memo: memo == null ? null : String(memo),
+              destination_pubkey: destination_pubkey == null ? null : String(destination_pubkey),
+              from_pubkey: from_pubkey || null,
+              amount: amount,
+            }, opts);
+          }
+          return sendResult;
+        }
         var txId = extractTxId(sendResult);
         return waitForTransactionVisible({
           txId: txId,
@@ -3200,12 +3515,8 @@
           destination_pubkey: destination_pubkey == null ? null : String(destination_pubkey),
           from_pubkey: from_pubkey || null,
           amount: amount,
-        }, opts).then(function (tx) {
-          // Native channel returns { queued: true } with no tx ID; attach the
-          // matched on-chain tx so callers can read result.tx.id (parity with
-          // qrSendTransaction's { queued: true, tx: tx } shape).
-          if (tx) sendResult.tx = tx;
-          return sendResult;
+        }, opts).then(function (matchedTx) {
+          return attachMatchedTx(sendResult, matchedTx);
         });
       });
     }
