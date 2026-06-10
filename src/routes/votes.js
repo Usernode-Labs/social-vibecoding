@@ -928,6 +928,39 @@ async function checkAndMerge(config, pool, session, options = {}) {
       });
     }
 
+    // #135: GitHub closes `Closes #N`-referenced issues itself, but a few
+    // seconds AFTER the merge — so the cache bust + refetch above can race
+    // it, re-caching the issue as open and leaving the group-chat panel
+    // stale for the cache TTL. Watch the referenced issues (PR-body closing
+    // keywords ∪ linked_issues) with retry/backoff until GitHub reports
+    // them closed, then bust the cache and broadcast the refresh again.
+    // Fired-and-forgotten — the polling must never slow down or fail the
+    // merge flow, and nothing is ever written to GitHub.
+    try {
+      if (github.isEnabled() && session.pr_number) {
+        const [, wOwner, wRepo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+        if (wOwner && wRepo) {
+          const { watchIssuesClosedAfterMerge } = require('../services/issue-close-watcher');
+          watchIssuesClosedAfterMerge({
+            owner: wOwner,
+            repo: wRepo,
+            prNumber: session.pr_number,
+            linkedIssues: session.linked_issues,
+            appSlug: session.app_slug,
+            appId: session.app_id,
+          }).catch((err) => {
+            log.warn('votes', 'Post-merge issue-close watch failed', {
+              sessionId: session.id, err: err.message,
+            });
+          });
+        }
+      }
+    } catch (err) {
+      log.warn('votes', 'Post-merge issue-close watch setup failed', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+
     // Chat session is done — no further turns will reference CC memory,
     // so drop the persistent `.claude` volume.
     try {
