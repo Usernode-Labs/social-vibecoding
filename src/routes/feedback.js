@@ -2,6 +2,7 @@ const { Router } = require('express');
 const log = require('../services/logger');
 const llm = require('../services/llm');
 const github = require('../services/github');
+const { pushIssueUpdate } = require('../services/ws');
 const { getPool } = require('../db/pool');
 
 // Derive `owner/repo` from a github.com URL. We do this at module
@@ -18,6 +19,43 @@ function parseGitHubRepo(url) {
     throw new Error(`Expected /<owner>/<repo> path, got: ${url}`);
   }
   return { owner: parts[0], repo: parts[1] };
+}
+
+// #125: after a feedback issue lands in a repo, make the "Open Issues"
+// panel of any app backed by that repo update without a reload. Two
+// halves: seed the server-side open-issues cache with the new issue
+// (warm path — no extra GitHub list call, no read-after-write lag),
+// then broadcast an issue_update so connected clients re-pull the
+// panel (App.handleIssueUpdate → AppView.loadVotePanel). `app` is the
+// known target row for app feedback, or null for platform feedback —
+// in that case we look the app up by repo, since the platform repo is
+// itself an app on self-hosted instances. Best-effort: a failure here
+// must never fail the request (the issue is already filed).
+async function announceIssueCreated(pool, owner, repo, rawIssue, app) {
+  try {
+    github.noteIssueCreated(owner, repo, rawIssue);
+    let target = app;
+    if (!target) {
+      const { rows } = await pool.query('SELECT id, slug, repo_url FROM apps');
+      target = rows.find((r) => {
+        const [, o, rp] = (r.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+        return o && rp
+          && o.toLowerCase() === owner.toLowerCase()
+          && rp.replace(/\.git$/, '').toLowerCase() === repo.replace(/\.git$/, '').toLowerCase();
+      });
+    }
+    if (target) {
+      pushIssueUpdate({
+        action: 'created',
+        source: 'github',
+        appSlug: target.slug,
+        appId: target.id,
+        issueNumber: rawIssue.number,
+      });
+    }
+  } catch (err) {
+    log.warn('feedback', 'Failed to announce new issue', { repo: `${owner}/${repo}`, message: err.message });
+  }
 }
 
 function feedbackRoutes(config) {
@@ -58,7 +96,7 @@ function feedbackRoutes(config) {
       }
       let appRow;
       try {
-        const { rows } = await pool.query('SELECT name, repo_url FROM apps WHERE slug = $1', [appSlug]);
+        const { rows } = await pool.query('SELECT id, slug, name, repo_url FROM apps WHERE slug = $1', [appSlug]);
         appRow = rows[0];
       } catch (err) {
         log.error('feedback', 'App lookup failed', { message: err.message });
@@ -73,7 +111,7 @@ function feedbackRoutes(config) {
       }
       issueOwner = owner;
       issueRepo = repo;
-      appContext = { slug: appSlug, name: appRow.name };
+      appContext = { id: appRow.id, slug: appRow.slug, name: appRow.name };
     }
 
     const source = req.user?.isAdmin ? 'usernode admin' : `usernode user (${req.user?.username || 'unknown'})`;
@@ -145,6 +183,7 @@ function feedbackRoutes(config) {
             error: "Failed to create GitHub issue: couldn't file to this app's repo — the bot may not be installed on it",
           });
         }
+        await announceIssueCreated(pool, issueOwner, issueRepo, issue, appContext);
         return res.json({ url: issue.html_url, title });
       }
 
@@ -181,6 +220,11 @@ function feedbackRoutes(config) {
       }
 
       const issue = await ghRes.json();
+      // Platform feedback: the platform repo is itself an app on
+      // self-hosted instances, so its Open Issues panel should refresh
+      // too. announceIssueCreated resolves the app row by repo (no-op
+      // when none matches).
+      await announceIssueCreated(pool, issueOwner, issueRepo, issue, null);
       res.json({ url: issue.html_url, title });
     } catch (err) {
       log.error('feedback', 'Error filing issue', { message: err.message });

@@ -152,6 +152,11 @@ function issueRoutes(config) {
               body: description || '',
             });
             githubIssueNumber = ghIssue.number;
+            // #125: seed the open-issues cache so the panel refresh the
+            // pushIssueUpdate below triggers (loadVotePanel → GET
+            // /github-issues) shows this issue immediately instead of
+            // waiting out the cache TTL.
+            github.noteIssueCreated(owner, repo, ghIssue);
           }
         } catch (err) {
           log.warn('issues', 'GitHub issue creation failed', { err: err.message });

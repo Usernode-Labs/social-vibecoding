@@ -1044,6 +1044,15 @@ const App = {
           // re-enabled when the modal is reopened below.
           feedbackText.disabled = true;
           feedbackBtn.textContent = 'Submitted';
+          // #125: make the new issue show up in this app's "Open Issues"
+          // panel without a reload. The server seeds its issues cache and
+          // broadcasts an issue_update (handled in connectEvents) for
+          // other clients; this direct refresh covers the submitting tab
+          // even if its events socket is momentarily down.
+          if (target === 'app' && body.appSlug && App.currentApp === body.appSlug
+              && typeof AppView !== 'undefined') {
+            AppView.loadVotePanel(body.appSlug);
+          }
           setTimeout(() => document.getElementById('feedback-cancel').click(), 1500);
           return;
         }
