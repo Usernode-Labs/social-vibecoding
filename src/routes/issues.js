@@ -12,6 +12,7 @@ const { encrypt, decrypt } = require('../services/secrets');
 const { issueCreateLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 const { weekStartUtc, countWeeklyAllowanceUsed, WEEKLY_KUDOS_LIMIT } = require('./kudos');
+const appAccess = require('../services/app-access');
 
 // Pull owner/repo out of a stored repo_url. Same shape used across the
 // codebase (e.g. the rename-apply path below, routes/votes.js).
@@ -31,13 +32,19 @@ function issueRoutes(config) {
   const router = Router();
   const pool = getPool(config);
 
+  // Per-app visibility gate for issue-id-addressed routes (/vote,
+  // /close): collab-level access via the issue's app, 404 on deny.
+  router.use('/api/issues/:id', appAccess.issueCollabGuard(pool));
+
   // List issues for an app
   router.get('/api/apps/:slug/issues', async (req, res) => {
     try {
-      const { rows: appRows } = await pool.query('SELECT id FROM apps WHERE slug = $1', [req.params.slug]);
-      if (!appRows.length) return res.status(404).json({ error: 'App not found' });
+      const gatedApp = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS
+      );
+      if (!gatedApp) return res.status(404).json({ error: 'App not found' });
 
-      const appId = appRows[0].id;
+      const appId = gatedApp.id;
 
       const { rows } = await pool.query(
         `SELECT i.*, u.username as created_by_username,
@@ -79,9 +86,8 @@ function issueRoutes(config) {
     }
 
     try {
-      const { rows: appRows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
-      if (!appRows.length) return res.status(404).json({ error: 'App not found' });
-      const app = appRows[0];
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
+      if (!app) return res.status(404).json({ error: 'App not found' });
 
       // Kind-specific validation + auto-filled title/description.
       if (kind === 'secret_change') {
@@ -270,11 +276,10 @@ function issueRoutes(config) {
   // ----------------------------------------------------------------
   router.get('/api/apps/:slug/github-issues', async (req, res) => {
     try {
-      const { rows: appRows } = await pool.query(
-        'SELECT id, repo_url FROM apps WHERE slug = $1', [req.params.slug]
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab', `${appAccess.ACCESS_COLUMNS}, repo_url`
       );
-      if (!appRows.length) return res.status(404).json({ error: 'App not found' });
-      const app = appRows[0];
+      if (!app) return res.status(404).json({ error: 'App not found' });
 
       const parsed = parseOwnerRepo(app.repo_url);
       if (!github.isEnabled() || !parsed) {
@@ -346,11 +351,10 @@ function issueRoutes(config) {
     }
 
     try {
-      const { rows: appRows } = await pool.query(
-        'SELECT id, slug, repo_url FROM apps WHERE slug = $1', [req.params.slug]
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab', `${appAccess.ACCESS_COLUMNS}, repo_url`
       );
-      if (!appRows.length) return res.status(404).json({ error: 'App not found' });
-      const app = appRows[0];
+      if (!app) return res.status(404).json({ error: 'App not found' });
 
       // Verify :number is a CURRENTLY OPEN GitHub issue on this repo BEFORE
       // spending quota, inserting a row, or posting chat noise. Otherwise a

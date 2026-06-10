@@ -3,13 +3,19 @@ const { getPool } = require('../db/pool');
 const log = require('./logger');
 const notifications = require('./notifications');
 const events = require('./events');
+const appAccess = require('./app-access');
 
 let wss;
+// Captured in attach() so the module-level push* helpers can run the
+// per-app visibility filter (appAccess.getWsVisibility) without every
+// caller having to thread a pool through.
+let _pool = null;
 const rooms = new Map(); // appId -> Set<{ ws, user }>
 const globalClients = new Set(); // Set<{ ws, user }> for /ws/events
 
 function attach(server, config) {
   const pool = getPool(config);
+  _pool = pool;
 
   wss = new WebSocketServer({ noServer: true });
 
@@ -49,11 +55,21 @@ function attach(server, config) {
   });
 
   wss.on('connection', async (ws, req, { user, appSlug }) => {
-    const appId = await resolveAppId(pool, appSlug);
-    if (!appId) {
+    const app = await resolveAppForAccess(pool, appSlug);
+    if (!app) {
       ws.close(4004, 'App not found');
       return;
     }
+    // Group chat is a collaboration surface: collab-private apps only
+    // admit admins + members. Same 4004 as "not found" so the room's
+    // existence isn't disclosed (matches the routes' 404-on-deny rule).
+    const allowed = await appAccess.checkAppAccess(pool, app, user, 'collab')
+      .catch(() => false);
+    if (!allowed) {
+      ws.close(4004, 'App not found');
+      return;
+    }
+    const appId = app.id;
 
     const client = { ws, user, appId, appSlug };
     joinRoom(appId, client);
@@ -110,9 +126,12 @@ function parseCookies(header) {
   return result;
 }
 
-async function resolveAppId(pool, slug) {
-  const { rows } = await pool.query('SELECT id FROM apps WHERE slug = $1', [slug]);
-  return rows[0]?.id || null;
+async function resolveAppForAccess(pool, slug) {
+  const { rows } = await pool.query(
+    'SELECT id, collab_visibility, view_visibility FROM apps WHERE slug = $1',
+    [slug]
+  );
+  return rows[0] || null;
 }
 
 function joinRoom(appId, client) {
@@ -523,43 +542,81 @@ function getOnlineUsers(appId) {
   return users;
 }
 
-// Push an app status update to all connected clients
+// App-scoped global broadcast with visibility filtering. Public-view
+// apps keep the broadcast-to-all fast path; for a view-private app the
+// payload (name, status, PR titles...) only goes to admins + members.
+// Membership comes from appAccess.getWsVisibility's 10s TTL cache, so
+// this is at most one query per app per window. Fail-closed: if the
+// lookup errors we drop the event (a stale UI beats a privacy leak).
+function broadcastGlobalScoped(payload, { appId = null, appSlug = null } = {}) {
+  if (!_pool || (appId == null && !appSlug)) {
+    broadcastGlobal(payload);
+    return;
+  }
+  appAccess.getWsVisibility(_pool, { appId, appSlug })
+    .then((info) => {
+      if (!info) return; // app gone — nothing to broadcast
+      if (!info.viewPrivate) {
+        broadcastGlobal(payload);
+        return;
+      }
+      const json = JSON.stringify(payload);
+      for (const client of globalClients) {
+        if (client.ws.readyState !== 1) continue;
+        if (client.user.isAdmin || info.memberIds.has(client.user.id)) {
+          client.ws.send(json);
+        }
+      }
+    })
+    .catch((err) => {
+      log.warn('ws', 'scoped broadcast dropped', { type: payload.type, err: err.message });
+    });
+}
+
+// Push an app status update to all connected clients (filtered for
+// view-private apps).
 function pushAppStatusUpdate(app) {
-  broadcastGlobal({
+  broadcastGlobalScoped({
     type: 'app_status',
     appId: app.id,
     slug: app.slug,
     status: app.status,
     url: app.url || null,
-  });
+  }, { appId: app.id, appSlug: app.slug });
 }
 
 function pushSessionUpdate(data) {
-  broadcastGlobal({ type: 'session_update', ...data });
+  broadcastGlobalScoped({ type: 'session_update', ...data },
+    { appId: data.appId, appSlug: data.appSlug });
 }
 
 function pushVoteUpdate(data) {
-  broadcastGlobal({ type: 'vote_update', ...data });
+  broadcastGlobalScoped({ type: 'vote_update', ...data },
+    { appId: data.appId, appSlug: data.appSlug });
 }
 
 // PR kudos count changed. Fan out the new total + the giver's username
 // (so the receiving client can append the new giver to its popover
 // cache without a refetch). Same broadcast model as vote_update —
-// every connected client gets the message and decides whether it cares.
+// every connected (and view-authorized) client gets the message and
+// decides whether it cares.
 function pushKudosUpdate(data) {
-  broadcastGlobal({ type: 'kudos_update', ...data });
+  broadcastGlobalScoped({ type: 'kudos_update', ...data },
+    { appId: data.appId, appSlug: data.appSlug });
 }
 
 // Notify all clients that an app's metadata changed (e.g. renamed via vote).
 function pushAppUpdate(data) {
-  broadcastGlobal({ type: 'app_update', ...data });
+  broadcastGlobalScoped({ type: 'app_update', ...data },
+    { appId: data.appId, appSlug: data.appSlug });
 }
 
 // Notify all clients that an issue/rename-proposal was created, voted on,
 // or closed for a given app — so their open vote panel refreshes in real
 // time instead of only on page reload.
 function pushIssueUpdate(data) {
-  broadcastGlobal({ type: 'issue_update', ...data });
+  broadcastGlobalScoped({ type: 'issue_update', ...data },
+    { appId: data.appId, appSlug: data.appSlug });
 }
 
 // Send a payload to every /ws/events socket belonging to `userId`. Used for
@@ -576,4 +633,4 @@ function pushNotificationToUser(userId, payload) {
   return sent;
 }
 
-module.exports = { attach, broadcast, broadcastGlobal, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushSessionUpdate, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushNotificationToUser, getReactionsForMessages };
+module.exports = { attach, broadcast, broadcastGlobal, broadcastGlobalScoped, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushSessionUpdate, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushNotificationToUser, getReactionsForMessages };

@@ -54,6 +54,12 @@ function notificationsRoutes(config) {
       };
       if (!before) {
         payload.unread = await notifications.countUnread(pool, req.user.id);
+        // Pending collaborator invites for the drawer's pinned Invites
+        // section. Sourced from app_collaborators (authoritative about
+        // what's still actionable), not from collab_invite notification
+        // rows. First page only — like `unread`, it's an account-wide
+        // aggregate the client already has on cursor follow-ups.
+        payload.pendingInvites = await notifications.listPendingInvites(pool, req.user.id);
       }
       res.json(payload);
     } catch (err) {

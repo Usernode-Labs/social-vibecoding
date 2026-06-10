@@ -252,6 +252,16 @@ const Home = {
         ? `<p class="text-xs mt-0.5 text-red-500">Missing secrets: ${escapeHtml(app.missingSecrets.join(', '))}</p>`
         : '');
 
+    // Visibility chip for non-default settings. View-private dominates
+    // (it implies collab-private); collab-private alone reads as
+    // "invite-only build" since anyone can still see/use the app.
+    const visChipCls = 'inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-violet-500/10 text-violet-500 dark:text-violet-400';
+    const visBadgeHtml = app.view_visibility === 'private'
+      ? `<p><span class="${visChipCls}" title="Only collaborators can see and use this app">🔒 Private</span></p>`
+      : (app.collab_visibility === 'private'
+        ? `<p><span class="${visChipCls}" title="Anyone can use this app; only invited collaborators can build it">✉️ Invite-only build</span></p>`
+        : '');
+
     const statRows = [];
     if (activeUsers > 0) {
       statRows.push(`<div><span class="font-semibold text-zinc-700 dark:text-zinc-300">${activeUsers}</span> active user${activeUsers === 1 ? '' : 's'}</div>`);
@@ -322,6 +332,7 @@ const Home = {
               <span class="status-dot ${statusClass}" title="${app.status}"></span>
             </div>
             ${warningHtml}
+            ${visBadgeHtml}
           </div>
         </div>
         ${statsAndPillHtml}

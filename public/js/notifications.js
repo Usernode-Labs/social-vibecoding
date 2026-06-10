@@ -29,6 +29,10 @@ const LOAD_MORE_THRESHOLD = 64;
 
 const Notifications = {
   items: [],   // newest-first; the single source of truth
+  // Pending collaborator invites (authoritative, from the first-page
+  // /api/notifications payload). Rendered as a pinned section above the
+  // grouped list with Accept / Decline actions.
+  invites: [],
   unread: 0,
   open: false,
   // Pagination cursor for scroll-to-load-more.
@@ -113,11 +117,15 @@ const Notifications = {
       if (!res.ok) return;
       const data = await res.json();
       Notifications.items = Array.isArray(data.notifications) ? data.notifications : [];
+      Notifications.invites = Array.isArray(data.pendingInvites) ? data.pendingInvites : [];
       Notifications.unread = data.unread || 0;
       Notifications.hasMore = !!data.hasMore;
       Notifications.nextBefore = data.nextBefore || null;
       Notifications._renderBadge();
-      if (Notifications.open) Notifications._renderList();
+      if (Notifications.open) {
+        Notifications._renderInvites();
+        Notifications._renderList();
+      }
     } catch (err) {
       console.warn('[notifications] refresh failed', err);
     }
@@ -167,6 +175,13 @@ const Notifications = {
       Notifications.items.unshift(notif);
     }
     if (!notif.readAt) Notifications.unread += 1;
+    // A live collab invite needs the authoritative pendingInvites list
+    // (the notification row alone can't drive the actionable section) —
+    // refresh re-pulls it along with the first page.
+    if (notif.kind === 'collab_invite') {
+      Notifications.refresh();
+      return;
+    }
     Notifications._renderBadge();
     if (Notifications.open) Notifications._renderList();
   },
@@ -181,6 +196,7 @@ const Notifications = {
     if (!panel) return;
     panel.classList.remove('hidden');
     Notifications.open = true;
+    Notifications._renderInvites();
     Notifications._renderList();
   },
 
@@ -313,11 +329,19 @@ const Notifications = {
 
   // --- rendering -------------------------------------------------------
 
+  // Badge total folds in pending invites so an invite is as loud as an
+  // unread notification (its underlying collab_invite row may already
+  // be read while the invite is still actionable).
+  _badgeTotal() {
+    return Notifications.unread + Notifications.invites.length;
+  },
+
   _renderBadge() {
     const badge = document.getElementById('notifications-badge');
     if (!badge) return;
-    if (Notifications.unread > 0) {
-      badge.textContent = Notifications.unread > 99 ? '99+' : String(Notifications.unread);
+    const total = Notifications._badgeTotal();
+    if (total > 0) {
+      badge.textContent = total > 99 ? '99+' : String(total);
       badge.classList.remove('hidden');
     } else {
       badge.classList.add('hidden');
@@ -329,8 +353,104 @@ const Notifications = {
 
   _updateTitle() {
     const base = document.title.replace(/^\(\d+\)\s*/, '');
-    if (Notifications.unread > 0) document.title = `(${Notifications.unread}) ${base}`;
+    const total = Notifications._badgeTotal();
+    if (total > 0) document.title = `(${total}) ${base}`;
     else document.title = base;
+  },
+
+  // --- pinned invites section -------------------------------------------
+
+  _renderInvites() {
+    const box = document.getElementById('notifications-invites');
+    if (!box) return;
+    if (!Notifications.invites.length) {
+      box.innerHTML = '';
+      return;
+    }
+    const rows = Notifications.invites.map((inv) => {
+      const who = inv.invitedBy ? `@${escapeHtml(inv.invitedBy)}` : 'Someone';
+      return `<div class="px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 bg-violet-500/5 border-l-2 border-l-violet-500" data-invite-app="${inv.appId}">
+        <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1.5">
+          <span aria-hidden="true">✉️</span>
+          <span class="font-medium text-zinc-800 dark:text-zinc-200">${who}</span>
+          invited you to collaborate on
+          <span class="font-medium text-zinc-700 dark:text-zinc-300">${escapeHtml(inv.appName || inv.appSlug || 'an app')}</span>
+          <span class="text-zinc-500">· ${relativeTime(inv.createdAt)}</span>
+        </div>
+        <div class="flex gap-2">
+          <button data-invite-accept="${inv.appId}" data-invite-slug="${escapeHtml(inv.appSlug || '')}"
+            class="rounded-md bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs font-medium text-white transition-colors">Accept</button>
+          <button data-invite-decline="${inv.appId}"
+            class="rounded-md border border-zinc-300 dark:border-zinc-700 px-3 py-1 text-xs font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Decline</button>
+        </div>
+      </div>`;
+    });
+    const header = `<div class="px-3 py-1.5 text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">Invites</div>`;
+    box.innerHTML = header + rows.join('');
+
+    // stopPropagation on both buttons: the handlers re-render this
+    // section (detaching the clicked node), after which the bubbled
+    // click's target is outside the panel and the document-level
+    // outside-click handler would wrongly dismiss the drawer.
+    box.querySelectorAll('[data-invite-accept]').forEach((el) => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        Notifications._acceptInvite(Number(el.getAttribute('data-invite-accept')), el.getAttribute('data-invite-slug'));
+      });
+    });
+    box.querySelectorAll('[data-invite-decline]').forEach((el) => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        Notifications._declineInvite(Number(el.getAttribute('data-invite-decline')));
+      });
+    });
+  },
+
+  _removeInviteLocal(appId) {
+    Notifications.invites = Notifications.invites.filter((i) => i.appId !== appId);
+    Notifications._renderBadge();
+    Notifications._renderInvites();
+  },
+
+  async _acceptInvite(appId, slug) {
+    try {
+      const res = await fetch(`/api/invites/${appId}/accept`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || `Accept failed (HTTP ${res.status})`);
+        // The invite may have been revoked — re-sync.
+        Notifications.refresh();
+        return;
+      }
+      Notifications._removeInviteLocal(appId);
+      // Pull the fresh state (the collab_invite row is now read) and
+      // refresh the home grid — a view-private app just became visible.
+      Notifications.refresh();
+      if (typeof Home !== 'undefined' && document.getElementById('home-screen') &&
+          !document.getElementById('home-screen').classList.contains('hidden')) {
+        Home.load();
+      }
+      const target = data.appSlug || slug;
+      if (target && typeof App !== 'undefined' && App.openAppTab) {
+        App.openAppTab(target, 'group-chat');
+      }
+    } catch (err) {
+      console.warn('[notifications] acceptInvite failed', err);
+    }
+  },
+
+  async _declineInvite(appId) {
+    try {
+      const res = await fetch(`/api/invites/${appId}/decline`, { method: 'POST' });
+      if (!res.ok) {
+        Notifications.refresh();
+        return;
+      }
+      Notifications._removeInviteLocal(appId);
+      Notifications.refresh();
+    } catch (err) {
+      console.warn('[notifications] declineInvite failed', err);
+    }
   },
 
   // Pure transform: items (newest-first) -> ordered groups. The first
@@ -365,7 +485,9 @@ const Notifications = {
 
     if (Notifications.items.length === 0) {
       list.innerHTML = '';
-      empty.classList.remove('hidden');
+      // The pinned invites section may still have content — only show
+      // the empty hint when there's truly nothing in the drawer.
+      empty.classList.toggle('hidden', Notifications.invites.length > 0);
       return;
     }
     empty.classList.add('hidden');
@@ -571,6 +693,8 @@ function previewText(n) {
     case 'pr_proposed': return `\u{1F5F3}️ ${who} proposed a PR to vote on`;
     case 'reply':       return `${who} replied to you`;
     case 'mention':     return `${who} mentioned you`;
+    case 'collab_invite':          return `✉️ ${who} invited you to collaborate`;
+    case 'collab_invite_accepted': return `✅ ${who} accepted your invite`;
     default:            return who;
   }
 }
@@ -661,6 +785,26 @@ function renderRow(n) {
         <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
       </div>
       <div class="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2 font-medium">${prLabel}</div>
+    </button>`;
+  }
+
+  // Collab-invite history rows (the actionable Accept/Decline buttons
+  // live ONLY in the pinned Invites section, driven by pendingInvites —
+  // once resolved this is just a plain history row).
+  if (n.kind === 'collab_invite' || n.kind === 'collab_invite_accepted') {
+    const verb = n.kind === 'collab_invite'
+      ? 'invited you to collaborate on'
+      : 'accepted your invite to collaborate on';
+    const icon = n.kind === 'collab_invite' ? '✉️' : '✅';
+    return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
+      <div class="text-xs text-zinc-500 dark:text-zinc-400 flex items-center gap-1 flex-wrap">
+        ${dot}
+        <span aria-hidden="true">${icon}</span>
+        <span class="font-medium text-zinc-800 dark:text-zinc-200">@${who}</span>
+        <span>${verb}</span>
+        <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
+        <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
+      </div>
     </button>`;
   }
 

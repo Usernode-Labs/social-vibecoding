@@ -19,6 +19,7 @@ const models = require('../services/models');
 const limits = require('../services/limits');
 const events = require('../services/events');
 const { chatLimiter } = require('../middleware/rate-limits');
+const appAccess = require('../services/app-access');
 // runSyncMain + persistBehindMain now live in services/sync-main.js so
 // the conflict-resolver can drive a sync turn without a route-requires-
 // route cycle. Re-exported below for backwards compatibility.
@@ -143,6 +144,12 @@ function sessionRoutes(config) {
   const router = Router();
   const pool = getPool(config);
 
+  // Per-app visibility gate for every session-id-addressed route below
+  // (/api/sessions/:id/...): resolves the session's app and requires
+  // collab-level access. 404 on deny so private apps' sessions aren't
+  // enumerable; missing sessions fall through to each route's own 404.
+  router.use('/api/sessions/:id', appAccess.sessionCollabGuard(pool));
+
   // GET /api/me/active-sessions
   //   Cross-app view of the current user's non-archived sessions,
   //   each annotated with whether a CC turn is in flight right now.
@@ -203,8 +210,11 @@ function sessionRoutes(config) {
   // List sessions for an app (user's own)
   router.get('/api/apps/:slug/sessions', async (req, res) => {
     try {
-      const { rows: appRows } = await pool.query('SELECT id FROM apps WHERE slug = $1', [req.params.slug]);
-      if (!appRows.length) return res.status(404).json({ error: 'App not found' });
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const appRows = [app];
 
       const { rows } = await pool.query(
         `SELECT id, branch_name, pr_number, pr_url, pr_title, staging_url, status, linked_issues, behind_main, created_at
@@ -224,9 +234,8 @@ function sessionRoutes(config) {
   // Create a new session (branch + PR)
   router.post('/api/apps/:slug/sessions', drainGuard, async (req, res) => {
     try {
-      const { rows: appRows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
-      if (!appRows.length) return res.status(404).json({ error: 'App not found' });
-      const app = appRows[0];
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
+      if (!app) return res.status(404).json({ error: 'App not found' });
 
       // Check staging container limits
       const { rows: countRows } = await pool.query(
