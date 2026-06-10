@@ -29,14 +29,17 @@ const DevChat = {
   // Handle to the resumable EventSource, if open.
   _eventSource: null,
 
-  // ----- Browser-title status indicator (#108) -----
+  // ----- Browser-title status indicator (#108, #142) -----
   // While the user is on the dev-chat tab, the document title carries a
   // status marker for the current session's turn: "thinking" while the
-  // Mayor / Claude Code is working, flipping to "done" when the turn
-  // finishes, and cleared when the user leaves the tab / switches
-  // session / starts typing a new turn. The point is glanceability from
-  // another browser tab — you can kick off a build, go do something
-  // else, and the tab title tells you when it's finished.
+  // Mayor / Claude Code is working. When the turn finishes while the
+  // user is away from the browser tab, it flips to "done" and STAYS
+  // there until they actually come back (visibilitychange / window
+  // focus — listeners at the bottom of this file); if they're already
+  // watching when it finishes, the marker just clears — the in-page UI
+  // shows completion. The point is glanceability from another browser
+  // tab — you can kick off a build, go do something else, and the tab
+  // title tells you when it's finished even if you look hours later.
   _titleStatus: null, // null | 'thinking' | 'done'
 
   budget: null,
@@ -546,7 +549,16 @@ const DevChat = {
       // a "done" badge from session A must not survive into session B.
       // If THIS session is mid-run, the busy check below re-applies
       // "thinking" via _setStreamingUI.
-      DevChat.setTitleStatus(null);
+      //
+      // Exception (#142): while the user is away from the browser tab,
+      // the only way to land here is the background !busy reload of the
+      // SAME session (_startProgressPolling), and clearing there wiped
+      // the freshly-set "done" badge before the user ever saw it. Keep
+      // a sticky "done" while away — the visibility/focus listeners at
+      // the bottom of this file clear it the moment they return.
+      if (!(DevChat._titleStatus === 'done' && DevChat._userIsAway())) {
+        DevChat.setTitleStatus(null);
+      }
       // Restore the spec viewer's open/closed state from localStorage
       // before the caller's renderChatView fires, so a refresh on a
       // session that had the viewer open paints with the panel
@@ -1161,6 +1173,14 @@ const DevChat = {
     done: '✅ Done · ',
   },
 
+  // "Away" = the user can't currently see this page: the browser tab is
+  // hidden, or the window has lost focus (another window on top). Used
+  // to decide whether a finished run should leave a sticky "done"
+  // marker in the title (#142).
+  _userIsAway() {
+    return document.visibilityState === 'hidden' || !document.hasFocus();
+  },
+
   // Set (or clear, with null) the dev-chat status reflected in
   // document.title. Non-null statuses only stick while the dev-chat tab
   // is the mounted tab — a turn finishing while the user is on the App
@@ -1220,7 +1240,14 @@ const DevChat = {
     // only flip to "done" when a run was actually live in this tab —
     // idle re-renders don't conjure a done marker.
     if (streaming) DevChat.setTitleStatus('thinking');
-    else if (DevChat._titleStatus === 'thinking') DevChat.setTitleStatus('done');
+    else if (DevChat._titleStatus === 'thinking') {
+      // A finished run only needs the "done" badge when the user isn't
+      // looking at this browser tab — it then persists until they
+      // return (cleared by the visibility/focus listeners at the bottom
+      // of this file). If they're already watching, the in-page UI
+      // shows completion, so drop the marker immediately (#142).
+      DevChat.setTitleStatus(DevChat._userIsAway() ? 'done' : null);
+    }
 
     const btn = document.getElementById('dc-send-btn');
     if (!btn) return;
@@ -2844,3 +2871,16 @@ DevChat._sanitizeStoredModel();
 // the page rendered the dropdown before this resolves, the next
 // renderChatView() pass will pick up the new entries.
 DevChat.loadModels();
+
+// A sticky "✅ Done" title marker (set when a run finishes while the
+// user is away — see _setStreamingUI) clears the moment they actually
+// come back to the tab (#142). Both events are needed: visibilitychange
+// fires on browser-tab switches, window focus on window-to-window
+// switches where the tab stays "visible" the whole time.
+DevChat._titleDoneReturnHandler = () => {
+  if (DevChat._titleStatus !== 'done') return;
+  if (DevChat._userIsAway()) return;
+  DevChat.setTitleStatus(null);
+};
+document.addEventListener('visibilitychange', DevChat._titleDoneReturnHandler);
+window.addEventListener('focus', DevChat._titleDoneReturnHandler);
