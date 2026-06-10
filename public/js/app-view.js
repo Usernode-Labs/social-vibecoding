@@ -1908,7 +1908,6 @@ const AppView = {
       ? `${resolved}?token=${AppView.iframeToken}`
       : resolved;
 
-    iframe.src = src;
     if (label) label.textContent = resolved;
     overlay.classList.remove('hidden');
     if (window.DevConsole) DevConsole.setButtonVisible(true);
@@ -1916,11 +1915,90 @@ const AppView = {
     document.getElementById('staging-back').onclick = () => {
       AppView.closeStagingOverlay();
     };
+
+    // Don't point the iframe at the host until it actually answers. A fresh
+    // preview's on-demand TLS cert can take a minute (occasionally a few) to
+    // issue; loading the iframe during that window shows a black void with no
+    // feedback. Probe the host first and only swap in the real src once the
+    // TLS handshake succeeds. Each probe also nudges Caddy's on-demand
+    // issuance along, so polling actively warms the cert too.
+    iframe.src = '';
+    const loadId = ++AppView._stagingLoadId;
+    AppView._waitForStagingReady(resolved, loadId).then((ready) => {
+      // A newer swap (or a close) superseded this one — drop the result.
+      if (loadId !== AppView._stagingLoadId) return;
+      AppView._setStagingLoader(false);
+      if (ready) iframe.src = src;
+    });
+  },
+
+  // Incremented on every swap/close so an in-flight readiness poll for a
+  // superseded preview can detect it's stale and bail without touching the
+  // iframe.
+  _stagingLoadId: 0,
+
+  _setStagingLoader(visible, { title, sub } = {}) {
+    const loader = document.getElementById('staging-loader');
+    if (!loader) return;
+    loader.classList.toggle('hidden', !visible);
+    if (title) {
+      const t = document.getElementById('staging-loader-title');
+      if (t) t.textContent = title;
+    }
+    if (sub) {
+      const s = document.getElementById('staging-loader-sub');
+      if (s) s.textContent = sub;
+    }
+  },
+
+  // Poll the staging host until its TLS handshake + HTTP response succeed.
+  // Uses a no-cors GET: it resolves for any reply (even opaque/redirect/4xx),
+  // and rejects on the network/TLS failure we get while the cert is still
+  // issuing — exactly the readiness signal we want. Resolves true when ready,
+  // false only if the user backed out (stale loadId).
+  async _waitForStagingReady(resolved, loadId) {
+    AppView._setStagingLoader(true, {
+      title: 'Provisioning secure preview…',
+      sub: 'Issuing a TLS certificate for this preview. First load can take a minute.',
+    });
+    const startedAt = Date.now();
+    let attempt = 0;
+    while (loadId === AppView._stagingLoadId) {
+      attempt += 1;
+      const controller = new AbortController();
+      const to = setTimeout(() => controller.abort(), 8000);
+      try {
+        await fetch(resolved, { mode: 'no-cors', cache: 'no-store', signal: controller.signal });
+        clearTimeout(to);
+        return true; // handshake + response succeeded → cert is live
+      } catch {
+        clearTimeout(to);
+        if (loadId !== AppView._stagingLoadId) return false;
+        const elapsed = Math.round((Date.now() - startedAt) / 1000);
+        // Escalate the copy so a longer-than-usual wait doesn't look hung.
+        if (elapsed >= 90) {
+          AppView._setStagingLoader(true, {
+            title: 'Still provisioning…',
+            sub: `The certificate authority is taking longer than usual (${elapsed}s). Hang tight — this keeps retrying automatically.`,
+          });
+        } else if (elapsed >= 30) {
+          AppView._setStagingLoader(true, {
+            title: 'Provisioning secure preview…',
+            sub: `Almost there — waiting on the TLS certificate (${elapsed}s).`,
+          });
+        }
+        await new Promise((r) => setTimeout(r, 2500));
+      }
+    }
+    return false; // superseded/closed
   },
 
   closeStagingOverlay() {
     const overlay = document.getElementById('staging-overlay');
     const iframe = document.getElementById('staging-iframe');
+    // Invalidate any in-flight readiness poll and hide the loader.
+    AppView._stagingLoadId += 1;
+    AppView._setStagingLoader(false);
     if (overlay) overlay.classList.add('hidden');
     if (iframe) iframe.src = '';
     // Restore dev-console button visibility based on whatever tab the

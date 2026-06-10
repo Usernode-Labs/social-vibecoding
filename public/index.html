@@ -332,7 +332,19 @@
     <div class="px-4 py-1.5 bg-violet-500/10 border-b border-violet-500/20 text-xs text-zinc-400 shrink-0">
       Private preview — only you can see this until the app's users vote your change in.
     </div>
-    <iframe id="staging-iframe" class="flex-1 border-0" style="background:#08080f"></iframe>
+    <div class="relative flex-1">
+      <iframe id="staging-iframe" class="absolute inset-0 w-full h-full border-0" style="background:#08080f"></iframe>
+      <!-- Shown while the preview's on-demand TLS cert is still being issued
+           (first load can take a minute, occasionally a few when the ACME CA
+           is slow). Without this the iframe just shows a black void during the
+           hanging TLS handshake. swapToStaging() polls the host and only
+           reveals the iframe once it answers. -->
+      <div id="staging-loader" class="hidden absolute inset-0 flex flex-col items-center justify-center gap-4 bg-zinc-950 text-center px-6">
+        <div class="w-9 h-9 border-2 border-zinc-700 border-t-violet-400 rounded-full animate-spin"></div>
+        <div id="staging-loader-title" class="text-sm text-zinc-200 font-medium">Provisioning secure preview…</div>
+        <div id="staging-loader-sub" class="text-xs text-zinc-500 max-w-xs leading-relaxed">Issuing a TLS certificate for this preview. First load can take a minute.</div>
+      </div>
+    </div>
   </div>
 
   <!-- Create app modal.

@@ -13,9 +13,17 @@ name: usernode
 
 services:
   caddy:
-    image: caddy:2-alpine
+    # Custom build: stock caddy ships no DNS plugins, and DNS-01 issuance of
+    # the *.social-vibecoding wildcard cert needs caddy-dns/acmedns. See
+    # caddy.Dockerfile + acme-dns/config.cfg.
+    build:
+      context: .
+      dockerfile: caddy.Dockerfile
+    image: usernode-caddy:acmedns
     container_name: caddy
     restart: unless-stopped
+    depends_on:
+      - acme-dns
     ports:
       - "80:80"
       - "443:443"
@@ -44,6 +52,17 @@ services:
       # for regenerating EAB creds if they're ever revoked.)
       ZEROSSL_EAB_KID: ${ZEROSSL_EAB_KID:-}
       ZEROSSL_EAB_HMAC: ${ZEROSSL_EAB_HMAC:-}
+      # acme-dns credentials for the *.social-vibecoding wildcard DNS-01
+      # challenge, consumed by the `tls { dns acmedns ... }` block in the
+      # Caddyfile. The API base points at the internal acme-dns service (not
+      # publicly exposed). Username/password/subdomain come from a one-time
+      # `POST /register` against acme-dns and are persisted into .env by the
+      # deploy workflow. Empty until registration is done (Caddy then just
+      # keeps using its current on-demand path).
+      ACME_DNS_API_BASE_URL: http://acme-dns:8081
+      ACME_DNS_USERNAME: ${ACME_DNS_USERNAME:-}
+      ACME_DNS_PASSWORD: ${ACME_DNS_PASSWORD:-}
+      ACME_DNS_SUBDOMAIN: ${ACME_DNS_SUBDOMAIN:-}
     networks:
       - usernode-net
     healthcheck:
@@ -60,6 +79,30 @@ services:
         limits:
           memory: 256m
           cpus: "0.5"
+
+  # Self-hosted DNS server that answers ONLY the ACME DNS-01 challenge for our
+  # wildcard cert. We delegate `_acme-challenge.social-vibecoding...` to it via
+  # a single static CNAME so Caddy's DNS-01 writes never touch the production
+  # Namecheap zone (whose only write API replaces the whole zone per call).
+  # Only :53 is public (for CA challenge lookups); the HTTP API (:8081) is
+  # internal-only — reachable by Caddy over the docker network.
+  acme-dns:
+    image: joohoi/acme-dns:v1.0
+    container_name: acme-dns
+    restart: unless-stopped
+    ports:
+      - "53:53/udp"
+      - "53:53/tcp"
+    volumes:
+      - ./acme-dns/config.cfg:/etc/acme-dns/config.cfg:ro
+      - acme-dns-data:/var/lib/acme-dns
+    networks:
+      - usernode-net
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+          cpus: "0.25"
 
   usernode:
     build:
@@ -231,6 +274,9 @@ networks:
 volumes:
   caddy-data:
   caddy-config:
+  # acme-dns sqlite db (registered account + current challenge TXT). Persist
+  # so the registered account survives restarts/deploys.
+  acme-dns-data:
   usernode-db-data:
   # Sidecar node working directory (chain-scoped wallet cache, etc.) and
   # archive root (manifest + snapshot binprots + block tail). Both must
