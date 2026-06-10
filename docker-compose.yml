@@ -22,8 +22,6 @@ services:
     image: usernode-caddy:acmedns
     container_name: caddy
     restart: unless-stopped
-    depends_on:
-      - acme-dns
     ports:
       - "80:80"
       - "443:443"
@@ -91,8 +89,15 @@ services:
     container_name: acme-dns
     restart: unless-stopped
     ports:
-      - "53:53/udp"
-      - "53:53/tcp"
+      # Bind to the public IP explicitly, NOT 0.0.0.0. The host runs
+      # systemd-resolved on 127.0.0.53:53, and a wildcard 0.0.0.0:53 publish
+      # collides with that loopback bind ("address already in use"), which is
+      # what aborted the first deploy. The CA only ever queries acme-dns over
+      # the public IPv4 (the NS glue is an A record), so this is exactly the
+      # interface we need. If the server IP changes, update here + the glue A
+      # in acme-dns/config.cfg + the Namecheap delegation.
+      - "144.76.85.53:53:53/udp"
+      - "144.76.85.53:53:53/tcp"
     volumes:
       - ./acme-dns/config.cfg:/etc/acme-dns/config.cfg:ro
       - acme-dns-data:/var/lib/acme-dns
