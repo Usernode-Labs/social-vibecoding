@@ -36,6 +36,106 @@ const ISSUES_MAX_PAGES = 10;          // 10 * 100 = up to 1000 open issues
 const ISSUE_BODY_MAX = 500;           // chars before we truncate the body
 const ISSUES_FETCH_TIMEOUT_MS = 8000; // per-page request timeout
 
+// #144: known-closed suppression. Cache busting alone can't keep the
+// "Open Issues" panel honest after a merge: fetchPublicIssues reads
+// GitHub's ANONYMOUS list endpoint, which is eventually consistent and
+// CDN-cached — for a window after `Closes #N` lands, a fresh
+// `state=open` list can still include the just-closed issue, and the
+// post-merge refetch then re-caches it as open for the full TTL. (The
+// issue-close watcher verifies closure via the authenticated
+// single-issue endpoint, which IS consistent — so it can correctly see
+// "closed" while this list still says "open".)
+//
+// So alongside the cache we keep a per-repo set of issue numbers known
+// (or about to be) closed; every fetchPublicIssues result — fresh,
+// cached, or stale-rate-limited — is filtered against it. Entries
+// expire after a TTL so a wrong optimistic suppression (a `Closes #N`
+// GitHub never honored) self-heals; the cached payload itself is kept
+// unfiltered so expiry resurfaces the issue without a refetch.
+// Map<normalized "owner/repo", Map<issueNumber, expiresAtMs>>.
+const closedIssueSuppressions = new Map();
+const ISSUES_CLOSED_SUPPRESS_TTL_MS = 10 * 60 * 1000;
+
+// Same normalization noteIssueCreated uses for cache-key matching:
+// owner/repo are case-insensitive on GitHub and repo_url parsing can
+// capture a trailing `.git`.
+function normRepoKey(owner, repo) {
+  return `${owner}/${repo}`.toLowerCase().replace(/\.git$/, '');
+}
+
+// Record issue numbers as closed so fetchPublicIssues stops returning
+// them, regardless of what GitHub's stale list (or our cache) says.
+// Called from the merge path (routes/votes.js, with the session's
+// linked_issues, optimistically — GitHub reliably closes them, just
+// late) and from the issue-close watcher (with observed closes).
+// Returns how many numbers were recorded.
+function noteIssuesClosed(owner, repo, numbers, ttlMs = ISSUES_CLOSED_SUPPRESS_TTL_MS) {
+  if (!owner || !repo || !Array.isArray(numbers) || !numbers.length) return 0;
+  const key = normRepoKey(owner, repo);
+  let entry = closedIssueSuppressions.get(key);
+  if (!entry) {
+    entry = new Map();
+    closedIssueSuppressions.set(key, entry);
+  }
+  const expiresAt = Date.now() + ttlMs;
+  let recorded = 0;
+  for (const raw of numbers) {
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n <= 0) continue;
+    entry.set(n, expiresAt);
+    recorded++;
+  }
+  if (recorded) {
+    log.debug('github', 'Suppressing closed issues from open-issues results', {
+      repo: key, issues: [...entry.keys()],
+    });
+  }
+  return recorded;
+}
+
+// Drop suppressions early — the issue-close watcher calls this for
+// numbers that turned out to still be open after its polling gave up,
+// so a `Closes #N` GitHub didn't honor doesn't hide a live issue for
+// the full suppression TTL. Returns how many entries were removed.
+function unsuppressIssues(owner, repo, numbers) {
+  if (!owner || !repo || !Array.isArray(numbers) || !numbers.length) return 0;
+  const entry = closedIssueSuppressions.get(normRepoKey(owner, repo));
+  if (!entry) return 0;
+  let removed = 0;
+  for (const raw of numbers) {
+    if (entry.delete(Number(raw))) removed++;
+  }
+  if (!entry.size) closedIssueSuppressions.delete(normRepoKey(owner, repo));
+  return removed;
+}
+
+// Live (non-expired) suppressed numbers for a repo, pruning expired
+// entries as a side effect. Returns null when nothing is suppressed.
+function liveSuppressions(owner, repo) {
+  const key = normRepoKey(owner, repo);
+  const entry = closedIssueSuppressions.get(key);
+  if (!entry) return null;
+  const now = Date.now();
+  for (const [n, expiresAt] of entry) {
+    if (expiresAt <= now) entry.delete(n);
+  }
+  if (!entry.size) {
+    closedIssueSuppressions.delete(key);
+    return null;
+  }
+  return entry;
+}
+
+// Filter a fetchPublicIssues-shaped result against the repo's live
+// suppressions. Never mutates the input (cached payloads stay
+// unfiltered so TTL expiry resurfaces issues without a refetch).
+function applyClosedSuppressions(owner, repo, result) {
+  const live = liveSuppressions(owner, repo);
+  if (!live || !result || !Array.isArray(result.issues)) return result;
+  const issues = result.issues.filter((i) => !live.has(i.number));
+  return issues.length === result.issues.length ? result : { ...result, issues };
+}
+
 async function init(config) {
   if (!config.githubAppId || !config.githubPrivateKey) {
     log.warn('github', 'GitHub App credentials not configured — GitHub features disabled');
@@ -538,7 +638,9 @@ function normalizeIssue(raw) {
 async function fetchPublicIssues(owner, repo) {
   const cacheKey = `${owner}/${repo}`;
   const cached = issuesCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return cached.result;
+  if (cached && cached.expiresAt > Date.now()) {
+    return applyClosedSuppressions(owner, repo, cached.result);
+  }
 
   let url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`
     + '/issues?state=open&per_page=100&sort=updated&direction=desc';
@@ -567,7 +669,9 @@ async function fetchPublicIssues(owner, repo) {
       if ((resp.status === 403 && resp.headers.get('x-ratelimit-remaining') === '0') || resp.status === 429) {
         log.warn('github', 'Issue fetch rate-limited', { repo: cacheKey });
         const stale = issuesCache.get(cacheKey);
-        if (stale) return { ...stale.result, note: 'rate limited' };
+        if (stale) {
+          return { ...applyClosedSuppressions(owner, repo, stale.result), note: 'rate limited' };
+        }
         return { issues: [], truncatedList: false, note: 'rate limited' };
       }
       if (resp.status === 404) {
@@ -595,7 +699,11 @@ async function fetchPublicIssues(owner, repo) {
 
     const result = { issues: collected, truncatedList };
     issuesCache.set(cacheKey, { result, expiresAt: Date.now() + ISSUES_CACHE_TTL_MS });
-    return result;
+    // Filter the RETURNED copy, not the cached one: a freshly-fetched
+    // list can itself be stale (GitHub's anonymous list endpoint lags
+    // closes), and caching it unfiltered means suppression expiry alone
+    // is what resurfaces a wrongly-suppressed issue.
+    return applyClosedSuppressions(owner, repo, result);
   } catch (err) {
     log.warn('github', 'Issue fetch failed', { repo: cacheKey, err: err.message });
     return { issues: [], truncatedList: false, note: 'fetch failed' };
@@ -682,4 +790,6 @@ module.exports = {
   fetchPublicIssues,
   invalidateIssuesCache,
   noteIssueCreated,
+  noteIssuesClosed,
+  unsuppressIssues,
 };

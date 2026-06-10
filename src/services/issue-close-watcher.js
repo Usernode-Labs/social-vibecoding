@@ -89,9 +89,16 @@ async function checkIssueState(owner, repo, issueNumber) {
 
 // Bust this repo's open-issues cache and tell every client viewing the
 // app's group chat to refetch (App.handleIssueUpdate → loadVotePanel).
-// Same event shape the merge path broadcasts at merge time.
-function bustAndBroadcast({ owner, repo, appSlug, appId }) {
+// Same event shape the merge path broadcasts at merge time. `closed`
+// carries the numbers whose closure was just observed — they're
+// recorded on the known-closed suppression list (#144) so the refetch
+// can't resurrect them even when GitHub's eventually-consistent
+// anonymous list endpoint still reports them open.
+function bustAndBroadcast({ owner, repo, appSlug, appId, closed }) {
   try {
+    if (Array.isArray(closed) && closed.length) {
+      github.noteIssuesClosed(owner, repo, closed);
+    }
     github.invalidateIssuesCache(owner, repo);
     const { pushIssueUpdate } = require('./ws');
     pushIssueUpdate({
@@ -121,6 +128,22 @@ async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues
   const numbers = await resolveIssueNumbers({ owner, repo, prNumber, linkedIssues });
   if (!numbers.length) return empty;
 
+  // #144: optimistically suppress every referenced number up front. The
+  // merge path already did this for linked_issues, but the resolved set
+  // can be wider (hand-edited `Closes #N` in the PR body), and when this
+  // watch is RESUMED after a platform restart (server.js
+  // resumeIssueCloseWatches — the self-edits app's GHA deploy rolls the
+  // platform right after merge, killing the original watcher) the fresh
+  // process has an empty suppression list. Anything that turns out to
+  // still be open is unsuppressed below.
+  try {
+    github.noteIssuesClosed(owner, repo, numbers);
+  } catch (err) {
+    log.warn('issue-close-watcher', 'Optimistic issue suppression failed', {
+      repo: `${owner}/${repo}`, err: err.message,
+    });
+  }
+
   const closed = [];
   const skipped = [];
   let pending = numbers;
@@ -136,7 +159,7 @@ async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues
     }
     if (newlyClosed.length) {
       closed.push(...newlyClosed);
-      bustAndBroadcast({ owner, repo, appSlug, appId });
+      bustAndBroadcast({ owner, repo, appSlug, appId, closed: newlyClosed });
     }
     pending = stillPending;
     if (pending.length && attempt < MAX_ATTEMPTS) {
@@ -148,6 +171,16 @@ async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues
     log.warn('issue-close-watcher', 'Gave up waiting for GitHub to close issues', {
       repo: `${owner}/${repo}`, pr: prNumber, stillOpen: pending, attempts: MAX_ATTEMPTS,
     });
+    // These are genuinely still open on GitHub — lift the optimistic
+    // suppression so they aren't hidden from the panel for the full
+    // suppression TTL.
+    try {
+      github.unsuppressIssues(owner, repo, pending);
+    } catch (err) {
+      log.warn('issue-close-watcher', 'Unsuppress failed', {
+        repo: `${owner}/${repo}`, err: err.message,
+      });
+    }
   }
   log.info('issue-close-watcher', 'Post-merge close watch done', {
     repo: `${owner}/${repo}`, pr: prNumber, closed, skipped, stillOpen: pending,
