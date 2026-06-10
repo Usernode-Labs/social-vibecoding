@@ -70,11 +70,14 @@ const DevChat = {
   // at startup so the UI dropdown can never offer something the server
   // wouldn't accept (server-side allowlist lives in src/services/models.js).
   // Kept seeded with the current set so the dropdown renders correctly
-  // before the fetch resolves on a slow connection.
+  // before the fetch resolves on a slow connection. Each value carries
+  // the display label plus output cost ($/MTok) so the selector can
+  // surface cost; loadModels() refreshes this from the server.
   MODELS: {
-    'claude-haiku-4-5': 'Haiku 4.5',
-    'claude-sonnet-4-6': 'Sonnet 4.6',
-    'claude-opus-4-8': 'Opus 4.8',
+    'claude-haiku-4-5': { label: 'Haiku 4.5', outputCostPerMTok: 5 },
+    'claude-sonnet-4-6': { label: 'Sonnet 4.6', outputCostPerMTok: 15 },
+    'claude-opus-4-8': { label: 'Opus 4.8', outputCostPerMTok: 25 },
+    'claude-fable-5': { label: 'Fable 5', outputCostPerMTok: 50 },
   },
 
   // Default model id used when sanitization rejects a stale storage
@@ -96,7 +99,11 @@ const DevChat = {
         const next = {};
         for (const m of data.models) {
           if (m && typeof m.id === 'string') {
-            next[m.id] = (typeof m.label === 'string' && m.label) ? m.label : m.id;
+            const label = (typeof m.label === 'string' && m.label) ? m.label : m.id;
+            const outputCostPerMTok = typeof m.outputCostPerMTok === 'number'
+              ? m.outputCostPerMTok
+              : undefined;
+            next[m.id] = { label, outputCostPerMTok };
           }
         }
         DevChat.MODELS = next;
@@ -2246,7 +2253,12 @@ const DevChat = {
     if (meta) meta.classList.add('hidden');
 
     const modelOptions = Object.entries(DevChat.MODELS)
-      .map(([id, label]) => `<option value="${id}" ${id === DevChat.selectedModel ? 'selected' : ''}>${label}</option>`)
+      .map(([id, meta]) => {
+        const label = (meta && typeof meta === 'object') ? meta.label : meta;
+        const cost = (meta && typeof meta === 'object') ? meta.outputCostPerMTok : undefined;
+        const text = typeof cost === 'number' ? `${label} — $${cost}/MTok` : label;
+        return `<option value="${id}" ${id === DevChat.selectedModel ? 'selected' : ''}>${text}</option>`;
+      })
       .join('');
 
     const viewerOpen = !!DevChat.specViewer.open;
