@@ -274,7 +274,8 @@ function issueRoutes(config) {
   // Lists the repo's OPEN GitHub issues (via github.fetchPublicIssues —
   // anonymous, cached, never-throws) for the "Open Issues" activity-panel
   // section. Augments each issue with this app's OPEN-bounty count and a
-  // per-viewer `my_bounty` flag, plus the viewer's remaining weekly kudos
+  // per-viewer `my_bounty` flag, the issue's creating user
+  // (`created_by_username`, #133), plus the viewer's remaining weekly kudos
   // allowance so the FE can disable the "Give kudos" button when the shared
   // budget is spent. Distinct from the platform-internal `issues` table
   // (governance proposals) listed by GET /api/apps/:slug/issues above.
@@ -308,12 +309,34 @@ function issueRoutes(config) {
       );
       const byNumber = new Map(bountyRows.map((r) => [r.n, r]));
 
+      // #133: resolve each issue's creating user so the panel can show it
+      // next to the title the way PR rows show their author. Platform-filed
+      // issues record created_by in the local issues table; feedback-filed
+      // ones carry the creator in the body's "**Source:** usernode user
+      // (name)" line; issues opened directly on GitHub fall back to the
+      // GitHub login (skipping GitHub App bot accounts, which would just
+      // name the platform bot on every row).
+      const { rows: creatorRows } = await pool.query(
+        `SELECT i.github_issue_number AS n, u.username
+           FROM issues i JOIN users u ON u.id = i.created_by
+          WHERE i.app_id = $1 AND i.github_issue_number IS NOT NULL`,
+        [app.id]
+      );
+      const creatorByNumber = new Map(creatorRows.map((r) => [r.n, r.username]));
+
       const issues = (result.issues || []).map((issue) => {
         const b = byNumber.get(issue.number);
+        const sourceMatch = typeof issue.body === 'string'
+          ? issue.body.match(/\*\*Source:\*\*\s*usernode user \(([^)]+)\)/)
+          : null;
+        const ghLogin = issue.user && !issue.user.endsWith('[bot]') ? issue.user : null;
         return {
           ...issue,
           bounty_count: b ? b.cnt : 0,
           my_bounty: b ? !!b.mine : false,
+          created_by_username: creatorByNumber.get(issue.number)
+            || (sourceMatch ? sourceMatch[1] : null)
+            || ghLogin,
         };
       });
 
