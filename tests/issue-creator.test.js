@@ -3,9 +3,10 @@
 // Platform-filed GitHub issues are authored by the bot account
 // ("usernode-bot"); the real creator lives in the body's first
 // "**Source:**" line written by routes/feedback.js. The helper must
-// recognize both forms that route writes:
-//   - "**Source:** usernode user (name)"  -> "name"
-//   - "**Source:** usernode admin"        -> "admin"
+// recognize the forms that route writes:
+//   - "**Source:** usernode user (name)"   -> "name"
+//   - "**Source:** usernode admin (name)"  -> "name"   (#140)
+//   - "**Source:** usernode admin"         -> "admin"  (legacy, pre-#140)
 // and return null for anything else so callers can fall back to the
 // GitHub login (for issues opened directly on GitHub).
 //
@@ -30,7 +31,14 @@ test('parses usernames containing spaces and dots', () => {
   );
 });
 
-test('parses the "usernode admin" form as "admin"', () => {
+test('parses the "usernode admin (name)" form (#140)', () => {
+  assert.equal(
+    creatorFromSourceLine('**Source:** usernode admin (evan)\n\nuse name of creator of issue'),
+    'evan'
+  );
+});
+
+test('parses the legacy bare "usernode admin" form as "admin"', () => {
   assert.equal(
     creatorFromSourceLine('**Source:** usernode admin\n\nuse name of creator of issue'),
     'admin'
