@@ -498,6 +498,12 @@ function normalizeIssue(raw) {
     labels,
     updatedAt: raw.updated_at || null,
     htmlUrl: raw.html_url || null,
+    // #133: GitHub-side creator login. For platform-filed issues this is
+    // the bot (the real creator lives in the local issues table / the
+    // body's "**Source:**" line); for issues opened directly on GitHub
+    // it's the actual author, which the github-issues route uses as a
+    // last-resort creator fallback.
+    user: (raw.user && raw.user.login) || null,
   };
 }
 

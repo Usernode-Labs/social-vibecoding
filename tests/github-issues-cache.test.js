@@ -23,6 +23,7 @@ function fakeIssue(number, title, updatedAt) {
     labels: [{ name: 'usernode' }],
     updated_at: updatedAt,
     html_url: `https://github.com/o/r/issues/${number}`,
+    user: { login: `gh-user-${number}` },
   };
 }
 
@@ -72,6 +73,9 @@ test('seeds a cached repo so the next fetchPublicIssues sees the new issue witho
     assert.strictEqual(after.issues[0].number, 2, 'new issue is prepended');
     assert.strictEqual(after.issues[0].title, 'fresh feedback');
     assert.strictEqual(after.issues[0].htmlUrl, 'https://github.com/o/r/issues/2');
+    // #133: the GitHub-side creator login rides along so the Open Issues
+    // panel's creator fallback chain works for seeded issues too.
+    assert.strictEqual(after.issues[0].user, 'gh-user-2');
   } finally {
     global.fetch = origFetch;
   }

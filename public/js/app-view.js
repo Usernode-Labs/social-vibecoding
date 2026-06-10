@@ -927,9 +927,14 @@ const AppView = {
         bodyHtml += '<div class="mb-2"><div class="text-xs text-zinc-500 mb-1 font-medium">Issues</div><div class="divide-y divide-zinc-200 dark:divide-zinc-800 sm:divide-y-0 border-y border-zinc-200 dark:border-zinc-800 sm:border-y-0">';
         for (const issue of issues.slice(0, 5)) {
           const myVote = issue.my_vote;
+          // #133: same "· user" creator treatment as PR rows. The list
+          // route already joins users for created_by_username.
+          const issueCreator = issue.created_by_username
+            ? ` <span class="text-zinc-500">· ${escapeHtml(issue.created_by_username)}</span>`
+            : '';
           bodyHtml += `
             <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
-              <span class="text-xs text-zinc-300 flex-1 min-w-0 truncate">${escapeHtml(issue.title)}</span>
+              <span class="text-xs text-zinc-300 flex-1 min-w-0 truncate" title="${escapeHtml(issue.title)}">${escapeHtml(issue.title)}${issueCreator}</span>
               <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
                 <button class="gc-vote-btn ${myVote === 'up' ? 'gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'up')">&#9650; ${issue.up_count}</button>
                 <button class="gc-vote-btn ${myVote === 'down' ? 'gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'down')">&#9660; ${issue.down_count}</button>
@@ -1209,11 +1214,21 @@ const AppView = {
         : (budgetSpent ? 'Weekly kudos allowance spent' : 'Pledge a kudos bounty — paid to whoever\'s merged PR closes this issue');
       const kudosBtn = `<button class="gc-vote-btn"${kudosDisabled ? ' disabled' : ''} title="${kudosTitle}" onclick="AppView.giveIssueBounty(${n})">${issue.my_bounty ? '&#9733; Bountied' : 'Give kudos'}</button>`;
       const createBtn = `<button class="gc-vote-btn" title="Start a dev chat to solve this issue" onclick="AppView.createPrForIssue(${n})">Create PR</button>`;
+      // #133: show the creating user next to the title, same "· user"
+      // treatment as PR rows above. created_by_username comes from the
+      // /github-issues route (local issues table → body Source line →
+      // GitHub login); omitted when the creator couldn't be resolved.
+      const creatorSuffix = issue.created_by_username
+        ? ` <span class="text-zinc-500">· ${escapeHtml(issue.created_by_username)}</span>`
+        : '';
+      const rowTitle = issue.created_by_username
+        ? `${issue.title} · ${issue.created_by_username}`
+        : issue.title;
 
       html += `
         <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
           <a href="${href}" target="_blank" rel="noopener" class="text-xs text-violet-400 font-mono hover:underline">#${n}</a>
-          <span class="text-xs text-zinc-300 flex-1 min-w-0 truncate" title="${escapeHtml(issue.title)}">${escapeHtml(issue.title)}</span>
+          <span class="text-xs text-zinc-300 flex-1 min-w-0 truncate" title="${escapeHtml(rowTitle)}">${escapeHtml(issue.title)}${creatorSuffix}</span>
           ${bountyPill}
           <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
             ${kudosBtn}
