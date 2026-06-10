@@ -928,6 +928,38 @@ async function checkAndMerge(config, pool, session, options = {}) {
       });
     }
 
+    // #135: GitHub's native auto-close of `Closes #N` issues can lag the
+    // merge by long enough that the panel (and the issues cache) still see
+    // them open. Close them deterministically: parse the merged PR body
+    // for closing keywords (unioned with linked_issues) and close each
+    // still-open issue via the API with retry/backoff. Fired-and-forgotten
+    // — the grace delay and retries must never slow down or fail the merge
+    // flow, and the service skips issues GitHub already closed itself.
+    try {
+      if (github.isEnabled() && session.pr_number) {
+        const [, acOwner, acRepo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+        if (acOwner && acRepo) {
+          const { autoCloseIssuesForMergedPR } = require('../services/issue-autoclose');
+          autoCloseIssuesForMergedPR({
+            owner: acOwner,
+            repo: acRepo,
+            prNumber: session.pr_number,
+            linkedIssues: session.linked_issues,
+            appSlug: session.app_slug,
+            appId: session.app_id,
+          }).catch((err) => {
+            log.warn('votes', 'Post-merge issue auto-close failed', {
+              sessionId: session.id, err: err.message,
+            });
+          });
+        }
+      }
+    } catch (err) {
+      log.warn('votes', 'Post-merge issue auto-close setup failed', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+
     // Chat session is done — no further turns will reference CC memory,
     // so drop the persistent `.claude` volume.
     try {
