@@ -604,6 +604,35 @@ function invalidateIssuesCache(owner, repo) {
   return false;
 }
 
+// Prepend a just-created issue to a repo's cached open-issues list so the
+// very next fetchPublicIssues call sees it. Called from the feedback path
+// (routes/feedback.js) right after createIssue succeeds, paired with a
+// pushIssueUpdate broadcast that makes clients re-pull the "Open Issues"
+// panel. Seeding instead of invalidating keeps the cache warm — no extra
+// anonymous GitHub list call against the 60/hr/IP budget, and no
+// read-after-write lag from GitHub's list endpoint hiding the new issue.
+// Match is case-insensitive and ignores a trailing `.git` on the repo
+// (mirrors how repo_url parsing can capture it). Dedupes by issue number.
+// No-op (returns false) when the repo has no live cache entry — the next
+// fetch reads fresh from GitHub and picks the issue up there.
+function noteIssueCreated(owner, repo, rawIssue) {
+  if (!owner || !repo || !rawIssue || rawIssue.number == null) return false;
+  const norm = (o, r) => `${o}/${r}`.toLowerCase().replace(/\.git$/, '');
+  const target = norm(owner, repo);
+  for (const key of issuesCache.keys()) {
+    if (key.toLowerCase().replace(/\.git$/, '') !== target) continue;
+    const entry = issuesCache.get(key);
+    const issues = [
+      normalizeIssue(rawIssue),
+      ...entry.result.issues.filter((i) => i.number !== rawIssue.number),
+    ];
+    issuesCache.set(key, { ...entry, result: { ...entry.result, issues } });
+    log.debug('github', 'Seeded open-issues cache with new issue', { repo: key, issue: rawIssue.number });
+    return true;
+  }
+  return false;
+}
+
 module.exports = {
   init,
   isEnabled,
@@ -632,4 +661,5 @@ module.exports = {
   fetchPublicRepoInfo,
   fetchPublicIssues,
   invalidateIssuesCache,
+  noteIssueCreated,
 };
