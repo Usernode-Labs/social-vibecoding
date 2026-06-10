@@ -21,6 +21,22 @@ function parseOwnerRepo(repoUrl) {
   return owner && repo ? { owner, repo } : null;
 }
 
+// #136: platform-filed GitHub issues are authored by the bot account, but
+// the real creator is recorded in the body's first "**Source:**" line
+// (written by routes/feedback.js): "usernode user (name)" for regular
+// users, "usernode admin" for admins. Returns the creator's display name
+// or null when no Source line can be parsed.
+function creatorFromSourceLine(body) {
+  if (typeof body !== 'string') return null;
+  const m = body.match(/\*\*Source:\*\*\s*([^\n]+)/);
+  if (!m) return null;
+  const source = m[1].trim();
+  const user = source.match(/^usernode user \(([^)]+)\)/);
+  if (user) return user[1];
+  if (/^usernode admin\b/.test(source)) return 'admin';
+  return null;
+}
+
 // Renames are no longer an issue kind — they open a dapp.json `name` PR
 // via POST /api/apps/:slug/rename (see src/routes/apps.js). The vote-apply
 // path below (maybeApplyRenameProposal) is retained only so any rename
@@ -309,13 +325,14 @@ function issueRoutes(config) {
       );
       const byNumber = new Map(bountyRows.map((r) => [r.n, r]));
 
-      // #133: resolve each issue's creating user so the panel can show it
-      // next to the title the way PR rows show their author. Platform-filed
-      // issues record created_by in the local issues table; feedback-filed
-      // ones carry the creator in the body's "**Source:** usernode user
-      // (name)" line; issues opened directly on GitHub fall back to the
-      // GitHub login (skipping GitHub App bot accounts, which would just
-      // name the platform bot on every row).
+      // #133/#136: resolve each issue's creating user so the panel can show
+      // it next to the title the way PR rows show their author. Platform-
+      // filed issues record created_by in the local issues table; feedback-
+      // filed ones carry the creator in the body's "**Source:**" line
+      // (both the "usernode user (name)" and "usernode admin" forms);
+      // issues opened directly on GitHub fall back to the GitHub login —
+      // but never the platform bot account itself, which would just name
+      // "usernode-bot" on every platform-filed row.
       const { rows: creatorRows } = await pool.query(
         `SELECT i.github_issue_number AS n, u.username
            FROM issues i JOIN users u ON u.id = i.created_by
@@ -326,16 +343,15 @@ function issueRoutes(config) {
 
       const issues = (result.issues || []).map((issue) => {
         const b = byNumber.get(issue.number);
-        const sourceMatch = typeof issue.body === 'string'
-          ? issue.body.match(/\*\*Source:\*\*\s*usernode user \(([^)]+)\)/)
+        const ghLogin = issue.user && !issue.user.endsWith('[bot]') && issue.user !== 'usernode-bot'
+          ? issue.user
           : null;
-        const ghLogin = issue.user && !issue.user.endsWith('[bot]') ? issue.user : null;
         return {
           ...issue,
           bounty_count: b ? b.cnt : 0,
           my_bounty: b ? !!b.mine : false,
           created_by_username: creatorByNumber.get(issue.number)
-            || (sourceMatch ? sourceMatch[1] : null)
+            || creatorFromSourceLine(issue.body)
             || ghLogin,
         };
       });
@@ -801,4 +817,4 @@ async function maybeApplySecretChangeProposal(config, pool, issue) {
   }
 }
 
-module.exports = { issueRoutes };
+module.exports = { issueRoutes, creatorFromSourceLine };
