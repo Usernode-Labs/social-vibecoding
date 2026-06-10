@@ -1593,6 +1593,12 @@ const App = {
     const headerEl = document.getElementById('header-title');
     if (headerEl) headerEl.textContent = text;
     document.title = text;
+    // Re-apply the dev-chat status marker ("⏳ thinking / ✅ done",
+    // #108) that the plain title assignment above just wiped, then let
+    // Notifications re-apply its "(N) " unread prefix outermost.
+    if (window.DevChat && typeof DevChat.applyTitleStatus === 'function') {
+      DevChat.applyTitleStatus();
+    }
     if (window.Notifications && typeof Notifications._updateTitle === 'function') {
       Notifications._updateTitle();
     }
@@ -1640,6 +1646,10 @@ const App = {
     // even though there's no UI to update.
     if (tab !== 'individual-chat' && typeof DevChat !== 'undefined' && DevChat.stopActiveSessionsPoll) {
       DevChat.stopActiveSessionsPoll();
+      // The title status indicator (#108) is scoped to "user is on the
+      // dev-chat tab" — leaving the tab clears it. Re-entering while a
+      // run is live re-applies it via openSession's busy check.
+      if (DevChat.setTitleStatus) DevChat.setTitleStatus(null);
     }
 
     switch (tab) {

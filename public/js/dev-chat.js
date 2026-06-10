@@ -29,6 +29,16 @@ const DevChat = {
   // Handle to the resumable EventSource, if open.
   _eventSource: null,
 
+  // ----- Browser-title status indicator (#108) -----
+  // While the user is on the dev-chat tab, the document title carries a
+  // status marker for the current session's turn: "thinking" while the
+  // Mayor / Claude Code is working, flipping to "done" when the turn
+  // finishes, and cleared when the user leaves the tab / switches
+  // session / starts typing a new turn. The point is glanceability from
+  // another browser tab — you can kick off a build, go do something
+  // else, and the tab title tells you when it's finished.
+  _titleStatus: null, // null | 'thinking' | 'done'
+
   budget: null,
 
   // ----- Cross-app active sessions panel state -----
@@ -136,6 +146,7 @@ const DevChat = {
     DevChat.currentSession = null;
     DevChat.messages = [];
     DevChat.isStreaming = false;
+    DevChat.setTitleStatus(null);
     DevChat._staleTimer = null;
     DevChat._lastSeenSeq = null;
     DevChat._resetSpecViewer();
@@ -531,6 +542,11 @@ const DevChat = {
 
       DevChat.currentSession = session;
       DevChat._startHeartbeat();
+      // Drop any title marker carried over from the previous session —
+      // a "done" badge from session A must not survive into session B.
+      // If THIS session is mid-run, the busy check below re-applies
+      // "thinking" via _setStreamingUI.
+      DevChat.setTitleStatus(null);
       // Restore the spec viewer's open/closed state from localStorage
       // before the caller's renderChatView fires, so a refresh on a
       // session that had the viewer open paints with the panel
@@ -1134,9 +1150,77 @@ const DevChat = {
   // it's already in phase-2 anyway.
   _streamingPhase: null,
 
+  // Title markers for the dev-chat status indicator (#108). Kept as a
+  // map so applyTitleStatus can strip whichever one is currently
+  // applied before re-prefixing.
+  // Status text leads the title so it survives browser-tab truncation —
+  // a glance at a narrow tab shows "⏳ Thinking…" even when the app
+  // name doesn't fit.
+  TITLE_STATUS_MARKERS: {
+    thinking: '⏳ Thinking… · ',
+    done: '✅ Done · ',
+  },
+
+  // Set (or clear, with null) the dev-chat status reflected in
+  // document.title. Non-null statuses only stick while the dev-chat tab
+  // is the mounted tab — a turn finishing while the user is on the App
+  // or Group Chat tab must not decorate those views' titles.
+  setTitleStatus(status) {
+    if (status && (typeof App === 'undefined' || App.currentTab !== 'individual-chat')) {
+      status = null;
+    }
+    if (DevChat._titleStatus === status) return;
+    DevChat._titleStatus = status;
+    DevChat.applyTitleStatus();
+  },
+
+  // Re-derive document.title from the current base title + status
+  // marker. Composes with Notifications._updateTitle's "(N) " unread
+  // prefix: the count stays outermost — `(2) ⏳ MyApp` — because the
+  // notifications module treats everything after the count as the base,
+  // and we treat the count as a passthrough prefix here. Also safe to
+  // call when no marker applies (it just strips a stale one). Exposed
+  // (not underscored) because App.setHeaderTitle calls it after every
+  // navigation re-set of the title.
+  applyTitleStatus() {
+    const full = document.title;
+    const countMatch = full.match(/^\(\d+\)\s*/);
+    const count = countMatch ? countMatch[0] : '';
+    let base = full.slice(count.length);
+    for (const m of Object.values(DevChat.TITLE_STATUS_MARKERS)) {
+      if (base.startsWith(m)) { base = base.slice(m.length); break; }
+    }
+    const marker = DevChat._titleStatus
+      ? DevChat.TITLE_STATUS_MARKERS[DevChat._titleStatus]
+      : '';
+    const next = count + marker + base;
+    if (next === full) return;
+    document.title = next;
+    // Mirror setHeaderTitle's fast-path sync to the native shell so the
+    // Flutter AppBar tracks the marker too (unknown methods are dropped
+    // by older app builds — see setHeaderTitle for the full story).
+    try {
+      if (window.Usernode && typeof window.Usernode.postMessage === 'function') {
+        window.Usernode.postMessage(JSON.stringify({
+          method: 'titleChanged',
+          value: document.title,
+        }));
+      }
+    } catch (_) {}
+  },
+
   _setStreamingUI(streaming, phase = null) {
     if (streaming) DevChat._streamingPhase = phase;
     else DevChat._streamingPhase = null;
+
+    // Every streaming state transition funnels through here (send,
+    // reconnect, phase change, finish, stop), so this is the one hook
+    // needed for the title indicator: streaming → "thinking"; a
+    // streaming→idle edge → "done". The `=== 'thinking'` guard means we
+    // only flip to "done" when a run was actually live in this tab —
+    // idle re-renders don't conjure a done marker.
+    if (streaming) DevChat.setTitleStatus('thinking');
+    else if (DevChat._titleStatus === 'thinking') DevChat.setTitleStatus('done');
 
     const btn = document.getElementById('dc-send-btn');
     if (!btn) return;
@@ -2348,6 +2432,9 @@ const DevChat = {
     document.getElementById('dc-back').addEventListener('click', () => {
       DevChat.currentSession = null;
       DevChat.messages = [];
+      // The title marker describes the session we just left — drop it
+      // so the session list doesn't claim to be thinking / done.
+      DevChat.setTitleStatus(null);
       DevChat.renderChatView();
       App.updateHash();
     });
