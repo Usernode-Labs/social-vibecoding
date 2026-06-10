@@ -65,6 +65,15 @@ function loadWithStubs({ gh = {}, calls, ws }) {
       invalidateIssuesCache: (owner, repo) => {
         calls.push({ type: 'invalidateIssuesCache', owner, repo });
       },
+      // #144: known-closed suppression hooks the watcher drives.
+      noteIssuesClosed: (owner, repo, numbers) => {
+        calls.push({ type: 'noteIssuesClosed', owner, repo, numbers: [...numbers] });
+        return numbers.length;
+      },
+      unsuppressIssues: (owner, repo, numbers) => {
+        calls.push({ type: 'unsuppressIssues', owner, repo, numbers: [...numbers] });
+        return numbers.length;
+      },
       ...gh.overrides,
     },
     loaded: true, id: ghPath, filename: ghPath, paths: orig.gh ? orig.gh.paths : [],
@@ -109,6 +118,12 @@ test('confirms already-closed issues on the first poll and broadcasts once', asy
     assert.deepEqual(res.closed, [3, 9]);
     assert.deepEqual(res.stillOpen, []);
     assert.equal(calls.filter((c) => c.type === 'invalidateIssuesCache').length, 1);
+    // #144: suppressed optimistically up front, re-suppressed on the
+    // observed close, and nothing unsuppressed (everything DID close).
+    const noted = calls.filter((c) => c.type === 'noteIssuesClosed');
+    assert.deepEqual(noted[0].numbers, [3, 9]);
+    assert.deepEqual(noted[noted.length - 1].numbers, [3, 9]);
+    assert.equal(calls.filter((c) => c.type === 'unsuppressIssues').length, 0);
     assert.equal(ws.length, 1);
     assert.equal(ws[0].source, 'issue_close_watcher');
     assert.equal(ws[0].appSlug, 'some-app');
@@ -172,6 +187,11 @@ test('reports stillOpen after exhausting attempts, no broadcast, never throws', 
     assert.equal(calls.filter((c) => c.type === 'getIssue').length, 3);
     assert.equal(ws.length, 0);
     assert.equal(calls.filter((c) => c.type === 'invalidateIssuesCache').length, 0);
+    // #144: the optimistic suppression is lifted for a genuinely-open
+    // issue so it isn't hidden from the panel for the suppression TTL.
+    const unsup = calls.filter((c) => c.type === 'unsuppressIssues');
+    assert.equal(unsup.length, 1);
+    assert.deepEqual(unsup[0].numbers, [8]);
   } finally { restore(); }
 });
 

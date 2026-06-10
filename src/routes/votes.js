@@ -913,6 +913,17 @@ async function checkAndMerge(config, pool, session, options = {}) {
     try {
       const [, ghOwner, ghRepo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
       if (ghOwner && ghRepo) {
+        // #144: record the linked issues as closed BEFORE busting the
+        // cache + broadcasting. GitHub's auto-close is async and its
+        // anonymous list endpoint lags even further, so the refetch this
+        // broadcast triggers can read the issues as still open and
+        // re-cache them — the suppression list makes fetchPublicIssues
+        // drop them no matter what the list says. Optimistic on purpose:
+        // GitHub closes `Closes #N` reliably (just late), and the
+        // suppression TTL self-heals the rare case where it doesn't.
+        const { sanitizeIssueNumbers } = require('../services/pr-metadata');
+        const closedNumbers = sanitizeIssueNumbers(session.linked_issues);
+        if (closedNumbers.length) github.noteIssuesClosed(ghOwner, ghRepo, closedNumbers);
         github.invalidateIssuesCache(ghOwner, ghRepo);
         const { pushIssueUpdate } = require('../services/ws');
         pushIssueUpdate({

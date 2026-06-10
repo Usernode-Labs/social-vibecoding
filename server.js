@@ -430,6 +430,19 @@ async function start() {
     log.warn('server', 'Stuck-merge recovery failed', { err: err.message });
   });
 
+  // #144: re-arm post-merge issue-close watches a restart killed. The
+  // watcher (services/issue-close-watcher.js) is fired-and-forgotten
+  // in-process from the merge path; for the self-edits app a merge
+  // triggers the GitHub Actions deploy that rolls THIS platform process,
+  // so the watcher dies before it can confirm GitHub's async auto-close
+  // and refresh the "Open Issues" panel — the closed issue then lingers
+  // until someone happens to reload after the cache TTL. Re-watching
+  // recently-merged sessions on boot closes that gap (and covers crash
+  // restarts mid-watch for ordinary apps too).
+  resumeIssueCloseWatches(config).catch((err) => {
+    log.warn('server', 'Issue-close watch resume failed', { err: err.message });
+  });
+
   // Fallback recovery: for sessions whose container is already gone but
   // whose branch is ahead of main (i.e. CC pushed commits during an old
   // pre-autonomous-worker run), complete the PR + staging tail.
@@ -537,6 +550,47 @@ async function recoverStuckMerges(config) {
     }
   } catch (err) {
     log.warn('server', 'recoverStuckMerges query failed', { err: err.message });
+  }
+}
+
+// Resume post-merge issue-close watches for sessions merged shortly
+// before this process started. See the call site for rationale. The
+// 15-minute window comfortably covers the merge → GHA build → rolling
+// restart sequence of the self-edits app; re-watching an issue GitHub
+// already closed is cheap (first poll confirms, one cache bust + panel
+// broadcast) and idempotent.
+async function resumeIssueCloseWatches(config) {
+  const github = require('./src/services/github');
+  if (!github.isEnabled()) return;
+  const { getPool } = require('./src/db/pool');
+  const pool = getPool(config);
+  const { rows } = await pool.query(
+    `SELECT cs.id, cs.pr_number, cs.linked_issues,
+            a.repo_url, a.slug AS app_slug, a.id AS app_id
+       FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+      WHERE cs.status = 'merged'
+        AND cs.merged_at > NOW() - INTERVAL '15 minutes'
+        AND cs.pr_number IS NOT NULL`
+  );
+  if (!rows.length) return;
+  const { watchIssuesClosedAfterMerge } = require('./src/services/issue-close-watcher');
+  log.info('server', 'Resuming post-merge issue-close watches', {
+    count: rows.length, sessionIds: rows.map((r) => r.id),
+  });
+  for (const row of rows) {
+    const [, owner, repo] = (row.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+    if (!owner || !repo) continue;
+    watchIssuesClosedAfterMerge({
+      owner, repo,
+      prNumber: row.pr_number,
+      linkedIssues: row.linked_issues,
+      appSlug: row.app_slug,
+      appId: row.app_id,
+    }).catch((err) => {
+      log.warn('server', 'Resumed issue-close watch failed', {
+        sessionId: row.id, err: err.message,
+      });
+    });
   }
 }
 
