@@ -928,34 +928,35 @@ async function checkAndMerge(config, pool, session, options = {}) {
       });
     }
 
-    // #135: GitHub's native auto-close of `Closes #N` issues can lag the
-    // merge by long enough that the panel (and the issues cache) still see
-    // them open. Close them deterministically: parse the merged PR body
-    // for closing keywords (unioned with linked_issues) and close each
-    // still-open issue via the API with retry/backoff. Fired-and-forgotten
-    // — the grace delay and retries must never slow down or fail the merge
-    // flow, and the service skips issues GitHub already closed itself.
+    // #135: GitHub closes `Closes #N`-referenced issues itself, but a few
+    // seconds AFTER the merge — so the cache bust + refetch above can race
+    // it, re-caching the issue as open and leaving the group-chat panel
+    // stale for the cache TTL. Watch the referenced issues (PR-body closing
+    // keywords ∪ linked_issues) with retry/backoff until GitHub reports
+    // them closed, then bust the cache and broadcast the refresh again.
+    // Fired-and-forgotten — the polling must never slow down or fail the
+    // merge flow, and nothing is ever written to GitHub.
     try {
       if (github.isEnabled() && session.pr_number) {
-        const [, acOwner, acRepo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-        if (acOwner && acRepo) {
-          const { autoCloseIssuesForMergedPR } = require('../services/issue-autoclose');
-          autoCloseIssuesForMergedPR({
-            owner: acOwner,
-            repo: acRepo,
+        const [, wOwner, wRepo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+        if (wOwner && wRepo) {
+          const { watchIssuesClosedAfterMerge } = require('../services/issue-close-watcher');
+          watchIssuesClosedAfterMerge({
+            owner: wOwner,
+            repo: wRepo,
             prNumber: session.pr_number,
             linkedIssues: session.linked_issues,
             appSlug: session.app_slug,
             appId: session.app_id,
           }).catch((err) => {
-            log.warn('votes', 'Post-merge issue auto-close failed', {
+            log.warn('votes', 'Post-merge issue-close watch failed', {
               sessionId: session.id, err: err.message,
             });
           });
         }
       }
     } catch (err) {
-      log.warn('votes', 'Post-merge issue auto-close setup failed', {
+      log.warn('votes', 'Post-merge issue-close watch setup failed', {
         sessionId: session.id, err: err.message,
       });
     }

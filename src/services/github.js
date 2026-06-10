@@ -278,10 +278,10 @@ async function closeIssue(owner, repo, issueNumber) {
 }
 
 // Fetch a single issue (state, pull_request marker, …). Used by the
-// post-merge auto-close (#135) to check whether GitHub's own `Closes #N`
-// handling already closed the issue before we close it explicitly. Note
-// GitHub numbers issues and PRs in one sequence — callers must check the
-// `pull_request` key on the response to tell them apart.
+// post-merge close watcher (#135) to poll whether GitHub's own `Closes #N`
+// handling has closed the issue yet. Note GitHub numbers issues and PRs in
+// one sequence — callers must check the `pull_request` key on the response
+// to tell them apart.
 async function getIssue(owner, repo, issueNumber) {
   const octokit = await getOctokit(owner);
   const { data } = await octokit.rest.issues.get({

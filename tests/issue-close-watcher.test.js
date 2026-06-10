@@ -1,25 +1,30 @@
-// Tests for src/services/issue-autoclose.js (#135) — the post-merge
-// deterministic close of `Closes #N`-referenced issues.
+// Tests for src/services/issue-close-watcher.js (#135) — the post-merge
+// poll that waits for GitHub's own `Closes #N` auto-close to land, then
+// busts the open-issues cache + broadcasts so the group-chat panel drops
+// the issue.
 //
 // Covers the guarantees the merge path depends on:
-//   1. Issues GitHub already closed natively are skipped (no double close).
-//   2. Still-open issues are closed explicitly via the API.
-//   3. Transient close failures retry with backoff and eventually succeed.
-//   4. Exhausted retries are reported as failed, never thrown.
-//   5. PR-shaped references and 404s are skipped.
+//   1. Issues GitHub already closed are confirmed on the first poll and
+//      trigger exactly one cache bust + broadcast.
+//   2. Issues that close a few polls in are retried with backoff and the
+//      broadcast fires once the closed state is observed.
+//   3. The watcher NEVER writes to GitHub (no closeIssue calls).
+//   4. Exhausted retries report stillOpen, no broadcast, never throw.
+//   5. PR-shaped references and 404s are dropped from the watch.
 //   6. Issue numbers come from the merged PR body's closing keywords
-//      unioned with the session's linked_issues.
-//   7. A successful self-close busts the issues cache + broadcasts.
+//      unioned with the session's linked_issues (getPR failure falls back
+//      to linked_issues alone).
+//   7. Transient state-check errors keep the issue in the watch.
 //
 // Like the other suites we stub collaborators via require.cache so no
 // real GitHub calls happen.
 //
-// Run with: node --test tests/issue-autoclose.test.js
+// Run with: node --test tests/issue-close-watcher.test.js
 
 // Zero all delays before the unit under test loads its tunables.
-process.env.ISSUE_AUTOCLOSE_GRACE_MS = '0';
-process.env.ISSUE_AUTOCLOSE_BACKOFF_MS = '0';
-process.env.ISSUE_AUTOCLOSE_ATTEMPTS = '3';
+process.env.ISSUE_CLOSE_WATCH_GRACE_MS = '0';
+process.env.ISSUE_CLOSE_WATCH_BACKOFF_MS = '0';
+process.env.ISSUE_CLOSE_WATCH_ATTEMPTS = '3';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -30,7 +35,7 @@ const assert = require('node:assert/strict');
 function loadWithStubs({ gh = {}, calls, ws }) {
   const ghPath = require.resolve('../src/services/github');
   const wsPath = require.resolve('../src/services/ws');
-  const subjectPath = require.resolve('../src/services/issue-autoclose');
+  const subjectPath = require.resolve('../src/services/issue-close-watcher');
   const prMetaPath = require.resolve('../src/services/pr-metadata');
   const orig = {
     gh: require.cache[ghPath],
@@ -50,11 +55,11 @@ function loadWithStubs({ gh = {}, calls, ws }) {
       getIssue: async (owner, repo, issueNumber) => {
         calls.push({ type: 'getIssue', owner, repo, issueNumber });
         if (gh.getIssue) return gh.getIssue(owner, repo, issueNumber);
-        return { number: issueNumber, state: 'open' };
+        return { number: issueNumber, state: 'closed' };
       },
+      // The watcher must never call this — recorded so tests can assert 0.
       closeIssue: async (owner, repo, issueNumber) => {
         calls.push({ type: 'closeIssue', owner, repo, issueNumber });
-        if (gh.closeIssue) return gh.closeIssue(owner, repo, issueNumber);
         return { number: issueNumber, state: 'closed' };
       },
       invalidateIssuesCache: (owner, repo) => {
@@ -75,7 +80,7 @@ function loadWithStubs({ gh = {}, calls, ws }) {
   // parseClosingKeywords/sanitizeIssueNumbers (which we want exercised).
   delete require.cache[prMetaPath];
   delete require.cache[subjectPath];
-  const subject = require('../src/services/issue-autoclose');
+  const subject = require('../src/services/issue-close-watcher');
 
   const restore = () => {
     if (orig.gh) require.cache[ghPath] = orig.gh; else delete require.cache[ghPath];
@@ -93,86 +98,84 @@ const BASE_ARGS = {
   appSlug: 'some-app', appId: 7,
 };
 
-test('skips issues GitHub already closed natively', async () => {
+test('confirms already-closed issues on the first poll and broadcasts once', async () => {
   const calls = [], ws = [];
   const { subject, restore } = loadWithStubs({
     calls, ws,
-    gh: {
-      getPR: async () => ({ body: 'Fix things\n\nCloses #5' }),
-      getIssue: async (o, r, n) => ({ number: n, state: 'closed' }),
-    },
+    gh: { getPR: async () => ({ body: 'Fix things\n\nCloses #3\nfixes #9' }) },
   });
   try {
-    const res = await subject.autoCloseIssuesForMergedPR({ ...BASE_ARGS });
-    assert.deepEqual(res.alreadyClosed, [5]);
-    assert.deepEqual(res.closed, []);
-    assert.equal(calls.filter((c) => c.type === 'closeIssue').length, 0);
-    // Nothing self-closed → no extra cache bust / broadcast.
-    assert.equal(ws.length, 0);
-  } finally { restore(); }
-});
-
-test('closes still-open issues and busts the cache + broadcasts', async () => {
-  const calls = [], ws = [];
-  const { subject, restore } = loadWithStubs({
-    calls, ws,
-    gh: { getPR: async () => ({ body: 'Closes #3\nfixes #9' }) },
-  });
-  try {
-    const res = await subject.autoCloseIssuesForMergedPR({ ...BASE_ARGS });
+    const res = await subject.watchIssuesClosedAfterMerge({ ...BASE_ARGS });
     assert.deepEqual(res.closed, [3, 9]);
-    assert.deepEqual(
-      calls.filter((c) => c.type === 'closeIssue').map((c) => c.issueNumber),
-      [3, 9]
-    );
+    assert.deepEqual(res.stillOpen, []);
     assert.equal(calls.filter((c) => c.type === 'invalidateIssuesCache').length, 1);
     assert.equal(ws.length, 1);
-    assert.equal(ws[0].source, 'issue_autoclose');
+    assert.equal(ws[0].source, 'issue_close_watcher');
     assert.equal(ws[0].appSlug, 'some-app');
+    // One poll round was enough — no extra getIssue calls.
+    assert.equal(calls.filter((c) => c.type === 'getIssue').length, 2);
   } finally { restore(); }
 });
 
-test('retries transient failures with backoff and succeeds', async () => {
+test('keeps polling until GitHub reports closed, then broadcasts', async () => {
   const calls = [], ws = [];
-  let attempts = 0;
+  let polls = 0;
   const { subject, restore } = loadWithStubs({
     calls, ws,
     gh: {
       getPR: async () => ({ body: 'Closes #4' }),
-      closeIssue: async () => {
-        attempts++;
-        if (attempts < 3) { const e = new Error('boom'); e.status = 502; throw e; }
-        return { state: 'closed' };
+      getIssue: async (o, r, n) => {
+        polls++;
+        // GitHub's delayed auto-close lands on the third poll.
+        return { number: n, state: polls < 3 ? 'open' : 'closed' };
       },
     },
   });
   try {
-    const res = await subject.autoCloseIssuesForMergedPR({ ...BASE_ARGS });
-    assert.equal(attempts, 3);
+    const res = await subject.watchIssuesClosedAfterMerge({ ...BASE_ARGS });
+    assert.equal(polls, 3);
     assert.deepEqual(res.closed, [4]);
-    assert.deepEqual(res.failed, []);
+    assert.deepEqual(res.stillOpen, []);
+    assert.equal(ws.length, 1);
   } finally { restore(); }
 });
 
-test('reports failed after exhausting attempts, never throws', async () => {
+test('never writes to GitHub', async () => {
+  const calls = [], ws = [];
+  const { subject, restore } = loadWithStubs({
+    calls, ws,
+    gh: {
+      getPR: async () => ({ body: 'Closes #5' }),
+      getIssue: async (o, r, n) => ({ number: n, state: 'open' }),
+    },
+  });
+  try {
+    await subject.watchIssuesClosedAfterMerge({ ...BASE_ARGS });
+    assert.equal(calls.filter((c) => c.type === 'closeIssue').length, 0);
+  } finally { restore(); }
+});
+
+test('reports stillOpen after exhausting attempts, no broadcast, never throws', async () => {
   const calls = [], ws = [];
   const { subject, restore } = loadWithStubs({
     calls, ws,
     gh: {
       getPR: async () => ({ body: 'Closes #8' }),
-      closeIssue: async () => { const e = new Error('still down'); e.status = 500; throw e; },
+      getIssue: async (o, r, n) => ({ number: n, state: 'open' }),
     },
   });
   try {
-    const res = await subject.autoCloseIssuesForMergedPR({ ...BASE_ARGS });
-    assert.deepEqual(res.failed, [8]);
+    const res = await subject.watchIssuesClosedAfterMerge({ ...BASE_ARGS });
+    assert.deepEqual(res.stillOpen, [8]);
     assert.deepEqual(res.closed, []);
-    assert.equal(calls.filter((c) => c.type === 'closeIssue').length, 3);
+    // ISSUE_CLOSE_WATCH_ATTEMPTS=3 poll rounds, one issue each.
+    assert.equal(calls.filter((c) => c.type === 'getIssue').length, 3);
     assert.equal(ws.length, 0);
+    assert.equal(calls.filter((c) => c.type === 'invalidateIssuesCache').length, 0);
   } finally { restore(); }
 });
 
-test('skips PR-shaped references and 404s', async () => {
+test('drops PR-shaped references and 404s from the watch', async () => {
   const calls = [], ws = [];
   const { subject, restore } = loadWithStubs({
     calls, ws,
@@ -185,9 +188,34 @@ test('skips PR-shaped references and 404s', async () => {
     },
   });
   try {
-    const res = await subject.autoCloseIssuesForMergedPR({ ...BASE_ARGS });
+    const res = await subject.watchIssuesClosedAfterMerge({ ...BASE_ARGS });
     assert.deepEqual(res.skipped.sort(), [2, 6]);
-    assert.equal(calls.filter((c) => c.type === 'closeIssue').length, 0);
+    assert.deepEqual(res.stillOpen, []);
+    assert.equal(ws.length, 0);
+    // Both dropped in round one — no further polling.
+    assert.equal(calls.filter((c) => c.type === 'getIssue').length, 2);
+  } finally { restore(); }
+});
+
+test('transient state-check errors keep the issue in the watch', async () => {
+  const calls = [], ws = [];
+  let polls = 0;
+  const { subject, restore } = loadWithStubs({
+    calls, ws,
+    gh: {
+      getPR: async () => ({ body: 'Closes #7' }),
+      getIssue: async (o, r, n) => {
+        polls++;
+        if (polls === 1) { const e = new Error('boom'); e.status = 502; throw e; }
+        return { number: n, state: 'closed' };
+      },
+    },
+  });
+  try {
+    const res = await subject.watchIssuesClosedAfterMerge({ ...BASE_ARGS });
+    assert.equal(polls, 2);
+    assert.deepEqual(res.closed, [7]);
+    assert.equal(ws.length, 1);
   } finally { restore(); }
 });
 
@@ -198,7 +226,7 @@ test('unions PR-body keywords with linked_issues; falls back when getPR fails', 
     gh: { getPR: async () => ({ body: 'Resolves #10' }) },
   });
   try {
-    const res = await subject.autoCloseIssuesForMergedPR({
+    const res = await subject.watchIssuesClosedAfterMerge({
       ...BASE_ARGS, linkedIssues: [10, 12, 'junk', -3],
     });
     assert.deepEqual(res.closed, [10, 12]);
@@ -210,7 +238,7 @@ test('unions PR-body keywords with linked_issues; falls back when getPR fails', 
     gh: { getPR: async () => { throw new Error('rate limited'); } },
   });
   try {
-    const res = await subject2.autoCloseIssuesForMergedPR({
+    const res = await subject2.watchIssuesClosedAfterMerge({
       ...BASE_ARGS, linkedIssues: [15],
     });
     assert.deepEqual(res.closed, [15]);
@@ -224,8 +252,8 @@ test('no-ops cleanly when GitHub is disabled or nothing is referenced', async ()
     gh: { overrides: { isEnabled: () => false } },
   });
   try {
-    const res = await subject.autoCloseIssuesForMergedPR({ ...BASE_ARGS });
-    assert.deepEqual(res, { closed: [], alreadyClosed: [], skipped: [], failed: [] });
+    const res = await subject.watchIssuesClosedAfterMerge({ ...BASE_ARGS });
+    assert.deepEqual(res, { closed: [], skipped: [], stillOpen: [] });
     assert.equal(calls.length, 0);
   } finally { restore(); }
 
@@ -235,8 +263,9 @@ test('no-ops cleanly when GitHub is disabled or nothing is referenced', async ()
     gh: { getPR: async () => ({ body: 'No keywords here' }) },
   });
   try {
-    const res = await subject2.autoCloseIssuesForMergedPR({ ...BASE_ARGS, linkedIssues: [] });
+    const res = await subject2.watchIssuesClosedAfterMerge({ ...BASE_ARGS, linkedIssues: [] });
     assert.deepEqual(res.closed, []);
     assert.equal(calls2.filter((c) => c.type === 'getIssue').length, 0);
+    assert.equal(ws2.length, 0);
   } finally { restore2(); }
 });
