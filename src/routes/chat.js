@@ -3,6 +3,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const models = require('../services/models');
 const { listActiveUserIds } = require('../services/active-users');
+const appAccess = require('../services/app-access');
 
 function chatRoutes(config) {
   const router = Router();
@@ -20,15 +21,16 @@ function chatRoutes(config) {
     const limit = Math.min(parseInt(req.query.limit || '50', 10), 100);
 
     try {
-      const { rows: appRows } = await pool.query(
-        'SELECT id FROM apps WHERE slug = $1',
-        [req.params.slug]
+      // Group chat is a collaboration surface — collab-level access (404
+      // on deny so private apps aren't enumerable).
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS
       );
-      if (appRows.length === 0) {
+      if (!app) {
         return res.status(404).json({ error: 'App not found' });
       }
 
-      const appId = appRows[0].id;
+      const appId = app.id;
       let query, params;
 
       if (before) {
@@ -101,15 +103,14 @@ function chatRoutes(config) {
   // enforced by the global JWT gate (this is a GET under /api/).
   router.get('/api/apps/:slug/mention-suggestions', async (req, res) => {
     try {
-      const { rows: appRows } = await pool.query(
-        'SELECT id, created_by FROM apps WHERE slug = $1',
-        [req.params.slug]
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS
       );
-      if (appRows.length === 0) {
+      if (!app) {
         return res.status(404).json({ error: 'App not found' });
       }
-      const appId = appRows[0].id;
-      const createdBy = appRows[0].created_by;
+      const appId = app.id;
+      const createdBy = app.created_by;
 
       // Active-user ids, via the shared definition. Non-fatal: if this
       // lookup fails we still return chat authors + creator.

@@ -36,6 +36,27 @@ async function resolveUsers(pool, usernames) {
   return rows;
 }
 
+// Visibility scoping: for a collab-private app, restrict a candidate
+// recipient-id list to its collaborators (status='member'). Public-collab
+// apps pass through unchanged. Keeps notification deep links from landing
+// people on chats they can't read (mentions) or PRs they can't vote on
+// (pr_proposed).
+async function filterToCollaborators(pool, appId, userIds) {
+  if (!appId || !userIds.length) return userIds;
+  const { rows: appRows } = await pool.query(
+    'SELECT collab_visibility FROM apps WHERE id = $1',
+    [appId]
+  );
+  if (appRows[0]?.collab_visibility !== 'private') return userIds;
+  const { rows } = await pool.query(
+    `SELECT user_id FROM app_collaborators
+      WHERE app_id = $1 AND status = 'member' AND user_id = ANY($2::int[])`,
+    [appId, userIds]
+  );
+  const members = new Set(rows.map((r) => r.user_id));
+  return userIds.filter((id) => members.has(id));
+}
+
 // Creates notification rows for every mention in `content` that resolves to
 // a real user (excluding the sender). Returns the inserted notification rows
 // joined with recipient + app info so callers can push them over WS.
@@ -46,7 +67,12 @@ async function createMentionNotifications(pool, { appId, chatMessageId, senderId
   const users = await resolveUsers(pool, names);
   // Self-mentions are allowed (useful for testing and also as a "remind
   // me" pattern). If this becomes noisy we can put it behind a flag.
-  const recipients = users;
+  // For collab-private apps, drop mentioned users who aren't members —
+  // their notification would deep-link to a chat they can't read.
+  const allowedIds = new Set(
+    await filterToCollaborators(pool, appId, users.map((u) => u.id))
+  );
+  const recipients = users.filter((u) => allowedIds.has(u.id));
   if (!recipients.length) return [];
 
   const values = [];
@@ -144,8 +170,12 @@ async function createPrProposedNotifications(pool, { appId, sessionId, proposerI
     [appId]
   );
 
-  const recipientIds = new Set([...activeIds, ...extraRows.map((r) => r.id)]);
+  let recipientIds = new Set([...activeIds, ...extraRows.map((r) => r.id)]);
   recipientIds.delete(proposerId);
+  // Collab-private apps: only collaborators can vote, so only they get
+  // nudged (a favoriter of a view-public/collab-private app would
+  // otherwise be asked to vote on a PR they can't act on).
+  recipientIds = new Set(await filterToCollaborators(pool, appId, [...recipientIds]));
   if (!recipientIds.size) return [];
 
   // INSERT ... SELECT with a NOT EXISTS guard so the per-recipient
@@ -163,6 +193,75 @@ async function createPrProposedNotifications(pool, { appId, sessionId, proposerI
     [ids, appId, sessionId, proposerId || null]
   );
   return rows;
+}
+
+// Collaborator-invite notification (kind='collab_invite'). One row per
+// outstanding invite; the actionable accept/decline UI lives in the
+// drawer's pinned Invites section (driven by listPendingInvites below,
+// the authoritative "still actionable" source) — this row is the badge
+// bump + the history entry that remains after the invite resolves.
+async function createCollabInviteNotification(pool, { appId, recipientId, inviterId }) {
+  if (!recipientId || !appId) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, source_user_id, kind)
+     VALUES ($1, $2, $3, 'collab_invite')
+     RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
+    [recipientId, appId, inviterId || null]
+  );
+  return rows;
+}
+
+// Inviter feedback (kind='collab_invite_accepted'): "@x accepted your
+// invite". Informational only — renders in the normal grouped list with
+// the standard click-through, no buttons.
+async function createCollabInviteAcceptedNotification(pool, { appId, recipientId, accepterId }) {
+  if (!recipientId || !appId) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, source_user_id, kind)
+     VALUES ($1, $2, $3, 'collab_invite_accepted')
+     RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
+    [recipientId, appId, accepterId || null]
+  );
+  return rows;
+}
+
+// Pending invites for the drawer's pinned Invites section. Sourced from
+// app_collaborators (NOT the notifications table) so the section is
+// authoritative about what's still actionable — a collab_invite
+// notification row alone can't tell whether the invite was already
+// accepted/declined in another tab.
+async function listPendingInvites(pool, userId) {
+  if (!userId) return [];
+  const { rows } = await pool.query(
+    `SELECT ac.app_id, a.slug AS app_slug, a.name AS app_name,
+            ac.created_at, inv.username AS invited_by
+       FROM app_collaborators ac
+       JOIN apps a ON a.id = ac.app_id
+       LEFT JOIN users inv ON inv.id = ac.invited_by
+      WHERE ac.user_id = $1 AND ac.status = 'invited'
+      ORDER BY ac.created_at DESC`,
+    [userId]
+  );
+  return rows.map((r) => ({
+    appId: r.app_id,
+    appSlug: r.app_slug,
+    appName: r.app_name,
+    invitedBy: r.invited_by,
+    createdAt: r.created_at,
+  }));
+}
+
+// Resolve (mark read) the collab_invite notification rows for one
+// (user, app) pair — called when the invite is accepted, declined, or
+// auto-resolved by the app going collab-public. Idempotent.
+async function markInviteNotificationsRead(pool, userId, appId) {
+  if (!userId || !appId) return 0;
+  const { rowCount } = await pool.query(
+    `UPDATE notifications SET read_at = NOW()
+      WHERE user_id = $1 AND app_id = $2 AND kind = 'collab_invite' AND read_at IS NULL`,
+    [userId, appId]
+  );
+  return rowCount || 0;
 }
 
 // Fetch up to `limit` recent notifications for a user, newest first.
@@ -385,6 +484,11 @@ module.exports = {
   createReactionNotification,
   createStalePrNotification,
   createPrProposedNotifications,
+  createCollabInviteNotification,
+  createCollabInviteAcceptedNotification,
+  listPendingInvites,
+  markInviteNotificationsRead,
+  filterToCollaborators,
   listForUser,
   countUnread,
   markRead,

@@ -3,6 +3,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const ws = require('../services/ws');
 const events = require('../services/events');
+const appAccess = require('../services/app-access');
 
 // Weekly quota per giver. The plan locks this at 5; if it ever moves,
 // tweak here and the FE budget badge will pick it up via /api/me/kudos-budget.
@@ -121,6 +122,10 @@ async function loadKudosForSession(pool, sessionId, viewerUserId) {
 function kudosRoutes(config) {
   const router = Router();
   const pool = getPool(config);
+
+  // Per-app visibility gate for the session-id-addressed kudos routes:
+  // collab-level access, 404 on deny (kudos is a build-surface signal).
+  router.use('/api/sessions/:id', appAccess.sessionCollabGuard(pool));
 
   // --------------------------------------------------------------
   // POST /api/sessions/:id/kudos — give a kudos.
@@ -353,7 +358,12 @@ function kudosRoutes(config) {
       // Window filter is a single WHERE clause; rest of the query is
       // identical. Using parameterized window arg rather than
       // string-interpolating column names — safe.
-      const where = windowArg === 'week' ? `WHERE c.week_start = $1` : '';
+      // View-private apps are excluded outright: this endpoint is
+      // unauthenticated (PUBLIC_PATHS), so their PR titles / app names
+      // must never appear here.
+      const where = windowArg === 'week'
+        ? `WHERE a.view_visibility = 'public' AND c.week_start = $1`
+        : `WHERE a.view_visibility = 'public'`;
       const params = windowArg === 'week' ? [weekStart, limit] : [limit];
       const limitParamIdx = windowArg === 'week' ? '$2' : '$1';
       // `credit` unifies the two kudos sources per PR: direct PR kudos and
@@ -483,6 +493,8 @@ function kudosRoutes(config) {
                 kg.kudos_given
            FROM users u
            LEFT JOIN chat_sessions cs ON cs.user_id = u.id
+             AND EXISTS (SELECT 1 FROM apps ap
+                         WHERE ap.id = cs.app_id AND ap.view_visibility = 'public')
            LEFT JOIN pr_kudos pk ON pk.session_id = cs.id ${kudosWindow}
            LEFT JOIN LATERAL (
              SELECT COALESCE(
@@ -501,6 +513,8 @@ function kudosRoutes(config) {
              SELECT COUNT(*)::int AS received, MAX(ib.awarded_at) AS last_at
                FROM issue_bounties ib
               WHERE ib.awarded_user_id = u.id AND ib.status = 'awarded' ${bountyWindow}
+                AND EXISTS (SELECT 1 FROM apps ap
+                            WHERE ap.id = ib.app_id AND ap.view_visibility = 'public')
            ) ab ON true
            GROUP BY u.id, u.username, kg.kudos_given, ab.received, ab.last_at
            ORDER BY kudos_received_prs_merged DESC,

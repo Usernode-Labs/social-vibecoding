@@ -104,6 +104,20 @@
 		default usernode
 	}
 
+	# Per-app visibility gate. Every child-app / staging request is
+	# pre-flighted against the platform before being proxied: view-public
+	# apps get an instant 200 (one cached lookup, no session work);
+	# view-private apps require an admin or member credential — the
+	# scoped per-host access cookie, the shell's iframe token, or a
+	# bounce through the apex /__access/authorize route which reads the
+	# real platform session. See the decision tree atop GET /__caddy/access
+	# in src/routes/internal.js. On a non-2xx the gate's response
+	# (404 / authorize redirect / cookie-setting redirect) is returned to
+	# the client verbatim and the app container is never reached.
+	forward_auth usernode:3000 {
+		uri /__caddy/access
+	}
+
 	reverse_proxy {upstream}:3000
 
 	encode gzip

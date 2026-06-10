@@ -10,10 +10,16 @@ const { getActiveUserStats, isUserActive } = require('../services/active-users')
 const notifications = require('../services/notifications');
 const { isAppLocked, hasAdminYesVote } = require('../services/admin-approval');
 const events = require('../services/events');
+const appAccess = require('../services/app-access');
 
 function voteRoutes(config) {
   const router = Router();
   const pool = getPool(config);
+
+  // Per-app visibility gate for the session-id-addressed vote routes
+  // (promote / vote / votes / undo / admin-merge): collab-level access,
+  // 404 on deny. Admins always pass inside the guard.
+  router.use('/api/sessions/:id', appAccess.sessionCollabGuard(pool));
 
   // Promote a session's PR for voting
   router.post('/api/sessions/:id/promote', async (req, res) => {
@@ -289,8 +295,11 @@ function voteRoutes(config) {
   // List promoted sessions (for the vote panel in group chat)
   router.get('/api/apps/:slug/promoted', async (req, res) => {
     try {
-      const { rows: appRows } = await pool.query('SELECT id, locked FROM apps WHERE slug = $1', [req.params.slug]);
-      if (!appRows.length) return res.status(404).json({ error: 'App not found' });
+      const gatedApp = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab', `${appAccess.ACCESS_COLUMNS}, locked`
+      );
+      if (!gatedApp) return res.status(404).json({ error: 'App not found' });
+      const appRows = [gatedApp];
 
       const userId = req.user?.id || null;
       // Include 'merging' alongside 'promoted' so the PR stays visible
@@ -361,8 +370,11 @@ function voteRoutes(config) {
   // List merged sessions
   router.get('/api/apps/:slug/merged', async (req, res) => {
     try {
-      const { rows: appRows } = await pool.query('SELECT id FROM apps WHERE slug = $1', [req.params.slug]);
-      if (!appRows.length) return res.status(404).json({ error: 'App not found' });
+      const gatedApp = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS
+      );
+      if (!gatedApp) return res.status(404).json({ error: 'App not found' });
+      const appRows = [gatedApp];
 
       const userId = req.user?.id || null;
       // Same kudos subqueries as /promoted so the merged card can show
@@ -798,13 +810,13 @@ async function checkAndMerge(config, pool, session, options = {}) {
       // self-hosted too (sha=null) so the future banner can detect
       // "platform updating" without a sha to anchor to.
       try {
-        const { broadcastGlobal } = require('../services/ws');
-        broadcastGlobal({
+        const { broadcastGlobalScoped } = require('../services/ws');
+        broadcastGlobalScoped({
           type: 'app_version_changed',
           appSlug: session.app_slug,
           sha: sha || null,
           prNumber: session.pr_number || null,
-        });
+        }, { appId: session.app_id, appSlug: session.app_slug });
       } catch {}
     }
 

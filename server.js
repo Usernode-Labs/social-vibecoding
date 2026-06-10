@@ -17,6 +17,7 @@ const { adminRoutes } = require('./src/routes/admin');
 const { dashboardRoutes } = require('./src/routes/dashboard');
 const { feedbackRoutes } = require('./src/routes/feedback');
 const { notificationsRoutes } = require('./src/routes/notifications');
+const { collaboratorRoutes } = require('./src/routes/collaborators');
 const { statusRoutes } = require('./src/routes/status');
 const { internalRoutes } = require('./src/routes/internal');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
@@ -272,6 +273,7 @@ app.use(adminRoutes(config));
 app.use(dashboardRoutes(config));
 app.use(feedbackRoutes(config));
 app.use(notificationsRoutes(config));
+app.use(collaboratorRoutes(config));
 
 app.get('/api/iframe-token', async (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Not authenticated' });

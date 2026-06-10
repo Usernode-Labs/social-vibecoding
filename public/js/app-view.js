@@ -76,6 +76,17 @@ const AppView = {
       appTabBtn.classList.toggle('hidden', !!appData.self_hosted);
     }
 
+    // Collaboration tabs (Group Chat / Dev Chat) are hidden for
+    // non-collaborators of an invite-only app — they can use the app
+    // (when view-public) but not build it. App.switchTab coerces any
+    // direct request for a gated tab back to the App tab, and every
+    // API behind these tabs enforces the same gate server-side.
+    const canCollab = appData.can_collaborate !== false;
+    const gcTabBtn = document.querySelector('.app-tab[data-tab="group-chat"]');
+    const devTabBtn = document.querySelector('.app-tab[data-tab="individual-chat"]');
+    if (gcTabBtn) gcTabBtn.classList.toggle('hidden', !canCollab);
+    if (devTabBtn) devTabBtn.classList.toggle('hidden', !canCollab);
+
     await AppView.refreshToken();
     AppView.startActivityTracking(slug);
     AppView.startTokenRefresh();
@@ -2014,6 +2025,268 @@ const AppView = {
   swapToProduction() {
     if (AppView.appData?.url) {
       AppView.renderAppTab();
+    }
+  },
+
+  // ── Members & visibility modal ─────────────────────────────────────
+  //
+  // One modal, two concerns:
+  //   - visibility controls (creator/admin only) → PATCH /visibility
+  //   - member list + invite typeahead (collab-private apps) →
+  //     /collaborators, /invites, /api/users/search
+  // State is re-fetched on every open so a stale modal can't show a
+  // removed member or an already-accepted invite.
+
+  _membersVis: { collab: 'public', view: 'public' },
+  _inviteDebounce: null,
+
+  async openMembersModal() {
+    const appData = AppView.appData;
+    if (!appData) return;
+    const modal = document.getElementById('members-modal');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+
+    AppView._membersVis = {
+      collab: appData.collab_visibility || 'public',
+      view: appData.view_visibility || 'public',
+    };
+
+    // Visibility section: creator/admin only.
+    const visSection = document.getElementById('members-visibility-section');
+    if (visSection) {
+      visSection.classList.toggle('hidden', !appData.can_manage);
+      if (appData.can_manage) AppView._renderMembersVisPills();
+    }
+    AppView._wireMembersModal();
+
+    // Member list + invite input: collab-private apps only.
+    const isPrivate = appData.collab_visibility === 'private';
+    const inviteSection = document.getElementById('members-invite-section');
+    const listSection = document.getElementById('members-list-section');
+    if (inviteSection) inviteSection.classList.toggle('hidden', !isPrivate || !appData.can_collaborate);
+    if (listSection) listSection.classList.toggle('hidden', !isPrivate || !appData.can_collaborate);
+    const status = document.getElementById('members-invite-status');
+    if (status) { status.textContent = ''; status.className = 'text-sm mt-2'; }
+    const input = document.getElementById('members-invite-input');
+    if (input) input.value = '';
+    AppView._hideInviteSuggestions();
+    if (isPrivate && appData.can_collaborate) await AppView.loadCollaborators();
+  },
+
+  hideMembersModal() {
+    const modal = document.getElementById('members-modal');
+    if (modal) modal.classList.add('hidden');
+    AppView._hideInviteSuggestions();
+  },
+
+  // Idempotent wiring (cloneNode swap clears stale listeners, mirroring
+  // Home.wireCreateButtons) for the pills + invite input.
+  _wireMembersModal() {
+    document.querySelectorAll('#members-visibility-section [data-m-collab-vis], #members-visibility-section [data-m-view-vis]')
+      .forEach((pill) => {
+        const fresh = pill.cloneNode(true);
+        pill.parentNode.replaceChild(fresh, pill);
+        fresh.addEventListener('click', () => {
+          if (fresh.dataset.mCollabVis) AppView._setMembersVisibility('collab', fresh.dataset.mCollabVis);
+          else AppView._setMembersVisibility('view', fresh.dataset.mViewVis);
+        });
+      });
+    const input = document.getElementById('members-invite-input');
+    if (input) {
+      const fresh = input.cloneNode(true);
+      input.parentNode.replaceChild(fresh, input);
+      fresh.addEventListener('input', () => {
+        clearTimeout(AppView._inviteDebounce);
+        AppView._inviteDebounce = setTimeout(() => AppView._searchInviteUsers(fresh.value.trim()), 200);
+      });
+      fresh.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const name = fresh.value.trim();
+          if (name) AppView.sendInvite(name);
+        }
+        if (e.key === 'Escape') AppView._hideInviteSuggestions();
+      });
+    }
+  },
+
+  _renderMembersVisPills() {
+    const { collab, view } = AppView._membersVis;
+    const collabPublic = collab === 'public';
+    document.querySelectorAll('#members-visibility-section [data-m-collab-vis]').forEach((p) => {
+      p.classList.toggle('active', p.dataset.mCollabVis === collab);
+    });
+    document.querySelectorAll('#members-visibility-section [data-m-view-vis]').forEach((p) => {
+      p.classList.toggle('active', p.dataset.mViewVis === view);
+      p.disabled = collabPublic;
+    });
+    const hint = document.getElementById('members-vis-hint');
+    if (hint) hint.classList.toggle('hidden', !collabPublic);
+  },
+
+  // Pill click → optimistic local state + PATCH. On failure, revert to
+  // the server's last-known values from appData.
+  async _setMembersVisibility(kind, value) {
+    const prev = { ...AppView._membersVis };
+    const v = value === 'private' ? 'private' : 'public';
+    if (kind === 'collab') {
+      AppView._membersVis.collab = v;
+      if (v === 'public') AppView._membersVis.view = 'public';
+    } else {
+      AppView._membersVis.view = (AppView._membersVis.collab === 'private') ? v : 'public';
+    }
+    AppView._renderMembersVisPills();
+    if (prev.collab === AppView._membersVis.collab && prev.view === AppView._membersVis.view) return;
+
+    const errEl = document.getElementById('members-vis-error');
+    if (errEl) errEl.classList.add('hidden');
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/visibility`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          collabVisibility: AppView._membersVis.collab,
+          viewVisibility: AppView._membersVis.view,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      // Keep the in-memory app row honest so re-opens render correctly
+      // and tab gating recomputes on the next open.
+      AppView.appData.collab_visibility = AppView._membersVis.collab;
+      AppView.appData.view_visibility = AppView._membersVis.view;
+      // Going collab-public dissolves the invite/member sections.
+      const isPrivate = AppView._membersVis.collab === 'private';
+      const inviteSection = document.getElementById('members-invite-section');
+      const listSection = document.getElementById('members-list-section');
+      if (inviteSection) inviteSection.classList.toggle('hidden', !isPrivate);
+      if (listSection) listSection.classList.toggle('hidden', !isPrivate);
+      if (isPrivate) AppView.loadCollaborators();
+    } catch (err) {
+      AppView._membersVis = prev;
+      AppView._renderMembersVisPills();
+      if (errEl) {
+        errEl.textContent = `Visibility change failed: ${err.message}`;
+        errEl.classList.remove('hidden');
+      }
+    }
+  },
+
+  async loadCollaborators() {
+    const list = document.getElementById('members-list');
+    if (!list || !AppView.appData) return;
+    list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500">Loading…</div>';
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/collaborators`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      AppView._renderCollaborators(data.collaborators || []);
+    } catch (err) {
+      list.innerHTML = `<div class="px-3 py-2 text-sm text-red-400">Failed to load members: ${escapeHtml(err.message)}</div>`;
+    }
+  },
+
+  _renderCollaborators(rows) {
+    const list = document.getElementById('members-list');
+    if (!list) return;
+    const me = (typeof App !== 'undefined' && App.user) ? App.user : {};
+    const canManage = !!AppView.appData?.can_manage;
+    if (!rows.length) {
+      list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500">No collaborators yet.</div>';
+      return;
+    }
+    list.innerHTML = rows.map((r) => {
+      const pending = r.status === 'invited';
+      const tag = r.isCreator
+        ? '<span class="text-[0.65rem] text-violet-500 font-medium ml-1">creator</span>'
+        : (pending ? '<span class="text-[0.65rem] text-amber-500 font-medium ml-1">invited</span>' : '');
+      // Remove/revoke: creator/admin for anyone but the creator; users
+      // may remove themselves (leave). Mirrors the server rules.
+      const canRemove = !r.isCreator && (canManage || r.userId === me.id);
+      const removeBtn = canRemove
+        ? `<button data-remove-user="${r.userId}" class="text-xs text-zinc-400 hover:text-red-500 px-2 py-1" title="${pending ? 'Revoke invite' : (r.userId === me.id ? 'Leave app' : 'Remove')}">${pending ? 'Revoke' : (r.userId === me.id ? 'Leave' : 'Remove')}</button>`
+        : '';
+      return `<div class="flex items-center justify-between px-3 py-2 ${pending ? 'opacity-70' : ''}">
+        <span class="text-sm text-zinc-700 dark:text-zinc-300 truncate">@${escapeHtml(r.username)}${tag}</span>
+        ${removeBtn}
+      </div>`;
+    }).join('');
+    list.querySelectorAll('[data-remove-user]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          const res = await fetch(
+            `/api/apps/${AppView.appData.slug}/collaborators/${btn.dataset.removeUser}`,
+            { method: 'DELETE' }
+          );
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+          // Leaving an app yourself: you may have just lost access —
+          // bounce home rather than leave a dead view up.
+          if (Number(btn.dataset.removeUser) === me.id && !me.isAdmin) {
+            AppView.hideMembersModal();
+            App.navigateHome();
+            return;
+          }
+          AppView.loadCollaborators();
+        } catch (err) {
+          alert(`Remove failed: ${err.message}`);
+          btn.disabled = false;
+        }
+      });
+    });
+  },
+
+  async _searchInviteUsers(q) {
+    const box = document.getElementById('members-invite-suggestions');
+    if (!box || !AppView.appData) return;
+    if (!q) { AppView._hideInviteSuggestions(); return; }
+    try {
+      const params = new URLSearchParams({ q, excludeApp: AppView.appData.slug });
+      const res = await fetch(`/api/users/search?${params.toString()}`);
+      if (!res.ok) return;
+      const { users } = await res.json();
+      if (!users || !users.length) { AppView._hideInviteSuggestions(); return; }
+      box.innerHTML = users.map((u) =>
+        `<button data-invite-user="${escapeAttr(u.username)}" class="w-full text-left px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">@${escapeHtml(u.username)}</button>`
+      ).join('');
+      box.classList.remove('hidden');
+      box.querySelectorAll('[data-invite-user]').forEach((btn) => {
+        btn.addEventListener('click', () => AppView.sendInvite(btn.dataset.inviteUser));
+      });
+    } catch { /* typeahead is best-effort */ }
+  },
+
+  _hideInviteSuggestions() {
+    const box = document.getElementById('members-invite-suggestions');
+    if (box) { box.classList.add('hidden'); box.innerHTML = ''; }
+  },
+
+  async sendInvite(username) {
+    const status = document.getElementById('members-invite-status');
+    const input = document.getElementById('members-invite-input');
+    AppView._hideInviteSuggestions();
+    if (status) { status.textContent = 'Inviting…'; status.className = 'text-sm mt-2'; }
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/invites`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      if (status) {
+        status.textContent = `✓ Invited @${data.username || username}`;
+        status.className = 'text-sm mt-2 import-status--ok';
+      }
+      if (input) input.value = '';
+      AppView.loadCollaborators();
+    } catch (err) {
+      if (status) {
+        status.textContent = err.message;
+        status.className = 'text-sm mt-2 import-status--err';
+      }
     }
   },
 };

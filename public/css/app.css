@@ -2043,6 +2043,31 @@ html.in-native-webview #header-title {
   cursor: default;
 }
 
+/* Visibility segmented pills (create modal + members modal). Active
+   state is a JS-toggled .active class — unlike the mode pills there are
+   two independent controls per surface, so an attribute on the modal
+   root doesn't fit. Same visual language as .create-mode-pill. */
+.create-vis-pill,
+.members-vis-pill {
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.create-vis-pill:hover,
+.members-vis-pill:hover {
+  color: var(--text-secondary);
+}
+.create-vis-pill.active,
+.members-vis-pill.active {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+.create-vis-pill:disabled,
+.members-vis-pill:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* Import-mode visibility gating.
    The flow is: paste URL → click Check → on success, the name field +
    submit button reveal so the user can confirm/edit and click Import.
@@ -2063,6 +2088,9 @@ html.in-native-webview #header-title {
 #import-status:empty { display: none; }
 #import-status.import-status--ok  { color: #10b981; }
 #import-status.import-status--err { color: #f87171; }
+/* The Members modal's invite status line reuses the same ok/err tones. */
+#members-invite-status.import-status--ok  { color: #10b981; }
+#members-invite-status.import-status--err { color: #f87171; }
 #import-status .import-spinner {
   display: inline-block;
   width: 12px;

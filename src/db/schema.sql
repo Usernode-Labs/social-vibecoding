@@ -647,3 +647,51 @@ CREATE INDEX IF NOT EXISTS idx_events_user_created ON events(user_id, created_at
 -- chat_sessions / pr_kudos, both already private) is TRUNCATEd in staging
 -- clones rather than leaking social history into previews.
 COMMENT ON TABLE events IS 'staging:private';
+
+-- Per-app visibility (collaborator & viewer privacy).
+--   collab_visibility: who may participate in building the app (group
+--     chat, dev sessions, voting, issues, kudos). 'public' = everyone.
+--   view_visibility:   who may see the app exists and use it (home list,
+--     App tab). 'public' = everyone.
+-- Invariants (enforced by the CHECK below + API validation in
+-- routes/apps.js): collab-public implies view-public, and view-private
+-- means the viewer list IS the collaborator list (viewers are never
+-- separately enumerated). Admins always see everything — enforced in
+-- src/services/app-access.js, the shared gate every route goes through.
+-- Defaults make every pre-migration app public/public (no behavior change).
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS collab_visibility VARCHAR(10) NOT NULL DEFAULT 'public';
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS view_visibility   VARCHAR(10) NOT NULL DEFAULT 'public';
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'apps_visibility_combo_check' AND conrelid = 'apps'::regclass
+  ) THEN
+    ALTER TABLE apps ADD CONSTRAINT apps_visibility_combo_check
+      CHECK (NOT (collab_visibility = 'public' AND view_visibility = 'private'));
+  END IF;
+END $$;
+
+-- App membership + invites in one table. A row with status='invited' is
+-- a pending invite (grants NO access — every check requires 'member');
+-- declining deletes the row so re-invites work. The creator gets a
+-- member row at creation time (and via the backfill below for existing
+-- apps), so "creator is always a collaborator" holds uniformly.
+-- Deliberately NOT staging:private (like app_favorites): membership must
+-- survive into staging clones so a cloned platform's own access checks
+-- keep working, and rows carry no secrets.
+CREATE TABLE IF NOT EXISTS app_collaborators (
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status      VARCHAR(16) NOT NULL DEFAULT 'member',
+  invited_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  accepted_at TIMESTAMPTZ,
+  PRIMARY KEY (app_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_app_collaborators_user ON app_collaborators(user_id, status);
+
+-- Backfill: every existing app's creator becomes a member. Idempotent.
+INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+  SELECT id, created_by, 'member', NOW() FROM apps WHERE created_by IS NOT NULL
+ON CONFLICT (app_id, user_id) DO NOTHING;

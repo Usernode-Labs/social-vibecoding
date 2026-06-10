@@ -741,6 +741,20 @@ const App = {
           && typeof AppView !== 'undefined' && AppView.loadVotePanel) {
         AppView.loadVotePanel(data.appSlug);
       }
+    } else if (data.action === 'visibility_changed') {
+      // Visibility flipped (PATCH /api/apps/:slug/visibility). Reload
+      // the home grid so badges update and newly-private apps drop out
+      // for outsiders; patch the open app's in-memory row so the
+      // Members modal and tab gating see the fresh values.
+      const homeScreen = document.getElementById('home-screen');
+      if (typeof Home !== 'undefined' && homeScreen && !homeScreen.classList.contains('hidden')) {
+        Home.load();
+      }
+      if (App.currentApp === data.appSlug
+          && typeof AppView !== 'undefined' && AppView.appData) {
+        AppView.appData.collab_visibility = data.collabVisibility;
+        AppView.appData.view_visibility = data.viewVisibility;
+      }
     }
   },
 
@@ -869,6 +883,29 @@ const App = {
     // handlers also flip the submit-button label and the URL block.
     document.querySelectorAll('.create-mode-pill').forEach((pill) => {
       pill.addEventListener('click', () => App.setCreateMode(pill.dataset.modePill));
+    });
+
+    // Visibility pills (Who can build / Who can see & use). Two
+    // independent segmented controls; collab=public forces view=public
+    // (invariant: a publicly-buildable app can't be privately viewed).
+    document.querySelectorAll('#create-visibility-block [data-collab-vis]').forEach((pill) => {
+      pill.addEventListener('click', () => App.setCreateVisibility('collab', pill.dataset.collabVis));
+    });
+    document.querySelectorAll('#create-visibility-block [data-view-vis]').forEach((pill) => {
+      pill.addEventListener('click', () => App.setCreateVisibility('view', pill.dataset.viewVis));
+    });
+    App.setCreateVisibility('collab', 'public');
+
+    // Members & visibility modal (header button + close/backdrop).
+    const membersBtn = document.getElementById('app-members-btn');
+    if (membersBtn) membersBtn.addEventListener('click', () => AppView.openMembersModal());
+    const membersClose = document.getElementById('members-close');
+    if (membersClose) membersClose.addEventListener('click', () => AppView.hideMembersModal());
+    const membersModal = document.getElementById('members-modal');
+    if (membersModal) membersModal.addEventListener('click', (e) => {
+      if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) {
+        AppView.hideMembersModal();
+      }
     });
 
     // Import flow: explicit "Check" button.
@@ -1228,6 +1265,36 @@ const App = {
     document.getElementById('create-error').classList.add('hidden');
     App.setCreateMode('new');
     App._setImportState('idle');
+    App.setCreateVisibility('collab', 'public');
+  },
+
+  // Visibility state for the create modal. setCreateVisibility('collab',
+  // 'public') also forces view='public' and disables the view pills —
+  // the one invalid combination (collab public + view private) can never
+  // be selected. Defaults match today's behavior (everything public).
+  _createVis: { collab: 'public', view: 'public' },
+
+  setCreateVisibility(kind, value) {
+    const v = value === 'private' ? 'private' : 'public';
+    if (kind === 'collab') {
+      App._createVis.collab = v;
+      if (v === 'public') App._createVis.view = 'public';
+    } else {
+      // View can only go private when collab is private.
+      App._createVis.view = (App._createVis.collab === 'private') ? v : 'public';
+    }
+    const block = document.getElementById('create-visibility-block');
+    if (!block) return;
+    block.querySelectorAll('[data-collab-vis]').forEach((p) => {
+      p.classList.toggle('active', p.dataset.collabVis === App._createVis.collab);
+    });
+    const collabPublic = App._createVis.collab === 'public';
+    block.querySelectorAll('[data-view-vis]').forEach((p) => {
+      p.classList.toggle('active', p.dataset.viewVis === App._createVis.view);
+      p.disabled = collabPublic;
+    });
+    const hint = document.getElementById('create-vis-hint');
+    if (hint) hint.classList.toggle('hidden', !collabPublic);
   },
 
   // Single source of truth for "which mode is the create modal in". CSS
@@ -1362,6 +1429,8 @@ const App = {
     }
 
     const body = mode === 'import' ? { name, repoUrl } : { name };
+    body.collabVisibility = App._createVis.collab;
+    body.viewVisibility = App._createVis.view;
 
     try {
       const res = await fetch('/api/apps', {
@@ -1446,6 +1515,18 @@ const App = {
       const drs = document.getElementById('drawer-row-share');
       if (drs) drs.classList.remove('hidden');
     }
+    // Members & visibility button: creator/admin always (visibility
+    // control), collaborators of an invite-only app too (member list +
+    // invites). Hidden for the self-app (no invites there) and for
+    // everyone else.
+    const membersBtn = document.getElementById('app-members-btn');
+    if (membersBtn) {
+      const a = AppView.appData;
+      const showMembers = !!a && !a.self_hosted && (
+        a.can_manage || (a.collab_visibility === 'private' && a.can_collaborate)
+      );
+      membersBtn.classList.toggle('hidden', !showMembers);
+    }
     // The App tab iframes appData.url, which doesn't resolve for the self-
     // hosted platform row (no per-slug subdomain). Land on Group Chat
     // instead — that's where votes/discussion happen and what users
@@ -1463,6 +1544,8 @@ const App = {
     document.getElementById('back-btn').classList.add('hidden');
     document.getElementById('app-github-link').classList.add('hidden');
     document.getElementById('app-share-btn').classList.add('hidden');
+    const _membersH = document.getElementById('app-members-btn');
+    if (_membersH) _membersH.classList.add('hidden');
     const _drgH = document.getElementById('drawer-row-github');
     const _drsH = document.getElementById('drawer-row-share');
     if (_drgH) _drgH.classList.add('hidden');
@@ -1528,6 +1611,14 @@ const App = {
     // so we never render an unreachable iframe.
     if (tab === 'app' && AppView.appData?.self_hosted) {
       tab = 'group-chat';
+    }
+    // Collaboration tabs are gated for non-collaborators of an
+    // invite-only app (the buttons are hidden by AppView.open; this
+    // catches hash/back-forward/programmatic requests). The server
+    // enforces the same gate on every API these tabs would hit.
+    if ((tab === 'group-chat' || tab === 'individual-chat')
+        && AppView.appData && AppView.appData.can_collaborate === false) {
+      tab = 'app';
     }
     App.currentTab = tab;
     document.querySelectorAll('.app-tab').forEach((btn) => {
