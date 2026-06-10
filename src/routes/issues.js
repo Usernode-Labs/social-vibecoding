@@ -24,15 +24,16 @@ function parseOwnerRepo(repoUrl) {
 // #136: platform-filed GitHub issues are authored by the bot account, but
 // the real creator is recorded in the body's first "**Source:**" line
 // (written by routes/feedback.js): "usernode user (name)" for regular
-// users, "usernode admin" for admins. Returns the creator's display name
+// users, "usernode admin (name)" for admins (#140; older issues used a
+// bare "usernode admin" with no name). Returns the creator's display name
 // or null when no Source line can be parsed.
 function creatorFromSourceLine(body) {
   if (typeof body !== 'string') return null;
   const m = body.match(/\*\*Source:\*\*\s*([^\n]+)/);
   if (!m) return null;
   const source = m[1].trim();
-  const user = source.match(/^usernode user \(([^)]+)\)/);
-  if (user) return user[1];
+  const named = source.match(/^usernode (?:user|admin) \(([^)]+)\)/);
+  if (named) return named[1];
   if (/^usernode admin\b/.test(source)) return 'admin';
   return null;
 }
@@ -329,7 +330,8 @@ function issueRoutes(config) {
       // it next to the title the way PR rows show their author. Platform-
       // filed issues record created_by in the local issues table; feedback-
       // filed ones carry the creator in the body's "**Source:**" line
-      // (both the "usernode user (name)" and "usernode admin" forms);
+      // (the "usernode user (name)" / "usernode admin (name)" forms, plus
+      // the legacy bare "usernode admin" written before #140);
       // issues opened directly on GitHub fall back to the GitHub login —
       // but never the platform bot account itself, which would just name
       // "usernode-bot" on every platform-filed row.

@@ -114,7 +114,11 @@ function feedbackRoutes(config) {
       appContext = { id: appRow.id, slug: appRow.slug, name: appRow.name };
     }
 
-    const source = req.user?.isAdmin ? 'usernode admin' : `usernode user (${req.user?.username || 'unknown'})`;
+    // #140: include the admin's actual username so the issues panel can show
+    // who filed it instead of a bare "admin" (mirrors the user form).
+    const source = req.user?.isAdmin
+      ? `usernode admin (${req.user?.username || 'unknown'})`
+      : `usernode user (${req.user?.username || 'unknown'})`;
 
     try {
       let title = 'Feedback from Usernode';
