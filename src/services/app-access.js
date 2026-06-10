@@ -112,10 +112,14 @@ function issueCollabGuard(pool) {
 const VIS_CACHE_TTL_MS = 10_000;
 const visCacheById = new Map();   // appId -> { at, viewPrivate, memberIds:Set }
 const slugToId = new Map();       // slug -> { at, appId }
+const hostVisBySlug = new Map();  // slug -> { at, appId, viewPrivate } (edge gate)
 
 function invalidateVisibility(appId, slug) {
   if (appId != null) visCacheById.delete(Number(appId));
-  if (slug) slugToId.delete(slug);
+  if (slug) {
+    slugToId.delete(slug);
+    hostVisBySlug.delete(slug);
+  }
   // Slug entries are tiny and TTL-bounded; a stale slug->id mapping is
   // harmless (ids never re-point), so no full sweep needed.
 }
@@ -155,6 +159,82 @@ async function getWsVisibility(pool, { appId = null, appSlug = null } = {}) {
   return entry;
 }
 
+// ── Edge (subdomain) gate support ─────────────────────────────────────
+//
+// Caddy forward_auths every *.<domain> request to GET /__caddy/access
+// (src/routes/internal.js). These helpers keep that hot path cheap:
+// parseAppHost maps a request host to the owning app slug, and
+// getHostVisibility answers "is this slug's app view-private?" from a
+// 10s TTL cache so the view-public fast path costs ~zero DB work.
+
+const jwt = require('jsonwebtoken');
+const { USERNODE_DOMAIN } = require('./caddy');
+
+// Short-lived grant the apex /__access/authorize route (routes/apps.js)
+// mints from a real platform session; the edge gate (/__caddy/access in
+// routes/internal.js) exchanges it for the per-host scoped access
+// cookie. 120s is plenty for one redirect hop.
+function mintAccessGrant(jwtSecret, { uid, appId, host }) {
+  return jwt.sign({ t: 'app-access-grant', uid, appId, host }, jwtSecret, { expiresIn: 120 });
+}
+
+// Map a request host to its app slug. Handles production hosts
+// (`<slug>.<domain>`), per-PR staging previews (`<slug>--s<id>.<domain>`,
+// plus the legacy `--<hash>` suffix) — staging previews clone prod data,
+// so they inherit the prod app's visibility. Returns
+// { slug, label } or null for hosts that aren't a routable app subdomain.
+function parseAppHost(rawHost) {
+  const host = String(rawHost || '').trim().toLowerCase().replace(/:\d+$/, '');
+  const suffix = '.' + USERNODE_DOMAIN;
+  if (!host.endsWith(suffix)) return null;
+  const label = host.slice(0, -suffix.length);
+  // Only single-level subdomains are routable (the Caddy wildcard
+  // matches one label).
+  if (!label || label.includes('.')) return null;
+  const staging = label.match(/^([a-z0-9-]+?)--s\d+(?:--[a-z0-9]+)?$/);
+  const slug = staging ? staging[1] : label;
+  if (!/^[a-z0-9-]+$/.test(slug)) return null;
+  return { slug, label, host };
+}
+
+async function getHostVisibility(pool, slug) {
+  const now = Date.now();
+  const cached = hostVisBySlug.get(slug);
+  if (cached && now - cached.at < VIS_CACHE_TTL_MS) {
+    return cached.appId == null ? null : cached;
+  }
+  const { rows } = await pool.query(
+    'SELECT id, view_visibility FROM apps WHERE slug = $1',
+    [slug]
+  );
+  if (!rows.length) {
+    // Negative-cache unknown slugs too — probes shouldn't each cost a query.
+    hostVisBySlug.set(slug, { at: now, appId: null, viewPrivate: false });
+    return null;
+  }
+  const entry = {
+    at: now,
+    appId: rows[0].id,
+    viewPrivate: rows[0].view_visibility === 'private',
+  };
+  hostVisBySlug.set(slug, entry);
+  return entry;
+}
+
+// "May this user view this (view-private) app?" — admins or members.
+// Rides the same member-id cache the WS filter uses, so membership
+// revocation propagates within the TTL (or instantly via
+// invalidateVisibility at the mutation sites).
+async function isViewMember(pool, appId, userId) {
+  if (!Number.isInteger(userId)) return false;
+  const info = await getWsVisibility(pool, { appId });
+  if (!info) return false;          // app deleted
+  if (!info.viewPrivate) return true; // flipped public since lookup
+  if (info.memberIds.has(userId)) return true;
+  const { rows } = await pool.query('SELECT is_admin FROM users WHERE id = $1', [userId]);
+  return !!rows[0]?.is_admin;
+}
+
 module.exports = {
   ACCESS_COLUMNS,
   isCollaborator,
@@ -164,4 +244,8 @@ module.exports = {
   issueCollabGuard,
   getWsVisibility,
   invalidateVisibility,
+  parseAppHost,
+  getHostVisibility,
+  isViewMember,
+  mintAccessGrant,
 };

@@ -75,6 +75,20 @@ test('legacy rows without visibility columns are treated as public', async () =>
   assert.equal(await appAccess.checkAppAccess(pool, legacy, user(99), 'collab'), true);
 });
 
+test('parseAppHost maps hosts to app slugs', () => {
+  const D = 'social-vibecoding.usernodelabs.org'; // services/caddy.js default
+  assert.equal(appAccess.parseAppHost(`myapp.${D}`)?.slug, 'myapp');
+  assert.equal(appAccess.parseAppHost(`MyApp.${D}:443`)?.slug, 'myapp');
+  // Staging previews (current + legacy hash suffix) inherit the prod slug.
+  assert.equal(appAccess.parseAppHost(`myapp--s42.${D}`)?.slug, 'myapp');
+  assert.equal(appAccess.parseAppHost(`myapp--s42--abc123.${D}`)?.slug, 'myapp');
+  // Non-platform / multi-label / apex hosts are not app hosts.
+  assert.equal(appAccess.parseAppHost('evil.example.com'), null);
+  assert.equal(appAccess.parseAppHost(`a.b.${D}`), null);
+  assert.equal(appAccess.parseAppHost(D), null);
+  assert.equal(appAccess.parseAppHost(''), null);
+});
+
 test('getAppForUser resolves by slug and applies the gate', async () => {
   const pool = stubPool({
     apps: { 3: FULLY_PRIVATE },

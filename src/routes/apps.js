@@ -976,6 +976,47 @@ function appRoutes(config) {
     }
   });
 
+  // ── Edge-gate authorize hop (view-private apps) ─────────────────────
+  //
+  // Platform session cookies are host-only (deliberately — child apps
+  // run user-authored code and must never see the platform credential),
+  // so a direct visit to a view-private app's subdomain carries no
+  // session for the edge gate (/__caddy/access in routes/internal.js)
+  // to read. The gate bounces bare browser GETs here, to the apex,
+  // where the session cookie IS present and authMiddleware has already
+  // resolved req.user (or redirected to /login.html). We re-run the
+  // standard view-level access check and, when allowed, send the
+  // browser back to the app host with a 120s single-purpose grant the
+  // gate exchanges for a per-host scoped access cookie. Non-members get
+  // the same existence-hiding 404 every other surface returns.
+  router.get('/__access/authorize', async (req, res) => {
+    try {
+      const parsed = appAccess.parseAppHost(req.query.host);
+      if (!parsed) return res.status(404).send('Not found');
+      const rawNext = typeof req.query.next === 'string' ? req.query.next : '/';
+      const next = rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '/';
+
+      const app = await appAccess.getAppForUser(
+        pool, parsed.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!app) return res.status(404).send('Not found');
+
+      const grant = appAccess.mintAccessGrant(config.jwtSecret, {
+        uid: req.user.id,
+        appId: app.id,
+        host: parsed.host,
+      });
+      return res.redirect(
+        302,
+        `https://${parsed.host}/__usernode_access`
+          + `?grant=${encodeURIComponent(grant)}&next=${encodeURIComponent(next)}`
+      );
+    } catch (err) {
+      log.error('apps', 'Edge authorize failed', { host: req.query.host, message: err.message });
+      return res.status(500).send('Internal server error');
+    }
+  });
+
   // Delete an app (admin only)
   router.delete('/api/apps/:slug', async (req, res) => {
     if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin access required' });
