@@ -366,10 +366,14 @@ function issueRoutes(config) {
       // outcome-specific "Review … & start session" clone button). 'failed'
       // rows are excluded — the button recovers to Auto-solve so the run
       // can be retried.
+      // staging_url/pr_number ride along (#183) so the panel can render the
+      // changes-ready label + Preview button for auto runs that pushed code
+      // and built a preview. staging_url is nulled on teardown, so a GC'd
+      // preview degrades the label back to the plain outcome wording.
       const { rows: headlessRows } = await pool.query(
         `SELECT DISTINCT ON (cs.headless_issue_number)
                 cs.headless_issue_number AS n, cs.id, cs.headless_status,
-                cs.headless_outcome, u.username
+                cs.headless_outcome, cs.staging_url, cs.pr_number, u.username
            FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id
           WHERE cs.app_id = $1 AND cs.is_headless = TRUE
             AND cs.headless_status IN ('generating', 'ready')
@@ -406,6 +410,8 @@ function issueRoutes(config) {
         outcome: r.headless_outcome,
         username: r.username,
         mySessionId: myCloneByHeadlessId.get(r.id) || null,
+        stagingUrl: r.staging_url || null,
+        prNumber: r.pr_number || null,
       }]));
 
       const issues = (result.issues || []).map((issue) => {
