@@ -45,6 +45,18 @@ function creatorFromSourceLine(body) {
 const VALID_KINDS = ['general', 'secret_change'];
 const MAX_SECRET_VALUE_LENGTH = 4096;
 
+// #132: should this issue kind get a GitHub twin on the app's repo?
+// Env-var change proposals (kind='secret_change') are in-app governance —
+// they're proposed, voted, applied, and audited entirely on the platform,
+// so opening a "Set secret …" issue on GitHub just pollutes the repo's
+// issue list (GitHub issues are reserved for real issues). Everything
+// downstream already tolerates a null github_issue_number: the apply path
+// guards its close/comment on it, and the UI omits the kudos button when
+// no twin exists.
+function shouldCreateGithubTwin(kind) {
+  return kind !== 'secret_change';
+}
+
 function issueRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -159,8 +171,12 @@ function issueRoutes(config) {
         payload = typeof payload === 'object' && payload ? payload : {};
       }
 
+      // GitHub twin — skipped for secret_change proposals (see
+      // shouldCreateGithubTwin): env-var proposals are in-app governance,
+      // not repo issues (#132). githubIssueNumber stays null for them,
+      // which the INSERT, chat message, and vote-apply path all handle.
       let githubIssueNumber = null;
-      if (github.isEnabled() && app.repo_url) {
+      if (github.isEnabled() && app.repo_url && shouldCreateGithubTwin(kind)) {
         try {
           const [, owner, repo] = app.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
           if (owner && repo) {
@@ -876,4 +892,4 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
   }
 }
 
-module.exports = { issueRoutes, creatorFromSourceLine };
+module.exports = { issueRoutes, creatorFromSourceLine, shouldCreateGithubTwin };
