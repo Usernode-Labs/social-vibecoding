@@ -528,10 +528,14 @@ const Home = {
   // Vanilla Pointer Events (same pattern as the spec-viewer resizer in
   // dev-chat.js — setPointerCapture + move/up/cancel on the captured
   // element), no library and no HTML5 draggable (poor touch support).
-  // The dragged card's DOM node is live-moved among its starred
-  // siblings on every pointermove, so the grid reflow itself is the
-  // drop indicator — no ghost clone needed, which keeps the 1/2/3-
-  // column layout correct for free.
+  //
+  // Homescreen-style visuals: picking a card up spawns a floating
+  // clone ("ghost") that tracks the pointer, while the real card stays
+  // in the grid restyled as a dashed drop slot. As the slot moves
+  // among its starred siblings, the siblings FLIP-animate into their
+  // new grid positions; on drop the ghost glides into the slot and the
+  // real card is swapped back in. The in-flow card doubles as the drop
+  // indicator, so the 1/2/3-column grid layout stays correct for free.
 
   // True while a drag gesture is in progress; Home.load() defers to
   // _reloadPending instead of re-rendering (see the guard in load()).
@@ -549,6 +553,11 @@ const Home = {
 
   _onStarredPointerDown(e, card, listEl) {
     if (e.button !== 0) return;
+    // A previous drag may still be settling (the ghost glides into the
+    // slot for ~190ms after pointerup, with _dragActive held true).
+    // Starting a second gesture mid-settle would let the old gesture's
+    // teardown clear _dragActive and sibling styles under the new one.
+    if (Home._dragActive) return;
     // Same guard list as the navigation click handler — a press that
     // starts on a corner button is a button press, never a drag.
     if (
@@ -565,10 +574,22 @@ const Home = {
     const isTouch = e.pointerType === 'touch';
     let dragging = false;
     let longPressTimer = null;
+    let ghost = null;
+    // Pointer position at pickup + the ghost's fixed-position origin;
+    // every move translates the ghost by the pointer's delta from here.
+    let grabX = 0;
+    let grabY = 0;
+    let ghostLeft = 0;
+    let ghostTop = 0;
 
-    const beginDrag = () => {
+    const starredCards = () =>
+      [...listEl.querySelectorAll('.app-card[data-starred="true"]')];
+
+    const beginDrag = (refX, refY) => {
       dragging = true;
       Home._dragActive = true;
+      grabX = refX;
+      grabY = refY;
       // Capture on the grid container, NOT the card: the live reflow
       // below removes + reinserts the card, and Chromium releases
       // pointer capture the moment the captured element leaves the
@@ -577,36 +598,120 @@ const Home = {
       // cursor instead. listEl never moves during a drag (Home.load()
       // is deferred via _dragActive), so capture on it survives.
       try { listEl.setPointerCapture(pointerId); } catch {}
-      card.classList.add('opacity-60', 'ring-2', 'ring-violet-500', 'scale-[1.02]', 'cursor-grabbing');
-      // touch-pan-y let the page scroll while the gesture was still
-      // ambiguous; now that it's a drag, claim the pointer entirely so
-      // the browser doesn't take over mid-drag with a pan.
-      card.style.touchAction = 'none';
+
+      // "Pick up": a fixed-position clone floats above the page and
+      // tracks the pointer, slightly scaled + elevated like a
+      // homescreen icon. pointer-events: none keeps it invisible to
+      // the elementFromPoint hit-test in onMove.
+      const rect = card.getBoundingClientRect();
+      ghostLeft = rect.left;
+      ghostTop = rect.top;
+      ghost = card.cloneNode(true);
+      ghost.removeAttribute('data-starred');
+      Object.assign(ghost.style, {
+        position: 'fixed',
+        left: `${rect.left}px`,
+        top: `${rect.top}px`,
+        width: `${rect.width}px`,
+        height: `${rect.height}px`,
+        margin: '0',
+        zIndex: '1000',
+        pointerEvents: 'none',
+        boxShadow: '0 16px 40px rgba(0, 0, 0, 0.3)',
+        transform: 'scale(1.04)',
+        transition: 'none',
+      });
+      document.body.appendChild(ghost);
+
+      // The real card stays in the grid as the drop slot: contents
+      // hidden, box restyled as a dashed violet gap. Inline styles
+      // rather than Tailwind utilities so the look doesn't depend on
+      // the CDN JIT generating classes mid-gesture.
+      for (const child of card.children) child.style.visibility = 'hidden';
+      Object.assign(card.style, {
+        borderStyle: 'dashed',
+        borderColor: 'rgba(139, 92, 246, 0.55)',
+        backgroundColor: 'rgba(139, 92, 246, 0.07)',
+        // touch-pan-y let the page scroll while the gesture was still
+        // ambiguous; now that it's a drag, claim the pointer entirely
+        // so the browser doesn't take over mid-drag with a pan.
+        touchAction: 'none',
+      });
       document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'grabbing';
     };
 
     // Touch: a drag starts only after a ~350ms long-press during which
     // the finger stays put (< 10px). Movement before the timer fires
     // means the user is scrolling — bail and let the browser pan
     // (touch-pan-y on the card keeps that path native).
-    if (isTouch) longPressTimer = setTimeout(beginDrag, 350);
+    if (isTouch) longPressTimer = setTimeout(() => beginDrag(startX, startY), 350);
 
-    const cleanup = (didDrag) => {
+    const moveGhost = (x, y) => {
+      ghost.style.transform =
+        `translate(${x - grabX}px, ${y - grabY}px) scale(1.04)`;
+    };
+
+    // FLIP-animate the other starred cards when the drop slot moves:
+    // measure where each sibling is right now (mid-animation positions
+    // included, so rapid slot changes retarget smoothly), apply the
+    // reorder, then play each one from its old spot to its new grid
+    // position.
+    const flipReorder = (applyReorder) => {
+      const sibs = starredCards().filter((c) => c !== card);
+      const firstRects = new Map(sibs.map((c) => [c, c.getBoundingClientRect()]));
+      applyReorder();
+      // Clear in-flight transforms so the post-reorder measurement is
+      // the true layout position, not a mid-transition one.
+      for (const c of sibs) {
+        c.style.transition = 'none';
+        c.style.transform = '';
+      }
+      for (const c of sibs) {
+        const first = firstRects.get(c);
+        const last = c.getBoundingClientRect();
+        const dx = first.left - last.left;
+        const dy = first.top - last.top;
+        if (dx || dy) c.style.transform = `translate(${dx}px, ${dy}px)`;
+      }
+      // Flush the inverted transforms before enabling transitions, so
+      // the jump back to the old position isn't itself animated.
+      void listEl.offsetHeight;
+      requestAnimationFrame(() => {
+        for (const c of sibs) {
+          c.style.transition = 'transform 200ms ease';
+          c.style.transform = '';
+        }
+      });
+    };
+
+    const detach = () => {
       clearTimeout(longPressTimer);
       listEl.removeEventListener('pointermove', onMove);
       listEl.removeEventListener('pointerup', onUp);
       listEl.removeEventListener('pointercancel', onCancel);
       try { listEl.releasePointerCapture(pointerId); } catch {}
-      card.classList.remove('opacity-60', 'ring-2', 'ring-violet-500', 'scale-[1.02]', 'cursor-grabbing');
-      card.style.touchAction = '';
-      document.body.style.userSelect = '';
-      if (didDrag) {
-        Home._suppressClick = true;
-        // Click (if any) dispatches synchronously after pointerup,
-        // before timers — this just clears a stale flag when no click
-        // follows (e.g. touch drags).
-        setTimeout(() => { Home._suppressClick = false; }, 0);
+    };
+
+    // Remove the ghost, turn the drop slot back into the real card,
+    // and clear every style this gesture touched. Ends the re-render
+    // deferral window.
+    const restoreCard = () => {
+      if (ghost) {
+        ghost.remove();
+        ghost = null;
       }
+      for (const child of card.children) child.style.visibility = '';
+      card.style.borderStyle = '';
+      card.style.borderColor = '';
+      card.style.backgroundColor = '';
+      card.style.touchAction = '';
+      for (const c of starredCards()) {
+        c.style.transition = '';
+        c.style.transform = '';
+      }
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
       Home._dragActive = false;
     };
 
@@ -623,19 +728,21 @@ const Home = {
         const dist = Math.hypot(ev.clientX - startX, ev.clientY - startY);
         if (isTouch) {
           // Finger moved before the long-press fired → it's a scroll.
-          if (dist > 10) cleanup(false);
+          if (dist > 10) detach();
         } else if (dist > 6) {
           // Mouse/pen: > 6px from the down point promotes to a drag;
           // below that it stays a click for the navigation handler.
-          beginDrag();
+          beginDrag(ev.clientX, ev.clientY);
         }
         if (!dragging) return;
       }
       ev.preventDefault();
-      // Hit-test against the other starred cards. Hits on "All Apps"
-      // cards, the create tile, or section headers fall through (no
-      // [data-starred] ancestor) and the card stays at its last valid
-      // slot — drops are constrained to the Starred section by
+      moveGhost(ev.clientX, ev.clientY);
+      // Hit-test against the other starred cards (the ghost is
+      // pointer-events: none, so it never occludes this). Hits on
+      // "All Apps" cards, the create tile, or section headers fall
+      // through (no [data-starred] ancestor) and the slot stays where
+      // it is — drops are constrained to the Starred section by
       // construction.
       const over = document.elementFromPoint(ev.clientX, ev.clientY)
         ?.closest('.app-card[data-starred="true"]');
@@ -651,20 +758,41 @@ const Home = {
         : ev.clientY < rect.top + rect.height / 2;
       // Skip no-op reinserts: before()/after() always remove + re-add
       // the node even when it already sits in the target slot, which
-      // churns layout on every pointermove for nothing.
+      // would churn layout and re-fire FLIP for nothing.
       if (before) {
-        if (card.nextElementSibling !== over) over.before(card);
+        if (card.nextElementSibling !== over) flipReorder(() => over.before(card));
       } else {
-        if (over.nextElementSibling !== card) over.after(card);
+        if (over.nextElementSibling !== card) flipReorder(() => over.after(card));
       }
     };
 
-    const onUp = async (ev) => {
+    const onUp = (ev) => {
       if (ev.pointerId !== pointerId) return;
       const didDrag = dragging;
-      cleanup(didDrag);
-      if (didDrag) await Home._saveStarredOrder(listEl);
-      runPendingReload();
+      detach();
+      if (!didDrag) {
+        runPendingReload();
+        return;
+      }
+      // Eat the synthetic click that follows pointerup. It dispatches
+      // synchronously before any timer below runs; the timeout just
+      // clears a stale flag when no click follows (e.g. touch drags).
+      Home._suppressClick = true;
+      setTimeout(() => { Home._suppressClick = false; }, 0);
+      // "Put down": glide the ghost into the drop slot, then swap the
+      // real card back in and persist. _dragActive stays true during
+      // the settle so a WS-driven Home.load() can't delete the slot
+      // out from under the animation.
+      const target = card.getBoundingClientRect();
+      ghost.style.transition = 'transform 180ms ease, box-shadow 180ms ease';
+      ghost.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.15)';
+      ghost.style.transform =
+        `translate(${target.left - ghostLeft}px, ${target.top - ghostTop}px) scale(1)`;
+      setTimeout(async () => {
+        restoreCard();
+        await Home._saveStarredOrder(listEl);
+        runPendingReload();
+      }, 190);
     };
 
     // Browser took over the gesture mid-drag (or the pointer died).
@@ -673,8 +801,9 @@ const Home = {
     const onCancel = (ev) => {
       if (ev.pointerId !== pointerId) return;
       const didDrag = dragging;
-      cleanup(didDrag);
+      detach();
       if (didDrag) {
+        restoreCard();
         Home._reloadPending = false;
         Home.load();
       } else {
