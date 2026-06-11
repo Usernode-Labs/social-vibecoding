@@ -184,6 +184,7 @@ function sessionRoutes(config) {
          FROM chat_sessions cs
          JOIN apps a ON cs.app_id = a.id
          WHERE cs.user_id = $1 AND cs.status IN ('active', 'promoted', 'paused')
+           AND cs.is_headless = FALSE
          ORDER BY cs.created_at DESC`,
         [req.user.id]
       );
@@ -220,7 +221,7 @@ function sessionRoutes(config) {
       const { rows } = await pool.query(
         `SELECT id, branch_name, pr_number, pr_url, pr_title, staging_url, status, linked_issues, behind_main, created_at
          FROM chat_sessions
-         WHERE app_id = $1 AND user_id = $2
+         WHERE app_id = $1 AND user_id = $2 AND is_headless = FALSE
          ORDER BY created_at DESC`,
         [appRows[0].id, req.user.id]
       );
@@ -240,7 +241,8 @@ function sessionRoutes(config) {
 
       // Check staging container limits
       const { rows: countRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions WHERE user_id = $1 AND status IN ('active', 'promoted')`,
+        `SELECT COUNT(*) as cnt FROM chat_sessions
+         WHERE user_id = $1 AND status IN ('active', 'promoted') AND is_headless = FALSE`,
         [req.user.id]
       );
       if (parseInt(countRows[0].cnt) >= config.maxUserSessions) {
@@ -294,6 +296,262 @@ function sessionRoutes(config) {
       res.status(201).json({ session: rows[0] });
     } catch (err) {
       log.error('sessions', 'Failed to create session', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #155: start a HEADLESS auto session for a GitHub issue.
+  //
+  // Unlike POST /sessions this is not connected to any user's dev chat: it
+  // runs ONE unattended Mayor turn (scout → spec, build → pushed commit, or
+  // a plain-text question) seeded with the issue, then parks as
+  // headless_status='ready' so any collaborator can clone it via
+  // POST /api/sessions/:id/clone-headless. Billed to the clicking user
+  // (their BYOK key when on file, else their daily budget) — the UI shows a
+  // confirmation warning + model selector before calling this.
+  //
+  // The run may create + push its branch, but never opens a PR and never
+  // builds a staging preview (see runClaudeCodeTool's `headless` flag).
+  router.post('/api/apps/:slug/issues/:number/headless-session', drainGuard, async (req, res) => {
+    try {
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
+      if (!app) return res.status(404).json({ error: 'App not found' });
+
+      const issueNumber = parseInt(req.params.number, 10);
+      if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+        return res.status(400).json({ error: 'Invalid issue number' });
+      }
+
+      const [, repoOwner, repoName] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+      if (!github.isEnabled() || !repoOwner || !repoName) {
+        return res.status(400).json({ error: 'No GitHub repo configured for this app' });
+      }
+      if (!llm.isEnabled()) return res.status(503).json({ error: 'LLM not configured' });
+
+      // One auto session per issue at a time: 'generating' means a run is
+      // in flight; 'ready' means the start-from button should be used
+      // instead. 'failed' rows don't block a retry.
+      const { rows: existingRows } = await pool.query(
+        `SELECT id, headless_status FROM chat_sessions
+         WHERE app_id = $1 AND is_headless = TRUE AND headless_issue_number = $2
+           AND headless_status IN ('generating', 'ready')
+         ORDER BY created_at DESC LIMIT 1`,
+        [app.id, issueNumber]
+      );
+      if (existingRows.length) {
+        return res.status(409).json({
+          error: existingRows[0].headless_status === 'generating'
+            ? 'An auto session is already being generated for this issue.'
+            : 'This issue already has a ready auto session — start a session from it instead.',
+        });
+      }
+
+      // Billed to the clicking user: BYOK key when on file, else gate on
+      // their shared daily budget exactly like a chat turn would.
+      const userApiKey = await loadUserApiKey(pool, req.user.id, config.jwtSecret);
+      if (!userApiKey) {
+        const budgetCheck = await checkBudget(pool, req.user.id);
+        if (budgetCheck.error) return res.status(429).json({ error: budgetCheck.error });
+      }
+
+      // Headless sessions don't count against the clicking user's session
+      // cap (they're shared, unattended work — see the cap query in POST
+      // /sessions), but they consume a real worker slot, so the global cap
+      // still applies.
+      const { rows: globalRows } = await pool.query(
+        `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
+      );
+      if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
+        const { freed } = await sessionLifecycle.freeGlobalSlot({
+          pool, graceMs: config.sessionPressureGraceMs,
+        });
+        if (!freed) {
+          return res.status(429).json({ error: 'Platform is at capacity right now. Try again in a few minutes.' });
+        }
+      }
+
+      const selectedModel = models.resolve(req.body && req.body.model);
+
+      // Full issue text for the seed turn (cache-first; degrades to a
+      // number-only seed when GitHub can't be reached right now).
+      const { issue } = await github.fetchPublicIssue(repoOwner, repoName, issueNumber);
+
+      const branchName = `dev/auto-issue-${issueNumber}-${Date.now()}`;
+      try {
+        await github.createBranch(repoOwner, repoName, branchName);
+      } catch (err) {
+        log.warn('sessions', 'GitHub branch creation failed (continuing)', { err: err.message });
+      }
+
+      // linked_issues is seeded with the issue so a PR opened later from a
+      // CLONED session carries `Closes #N` (the clone copies the linkage).
+      const { rows } = await pool.query(
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, headless_status, headless_issue_number, linked_issues)
+         VALUES ($1, $2, $3, 'active', TRUE, 'generating', $4, $5)
+         RETURNING *`,
+        [app.id, req.user.id, branchName, issueNumber, [issueNumber]]
+      );
+      const session = rows[0];
+      // The runner reuses chat-handler helpers that expect the app fields
+      // joined onto the session row.
+      session.app_slug = app.slug;
+      session.app_name = app.name;
+      session.repo_url = app.repo_url;
+      session.app_self_hosted = app.self_hosted;
+
+      events.record(pool, {
+        type: events.EVENT_TYPES.DEV_SESSION_STARTED,
+        userId: req.user.id,
+        appId: app.id,
+        sessionId: session.id,
+        metadata: { headless: true, issueNumber },
+      });
+
+      // Fire-and-forget: the run continues after this response. Failures
+      // inside the runner mark the row 'failed' (and a platform restart
+      // mid-run is swept to 'failed' at boot — see migrate.js).
+      runHeadlessSession({
+        pool, config, session,
+        user: { id: req.user.id, username: req.user.username },
+        selectedModel, repoOwner, repoName, userApiKey,
+        issueNumber, issue,
+      }).catch((err) => {
+        log.error('sessions', 'Headless session runner crashed', { sessionId: session.id, err: err.message, stack: err.stack });
+      });
+
+      log.info('sessions', 'Headless session started', { sessionId: session.id, issueNumber, model: selectedModel });
+      res.status(201).json({ session });
+    } catch (err) {
+      log.error('sessions', 'Failed to start headless session', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #155: clone a READY headless auto session into the caller's own dev
+  // chat. Any collaborator can do this (the sessionCollabGuard above
+  // enforces collab access), and many users can clone the same auto
+  // session independently — each clone gets its own branch (forked off the
+  // auto session's branch so pushed commits carry over), a copy of the
+  // chat history + spec, and (best-effort) the auto session's Claude Code
+  // memory volume so the agent resumes with full context. A follow-up
+  // assistant message tells the new owner where things stand and how to
+  // proceed (review spec / answer question / ask for PR + staging).
+  router.post('/api/sessions/:id/clone-headless', drainGuard, async (req, res) => {
+    try {
+      const { rows: srcRows } = await pool.query(
+        `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
+         FROM chat_sessions cs
+         JOIN apps a ON cs.app_id = a.id
+         WHERE cs.id = $1 AND cs.is_headless = TRUE`,
+        [req.params.id]
+      );
+      if (!srcRows.length) return res.status(404).json({ error: 'Auto session not found' });
+      const src = srcRows[0];
+      if (src.headless_status !== 'ready') {
+        return res.status(409).json({
+          error: src.headless_status === 'generating'
+            ? 'The auto session is still generating — try again when it finishes.'
+            : 'This auto session is not in a cloneable state.',
+        });
+      }
+
+      // The clone is an ordinary dev-chat session, so the usual caps apply.
+      const { rows: countRows } = await pool.query(
+        `SELECT COUNT(*) as cnt FROM chat_sessions
+         WHERE user_id = $1 AND status IN ('active', 'promoted') AND is_headless = FALSE`,
+        [req.user.id]
+      );
+      if (parseInt(countRows[0].cnt) >= config.maxUserSessions) {
+        return res.status(429).json({ error: `You already have ${config.maxUserSessions} active sessions. Pause, archive, or merge one first.` });
+      }
+      const { rows: globalRows } = await pool.query(
+        `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
+      );
+      if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
+        const { freed } = await sessionLifecycle.freeGlobalSlot({
+          pool, graceMs: config.sessionPressureGraceMs,
+        });
+        if (!freed) {
+          return res.status(429).json({ error: 'Platform is at capacity right now. Try again in a few minutes.' });
+        }
+      }
+
+      // Fork the new branch off the auto session's branch so any commit it
+      // pushed carries over. Fall back to main if that branch is missing
+      // (e.g. the headless run never pushed and the branch was pruned).
+      const branchName = `dev/${req.user.username}-${Date.now()}`;
+      const [, repoOwner, repoName] = (src.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+      if (github.isEnabled() && repoOwner && repoName) {
+        try {
+          await github.createBranch(repoOwner, repoName, branchName, src.branch_name);
+        } catch (err) {
+          log.warn('sessions', 'Branch fork off auto session failed — falling back to main', { err: err.message, from: src.branch_name });
+          try {
+            await github.createBranch(repoOwner, repoName, branchName);
+          } catch (err2) {
+            log.warn('sessions', 'GitHub branch creation failed (continuing)', { err: err2.message });
+          }
+        }
+      }
+
+      const { rows } = await pool.query(
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, spec_md, linked_issues, testing_md, testing_path, cloned_from_session_id)
+         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8)
+         RETURNING *`,
+        [src.app_id, req.user.id, branchName, src.spec_md || '', src.linked_issues, src.testing_md, src.testing_path, src.id]
+      );
+      const session = rows[0];
+
+      // Copy the conversation so the Mayor (and the new owner) see the full
+      // auto-session context. Costs are zeroed — the cloner didn't pay for
+      // the original run and the per-message figures would double-count.
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, model, metadata)
+         SELECT $1, role, content, model, metadata
+         FROM chat_session_messages WHERE session_id = $2 ORDER BY id ASC`,
+        [session.id, src.id]
+      );
+      // Carry the spec version history too, so the spec viewer shows v1…vN.
+      await pool.query(
+        `INSERT INTO chat_session_specs (session_id, version, content, built_at, commit_sha, pr_number)
+         SELECT $1, version, content, built_at, commit_sha, pr_number
+         FROM chat_session_specs WHERE session_id = $2`,
+        [session.id, src.id]
+      ).catch((err) => log.warn('sessions', 'Spec history copy failed (continuing)', { err: err.message }));
+
+      // Best-effort: clone the auto session's CC memory volume so --resume
+      // continues its conversation. On failure the clone simply starts with
+      // fresh CC memory (chat history + spec still carry the context).
+      if (src.cc_session_id) {
+        try {
+          await worker.cloneCcVolume(src.id, session.id);
+          await pool.query(`UPDATE chat_sessions SET cc_session_id = $1 WHERE id = $2`, [src.cc_session_id, session.id]);
+          session.cc_session_id = src.cc_session_id;
+        } catch (err) {
+          log.warn('sessions', 'CC volume clone failed — clone starts with fresh CC memory', { src: src.id, dest: session.id, err: err.message });
+        }
+      }
+
+      // The promised follow-up (#155): an assistant message telling the new
+      // owner where the auto session left off and what to do next.
+      const followUp = buildHeadlessFollowUpMessage(src);
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content) VALUES ($1, 'assistant', $2)`,
+        [session.id, followUp]
+      );
+
+      events.record(pool, {
+        type: events.EVENT_TYPES.DEV_SESSION_STARTED,
+        userId: req.user.id,
+        appId: src.app_id,
+        sessionId: session.id,
+        metadata: { clonedFrom: src.id, headlessIssue: src.headless_issue_number },
+      });
+
+      log.info('sessions', 'Cloned headless session', { src: src.id, sessionId: session.id, user: req.user.username });
+      res.status(201).json({ session });
+    } catch (err) {
+      log.error('sessions', 'Failed to clone headless session', { message: err.message, stack: err.stack });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -638,7 +896,8 @@ function sessionRoutes(config) {
          FROM chat_sessions cs
          JOIN apps a ON cs.app_id = a.id
          WHERE cs.id = $1 AND cs.user_id = $2
-           AND cs.status IN ('active', 'promoted')`,
+           AND cs.status IN ('active', 'promoted')
+           AND cs.is_headless = FALSE`,
         [req.params.id, req.user.id]
       );
       if (!sessionRows.length) return res.status(404).json({ error: 'Active session not found' });
@@ -1739,6 +1998,282 @@ async function checkBudget(pool, userId) {
   return limits.checkBudget(pool, userId);
 }
 
+// Resolve a user's BYOK Anthropic key (#30) outside the chat handler so the
+// headless route (#155) can share the exact same lookup. Returns the
+// decrypted key string or null (missing key, decrypt failure — both mean
+// "bill the shared budget").
+async function loadUserApiKey(pool, userId, jwtSecret) {
+  try {
+    const { rows } = await pool.query(
+      'SELECT anthropic_key_enc FROM users WHERE id = $1',
+      [userId]
+    );
+    if (rows[0]?.anthropic_key_enc) {
+      const secrets = require('../services/secrets');
+      return secrets.decrypt(rows[0].anthropic_key_enc, jwtSecret);
+    }
+  } catch (err) {
+    log.warn('sessions', 'Failed to load user API key', { userId, err: err.message });
+  }
+  return null;
+}
+
+// #155: the follow-up assistant message appended to a session cloned from a
+// headless auto session — tells the new owner where the auto run left off
+// (spec to review / code done / question pending) and that PR + staging are
+// theirs to trigger.
+function buildHeadlessFollowUpMessage(src) {
+  const n = src.headless_issue_number;
+  const issueRef = n ? `GitHub issue #${n}` : 'a GitHub issue';
+  const intro =
+    `This session was cloned from an auto session that ran unattended on ${issueRef}. `
+    + `You're on your own branch (forked from the auto session's, so its commits carry over) — `
+    + `other users can clone the same auto session independently without affecting yours.`;
+  switch (src.headless_outcome) {
+    case 'spec':
+      return `${intro}\n\nWhere things stand: the auto session investigated the repo and drafted a spec — open the spec viewer to review it. When you're happy with it, tell me to build it and I'll dispatch the coding agent (that turn also opens the PR and staging preview).`;
+    case 'code':
+      return `${intro}\n\nWhere things stand: the code change is already committed and pushed on this branch — no PR or staging preview exists yet. Review the summary above, iterate if you want, and when you're ready just tell me to open the PR / build the staging preview.`;
+    default:
+      return `${intro}\n\nWhere things stand: the auto session ran into something that needs a human decision — see its last message above. Answer here and we'll continue from where it left off.`;
+  }
+}
+
+// #155: the unattended Mayor turn behind the issue panel's "Auto-solve"
+// button. Mirrors one POST /chat turn (phase-1 Mayor + optional dispatch +
+// phase-2 wrap-up) with three deliberate differences: there is no SSE
+// stream (events go to the session bus / global WS only), there is no stop
+// handle (nobody is watching), and a build dispatch runs with
+// `headless: true` so it can push its branch but never opens a PR or
+// staging preview. All spend is billed to the clicking user. On success the
+// session flips to headless_status='ready' with an outcome of 'spec'
+// (scout drafted a spec), 'code' (commit pushed), or 'question' (the Mayor
+// replied in text / the dispatch errored — either way a human needs to look).
+async function runHeadlessSession({
+  pool, config, session, user, selectedModel,
+  repoOwner, repoName, userApiKey, issueNumber, issue,
+}) {
+  const { broadcastGlobal } = require('../services/ws');
+  const seqPrefix = `h${Date.now().toString(36)}`;
+  let eventSeq = 0;
+  const send = (type, data) => {
+    const event = { type, _seq: `${seqPrefix}-${++eventSeq}`, ...data };
+    broadcastGlobal({ type: 'session_event', sessionId: session.id, event: type, ...event });
+    sessionBus.publish(session.id, event);
+  };
+  const sendStatus = async (text, metadata) => {
+    send('status', { text, ...(metadata || {}) });
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+       VALUES ($1, 'system', $2, $3)`,
+      [session.id, text, JSON.stringify(metadata || {})]
+    ).catch(() => {});
+  };
+  // The dispatch helpers (runScoutTool / runClaudeCodeTool) use `req` only
+  // for billing identity (+ PR author, unused in headless) and `res` only
+  // for SSE heartbeats — substitute the clicking user and a write-sink.
+  const fakeReq = { user: { id: user.id, username: user.username } };
+  const fakeRes = { write() {} };
+
+  const debitMayorUsage = async (usage) => {
+    if (!usage) return;
+    const cost = llm.estimateCostCents(usage, selectedModel);
+    if (!userApiKey && cost) {
+      await pool.query(
+        `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
+         ON CONFLICT (user_id, date) DO UPDATE SET total_cost_cents = llm_usage.total_cost_cents + EXCLUDED.total_cost_cents`,
+        [user.id, cost]
+      );
+    }
+    send('usage', { costCents: cost, model: selectedModel, byok: !!userApiKey });
+    return cost;
+  };
+
+  let outcome = 'question';
+  try {
+    // Seed turn: same shape as the issue panel's "Create PR" seeding, minus
+    // the open-a-PR instruction (headless mode never opens one).
+    const title = issue ? issue.title : '';
+    const body = issue && issue.body ? `\n\n${issue.body}` : '';
+    const seed = `Please work on GitHub issue #${issueNumber}: "${title}".${body}`;
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content) VALUES ($1, 'user', $2)`,
+      [session.id, seed]
+    );
+    await sendStatus('Auto session: thinking about the issue...');
+
+    const headlessAddendum = `
+
+HEADLESS AUTO-SESSION MODE: you are running unattended on GitHub issue #${issueNumber} — there is NO human in this chat and there will be NO follow-up turn. Decide ONE action for this single turn:
+- dispatch_scout when the issue needs investigation or design: produce a grounded spec a human will review later. Prefer this for anything non-trivial.
+- dispatch_claude_code ONLY for small, unambiguous fixes the issue text fully specifies. The agent may commit and push its branch, but NO pull request and NO staging preview will be created in this mode — a human will start a session from this auto session later and trigger those.
+- If the issue is too unclear to act on at all, reply in plain text with the specific question(s) a human must answer, and call no tool.
+Never promise future work and never ask for confirmation — state what you did and what the human reviewer should do next.`;
+    const mayorPrompt = getMayorSystemPrompt(session.app_name, false, '', !!session.app_self_hosted, null) + headlessAddendum;
+    const tools = [DISPATCH_TOOL, DISPATCH_SCOUT_TOOL, LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL];
+
+    // --- Phase 1: Mayor turn (same issue-data loop as the chat handler) ---
+    let mayor1;
+    let mayorConvo = [{ role: 'user', content: seed }];
+    let issuesIters = 0;
+    for (;;) {
+      mayor1 = await llm.streamChat({
+        messages: mayorConvo,
+        systemPrompt: mayorPrompt,
+        model: selectedModel,
+        tools,
+        apiKey: userApiKey,
+      });
+
+      const issuesCalls = mayor1.toolUses.filter((t) => ISSUE_DATA_TOOL_NAMES.has(t.name));
+      const hasTerminalTool = mayor1.toolUses.some((t) =>
+        t.name === 'dispatch_claude_code' || t.name === 'dispatch_scout');
+      if (!issuesCalls.length || hasTerminalTool || issuesIters >= MAYOR_ISSUES_MAX_ITERS) break;
+      issuesIters += 1;
+
+      await debitMayorUsage(mayor1.usage);
+      const issuesResults = await Promise.all(
+        issuesCalls.map((tc) => resolveIssueDataToolResult(tc, repoOwner, repoName))
+      );
+      mayorConvo = [
+        ...mayorConvo,
+        { role: 'assistant', content: mayor1.rawContent },
+        {
+          role: 'user',
+          content: issuesCalls.map((tc, i) => ({
+            type: 'tool_result',
+            tool_use_id: tc.id,
+            content: issuesResults[i],
+          })),
+        },
+      ];
+    }
+
+    const mayorText1 = mayor1.text;
+    const costCents1 = mayor1.usage ? llm.estimateCostCents(mayor1.usage, selectedModel) : 0;
+    if (mayorText1.trim()) {
+      send('mayor_reasoning', { text: mayorText1 });
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
+         VALUES ($1, 'assistant', $2, $3, $4, $5)`,
+        [session.id, mayorText1, selectedModel, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1]
+      );
+    }
+    await debitMayorUsage(mayor1.usage);
+
+    const scoutCall = mayor1.toolUses.find((t) => t.name === 'dispatch_scout');
+    const dispatchCall = mayor1.toolUses.find((t) => t.name === 'dispatch_claude_code');
+    const activeToolCall = scoutCall || dispatchCall || null;
+    const toolKind = scoutCall ? 'scout' : (dispatchCall ? 'build' : null);
+
+    if (!activeToolCall) {
+      // Pure text turn — the Mayor asked a question (or answered directly).
+      // That IS the outcome; a human picks it up from a cloned session.
+      outcome = 'question';
+    } else {
+      const toolPromptArg = typeof activeToolCall.input?.prompt === 'string' && activeToolCall.input.prompt.trim()
+        ? activeToolCall.input.prompt.trim()
+        : seed;
+
+      const toolArgs = {
+        pool, config, req: fakeReq, res: fakeRes, session, selectedModel,
+        userMessage: seed,
+        toolPromptArg,
+        repoOwner, repoName,
+        send, sendStatus,
+        stopHandle: null,
+        userApiKey,
+      };
+      const toolResult = toolKind === 'scout'
+        ? await runScoutTool(toolArgs)
+        : await runClaudeCodeTool({ ...toolArgs, headless: true });
+
+      if (toolResult.isError) {
+        outcome = 'question';
+      } else {
+        outcome = toolKind === 'scout' ? 'spec' : 'code';
+      }
+
+      // --- Phase 2: Mayor wrap-up (mirrors the chat handler) ---
+      const phase2ToolResults = [];
+      for (const tu of mayor1.toolUses) {
+        if (tu.id === activeToolCall.id) {
+          phase2ToolResults.push({
+            type: 'tool_result',
+            tool_use_id: tu.id,
+            content: toolResult.toolResultText,
+            ...(toolResult.isError ? { is_error: true } : {}),
+          });
+        } else if (ISSUE_DATA_TOOL_NAMES.has(tu.name)) {
+          phase2ToolResults.push({
+            type: 'tool_result',
+            tool_use_id: tu.id,
+            content: await resolveIssueDataToolResult(tu, repoOwner, repoName),
+          });
+        } else {
+          phase2ToolResults.push({
+            type: 'tool_result',
+            tool_use_id: tu.id,
+            content: 'Skipped — only one action runs per turn.',
+            is_error: true,
+          });
+        }
+      }
+      const currentSpec = await loadSessionSpec(pool, session.id);
+      const wrapPrompt = getMayorSystemPrompt(session.app_name, false, currentSpec, !!session.app_self_hosted, null) + headlessAddendum;
+      const mayor2 = await llm.streamChat({
+        messages: [
+          ...mayorConvo,
+          { role: 'assistant', content: mayor1.rawContent },
+          { role: 'user', content: phase2ToolResults },
+        ],
+        systemPrompt: wrapPrompt,
+        model: selectedModel,
+        tools,
+        toolChoice: { type: 'none' },
+        apiKey: userApiKey,
+      });
+
+      let mayorText2 = mayor2.text;
+      if (!mayorText2.trim()) {
+        mayorText2 = toolResult.isError
+          ? "_The auto session's dispatch didn't finish successfully — see the status above._"
+          : (toolKind === 'scout'
+            ? '_Spec drafted — review it in the spec viewer after starting a session from this auto session._'
+            : '_Change committed and pushed — start a session from this auto session to open the PR._');
+      }
+      send('mayor_reasoning', { text: mayorText2 });
+      const costCents2 = llm.estimateCostCents(mayor2.usage, selectedModel);
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
+         VALUES ($1, 'assistant', $2, $3, $4, $5)`,
+        [session.id, mayorText2, selectedModel, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2]
+      );
+      await debitMayorUsage(mayor2.usage);
+    }
+
+    await pool.query(
+      `UPDATE chat_sessions SET headless_status = 'ready', headless_outcome = $1, last_activity_at = NOW()
+       WHERE id = $2`,
+      [outcome, session.id]
+    );
+    send('headless_update', { status: 'ready', outcome, issueNumber, appSlug: session.app_slug });
+    log.info('sessions', 'Headless session ready', { sessionId: session.id, issueNumber, outcome });
+  } catch (err) {
+    activeWorkers.delete(session.id);
+    workerProgress.clear(session.id);
+    log.error('sessions', 'Headless session failed', { sessionId: session.id, err: err.message, stack: err.stack });
+    await pool.query(
+      `UPDATE chat_sessions SET headless_status = 'failed' WHERE id = $1`,
+      [session.id]
+    ).catch(() => {});
+    await sendStatus(`Auto session failed: ${String(err.message || err).substring(0, 200)}`);
+    send('headless_update', { status: 'failed', issueNumber, appSlug: session.app_slug });
+  } finally {
+    setTimeout(() => sessionBus.clearSession(session.id), 30000);
+  }
+}
+
 // Tools the Mayor can call. Each user message produces at most one
 // tool_use (we serialize per-session to one CC dispatch at a time). The
 // Mayor's system prompt teaches the priority order between these.
@@ -2208,6 +2743,12 @@ async function runClaudeCodeTool({
   send, sendStatus,
   stopHandle,
   userApiKey,
+  // #155: headless auto sessions may commit + push their branch, but must
+  // NOT open a PR or build a staging preview — those happen later, from a
+  // dev chat cloned off the auto session. Skips the whole PR/staging block
+  // on the success path; everything else (worker exec, push accounting,
+  // cost debit) is identical.
+  headless = false,
 }) {
   activeWorkers.add(session.id);
   // Name the model in the spin-up status so users can see at a glance
@@ -2468,6 +3009,30 @@ path: /relative/path?demo=1
         : 'No changes were made by Claude Code.';
       await sendStatus(msg);
       summaryParts.push(msg);
+    } else if (headless) {
+      // Success path, headless variant (#155): the commit was already
+      // pushed by run-cc.sh inside the worker. Persist testing guidance so
+      // it carries into cloned sessions, but deliberately skip PR creation
+      // and the staging build — the issue button's contract is "branch +
+      // push only"; a user opens the PR from a cloned dev chat later.
+      if (!result.pushOk) {
+        await sendStatus('Warning: push reported a failure — the branch may be stale.');
+        summaryParts.push('Push reported a failure; the branch may be missing the commit.');
+      }
+      summaryParts.push(`Commit ${commitHash.substring(0, 8)} pushed to ${session.branch_name}.`);
+      if (testing.testingMd || testing.testingPath) {
+        await pool.query(
+          `UPDATE chat_sessions SET testing_md = $1, testing_path = $2 WHERE id = $3`,
+          [testing.testingMd, testing.testingPath, session.id]
+        ).catch((err) => log.warn('sessions', 'Failed to persist testing guidance', { sessionId: session.id, err: err.message }));
+        session.testing_md = testing.testingMd;
+        session.testing_path = testing.testingPath;
+      }
+      await sendStatus('Changes committed and pushed (headless) — no PR or staging preview yet.');
+      summaryParts.push(
+        'Headless mode: no PR was opened and no staging preview was built. '
+        + 'A user can start a dev-chat session from this auto session to review the change and open the PR / staging build.'
+      );
     } else {
       if (!result.pushOk) {
         await sendStatus('Warning: push reported a failure — staging may be stale.');

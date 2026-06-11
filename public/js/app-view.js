@@ -1309,6 +1309,23 @@ const AppView = {
         : (budgetSpent ? 'Weekly kudos allowance spent' : 'Pledge a kudos bounty — paid to whoever\'s merged PR closes this issue');
       const kudosBtn = `<button class="gc-vote-btn"${kudosDisabled ? ' disabled' : ''} title="${kudosTitle}" onclick="AppView.giveIssueBounty(${n})">${issue.my_bounty ? '&#9733; Bountied' : 'Pledge kudos'}</button>`;
       const createBtn = `<button class="gc-vote-btn" title="Start a dev chat to solve this issue" onclick="AppView.createPrForIssue(${n})">Create PR</button>`;
+      // #155: headless auto-session button. Three states driven by the
+      // issue's `headless` field from /github-issues:
+      //   none/failed → "Auto-solve" (opens the confirm + model popup)
+      //   generating  → disabled progress label
+      //   ready       → "Start session from auto session" (clone for me)
+      const h = issue.headless;
+      let autoBtn;
+      if (h && h.status === 'generating') {
+        autoBtn = `<button class="gc-vote-btn" disabled title="A headless AI session is working on this issue${h.username ? ` (started by ${escapeAttr(h.username)})` : ''}">Generating auto session&hellip;</button>`;
+      } else if (h && h.status === 'ready') {
+        const outcomeNote = h.outcome === 'spec' ? 'it drafted a spec'
+          : h.outcome === 'code' ? 'it pushed a code change'
+          : 'it has a question for you';
+        autoBtn = `<button class="gc-vote-btn" title="Clone the finished auto session (${outcomeNote}) into your own dev chat — others can clone it too" onclick="AppView.startFromAutoSession(${h.sessionId})">Start session from auto session</button>`;
+      } else {
+        autoBtn = `<button class="gc-vote-btn" title="Spin up a headless AI session that starts solving this issue on its own — uses your credits" onclick="AppView.confirmAutoSession(${n})">Auto-solve</button>`;
+      }
       // #133: show the creating user next to the title, same "· user"
       // treatment as PR rows above. created_by_username comes from the
       // /github-issues route (local issues table → body Source line →
@@ -1328,10 +1345,17 @@ const AppView = {
           <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
             ${kudosBtn}
             ${createBtn}
+            ${autoBtn}
           </div>
         </div>`;
     }
     html += '</div>';
+
+    // Keep the generating-state poller in sync with what we just rendered.
+    // Idempotent (set/clear of one timer), so calling from the renderer is
+    // safe and guarantees it runs on both the initial panel build and every
+    // in-place re-render.
+    AppView._syncHeadlessPolling();
 
     // Paging footer: "Show 5 more" while local items remain; once all
     // fetched issues are shown but the repo has more than the fetch ceiling
@@ -1529,6 +1553,180 @@ const AppView = {
       `Please implement GitHub issue #${issueNumber}: "${title}".${body}\n\n`
       + `Open a PR that closes this issue (include "Closes #${issueNumber}" so it links and closes the issue on merge).`;
     if (typeof DevChat.sendMessage === 'function') DevChat.sendMessage(seed);
+  },
+
+  // ---- Headless auto sessions (#155) --------------------------------------
+
+  _headlessPollTimer: null,
+
+  // "Auto-solve" — confirmation popup (token warning + model selector)
+  // before spinning up a headless AI session on this issue. The session is
+  // billed to the clicking user but isn't attached to their dev chat.
+  async confirmAutoSession(issueNumber) {
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug) return;
+
+    // Model list comes from the same GET /api/models the dev-chat dropdown
+    // uses, so the popup can never offer a model the server would reject.
+    let models = [];
+    let defaultModel = '';
+    try {
+      const res = await fetch('/api/models');
+      const data = await res.json();
+      models = Array.isArray(data.models) ? data.models : [];
+      defaultModel = data.default || (models[0] && models[0].id) || '';
+    } catch {
+      alert("Couldn't load the model list — try again.");
+      return;
+    }
+    const stored = localStorage.getItem('usernode:dc:model');
+    const preselect = models.some((m) => m.id === stored) ? stored : defaultModel;
+
+    const choice = await AppView._showAutoSessionModal(issueNumber, models, preselect);
+    if (!choice) return;
+
+    try {
+      const resp = await fetch(`/api/apps/${slug}/issues/${issueNumber}/headless-session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: choice }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        alert(data.error || `Couldn't start the auto session (HTTP ${resp.status}).`);
+        return;
+      }
+      const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
+      if (issue) issue.headless = { sessionId: data.session.id, status: 'generating' };
+      AppView._rerenderOpenIssues();
+    } catch (err) {
+      alert(`Couldn't start the auto session: ${err.message}`);
+    }
+  },
+
+  // Singleton confirm popup for Auto-solve. Same scrim/card styling as
+  // ConfirmModal (confirm-modal.js) plus a model <select>; resolves to the
+  // chosen model id, or null on cancel/backdrop/Esc.
+  _showAutoSessionModal(issueNumber, models, preselect) {
+    let root = document.getElementById('auto-session-modal');
+    if (root) root.remove();
+    root = document.createElement('div');
+    root.id = 'auto-session-modal';
+    root.className = 'fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
+    const options = models.map((m) =>
+      `<option value="${escapeAttr(m.id)}"${m.id === preselect ? ' selected' : ''}>${escapeHtml(m.label || m.id)}</option>`
+    ).join('');
+    root.innerHTML = `
+      <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
+        <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl relative">
+          <h2 class="text-lg font-bold mb-2 text-zinc-900 dark:text-zinc-100">Start auto session for issue #${issueNumber}?</h2>
+          <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
+            This spins up a <b>headless AI session</b> that immediately starts working on the
+            issue on its own — investigating the repo and drafting a spec, pushing a code
+            change, or coming back with a question. It is not connected to your dev chat,
+            but it <b>will automatically use your tokens/credits</b> the moment you confirm.
+          </p>
+          <p class="text-xs text-amber-500 mb-4">
+            Experimental — not recommended for normal users at the moment. Costs are billed
+            to you even if the result isn't useful.
+          </p>
+          <label class="block text-xs font-medium text-zinc-500 mb-1" for="auto-session-model">Model</label>
+          <select id="auto-session-model"
+            class="w-full mb-5 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100">
+            ${options}
+          </select>
+          <div class="flex justify-end gap-2">
+            <button data-role="cancel" type="button"
+              class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
+            <button data-role="confirm" type="button"
+              class="rounded-lg px-4 py-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-500 transition-colors">Start auto session</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(root);
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const cleanup = (result) => {
+        if (settled) return;
+        settled = true;
+        document.removeEventListener('keydown', onKey, true);
+        root.remove();
+        resolve(result);
+      };
+      const onKey = (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); cleanup(null); }
+      };
+      root.querySelector('[data-role="cancel"]').addEventListener('click', () => cleanup(null));
+      root.querySelector('[data-role="confirm"]').addEventListener('click', () => {
+        const sel = root.querySelector('#auto-session-model');
+        cleanup((sel && sel.value) || null);
+      });
+      root.addEventListener('click', (e) => {
+        if (e.target === root || e.target.dataset.modalBackdrop !== undefined) cleanup(null);
+      });
+      document.addEventListener('keydown', onKey, true);
+    });
+  },
+
+  // "Start session from auto session" — clone the finished headless session
+  // (chat history + spec + branch + CC memory) into a dev chat owned by the
+  // clicking user, then land them in it. Any number of users can do this
+  // independently; each clone gets its own branch and PR path.
+  async startFromAutoSession(headlessSessionId) {
+    if (typeof DevChat === 'undefined') return;
+    try {
+      const resp = await fetch(`/api/sessions/${headlessSessionId}/clone-headless`, { method: 'POST' });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        alert(data.error || `Couldn't start a session from the auto session (HTTP ${resp.status}).`);
+        return;
+      }
+      DevChat.sessions.unshift(data.session);
+      if (typeof App !== 'undefined' && App.switchTab) {
+        await App.switchTab('individual-chat', data.session.id);
+      }
+    } catch (err) {
+      alert(`Couldn't start a session from the auto session: ${err.message}`);
+    }
+  },
+
+  // While any rendered issue shows a generating auto session, poll the
+  // issues endpoint so the button flips to "Start session from auto
+  // session" (or back to Auto-solve on failure) without a manual refresh.
+  _syncHeadlessPolling() {
+    const generating = (AppView._ghIssues || []).some(
+      (i) => i.headless && i.headless.status === 'generating'
+    );
+    if (!generating) {
+      if (AppView._headlessPollTimer) {
+        clearInterval(AppView._headlessPollTimer);
+        AppView._headlessPollTimer = null;
+      }
+      return;
+    }
+    if (AppView._headlessPollTimer) return;
+    AppView._headlessPollTimer = setInterval(async () => {
+      const slug = AppView.appData && AppView.appData.slug;
+      if (!slug || !document.getElementById('gc-open-issues')) {
+        clearInterval(AppView._headlessPollTimer);
+        AppView._headlessPollTimer = null;
+        return;
+      }
+      try {
+        const res = await fetch(`/api/apps/${slug}/github-issues`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!Array.isArray(data.issues)) return;
+        // Merge just the headless field — bounty state may have optimistic
+        // local updates we don't want a poll to clobber.
+        const byNumber = new Map(data.issues.map((i) => [i.number, i.headless || null]));
+        for (const issue of AppView._ghIssues || []) {
+          if (byNumber.has(issue.number)) issue.headless = byNumber.get(issue.number);
+        }
+        AppView._rerenderOpenIssues();
+      } catch {}
+    }, 8000);
   },
 
   // Core PR voting controls (Preview / Yes / No / Admin-merge) as an HTML

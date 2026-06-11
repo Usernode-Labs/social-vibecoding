@@ -284,9 +284,13 @@ async function getFileContent(owner, repo, filePath, ref) {
   }
 }
 
-async function createBranch(owner, repo, branchName) {
+// `fromBranch` (default 'main') lets callers fork off an arbitrary existing
+// branch — used by the headless-session clone flow (#155), which branches a
+// user's new dev branch off the auto session's branch so any pushed commits
+// carry over.
+async function createBranch(owner, repo, branchName, fromBranch = 'main') {
   const octokit = await getOctokit(owner);
-  const { data: ref } = await octokit.rest.git.getRef({ owner, repo, ref: 'heads/main' });
+  const { data: ref } = await octokit.rest.git.getRef({ owner, repo, ref: `heads/${fromBranch}` });
 
   await octokit.rest.git.createRef({
     owner, repo,
@@ -294,7 +298,7 @@ async function createBranch(owner, repo, branchName) {
     sha: ref.object.sha,
   });
 
-  log.info('github', 'Branch created', { repo: `${owner}/${repo}`, branch: branchName });
+  log.info('github', 'Branch created', { repo: `${owner}/${repo}`, branch: branchName, from: fromBranch });
 }
 
 async function createPR(owner, repo, { branch, title, body }) {
