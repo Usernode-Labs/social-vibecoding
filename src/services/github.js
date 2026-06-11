@@ -33,7 +33,13 @@ const GITHUB_USER_AGENT = 'usernode-platform';
 const issuesCache = new Map();
 const ISSUES_CACHE_TTL_MS = 5 * 60 * 1000;
 const ISSUES_MAX_PAGES = 10;          // 10 * 100 = up to 1000 open issues
-const ISSUE_BODY_MAX = 500;           // chars before we truncate the body
+// Per-issue body cap applied ONLY at agent-facing surfaces (the Mayor's
+// list_github_issues tool and the worker's usernode-issues CLI) via
+// truncateIssueBodies, so a few verbose issues can't blow up the model's
+// context. The cache and the web route carry FULL bodies (#158): the
+// "Create PR" button seeds the dev chat with the issue text, and cutting
+// it at 500 chars dropped the rest of the issue from the PR flow.
+const ISSUE_BODY_MAX = 500;
 const ISSUES_FETCH_TIMEOUT_MS = 8000; // per-page request timeout
 
 // #144: known-closed suppression. Cache busting alone can't keep the
@@ -595,12 +601,12 @@ function parseNextLink(linkHeader) {
   return null;
 }
 
-// Reduce a raw GitHub issue object to the compact, agent-friendly shape the
-// list_github_issues tool returns. Labels collapse to bare names; bodies are
-// truncated so a few verbose issues can't blow up the model's context.
+// Reduce a raw GitHub issue object to the compact shape fetchPublicIssues
+// returns. Labels collapse to bare names. Bodies are kept FULL here (#158) —
+// the web route needs the complete text so "Create PR" can seed the dev chat
+// with the whole issue; agent surfaces clip via truncateIssueBodies instead.
 function normalizeIssue(raw) {
-  let body = typeof raw.body === 'string' ? raw.body : '';
-  if (body.length > ISSUE_BODY_MAX) body = `${body.slice(0, ISSUE_BODY_MAX)}…`;
+  const body = typeof raw.body === 'string' ? raw.body : '';
   const labels = Array.isArray(raw.labels)
     ? raw.labels.map((l) => (typeof l === 'string' ? l : l && l.name)).filter(Boolean)
     : [];
@@ -617,6 +623,24 @@ function normalizeIssue(raw) {
     // it's the actual author, which the github-issues route uses as a
     // last-resort creator fallback.
     user: (raw.user && raw.user.login) || null,
+  };
+}
+
+// Clip issue bodies for agent-facing surfaces (the Mayor's
+// list_github_issues tool and the worker's usernode-issues CLI) so a few
+// verbose issues can't blow up the model's context. Takes a
+// fetchPublicIssues-shaped result and returns a copy with each body capped
+// at ISSUE_BODY_MAX; never mutates the input (the result may be the shared
+// cache entry). The web route deliberately skips this (#158).
+function truncateIssueBodies(result) {
+  if (!result || !Array.isArray(result.issues)) return result;
+  return {
+    ...result,
+    issues: result.issues.map((issue) => {
+      const body = typeof issue.body === 'string' ? issue.body : '';
+      if (body.length <= ISSUE_BODY_MAX) return issue;
+      return { ...issue, body: `${body.slice(0, ISSUE_BODY_MAX)}…` };
+    }),
   };
 }
 
@@ -788,6 +812,7 @@ module.exports = {
   checkRepoPublic,
   fetchPublicRepoInfo,
   fetchPublicIssues,
+  truncateIssueBodies,
   invalidateIssuesCache,
   noteIssueCreated,
   noteIssuesClosed,

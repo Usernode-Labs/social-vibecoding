@@ -1856,8 +1856,10 @@ async function resolveGithubIssuesToolResult(repoOwner, repoName) {
   if (!repoOwner || !repoName) {
     return JSON.stringify({ issues: [], truncatedList: false, note: 'no repo' });
   }
+  // Clip verbose bodies for the model's context — the cache itself carries
+  // full bodies for the web route / Create-PR seeding (#158).
   const result = await github.fetchPublicIssues(repoOwner, repoName);
-  return JSON.stringify(result);
+  return JSON.stringify(github.truncateIssueBodies(result));
 }
 
 // Build the Mayor's message history from chat_session_messages rows.

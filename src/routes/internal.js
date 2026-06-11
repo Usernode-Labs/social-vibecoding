@@ -395,7 +395,9 @@ function internalRoutes(_config) {
         return res.json({ ok: true, issues: [], truncatedList: false, note: 'no repo' });
       }
       const [, owner, repo] = parsed;
-      const result = await github.fetchPublicIssues(owner, repo);
+      // Clip verbose bodies for the agent's context — the cache carries
+      // full bodies for the web route / Create-PR seeding (#158).
+      const result = github.truncateIssueBodies(await github.fetchPublicIssues(owner, repo));
       return res.json({ ok: true, ...result });
     }
   );

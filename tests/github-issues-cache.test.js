@@ -208,6 +208,48 @@ test('noteIssuesClosed/unsuppressIssues reject malformed input', () => {
   assert.strictEqual(github.unsuppressIssues('o', 'r', [99]), 0);
 });
 
+// ------------------------------------------------------------------
+// #158: full issue bodies. fetchPublicIssues must NOT truncate bodies
+// (the web route / "Create PR" seeding needs the whole text); the
+// agent surfaces clip via truncateIssueBodies instead.
+// ------------------------------------------------------------------
+
+test('fetchPublicIssues keeps the full issue body untruncated (#158)', async () => {
+  const origFetch = global.fetch;
+  try {
+    const longBody = 'x'.repeat(5000);
+    stubFetch([{ ...fakeIssue(20, 'verbose', '2026-06-09T00:00:00Z'), body: longBody }]);
+
+    const res = await github.fetchPublicIssues('FullOwner', 'full-repo');
+    assert.strictEqual(res.issues[0].body, longBody);
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('truncateIssueBodies clips long bodies at 500 chars with an ellipsis, leaving short ones alone', () => {
+  const longBody = 'y'.repeat(5000);
+  const input = {
+    issues: [
+      { number: 1, title: 'long', body: longBody },
+      { number: 2, title: 'short', body: 'short body' },
+    ],
+    truncatedList: false,
+  };
+  const out = github.truncateIssueBodies(input);
+  assert.strictEqual(out.issues[0].body, `${'y'.repeat(500)}…`);
+  assert.strictEqual(out.issues[1].body, 'short body');
+  assert.strictEqual(out.truncatedList, false);
+  // Must not mutate the input — it may be the shared cache entry.
+  assert.strictEqual(input.issues[0].body, longBody);
+});
+
+test('truncateIssueBodies passes through degenerate inputs', () => {
+  assert.strictEqual(github.truncateIssueBodies(null), null);
+  const noIssues = { truncatedList: false, note: 'no repo' };
+  assert.strictEqual(github.truncateIssueBodies(noIssues), noIssues);
+});
+
 test('suppression matches owner/repo case-insensitively and ignores a trailing .git', async () => {
   const origFetch = global.fetch;
   try {
