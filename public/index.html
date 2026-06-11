@@ -780,6 +780,9 @@
   <script src="/js/confirm-modal.js"></script>
   <script src="/js/settings.js"></script>
   <script src="/js/group-chat.js"></script>
+  <!-- Pure two-half spec splitter (#196). Must load BEFORE dev-chat.js,
+       whose spec viewer calls window.splitSpecSections. -->
+  <script src="/js/spec-sections.js"></script>
   <script src="/js/dev-chat.js"></script>
   <!-- Kudos widget (button + budget badge) and leaderboard screen.
        Loaded BEFORE app-view.js so the panel renderer can use

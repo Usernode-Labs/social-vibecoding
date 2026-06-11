@@ -471,6 +471,17 @@ test('specHasBlockingQuestions: matches Questions/Open questions ATX headings on
     // like "Questions we answered" still matches (a safe false positive —
     // it only downgrades a buildable spec to a questions round-trip).
     assert.equal(has('## Questions we answered'), true);
+    // #196: the two-half spec convention places blockers at the END of
+    // the user-facing half as "### Questions" — still detected.
+    assert.equal(has([
+      '# Title',
+      '## User-facing changes',
+      'Stuff changes.',
+      '### Questions',
+      '1. A or B? (default: A)',
+      '## Technical implementation',
+      'Details.',
+    ].join('\n\n')), true);
   } finally {
     loaded.restore();
   }
