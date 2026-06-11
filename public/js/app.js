@@ -667,7 +667,12 @@ const App = {
         DevChat.messages.push({ role: 'system', content: 'Staging deployed!', stagingUrl: data.url, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8) });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
-        if (data.url) DevChat.currentSession.staging_url = data.url;
+        if (data.url) {
+          DevChat.currentSession.staging_url = data.url;
+          // #127: testing guidance rides along with the rebuild broadcast.
+          if ('testingMd' in data) DevChat.currentSession.testing_md = data.testingMd;
+          if ('testingPath' in data) DevChat.currentSession.testing_path = data.testingPath;
+        }
         break;
       case 'staging_failed':
         DevChat._deactivateLastStatus();

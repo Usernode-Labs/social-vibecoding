@@ -270,6 +270,21 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_linked_issues_applied  INT
 -- closing keywords aren't re-fetched from GitHub on every boot.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS linked_issues_backfilled  BOOLEAN NOT NULL DEFAULT false;
 
+-- Bot-generated testing guidance for PR previews (#127). The coding agent
+-- may end a build turn with a "==== TESTING ====" block (parsed by
+-- src/services/testing-notes.js):
+--   testing_md         : latest "how to test" markdown (NULL = none).
+--   testing_path       : validated relative deep-link path into the app that
+--                        lands the tester on the changed feature.
+--   pr_testing_applied : snapshot of the rendered "How to test" section last
+--                        written into the live PR body (the
+--                        pr_linked_issues_applied analog) so the existing-PR
+--                        update path detects changed guidance even when the
+--                        title is unchanged.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS testing_md         TEXT;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS testing_path       VARCHAR(512);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_testing_applied TEXT;
+
 -- Stale-promoted-PR policy + reversible archive.
 --   promoted_at       : when the session was proposed to the group. With
 --                       the latest pr_votes timestamp this gives the

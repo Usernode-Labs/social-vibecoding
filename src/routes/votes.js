@@ -308,7 +308,7 @@ function voteRoutes(config) {
       // majority threshold is crossed and only reappears in the "merged"
       // list at the very end, making it look like the vote was lost.
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.staging_url, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
+        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') as yes_count,
            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'no') as no_count,
            (SELECT vote FROM pr_votes WHERE session_id = cs.id AND user_id = $2) as my_vote,

@@ -1656,8 +1656,18 @@ const AppView = {
     // (now no-op) Yes/No buttons for someone who never voted; the pill +
     // status badge already convey the outcome.
     if (opts && opts.collapseVoted && pr.status !== 'promoted') return '';
+    // #127: stash the PR's testing guidance in the by-session registry so
+    // the Preview onclick passes it to the overlay (which renders its own
+    // "Test this change" button + instructions panel) without the markdown
+    // ever transiting an HTML attribute. No new button here — the row is
+    // already dense.
+    if (pr.testing_md || pr.testing_path) {
+      AppView._sessionTesting[pr.id] = { md: pr.testing_md || null, path: pr.testing_path || null };
+    } else {
+      delete AppView._sessionTesting[pr.id];
+    }
     const preview = pr.staging_url
-      ? `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStaging('${pr.staging_url}')">Preview</button>`
+      ? `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStagingForSession(${pr.id}, '${pr.staging_url}')">Preview</button>`
       : '';
     const adminMerge = App.user?.isAdmin
       ? `<button class="gc-vote-btn gc-vote-btn-admin" title="Admin: merge this PR right now, bypassing the vote majority" onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
@@ -2125,21 +2135,49 @@ const AppView = {
     } catch {}
   },
 
-  // Open staging in fullscreen overlay
-  swapToStaging(stagingUrl) {
+  // Open staging in fullscreen overlay.
+  //
+  // #127: `testing` is the session's bot-generated testing guidance
+  // ({ md, path } | null) and `opts.jump` opens the iframe directly at the
+  // deep-link path (the dev-chat "Test this change" button does this).
+  // Callers must never thread the markdown through an HTML attribute —
+  // use a wrapper that looks the object up at click time
+  // (swapToStagingForSession / DevChat.previewStaging).
+  swapToStaging(stagingUrl, testing, opts) {
     const overlay = document.getElementById('staging-overlay');
     const iframe = document.getElementById('staging-iframe');
     const label = document.getElementById('staging-url-label');
     if (!overlay || !iframe) return;
 
     const resolved = resolveDevHost(stagingUrl);
-    const src = AppView.iframeToken
-      ? `${resolved}?token=${AppView.iframeToken}`
-      : resolved;
+
+    // Re-validate the deep link client-side (the server already did via
+    // testing-notes.validatePath, but defense-in-depth is cheap): must be
+    // relative and not protocol-relative, so new URL() below can never
+    // leave the staging origin.
+    const rawPath = testing && typeof testing.path === 'string' ? testing.path : null;
+    const safePath = rawPath && rawPath.startsWith('/') && !rawPath.startsWith('//') ? rawPath : null;
+    const testingMd = testing && typeof testing.md === 'string' && testing.md.trim() ? testing.md : null;
+    AppView._stagingTesting = (safePath || testingMd) ? { md: testingMd, path: safePath } : null;
+
+    // Build iframe URLs with the URL API so a deep link carrying its own
+    // query string composes with the token param (no '?token=' concat).
+    const buildSrc = (path) => {
+      let url;
+      try { url = new URL(path || '/', resolved); } catch { return resolved; }
+      if (AppView.iframeToken) url.searchParams.set('token', AppView.iframeToken);
+      return url.toString();
+    };
+    const jump = !!(opts && opts.jump) && !!safePath;
+    // Mutable so a "Test this change" click during the readiness poll
+    // retargets the pending load instead of being clobbered by it.
+    const pending = { src: buildSrc(jump ? safePath : null) };
 
     if (label) label.textContent = resolved;
     overlay.classList.remove('hidden');
     if (window.DevConsole) DevConsole.setButtonVisible(true);
+
+    AppView._renderTestingControls(buildSrc, pending);
 
     document.getElementById('staging-back').onclick = () => {
       AppView.closeStagingOverlay();
@@ -2150,15 +2188,80 @@ const AppView = {
     // issue; loading the iframe during that window shows a black void with no
     // feedback. Probe the host first and only swap in the real src once the
     // TLS handshake succeeds. Each probe also nudges Caddy's on-demand
-    // issuance along, so polling actively warms the cert too.
+    // issuance along, so polling actively warms the cert too. (The probe
+    // always targets the origin root, not the deep link — readiness is a
+    // host/TLS property, and the deep path may be app-routed or auth-gated.)
     iframe.src = '';
     const loadId = ++AppView._stagingLoadId;
     AppView._waitForStagingReady(resolved, loadId).then((ready) => {
       // A newer swap (or a close) superseded this one — drop the result.
       if (loadId !== AppView._stagingLoadId) return;
       AppView._setStagingLoader(false);
-      if (ready) iframe.src = src;
+      if (ready) iframe.src = pending.src;
     });
+  },
+
+  // #127: Preview entry point for vote-panel / group-chat rows — looks up
+  // the testing guidance stashed by voteButtonsHtml at render time, so the
+  // existing Preview button passes it through without any new UI there.
+  swapToStagingForSession(sessionId, stagingUrl) {
+    AppView.swapToStaging(stagingUrl, (AppView._sessionTesting || {})[sessionId] || null);
+  },
+
+  // #127: per-render registry of { md, path } testing guidance keyed by
+  // session id, populated by voteButtonsHtml. Exists so bot-authored
+  // markdown never transits an inline onclick attribute.
+  _sessionTesting: {},
+
+  // The current preview's testing guidance ({ md, path } | null), set by
+  // swapToStaging and cleared on close.
+  _stagingTesting: null,
+
+  // #127: show/hide + wire the overlay's "Test this change" button and the
+  // collapsible "How to test" panel for the current preview.
+  _renderTestingControls(buildSrc, pending) {
+    const btn = document.getElementById('staging-test-btn');
+    const panel = document.getElementById('staging-testing-panel');
+    const content = document.getElementById('staging-testing-content');
+    const closeBtn = document.getElementById('staging-testing-close');
+    const iframe = document.getElementById('staging-iframe');
+    if (!btn || !panel || !content) return;
+
+    panel.classList.add('hidden');
+    const t = AppView._stagingTesting;
+    if (!t) {
+      btn.classList.add('hidden');
+      content.innerHTML = '';
+      return;
+    }
+
+    // Bot-authored markdown: render through DevChat's escaping markdown
+    // pipeline when available, otherwise fall back to escaped plain text.
+    if (t.md) {
+      content.innerHTML = (window.DevChat && typeof DevChat.renderMarkdown === 'function')
+        ? DevChat.renderMarkdown(t.md)
+        : `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(t.md)}</pre>`;
+    } else {
+      content.innerHTML = '<span class="text-zinc-500">Use the button above to jump to the changed feature.</span>';
+    }
+
+    btn.classList.remove('hidden');
+    btn.title = t.path ? 'Open the preview at the changed feature' : 'Show the testing instructions';
+    btn.onclick = () => {
+      if (t.path) {
+        // Retarget the (possibly still pending) load at the deep link.
+        pending.src = buildSrc(t.path);
+        if (iframe && iframe.src) iframe.src = pending.src;
+        if (t.md) panel.classList.remove('hidden');
+      } else {
+        panel.classList.toggle('hidden');
+      }
+    };
+    if (closeBtn) closeBtn.onclick = () => panel.classList.add('hidden');
+
+    // Auto-open the instructions so a tester landing in the preview sees
+    // the steps without hunting; the × dismisses them.
+    if (t.md) panel.classList.remove('hidden');
   },
 
   // Incremented on every swap/close so an in-flight readiness poll for a
@@ -2230,6 +2333,12 @@ const AppView = {
     AppView._setStagingLoader(false);
     if (overlay) overlay.classList.add('hidden');
     if (iframe) iframe.src = '';
+    // #127: reset the testing affordances so the next preview starts clean.
+    AppView._stagingTesting = null;
+    const testBtn = document.getElementById('staging-test-btn');
+    if (testBtn) testBtn.classList.add('hidden');
+    const testPanel = document.getElementById('staging-testing-panel');
+    if (testPanel) testPanel.classList.add('hidden');
     // Restore dev-console button visibility based on whatever tab the
     // user lands back on.
     if (window.DevConsole) {
