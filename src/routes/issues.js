@@ -359,6 +359,27 @@ function issueRoutes(config) {
       );
       const creatorByNumber = new Map(creatorRows.map((r) => [r.n, r.username]));
 
+      // #155: latest live headless auto session per issue, so the panel can
+      // render the right button state (Auto-solve / Generating… / Start
+      // session from auto session). 'failed' rows are excluded — the button
+      // recovers to Auto-solve so the run can be retried.
+      const { rows: headlessRows } = await pool.query(
+        `SELECT DISTINCT ON (cs.headless_issue_number)
+                cs.headless_issue_number AS n, cs.id, cs.headless_status,
+                cs.headless_outcome, u.username
+           FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id
+          WHERE cs.app_id = $1 AND cs.is_headless = TRUE
+            AND cs.headless_status IN ('generating', 'ready')
+          ORDER BY cs.headless_issue_number, cs.created_at DESC`,
+        [app.id]
+      );
+      const headlessByNumber = new Map(headlessRows.map((r) => [r.n, {
+        sessionId: r.id,
+        status: r.headless_status,
+        outcome: r.headless_outcome,
+        username: r.username,
+      }]));
+
       const issues = (result.issues || []).map((issue) => {
         const b = byNumber.get(issue.number);
         const ghLogin = issue.user && !issue.user.endsWith('[bot]') && issue.user !== 'usernode-bot'
@@ -371,6 +392,7 @@ function issueRoutes(config) {
           created_by_username: creatorByNumber.get(issue.number)
             || creatorFromSourceLine(issue.body)
             || ghLogin,
+          headless: headlessByNumber.get(issue.number) || null,
         };
       });
 

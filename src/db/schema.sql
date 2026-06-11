@@ -256,6 +256,33 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ 
 -- Supports the sweeper's "active + idle past threshold" scan.
 CREATE INDEX IF NOT EXISTS chat_sessions_activity_idx ON chat_sessions(status, last_activity_at);
 
+-- #155: headless "auto sessions" started from an issue's Auto-solve button.
+-- A headless session is NOT connected to any user's dev chat: it runs one
+-- unattended Mayor turn (scout / build / question) against the issue, may
+-- push a branch, but never opens a PR or builds staging. It is billed to
+-- the user who clicked the button (user_id), and any collaborator can later
+-- clone its state (messages + spec + branch + CC memory) into their own
+-- dev-chat session via POST /api/sessions/:id/clone-headless.
+--   is_headless            = marks the row as an auto session; excluded from
+--                            per-user session lists, the 3-slot cap, and chat.
+--   headless_status        = 'generating' (run in flight) | 'ready' | 'failed'.
+--                            NULL on ordinary sessions.
+--   headless_issue_number  = the GitHub issue the auto session was started for.
+--   headless_outcome       = what the run arrived at: 'spec' | 'code' |
+--                            'question'. Drives the cloned session's follow-up
+--                            message. NULL until the run finishes.
+--   cloned_from_session_id = on ORDINARY sessions: the headless session this
+--                            dev chat was cloned from (many clones per source).
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS is_headless BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS headless_status VARCHAR(20);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS headless_issue_number INTEGER;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS headless_outcome VARCHAR(20);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS cloned_from_session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
+-- Supports the per-issue "latest auto session" lookup on the issues panel.
+CREATE INDEX IF NOT EXISTS chat_sessions_headless_idx
+  ON chat_sessions(app_id, headless_issue_number, created_at DESC)
+  WHERE is_headless;
+
 -- GitHub issue linkage (#75): the open issues this session's work addresses,
 -- declared by the Mayor via dispatch_claude_code / dispatch_scout's
 -- `addresses_issues` arg. Accumulates (union) across turns. pr-metadata.js

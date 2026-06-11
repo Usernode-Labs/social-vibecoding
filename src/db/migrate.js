@@ -32,7 +32,27 @@ async function migrate(config) {
   await backfillFenceWrappedSpecs(pool);
   await backfillOrphanedSpecDrafts(pool);
   await backfillLinkedIssuesFromPrBodies(pool);
+  await failOrphanedHeadlessRuns(pool);
   await migrateAppDbsToPerRole(pool, config);
+}
+
+// #155: a headless auto-session run lives entirely in this process — if the
+// platform restarts mid-run there is nothing left to finish it, so any row
+// still marked 'generating' at boot is permanently stuck. Flip those to
+// 'failed' so the issue panel's button recovers to "Auto-solve" instead of
+// showing "Generating…" forever. Idempotent; no-ops when nothing is stuck.
+async function failOrphanedHeadlessRuns(pool) {
+  try {
+    const { rowCount } = await pool.query(
+      `UPDATE chat_sessions SET headless_status = 'failed'
+        WHERE is_headless = TRUE AND headless_status = 'generating'`
+    );
+    if (rowCount > 0) {
+      log.info('db', 'Marked orphaned headless runs as failed', { count: rowCount });
+    }
+  } catch (err) {
+    log.warn('db', 'Failed to reset orphaned headless runs', { err: err.message });
+  }
 }
 
 // One-shot, idempotent backfill that recovers chat_sessions.linked_issues for

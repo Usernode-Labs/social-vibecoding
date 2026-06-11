@@ -966,6 +966,31 @@ async function destroyCcVolume(sessionId) {
   await docker.removeVolume(ccVolumeName(sessionId));
 }
 
+// #155: copy one session's CC memory volume (~/.claude) into another
+// session's volume, so a dev chat cloned from a headless auto session can
+// `--resume` the auto session's Claude Code conversation. Uses the worker
+// image (always present locally — staging/CC builds keep it warm) for the
+// one-shot copy container, so no registry pull is needed. Throws when the
+// source volume doesn't exist or the copy fails; callers treat a clone
+// failure as "start with fresh CC memory" (cc_session_id stays NULL).
+async function cloneCcVolume(srcSessionId, destSessionId) {
+  const src = ccVolumeName(srcSessionId);
+  const dest = ccVolumeName(destSessionId);
+  // Throws if the source volume was never created (e.g. the headless run
+  // failed before its first worker bootstrap).
+  await docker.execFileAsync('docker', ['volume', 'inspect', src], { timeout: 5000 });
+  await docker.ensureVolume(dest);
+  await docker.execFileAsync('docker', [
+    'run', '--rm',
+    '-v', `${src}:/from:ro`,
+    '-v', `${dest}:/to`,
+    '--entrypoint', 'sh',
+    WORKER_IMAGE,
+    '-c', 'cp -a /from/. /to/',
+  ], { timeout: 60000 });
+  log.info('worker', 'CC volume cloned', { from: src, to: dest });
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // Platform-side git push proxy
 // ──────────────────────────────────────────────────────────────────────
@@ -1067,6 +1092,7 @@ module.exports = {
   listOrphanWorkers,
   destroyWorker,
   destroyCcVolume,
+  cloneCcVolume,
   parseClaudeResponse,
   // exposed for the routes' container-name lookups
   workerContainerName,
