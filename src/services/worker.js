@@ -865,6 +865,10 @@ async function execInWorker(sessionId, {
     journal,
     model: models.resolve(model),
     startedAt: new Date().toISOString(),
+    // #174: billing context for restart-resume — the resume paths debit
+    // the recovered costUsd into the bucket the turn actually billed,
+    // even if the user adds/removes their key while the turn is detached.
+    byok: !!anthropicApiKey,
   });
 
   try {

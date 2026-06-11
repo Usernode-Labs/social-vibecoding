@@ -25,6 +25,7 @@ const github = require('./src/services/github');
 const llm = require('./src/services/llm');
 const worker = require('./src/services/worker');
 const sessionLifecycle = require('./src/services/session-lifecycle');
+const limits = require('./src/services/limits');
 const ws = require('./src/services/ws');
 const log = require('./src/services/logger');
 const lifecycle = require('./src/services/lifecycle');
@@ -1121,6 +1122,27 @@ async function resumeDetachedTurn({
     return;
   }
   flushProgress();
+
+  // #174: the journal replay rebuilt the turn's self-reported cost —
+  // without this debit a restart silently drops the CC turn's spend from
+  // both ledger buckets. active_turn rows persisted before the byok flag
+  // shipped fall back to key-on-file (presence of the encrypted key is
+  // enough; no decryption needed).
+  if (result.costUsd) {
+    let byok = activeTurn.byok;
+    if (byok === undefined || byok === null) {
+      try {
+        const { rows } = await pool.query(
+          'SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND anthropic_key_enc IS NOT NULL) AS byok',
+          [session.user_id]
+        );
+        byok = !!rows[0]?.byok;
+      } catch {
+        byok = false;
+      }
+    }
+    await limits.recordSpend(pool, session.user_id, Math.round(result.costUsd * 100), { byok: !!byok });
+  }
 
   try {
     if (activeTurn.mode === 'scout') {
