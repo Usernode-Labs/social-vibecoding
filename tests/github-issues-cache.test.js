@@ -227,7 +227,7 @@ test('fetchPublicIssues keeps the full issue body untruncated (#158)', async () 
   }
 });
 
-test('truncateIssueBodies clips long bodies at 500 chars with an ellipsis, leaving short ones alone', () => {
+test('truncateIssueBodies clips long bodies at 500 chars with an explicit marker, leaving short ones alone', () => {
   const longBody = 'y'.repeat(5000);
   const input = {
     issues: [
@@ -237,17 +237,137 @@ test('truncateIssueBodies clips long bodies at 500 chars with an ellipsis, leavi
     truncatedList: false,
   };
   const out = github.truncateIssueBodies(input);
-  assert.strictEqual(out.issues[0].body, `${'y'.repeat(500)}…`);
+  // Default marker names the Mayor's get_github_issue tool with the
+  // issue's own number, so the agent knows the cut happened and how to
+  // get the rest.
+  assert.strictEqual(
+    out.issues[0].body,
+    `${'y'.repeat(500)}… [truncated — use get_github_issue(1) for full text]`
+  );
   assert.strictEqual(out.issues[1].body, 'short body');
   assert.strictEqual(out.truncatedList, false);
   // Must not mutate the input — it may be the shared cache entry.
   assert.strictEqual(input.issues[0].body, longBody);
 });
 
+test('truncateIssueBodies accepts a surface-specific full-text hint (worker CLI form)', () => {
+  const out = github.truncateIssueBodies(
+    { issues: [{ number: 42, title: 'long', body: 'z'.repeat(501) }], truncatedList: false },
+    (n) => `usernode-issues ${n}`
+  );
+  assert.strictEqual(
+    out.issues[0].body,
+    `${'z'.repeat(500)}… [truncated — use usernode-issues 42 for full text]`
+  );
+});
+
 test('truncateIssueBodies passes through degenerate inputs', () => {
   assert.strictEqual(github.truncateIssueBodies(null), null);
   const noIssues = { truncatedList: false, note: 'no repo' };
   assert.strictEqual(github.truncateIssueBodies(noIssues), noIssues);
+});
+
+// ------------------------------------------------------------------
+// #158: fetchPublicIssue — single-issue, full-body lookup backing the
+// Mayor's get_github_issue tool and `usernode-issues <number>`.
+// ------------------------------------------------------------------
+
+test('fetchPublicIssue serves a cached open issue without a network call, full body intact', async () => {
+  const origFetch = global.fetch;
+  try {
+    const longBody = 'w'.repeat(3000);
+    const calls = stubFetch([{ ...fakeIssue(30, 'cached', '2026-06-09T00:00:00Z'), body: longBody }]);
+
+    await github.fetchPublicIssues('OneOwner', 'one-repo'); // warm the cache
+    assert.strictEqual(calls.length, 1);
+
+    const res = await github.fetchPublicIssue('OneOwner', 'one-repo', 30);
+    assert.strictEqual(calls.length, 1, 'must come from cache');
+    assert.strictEqual(res.issue.number, 30);
+    assert.strictEqual(res.issue.body, longBody);
+    assert.strictEqual(res.note, undefined);
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('fetchPublicIssue falls through to the single-issue endpoint on a cache miss', async () => {
+  const origFetch = global.fetch;
+  try {
+    const calls = [];
+    global.fetch = async (url) => {
+      calls.push(String(url));
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        json: async () => fakeIssue(77, 'closed but fetchable', '2026-06-09T00:00:00Z'),
+      };
+    };
+    const res = await github.fetchPublicIssue('MissOwner', 'miss-repo', 77);
+    assert.strictEqual(calls.length, 1);
+    assert.ok(calls[0].endsWith('/repos/MissOwner/miss-repo/issues/77'));
+    assert.strictEqual(res.issue.number, 77);
+    assert.strictEqual(res.issue.title, 'closed but fetchable');
+    assert.strictEqual(res.issue.body, 'body of #77');
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('fetchPublicIssue maps 404, PR numbers, and bad input to well-formed notes', async () => {
+  const origFetch = global.fetch;
+  try {
+    global.fetch = async () => ({
+      ok: false, status: 404, headers: { get: () => null }, json: async () => ({}),
+    });
+    assert.deepStrictEqual(
+      await github.fetchPublicIssue('NfOwner', 'nf-repo', 999),
+      { issue: null, note: 'not found' }
+    );
+
+    // The /issues/:n endpoint resolves PR numbers too — refuse those.
+    global.fetch = async () => ({
+      ok: true, status: 200, headers: { get: () => null },
+      json: async () => ({ ...fakeIssue(12, 'a PR', '2026-06-09T00:00:00Z'), pull_request: { url: 'x' } }),
+    });
+    assert.deepStrictEqual(
+      await github.fetchPublicIssue('PrOwner', 'pr-repo', 12),
+      { issue: null, note: 'not an issue (pull request)' }
+    );
+
+    // Bad input never reaches the network.
+    global.fetch = async () => { throw new Error('must not fetch'); };
+    assert.deepStrictEqual(await github.fetchPublicIssue('o', 'r', 'junk'), { issue: null, note: 'bad issue number' });
+    assert.deepStrictEqual(await github.fetchPublicIssue('o', 'r', -1), { issue: null, note: 'bad issue number' });
+    assert.deepStrictEqual(await github.fetchPublicIssue(null, 'r', 1), { issue: null, note: 'bad issue number' });
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('fetchPublicIssue reports rate limiting when the issue is nowhere in cache', async () => {
+  const origFetch = global.fetch;
+  try {
+    // Cache holds issue 50 only; asking for 51 misses it, goes to network,
+    // and hits the 429 — the stale-cache fallback has no #51 either, so a
+    // clean rate-limited note comes back instead of a throw or empty body.
+    stubFetch([fakeIssue(50, 'cached neighbor', '2026-06-09T00:00:00Z')]);
+    await github.fetchPublicIssues('RlOwner', 'rl-repo');
+
+    global.fetch = async () => ({
+      ok: false,
+      status: 429,
+      headers: { get: (h) => (h === 'x-ratelimit-remaining' ? '0' : null) },
+      json: async () => ({}),
+    });
+    assert.deepStrictEqual(
+      await github.fetchPublicIssue('RlOwner', 'rl-repo', 51),
+      { issue: null, note: 'rate limited' }
+    );
+  } finally {
+    global.fetch = origFetch;
+  }
 });
 
 test('suppression matches owner/repo case-insensitively and ignores a trailing .git', async () => {

@@ -632,14 +632,25 @@ function normalizeIssue(raw) {
 // fetchPublicIssues-shaped result and returns a copy with each body capped
 // at ISSUE_BODY_MAX; never mutates the input (the result may be the shared
 // cache entry). The web route deliberately skips this (#158).
-function truncateIssueBodies(result) {
+//
+// Clipped bodies end with an EXPLICIT marker naming how to get the full
+// text, so the agent knows the cut happened and what to do about it.
+// `fullTextHint(issueNumber)` supplies the surface-specific command
+// (Mayor: `get_github_issue(N)`; worker CLI: `usernode-issues N`).
+function truncateIssueBodies(result, fullTextHint) {
   if (!result || !Array.isArray(result.issues)) return result;
+  const hint = typeof fullTextHint === 'function'
+    ? fullTextHint
+    : (n) => `get_github_issue(${n})`;
   return {
     ...result,
     issues: result.issues.map((issue) => {
       const body = typeof issue.body === 'string' ? issue.body : '';
       if (body.length <= ISSUE_BODY_MAX) return issue;
-      return { ...issue, body: `${body.slice(0, ISSUE_BODY_MAX)}…` };
+      return {
+        ...issue,
+        body: `${body.slice(0, ISSUE_BODY_MAX)}… [truncated — use ${hint(issue.number)} for full text]`,
+      };
     }),
   };
 }
@@ -734,6 +745,82 @@ async function fetchPublicIssues(owner, repo) {
   }
 }
 
+// Read-only, anonymous fetch of ONE issue with its FULL (untruncated)
+// body. Backs the Mayor's get_github_issue tool and the worker's
+// `usernode-issues <number>` CLI form — the on-demand escape hatch for
+// bodies the list surfaces clip at ISSUE_BODY_MAX (#158).
+//
+// Cache-first: the open-issues cache already carries full bodies, so a
+// hit costs no network call (and no anonymous rate-limit budget). On a
+// miss we GET the single-issue endpoint, which also resolves CLOSED
+// issues — useful when an agent follows up on a just-merged fix.
+//
+// NEVER throws and NEVER returns null: every outcome resolves to a
+// well-formed `{ issue, note? }` — `issue` is the normalized full-body
+// shape or null, with `note` naming why ('bad issue number',
+// 'not found', 'not an issue (pull request)', 'rate limited',
+// 'fetch failed').
+async function fetchPublicIssue(owner, repo, number) {
+  const n = Number(number);
+  if (!owner || !repo || !Number.isInteger(n) || n <= 0) {
+    return { issue: null, note: 'bad issue number' };
+  }
+
+  const cacheKey = `${owner}/${repo}`;
+  const cached = issuesCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    const hit = cached.result.issues.find((i) => i.number === n);
+    if (hit) return { issue: hit };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ISSUES_FETCH_TIMEOUT_MS);
+    let resp;
+    try {
+      resp = await fetch(
+        `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${n}`,
+        {
+          headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': GITHUB_USER_AGENT },
+          signal: controller.signal,
+        }
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if ((resp.status === 403 && resp.headers.get('x-ratelimit-remaining') === '0') || resp.status === 429) {
+      // Same stale-cache fallback fetchPublicIssues uses: an expired list
+      // entry still beats returning nothing.
+      log.warn('github', 'Single-issue fetch rate-limited', { repo: cacheKey, issue: n });
+      const stale = issuesCache.get(cacheKey);
+      const hit = stale && stale.result.issues.find((i) => i.number === n);
+      if (hit) return { issue: hit, note: 'rate limited' };
+      return { issue: null, note: 'rate limited' };
+    }
+    if (resp.status === 404) {
+      return { issue: null, note: 'not found' };
+    }
+    if (!resp.ok) {
+      return { issue: null, note: 'fetch failed' };
+    }
+
+    const raw = await resp.json();
+    if (!raw || raw.number == null) {
+      return { issue: null, note: 'fetch failed' };
+    }
+    // The /issues/:n endpoint resolves PR numbers too; keep the tool's
+    // contract honest — it reads issues, not pull requests.
+    if (raw.pull_request) {
+      return { issue: null, note: 'not an issue (pull request)' };
+    }
+    return { issue: normalizeIssue(raw) };
+  } catch (err) {
+    log.warn('github', 'Single-issue fetch failed', { repo: cacheKey, issue: n, err: err.message });
+    return { issue: null, note: 'fetch failed' };
+  }
+}
+
 // Drop the cached open-issues list for a repo so the next fetchPublicIssues
 // call re-reads from GitHub. Called from the merge path (routes/votes.js
 // checkAndMerge) when a PR that closed one or more issues lands, so the
@@ -812,6 +899,7 @@ module.exports = {
   checkRepoPublic,
   fetchPublicRepoInfo,
   fetchPublicIssues,
+  fetchPublicIssue,
   truncateIssueBodies,
   invalidateIssuesCache,
   noteIssueCreated,
