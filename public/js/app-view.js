@@ -730,7 +730,23 @@ const AppView = {
       const issuesData = issuesRes.ok ? await issuesRes.json() : { issues: [] };
       const allIssues = issuesData.issues || [];
       const renameProposals = allIssues.filter((i) => i.kind === 'rename');
-      const issues = allIssues.filter((i) => i.kind !== 'rename');
+      // #131: secret/env-var change proposals get their own "Environment
+      // variables" section (with the full standard control set) instead of
+      // being lumped into the generic Issues list.
+      const envProposals = allIssues.filter((i) => i.kind === 'secret_change');
+      const issues = allIssues.filter((i) => i.kind !== 'rename' && i.kind !== 'secret_change');
+
+      // Cache for in-place re-renders (giveIssueBounty re-paints the env
+      // section's kudos button without a full panel reload, mirroring the
+      // Open Issues pattern below).
+      AppView._envProposals = envProposals;
+      AppView._envCtx = { majority, activeUsers, lockedHint };
+      // GitHub twins of open env-var proposals are rendered in the dedicated
+      // section only — _renderOpenIssuesInner skips these numbers so a
+      // "Set secret" row never shows up under an issues category (#131).
+      AppView._envIssueNumbers = new Set(
+        envProposals.map((i) => i.github_issue_number).filter(Boolean)
+      );
 
       // Open GitHub issues (the repo's issues, distinct from the internal
       // governance `issues` above). Cached on AppView so "Show 5 more" and
@@ -753,6 +769,7 @@ const AppView = {
       const counts = [
         promoted.length && `${promoted.length} open PR${promoted.length > 1 ? 's' : ''}`,
         renameProposals.length && `${renameProposals.length} rename proposal${renameProposals.length > 1 ? 's' : ''}`,
+        envProposals.length && `${envProposals.length} env var proposal${envProposals.length > 1 ? 's' : ''}`,
         issues.length && `${issues.length} issue${issues.length > 1 ? 's' : ''}`,
         ghIssues.length && `${ghIssues.length} open issue${ghIssues.length > 1 ? 's' : ''}`,
         merged.length && `${merged.length} merged`,
@@ -921,6 +938,14 @@ const AppView = {
             </div>`;
         }
         bodyHtml += '</div></div>';
+      }
+
+      // #131: Environment variables — secret/env-var change proposals in
+      // their own section with the standard control set (tally pill,
+      // Yes/No, Admin merge, kudos). Rendered via a helper into a stable
+      // wrapper so bounty pledges can re-paint it in place.
+      if (envProposals.length) {
+        bodyHtml += `<div id="gc-env-vars" class="mb-2">${AppView._renderEnvVarsInner()}</div>`;
       }
 
       if (issues.length) {
@@ -1170,6 +1195,133 @@ const AppView = {
     }
   },
 
+  // ---- Environment variables section (#131) -------------------------------
+
+  // Build the inner HTML for the Environment variables section (open
+  // `secret_change` proposals) from the state cached by loadVotePanel.
+  // Each row carries the same standard control set as a PR row: the
+  // vote-tally pill, Yes/No vote buttons, an admin-only "Admin merge"
+  // (force-apply), and a kudos (bounty) button targeting the proposal's
+  // GitHub issue. Re-rendered in place (into #gc-env-vars) by
+  // giveIssueBounty so a pledge updates the button without a panel reload.
+  _renderEnvVarsInner() {
+    const proposals = AppView._envProposals || [];
+    if (!proposals.length) return '';
+    const ctx = AppView._envCtx || {};
+    const majority = ctx.majority || 1;
+    const activeUsers = ctx.activeUsers || 0;
+    const lockedHint = ctx.lockedHint || '';
+    const meta = AppView._ghIssuesMeta || {};
+    const budgetSpent = meta.myRemaining === 0;
+
+    let html = `<div class="text-xs text-zinc-500 mb-1 font-medium">Environment variables <span class="text-zinc-600 font-normal">(need ${majority}/${activeUsers} up-votes to apply)</span>${lockedHint}</div><div class="divide-y divide-zinc-200 dark:divide-zinc-800 sm:divide-y-0 border-y border-zinc-200 dark:border-zinc-800 sm:border-y-0">`;
+    for (const issue of proposals) {
+      const myVote = issue.my_vote;
+      const upCount = parseInt(issue.up_count) || 0;
+      const downCount = parseInt(issue.down_count) || 0;
+      const creatorSuffix = issue.created_by_username
+        ? ` <span class="text-zinc-500">· ${escapeHtml(issue.created_by_username)}</span>`
+        : '';
+      const rowTitle = issue.created_by_username
+        ? `${issue.title} · ${issue.created_by_username}`
+        : issue.title;
+
+      // Same rounded tally pill PR rows use — issue up/down votes map onto
+      // the pill's yes/no slots against the live active-user majority.
+      const tallyPill = AppView.voteCountPill(
+        { yes_count: upCount, no_count: downCount }, majority
+      );
+
+      const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${myVote === 'up' ? ' gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'up')">Yes (${upCount})</button>`;
+      const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${myVote === 'down' ? ' gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'down')">No (${downCount})</button>`;
+
+      // Admin force-apply — the env-var counterpart of a PR's Admin merge.
+      // Same visibility gate (App.user?.isAdmin) and danger-confirm flow.
+      const adminBtn = App.user?.isAdmin
+        ? `<button class="gc-vote-btn gc-vote-btn-admin" title="Admin: apply this env-var change right now, bypassing the vote majority" onclick="AppView.castIssueAdminApply(${issue.id})">Admin merge</button>`
+        : '';
+
+      // Kudos = a bounty pledged on the proposal's GitHub issue, exactly
+      // like Open Issues rows (shared weekly allowance, same endpoint).
+      // The GitHub twin's bounty state lives in the cached _ghIssues list;
+      // when it can't be found (no GitHub issue, or the fetch degraded) the
+      // button is omitted rather than rendered dead.
+      let bountyPill = '';
+      let kudosBtn = '';
+      const n = issue.github_issue_number;
+      const gh = n ? (AppView._ghIssues || []).find((g) => g.number === n) : null;
+      if (gh) {
+        bountyPill = gh.bounty_count
+          ? `<span class="inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500" title="Kudos bounties pledged on this proposal">&#9733; ${gh.bounty_count}</span>`
+          : '';
+        const kudosDisabled = gh.my_bounty || budgetSpent;
+        const kudosTitle = gh.my_bounty
+          ? 'You already placed a bounty on this proposal'
+          : (budgetSpent ? 'Weekly kudos allowance spent' : 'Pledge a kudos bounty on this proposal');
+        kudosBtn = `<button class="gc-vote-btn"${kudosDisabled ? ' disabled' : ''} title="${kudosTitle}" onclick="AppView.giveIssueBounty(${n})">${gh.my_bounty ? '&#9733; Bountied' : 'Pledge kudos'}</button>`;
+      }
+
+      html += `
+        <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
+          <span class="text-xs text-zinc-300 flex-1 min-w-0 truncate" title="${escapeHtml(rowTitle)}">${escapeHtml(issue.title)}${creatorSuffix}</span>
+          ${bountyPill}
+          <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
+            ${tallyPill}
+            ${yesBtn}
+            ${noBtn}
+            ${adminBtn}
+            ${kudosBtn}
+          </div>
+        </div>`;
+    }
+    html += '</div>';
+    return html;
+  },
+
+  // Re-render just the Environment variables section in place (no panel
+  // reload) — used after a bounty pledge updates the cached GH issue state.
+  _rerenderEnvVars() {
+    const el = document.getElementById('gc-env-vars');
+    if (el) el.innerHTML = AppView._renderEnvVarsInner();
+  },
+
+  // Admin force-apply for an env-var (secret_change) proposal: bypass the
+  // active-user vote majority and apply the change right now. Gated
+  // server-side by /api/issues/:id/admin-apply (admin-only). Mirrors
+  // castAdminMerge's ConfirmModal misclick guard — the button sits inline
+  // with the regular Yes/No buttons.
+  async castIssueAdminApply(issueId) {
+    if (!App.user?.isAdmin) return;
+    const key = `issue-admin-apply:${issueId}`;
+    if (AppView._voteInFlight.has(key)) return;
+    const ok = await ConfirmModal.show({
+      title: 'Apply this env-var change now?',
+      message:
+        'This bypasses the active-user vote majority and applies the proposed secret change right now (the app redeploys with the new value).\n\n'
+        + 'Use only when you\'re confident the change should ship — the override is announced in group chat with your username.',
+      confirmLabel: 'Apply now',
+      cancelLabel: 'Cancel',
+      danger: true,
+    });
+    if (!ok) return;
+    AppView._voteInFlight.add(key);
+    try {
+      const resp = await fetch(`/api/issues/${issueId}/admin-apply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        alert(data.error || `Admin apply failed (HTTP ${resp.status}).`);
+      }
+      if (AppView.appData) AppView.loadVotePanel(AppView.appData.slug);
+    } catch (err) {
+      alert(`Admin apply failed: ${err.message}`);
+    } finally {
+      AppView._voteInFlight.delete(key);
+    }
+  },
+
   // ---- Open Issues section ------------------------------------------------
 
   // Build the inner HTML for the Open Issues section from the cached
@@ -1177,7 +1329,12 @@ const AppView = {
   // re-rendered in place (into #gc-open-issues) by showMoreIssues /
   // giveIssueBounty so paging + optimistic bounty updates need no refetch.
   _renderOpenIssuesInner() {
-    const issues = AppView._ghIssues || [];
+    // #131: hide the GitHub twins of open env-var (secret_change)
+    // proposals — those render in the dedicated Environment variables
+    // section instead of under an issues category.
+    const issues = (AppView._ghIssues || []).filter(
+      (i) => !(AppView._envIssueNumbers && AppView._envIssueNumbers.has(i.number))
+    );
     const meta = AppView._ghIssuesMeta || {};
     const heading = `<div class="text-xs text-zinc-500 mb-1 font-medium">Open Issues</div>`;
 
@@ -1291,6 +1448,9 @@ const AppView = {
       }
       if (typeof data.remaining === 'number') AppView._ghIssuesMeta.myRemaining = data.remaining;
       AppView._rerenderOpenIssues();
+      // Env-var proposal rows share the same bounty state (#131) — repaint
+      // that section too so its kudos button reflects the pledge.
+      AppView._rerenderEnvVars();
     } catch (err) {
       alert(`Couldn't place bounty: ${err.message}`);
     } finally {
