@@ -5,6 +5,7 @@ const { getPool } = require('./pool');
 const log = require('../services/logger');
 const appManifest = require('../services/app-manifest');
 const dbManager = require('../services/db-manager');
+const { encrypt } = require('../services/secrets');
 
 async function migrate(config) {
   const pool = getPool(config);
@@ -21,6 +22,7 @@ async function migrate(config) {
   await seedAdmin(pool, config);
   await seedSelfApp(pool, config);
   await seedStagingNotifications(pool, config);
+  await seedStagingEnvProposal(pool, config);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
   // Must run BEFORE backfillOrphanedSpecDrafts: unwrapping spec_md after that
@@ -746,6 +748,116 @@ async function seedStagingNotifications(pool, config) {
     inserted,
     multiAppInserted,
     otherApps: otherApps.length,
+  });
+}
+
+// Staging fixture for the "Environment variables" vote-panel section
+// (#131). The backing `issues` table is public (copied to staging with
+// rows), but no open secret_change proposal usually exists in prod, so
+// the section would render empty on every preview. Seed one synthetic
+// open proposal for the self-app — payload shaped exactly like the
+// create path in routes/issues.js, including a real `valueEnc`
+// ciphertext (encrypted with this environment's own JWT_SECRET) so
+// vote-through-majority / admin-apply work end-to-end against the
+// staging app_secrets table. github_issue_number stays NULL: the
+// fixture has no GitHub twin, which also means the kudos button is
+// (correctly) omitted on its row. Idempotent on restart: keyed off the
+// fixture title, any status — a proposal applied/closed during testing
+// doesn't resurrect on the next boot.
+async function seedStagingEnvProposal(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  if (!config.jwtSecret) {
+    log.warn('db', 'Staging env-proposal fixture skipped: no JWT_SECRET to encrypt with');
+    return;
+  }
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging env-proposal fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username, is_admin
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 2`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging env-proposal fixture skipped: no users');
+    return;
+  }
+  const creator = userRows[0];
+  const secondVoter = userRows[1] || null;
+
+  // Title matches what routes/issues.js generates for a real proposal,
+  // and doubles as the idempotency key.
+  const fixtureTitle = 'Set secret "STAGING_DEMO_KEY"';
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM issues WHERE app_id = $1 AND title = $2 LIMIT 1',
+    [appId, fixtureTitle]
+  );
+
+  let issueId;
+  if (existing.length) {
+    issueId = existing[0].id;
+  } else {
+    const demoValue = 'demo-value';
+    const payload = {
+      key: 'STAGING_DEMO_KEY',
+      action: 'set',
+      valueEnc: encrypt(demoValue, config.jwtSecret),
+      valueLast4: demoValue.slice(-4),
+      private: false,
+      sensitive: false,
+    };
+    const { rows } = await pool.query(
+      `INSERT INTO issues
+         (app_id, github_issue_number, title, description, kind, payload, created_by, status, created_at)
+       VALUES
+         ($1, NULL, $2, $3, 'secret_change', $4, $5, 'open', NOW() - INTERVAL '30 minutes')
+       RETURNING id`,
+      [
+        appId,
+        fixtureTitle,
+        `[staging fixture] ${creator.username} (via Usernode) proposed setting the env var "STAGING_DEMO_KEY". `
+          + 'Auto-applies + redeploys when a majority of active users vote up.',
+        JSON.stringify(payload),
+        creator.id,
+      ]
+    );
+    issueId = rows[0].id;
+  }
+
+  // A couple of votes so the tally pill renders a partial fill (one up
+  // stripe, one down stripe when a second user exists). UNIQUE
+  // (issue_id, user_id) + DO NOTHING keeps reboots and real re-votes
+  // cast during testing intact.
+  await pool.query(
+    `INSERT INTO issue_votes (issue_id, user_id, vote, created_at)
+     VALUES ($1, $2, 'up', NOW() - INTERVAL '25 minutes')
+     ON CONFLICT (issue_id, user_id) DO NOTHING`,
+    [issueId, creator.id]
+  );
+  if (secondVoter) {
+    await pool.query(
+      `INSERT INTO issue_votes (issue_id, user_id, vote, created_at)
+       VALUES ($1, $2, 'down', NOW() - INTERVAL '20 minutes')
+       ON CONFLICT (issue_id, user_id) DO NOTHING`,
+      [issueId, secondVoter.id]
+    );
+  }
+
+  log.info('db', 'Staging env-proposal fixture seeded', {
+    issueId,
+    creator: creator.username,
+    voters: secondVoter ? 2 : 1,
   });
 }
 
