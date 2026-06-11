@@ -976,9 +976,14 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 }
 .gc-react-bar-grid {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(8, 1fr);
   gap: 2px;
-  max-width: 264px;
+  max-width: 296px;
+  /* The full emoji set is long — cap the height and scroll within the bar
+     so opening "more" never pushes the picker off-screen. */
+  max-height: 244px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   margin-top: 6px;
   padding-top: 6px;
   border-top: 1px solid var(--border);
