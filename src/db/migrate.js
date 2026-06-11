@@ -23,6 +23,7 @@ async function migrate(config) {
   await seedSelfApp(pool, config);
   await seedStagingNotifications(pool, config);
   await seedStagingEnvProposal(pool, config);
+  await seedStagingMergedPrs(pool, config);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
   // Must run BEFORE backfillOrphanedSpecDrafts: unwrapping spec_md after that
@@ -858,6 +859,112 @@ async function seedStagingEnvProposal(pool, config) {
     issueId,
     creator: creator.username,
     voters: secondVoter ? 2 : 1,
+  });
+}
+
+// Staging fixture for the Merged section's show-more toggle (#149). The
+// self-app's prod DB usually has only a handful of merged sessions copied
+// into staging, and a fresh staging clone of a young app may have fewer
+// than the 4+ needed for the "Show N more" / "Show less" footer to render
+// at all. Seed 8 synthetic merged PRs (varied titles, authors, timestamps)
+// so the collapsed-to-3 default plus the toggle are exercisable on every
+// preview. Idempotent on restart: each row is keyed off its unique
+// `staging-fixture/merged-pr-N` branch name and checked before insert;
+// pr_votes ride on UNIQUE(session_id, user_id) + DO NOTHING.
+async function seedStagingMergedPrs(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging merged-PR fixtures skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: users } = await pool.query(
+    `SELECT id, username
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 3`
+  );
+  if (!users.length) {
+    log.warn('db', 'Staging merged-PR fixtures skipped: no users');
+    return;
+  }
+
+  // Varied titles/ages so the list reads like real history. hoursAgo
+  // staggers created_at (the /merged sort key) across ~a week, newest
+  // first; authorIdx rotates rows across the available users (mod the
+  // actual user count below). PR numbers sit in the same synthetic 9xxx
+  // range as the notifications fixture so they can't shadow real PRs.
+  const fixtures = [
+    { title: 'Fix vote pill overflow on narrow screens', hoursAgo: 3 },
+    { title: 'Add keyboard shortcuts for panel navigation', hoursAgo: 9 },
+    { title: 'Debounce group-chat scroll handler', hoursAgo: 26 },
+    { title: 'Improve dark-mode contrast on merged rows', hoursAgo: 50 },
+    { title: 'Cache app icons in localStorage', hoursAgo: 74 },
+    { title: 'Show relative timestamps in activity feed', hoursAgo: 98 },
+    { title: 'Refactor kudos button into shared helper', hoursAgo: 122 },
+    { title: 'Tidy empty states across dashboard tiles', hoursAgo: 150 },
+  ];
+
+  let inserted = 0;
+  for (let i = 0; i < fixtures.length; i++) {
+    const f = fixtures[i];
+    const branch = `staging-fixture/merged-pr-${i + 1}`;
+    const author = users[i % users.length];
+
+    let sessionId;
+    const { rows: existing } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, branch]
+    );
+    if (existing.length) {
+      sessionId = existing[0].id;
+    } else {
+      const { rows } = await pool.query(
+        `INSERT INTO chat_sessions
+           (app_id, user_id, branch_name, pr_number, pr_title, status,
+            votes_required, active_users_at_merge, created_at)
+         VALUES
+           ($1, $2, $3, $4, $5, 'merged', $6, $7,
+            NOW() - ($8::int * INTERVAL '1 hour'))
+         RETURNING id`,
+        [appId, author.id, branch, 9100 + i, `[staging fixture] ${f.title}`,
+         Math.max(1, Math.ceil(users.length / 2)), users.length, f.hoursAgo]
+      );
+      sessionId = rows[0].id;
+      inserted++;
+    }
+
+    // A yes-vote or two per PR so the tally pill renders a realistic
+    // fill instead of 0/N on every fixture row.
+    await pool.query(
+      `INSERT INTO pr_votes (session_id, user_id, vote, created_at)
+       VALUES ($1, $2, 'yes', NOW() - ($3::int * INTERVAL '1 hour'))
+       ON CONFLICT (session_id, user_id) DO NOTHING`,
+      [sessionId, author.id, f.hoursAgo + 1]
+    );
+    const secondVoter = users[(i + 1) % users.length];
+    if (secondVoter.id !== author.id) {
+      await pool.query(
+        `INSERT INTO pr_votes (session_id, user_id, vote, created_at)
+         VALUES ($1, $2, 'yes', NOW() - ($3::int * INTERVAL '1 hour'))
+         ON CONFLICT (session_id, user_id) DO NOTHING`,
+        [sessionId, secondVoter.id, f.hoursAgo + 1]
+      );
+    }
+  }
+
+  log.info('db', 'Staging merged-PR fixtures seeded', {
+    appId,
+    total: fixtures.length,
+    inserted,
   });
 }
 
