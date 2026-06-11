@@ -1317,7 +1317,7 @@ const AppView = {
       const h = issue.headless;
       let autoBtn;
       if (h && h.status === 'generating') {
-        autoBtn = `<button class="gc-vote-btn" disabled title="A headless AI session is working on this issue${h.username ? ` (started by ${escapeAttr(h.username)})` : ''}">Generating auto session&hellip;</button>`;
+        autoBtn = `<button class="gc-vote-btn" disabled title="A headless AI session is working on this issue${h.username ? ` (started by ${escapeAttr(h.username)})` : ''}">Generating auto-solve&hellip;</button>`;
       } else if (h && h.status === 'ready') {
         const outcomeNote = h.outcome === 'spec' ? 'it drafted a spec'
           : h.outcome === 'code' ? 'it pushed a code change'
