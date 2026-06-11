@@ -21,6 +21,7 @@ const limits = require('../services/limits');
 const events = require('../services/events');
 const { chatLimiter } = require('../middleware/rate-limits');
 const appAccess = require('../services/app-access');
+const notifications = require('../services/notifications');
 // runSyncMain + persistBehindMain now live in services/sync-main.js so
 // the conflict-resolver can drive a sync turn without a route-requires-
 // route cycle. Re-exported below for backwards compatibility.
@@ -90,6 +91,45 @@ function extractSpecSnippet(content, title) {
 // runSyncMain + persistBehindMain moved to services/sync-main.js (see
 // the require at the top of this file). They're re-exported below so
 // any external importer keeps working.
+
+// #161: if the session owner armed notify_on_done (they left while the
+// turn was running), atomically clear the flag and create + push a
+// session_done notification. Called fire-and-forget from the chat
+// handler's done hook — never throws into the SSE path. The UPDATE …
+// RETURNING makes the check-and-clear atomic, so concurrent done sites
+// (or a done racing the arm beacon) can't double-notify.
+async function notifySessionDoneIfArmed(pool, sessionId) {
+  try {
+    const { rows } = await pool.query(
+      `UPDATE chat_sessions SET notify_on_done = FALSE
+       WHERE id = $1 AND notify_on_done = TRUE
+       RETURNING user_id, app_id`,
+      [sessionId]
+    );
+    if (!rows.length) return;
+    const created = await notifications.createSessionDoneNotification(pool, {
+      userId: rows[0].user_id, appId: rows[0].app_id, sessionId,
+    });
+    if (created.length) await notifications.hydrateAndPush(pool, created[0]);
+  } catch (err) {
+    log.warn('sessions', 'session_done notify failed', { sessionId, err: err.message });
+  }
+}
+
+// #161: headless auto-solve completion notification. Always fired at
+// the runner's terminal writes (ready/failed) — starting an auto-solve
+// opts the clicking user into the completion notification, no arming.
+// Best-effort: a failed insert/push must never fail the run itself.
+async function notifyAutoSolveDone(pool, { userId, appId, sessionId, detail }) {
+  try {
+    const created = await notifications.createAutoSolveDoneNotification(pool, {
+      userId, appId, sessionId, detail,
+    });
+    if (created.length) await notifications.hydrateAndPush(pool, created[0]);
+  } catch (err) {
+    log.warn('sessions', 'auto_solve_done notify failed', { sessionId, err: err.message });
+  }
+}
 
 async function loadSessionSpec(pool, sessionId) {
   const { rows } = await pool.query(
@@ -548,6 +588,18 @@ function sessionRoutes(config) {
         metadata: { clonedFrom: src.id, headlessIssue: src.headless_issue_number },
       });
 
+      // #161 auto-dismiss: cloning the auto session resolves its
+      // completion notification for the cloner. Fire-and-forget;
+      // cross-tab badge sync only when something actually cleared.
+      notifications.markReadForAction(pool, req.user.id, 'headless_cloned', src.id)
+        .then((cleared) => {
+          if (cleared > 0) {
+            const { pushNotificationToUser } = require('../services/ws');
+            pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
+          }
+        })
+        .catch((err) => log.warn('sessions', 'headless_cloned dismiss failed', { err: err.message }));
+
       log.info('sessions', 'Cloned headless session', { src: src.id, sessionId: session.id, user: req.user.username });
       res.status(201).json({ session });
     } catch (err) {
@@ -571,9 +623,26 @@ function sessionRoutes(config) {
       // Viewing a session counts as activity so the auto-pause sweeper
       // doesn't pause a session the user is actively reading. Fire-and-
       // forget — the view shouldn't block on this write, and a missed
-      // bump just means the next chat turn / open re-marks it.
-      pool.query(`UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1`, [req.params.id])
-        .catch((err) => log.warn('sessions', 'activity bump on view failed', { err: err.message }));
+      // bump just means the next chat turn / open re-marks it. Opening
+      // also disarms notify_on_done (#161): the owner is looking at the
+      // session again, so a left-mid-turn completion needs no notification.
+      pool.query(
+        `UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1`,
+        [req.params.id]
+      ).catch((err) => log.warn('sessions', 'activity bump on view failed', { err: err.message }));
+
+      // #161 auto-dismiss: opening the session is the canonical "user saw
+      // it" signal — resolve any unread session_done rows for it, even
+      // when the user navigated here on their own rather than via the
+      // notification. Fire-and-forget; cross-tab badge sync on change.
+      notifications.markReadForAction(pool, req.user.id, 'session_opened', rows[0].id)
+        .then((cleared) => {
+          if (cleared > 0) {
+            const { pushNotificationToUser } = require('../services/ws');
+            pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
+          }
+        })
+        .catch((err) => log.warn('sessions', 'session_opened dismiss failed', { err: err.message }));
 
       const { rows: messages } = await pool.query(
         `SELECT id, role, content, model, token_count, cost_cents, metadata, created_at
@@ -609,6 +678,30 @@ function sessionRoutes(config) {
       // Best-effort — a failed heartbeat just risks an earlier auto-pause,
       // which is recoverable (reopening auto-resumes). Don't 500-spam.
       res.json({ ok: false });
+    }
+  });
+
+  // #161: arm/disarm the "notify me when this turn finishes" flag.
+  // Owner-only. The client arms it the moment the owner stops watching a
+  // running turn (tab hidden, window blurred, tab/app switch, pagehide
+  // beacon) and disarms it when they come back mid-run. Idempotent
+  // (plain SET), so duplicate fires — e.g. a pagehide beacon racing an
+  // earlier visibility-arm — are harmless. Accepts navigator.sendBeacon
+  // payloads: a same-origin JSON Blob rides through express.json() and
+  // cookie auth applies as usual.
+  router.post('/api/sessions/:id/notify-on-done', async (req, res) => {
+    try {
+      const armed = !!(req.body && req.body.armed);
+      const { rowCount } = await pool.query(
+        `UPDATE chat_sessions SET notify_on_done = $1
+         WHERE id = $2 AND user_id = $3`,
+        [armed, req.params.id, req.user.id]
+      );
+      if (!rowCount) return res.status(404).json({ error: 'Session not found' });
+      res.status(204).end();
+    } catch (err) {
+      log.error('sessions', 'notify-on-done update failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
     }
   });
 
@@ -934,8 +1027,10 @@ function sessionRoutes(config) {
       // Mark the session as freshly active so the auto-pause sweeper
       // leaves it alone (see server.js session sweeper + schema
       // last_activity_at). A chat turn is the strongest activity signal.
+      // Sending a message also proves presence, so any stale
+      // notify-on-done arming from a previous turn is reset (#161).
       await pool.query(
-        `UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1`,
+        `UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1`,
         [session.id]
       );
 
@@ -980,6 +1075,11 @@ function sessionRoutes(config) {
         // there's no cross-session leakage and the client's existing seq
         // dedup handles any overlap with the primary stream.
         sessionBus.publish(session.id, event);
+        // #161: every turn-completion path funnels through send('done')
+        // — the main exit, the early returns, and the catch fallthrough —
+        // so this is the one hook needed for the left-mid-turn completion
+        // notification. Fire-and-forget; the helper swallows its errors.
+        if (type === 'done') notifySessionDoneIfArmed(pool, session.id);
       };
 
       // Locals used across multiple branches of the CC flow. Previously these
@@ -1790,6 +1890,13 @@ function sessionRoutes(config) {
 
     handle.stopped = true;
     handle.stoppedBy = req.user.username;
+    // #161: clicking stop proves presence — disarm notify_on_done BEFORE
+    // aborting so the turn's resulting send('done') doesn't create a
+    // spurious "your session finished" notification.
+    await pool.query(
+      `UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1`,
+      [sessionId]
+    ).catch((err) => log.warn('sessions', 'stop disarm failed', { sessionId, err: err.message }));
     log.info('sessions', 'Stop requested', {
       sessionId,
       phase: handle.phase,
@@ -2279,6 +2386,11 @@ async function runHeadlessSession({
       [outcome, session.id]
     );
     send('headless_update', { status: 'ready', outcome, issueNumber, appSlug: session.app_slug });
+    // #161: always notify the user who started the run (no arming —
+    // kicking off an auto-solve opts you into its completion ping).
+    await notifyAutoSolveDone(pool, {
+      userId: user.id, appId: session.app_id, sessionId: session.id, detail: outcome,
+    });
     log.info('sessions', 'Headless session ready', { sessionId: session.id, issueNumber, outcome });
   } catch (err) {
     activeWorkers.delete(session.id);
@@ -2290,6 +2402,11 @@ async function runHeadlessSession({
     ).catch(() => {});
     await sendStatus(`Auto session failed: ${String(err.message || err).substring(0, 200)}`);
     send('headless_update', { status: 'failed', issueNumber, appSlug: session.app_slug });
+    // #161: a failed run is still a completion — the user must come back
+    // and retry (or read the failure), so notify with detail='failed'.
+    await notifyAutoSolveDone(pool, {
+      userId: user.id, appId: session.app_id, sessionId: session.id, detail: 'failed',
+    });
   } finally {
     setTimeout(() => sessionBus.clearSession(session.id), 30000);
   }
@@ -2356,6 +2473,11 @@ async function failHeadlessRun(pool, session, message) {
   broadcastGlobal({
     type: 'session_event', sessionId: session.id, event: 'headless_update',
     status: 'failed', issueNumber: session.headless_issue_number, appSlug: session.app_slug,
+  });
+  // #161: terminal state — same completion notification the live
+  // runner's catch block fires.
+  await notifyAutoSolveDone(pool, {
+    userId: session.user_id, appId: session.app_id, sessionId: session.id, detail: 'failed',
   });
 }
 
@@ -2555,6 +2677,11 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
   broadcastGlobal({
     type: 'session_event', sessionId: session.id, event: 'headless_update',
     status: 'ready', outcome, issueNumber, appSlug: session.app_slug,
+  });
+  // #161: a restart-resumed run completing is the same user-facing
+  // moment as a live one — notify the user who started it.
+  await notifyAutoSolveDone(pool, {
+    userId: user.id, appId: session.app_id, sessionId: session.id, detail: outcome,
   });
   log.info('sessions', 'Headless session resumed to ready', { sessionId: session.id, issueNumber, outcome });
 }
@@ -3812,4 +3939,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDoneIfArmed, notifyAutoSolveDone };

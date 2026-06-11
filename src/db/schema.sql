@@ -302,6 +302,14 @@ CREATE INDEX IF NOT EXISTS chat_sessions_headless_idx
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS active_turn   JSONB;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS headless_step VARCHAR(20);
 
+-- #161: "owner left while a turn was in flight; notify on completion".
+-- Armed/disarmed by the client via POST /api/sessions/:id/notify-on-done
+-- the moment the owner stops watching a running turn; checked + cleared
+-- at every turn-completion point (the chat handler's done hook and
+-- server.js resumeDetachedTurn). Persisted rather than in-memory so
+-- restart-recovered turns honor it.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS notify_on_done BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- GitHub issue linkage (#75): the open issues this session's work addresses,
 -- declared by the Mayor via dispatch_claude_code / dispatch_scout's
 -- `addresses_issues` arg. Accumulates (union) across turns. pr-metadata.js
@@ -500,9 +508,13 @@ ON CONFLICT (key) DO NOTHING;
 -- chat_message_id points to the reply, set in src/services/ws.js),
 -- 'reaction' (#25 — someone reacted to your message; chat_message_id is
 -- the reacted message, `detail` holds the emoji), 'stale_pr' (a promoted
--- PR is going quiet, addressed to its author), and 'pr_proposed' (a PR
+-- PR is going quiet, addressed to its author), 'pr_proposed' (a PR
 -- was promoted for voting — session_id points to it; fanned out to the
--- app's active users + creator + favoriters in src/routes/votes.js).
+-- app's active users + creator + favoriters in src/routes/votes.js),
+-- 'session_done' (#161 — a dev-session turn finished after its owner
+-- left; session_id points to the session) and 'auto_solve_done' (#161 —
+-- a headless auto-solve run finished; `detail` holds the outcome:
+-- spec | code | question | failed).
 CREATE TABLE IF NOT EXISTS notifications (
   id              SERIAL PRIMARY KEY,
   user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

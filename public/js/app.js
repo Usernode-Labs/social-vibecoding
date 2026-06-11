@@ -1669,6 +1669,11 @@ const App = {
       // dev-chat tab" — leaving the tab clears it. Re-entering while a
       // run is live re-applies it via openSession's busy check.
       if (DevChat.setTitleStatus) DevChat.setTitleStatus(null);
+      // #161: switching away from a still-streaming dev session counts
+      // as leaving it — arm its completion notification.
+      if (DevChat.isStreaming && DevChat.currentSession && DevChat._setNotifyOnDone) {
+        DevChat._setNotifyOnDone(DevChat.currentSession.id, true);
+      }
     }
 
     switch (tab) {
