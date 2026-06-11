@@ -839,23 +839,23 @@ function sessionRoutes(config) {
         // enforced both by the system prompt AND by the resolution code
         // below — models sometimes ignore prose constraints, so we
         // belt-and-suspenders it server-side.
-        // list_github_issues stays available even when a worker is busy:
-        // it's read-only and cheap, and reading the tracker while a build
-        // runs is a legitimate chat action. The dispatch tools remain
-        // gated by isWorkerBusy as before.
+        // The issue data tools (list_github_issues / get_github_issue) stay
+        // available even when a worker is busy: they're read-only and cheap,
+        // and reading the tracker while a build runs is a legitimate chat
+        // action. The dispatch tools remain gated by isWorkerBusy as before.
         const tools = isWorkerBusy
-          ? [LIST_GITHUB_ISSUES_TOOL]
-          : [DISPATCH_TOOL, DISPATCH_SCOUT_TOOL, LIST_GITHUB_ISSUES_TOOL];
+          ? [LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL]
+          : [DISPATCH_TOOL, DISPATCH_SCOUT_TOOL, LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL];
 
         setPhase('mayor1');
         let mayor1;
-        // The conversation we feed the Mayor. list_github_issues is a
-        // read-only DATA tool: when the Mayor calls it, we resolve it
-        // in-process, append the issues as a tool_result, and re-invoke so
-        // the Mayor reasons with them in the SAME turn. This loop drains
-        // issue-calls out BEFORE the terminal-tool (dispatch/spec) selection
-        // below, so in the common case mayor1.rawContent carries no dangling
-        // list_github_issues tool_use into phase-2.
+        // The conversation we feed the Mayor. list_github_issues and
+        // get_github_issue are read-only DATA tools: when the Mayor calls
+        // one, we resolve it in-process, append the result as a tool_result,
+        // and re-invoke so the Mayor reasons with it in the SAME turn. This
+        // loop drains issue-calls out BEFORE the terminal-tool (dispatch/spec)
+        // selection below, so in the common case mayor1.rawContent carries no
+        // dangling issue-data tool_use into phase-2.
         let mayorConvo = messages;
         let issuesIters = 0;
         try {
@@ -870,9 +870,9 @@ function sessionRoutes(config) {
               apiKey: userApiKey,
             });
 
-            const issuesCalls = mayor1.toolUses.filter((t) => t.name === 'list_github_issues');
+            const issuesCalls = mayor1.toolUses.filter((t) => ISSUE_DATA_TOOL_NAMES.has(t.name));
             // Parallel tool use is enabled, so the Mayor may emit
-            // list_github_issues ALONGSIDE a terminal tool in one response.
+            // an issue data tool ALONGSIDE a terminal tool in one response.
             // If a terminal tool is present we must NOT re-invoke here: the
             // re-invocation only answers the issues tool_use, leaving the
             // terminal tool_use dangling -> Anthropic 400. Break instead and
@@ -900,9 +900,9 @@ function sessionRoutes(config) {
               send('usage', { costCents: dataCost, model: selectedModel, byok: !!userApiKey });
             }
 
-            await sendStatus("Reading the repo's open GitHub issues...");
+            await sendStatus("Reading the repo's GitHub issues...");
             const issuesResults = await Promise.all(
-              issuesCalls.map(() => resolveGithubIssuesToolResult(repoOwner, repoName))
+              issuesCalls.map((tc) => resolveIssueDataToolResult(tc, repoOwner, repoName))
             );
             mayorConvo = [
               ...mayorConvo,
@@ -1144,13 +1144,13 @@ function sessionRoutes(config) {
         // the `activeWorkers` race check or accidentally re-dispatch).
         //
         // Base on mayorConvo (not the original `messages`) so any
-        // list_github_issues round-trips resolved above stay in context for
+        // issue-data round-trips resolved above stay in context for
         // the wrap-up. Answer EVERY tool_use in the final assistant turn —
-        // not just the terminal one we ran: if the Mayor combined a
-        // list_github_issues call with a terminal tool (or hit the issues
+        // not just the terminal one we ran: if the Mayor combined an
+        // issue-data call with a terminal tool (or hit the issues
         // loop cap), a leftover tool_use would otherwise dangle and Anthropic
         // would 400 the wrap-up. The terminal tool gets the real result; any
-        // stray list_github_issues gets a fresh fetch; anything else gets a
+        // stray issue-data call gets a fresh fetch; anything else gets a
         // benign skip note.
         const phase2ToolResults = [];
         for (const tu of mayor1.toolUses) {
@@ -1161,11 +1161,11 @@ function sessionRoutes(config) {
               content: toolResult.toolResultText,
               ...(toolResult.isError ? { is_error: true } : {}),
             });
-          } else if (tu.name === 'list_github_issues') {
+          } else if (ISSUE_DATA_TOOL_NAMES.has(tu.name)) {
             phase2ToolResults.push({
               type: 'tool_result',
               tool_use_id: tu.id,
-              content: await resolveGithubIssuesToolResult(repoOwner, repoName),
+              content: await resolveIssueDataToolResult(tu, repoOwner, repoName),
             });
           } else {
             phase2ToolResults.push({
@@ -1833,7 +1833,8 @@ const LIST_GITHUB_ISSUES_TOOL = {
   description:
     "List the OPEN GitHub issues on this app's repository (read-only). "
     + 'Returns JSON `{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }` — '
-    + 'pull requests are excluded and long bodies are truncated. '
+    + 'pull requests are excluded and long bodies are clipped with an explicit '
+    + '"[truncated — use get_github_issue(N) for full text]" marker; call get_github_issue for the full body. '
     + 'Call this when the user mentions the issue tracker, asks what issues or bugs are filed, '
     + 'or when planning work that may already be reported, so your reply is grounded in real issues. '
     + 'It only READS issues — it cannot create, comment on, edit, or close them. Takes no input.',
@@ -1843,9 +1844,39 @@ const LIST_GITHUB_ISSUES_TOOL = {
   },
 };
 
-// Cap on how many consecutive list_github_issues fetches we'll service
+// Companion data tool to list_github_issues (#158): fetch ONE issue with
+// its FULL (untruncated) body. Same read-only, available-every-turn
+// posture; resolves in-process via github.fetchPublicIssue (cache-first,
+// also resolves closed issues). Scout + build reach the identical
+// capability via `usernode-issues <number>`.
+const GET_GITHUB_ISSUE_TOOL = {
+  name: 'get_github_issue',
+  description:
+    "Fetch ONE GitHub issue from this app's repository with its FULL, untruncated body (read-only). "
+    + 'Returns JSON `{ issue: { number, title, body, labels, updatedAt, htmlUrl } }`, or '
+    + '`{ issue: null, note }` when it cannot be resolved. '
+    + 'Use it when a body from list_github_issues ends with a "[truncated …]" marker and you need the rest, '
+    + 'or when the user asks about a specific issue number. Also resolves recently-closed issues. '
+    + 'It only READS the issue — it cannot create, comment on, edit, or close it.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      number: {
+        type: 'integer',
+        description: 'The issue number to fetch (e.g. 158 for issue #158).',
+      },
+    },
+    required: ['number'],
+  },
+};
+
+// The Mayor's read-only issue DATA tools — resolved in-process and looped
+// back as tool_results (unlike the terminal dispatch tools).
+const ISSUE_DATA_TOOL_NAMES = new Set(['list_github_issues', 'get_github_issue']);
+
+// Cap on how many consecutive issue-data-tool fetches we'll service
 // within a single Mayor turn before forcing the model to move on. Bounds
-// the worst case where the model loops on the data tool instead of acting.
+// the worst case where the model loops on the data tools instead of acting.
 const MAYOR_ISSUES_MAX_ITERS = 3;
 
 // Resolve a list_github_issues tool call to the JSON string we hand back as
@@ -1856,8 +1887,28 @@ async function resolveGithubIssuesToolResult(repoOwner, repoName) {
   if (!repoOwner || !repoName) {
     return JSON.stringify({ issues: [], truncatedList: false, note: 'no repo' });
   }
+  // Clip verbose bodies for the model's context — the cache itself carries
+  // full bodies for the web route / Create-PR seeding (#158). The marker
+  // names get_github_issue so the Mayor knows the on-demand escape hatch.
   const result = await github.fetchPublicIssues(repoOwner, repoName);
-  return JSON.stringify(result);
+  return JSON.stringify(github.truncateIssueBodies(result, (n) => `get_github_issue(${n})`));
+}
+
+// Resolve a get_github_issue tool call: ONE issue, FULL body (#158).
+// github.fetchPublicIssue never throws and validates the number itself.
+async function resolveGithubIssueToolResult(repoOwner, repoName, number) {
+  if (!repoOwner || !repoName) {
+    return JSON.stringify({ issue: null, note: 'no repo' });
+  }
+  return JSON.stringify(await github.fetchPublicIssue(repoOwner, repoName, number));
+}
+
+// Route one issue-data tool_use to its resolver. Callers guard on
+// ISSUE_DATA_TOOL_NAMES so `tu.name` is always one of the two.
+function resolveIssueDataToolResult(tu, repoOwner, repoName) {
+  return tu.name === 'get_github_issue'
+    ? resolveGithubIssueToolResult(repoOwner, repoName, tu.input && tu.input.number)
+    : resolveGithubIssuesToolResult(repoOwner, repoName);
 }
 
 // Build the Mayor's message history from chat_session_messages rows.
@@ -1953,7 +2004,7 @@ USER REQUEST: "${userMessage}"
 
 You are running in PLAN MODE: you can read files (Read, Glob, Grep) but you cannot edit, commit, or push anything. Do not attempt to.${revisionBlock}
 
-A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`). Use it if the open issues are relevant context for this spec; do not try to reach GitHub any other way.
+A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`); long bodies are clipped with a "[truncated …]" marker, and \`usernode-issues <number>\` fetches that one issue with its FULL body (\`{ issue, note? }\`). Use it if the open issues are relevant context for this spec; do not try to reach GitHub any other way.
 
 Your job is to investigate this repo and produce a MARKDOWN SPEC for the change. The spec should be:
 - A complete, self-contained markdown document the user can review on its own.
@@ -2224,7 +2275,7 @@ in dev-chat you already have those rules injected above, so ignore
 that instruction here. It's for humans or Claude Code invocations
 that run against this repo outside the harness.
 
-A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`). Consult it if an open issue is relevant to what you're building; do not try to reach GitHub any other way.
+A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`); long bodies are clipped with a "[truncated …]" marker, and \`usernode-issues <number>\` fetches that one issue with its FULL body (\`{ issue, note? }\`). Consult it if an open issue is relevant to what you're building; do not try to reach GitHub any other way.
 
 INSTRUCTIONS:
 - IMPLEMENT the requested changes fully. Do not just explore — write code.

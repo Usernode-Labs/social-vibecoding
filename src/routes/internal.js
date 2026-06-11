@@ -395,7 +395,66 @@ function internalRoutes(_config) {
         return res.json({ ok: true, issues: [], truncatedList: false, note: 'no repo' });
       }
       const [, owner, repo] = parsed;
-      const result = await github.fetchPublicIssues(owner, repo);
+      // Clip verbose bodies for the agent's context — the cache carries
+      // full bodies for the web route / Create-PR seeding (#158). The
+      // marker names the CLI form that returns the full text on demand.
+      const result = github.truncateIssueBodies(
+        await github.fetchPublicIssues(owner, repo),
+        (n) => `usernode-issues ${n}`
+      );
+      return res.json({ ok: true, ...result });
+    }
+  );
+
+  // Read-only: fetch ONE GitHub issue with its FULL (untruncated) body.
+  // Backs the worker's `usernode-issues <number>` CLI form — the escape
+  // hatch for bodies the list route clips (#158). Same auth posture as
+  // the list route (session-scoped ISSUES_JWT, both scout and build).
+  // Always 200 with `{ ok: true, issue, note? }` once the session checks
+  // pass — github.fetchPublicIssue never throws and resolves every
+  // failure to `{ issue: null, note }`, so the CLI always prints
+  // parseable JSON.
+  router.get(
+    '/api/internal/sessions/:sessionId/issues/:number',
+    internalAuth,
+    pushLimiter,
+    async (req, res) => {
+      const sessionId = parseInt(req.params.sessionId, 10);
+      if (!Number.isFinite(sessionId)) {
+        return res.status(400).json({ ok: false, code: 'bad_session_id' });
+      }
+      if (req.workerSession.sessionId !== sessionId) {
+        log.warn('internal-api', 'Session mismatch between JWT and route (issue)', {
+          jwt: req.workerSession.sessionId, route: sessionId,
+        });
+        return res.status(403).json({ ok: false, code: 'session_mismatch' });
+      }
+
+      let repoUrl = '';
+      try {
+        const { rows } = await pool.query(
+          `SELECT a.repo_url
+             FROM chat_sessions cs
+             JOIN apps a ON a.id = cs.app_id
+            WHERE cs.id = $1`,
+          [sessionId]
+        );
+        if (!rows.length) {
+          return res.status(404).json({ ok: false, code: 'session_not_found' });
+        }
+        repoUrl = rows[0].repo_url || '';
+      } catch (err) {
+        log.error('internal-api', 'Issue session lookup failed', { sessionId, err: err.message });
+        return res.status(500).json({ ok: false, code: 'db_error' });
+      }
+
+      const parsed = repoUrl.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+      if (!parsed) {
+        return res.json({ ok: true, issue: null, note: 'no repo' });
+      }
+      const [, owner, repo] = parsed;
+      // fetchPublicIssue validates the number itself ('bad issue number').
+      const result = await github.fetchPublicIssue(owner, repo, req.params.number);
       return res.json({ ok: true, ...result });
     }
   );
