@@ -680,6 +680,10 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   broadcastGlobal({
     type: 'session_event', sessionId: session.id,
     event: 'staging_ready', url: stagingResult.stagingUrl,
+    // #127: keep any open dev-chat's testing affordances in sync after a
+    // staging rebuild (the guidance itself lives on the session row).
+    testingMd: session.testing_md || null,
+    testingPath: session.testing_path || null,
   });
   pushSessionUpdate({ action: 'staging_ready', sessionId: session.id, appSlug: session.app_slug });
 
@@ -928,7 +932,22 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
       [sessionId]
     );
     const recoveredUserMessage = userMsgRows[0]?.content || '';
-    const recoveredCcSummary = result.lastResultText || '';
+
+    // #127: same TESTING-block handling as the live dev-turn path — peel
+    // the block off the recovered summary (so markers don't leak into the
+    // PR body prompt) and persist the guidance before applyPrMetadata
+    // reads it back for the "How to test" section.
+    const testingNotes = require('./src/services/testing-notes');
+    const recoveredTesting = testingNotes.extract(result.lastResultText || '');
+    const recoveredCcSummary = recoveredTesting.cleanedText;
+    if (recoveredTesting.testingMd || recoveredTesting.testingPath) {
+      await pool.query(
+        `UPDATE chat_sessions SET testing_md = $1, testing_path = $2 WHERE id = $3`,
+        [recoveredTesting.testingMd, recoveredTesting.testingPath, sessionId]
+      ).catch(() => {});
+      session.testing_md = recoveredTesting.testingMd;
+      session.testing_path = recoveredTesting.testingPath;
+    }
 
     const prMetadata = require('./src/services/pr-metadata');
     await prMetadata.applyPrMetadata({
@@ -955,7 +974,11 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
       [sessionId, JSON.stringify({ stagingUrl: stagingResult.stagingUrl })]
     );
 
-    emit('staging_ready', { url: stagingResult.stagingUrl });
+    emit('staging_ready', {
+      url: stagingResult.stagingUrl,
+      testingMd: session.testing_md || null,
+      testingPath: session.testing_path || null,
+    });
     log.info('server', 'Orphan finalized', {
       sessionId, commitHash: result.sha.substring(0, 8), url: stagingResult.stagingUrl,
     });

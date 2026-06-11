@@ -26,6 +26,22 @@ function buildClosingBlock(issues) {
   return sanitizeIssueNumbers(issues).map((n) => `Closes #${n}`).join('\n');
 }
 
+// Build the deterministic "How to test" section for a PR body (#127) from
+// the session's bot-emitted testing guidance (chat_sessions.testing_md /
+// testing_path, parsed by services/testing-notes.js). Like the closing
+// block, this is assembled in code and deliberately NOT fed into the LLM
+// prompt, so the model can never drop or paraphrase it. Empty string when
+// the session carries no guidance, keeping legacy bodies byte-identical.
+function buildTestingBlock(testingMd, testingPath) {
+  const md = typeof testingMd === 'string' ? testingMd.trim() : '';
+  const path = typeof testingPath === 'string' ? testingPath.trim() : '';
+  if (!md && !path) return '';
+  const parts = ['## How to test'];
+  if (md) parts.push(md);
+  if (path) parts.push(`Deep link: \`${path}\``);
+  return parts.join('\n\n');
+}
+
 // Extract the issue numbers a PR body declares it closes via GitHub's
 // closing keywords (close/closes/closed, fix/fixes/fixed, resolve/resolves/
 // resolved), optionally followed by a colon, e.g. "Closes #75", "fixed: #80".
@@ -60,12 +76,14 @@ function sameIssueSet(a, b) {
 // to the legacy template so PR creation is never blocked on LLM
 // availability. `usage` is undefined when the fallback fires (no API
 // call was made) so callers can skip debiting in that case.
-async function generatePrMetadata({ userMessage, ccSummary, requests, summaries, specs, username, apiKey, closingBlock }) {
-  // `closingBlock` (#75) is the deterministic `Closes #N` text. It is
-  // inserted between the body and the footer and is deliberately NOT fed
-  // into the LLM prompt below, so the model can never drop, duplicate, or
-  // paraphrase the closing keywords.
-  const suffix = closingBlock ? `\n\n${closingBlock}` : '';
+async function generatePrMetadata({ userMessage, ccSummary, requests, summaries, specs, username, apiKey, closingBlock, testingBlock }) {
+  // `closingBlock` (#75) is the deterministic `Closes #N` text and
+  // `testingBlock` (#127) the deterministic "How to test" section. Both are
+  // inserted between the body and the footer (testing first, closing last)
+  // and are deliberately NOT fed into the LLM prompt below, so the model
+  // can never drop, duplicate, or paraphrase them.
+  const suffix = (testingBlock ? `\n\n${testingBlock}` : '')
+    + (closingBlock ? `\n\n${closingBlock}` : '');
   const fallbackTitle = `${username}'s changes`;
   const fallbackBody = `Dev session by ${username} via Usernode${suffix}`;
 
@@ -116,7 +134,10 @@ async function generatePrMetadata({ userMessage, ccSummary, requests, summaries,
 //                 may run ahead of what's actually built), so the prompt
 //                 leans on requests/summaries for the concrete changes.
 async function gatherSessionContext(pool, sessionId, currentCcSummary) {
-  const ctx = { requests: [], summaries: [], specs: [], linkedIssues: [], appliedIssues: [] };
+  const ctx = {
+    requests: [], summaries: [], specs: [], linkedIssues: [], appliedIssues: [],
+    testingMd: null, testingPath: null, appliedTesting: null,
+  };
   if (pool && sessionId != null) {
     try {
       const { rows } = await pool.query(
@@ -152,7 +173,9 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
         if (c) specTexts.push(c);
       }
       const { rows: liveRows } = await pool.query(
-        `SELECT spec_md, linked_issues, pr_linked_issues_applied FROM chat_sessions WHERE id = $1`,
+        `SELECT spec_md, linked_issues, pr_linked_issues_applied,
+                testing_md, testing_path, pr_testing_applied
+           FROM chat_sessions WHERE id = $1`,
         [sessionId]
       );
       const live = (liveRows[0] && liveRows[0].spec_md ? String(liveRows[0].spec_md) : '').trim();
@@ -163,6 +186,13 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
       // regardless of what columns they SELECT'd onto the session object.
       ctx.linkedIssues = sanitizeIssueNumbers(liveRows[0] && liveRows[0].linked_issues);
       ctx.appliedIssues = sanitizeIssueNumbers(liveRows[0] && liveRows[0].pr_linked_issues_applied);
+
+      // Testing guidance (#127) — same read-by-id rationale as above. The
+      // dev-turn path persists testing_md/testing_path BEFORE calling
+      // applyPrMetadata, so this always sees the current turn's block.
+      ctx.testingMd = (liveRows[0] && liveRows[0].testing_md) || null;
+      ctx.testingPath = (liveRows[0] && liveRows[0].testing_path) || null;
+      ctx.appliedTesting = (liveRows[0] && liveRows[0].pr_testing_applied) || null;
 
       const seen = new Set();
       for (const s of specTexts) {
@@ -200,14 +230,21 @@ async function applyPrMetadata({
 
   // Build cumulative context across all of this PR's turns. Falls back to
   // the single current turn when no history is available.
-  const { requests, summaries, specs, linkedIssues, appliedIssues } = await gatherSessionContext(pool, session && session.id, ccSummary);
+  const {
+    requests, summaries, specs, linkedIssues, appliedIssues,
+    testingMd, testingPath, appliedTesting,
+  } = await gatherSessionContext(pool, session && session.id, ccSummary);
 
   // Deterministic `Closes #N` block (#75), regenerated from the linked set
   // on every turn so it's always current and never doubled.
   const closingBlock = buildClosingBlock(linkedIssues);
 
+  // Deterministic "How to test" section (#127), regenerated from the
+  // session's latest testing guidance on every turn.
+  const testingBlock = buildTestingBlock(testingMd, testingPath);
+
   const meta = await generatePrMetadata({
-    userMessage, ccSummary, requests, summaries, specs, username, apiKey, closingBlock,
+    userMessage, ccSummary, requests, summaries, specs, username, apiKey, closingBlock, testingBlock,
   });
   const { title: prTitle, body: prBody } = meta;
 
@@ -215,6 +252,11 @@ async function applyPrMetadata({
   // PR body. Drives the existing-PR update gate below so a newly-linked
   // issue reaches GitHub even when the title is unchanged.
   const issuesChanged = !sameIssueSet(linkedIssues, appliedIssues);
+
+  // Same drift check for the testing section (#127): compare the freshly
+  // rendered block against the snapshot last written to the PR body, so new
+  // or revised guidance reaches GitHub on a title-unchanged turn.
+  const testingChanged = testingBlock !== (appliedTesting || '');
 
   // Debit the platform Haiku call to the session owner. Skip when
   // BYOK is in effect (user's own key paid for it) or the fallback
@@ -244,8 +286,8 @@ async function applyPrMetadata({
       session.pr_url = pr.html_url;
       session.pr_title = prTitle;
       await pool.query(
-        `UPDATE chat_sessions SET pr_number = $1, pr_url = $2, pr_title = $3, pr_linked_issues_applied = $4 WHERE id = $5`,
-        [pr.number, pr.html_url, prTitle, linkedIssues, session.id]
+        `UPDATE chat_sessions SET pr_number = $1, pr_url = $2, pr_title = $3, pr_linked_issues_applied = $4, pr_testing_applied = $5 WHERE id = $6`,
+        [pr.number, pr.html_url, prTitle, linkedIssues, testingBlock || null, session.id]
       );
       if (broadcast) broadcast('pr_created', { prNumber: pr.number, prUrl: pr.html_url, prTitle });
       return { prNumber: pr.number, prUrl: pr.html_url, prTitle };
@@ -256,9 +298,10 @@ async function applyPrMetadata({
   }
 
   // Existing PR: hit GitHub if the title changed OR the linked-issue set
-  // changed (#75) — the latter case would otherwise be skipped on a
-  // title-unchanged turn, leaving the new `Closes #N` line off the PR body.
-  if (prTitle === session.pr_title && !issuesChanged) {
+  // changed (#75) OR the testing guidance changed (#127) — the latter two
+  // would otherwise be skipped on a title-unchanged turn, leaving the new
+  // `Closes #N` line / "How to test" section off the PR body.
+  if (prTitle === session.pr_title && !issuesChanged && !testingChanged) {
     return { prNumber: session.pr_number, prUrl: session.pr_url, prTitle: session.pr_title };
   }
 
@@ -269,8 +312,8 @@ async function applyPrMetadata({
     });
     session.pr_title = prTitle;
     await pool.query(
-      `UPDATE chat_sessions SET pr_title = $1, pr_linked_issues_applied = $2 WHERE id = $3`,
-      [prTitle, linkedIssues, session.id]
+      `UPDATE chat_sessions SET pr_title = $1, pr_linked_issues_applied = $2, pr_testing_applied = $3 WHERE id = $4`,
+      [prTitle, linkedIssues, testingBlock || null, session.id]
     );
     if (broadcast) broadcast('pr_updated', { prNumber: session.pr_number, prUrl: session.pr_url, prTitle });
     return { prNumber: session.pr_number, prUrl: session.pr_url, prTitle };
@@ -280,4 +323,4 @@ async function applyPrMetadata({
   }
 }
 
-module.exports = { generatePrMetadata, applyPrMetadata, sanitizeIssueNumbers, buildClosingBlock, parseClosingKeywords };
+module.exports = { generatePrMetadata, applyPrMetadata, sanitizeIssueNumbers, buildClosingBlock, buildTestingBlock, parseClosingKeywords };

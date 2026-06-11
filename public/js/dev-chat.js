@@ -809,6 +809,10 @@ const DevChat = {
                 DevChat.scrollToBottom();
                 if (data.url) {
                   DevChat.currentSession.staging_url = data.url;
+                  // #127: testing guidance rides along so the PR card's
+                  // "Test this change" button works without a refetch.
+                  if ('testingMd' in data) DevChat.currentSession.testing_md = data.testingMd;
+                  if ('testingPath' in data) DevChat.currentSession.testing_path = data.testingPath;
                 }
                 break;
               case 'staging_failed':
@@ -1083,7 +1087,12 @@ const DevChat = {
         DevChat.messages.push({ role: 'system', content: 'Staging deployed!', stagingUrl: data.url, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8) });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
-        if (data.url && DevChat.currentSession) DevChat.currentSession.staging_url = data.url;
+        if (data.url && DevChat.currentSession) {
+          DevChat.currentSession.staging_url = data.url;
+          // #127: keep the replayed session's testing guidance in sync too.
+          if ('testingMd' in data) DevChat.currentSession.testing_md = data.testingMd;
+          if ('testingPath' in data) DevChat.currentSession.testing_path = data.testingPath;
+        }
         break;
       case 'staging_failed':
         DevChat._removeSpinner();
@@ -1479,6 +1488,20 @@ const DevChat = {
 
   
 
+  // #127: open the staging preview with the session's testing guidance
+  // attached. `jump` opens the iframe directly at the deep-link path (the
+  // "Test this change" button); plain Preview starts at the app root but
+  // still carries the guidance so the overlay can offer its own "Test this
+  // change" button + "How to test" panel. The markdown is looked up here at
+  // click time so it never transits an HTML attribute.
+  previewStaging(url, jump) {
+    const s = DevChat.currentSession || {};
+    const testing = (s.testing_md || s.testing_path)
+      ? { md: s.testing_md || null, path: s.testing_path || null }
+      : null;
+    AppView.swapToStaging(url, testing, { jump: !!jump });
+  },
+
   async promotePR() {
     if (!DevChat.currentSession?.id) return;
     try {
@@ -1639,6 +1662,15 @@ const DevChat = {
           // clicking it lands on a 502/blank page. Disable it instead, with a
           // tooltip pointing the user at the now-live app.
           const previewGone = !!session && (session.status === 'merged' || session.status === 'merging' || !!session.merged_at);
+          // #127: bot-emitted testing guidance lives on the session row
+          // (testing_md / testing_path). When present, offer a "Test this
+          // change" button that opens the preview at the deep link with the
+          // instructions panel showing. The markdown is looked up at click
+          // time (DevChat.previewStaging) — never inlined in the attribute.
+          const hasTesting = !!(session?.testing_md || session?.testing_path);
+          const testBtn = !hasTesting ? '' : (previewGone
+            ? `<button class="dc-pr-btn dc-pr-btn-preview" disabled title="Preview removed after merge — this change is now live in the app">Test this change</button>`
+            : `<button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.previewStaging('${msg.stagingUrl}', true)">Test this change</button>`);
           return `
             <div class="dc-status-line"><span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span> ${msg.content} <span style="font-size:9px;opacity:0.4;margin-left:auto">${stgId} ${stgTs}</span></div>
             <div class="dc-pr-card" id="dc-pr-card">
@@ -1651,7 +1683,8 @@ const DevChat = {
               <div class="dc-pr-card-actions">
                 ${previewGone
                   ? `<button class="dc-pr-btn dc-pr-btn-preview" disabled title="Preview removed after merge — this change is now live in the app">Preview staging</button>`
-                  : `<button class="dc-pr-btn dc-pr-btn-preview" onclick="AppView.swapToStaging('${msg.stagingUrl}')">Preview staging</button>`}
+                  : `<button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.previewStaging('${msg.stagingUrl}', false)">Preview staging</button>`}
+                ${testBtn}
                 ${session?.pr_url ? `<a href="${session.pr_url}" target="_blank" class="dc-pr-btn dc-pr-btn-preview" style="text-decoration:none">View on GitHub</a>` : ''}
                 ${session?.pr_number && session?.status === 'active' ? `<button class="dc-pr-btn dc-pr-btn-promote" onclick="DevChat.promotePR()">Propose to group</button>` : ''}
                 ${session?.status === 'promoted' ? '<span class="text-xs" style="color:var(--accent)">Proposed!</span>' : ''}

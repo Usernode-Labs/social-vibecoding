@@ -6,6 +6,7 @@ const log = require('../services/logger');
 const llm = require('../services/llm');
 const github = require('../services/github');
 const prMetadata = require('../services/pr-metadata');
+const testingNotes = require('../services/testing-notes');
 const staging = require('../services/staging');
 const docker = require('../services/docker');
 const caddy = require('../services/caddy');
@@ -2461,7 +2462,31 @@ INSTRUCTIONS:
 - If building something new, implement the full feature — don't stop partway.
 - After all changes are made, stage everything with "git add -A" and commit
   with a clear message describing what was built.
-- Do NOT ask questions or request clarification. Just build it.`;
+- Do NOT ask questions or request clarification. Just build it.
+- End your FINAL message with a testing block (optional, but strongly
+  encouraged whenever the change is user-visible) so reviewers can try the
+  change in the staging preview:
+
+==== TESTING ====
+path: /relative/path?demo=1
+1. First step a tester should take.
+2. What they should see if the change works.
+==== END TESTING ====
+
+  Rules for the testing block:
+  - The "path:" line is optional. If present it must be a RELATIVE path
+    within the app (starts with "/", no scheme or host) that lands the
+    tester as close to the changed feature as possible. Omit the line when
+    the app's root is the right place to start.
+  - The steps are short markdown (numbered list preferred), written for a
+    non-technical tester looking at a staging preview seeded with a copy of
+    production data.
+  - If the change is hard to demonstrate with production-cloned data, you
+    MAY add a small staging-gated demo state (route or query param guarded
+    by USERNODE_ENV === 'staging') and point "path:" at it. It must be a
+    no-op in production.
+  - The block must be the LAST thing in your final message. Skip the block
+    entirely for changes with nothing user-visible to test.`;
 
   const commitMsg = github.safeMention(`Changes: ${userMessage.substring(0, 50)}`);
 
@@ -2587,7 +2612,13 @@ INSTRUCTIONS:
       ).catch(() => {});
     }
 
-    const ccText = result.lastResultText || '';
+    // #127: peel the optional "==== TESTING ====" block off the agent's
+    // final message before anything downstream consumes it (Mayor summary,
+    // ccOutput status, PR-metadata LLM prompt) so the raw markers never
+    // leak into chat history or prompts. The parsed guidance is persisted
+    // onto the session below, on the has-changes success path.
+    const testing = testingNotes.extract(result.lastResultText || '');
+    const ccText = testing.cleanedText;
     commitHash = result.sha;
     const hasChanges = result.ahead > 0 && !!commitHash;
 
@@ -2621,6 +2652,20 @@ INSTRUCTIONS:
         summaryParts.push('Push reported a failure; staging may be stale.');
       }
       summaryParts.push(`Commit ${commitHash.substring(0, 8)} pushed to ${session.branch_name}.`);
+
+      // #127: persist the turn's testing guidance BEFORE applyPrMetadata so
+      // the PR body's "How to test" section (read back from the DB by id)
+      // sees it. When this turn emitted a block, the latest one wins (both
+      // columns overwritten — even a now-absent path); when it didn't,
+      // earlier guidance is kept so a small follow-up turn doesn't wipe it.
+      if (testing.testingMd || testing.testingPath) {
+        await pool.query(
+          `UPDATE chat_sessions SET testing_md = $1, testing_path = $2 WHERE id = $3`,
+          [testing.testingMd, testing.testingPath, session.id]
+        ).catch((err) => log.warn('sessions', 'Failed to persist testing guidance', { sessionId: session.id, err: err.message }));
+        session.testing_md = testing.testingMd;
+        session.testing_path = testing.testingPath;
+      }
 
       const wasNewPR = !session.pr_number;
       const prResult = await prMetadata.applyPrMetadata({
@@ -2688,7 +2733,14 @@ INSTRUCTIONS:
 
         stagingUrl = stagingResult.stagingUrl;
         await sendStatus('Staging deployed!', { stagingUrl });
-        send('staging_ready', { url: stagingUrl });
+        // #127: ship the session's testing guidance (this turn's block, or
+        // the kept-previous one off the session row) alongside the staging
+        // URL so the client can offer "Test this change" without a refetch.
+        send('staging_ready', {
+          url: stagingUrl,
+          testingMd: session.testing_md || null,
+          testingPath: session.testing_path || null,
+        });
         summaryParts.push(`Staging redeployed: ${stagingUrl}`);
 
         if (session.status === 'promoted') {
@@ -2721,10 +2773,13 @@ INSTRUCTIONS:
             if (pat) {
               const { Octokit } = await import('@octokit/rest');
               const ok = new Octokit({ auth: pat });
+              // #127: append the "How to test" section so the guidance is
+              // visible right where reviewers find the staging link.
+              const testingComment = prMetadata.buildTestingBlock(session.testing_md, session.testing_path);
               await ok.rest.issues.createComment({
                 owner: repoOwner, repo: repoName,
                 issue_number: session.pr_number,
-                body: github.safeMention(`**Staging deployed!**\n\n${stagingResult.stagingUrl}\n\nCommit: ${commitHash.substring(0, 8)}`),
+                body: github.safeMention(`**Staging deployed!**\n\n${stagingResult.stagingUrl}\n\nCommit: ${commitHash.substring(0, 8)}${testingComment ? `\n\n${testingComment}` : ''}`),
               });
             }
           } catch (commentErr) {
