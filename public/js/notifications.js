@@ -903,6 +903,7 @@ function renderRow(n) {
     const outcomeText = {
       spec: 'drafted a spec',
       code: 'pushed code',
+      spec_code: 'drafted a spec and pushed code',
       question: 'replied with a question',
       failed: 'failed — you can retry',
     }[n.detail] || 'finished';
