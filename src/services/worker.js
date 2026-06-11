@@ -68,8 +68,12 @@ function mintWorkerJwt(sessionId) {
 // Two transports drive this parser:
 //   1) `docker logs -f <container>` — used for legacy single-shot
 //      workers and for the warm-ready wait during bootstrap.
-//   2) `docker exec <container> /usr/local/bin/run-cc.sh` — per-turn
-//      streaming for the long-lived worker path. Same stdout format.
+//   2) Turn journal files in the CC volume — per-turn output for the
+//      long-lived worker path. run-cc.sh runs as a DETACHED exec whose
+//      output is redirected to the journal (plus a trailing
+//      __USERNODE_EXIT__ <code> line from the wrapper); the host tails
+//      the file. Same line format, but restart-proof: the journal and
+//      the exec both outlive the platform process.
 
 function parseClaudeResponse(stdout) {
   // Keep for back-compat with callers that still pass a full stdout blob.
@@ -213,6 +217,15 @@ function parseLine(line, onProgress, state) {
     state.fatalError = line.replace('__USERNODE_ERROR__', '').trim();
     return;
   }
+  if (line.startsWith('__USERNODE_EXIT__')) {
+    // Appended by the detached-exec wrapper after run-cc.sh exits — the
+    // journal-file analog of the docker-exec child's exit code. Seeing
+    // this line is how the journal tailer knows the turn is over.
+    const code = parseInt(line.replace('__USERNODE_EXIT__', '').trim(), 10);
+    state.exitCode = Number.isFinite(code) ? code : -1;
+    state.execExitSeen = true;
+    return;
+  }
   if (line.startsWith('__USERNODE_WARN__')) {
     const msg = line.replace('__USERNODE_WARN__', '').trim();
     log.warn('worker', msg);
@@ -249,6 +262,9 @@ function newWatchState() {
     phase: null,
     fatalError: null,
     resultSeen: false,
+    // True once the detached-exec wrapper's __USERNODE_EXIT__ line has
+    // been parsed from the turn journal (detached transport only).
+    execExitSeen: false,
     rawStdout: '',
     rawStderr: '',
     exitCode: null,
@@ -294,6 +310,63 @@ function ccVolumeName(sessionId) {
 
 function workerContainerName(sessionId) {
   return `usernode-worker-${sessionId}`;
+}
+
+// Per-turn journal file inside the CC volume (/home/node/.claude). The
+// detached `docker exec` wrapper redirects run-cc.sh's combined output
+// here so the turn's progress stream survives a platform restart: the
+// volume outlives both the exec and the platform process, and the boot
+// adoption path can replay the file from line 0 to pick the turn back
+// up. One turn per session is in flight at a time (enforced via the
+// warm registry), so the timestamp suffix only disambiguates the
+// current turn from stale leftovers (which the wrapper rm's first).
+function turnJournalPath(turnId) {
+  return `/home/node/.claude/turn-${turnId}.log`;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Durable turn records (chat_sessions.active_turn)
+// ──────────────────────────────────────────────────────────────────────
+//
+// Written before the detached dispatch and cleared when the journal has
+// been consumed to completion. If the platform dies mid-turn the record
+// survives, and server.js's adoption path resumes the turn from its
+// journal instead of killing the in-container claude.
+//
+// The pool singleton is created by server.js at boot, long before any
+// turn can run, so the bare getPool() here never constructs.
+function _getPoolSafe() {
+  try {
+    return require('../db/pool').getPool();
+  } catch {
+    return null;
+  }
+}
+
+async function _persistActiveTurn(sessionId, turn) {
+  const pool = _getPoolSafe();
+  if (!pool) return;
+  try {
+    await pool.query(
+      'UPDATE chat_sessions SET active_turn = $1 WHERE id = $2',
+      [JSON.stringify(turn), sessionId]
+    );
+  } catch (err) {
+    log.warn('worker', 'Failed to persist active_turn', { sessionId, err: err.message });
+  }
+}
+
+async function clearActiveTurn(sessionId) {
+  const pool = _getPoolSafe();
+  if (!pool) return;
+  try {
+    await pool.query(
+      'UPDATE chat_sessions SET active_turn = NULL WHERE id = $1',
+      [sessionId]
+    );
+  } catch (err) {
+    log.warn('worker', 'Failed to clear active_turn', { sessionId, err: err.message });
+  }
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -659,10 +732,13 @@ async function ensureWorker(sessionId, {
   return containerName;
 }
 
-// Run one CC turn inside an already-warm container. Streams stdout/stderr
-// the same way watchWorker does (via the shared `parseLine` state
-// machine) so the dev-chat UI sees identical progress markers regardless
-// of which transport delivered them.
+// Run one CC turn inside an already-warm container, detached: the exec
+// is dispatched with `docker exec -d`, its output lands in a journal
+// file in the CC volume, and we follow the journal through the shared
+// `parseLine` state machine. The dev-chat UI sees identical progress
+// markers to the old attached transport — but the turn itself survives
+// a platform restart (boot adoption resumes it via the
+// chat_sessions.active_turn record + resumeTurnFromJournal).
 //
 // Returns the same shape watchWorker produces, so route callers can swap
 // `spawnWorker + watchWorker` for `ensureWorker + execInWorker` without
@@ -676,10 +752,10 @@ async function execInWorker(sessionId, {
   branchName,
   anthropicApiKey,
   onProgress,
-  // Optional callback that receives the host-side `docker exec` child
-  // process. Lets the route handler stash the child on stopRegistry so
-  // a stop signal can SIGTERM just this exec without killing the warm
-  // container.
+  // Legacy callback: the attached transport used to hand the host-side
+  // `docker exec` child to the route handler for SIGTERM-based stops.
+  // The detached transport has no such child — stops go through
+  // stopTurn() — so this is invoked with null purely for back-compat.
   onChild,
 } = {}) {
   const meta = _registryGet(sessionId);
@@ -756,64 +832,209 @@ async function execInWorker(sessionId, {
       ? { ANTHROPIC_BASE_URL: `${PLATFORM_INTERNAL_URL}/api/internal/anthropic` }
       : {}),
   };
+  // Journal transport: the turn runs DETACHED from this process. The
+  // wrapper below redirects run-cc.sh's combined output to a journal
+  // file in the CC volume and appends __USERNODE_EXIT__ <code> when it
+  // finishes. We then tail the journal from line 0. If the platform
+  // restarts mid-turn, the exec keeps running, the journal keeps
+  // filling, and the boot adoption path resumes via the same consumer
+  // (resumeTurnFromJournal) using the chat_sessions.active_turn record.
+  const turnId = Date.now();
+  const journal = turnJournalPath(turnId);
+  safeEnv.TURN_JOURNAL = journal;
+
   const secretEnvArgs = Object.keys(secretEnv).flatMap((k) => ['-e', k]);
   const safeEnvArgs = Object.entries(safeEnv).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
 
   const args = [
-    'exec',
+    'exec', '-d',
     ...secretEnvArgs,
     ...safeEnvArgs,
     containerName,
-    '/usr/local/bin/run-cc.sh',
+    'sh', '-c',
+    // rm stale journals first so the tailer's existence-wait can't latch
+    // onto a leftover file from a previous turn.
+    'rm -f /home/node/.claude/turn-*.log 2>/dev/null; '
+      + '/usr/local/bin/run-cc.sh > "$TURN_JOURNAL" 2>&1; '
+      + 'echo "__USERNODE_EXIT__ $?" >> "$TURN_JOURNAL"',
   ];
 
   _registryUpsert(sessionId, { inFlight: true });
+  await _persistActiveTurn(sessionId, {
+    mode,
+    journal,
+    model: models.resolve(model),
+    startedAt: new Date().toISOString(),
+  });
 
   try {
-    return await new Promise((resolve, reject) => {
-      const proc = spawn('docker', args, {
-        // Same secret-env trick as bootstrap: secrets travel via the
-        // child's env, never argv.
-        env: { ...process.env, ...secretEnv },
-      });
-      if (typeof onChild === 'function') {
-        try { onChild(proc); } catch {}
-      }
+    // Dispatch. `docker exec -d` returns as soon as the exec is created;
+    // secrets travel via the docker CLI's env (bare `-e KEY`), same as
+    // the attached transport did.
+    await docker.execFileAsync('docker', args, {
+      timeout: 30000,
+      env: { ...process.env, ...secretEnv },
+    });
+    // onChild is legacy: there is no host-side child that owns the turn
+    // anymore. Stop semantics live in stopTurn() (in-container pkill).
+    if (typeof onChild === 'function') {
+      try { onChild(null); } catch {}
+    }
 
-      const state = newWatchState();
-      const progress = typeof onProgress === 'function' ? onProgress : () => {};
+    const state = newWatchState();
+    const progress = typeof onProgress === 'function' ? onProgress : () => {};
+    await _consumeJournal(containerName, journal, progress, state);
 
-      let stdoutBuf = '';
+    // Successful, complete turns don't need their journal anymore; failed
+    // or markerless ones keep it on disk for debugging (the next turn's
+    // wrapper rm's it).
+    if (state.execExitSeen && !state.fatalError) {
+      docker.execFileAsync('docker', [
+        'exec', containerName, 'rm', '-f', journal,
+      ], { timeout: 5000 }).catch(() => {});
+    }
+    return state;
+  } finally {
+    _registryUpsert(sessionId, { inFlight: false, lastUsedMs: Date.now() });
+    await clearActiveTurn(sessionId);
+  }
+}
+
+// Follow a turn journal until the __USERNODE_EXIT__ marker lands (turn
+// finished) or the turn process is verifiably gone (killed / OOM — no
+// marker will ever come). Feeds every line through the shared parseLine
+// state machine, so the resolved `state` matches the attached
+// transport's shape exactly.
+//
+// The tail itself is a disposable `docker exec`; if it drops while the
+// turn is still running (docker hiccup, etc.) we restart it and skip
+// the lines we already consumed.
+async function _consumeJournal(containerName, journal, progress, state) {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  let linesConsumed = 0;
+
+  const consume = (line) => {
+    state.rawStdout += `${line}\n`;
+    parseLine(line, progress, state);
+  };
+
+  for (;;) {
+    await new Promise((resolve) => {
+      // Wait for the wrapper to create the journal, then follow it from
+      // the top. `exec tail` so the pid the shell reports is tail itself.
+      const proc = spawn('docker', [
+        'exec', containerName, 'sh', '-c',
+        `n=0; while [ ! -f "${journal}" ]; do n=$((n+1)); [ "$n" -gt 300 ] && exit 86; sleep 0.1; done; exec tail -n +1 -f "${journal}"`,
+      ]);
+
+      let done = false;
+      let buf = '';
+      let skip = linesConsumed;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        clearInterval(liveness);
+        try { proc.kill('SIGKILL'); } catch {}
+        resolve();
+      };
+
       proc.stdout.on('data', (chunk) => {
-        const text = chunk.toString('utf8');
-        state.rawStdout += text;
-        stdoutBuf += text;
-        const lines = stdoutBuf.split('\n');
-        stdoutBuf = lines.pop() || '';
-        for (const line of lines) parseLine(line, progress, state);
-      });
-
-      let stderrBuf = '';
-      proc.stderr.on('data', (chunk) => {
-        const text = chunk.toString('utf8');
-        state.rawStderr += text;
-        stderrBuf += text;
-        const lines = stderrBuf.split('\n');
-        stderrBuf = lines.pop() || '';
+        buf += chunk.toString('utf8');
+        const lines = buf.split('\n');
+        buf = lines.pop() || '';
         for (const line of lines) {
-          if (line.trim() && line.length < 500) progress(line);
+          if (skip > 0) { skip -= 1; continue; }
+          linesConsumed += 1;
+          consume(line);
+          if (state.execExitSeen) return finish();
         }
       });
+      proc.stderr.on('data', () => {});
+      proc.on('close', finish);
+      proc.on('error', finish);
 
-      proc.on('close', (code) => {
-        if (stdoutBuf.trim()) parseLine(stdoutBuf, progress, state);
-        // Match watchWorker semantics: state.exitCode mirrors the
-        // child's exit code, falling back to -1 on signal.
-        state.exitCode = code == null ? -1 : code;
-        resolve(state);
-      });
-      proc.on('error', (err) => reject(err));
+      // Watchdog: `tail -f` never exits on its own, so detect the case
+      // where the turn died without writing the exit marker (stopTurn
+      // pkill, OOM kill). Two consecutive idle reads give the wrapper's
+      // final `echo >> journal` time to flush through the tail.
+      let idleStrikes = 0;
+      const liveness = setInterval(async () => {
+        if (done) return;
+        const busy = await isWorkerExecuting(containerName);
+        if (busy === true) { idleStrikes = 0; return; }
+        idleStrikes += 1;
+        if (idleStrikes >= 2) finish();
+      }, 5000);
     });
+
+    if (state.execExitSeen) return state;
+
+    // Tail ended without an exit marker. If the turn is still running
+    // (transient tail/docker failure), restart the tail; otherwise do a
+    // final non-follow read to catch anything the tail missed, then
+    // give up with whatever state we accumulated.
+    const busy = await isWorkerExecuting(containerName);
+    if (busy === true) {
+      await sleep(1000);
+      continue;
+    }
+    try {
+      const { stdout } = await docker.execFileAsync('docker', [
+        'exec', containerName, 'cat', journal,
+      ], { timeout: 10000 });
+      const lines = stdout.split('\n');
+      for (let i = linesConsumed; i < lines.length; i++) {
+        const line = lines[i];
+        if (!line) continue;
+        linesConsumed += 1;
+        consume(line);
+        if (state.execExitSeen) break;
+      }
+    } catch {
+      // Container (or journal) gone — nothing more to read.
+    }
+    if (!state.execExitSeen && state.exitCode == null) {
+      // Turn process vanished without a marker: stopped or killed.
+      state.exitCode = -1;
+    }
+    return state;
+  }
+}
+
+// Stop the in-flight turn for a session by killing run-cc.sh + claude
+// inside the container. The warm wrapper (sleep infinity) survives, so
+// the container stays adoptable for the next dispatch. The journal
+// consumer notices the process is gone via its liveness watchdog and
+// resolves without an exit marker (exitCode -1).
+async function stopTurn(sessionId) {
+  const meta = _registryGet(sessionId);
+  const containerName = meta?.containerName || workerContainerName(sessionId);
+  await docker.execFileAsync('docker', [
+    'exec', containerName, 'sh', '-c', TURN_PROC_KILL_SCRIPT,
+  ], { timeout: 5000 }).catch(() => {});
+  log.info('worker', 'Stop signal sent (in-container turn-process kill)', { containerName, sessionId });
+}
+
+// Boot-time resume: pick an in-flight (or finished-while-we-were-down)
+// turn back up from its journal. The caller (server.js adoption) owns
+// post-turn processing and clearing chat_sessions.active_turn; this
+// just replays/follows the journal and returns the watch state, exactly
+// as if execInWorker had stayed attached the whole time.
+async function resumeTurnFromJournal(sessionId, { journal, onProgress } = {}) {
+  if (!journal) throw new Error('resumeTurnFromJournal: journal path required');
+  const meta = _registryGet(sessionId);
+  const containerName = meta?.containerName || workerContainerName(sessionId);
+  _registryUpsert(sessionId, { inFlight: true, adopted: true });
+  try {
+    const state = newWatchState();
+    const progress = typeof onProgress === 'function' ? onProgress : () => {};
+    await _consumeJournal(containerName, journal, progress, state);
+    if (state.execExitSeen && !state.fatalError) {
+      docker.execFileAsync('docker', [
+        'exec', containerName, 'rm', '-f', journal,
+      ], { timeout: 5000 }).catch(() => {});
+    }
+    return state;
   } finally {
     _registryUpsert(sessionId, { inFlight: false, lastUsedMs: Date.now() });
   }
@@ -922,10 +1143,36 @@ async function listOrphanWorkers() {
   }
 }
 
+// Match a turn process (run-cc.sh wrapper, run-cc.sh itself, or the
+// claude CLI) by full cmdline. The anchors keep paths like
+// /home/node/.claude/turn-X.log (our tail/cat execs) from matching —
+// "claude" there is preceded by "." and followed by "/", neither of
+// which the pattern accepts. The probe scripts below also exclude
+// their own pid, and their script text can't self-match ("run-cc\.sh"
+// in the text has a literal backslash; "claude" is preceded by "(").
+//
+// IMPORTANT: these walk /proc with sh + grep instead of pgrep/pkill —
+// the worker image (node:22-bookworm-slim) does NOT ship procps, so
+// pgrep/pkill exit 127 in there. The old `pgrep ... && busy || idle`
+// one-liner silently reported "idle" for every container, busy or not.
+const TURN_PROC_RE = '(^|[ /])(claude|run-cc\\.sh)( |$)';
+const TURN_PROC_PROBE_SCRIPT =
+  'busy=0; for d in /proc/[0-9]*; do '
+  + '[ "$d" = "/proc/$$" ] && continue; '
+  + 'c=$(tr "\\0" " " < "$d/cmdline" 2>/dev/null) || continue; '
+  + `printf "%s" "$c" | grep -qE '${TURN_PROC_RE}' && { busy=1; break; }; `
+  + 'done; [ "$busy" = "1" ] && echo busy || echo idle';
+const TURN_PROC_KILL_SCRIPT =
+  'for d in /proc/[0-9]*; do '
+  + '[ "$d" = "/proc/$$" ] && continue; '
+  + 'c=$(tr "\\0" " " < "$d/cmdline" 2>/dev/null) || continue; '
+  + `printf "%s" "$c" | grep -qE '${TURN_PROC_RE}' && kill -TERM "\${d#/proc/}" 2>/dev/null; `
+  + 'done; exit 0';
+
 // Best-effort check of whether a running warm container has an in-flight
-// per-turn exec. We look for a `claude` process inside the container —
-// the sleep wrapper is always there, but `claude` is only present
-// during a docker exec of run-cc.sh.
+// per-turn exec. We look for a turn process inside the container — the
+// sleep wrapper is always there, but run-cc.sh/claude are only present
+// while a turn is executing.
 //
 // Returns:
 //   true   — claude (or its parent run-cc.sh) is currently executing
@@ -934,8 +1181,7 @@ async function listOrphanWorkers() {
 async function isWorkerExecuting(containerName) {
   try {
     const { stdout } = await docker.execFileAsync('docker', [
-      'exec', containerName, 'sh', '-c',
-      'pgrep -f "(^|/)(claude|run-cc.sh)(\\s|$)" >/dev/null && echo busy || echo idle',
+      'exec', containerName, 'sh', '-c', TURN_PROC_PROBE_SCRIPT,
     ], { timeout: 5000 });
     const out = stdout.trim();
     if (out === 'busy') return true;
@@ -1082,6 +1328,9 @@ module.exports = {
   // long-lived API
   ensureWorker,
   execInWorker,
+  stopTurn,
+  resumeTurnFromJournal,
+  clearActiveTurn,
   evictWorker,
   warmRegistrySnapshot,
   adoptWarmWorker,

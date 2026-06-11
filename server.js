@@ -391,9 +391,23 @@ async function start() {
   // orphans are a feature, not a bug: workers are intentionally detached
   // from the server lifecycle so `node --watch` restarts don't interrupt
   // in-flight Claude Code sessions.
-  recoverActiveWorkers(config).catch((err) => {
-    log.warn('server', 'Worker adoption failed', { err: err.message });
-  });
+  recoverActiveWorkers(config)
+    .catch((err) => {
+      log.warn('server', 'Worker adoption failed', { err: err.message });
+    })
+    .finally(() => {
+      // Resume headless auto sessions that were 'generating' when the
+      // previous process died. Runs after worker adoption so any warm
+      // container for a headless session is already registered (the
+      // resume path also tolerates adoption not having finished — it
+      // falls back to the deterministic container name). Each row is
+      // carried forward from its persisted headless_step checkpoint;
+      // unresumable rows are marked 'failed' (the pre-resume behavior).
+      const { resumeHeadlessRuns } = require('./src/routes/sessions');
+      resumeHeadlessRuns(config).catch((err) => {
+        log.warn('server', 'Headless resume failed', { err: err.message });
+      });
+    });
 
   // Idle-eviction sweeper. Warm workers cost ~256MB resident; eviction
   // reclaims that memory after a tunable idle period. The CC volume
@@ -819,15 +833,38 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   //       no log scrape needed.
   //   (b) a legacy single-shot still in flight — only possible during
   //       rollout from the old worker contract; tail logs as before.
-  //   (c) a warm wrapper that was mid-exec when our process died. The
-  //       host-side `docker exec` child was killed with us; the in-
-  //       container claude/run-cc.sh keeps running but its stdout went
-  //       to a disconnected client and is unrecoverable. Killing it
-  //       avoids racing the next dispatch's exec against a phantom.
-  //
-  // `pgrep claude || pgrep run-cc.sh` inside the container distinguishes
-  // case (a) from (b)+(c).
+  //   (c) a warm wrapper with a detached turn in flight (or finished
+  //       while we were down). The turn's output lives in a journal
+  //       file in the CC volume, recorded on chat_sessions.active_turn
+  //       — resume it from line 0 and finish the post-turn work as if
+  //       we'd never restarted.
+  //   (d) a mid-exec wrapper from BEFORE the detached-turn contract
+  //       (no active_turn record). Its output went to a dead pipe and
+  //       is unrecoverable; kill it so it can't race the next dispatch.
   if (containerState === 'running') {
+    // Headless auto sessions own their multi-step loop: the turn resume
+    // AND the Mayor wrap-up continuation both happen in
+    // resumeHeadlessRuns (runs right after worker adoption). Just
+    // register the warm container so the loop can drive it.
+    if (session.is_headless) {
+      log.info('server', 'Adopting headless worker (resume owned by resumeHeadlessRuns)', {
+        containerName, sessionId,
+      });
+      worker.adoptWarmWorker(sessionId, containerName);
+      return;
+    }
+
+    // Case (c): detached turn with a durable record — resume it.
+    const activeTurn = session.active_turn || null;
+    if (activeTurn && activeTurn.journal) {
+      worker.adoptWarmWorker(sessionId, containerName);
+      await resumeDetachedTurn({
+        config, pool, staging, broadcastGlobal, session, sessionId,
+        containerName, activeTurn,
+      });
+      return;
+    }
+
     const busy = await worker.isWorkerExecuting(containerName);
     if (busy === false) {
       log.info('server', 'Adopting warm-idle worker (no in-flight exec)', {
@@ -837,20 +874,17 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
       return;
     }
     if (busy === true && session.cc_session_id) {
-      // V1 conservative recovery for case (c): the prior in-flight turn
-      // is unrecoverable from the host. Kill the orphan exec to free
-      // the warm container for fresh dispatches, then post a system
-      // message so the user knows to retry. We DON'T try to scrape
-      // logs — `docker exec` output went to our dead parent, not the
-      // wrapper's stdout, so `docker logs -f` would only ever show
-      // bootstrap + warm-ready. Better to fail fast than hang forever.
+      // Case (d) conservative recovery: the prior in-flight turn
+      // predates the detached contract and is unrecoverable from the
+      // host. Kill the orphan exec to free the warm container for
+      // fresh dispatches, then post a system message so the user
+      // knows to retry.
       log.info('server', 'Adopting mid-exec worker — killing orphan exec', {
         containerName, sessionId,
       });
-      const docker = require('./src/services/docker');
-      await docker.execFileAsync('docker', [
-        'exec', containerName, 'pkill', '-f', '(^|/)(claude|run-cc.sh)( |$)',
-      ], { timeout: 5000 }).catch(() => {});
+      // worker.stopTurn walks /proc inside the container — the worker
+      // image has no pkill (see TURN_PROC_KILL_SCRIPT in worker.js).
+      await worker.stopTurn(sessionId).catch(() => {});
       await pool.query(
         `INSERT INTO chat_session_messages (session_id, role, content, metadata)
          VALUES ($1, 'system', $2, $3)`,
@@ -872,6 +906,22 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     // watchWorker scrape. Safe on already-exited containers; for a
     // hung warm wrapper it'd block, but the idle sweeper plus session
     // archive cap the worst case.
+  } else if (session.active_turn) {
+    // A detached turn was recorded but its container is gone (evicted /
+    // host reboot). The journal lives in the unreachable volume, so the
+    // turn itself can't be replayed — but if it pushed before dying,
+    // recoverSessions' staging heal picks the branch up. Clear the
+    // record and let the user know.
+    await worker.clearActiveTurn(sessionId);
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+       VALUES ($1, 'system', $2, $3)`,
+      [
+        sessionId,
+        'A coding turn was interrupted by a restart and its worker is gone — please retry your request.',
+        JSON.stringify({}),
+      ]
+    ).catch(() => {});
   }
 
   const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
@@ -902,6 +952,24 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     },
   });
 
+  await finalizeRecoveredTurn({
+    config, pool, staging, session, sessionId, result, repoOwner, repoName,
+    emit, containerName,
+    // Legacy single-shot containers are per-turn; reap when done.
+    keepWorker: false,
+  });
+}
+
+// Shared post-turn finalization for both recovery transports (legacy
+// `docker logs` scrape and detached-journal resume): persist the CC
+// session id, then — when the turn pushed a commit — run the same PR +
+// staging tail the live dev-turn path runs. `keepWorker` distinguishes
+// the long-lived warm contract (container stays adoptable) from the
+// legacy single-shot contract (container is reaped when done).
+async function finalizeRecoveredTurn({
+  config, pool, staging, session, sessionId, result, repoOwner, repoName,
+  emit, containerName, keepWorker,
+}) {
   // Capture the CC session id so the next turn can --resume, even though
   // the server process that originally spawned this worker is gone.
   const newCcId = result.sessionId || result.initSessionId || null;
@@ -915,7 +983,7 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   const hasChanges = result.ahead > 0 && !!result.sha;
   if (!hasChanges) {
     emit('status', { text: 'Recovered session produced no changes.' });
-    await worker.destroyWorker(containerName);
+    if (!keepWorker) await worker.destroyWorker(containerName);
     return;
   }
 
@@ -983,7 +1051,130 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
       sessionId, commitHash: result.sha.substring(0, 8), url: stagingResult.stagingUrl,
     });
   } finally {
-    await worker.destroyWorker(containerName);
+    if (!keepWorker) await worker.destroyWorker(containerName);
+  }
+}
+
+// Resume a detached CC turn after a restart. The turn kept running (or
+// finished) while we were down — its output is in the journal file
+// recorded on chat_sessions.active_turn. Replays the journal from line
+// 0 (rebuilding progress + result state), follows it live if the turn
+// is still going, then runs the standard post-turn tail. The warm
+// container stays registered for the session's next dispatch.
+async function resumeDetachedTurn({
+  config, pool, staging, broadcastGlobal, session, sessionId,
+  containerName, activeTurn,
+}) {
+  const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  const emit = (event, data) => {
+    broadcastGlobal({ type: 'session_event', sessionId, event, ...data });
+  };
+
+  log.info('server', 'Resuming detached turn from journal', {
+    sessionId, containerName, mode: activeTurn.mode, journal: activeTurn.journal,
+  });
+  emit('status', { text: 'Resuming in-flight coding agent after restart...' });
+
+  // The journal replay re-feeds every line from the start of the turn,
+  // including ones the previous process already appended to the latest
+  // "Claude Code progress" row. Rebuild that row's progressLog
+  // WHOLESALE from the replayed lines (idempotent) instead of appending
+  // duplicates; live tabs still get each line over the WebSocket.
+  const progressLines = [];
+  let flushQueued = false;
+  const flushProgress = () => {
+    flushQueued = false;
+    pool.query(
+      `UPDATE chat_session_messages
+       SET metadata = jsonb_set(metadata, '{progressLog}', $1::jsonb)
+       WHERE id = (
+         SELECT id FROM chat_session_messages
+         WHERE session_id = $2 AND role = 'system'
+           AND metadata->>'progressLog' IS NOT NULL
+         ORDER BY id DESC LIMIT 1
+       )`,
+      [JSON.stringify(progressLines), sessionId]
+    ).catch(() => {});
+  };
+
+  let result;
+  try {
+    result = await worker.resumeTurnFromJournal(sessionId, {
+      journal: activeTurn.journal,
+      onProgress: (text) => {
+        emit('cc_progress', { text });
+        progressLines.push(text);
+        if (!flushQueued) {
+          flushQueued = true;
+          setTimeout(flushProgress, 1000);
+        }
+      },
+    });
+  } catch (err) {
+    log.warn('server', 'Detached-turn resume failed', { sessionId, err: err.message });
+    await worker.clearActiveTurn(sessionId);
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+       VALUES ($1, 'system', $2, $3)`,
+      [sessionId, 'A coding turn was interrupted by a restart and could not be resumed — please retry your request.', JSON.stringify({})]
+    ).catch(() => {});
+    return;
+  }
+  flushProgress();
+
+  try {
+    if (activeTurn.mode === 'scout') {
+      // Scout turns push nothing — their product is the spec text.
+      // Persist it the same way runScoutTool does (spec_md + frozen
+      // version) so the draft isn't lost with the dead SSE.
+      const { stripSpecWrapperFence, snapshotSessionSpec } = require('./src/routes/sessions');
+      const ccText = stripSpecWrapperFence((result.lastResultText || '').trim());
+      if (ccText) {
+        await pool.query(
+          'UPDATE chat_sessions SET spec_md = $1 WHERE id = $2',
+          [ccText, sessionId]
+        ).catch(() => {});
+        const specVersion = await snapshotSessionSpec(pool, sessionId, ccText);
+        const lineCount = ccText.split('\n').length;
+        await pool.query(
+          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+           VALUES ($1, 'system', $2, $3)`,
+          [
+            sessionId,
+            `Scout finished after restart — drafted a ${lineCount}-line spec.`,
+            JSON.stringify({ specLines: lineCount, scoutOutput: ccText, specVersion }),
+          ]
+        ).catch(() => {});
+        emit('spec_updated', { length: ccText.length, lines: lineCount, version: specVersion });
+      } else {
+        emit('status', { text: 'Recovered scout turn produced no spec text.' });
+      }
+      // Persist the CC session id for the next --resume.
+      const newCcId = result.sessionId || result.initSessionId || null;
+      if (newCcId && newCcId !== session.cc_session_id) {
+        await pool.query(
+          'UPDATE chat_sessions SET cc_session_id = $1 WHERE id = $2',
+          [newCcId, sessionId]
+        ).catch(() => {});
+      }
+    } else {
+      await finalizeRecoveredTurn({
+        config, pool, staging, session, sessionId, result, repoOwner, repoName,
+        emit, containerName,
+        // Warm contract: the container outlives the turn.
+        keepWorker: true,
+      });
+    }
+    // The dead SSE's Mayor phase-2 narration can't be resumed (matches
+    // pre-existing recovery semantics) — drop a breadcrumb instead.
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+       VALUES ($1, 'system', $2, $3)`,
+      [sessionId, 'Coding turn recovered after a platform restart.', JSON.stringify({})]
+    ).catch(() => {});
+    emit('status', { text: 'Coding turn recovered after a platform restart.' });
+  } finally {
+    await worker.clearActiveTurn(sessionId);
   }
 }
 

@@ -32,7 +32,7 @@ const { runSyncMain, persistBehindMain } = require('../services/sync-main');
 const { activeWorkers, getActiveWorkerCount } = require('../services/active-workers');
 
 // Per-session stop handles, populated while a chat turn is in flight.
-// Shape: { abort: AbortController, workerName: string|null, phase: 'mayor1'|'cc'|'mayor2', stopped: boolean }
+// Shape: { abort: AbortController, workerName: string|null, phase: 'mayor1'|'cc'|'mayor2', stopped: boolean, stoppedBy: string|null }
 // The POST /stop endpoint looks up this record to:
 //   1. Abort the in-flight Mayor Anthropic stream (phase 'mayor1').
 //   2. `docker stop` the running Claude Code worker (phase 'cc').
@@ -996,14 +996,10 @@ function sessionRoutes(config) {
       const stopHandle = {
         abort: new AbortController(),
         // Diagnostic only with long-lived workers — the warm container
-        // is preserved across stop. Real signal travels through
-        // execChild below.
+        // is preserved across stop. During the CC phase the stop signal
+        // is worker.stopTurn() (in-container pkill of run-cc.sh +
+        // claude); the detached exec has no host-side child to SIGTERM.
         workerName: null,
-        // Set by execInWorker.onChild to the host-side `docker exec`
-        // child process. POST /stop SIGTERMs this so just the in-flight
-        // turn dies, leaving the warm container ready for the next
-        // dispatch. Cleared on exec completion.
-        execChild: null,
         phase: 'mayor1',
         stopped: false,
         stoppedBy: null,
@@ -1818,20 +1814,21 @@ function sessionRoutes(config) {
       sessionId,
       phase: handle.phase,
       by: req.user.username,
-      hasExec: !!handle.execChild,
+      ccRunning: handle.phase === 'cc',
       hasWorker: !!handle.workerName,
     });
 
-    if (handle.execChild) {
-      // Long-lived worker path: SIGTERM the host-side `docker exec`
-      // child. Docker forwards the signal into the in-container
-      // run-cc.sh + claude processes, which exit; the warm wrapper
-      // (sleep infinity) keeps running so the next dispatch is fast.
-      // The host-side execInWorker promise resolves when the child
-      // closes, letting runClaudeCodeTool's early-return branch fire.
-      try { handle.execChild.kill('SIGTERM'); } catch {}
+    if (handle.phase === 'cc') {
+      // Detached-turn path: the CC turn runs as a detached exec with no
+      // host-side child to signal, so kill run-cc.sh + claude inside
+      // the container directly. The warm wrapper (sleep infinity)
+      // survives, keeping the next dispatch fast. The journal consumer
+      // notices the process is gone via its liveness watchdog and
+      // resolves, letting runClaudeCodeTool's early-return branch fire.
+      worker.stopTurn(sessionId)
+        .catch((err) => log.warn('sessions', 'stopTurn failed', { err: err.message }));
     } else if (handle.workerName) {
-      // Legacy single-shot fallback: no exec child to signal, so we
+      // Legacy single-shot fallback: no in-flight turn to signal, so we
       // SIGTERM the whole container. `docker stop` gives it ~10s
       // before SIGKILL — fine for the legacy path because the wrapper
       // IS the per-turn workload there.
@@ -2039,6 +2036,36 @@ function buildHeadlessFollowUpMessage(src) {
   }
 }
 
+// The unattended-mode addendum appended to the Mayor system prompt for
+// both headless phases. Factored out so the boot-time resume path
+// (resumeHeadlessRuns) can rebuild the exact same prompt.
+function buildHeadlessAddendum(issueNumber) {
+  return `
+
+HEADLESS AUTO-SESSION MODE: you are running unattended on GitHub issue #${issueNumber} — there is NO human in this chat and there will be NO follow-up turn. Decide ONE action for this single turn:
+- dispatch_scout when the issue needs investigation or design: produce a grounded spec a human will review later. Prefer this for anything non-trivial.
+- dispatch_claude_code ONLY for small, unambiguous fixes the issue text fully specifies. The agent may commit and push its branch, but NO pull request and NO staging preview will be created in this mode — a human will start a session from this auto session later and trigger those.
+- If the issue is too unclear to act on at all, reply in plain text with the specific question(s) a human must answer, and call no tool.
+Never promise future work and never ask for confirmation — state what you did and what the human reviewer should do next.`;
+}
+
+// Persist where the headless loop currently is so a platform restart can
+// resume from the last checkpoint instead of failing the run. Steps:
+// 'planning' (Mayor phase-1) → 'cc_running' (CC turn dispatched) →
+// 'wrapping' (Mayor phase-2). `outcome` is persisted alongside the
+// cc_running → wrapping transition so a 'wrapping' resume knows what the
+// dispatch arrived at without re-deriving it.
+async function setHeadlessStep(pool, sessionId, step, outcome) {
+  await pool.query(
+    outcome !== undefined
+      ? 'UPDATE chat_sessions SET headless_step = $1, headless_outcome = $3 WHERE id = $2'
+      : 'UPDATE chat_sessions SET headless_step = $1 WHERE id = $2',
+    outcome !== undefined ? [step, sessionId, outcome] : [step, sessionId]
+  ).catch((err) => {
+    log.warn('sessions', 'Failed to persist headless_step', { sessionId, step, err: err.message });
+  });
+}
+
 // #155: the unattended Mayor turn behind the issue panel's "Auto-solve"
 // button. Mirrors one POST /chat turn (phase-1 Mayor + optional dispatch +
 // phase-2 wrap-up) with three deliberate differences: there is no SSE
@@ -2049,9 +2076,14 @@ function buildHeadlessFollowUpMessage(src) {
 // session flips to headless_status='ready' with an outcome of 'spec'
 // (scout drafted a spec), 'code' (commit pushed), or 'question' (the Mayor
 // replied in text / the dispatch errored — either way a human needs to look).
+//
+// `resume` is set by resumeHeadlessRuns when re-driving a 'planning'-step
+// run after a restart: the seed user message already exists in
+// chat_session_messages, so it isn't inserted again.
 async function runHeadlessSession({
   pool, config, session, user, selectedModel,
   repoOwner, repoName, userApiKey, issueNumber, issue,
+  resume = false,
 }) {
   const { broadcastGlobal } = require('../services/ws');
   const seqPrefix = `h${Date.now().toString(36)}`;
@@ -2096,19 +2128,18 @@ async function runHeadlessSession({
     const title = issue ? issue.title : '';
     const body = issue && issue.body ? `\n\n${issue.body}` : '';
     const seed = `Please work on GitHub issue #${issueNumber}: "${title}".${body}`;
-    await pool.query(
-      `INSERT INTO chat_session_messages (session_id, role, content) VALUES ($1, 'user', $2)`,
-      [session.id, seed]
-    );
-    await sendStatus('Auto session: thinking about the issue...');
+    if (!resume) {
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content) VALUES ($1, 'user', $2)`,
+        [session.id, seed]
+      );
+    }
+    await setHeadlessStep(pool, session.id, 'planning');
+    await sendStatus(resume
+      ? 'Auto session: resuming after a platform restart...'
+      : 'Auto session: thinking about the issue...');
 
-    const headlessAddendum = `
-
-HEADLESS AUTO-SESSION MODE: you are running unattended on GitHub issue #${issueNumber} — there is NO human in this chat and there will be NO follow-up turn. Decide ONE action for this single turn:
-- dispatch_scout when the issue needs investigation or design: produce a grounded spec a human will review later. Prefer this for anything non-trivial.
-- dispatch_claude_code ONLY for small, unambiguous fixes the issue text fully specifies. The agent may commit and push its branch, but NO pull request and NO staging preview will be created in this mode — a human will start a session from this auto session later and trigger those.
-- If the issue is too unclear to act on at all, reply in plain text with the specific question(s) a human must answer, and call no tool.
-Never promise future work and never ask for confirmation — state what you did and what the human reviewer should do next.`;
+    const headlessAddendum = buildHeadlessAddendum(issueNumber);
     const mayorPrompt = getMayorSystemPrompt(session.app_name, false, '', !!session.app_self_hosted, null) + headlessAddendum;
     const tools = [DISPATCH_TOOL, DISPATCH_SCOUT_TOOL, LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL];
 
@@ -2184,6 +2215,11 @@ Never promise future work and never ask for confirmation — state what you did 
         stopHandle: null,
         userApiKey,
       };
+      // Checkpoint BEFORE the dispatch: if the platform restarts while
+      // the (detached) CC turn runs, resumeHeadlessRuns finds
+      // headless_step='cc_running' + active_turn and picks the turn back
+      // up from its journal instead of failing the run.
+      await setHeadlessStep(pool, session.id, 'cc_running');
       const toolResult = toolKind === 'scout'
         ? await runScoutTool(toolArgs)
         : await runClaudeCodeTool({ ...toolArgs, headless: true });
@@ -2193,6 +2229,9 @@ Never promise future work and never ask for confirmation — state what you did 
       } else {
         outcome = toolKind === 'scout' ? 'spec' : 'code';
       }
+      // Checkpoint the outcome with the wrapping transition so a restart
+      // during the phase-2 Mayor call can finalize with the right state.
+      await setHeadlessStep(pool, session.id, 'wrapping', outcome);
 
       // --- Phase 2: Mayor wrap-up (mirrors the chat handler) ---
       const phase2ToolResults = [];
@@ -2253,7 +2292,7 @@ Never promise future work and never ask for confirmation — state what you did 
     }
 
     await pool.query(
-      `UPDATE chat_sessions SET headless_status = 'ready', headless_outcome = $1, last_activity_at = NOW()
+      `UPDATE chat_sessions SET headless_status = 'ready', headless_outcome = $1, headless_step = NULL, last_activity_at = NOW()
        WHERE id = $2`,
       [outcome, session.id]
     );
@@ -2264,7 +2303,7 @@ Never promise future work and never ask for confirmation — state what you did 
     workerProgress.clear(session.id);
     log.error('sessions', 'Headless session failed', { sessionId: session.id, err: err.message, stack: err.stack });
     await pool.query(
-      `UPDATE chat_sessions SET headless_status = 'failed' WHERE id = $1`,
+      `UPDATE chat_sessions SET headless_status = 'failed', headless_step = NULL WHERE id = $1`,
       [session.id]
     ).catch(() => {});
     await sendStatus(`Auto session failed: ${String(err.message || err).substring(0, 200)}`);
@@ -2272,6 +2311,276 @@ Never promise future work and never ask for confirmation — state what you did 
   } finally {
     setTimeout(() => sessionBus.clearSession(session.id), 30000);
   }
+}
+
+// Boot hook: resume headless auto sessions that were 'generating' when
+// the platform went down, instead of blanket-failing them (the old
+// failOrphanedHeadlessRuns behavior — now narrowed in migrate.js to
+// only rows that predate the step machine). Driven by the persisted
+// headless_step checkpoint:
+//   planning   → re-issue the whole Mayor turn from the persisted seed
+//                message (cheap, retry-safe — nothing was dispatched yet).
+//   cc_running → pick the detached CC turn back up from its journal
+//                (chat_sessions.active_turn), run headless post-
+//                processing, then continue with the wrap-up.
+//   wrapping   → the dispatch finished and its outcome was checkpointed;
+//                re-issue just the phase-2 Mayor call from the persisted
+//                transcript.
+// Anything that can't be carried forward is marked 'failed' — same
+// terminal state as before, just no longer the only possibility.
+async function resumeHeadlessRuns(config) {
+  const pool = getPool(config);
+  let rows;
+  try {
+    ({ rows } = await pool.query(
+      `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url,
+              a.self_hosted AS app_self_hosted, u.username
+       FROM chat_sessions cs
+       JOIN apps a ON cs.app_id = a.id
+       JOIN users u ON cs.user_id = u.id
+       WHERE cs.is_headless = TRUE AND cs.headless_status = 'generating'`
+    ));
+  } catch (err) {
+    log.error('sessions', 'resumeHeadlessRuns query failed', { err: err.message });
+    return;
+  }
+  if (!rows.length) return;
+  log.info('sessions', 'Resuming headless runs after restart', {
+    count: rows.length, sessionIds: rows.map((r) => r.id),
+  });
+  for (const session of rows) {
+    resumeOneHeadlessRun({ pool, config, session }).catch(async (err) => {
+      log.error('sessions', 'Headless resume failed — marking run failed', {
+        sessionId: session.id, err: err.message, stack: err.stack,
+      });
+      await failHeadlessRun(pool, session, `Auto session could not be resumed after restart: ${String(err.message || err).substring(0, 200)}`);
+    });
+  }
+}
+
+// Terminal failure for a resumed headless run: same row updates + WS
+// broadcast the live runner's catch block performs.
+async function failHeadlessRun(pool, session, message) {
+  const { broadcastGlobal } = require('../services/ws');
+  await pool.query(
+    `UPDATE chat_sessions SET headless_status = 'failed', headless_step = NULL WHERE id = $1`,
+    [session.id]
+  ).catch(() => {});
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+     VALUES ($1, 'system', $2, $3)`,
+    [session.id, message, JSON.stringify({})]
+  ).catch(() => {});
+  broadcastGlobal({
+    type: 'session_event', sessionId: session.id, event: 'headless_update',
+    status: 'failed', issueNumber: session.headless_issue_number, appSlug: session.app_slug,
+  });
+}
+
+async function resumeOneHeadlessRun({ pool, config, session }) {
+  const { broadcastGlobal } = require('../services/ws');
+  const issueNumber = session.headless_issue_number;
+  const user = { id: session.user_id, username: session.username };
+  const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  if (!repoOwner || !repoName) {
+    return failHeadlessRun(pool, session, 'Auto session failed after restart: no GitHub repo configured.');
+  }
+
+  const userApiKey = await loadUserApiKey(pool, session.user_id, config.jwtSecret);
+  // The model picked at start isn't a session column, but every persisted
+  // assistant turn carries it — reuse the latest, else the default.
+  const { rows: modelRows } = await pool.query(
+    `SELECT model FROM chat_session_messages
+     WHERE session_id = $1 AND role = 'assistant' AND model IS NOT NULL
+     ORDER BY id DESC LIMIT 1`,
+    [session.id]
+  );
+  const selectedModel = models.resolve(modelRows[0]?.model);
+
+  const step = session.headless_step || 'planning';
+  log.info('sessions', 'Resuming headless run', { sessionId: session.id, issueNumber, step });
+
+  if (step === 'planning') {
+    // Nothing was dispatched yet — re-issue the whole Mayor turn. The
+    // seed user message already exists (resume: true skips re-inserting);
+    // re-fetch the issue for the in-memory seed string the dispatch
+    // helpers receive.
+    const { issue } = await github.fetchPublicIssue(repoOwner, repoName, issueNumber);
+    return runHeadlessSession({
+      pool, config, session, user, selectedModel,
+      repoOwner, repoName, userApiKey, issueNumber, issue,
+      resume: true,
+    });
+  }
+
+  let outcome = session.headless_outcome || 'question';
+  let dispatchSummary = null;
+
+  if (step === 'cc_running') {
+    const activeTurn = session.active_turn || null;
+    if (!activeTurn || !activeTurn.journal) {
+      return failHeadlessRun(pool, session, 'Auto session failed after restart: its coding turn left no resumable record.');
+    }
+    // Replay/follow the detached turn's journal. Progress lines are
+    // rebuilt WHOLESALE onto the latest progress row (replay re-feeds
+    // every line from the start of the turn).
+    const progressLines = [];
+    let flushQueued = false;
+    const flushProgress = () => {
+      flushQueued = false;
+      pool.query(
+        `UPDATE chat_session_messages
+         SET metadata = jsonb_set(metadata, '{progressLog}', $1::jsonb)
+         WHERE id = (
+           SELECT id FROM chat_session_messages
+           WHERE session_id = $2 AND role = 'system'
+             AND metadata->>'progressLog' IS NOT NULL
+           ORDER BY id DESC LIMIT 1
+         )`,
+        [JSON.stringify(progressLines), session.id]
+      ).catch(() => {});
+    };
+    const result = await worker.resumeTurnFromJournal(session.id, {
+      journal: activeTurn.journal,
+      onProgress: (text) => {
+        broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'cc_progress', text });
+        progressLines.push(text);
+        if (!flushQueued) {
+          flushQueued = true;
+          setTimeout(flushProgress, 1000);
+        }
+      },
+    });
+    flushProgress();
+    await worker.clearActiveTurn(session.id);
+
+    const producedAnything = result.execExitSeen || result.resultSeen
+      || !!(result.lastResultText || '').trim();
+    if (!producedAnything) {
+      return failHeadlessRun(pool, session, 'Auto session failed after restart: its coding turn could not be recovered.');
+    }
+
+    // Persist the CC session id for later cloned sessions' --resume.
+    const newCcId = result.sessionId || result.initSessionId || null;
+    if (newCcId && newCcId !== session.cc_session_id) {
+      await pool.query(
+        'UPDATE chat_sessions SET cc_session_id = $1 WHERE id = $2',
+        [newCcId, session.id]
+      ).catch(() => {});
+    }
+
+    // Headless post-processing — mirrors runScoutTool / runClaudeCodeTool's
+    // headless success paths (spec persist / testing notes), never PR or
+    // staging (the headless contract).
+    if (activeTurn.mode === 'scout') {
+      const ccText = stripSpecWrapperFence((result.lastResultText || '').trim());
+      if (ccText && !result.fatalError) {
+        await pool.query(
+          'UPDATE chat_sessions SET spec_md = $1 WHERE id = $2',
+          [ccText, session.id]
+        );
+        const specVersion = await snapshotSessionSpec(pool, session.id, ccText);
+        const lineCount = ccText.split('\n').length;
+        await pool.query(
+          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+           VALUES ($1, 'system', $2, $3)`,
+          [session.id, `Scout drafted a ${lineCount}-line spec from the codebase.`,
+            JSON.stringify({ specLines: lineCount, scoutOutput: ccText, specVersion })]
+        ).catch(() => {});
+        outcome = 'spec';
+        dispatchSummary = `The scout investigated the repo and drafted a ${lineCount}-line markdown spec. It now lives in the session's spec doc.`;
+      } else {
+        outcome = 'question';
+        dispatchSummary = 'The scout did not complete successfully — no spec was produced.';
+      }
+    } else {
+      const testing = testingNotes.extract(result.lastResultText || '');
+      const hasChanges = result.ahead > 0 && !!result.sha;
+      if (hasChanges && !result.fatalError) {
+        if (testing.testingMd || testing.testingPath) {
+          await pool.query(
+            'UPDATE chat_sessions SET testing_md = $1, testing_path = $2 WHERE id = $3',
+            [testing.testingMd, testing.testingPath, session.id]
+          ).catch(() => {});
+        }
+        outcome = 'code';
+        dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}. `
+          + 'Headless mode: no PR was opened and no staging preview was built.'
+          + (testing.cleanedText ? `\n\nWhat the agent did:\n${testing.cleanedText.slice(0, 2000)}` : '');
+      } else {
+        outcome = 'question';
+        dispatchSummary = result.fatalError
+          ? `The coding agent hit an error: ${result.fatalError.substring(0, 200)}`
+          : 'The coding agent finished without pushing any changes.';
+      }
+    }
+    await setHeadlessStep(pool, session.id, 'wrapping', outcome);
+  }
+
+  // step === 'wrapping' (directly, or fallen through from cc_running):
+  // re-issue just the phase-2 Mayor wrap-up from the persisted
+  // transcript. The original tool_use blocks died with the old process,
+  // so the dispatch outcome is delivered as a plain user message — the
+  // Anthropic API merges/accepts consecutive same-role messages.
+  const { rows: msgRows } = await pool.query(
+    `SELECT role, content FROM chat_session_messages
+     WHERE session_id = $1 AND role IN ('user', 'assistant')
+     ORDER BY id ASC`,
+    [session.id]
+  );
+  const convo = msgRows
+    .filter((r) => (r.content || '').trim())
+    .map((r) => ({ role: r.role, content: r.content }));
+  convo.push({
+    role: 'user',
+    content: `[SYSTEM NOTE — not the human] The platform restarted while this auto session was running; it has been resumed. The dispatched work finished with outcome '${outcome}'.${dispatchSummary ? `\n\nDispatch result:\n${dispatchSummary}` : ''}\n\nWrite the final wrap-up message for the human reviewer who will pick this session up later: state what was done and what they should do next. Do not call any tools.`,
+  });
+
+  const headlessAddendum = buildHeadlessAddendum(issueNumber);
+  const currentSpec = await loadSessionSpec(pool, session.id);
+  const wrapPrompt = getMayorSystemPrompt(session.app_name, false, currentSpec, !!session.app_self_hosted, null) + headlessAddendum;
+  // No tools passed → plain text turn; the API can't call anything, so
+  // tool_choice is unnecessary (and invalid without a tools array).
+  const mayor2 = await llm.streamChat({
+    messages: convo,
+    systemPrompt: wrapPrompt,
+    model: selectedModel,
+    apiKey: userApiKey,
+  });
+
+  let mayorText2 = (mayor2.text || '').trim();
+  if (!mayorText2) {
+    mayorText2 = outcome === 'spec'
+      ? '_Spec drafted — review it in the spec viewer after starting a session from this auto session._'
+      : outcome === 'code'
+        ? '_Change committed and pushed — start a session from this auto session to open the PR._'
+        : "_The auto session's dispatch didn't finish successfully — see the status above._";
+  }
+  const costCents2 = mayor2.usage ? llm.estimateCostCents(mayor2.usage, selectedModel) : 0;
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
+     VALUES ($1, 'assistant', $2, $3, $4, $5)`,
+    [session.id, mayorText2, selectedModel,
+      mayor2.usage ? mayor2.usage.input_tokens + mayor2.usage.output_tokens : 0, costCents2]
+  );
+  if (!userApiKey && costCents2) {
+    await pool.query(
+      `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
+       ON CONFLICT (user_id, date) DO UPDATE SET total_cost_cents = llm_usage.total_cost_cents + EXCLUDED.total_cost_cents`,
+      [user.id, costCents2]
+    ).catch(() => {});
+  }
+
+  await pool.query(
+    `UPDATE chat_sessions SET headless_status = 'ready', headless_outcome = $1, headless_step = NULL, last_activity_at = NOW()
+     WHERE id = $2`,
+    [outcome, session.id]
+  );
+  broadcastGlobal({
+    type: 'session_event', sessionId: session.id, event: 'headless_update',
+    status: 'ready', outcome, issueNumber, appSlug: session.app_slug,
+  });
+  log.info('sessions', 'Headless session resumed to ready', { sessionId: session.id, issueNumber, outcome });
 }
 
 // Tools the Mayor can call. Each user message produces at most one
@@ -2572,7 +2881,7 @@ CRITICAL: Output the spec as RAW markdown. Do NOT wrap your whole response in a 
   });
 
   // Surface the warm container name for diagnostics. The actual stop
-  // signal travels through stopHandle.execChild (set below) so the
+  // signal travels through worker.stopTurn (in-container pkill) so the
   // warm container survives stop and the next dispatch is fast.
   if (stopHandle) stopHandle.workerName = containerName;
 
@@ -2625,9 +2934,6 @@ CRITICAL: Output the spec as RAW markdown. Do NOT wrap your whole response in a 
             ) WHERE id = $2`,
             [JSON.stringify([text]), progressMsgId]
           ).catch(() => {});
-        },
-        onChild: (child) => {
-          if (stopHandle) stopHandle.execChild = child;
         },
       });
     } finally {
@@ -2714,7 +3020,6 @@ CRITICAL: Output the spec as RAW markdown. Do NOT wrap your whole response in a 
   } finally {
     activeWorkers.delete(session.id);
     workerProgress.clear(session.id);
-    if (stopHandle) stopHandle.execChild = null;
     // No destroyWorker here — the warm container stays so the next
     // dispatch (build or another scout) can reuse it. Idle eviction
     // and session archive both own teardown.
@@ -2873,9 +3178,9 @@ path: /relative/path?demo=1
   });
 
   // Surface the container name for diagnostics + admin tooling. The
-  // actual stop signal flows through stopHandle.execChild (set below)
-  // so the warm container is preserved across stop — eviction is the
-  // only path that destroys it.
+  // actual stop signal flows through worker.stopTurn (in-container
+  // pkill) so the warm container is preserved across stop — eviction is
+  // the only path that destroys it.
   if (stopHandle) stopHandle.workerName = containerName;
 
   let ccLog = null;
@@ -2925,12 +3230,6 @@ path: /relative/path?demo=1
             ) WHERE id = $2`,
             [JSON.stringify([text]), progressMsgId]
           ).catch(() => {});
-        },
-        onChild: (child) => {
-          // Stash the host-side docker-exec child on stopHandle so
-          // POST /api/sessions/:id/stop can SIGTERM just this exec
-          // without taking down the warm container.
-          if (stopHandle) stopHandle.execChild = child;
         },
       });
     } finally {
@@ -3278,7 +3577,6 @@ path: /relative/path?demo=1
   } finally {
     activeWorkers.delete(session.id);
     workerProgress.clear(session.id);
-    if (stopHandle) stopHandle.execChild = null;
     // Warm container intentionally NOT destroyed — the next dispatch
     // (build or scout) reuses it. Idle eviction (worker.evictWorker via
     // the sweeper in server.js) and session archive own teardown.
@@ -3545,4 +3843,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, stripSpecWrapperFence };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns };

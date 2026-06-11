@@ -283,6 +283,25 @@ CREATE INDEX IF NOT EXISTS chat_sessions_headless_idx
   ON chat_sessions(app_id, headless_issue_number, created_at DESC)
   WHERE is_headless;
 
+-- Restart-proof turns + resumable headless runs.
+--   active_turn   = durable record of an in-flight detached CC turn:
+--                   { mode, journal, model, startedAt }. Set by
+--                   worker.execInWorker before the detached `docker exec`
+--                   dispatch and cleared after post-turn processing. On boot,
+--                   server.js's adoption path uses it to replay the turn's
+--                   journal file (in the CC volume) instead of killing the
+--                   still-running in-container claude. NULL = no turn in
+--                   flight.
+--   headless_step = where the headless auto-session loop last checkpointed:
+--                   'planning' (Mayor phase-1) | 'cc_running' (CC turn
+--                   dispatched) | 'wrapping' (Mayor phase-2). Lets
+--                   resumeHeadlessRuns continue a 'generating' row after a
+--                   restart instead of blanket-failing it. NULL on ordinary
+--                   sessions and on headless rows finished before this column
+--                   existed.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS active_turn   JSONB;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS headless_step VARCHAR(20);
+
 -- GitHub issue linkage (#75): the open issues this session's work addresses,
 -- declared by the Mayor via dispatch_claude_code / dispatch_scout's
 -- `addresses_issues` arg. Accumulates (union) across turns. pr-metadata.js

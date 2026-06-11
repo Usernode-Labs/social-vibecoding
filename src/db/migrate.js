@@ -36,19 +36,25 @@ async function migrate(config) {
   await migrateAppDbsToPerRole(pool, config);
 }
 
-// #155: a headless auto-session run lives entirely in this process — if the
-// platform restarts mid-run there is nothing left to finish it, so any row
-// still marked 'generating' at boot is permanently stuck. Flip those to
-// 'failed' so the issue panel's button recovers to "Auto-solve" instead of
-// showing "Generating…" forever. Idempotent; no-ops when nothing is stuck.
+// #155: headless runs interrupted by a restart used to be blanket-failed
+// here because the loop lived entirely in the dead process. They are now
+// resumable: runHeadlessSession checkpoints its position in
+// chat_sessions.headless_step ('planning' / 'cc_running' / 'wrapping'),
+// and resumeHeadlessRuns (src/routes/sessions.js, called from server.js
+// boot after worker adoption) carries any 'generating' row forward from
+// that checkpoint — marking 'failed' only the rows it explicitly gives
+// up on. The sweep below is narrowed to rows with NO checkpoint, i.e.
+// runs started before the step machine existed; those genuinely cannot
+// be resumed. Idempotent; no-ops when nothing is stuck.
 async function failOrphanedHeadlessRuns(pool) {
   try {
     const { rowCount } = await pool.query(
       `UPDATE chat_sessions SET headless_status = 'failed'
-        WHERE is_headless = TRUE AND headless_status = 'generating'`
+        WHERE is_headless = TRUE AND headless_status = 'generating'
+          AND headless_step IS NULL`
     );
     if (rowCount > 0) {
-      log.info('db', 'Marked orphaned headless runs as failed', { count: rowCount });
+      log.info('db', 'Marked unresumable (pre-step-machine) headless runs as failed', { count: rowCount });
     }
   } catch (err) {
     log.warn('db', 'Failed to reset orphaned headless runs', { err: err.message });
