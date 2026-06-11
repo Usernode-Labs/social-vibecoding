@@ -749,6 +749,39 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   font-weight: 600;
 }
 
+/* ── #130: PR / issue reference chips ───────────────────── */
+
+/* Inline chips for PR#N / #N tokens in user messages, also reused as the
+   number badge in the reference-autocomplete dropdown so the dropdown
+   teaches the rendering. Plain spans (role="link"), so iOS long-press
+   text selection still works around them; navigation is wired in
+   GroupChat._attachQuoteHandlers → AppView.revealInDrawer. */
+.gc-ref {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border-radius: 5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+/* Violet — matches the drawer's existing PR#N anchors. */
+.gc-ref-pr {
+  color: rgb(167, 139, 250);
+  background: rgba(139, 92, 246, 0.12);
+}
+/* Emerald — clearly distinct from the PR violet (amber already signals
+   bounties/warnings in the panel). */
+.gc-ref-issue {
+  color: rgb(52, 211, 153);
+  background: rgba(16, 185, 129, 0.12);
+}
+@media (hover: hover) {
+  .gc-ref:hover { filter: brightness(1.15); text-decoration: underline; }
+}
+
 .gc-msg-system {
   padding: 4px 12px;
   font-size: 11px;
@@ -841,6 +874,10 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   0% { background: color-mix(in srgb, var(--accent) 30%, transparent); }
   100% { background: transparent; }
 }
+
+/* #130: same brief highlight on a drawer row revealed by a reference chip
+   (AppView.revealInDrawer). */
+.gc-vote-item-flash { animation: gcMsgFlash 1.5s ease-out; }
 
 /* ── #25: emoji reactions ───────────────────────────────── */
 
@@ -1024,6 +1061,18 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   color: var(--accent);
 }
 .gc-mention-option-at { color: var(--accent); font-weight: 600; }
+
+/* #130: reference-autocomplete rows reuse the mention menu/option styling;
+   these only add room for the PR#N / #N badge plus a truncating title. */
+.gc-ref-option { gap: 8px; }
+.gc-ref-option-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  color: var(--text-secondary, inherit);
+}
 .gc-mention-option-you {
   margin-left: auto;
   font-size: 11px;

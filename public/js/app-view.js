@@ -482,6 +482,14 @@ const AppView = {
       MentionAutocomplete.attach(gcInput, slugForDraft);
     }
 
+    // #130: PR# / # reference autocomplete (open PRs + open issues). Same
+    // attach lifecycle as mentions; its capture-phase keydown only consumes
+    // keys while its own menu is open, and the `@` vs `#` triggers are
+    // mutually exclusive so the two menus never fight.
+    if (typeof RefAutocomplete !== 'undefined') {
+      RefAutocomplete.attach(gcInput, slugForDraft);
+    }
+
     // #15: Escape clears a staged reply quote (when the input is empty so
     // we don't fight other Escape semantics mid-typing).
     gcInput.addEventListener('keydown', (e) => {
@@ -904,7 +912,7 @@ const AppView = {
             : '';
           const mergingBadge = isMerging ? AppView.mergingBadgeHtml() : '';
           bodyHtml += `
-            <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''}>
+            <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}">
               <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-violet-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
               <span ${prQuoteAttrs}>${labelText}</span>
               ${AppView.closesPillHtml(pr)}
@@ -1065,15 +1073,7 @@ const AppView = {
         const openAndScroll = (e) => {
           e.stopPropagation();
           e.preventDefault();
-          if (!AppView.panelOpen) {
-            AppView.panelOpen = true;
-            AppView._writeInfoPanelOpen(slug, true);
-            const body = document.getElementById('gc-panel-body');
-            const arrow = document.querySelector('#gc-panel-toggle span:first-child');
-            if (body) body.classList.remove('hidden');
-            if (arrow) arrow.innerHTML = '&#9660;';
-            AppView._syncPanelResizer(slug);
-          }
+          AppView.openInfoPanel(slug);
           const target = panel.querySelector('[data-unvoted="1"]');
           if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
         };
@@ -1090,6 +1090,91 @@ const AppView = {
     } catch {
       panel.innerHTML = '';
     }
+  },
+
+  // Open the "App information and activity" panel programmatically (no-op
+  // when already open). Shared by the "Vote on N →" CTA and #130's
+  // revealInDrawer so the open mechanics live in one place: state flag,
+  // persisted open preference, body un-hide, arrow glyph, resizer sync.
+  openInfoPanel(slug) {
+    const s = slug || (AppView.appData && AppView.appData.slug);
+    if (AppView.panelOpen) return;
+    AppView.panelOpen = true;
+    AppView._writeInfoPanelOpen(s, true);
+    const body = document.getElementById('gc-panel-body');
+    const arrow = document.querySelector('#gc-panel-toggle span:first-child');
+    if (body) body.classList.remove('hidden');
+    if (arrow) arrow.innerHTML = '&#9660;';
+    AppView._syncPanelResizer(s);
+  },
+
+  // #130: reveal a PR / issue reference (from a chat chip) in the activity
+  // drawer. Opens the panel if closed, un-hides paged/collapsed rows when
+  // the target sits beyond the current page, then scrolls to and flashes
+  // the row. When the number isn't anywhere in the panel (closed issue,
+  // unknown PR, degraded GitHub fetch, panel still mid-fetch) it falls
+  // back to opening the reference on GitHub.
+  revealInDrawer(type, number) {
+    const n = parseInt(number, 10);
+    if (!n) return;
+    AppView.openInfoPanel();
+    const panel = document.getElementById('gc-panel-content');
+    const findRow = (kind) => panel && panel.querySelector(`[data-ref-${kind}="${n}"]`);
+
+    // Bare-# chips resolve against issue rows first, then PR rows. (GitHub
+    // issues and PRs share one number sequence per repo, so a number is
+    // never genuinely both — this just routes `#N`-typed PR refs home.)
+    const kinds = type === 'pr' ? ['pr'] : ['issue', 'pr'];
+    let row = null;
+    for (const kind of kinds) {
+      row = findRow(kind);
+      if (row) break;
+      if (kind === 'issue') {
+        // The issue may exist but sit beyond the current "Show 5 more"
+        // page — bump the visible count past it and re-render in place.
+        // Same filtered list _renderOpenIssuesInner pages over (env-var
+        // proposal twins render in their own section, already tagged).
+        const issues = (AppView._ghIssues || []).filter(
+          (i) => !(AppView._envIssueNumbers && AppView._envIssueNumbers.has(i.number))
+        );
+        const idx = issues.findIndex((i) => i.number === n);
+        if (idx >= (AppView._ghIssuesShown || 5)) {
+          AppView._ghIssuesShown = idx + 1;
+          AppView._rerenderOpenIssues();
+          row = findRow(kind);
+        }
+      } else {
+        // The PR may be hidden behind the collapsed Merged list — expand
+        // it in place (the existing #gc-merged renderer) and retry.
+        const merged = AppView._merged || [];
+        const inMerged = merged.some((pr) => (pr.pr_number || pr.id) === n);
+        if (inMerged && !AppView._mergedExpanded) {
+          AppView._mergedExpanded = true;
+          const el = document.getElementById('gc-merged');
+          if (el) el.innerHTML = AppView._renderMergedInner();
+          row = findRow(kind);
+        }
+      }
+      if (row) break;
+    }
+
+    if (row) {
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Remove + reflow first so a second click on the same chip restarts
+      // the flash animation instead of silently doing nothing.
+      row.classList.remove('gc-vote-item-flash');
+      void row.offsetWidth;
+      row.classList.add('gc-vote-item-flash');
+      setTimeout(() => row.classList.remove('gc-vote-item-flash'), 1600);
+      return;
+    }
+
+    // GitHub fallback — same repo_url normalization as the panel's "More
+    // open issues" link. No repo URL → no-op (the panel is open at least).
+    const repo = AppView.appData && AppView.appData.repo_url;
+    if (!repo) return;
+    const base = repo.replace(/\.git$/, '').replace(/\/$/, '');
+    window.open(`${base}/${type === 'pr' ? 'pull' : 'issues'}/${n}`, '_blank', 'noopener');
   },
 
   // #16: undo a merged PR. A single click opens a revert PR (like
@@ -1200,7 +1285,7 @@ const AppView = {
       }
 
       html += `
-        <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
+        <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1"${n ? ` data-ref-issue="${n}"` : ''}>
           <span class="text-xs text-zinc-300 flex-1 min-w-0 truncate" title="${escapeHtml(rowTitle)}">${escapeHtml(issue.title)}${creatorSuffix}</span>
           ${bountyPill}
           <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
@@ -1338,7 +1423,7 @@ const AppView = {
         : issue.title;
 
       html += `
-        <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
+        <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1" data-ref-issue="${n}">
           <a href="${href}" target="_blank" rel="noopener" class="text-xs text-violet-400 font-mono hover:underline">#${n}</a>
           <span class="text-xs text-zinc-300 flex-1 min-w-0 truncate" title="${escapeHtml(rowTitle)}">${escapeHtml(issue.title)}${creatorSuffix}</span>
           ${bountyPill}
@@ -1455,7 +1540,7 @@ const AppView = {
       }
 
       html += `
-        <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
+        <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1" data-ref-pr="${pr.pr_number || pr.id}">
           <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-emerald-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
           <span ${mergedQuoteAttrs}>${mergedLabel}</span>
           ${AppView.closesPillHtml(pr)}
