@@ -1409,30 +1409,38 @@ const AppView = {
         : (budgetSpent ? 'Weekly kudos allowance spent' : 'Pledge a kudos bounty — paid to whoever\'s merged PR closes this issue');
       const kudosBtn = `<button class="gc-vote-btn"${kudosDisabled ? ' disabled' : ''} title="${kudosTitle}" onclick="AppView.giveIssueBounty(${n})">${issue.my_bounty ? '&#9733; Bountied' : 'Pledge kudos'}</button>`;
       const createBtn = `<button class="gc-vote-btn" title="Start a dev chat to solve this issue" onclick="AppView.createPrForIssue(${n})">Create PR</button>`;
-      // #155: headless auto-session button. Three states driven by the
+      // #155: headless auto-session button. Four states driven by the
       // issue's `headless` field from /github-issues:
       //   none/failed → "Auto-solve" (opens the confirm + model popup)
       //   generating  → disabled progress label
       //   ready       → contextual clone-for-me label by outcome (#168):
       //                 "Review spec / Review solution / Answer question
       //                 & start session", generic fallback otherwise
+      //   ready + viewer already cloned (mySessionId, #172) → "Go to
+      //                 session", navigating to their derived session
+      //                 instead of offering a second clone
       const h = issue.headless;
       let autoBtn;
       if (h && h.status === 'generating') {
         autoBtn = `<button class="gc-vote-btn" disabled title="A headless AI session is working on this issue${h.username ? ` (started by ${escapeAttr(h.username)})` : ''}">Generating auto-solve&hellip;</button>`;
       } else if (h && h.status === 'ready') {
-        const outcomeNote = h.outcome === 'spec' ? 'it drafted a spec'
-          : h.outcome === 'code' ? 'it pushed a code change'
-          : h.outcome === 'spec_code' ? 'it drafted a spec and pushed a code change'
-          : 'it has a question for you';
-        const autoLabel = h.outcome === 'spec' ? 'Review spec &amp; start session'
-          : h.outcome === 'code' ? 'Review solution &amp; start session'
-          : h.outcome === 'question' ? 'Answer question &amp; start session'
-          : 'Start session from auto session';
-        autoBtn = `<button class="gc-vote-btn" title="Clone the finished auto session (${outcomeNote}) into your own dev chat — others can clone it too" onclick="AppView.startFromAutoSession(${h.sessionId})">${autoLabel}</button>`;
+        if (h.mySessionId) {
+          autoBtn = `<button class="gc-vote-btn" title="You already started a session from this auto session — open it" onclick="AppView.goToAutoSessionClone(${h.mySessionId})">Go to session</button>`;
+        } else {
+          const outcomeNote = h.outcome === 'spec' ? 'it drafted a spec'
+            : h.outcome === 'code' ? 'it pushed a code change'
+            : h.outcome === 'spec_code' ? 'it drafted a spec and pushed a code change'
+            : 'it has a question for you';
+          const autoLabel = h.outcome === 'spec' ? 'Review spec &amp; start session'
+            : h.outcome === 'code' ? 'Review solution &amp; start session'
+            : h.outcome === 'question' ? 'Answer question &amp; start session'
+            : 'Start session from auto session';
+          autoBtn = `<button class="gc-vote-btn" title="Clone the finished auto session (${outcomeNote}) into your own dev chat — others can clone it too" onclick="AppView.startFromAutoSession(${h.sessionId})">${autoLabel}</button>`;
+        }
         // #150: a question outcome doesn't block re-running — answer the
         // questions on the issue, then press Auto-solve again and the new
-        // run reads the answers. Both paths stay available.
+        // run reads the answers. Both paths stay available (whether or not
+        // the viewer already cloned this run).
         if (h.outcome === 'question') {
           autoBtn += `<button class="gc-vote-btn" title="Questions were posted on the issue — answer them, then run auto-solve again" onclick="AppView.confirmAutoSession(${n})">Auto-solve</button>`;
         }
@@ -1798,12 +1806,32 @@ const AppView = {
         alert(data.error || `Couldn't start a session from the auto session (HTTP ${resp.status}).`);
         return;
       }
+      // #172: remember the clone locally so a back-navigation to the
+      // issues panel shows "Go to session" before the next refetch. The
+      // server's headless.mySessionId is the source of truth on every
+      // re-render/poll.
+      for (const issue of AppView._ghIssues || []) {
+        if (issue.headless && issue.headless.sessionId === headlessSessionId) {
+          issue.headless.mySessionId = data.session.id;
+        }
+      }
       DevChat.sessions.unshift(data.session);
       if (typeof App !== 'undefined' && App.switchTab) {
         await App.switchTab('individual-chat', data.session.id);
       }
     } catch (err) {
       alert(`Couldn't start a session from the auto session: ${err.message}`);
+    }
+  },
+
+  // #172: "Go to session" — the viewer already cloned this auto session,
+  // so navigate to their existing derived session instead of cloning
+  // again. No DevChat.sessions.unshift needed: the switchTab path reloads
+  // the session list itself before opening the session.
+  async goToAutoSessionClone(sessionId) {
+    if (typeof DevChat === 'undefined') return;
+    if (typeof App !== 'undefined' && App.switchTab) {
+      await App.switchTab('individual-chat', sessionId);
     }
   },
 
