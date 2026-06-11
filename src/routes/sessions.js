@@ -119,7 +119,7 @@ const { stripSpecWrapperFence } = require('../services/spec-format');
 
 // #27: freeze the current spec content as a new immutable version in
 // chat_session_specs and return its version number. Every spec mutation
-// (write_spec / edit_spec / scout) calls this and tags its inline spec
+// (scout) calls this and tags its inline spec
 // preview card with the returned version, so clicking an OLDER card
 // opens exactly the content it represented — instead of always falling
 // back to the latest spec. Since #69 retired the manual "Save version"
@@ -831,25 +831,21 @@ function sessionRoutes(config) {
         // tool_use block. We run the tool, feed the result back as a
         // `tool_result`, and re-enter the model for a short wrap-up
         // turn.
-        // The Mayor sees three tools when no worker is busy. The
-        // spec-edit tool is gated by spec emptiness: write_spec for the
-        // initial-empty case (no anchor to edit against), edit_spec
-        // once the spec has content (anchored replacement preserves
-        // accepted text). Exactly one of the two is exposed to the API
-        // per turn, mirroring the prompt's tool description. Their
-        // priority ordering and the rule against combining the spec
-        // tool with dispatch_claude_code in one turn are enforced both
-        // by the system prompt AND by the resolution code below —
-        // models sometimes ignore prose constraints, so we
+        // The Mayor sees two action tools when no worker is busy:
+        // dispatch_scout (all spec drafting AND revision — the Mayor has
+        // no in-process spec-edit tools anymore; Claude Code in plan
+        // mode does a much better job at spec work, see #111) and
+        // dispatch_claude_code (build). Their priority ordering is
+        // enforced both by the system prompt AND by the resolution code
+        // below — models sometimes ignore prose constraints, so we
         // belt-and-suspenders it server-side.
-        const specEditTool = currentSpec.trim() ? EDIT_SPEC_TOOL : WRITE_SPEC_TOOL;
         // list_github_issues stays available even when a worker is busy:
         // it's read-only and cheap, and reading the tracker while a build
-        // runs is a legitimate chat action. The dispatch/spec tools remain
+        // runs is a legitimate chat action. The dispatch tools remain
         // gated by isWorkerBusy as before.
         const tools = isWorkerBusy
           ? [LIST_GITHUB_ISSUES_TOOL]
-          : [DISPATCH_TOOL, DISPATCH_SCOUT_TOOL, specEditTool, LIST_GITHUB_ISSUES_TOOL];
+          : [DISPATCH_TOOL, DISPATCH_SCOUT_TOOL, LIST_GITHUB_ISSUES_TOOL];
 
         setPhase('mayor1');
         let mayor1;
@@ -884,9 +880,7 @@ function sessionRoutes(config) {
             // re-fetches any stray list_github_issues).
             const hasTerminalTool = mayor1.toolUses.some((t) =>
               t.name === 'dispatch_claude_code'
-              || t.name === 'dispatch_scout'
-              || t.name === 'edit_spec'
-              || t.name === 'write_spec');
+              || t.name === 'dispatch_scout');
             if (!issuesCalls.length || hasTerminalTool || issuesIters >= MAYOR_ISSUES_MAX_ITERS) break;
             issuesIters += 1;
 
@@ -1012,25 +1006,17 @@ function sessionRoutes(config) {
         }
 
         // Pick which tool the Mayor invoked, with server-side priority
-        // enforcement: edit_spec / write_spec / dispatch_scout >
-        // dispatch_claude_code. If the Mayor (mis)used multiple in one
-        // turn, we honor the planning tool and quietly drop the
-        // dispatch — same rule the tool descriptions state, but
-        // enforced here so a model regression can't cause a surprise
-        // build mid-spec-discussion. edit_spec and write_spec are
-        // mutually exclusive at the API surface (only one is exposed
-        // per turn based on spec emptiness), but we check both just in
-        // case a stale tool_use slips through.
-        const editSpecCall = mayor1.toolUses.find((t) => t.name === 'edit_spec');
-        const writeSpecCall = mayor1.toolUses.find((t) => t.name === 'write_spec');
+        // enforcement: dispatch_scout > dispatch_claude_code. If the
+        // Mayor (mis)used both in one turn, we honor the planning tool
+        // and quietly drop the dispatch — same rule the tool
+        // descriptions state, but enforced here so a model regression
+        // can't cause a surprise build mid-spec-discussion.
         const scoutCall = mayor1.toolUses.find((t) => t.name === 'dispatch_scout');
         const dispatchCall = mayor1.toolUses.find((t) => t.name === 'dispatch_claude_code');
 
         let activeToolCall = null;
-        let toolKind = null; // 'edit_spec' | 'write_spec' | 'scout' | 'build'
-        if (editSpecCall) { activeToolCall = editSpecCall; toolKind = 'edit_spec'; }
-        else if (writeSpecCall) { activeToolCall = writeSpecCall; toolKind = 'write_spec'; }
-        else if (scoutCall) { activeToolCall = scoutCall; toolKind = 'scout'; }
+        let toolKind = null; // 'scout' | 'build'
+        if (scoutCall) { activeToolCall = scoutCall; toolKind = 'scout'; }
         else if (dispatchCall) { activeToolCall = dispatchCall; toolKind = 'build'; }
 
         if (!activeToolCall) {
@@ -1042,20 +1028,17 @@ function sessionRoutes(config) {
         }
 
         // Race check: scout and build both share a per-session worker
-        // container, so they share the same gate. write_spec and
-        // edit_spec are just DB UPDATEs and bypass the gate entirely.
+        // container, so they share the same gate.
         //
         // Same warm-CC caveat as /status and isWorkerBusy above —
         // gating on container-status would reject every scout/build
         // for ~10 min after the first dispatch finishes (warm idle is
         // not busy).
-        if (toolKind === 'scout' || toolKind === 'build') {
-          if (activeWorkers.has(session.id) || worker.isInFlight(session.id)) {
-            await sendStatus('Claude Code is already running for this session. Please wait for it to finish.');
-            send('done', {});
-            res.end();
-            return;
-          }
+        if (activeWorkers.has(session.id) || worker.isInFlight(session.id)) {
+          await sendStatus('Claude Code is already running for this session. Please wait for it to finish.');
+          send('done', {});
+          res.end();
+          return;
         }
 
         // Seal the phase-1 assistant bubble so the phase-2 wrap-up
@@ -1065,9 +1048,9 @@ function sessionRoutes(config) {
         // Persist any GitHub issues the Mayor declared this dispatch
         // addresses (#75). Union with the session's existing linkage so the
         // set grows across turns; pr-metadata.js turns each number into a
-        // `Closes #N` line in the PR body. Only scout/build dispatches carry
-        // this arg. Best-effort: a failure here must not block the build.
-        if (toolKind === 'scout' || toolKind === 'build') {
+        // `Closes #N` line in the PR body. Best-effort: a failure here
+        // must not block the build.
+        {
           const declared = prMetadata.sanitizeIssueNumbers(activeToolCall.input?.addresses_issues);
           if (declared.length) {
             try {
@@ -1093,19 +1076,7 @@ function sessionRoutes(config) {
 
         // --- Run the chosen tool ---
         let toolResult;
-        if (toolKind === 'write_spec') {
-          setPhase('spec');
-          toolResult = await runWriteSpecTool({
-            pool, session, send, sendStatus,
-            toolInput: activeToolCall.input,
-          });
-        } else if (toolKind === 'edit_spec') {
-          setPhase('spec');
-          toolResult = await runEditSpecTool({
-            pool, session, send, sendStatus,
-            toolInput: activeToolCall.input,
-          });
-        } else if (toolKind === 'scout') {
+        if (toolKind === 'scout') {
           const toolPromptArg = typeof activeToolCall.input?.prompt === 'string' && activeToolCall.input.prompt.trim()
             ? activeToolCall.input.prompt.trim()
             : message.trim();
@@ -1220,10 +1191,9 @@ function sessionRoutes(config) {
         // real-world changes that already exist. The client hides the
         // stop button and shows a plain spinner during this phase.
         setPhase('mayor2');
-        // Re-read spec_md and rebuild the system prompt: scout,
-        // write_spec, or edit_spec may have just mutated it, and the
-        // wrap-up turn should describe the doc as it is now (not as it
-        // was at the start of phase-1).
+        // Re-read spec_md and rebuild the system prompt: a scout may
+        // have just mutated it, and the wrap-up turn should describe
+        // the doc as it is now (not as it was at the start of phase-1).
         currentSpec = await loadSessionSpec(pool, session.id);
         // Recompute PR context: a dispatch this turn may have just opened
         // a PR (applyPrMetadata mutates session.pr_number in place).
@@ -1252,12 +1222,10 @@ function sessionRoutes(config) {
           // Cheap guard: we still want to show *something* after the
           // tool runs, even if the Mayor produces no wrap-up text.
           if (toolResult.isError) {
-            mayorText2 = (toolKind === 'write_spec' || toolKind === 'edit_spec')
-              ? "_The spec edit didn't go through — see the status above._"
-              : toolKind === 'scout'
-                ? "_The scout didn't finish successfully — see the status above._"
-                : "_The coding agent didn't complete successfully — see the status messages above._";
-          } else if (toolKind === 'write_spec' || toolKind === 'edit_spec' || toolKind === 'scout') {
+            mayorText2 = toolKind === 'scout'
+              ? "_The scout didn't finish successfully — see the status above._"
+              : "_The coding agent didn't complete successfully — see the status messages above._";
+          } else if (toolKind === 'scout') {
             // Spec/scout just planned something — make the build handoff
             // explicit so a finished spec doesn't read as a finished change.
             mayorText2 = "_Spec updated — it's in the spec viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._";
@@ -1314,15 +1282,15 @@ function sessionRoutes(config) {
   // ===== Spec stage endpoints =====
   //
   // The session has a working buffer (chat_sessions.spec_md, overwritten
-  // by Mayor's write_spec / edit_spec / dispatch_scout) and an append-
-  // only history of immutable numbered versions in chat_session_specs.
+  // by the Mayor's dispatch_scout) and an append-only history of
+  // immutable numbered versions in chat_session_specs.
   // A version is frozen on every spec mutation (#27, via
   // snapshotSessionSpec), so spec_md is always byte-identical to the
   // latest version. Numbered versions (v1…vN) are the single spec
   // surface the dev-chat viewer presents (#69 removed the separate
   // "Draft (live)" entry and the manual "Save version" step); spec_md
-  // is kept purely as the in-process anchor buffer for edit_spec and as
-  // a theme signal for PR metadata. The dev-chat UI surfaces the spec
+  // is kept purely as the live-draft buffer the scout revises against
+  // and as a theme signal for PR metadata. The dev-chat UI surfaces the spec
   // in a read-only side-panel viewer (see DevChat.specViewer in
   // public/js/dev-chat.js); the user ships it by asking the Mayor to
   // dispatch the coding agent in chat — there is no in-UI "Build from
@@ -1405,8 +1373,8 @@ function sessionRoutes(config) {
   });
 
   // (#69) The manual POST /api/sessions/:id/specs "Save version" route
-  // was retired. Every Mayor spec mutation (write_spec / edit_spec /
-  // scout) already auto-freezes an immutable numbered version via
+  // was retired. Every Mayor spec mutation (scout) already
+  // auto-freezes an immutable numbered version via
   // snapshotSessionSpec(), so the live spec_md is always byte-identical
   // to the latest chat_session_specs row. The old route just re-snapped
   // that same content and almost always hit its own dedup branch — a
@@ -1823,19 +1791,21 @@ const DISPATCH_TOOL = {
 const DISPATCH_SCOUT_TOOL = {
   name: 'dispatch_scout',
   description:
-    'Dispatch the coding agent in read-only PLAN MODE to investigate the repo and draft a grounded markdown spec. '
-    + 'Use for the FIRST substantive spec work in a session, when you need to know what files exist or how things are currently built. '
-    + "The agent reads files and writes prose; it CANNOT edit, commit, or push. Output replaces the session's spec doc. "
-    + 'Slow (~30-60s) — do not call for small revisions; use edit_spec (or write_spec when the spec is empty) instead. At most one call per user message.',
+    'Dispatch the coding agent in read-only PLAN MODE to investigate the repo and draft or revise a grounded markdown spec. '
+    + 'Use for ALL spec work in a session — the initial draft AND every later revision, large or small. '
+    + "The agent reads files and writes prose; it CANNOT edit, commit, or push. Output replaces the session's spec doc "
+    + '(when a spec already exists, the scout sees it and outputs a revised full document, preserving accepted content). '
+    + 'Slow (~30-60s). At most one call per user message.',
   input_schema: {
     type: 'object',
     properties: {
       prompt: {
         type: 'string',
         description:
-          'Instructions for the scout. Should describe what to investigate and what shape the resulting spec should take '
-          + '(e.g. "Read the relevant files for the leaderboard and draft a markdown spec covering screens, data model, '
-          + 'and edge cases for adding realtime updates"). 1-3 sentences.',
+          'Instructions for the scout. For an initial draft, describe what to investigate and what shape the resulting '
+          + 'spec should take (e.g. "Read the relevant files for the leaderboard and draft a markdown spec covering screens, '
+          + 'data model, and edge cases for adding realtime updates"). For a revision, describe precisely what to change in '
+          + 'the existing spec (the current spec doc is auto-injected into the scout\'s prompt — do not restate it). 1-3 sentences.',
       },
       addresses_issues: {
         type: 'array',
@@ -1849,82 +1819,6 @@ const DISPATCH_SCOUT_TOOL = {
       },
     },
     required: ['prompt'],
-  },
-};
-
-// Spec stage — cheap, in-process spec edit. No container, no model
-// round-trip beyond the Mayor's own turn. Used for the FIRST draft
-// when scout would be overkill; once a spec exists, the Mayor uses
-// edit_spec instead (see EDIT_SPEC_TOOL below). Forbidden to combine
-// with dispatch_claude_code in the same turn — the user owns the
-// dispatch decision and asks the Mayor to do it in chat.
-const WRITE_SPEC_TOOL = {
-  name: 'write_spec',
-  description:
-    'Overwrite the current draft spec for this session with the given markdown content. '
-    + 'Only available when the spec is currently empty — once a spec exists, this tool is replaced by edit_spec. '
-    + 'Use this to capture an INITIAL spec when scout would be overkill (e.g. the user gave you a clear, self-contained design). '
-    + 'Cannot read the repo; if you need real file evidence, use dispatch_scout first. '
-    + 'Do not call dispatch_claude_code in the same turn as write_spec.',
-  input_schema: {
-    type: 'object',
-    properties: {
-      content: {
-        type: 'string',
-        description:
-          'The full new contents of the spec doc. Markdown formatted; pick sections that fit the task '
-          + '(Goal, Screens, Data Model, Edge Cases, etc.). Prefer decisions over questions: only add a '
-          + '"Questions" section for items that genuinely block implementation; put non-blocking notes '
-          + 'under "Considerations" or "Deferred work" instead. '
-          + 'Pass RAW markdown — do NOT wrap the whole spec in a code fence (no leading ```markdown / trailing ```), '
-          + 'or it renders as one big code block. '
-          + 'The spec renders as standard CommonMark: if a fenced code block must itself contain a '
-          + 'triple-backtick fence, wrap the outer block in a four-backtick fence so the inner fence does '
-          + 'not close it early and break the rest of the doc.',
-      },
-    },
-    required: ['content'],
-  },
-};
-
-// Spec stage — anchored, in-process spec edit. Replaces write_spec
-// once a spec exists, so revisions splice into the existing doc rather
-// than overwriting it from scratch. The model sees the current spec
-// verbatim in its system prompt (CURRENT SPEC DOC block) so it can
-// quote old_text exactly. On miss/ambiguous-match the call returns a
-// recoverable error and the user can re-prompt.
-const EDIT_SPEC_TOOL = {
-  name: 'edit_spec',
-  description:
-    'Edit the current spec by replacing an exact existing snippet with new content. '
-    + 'Use for ALL revisions once a spec exists. Anchored: old_text MUST match a unique '
-    + 'verbatim substring of the current spec (whitespace included). new_text replaces '
-    + 'that match; pass empty new_text to delete a section, or include old_text inside new_text '
-    + 'to insert nearby content. Cannot overwrite the whole doc; for heavy restructures, make '
-    + 'multiple edit_spec calls across turns. '
-    + 'Cannot read the repo; if you need real file evidence, use dispatch_scout first. '
-    + 'Do not call dispatch_claude_code in the same turn as edit_spec.',
-  input_schema: {
-    type: 'object',
-    properties: {
-      old_text: {
-        type: 'string',
-        description:
-          'Exact verbatim substring from the current spec to replace. Must occur exactly once. '
-          + 'Copy directly from the CURRENT SPEC DOC block in your system prompt; include 1–2 '
-          + 'surrounding lines if needed for uniqueness.',
-      },
-      new_text: {
-        type: 'string',
-        description:
-          'Replacement content. Empty string deletes the matched section. '
-          + 'To add new content next to an existing section, include the original old_text inside new_text. '
-          + 'Markdown rendered as standard CommonMark: if new_text adds a fenced code block that itself '
-          + 'contains a triple-backtick fence, wrap the outer block in a four-backtick fence so it does not '
-          + 'close early.',
-      },
-    },
-    required: ['old_text', 'new_text'],
   },
 };
 
@@ -2008,152 +1902,6 @@ function buildMayorMessages(history) {
   return messages;
 }
 
-// Cheap, in-process spec edit triggered by the Mayor's write_spec tool.
-// No worker container, no model round-trip beyond the Mayor's own turn —
-// we just UPDATE chat_sessions.spec_md, fire a system status event so
-// the dev-chat timeline shows the change, and emit `spec_updated` so any
-// open Spec panel re-renders live. Returns a tool_result summary the
-// phase-2 wrap-up will narrate to the user.
-async function runWriteSpecTool({ pool, session, send, sendStatus, toolInput }) {
-  const content = stripSpecWrapperFence(typeof toolInput?.content === 'string' ? toolInput.content : '');
-  if (!content.trim()) {
-    await sendStatus('write_spec was called with empty content; the spec was not updated.');
-    return {
-      toolResultText: 'write_spec was called without content. The spec doc is unchanged.',
-      isError: true,
-    };
-  }
-
-  await pool.query(
-    'UPDATE chat_sessions SET spec_md = $1 WHERE id = $2',
-    [content, session.id]
-  );
-
-  const lineCount = content.split('\n').length;
-  const charCount = content.length;
-  const preview = buildSpecPreview(content);
-
-  // #27: freeze this draft so the inline card opens its own content.
-  const specVersion = await snapshotSessionSpec(pool, session.id, content);
-
-  await sendStatus(
-    `Spec updated (${lineCount} lines).`,
-    { specPreview: preview, specLines: lineCount, specVersion }
-  );
-  send('spec_updated', { length: charCount, lines: lineCount, version: specVersion });
-
-  return {
-    toolResultText:
-      `The session's spec doc was overwritten with new content (${lineCount} lines, ${charCount} chars). `
-      + `The user can review it in the dev-chat spec viewer. When they're ready to ship, they'll ask you to dispatch the coding agent.`,
-    isError: false,
-  };
-}
-
-// Anchored, in-process spec edit triggered by the Mayor's edit_spec
-// tool. Re-reads spec_md from the DB (don't trust Mayor-side staleness)
-// and validates that old_text appears exactly once. On miss/ambiguous
-// match we return a recoverable error so the Mayor can retry on the
-// next user message — explicitly NOT a silent regenerate-from-scratch.
-// Same status/spec_updated event shape as runWriteSpecTool so the
-// dev-chat timeline + Spec panel update identically.
-async function runEditSpecTool({ pool, session, send, sendStatus, toolInput }) {
-  const oldText = typeof toolInput?.old_text === 'string' ? toolInput.old_text : '';
-  const newText = typeof toolInput?.new_text === 'string' ? toolInput.new_text : '';
-
-  if (!oldText) {
-    await sendStatus('edit_spec was called with empty old_text; the spec was not updated.');
-    return {
-      toolResultText:
-        'edit_spec was called with empty old_text. Nothing to anchor against. '
-        + 'The spec doc is unchanged.',
-      isError: true,
-    };
-  }
-
-  const currentSpec = await loadSessionSpec(pool, session.id);
-
-  if (!currentSpec.trim()) {
-    await sendStatus('edit_spec was called but the spec is empty; use write_spec to draft an initial spec.');
-    return {
-      toolResultText:
-        'edit_spec was called but the current spec is empty — there is nothing to edit. '
-        + 'The spec doc is unchanged. Use write_spec to draft an initial spec, or dispatch_scout to investigate the repo first.',
-      isError: true,
-    };
-  }
-
-  // Count occurrences without regex (avoids escape pain on markdown
-  // text). Fail loudly on miss or ambiguity rather than silently
-  // mutating something the Mayor didn't intend.
-  let occurrences = 0;
-  let idx = 0;
-  while (true) {
-    const found = currentSpec.indexOf(oldText, idx);
-    if (found === -1) break;
-    occurrences += 1;
-    if (occurrences > 1) break;
-    idx = found + oldText.length;
-  }
-
-  if (occurrences === 0) {
-    await sendStatus('edit_spec failed: old_text not found in the current spec.');
-    return {
-      toolResultText:
-        'edit_spec failed: old_text was not found in the current spec. '
-        + 'The current spec is shown verbatim in the CURRENT SPEC DOC block of your system prompt — '
-        + 'copy old_text directly from there (whitespace included). '
-        + 'The spec doc is unchanged.',
-      isError: true,
-    };
-  }
-
-  if (occurrences > 1) {
-    await sendStatus('edit_spec failed: old_text matched multiple places in the spec.');
-    return {
-      toolResultText:
-        `edit_spec failed: old_text matched ${occurrences > 1 ? '2 or more' : occurrences} places in the current spec. `
-        + 'Make the snippet unique by including more surrounding context (an extra line above and below is usually enough). '
-        + 'The spec doc is unchanged.',
-      isError: true,
-    };
-  }
-
-  const matchIdx = currentSpec.indexOf(oldText);
-  const updated = stripSpecWrapperFence(
-    currentSpec.slice(0, matchIdx) + newText + currentSpec.slice(matchIdx + oldText.length)
-  );
-
-  await pool.query(
-    'UPDATE chat_sessions SET spec_md = $1 WHERE id = $2',
-    [updated, session.id]
-  );
-
-  const beforeLines = currentSpec.split('\n').length;
-  const afterLines = updated.split('\n').length;
-  const removedLines = oldText.split('\n').length;
-  const addedLines = newText.split('\n').length;
-  const lineDelta = afterLines - beforeLines;
-  const preview = buildSpecPreview(updated);
-
-  // #27: freeze this edited spec so the inline card opens its own content.
-  const specVersion = await snapshotSessionSpec(pool, session.id, updated);
-
-  await sendStatus(
-    `Spec edited (−${removedLines} / +${addedLines} lines, now ${afterLines} total).`,
-    { specPreview: preview, specLines: afterLines, specVersion }
-  );
-  send('spec_updated', { length: updated.length, lines: afterLines, version: specVersion });
-
-  return {
-    toolResultText:
-      `The session's spec doc was edited in place: the matched ${oldText.length}-char snippet was replaced with `
-      + `a ${newText.length}-char snippet (−${removedLines} / +${addedLines} lines, net ${lineDelta >= 0 ? '+' : ''}${lineDelta}; spec is now ${afterLines} lines total). `
-      + `The user can review it in the dev-chat spec viewer. When they're ready to ship, they'll ask you to dispatch the coding agent.`,
-    isError: false,
-  };
-}
-
 // Runs Claude Code in read-only PLAN MODE (the spec-stage scout). CC
 // reads the repo and produces a markdown spec as its final result text;
 // we capture that into chat_sessions.spec_md. No commit, no push, no
@@ -2175,6 +1923,24 @@ async function runScoutTool({
 
   await worker.ensureWorkerImage();
 
+  // When a spec already exists, this scout run is a REVISION: the scout
+  // sees the current doc verbatim and outputs a full revised document,
+  // preserving accepted content. This replaced the Mayor's old
+  // in-process write_spec/edit_spec tools (#111) — Claude Code does a
+  // much better job at spec drafting and revision than the Mayor did.
+  const existingSpec = (await loadSessionSpec(pool, session.id)).trim();
+  const revisionBlock = existingSpec
+    ? `
+
+This session ALREADY HAS a spec doc, shown verbatim below. Your task is a REVISION of it, not a from-scratch rewrite: apply the requested changes, keep everything else intact (the user may have already reviewed and accepted the rest), and re-verify against the repo only where the change requires it. Your final message must be the COMPLETE revised spec document — it replaces the doc wholesale.
+
+==== CURRENT SPEC DOC (revise this) ====
+
+${existingSpec}
+
+==== END CURRENT SPEC DOC ====`
+    : '';
+
   // Scout-specific prompt. Deliberately omits the platform-conventions
   // block and commit/push instructions used in the build prompt — scout
   // never edits anything. The "final message is the spec" contract is
@@ -2185,7 +1951,7 @@ ${toolPromptArg}
 
 USER REQUEST: "${userMessage}"
 
-You are running in PLAN MODE: you can read files (Read, Glob, Grep) but you cannot edit, commit, or push anything. Do not attempt to.
+You are running in PLAN MODE: you can read files (Read, Glob, Grep) but you cannot edit, commit, or push anything. Do not attempt to.${revisionBlock}
 
 A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`). Use it if the open issues are relevant context for this spec; do not try to reach GitHub any other way.
 
@@ -2331,13 +2097,18 @@ CRITICAL: Output the spec as RAW markdown. Do NOT wrap your whole response in a 
       // #27: freeze the scout's draft so the inline card opens its own content.
       const specVersion = await snapshotSessionSpec(pool, session.id, ccText);
       await sendStatus(
-        `Scout drafted a ${lineCount}-line spec from the codebase.`,
+        existingSpec
+          ? `Scout revised the spec (now ${lineCount} lines).`
+          : `Scout drafted a ${lineCount}-line spec from the codebase.`,
         { specPreview: preview, specLines: lineCount, scoutOutput: ccText, specVersion }
       );
       send('spec_updated', { length: ccText.length, lines: lineCount, version: specVersion });
       summaryParts.push(
-        `The scout investigated the repo and drafted a ${lineCount}-line markdown spec. `
-        + `It now lives in the session's spec doc; the user can review it in the dev-chat spec viewer. When they're ready to ship, they'll ask you to dispatch the coding agent.`
+        existingSpec
+          ? `The scout revised the session's spec doc (now ${lineCount} lines). `
+            + `The user can review it in the dev-chat spec viewer. When they're ready to ship, they'll ask you to dispatch the coding agent.`
+          : `The scout investigated the repo and drafted a ${lineCount}-line markdown spec. `
+            + `It now lives in the session's spec doc; the user can review it in the dev-chat spec viewer. When they're ready to ship, they'll ask you to dispatch the coding agent.`
       );
     }
 
@@ -2906,18 +2677,11 @@ path: /relative/path?demo=1
 }
 
 function getMayorSystemPrompt(appName, isWorkerBusy, currentSpec, selfHosted, prContext) {
-  // The spec-edit tool name shown to the model depends on whether a
-  // spec already exists: write_spec when the doc is empty (no anchor
-  // to edit against), edit_spec once it has content (anchored
-  // replacement preserves what the user already accepted). The actual
-  // tool exposed to the Anthropic API is gated the same way at the
-  // call site (see `tools` construction in the chat handler).
   const specIsEmpty = !((currentSpec || '').trim());
-  const specToolName = specIsEmpty ? 'write_spec' : 'edit_spec';
 
   const toolNote = isWorkerBusy
-    ? `\n\nSTATUS: A coding agent IS currently running for this session — the dispatch_claude_code, dispatch_scout, and ${specToolName} tools are NOT available right now. Just chat with the user; tell them the agent is still working and they can follow up once it finishes.`
-    : `\n\nSTATUS: No coding agent is running. You MAY use dispatch_claude_code, dispatch_scout, or ${specToolName} when appropriate (see the rules below). Otherwise just reply in text and do not call any tools.`;
+    ? `\n\nSTATUS: A coding agent IS currently running for this session — the dispatch_claude_code and dispatch_scout tools are NOT available right now. Just chat with the user; tell them the agent is still working and they can follow up once it finishes.`
+    : `\n\nSTATUS: No coding agent is running. You MAY use dispatch_claude_code or dispatch_scout when appropriate (see the rules below). Otherwise just reply in text and do not call any tools.`;
 
   // Platform conventions are authoritative; app-specific guidance in a
   // repo CLAUDE.md takes precedence for app-specific matters only. See
@@ -2938,10 +2702,10 @@ private and staging will seed fake rows — so the user knows what
 to expect on the staging preview.`;
 
   // Live-spec block: the Mayor sees the current spec_md verbatim every
-  // turn so it can answer "what's in the spec?" accurately and so
-  // edit_spec calls can quote real existing text. Re-injected fresh
-  // before each phase (see chat handler) so a write_spec / scout /
-  // edit_spec earlier in the same turn is reflected in phase-2.
+  // turn so it can answer "what's in the spec?" accurately and write
+  // precise revision prompts for the scout. Re-injected fresh before
+  // each phase (see chat handler) so a scout dispatch earlier in the
+  // same turn is reflected in phase-2.
   const specBlock = `
 
 ==== CURRENT SPEC DOC (live draft) ====
@@ -2969,39 +2733,26 @@ If the user's next request is a DISTINCT, separate change — a new feature or f
 ==== END PULL REQUEST ====`
     : '';
 
-  // Conditional spec-tool description. Only one of these tools is
-  // exposed to the API at any moment, so the prompt only describes
-  // the one the model can actually call.
-  const specToolItem = specIsEmpty
-    ? `2) write_spec(content) — cheap in-process spec edit, ms-fast
-   The spec is currently empty. Use this to draft an INITIAL spec when scout would be overkill (e.g. the user gave you a clear, self-contained design and just wants it captured). Pass the FULL spec content as markdown. Once a spec exists, this tool is replaced by edit_spec — you cannot overwrite an existing spec wholesale.
-   Cannot fact-check itself against the repo, so don't use it for changes where you need to confirm what the code currently does — use dispatch_scout for that.`
-    : `2) edit_spec(old_text, new_text) — anchored in-process spec edit, ms-fast
-   The current spec is shown verbatim in CURRENT SPEC DOC above. Use this for ALL revisions. Pass an EXACT verbatim substring from the current spec as old_text and the replacement as new_text — old_text MUST match the current spec character-for-character (whitespace included) and MUST be unique (include surrounding context if needed). Empty new_text deletes the matched section. To add a new section, anchor on a unique nearby snippet and include it in both old_text and new_text.
-   If old_text is not found or is ambiguous, the call fails with a clear error and you can retry on the user's next message — do NOT silently regenerate the spec from scratch.
-   Cannot fact-check itself against the repo, so don't use it for changes where you need to confirm what the code currently does — use dispatch_scout for that.`;
-
   return `You are the Mayor — a friendly project manager for the app "${appName}" on Usernode Social Vibecoding.
 
 YOUR ROLE:
 You talk to the user in plain English and decide whether their latest message needs the coding agent (Claude Code) to actually edit the repo, OR needs spec-stage planning before any code is written. You are NOT a developer — never write code, file contents, diffs, or implementation details. Keep replies to 1-4 sentences.
 
 THE SPEC DOC:
-Every session has a markdown SPEC DOC that the user can read in the dev-chat spec viewer (a side-panel they open via the spec preview cards in the chat). It is your collaborative working surface for planning before code is written. The current spec is included verbatim below in the CURRENT SPEC DOC block — refer to it whenever you discuss, summarize, or edit the spec. The viewer is read-only: the user cannot hand-edit the spec, so all revisions go through you. When they're happy with the spec they'll ask you to dispatch the coding agent in chat — you don't need to call dispatch_claude_code just because the spec is done; the user owns that decision.
+Every session has a markdown SPEC DOC that the user can read in the dev-chat spec viewer (a side-panel they open via the spec preview cards in the chat). It is your collaborative working surface for planning before code is written. The current spec is included verbatim below in the CURRENT SPEC DOC block — refer to it whenever you discuss or summarize the spec. The viewer is read-only: the user cannot hand-edit the spec, so all revisions go through you — and YOU never edit the spec in-process either. ALL spec writing and revising, however small, is done by dispatching the scout (dispatch_scout), which reads the repo and rewrites the doc; you only relay what the user wants changed. When they're happy with the spec they'll ask you to dispatch the coding agent in chat — you don't need to call dispatch_claude_code just because the spec is done; the user owns that decision.
 
 SPEC QUESTIONS — KEEP THEM RARE:
-Do not pad the spec with open questions. Only include a "Questions" section for things that genuinely BLOCK implementation — decisions the coding agent cannot reasonably make on its own and that would change what gets built. Wherever you can, make a sensible default choice and state it instead of asking. Non-blocking items belong under "Considerations" (trade-offs, assumptions, things to keep in mind) or "Deferred work" (out-of-scope or follow-up items) — never phrase those as questions. When you write or edit the spec, prefer decisions over questions.
+Do not pad the spec with open questions. Only include a "Questions" section for things that genuinely BLOCK implementation — decisions the coding agent cannot reasonably make on its own and that would change what gets built. Wherever you can, make a sensible default choice and state it instead of asking. Non-blocking items belong under "Considerations" (trade-offs, assumptions, things to keep in mind) or "Deferred work" (out-of-scope or follow-up items) — never phrase those as questions. When you instruct the scout to write or revise the spec, tell it to prefer decisions over questions.
 
-THREE TOOLS, in priority order:
+TWO TOOLS, in priority order:
 
-1) dispatch_scout(prompt) — read-only repo investigation, slow (~30-60s)
-   Use for the FIRST substantive spec work in a session, when you need to know how the app is currently built. The scout is the coding agent in read-only mode: it reads files (Read/Glob/Grep), writes prose, and is structurally forbidden from editing or committing. Output replaces the session's spec doc.
+1) dispatch_scout(prompt) — read-only repo investigation + ALL spec writing, slow (~30-60s)
+   Use for ALL spec work in a session: the first substantive draft AND every later revision, large or small. The scout is the coding agent in read-only mode: it reads files (Read/Glob/Grep), writes prose, and is structurally forbidden from editing or committing. Output replaces the session's spec doc.
+   ${specIsEmpty ? 'The spec is currently empty — your first dispatch_scout drafts it from scratch.' : 'A spec already exists (see CURRENT SPEC DOC below). When the user asks for a revision — even a one-line tweak — dispatch the scout with a prompt describing exactly what to change; the current spec is auto-injected into its context, so do NOT restate the spec, just describe the delta. The scout revises the doc and preserves the rest.'}
    Heuristic: if your reply would be "I'd need to look at the code to answer that", that's a dispatch_scout signal — not an excuse to guess.
-   Do NOT use for small revisions. It's slow and expensive.
+   You have NO in-process spec-edit tool — never draft or paste spec content into chat yourself; route every spec change through dispatch_scout.
 
-${specToolItem}
-
-3) dispatch_claude_code(prompt) — full coding agent, slow + writes code
+2) dispatch_claude_code(prompt) — full coding agent, slow + writes code
    Calls the coding agent to clone, edit files, commit, and push to the dev branch. Staging auto-rebuilds. Only call when:
    * The user has made a clear, concrete change request, AND
    * No spec stage is needed first (small/obvious change), OR the user has asked you to "just build it" or similar.
@@ -3015,11 +2766,11 @@ GENERAL RULES (apply to all tools):
   * asking for something that looks like a brand-new, standalone app unrelated to "${appName}" (e.g. they're chatting here but describe building a totally different product). In that case, DO NOT dispatch — instead, gently point them to the home page to create a new app, e.g. "That sounds like a separate app from ${appName}. You can head back to the home screen and spin up a new app for it." Only dispatch if they confirm they want it added to this app.
 - If the request is vague, ask a clarifying question INSTEAD of calling any tool. Never dispatch while also asking for clarification.
 - At most ONE tool call per user message.
-- Never call ${specToolName} and dispatch_claude_code in the same turn. The user dispatches the build themselves.
+- Never call dispatch_scout and dispatch_claude_code in the same turn. The user dispatches the build themselves.
 
 AFTER A TOOL RETURNS:
-You'll get a short summary of what happened. Write a 1-3 sentence reply to the user in plain English, referencing the spec doc / staging URL / PR if present. For dispatch_scout: tell them the spec was drafted and is available in the spec viewer. For ${specToolName}: tell them what you changed in the spec. For dispatch_claude_code: summarize what was built. If anything failed, explain briefly and suggest next steps.
-- IMPORTANT — spec→build handoff: after dispatch_scout, write_spec, or edit_spec, the spec is only PLANNED, not built. End your reply with a one-line next step that makes this explicit, e.g. "When this looks right, just tell me to build it and I'll have the coding agent implement it." Nothing gets built until the user asks — don't let a finished spec read as a finished change. (After dispatch_claude_code the change IS built, so no handoff line is needed.)
+You'll get a short summary of what happened. Write a 1-3 sentence reply to the user in plain English, referencing the spec doc / staging URL / PR if present. For dispatch_scout: tell them the spec was drafted (or revised) and is available in the spec viewer. For dispatch_claude_code: summarize what was built. If anything failed, explain briefly and suggest next steps.
+- IMPORTANT — spec→build handoff: after dispatch_scout, the spec is only PLANNED, not built. End your reply with a one-line next step that makes this explicit, e.g. "When this looks right, just tell me to build it and I'll have the coding agent implement it." Nothing gets built until the user asks — don't let a finished spec read as a finished change. (After dispatch_claude_code the change IS built, so no handoff line is needed.)
 
 STAGING BUILD FAILURES (recoverable):
 A dispatch_claude_code tool_result may report that the commit/push/PR succeeded but the staging preview failed to build. The two common causes — both surfaced verbatim in the tool_result with explicit "Fix:" instructions:

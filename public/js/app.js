@@ -715,7 +715,7 @@ const App = {
         DevChat.renderMessages();
         break;
       case 'spec_updated':
-        // Mayor's write_spec / dispatch_scout updated the live draft.
+        // Mayor's dispatch_scout updated the live draft.
         // The accompanying status event already pushed an inline preview
         // card into the chat timeline; we just keep an open spec viewer
         // in sync if the user happens to be looking at the live draft.
