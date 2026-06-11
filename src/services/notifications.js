@@ -9,7 +9,7 @@
 // active users + creator + favoriters so they come vote), 'session_done'
 // (#161 — a dev-session turn finished after its owner left) and
 // 'auto_solve_done' (#161 — a headless auto-solve run finished; `detail`
-// holds the outcome).
+// holds the outcome: spec | code | spec_code (#170) | question | failed).
 
 const log = require('./logger');
 const { listActiveUserIds } = require('./active-users');
@@ -170,7 +170,8 @@ async function createSessionDoneNotification(pool, { userId, appId, sessionId })
 // #161: headless auto-solve completion (kind='auto_solve_done').
 // Always created at runHeadlessSession's terminal writes (no arming —
 // starting an auto-solve opts you into its completion notification).
-// `detail` carries the outcome: 'spec' | 'code' | 'question' | 'failed'.
+// `detail` carries the outcome: 'spec' | 'code' | 'spec_code' (#170) |
+// 'question' | 'failed'.
 // Same unread dedup as session_done so a resume re-fire can't double up.
 async function createAutoSolveDoneNotification(pool, { userId, appId, sessionId, detail }) {
   if (!userId || !sessionId) return [];
