@@ -308,7 +308,9 @@ function issueRoutes(config) {
   // anonymous, cached, never-throws) for the "Open Issues" activity-panel
   // section. Augments each issue with this app's OPEN-bounty count and a
   // per-viewer `my_bounty` flag, the issue's creating user
-  // (`created_by_username`, #133), plus the viewer's remaining weekly kudos
+  // (`created_by_username`, #133), the latest live headless auto session
+  // (`headless`, #155 — including the viewer's own derived session as
+  // `headless.mySessionId`, #172), plus the viewer's remaining weekly kudos
   // allowance so the FE can disable the "Give kudos" button when the shared
   // budget is spent. Distinct from the platform-internal `issues` table
   // (governance proposals) listed by GET /api/apps/:slug/issues above.
@@ -374,11 +376,36 @@ function issueRoutes(config) {
           ORDER BY cs.headless_issue_number, cs.created_at DESC`,
         [app.id]
       );
+      // #172: the viewer's own most recent non-archived clone of each
+      // listed headless session, so the FE can swap the clone button for
+      // "Go to session" once they've already started one. Strictly
+      // per-viewer — sessions are owner-scoped, so another user's clone
+      // isn't navigable and must not hide the clone button. 'archived'
+      // clones are excluded (one-way abandoned state) so the user can
+      // start over. No dedicated index: the lookup filters by user_id +
+      // cloned_from_session_id over a handful of ids, fine at current
+      // volumes.
+      const headlessIds = headlessRows.map((r) => r.id);
+      const myCloneByHeadlessId = new Map();
+      if (headlessIds.length) {
+        const { rows: cloneRows } = await pool.query(
+          `SELECT DISTINCT ON (cloned_from_session_id)
+                  cloned_from_session_id AS src, id
+             FROM chat_sessions
+            WHERE user_id = $1 AND cloned_from_session_id = ANY($2)
+              AND status <> 'archived'
+            ORDER BY cloned_from_session_id, created_at DESC`,
+          [req.user.id, headlessIds]
+        );
+        for (const r of cloneRows) myCloneByHeadlessId.set(r.src, r.id);
+      }
+
       const headlessByNumber = new Map(headlessRows.map((r) => [r.n, {
         sessionId: r.id,
         status: r.headless_status,
         outcome: r.headless_outcome,
         username: r.username,
+        mySessionId: myCloneByHeadlessId.get(r.id) || null,
       }]));
 
       const issues = (result.issues || []).map((issue) => {
