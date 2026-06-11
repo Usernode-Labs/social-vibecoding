@@ -677,6 +677,13 @@ CREATE TABLE IF NOT EXISTS app_favorites (
   PRIMARY KEY (app_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_app_favorites_user ON app_favorites(user_id);
+-- Per-user manual ordering of starred apps (issue #128). NULL = no
+-- explicit position: such rows sort after all explicitly ordered ones,
+-- falling back to the activity-based list order. Lower = earlier.
+-- Uniqueness is deliberately not enforced — gaps/ties are tolerated and
+-- resolved by the fallback, and PUT /api/favorites/order rewrites the
+-- caller's full set contiguously on every save anyway.
+ALTER TABLE app_favorites ADD COLUMN IF NOT EXISTS sort_order INTEGER;
 
 -- Append-only product-analytics event log. The long-term source of truth
 -- behind the admin /dashboard (growth, retention, and the dapp-usage /

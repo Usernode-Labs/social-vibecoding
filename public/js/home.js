@@ -4,6 +4,15 @@ const Home = {
   },
 
   async load() {
+    // Re-render guard: Home.load() is invoked from many WS/event paths
+    // (app_status / app_update in app.js, notifications.js), any of
+    // which would wholesale-replace the grid mid-drag and yank the
+    // card out from under the user's pointer. Defer instead; the drag
+    // handlers re-run load() when the gesture ends.
+    if (Home._dragActive) {
+      Home._reloadPending = true;
+      return;
+    }
     const listEl = document.getElementById('app-list');
     const emptyEl = document.getElementById('empty-state');
     const canCreate = Home.canCreate();
@@ -32,11 +41,37 @@ const Home = {
       const starred = apps.filter((a) => a.is_favorited);
       const rest = apps.filter((a) => !a.is_favorited);
       const hasStarred = starred.length > 0;
+      // Personal ordering (issue #128): explicit favorite_order first
+      // (ascending), NULLs after. Array.prototype.sort is stable, so
+      // returning 0 for two NULLs preserves the server's activity
+      // order among un-ordered favorites.
+      starred.sort((x, y) => {
+        if (x.favorite_order == null && y.favorite_order == null) return 0;
+        if (x.favorite_order == null) return 1;
+        if (y.favorite_order == null) return -1;
+        return x.favorite_order - y.favorite_order;
+      });
+      // Reordering is meaningless with a single card — skip the grab
+      // affordance and the drag wiring below when there's only one.
+      const canDragStars = starred.length >= 2;
 
       let html = '';
       if (hasStarred) {
         html += '<div class="home-section-header col-span-full">Starred</div>';
-        html += starred.map(Home.renderAppCard).join('');
+        // Starred apps only ever render in this section, so tag the
+        // cards at render time: data-starred drives the drag wiring's
+        // selector, touch-pan-y keeps vertical scrolling alive until a
+        // long-press actually starts a drag, and cursor-grab replaces
+        // cursor-pointer as the discoverability hint.
+        html += starred.map((a) => {
+          let card = Home.renderAppCard(a);
+          card = card.replace('class="app-card ', 'data-starred="true" class="app-card ');
+          if (canDragStars) {
+            card = card.replace('class="app-card ', 'class="app-card touch-pan-y ');
+            card = card.replace('cursor-pointer', 'cursor-grab');
+          }
+          return card;
+        }).join('');
         html += '<div class="home-section-header col-span-full mt-2">All Apps</div>';
       }
       html += rest.map(Home.renderAppCard).join('');
@@ -46,6 +81,13 @@ const Home = {
 
       listEl.querySelectorAll('.app-card').forEach((card) => {
         card.addEventListener('click', (e) => {
+          // A completed drag ends with the pointer still on the card,
+          // so the browser fires a click right after pointerup — eat
+          // it so dropping a card doesn't also open the app.
+          if (Home._suppressClick) {
+            Home._suppressClick = false;
+            return;
+          }
           if (
             e.target.closest('.retry-btn') ||
             e.target.closest('.delete-btn') ||
@@ -95,6 +137,8 @@ const Home = {
       listEl.querySelectorAll('.star-btn').forEach((btn) => {
         btn.addEventListener('click', (e) => Home.handleStarClick(e, btn));
       });
+
+      if (canDragStars) Home.wireStarredDrag(listEl);
 
       listEl.querySelectorAll('.check-updates-btn').forEach((btn) => {
         btn.addEventListener('click', async (e) => {
@@ -476,6 +520,176 @@ const Home = {
       alert(`Star toggle failed: ${err.message}`);
     } finally {
       btn.disabled = false;
+    }
+  },
+
+  // ===== Starred-section drag-and-drop (issue #128) =====
+  //
+  // Vanilla Pointer Events (same pattern as the spec-viewer resizer in
+  // dev-chat.js — setPointerCapture + move/up/cancel on the captured
+  // element), no library and no HTML5 draggable (poor touch support).
+  // The dragged card's DOM node is live-moved among its starred
+  // siblings on every pointermove, so the grid reflow itself is the
+  // drop indicator — no ghost clone needed, which keeps the 1/2/3-
+  // column layout correct for free.
+
+  // True while a drag gesture is in progress; Home.load() defers to
+  // _reloadPending instead of re-rendering (see the guard in load()).
+  _dragActive: false,
+  _reloadPending: false,
+  // Eats the synthetic click the browser fires right after the
+  // pointerup that ends a drag (see the card click handler in load()).
+  _suppressClick: false,
+
+  wireStarredDrag(listEl) {
+    listEl.querySelectorAll('.app-card[data-starred="true"]').forEach((card) => {
+      card.addEventListener('pointerdown', (e) => Home._onStarredPointerDown(e, card, listEl));
+    });
+  },
+
+  _onStarredPointerDown(e, card, listEl) {
+    if (e.button !== 0) return;
+    // Same guard list as the navigation click handler — a press that
+    // starts on a corner button is a button press, never a drag.
+    if (
+      e.target.closest('.star-btn') ||
+      e.target.closest('.lock-btn') ||
+      e.target.closest('.delete-btn') ||
+      e.target.closest('.retry-btn') ||
+      e.target.closest('.check-updates-btn')
+    ) return;
+
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const pointerId = e.pointerId;
+    const isTouch = e.pointerType === 'touch';
+    let dragging = false;
+    let longPressTimer = null;
+
+    const beginDrag = () => {
+      dragging = true;
+      Home._dragActive = true;
+      try { card.setPointerCapture(pointerId); } catch {}
+      card.classList.add('opacity-60', 'ring-2', 'ring-violet-500', 'scale-[1.02]', 'cursor-grabbing');
+      // touch-pan-y let the page scroll while the gesture was still
+      // ambiguous; now that it's a drag, claim the pointer entirely so
+      // the browser doesn't take over mid-drag with a pan.
+      card.style.touchAction = 'none';
+      document.body.style.userSelect = 'none';
+    };
+
+    // Touch: a drag starts only after a ~350ms long-press during which
+    // the finger stays put (< 10px). Movement before the timer fires
+    // means the user is scrolling — bail and let the browser pan
+    // (touch-pan-y on the card keeps that path native).
+    if (isTouch) longPressTimer = setTimeout(beginDrag, 350);
+
+    const cleanup = (didDrag) => {
+      clearTimeout(longPressTimer);
+      card.removeEventListener('pointermove', onMove);
+      card.removeEventListener('pointerup', onUp);
+      card.removeEventListener('pointercancel', onCancel);
+      try { card.releasePointerCapture(pointerId); } catch {}
+      card.classList.remove('opacity-60', 'ring-2', 'ring-violet-500', 'scale-[1.02]', 'cursor-grabbing');
+      card.style.touchAction = '';
+      document.body.style.userSelect = '';
+      if (didDrag) {
+        Home._suppressClick = true;
+        // Click (if any) dispatches synchronously after pointerup,
+        // before timers — this just clears a stale flag when no click
+        // follows (e.g. touch drags).
+        setTimeout(() => { Home._suppressClick = false; }, 0);
+      }
+      Home._dragActive = false;
+    };
+
+    const runPendingReload = () => {
+      if (Home._reloadPending) {
+        Home._reloadPending = false;
+        Home.load();
+      }
+    };
+
+    const onMove = (ev) => {
+      if (!dragging) {
+        const dist = Math.hypot(ev.clientX - startX, ev.clientY - startY);
+        if (isTouch) {
+          // Finger moved before the long-press fired → it's a scroll.
+          if (dist > 10) cleanup(false);
+        } else if (dist > 6) {
+          // Mouse/pen: > 6px from the down point promotes to a drag;
+          // below that it stays a click for the navigation handler.
+          beginDrag();
+        }
+        if (!dragging) return;
+      }
+      ev.preventDefault();
+      // Hit-test against the other starred cards. Hits on "All Apps"
+      // cards, the create tile, or section headers fall through (no
+      // [data-starred] ancestor) and the card stays at its last valid
+      // slot — drops are constrained to the Starred section by
+      // construction.
+      const over = document.elementFromPoint(ev.clientX, ev.clientY)
+        ?.closest('.app-card[data-starred="true"]');
+      if (!over || over === card || !listEl.contains(over)) return;
+      // Insert before when the pointer is in the leading half of the
+      // hovered card, after otherwise. "Leading" follows reading
+      // order: the left half at 2-3 grid columns, the top half when
+      // the grid is single-column (card spans the full row).
+      const rect = over.getBoundingClientRect();
+      const multiCol = rect.width < listEl.getBoundingClientRect().width * 0.9;
+      const before = multiCol
+        ? ev.clientX < rect.left + rect.width / 2
+        : ev.clientY < rect.top + rect.height / 2;
+      if (before) over.before(card); else over.after(card);
+    };
+
+    const onUp = async () => {
+      const didDrag = dragging;
+      cleanup(didDrag);
+      if (didDrag) await Home._saveStarredOrder(listEl);
+      runPendingReload();
+    };
+
+    // Browser took over the gesture mid-drag (or the pointer died).
+    // Dropping at the current position would persist an order the user
+    // may not have meant — abort without saving and reload server truth.
+    const onCancel = () => {
+      const didDrag = dragging;
+      cleanup(didDrag);
+      if (didDrag) {
+        Home._reloadPending = false;
+        Home.load();
+      } else {
+        runPendingReload();
+      }
+    };
+
+    card.addEventListener('pointermove', onMove);
+    card.addEventListener('pointerup', onUp);
+    card.addEventListener('pointercancel', onCancel);
+  },
+
+  // Persist the order currently shown in the DOM. On success the DOM
+  // is already correct — no reload needed, the server now agrees. On
+  // failure, alert + full Home.load() to restore server truth (same
+  // optimistic-then-revert shape as handleStarClick).
+  async _saveStarredOrder(listEl) {
+    const order = [...listEl.querySelectorAll('.app-card[data-starred="true"]')]
+      .map((c) => c.dataset.slug);
+    try {
+      const res = await fetch('/api/favorites/order', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+    } catch (err) {
+      alert(`Reorder failed: ${err.message}`);
+      await Home.load();
     }
   },
 
