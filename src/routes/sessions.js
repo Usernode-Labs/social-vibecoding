@@ -2161,7 +2161,7 @@ function buildHeadlessFollowUpMessage(src) {
     case 'spec_code':
       return `${intro}\n\nWhere things stand: the auto session drafted a spec (open the spec viewer to review it) AND implemented it — the change is already committed and pushed on this branch. No PR or staging preview exists yet. Review both the spec and the change summary above, iterate if you want, and when you're ready just tell me to open the PR / build the staging preview.`;
     default:
-      return `${intro}\n\nWhere things stand: the auto session ran into something that needs a human decision — see its last message above (the same questions were also posted as a comment on the GitHub issue). Answer here and we'll continue from where it left off.`;
+      return `${intro}\n\nWhere things stand: the auto session ran into something that needs a human decision — see its last message above (the same questions were also posted as a comment on the GitHub issue). Answer here and we'll continue from where it left off.${(src.spec_md || '').trim() ? ' The auto session also drafted a spec — open the spec viewer to review it alongside the questions.' : ''}`;
   }
 }
 
@@ -2172,8 +2172,11 @@ function buildHeadlessAddendum(issueNumber) {
   return `
 
 HEADLESS AUTO-SESSION MODE: you are running unattended on GitHub issue #${issueNumber} — there is NO human in this chat and there will be NO follow-up turn. Decide ONE action for this single turn, in this order:
-1. FIRST apply the CLARITY GATE (above) to the issue, including any ISSUE COMMENTS included in the message — treat the reporter's comments as their input, and comments marked as earlier auto-solve questions as your own previous turn (answers to them may make the issue clear now). If the issue FAILS the gate: reply in plain text containing ONLY the numbered clarifying questions with your suggested defaults, and call no tool. Your reply will be posted verbatim as a comment on GitHub issue #${issueNumber} for the reporter to answer — write it for them (no greetings, no meta-talk about sessions or tools).
-2. dispatch_scout when the issue passes the gate and needs investigation or design: produce a grounded spec a human will review later. Prefer this for anything non-trivial. After the scout returns you will get ONE follow-up decision turn where you may implement the spec immediately if it turned out straightforward — so scouting first never costs you the chance to ship.
+1. FIRST apply the CLARITY GATE (above) to the issue, including any ISSUE COMMENTS included in the message — treat the reporter's comments as their input, and comments marked as earlier auto-solve questions as your own previous turn (answers to them may make the issue clear now). If the issue FAILS the gate, classify each blocking question you would ask:
+   - REPO-ANSWERABLE: what exists in the app, where the relevant code lives, how a feature currently behaves, whether the report matches reality. Asking the reporter is a last resort — investigation comes first: these questions go to dispatch_scout (step 2), NOT to the reporter. In the scout prompt, enumerate the unresolved points and instruct it to settle them from the code, choose stated defaults where reasonable, and keep only the genuinely human-only blockers in a "Questions" section.
+   - HUMAN-ONLY: what the reporter wants, product/priority choices, reproduction details only the reporter has — things no codebase can answer.
+   ONLY if EVERY blocking question is human-only: reply in plain text containing ONLY the numbered clarifying questions with your suggested defaults, and call no tool. Your reply will be posted verbatim as a comment on GitHub issue #${issueNumber} for the reporter to answer — write it for them (no greetings, no meta-talk about sessions or tools). Otherwise dispatch_scout per step 2.
+2. dispatch_scout when the issue passes the gate and needs investigation or design — OR when the gate failed for repo-answerable reasons (scouting is also the way to resolve ambiguity): produce a grounded spec a human will review later. Prefer this for anything non-trivial. After the scout returns you will get ONE follow-up decision turn where you may implement the spec immediately if it turned out straightforward — so scouting first never costs you the chance to ship; any questions surviving the scout's investigation will be posted to the issue from that decision turn, so failing the gate is not a reason to avoid scouting.
 3. dispatch_claude_code ONLY for small, unambiguous fixes the issue text fully specifies. The agent may commit and push its branch, but NO pull request and NO staging preview will be created in this mode — a human will start a session from this auto session later and trigger those.
 Never promise future work and never ask for confirmation — state what you did and what the human reviewer should do next.`;
 }
@@ -2187,7 +2190,9 @@ Never promise future work and never ask for confirmation — state what you did 
 function buildHeadlessDecisionAddendum(issueNumber) {
   return `
 
-DECISION TURN: the scout's spec is now in your system prompt (CURRENT SPEC DOC). You get exactly ONE more action. Dispatch dispatch_claude_code to implement the spec NOW only if ALL of these hold:
+DECISION TURN: the scout's spec is now in your system prompt (CURRENT SPEC DOC). You get exactly ONE more action.
+If the spec contains a Questions section with decisions a human must make: do NOT dispatch. Reply in plain text containing ONLY those numbered questions with your suggested defaults, written for the issue reporter — your reply will be posted verbatim as a comment on GitHub issue #${issueNumber} (no greetings, no meta-talk about sessions or specs).
+Otherwise, dispatch dispatch_claude_code to implement the spec NOW only if ALL of these hold:
 - The spec has no "Questions" section, no open decisions, and no choices deferred to a human.
 - It describes a small, bounded change with concrete file paths — roughly a handful of files, no broad refactor.
 - No database schema migrations, no destructive or irreversible operations, no changes to auth, billing, permissions, or security-sensitive code.
@@ -2241,6 +2246,16 @@ function buildHeadlessSeed(issueNumber, issue, comments, botUsername) {
 // questions for the reporter. Exported for tests.
 function shouldPostHeadlessQuestionComment({ outcome, dispatchedTool, mayorText }) {
   return outcome === 'question' && !dispatchedTool && !!(mayorText || '').trim();
+}
+
+// #178: does the spec still carry a blocking "Questions" section after the
+// scout's investigation? Keys on ATX headings whose text begins with
+// "Question(s)" / "Open question(s)" — the exact section name the base
+// prompt and scout prompt mandate for blockers. A false positive merely
+// downgrades a buildable spec to a posted-questions round-trip; a false
+// negative reproduces the old park-for-human behavior. Exported for tests.
+function specHasBlockingQuestions(specMd) {
+  return /^#{1,6}\s*(?:open\s+)?questions?\b/im.test(specMd || '');
 }
 
 const HEADLESS_QUESTION_FOOTER = '\n\n— Posted by this issue\'s auto-solve session. '
@@ -2337,6 +2352,11 @@ async function runHeadlessSession({
   };
 
   let outcome = 'question';
+  // #178: the reporter-facing question text to post on the issue at the
+  // terminal write, set by whichever path produced it — the phase-1
+  // pure-text turn, or the decision turn when the scout's spec still
+  // carries a blocking Questions section. Empty means nothing to post.
+  let questionTextToPost = '';
   try {
     // Seed turn: same shape as the issue panel's "Create PR" seeding, minus
     // the open-a-PR instruction (headless mode never opens one), plus the
@@ -2416,6 +2436,9 @@ async function runHeadlessSession({
       // Pure text turn — the Mayor asked a question (or answered directly).
       // That IS the outcome; a human picks it up from a cloned session.
       outcome = 'question';
+      if (shouldPostHeadlessQuestionComment({ outcome, dispatchedTool: activeToolCall, mayorText: mayorText1 })) {
+        questionTextToPost = mayorText1;
+      }
     } else {
       const toolPromptArg = typeof activeToolCall.input?.prompt === 'string' && activeToolCall.input.prompt.trim()
         ? activeToolCall.input.prompt.trim()
@@ -2436,7 +2459,7 @@ async function runHeadlessSession({
       // up from its journal instead of failing the run.
       await setHeadlessStep(pool, session.id, 'cc_running');
       const toolResult = toolKind === 'scout'
-        ? await runScoutTool(toolArgs)
+        ? await runScoutTool({ ...toolArgs, headless: true })
         : await runClaudeCodeTool({ ...toolArgs, headless: true });
 
       if (toolResult.isError) {
@@ -2448,7 +2471,11 @@ async function runHeadlessSession({
       // during the phase-2 Mayor call can finalize with the right state.
       // (#170: a restart mid-decision-turn deliberately lands here too —
       // the 'wrapping' resume re-issues a tool-less wrap-up and finalizes
-      // as 'spec', degrading to "stop for human review".)
+      // as 'spec', degrading to "stop for human review". #178: that same
+      // degrade covers the questions-after-scout case, except that the
+      // resume finalization flips to 'question' when the spec carries a
+      // blocking Questions section — without posting a comment, since the
+      // decision text died with the old process.)
       await setHeadlessStep(pool, session.id, 'wrapping', outcome);
 
       // Tool results fed back to the Mayor for phase 2.
@@ -2490,6 +2517,11 @@ async function runHeadlessSession({
         // ONE headless build if the spec is straightforward, else reply in
         // plain text (identical to the old behaviour). Only DISPATCH_TOOL
         // is exposed — there is structurally no path to a second scout.
+        // #178: a spec that still carries a blocking Questions section
+        // after the scout's investigation routes to the reporter instead —
+        // the decision text becomes a posted issue comment and the run
+        // finalizes as 'question' so Auto-solve can be re-run with answers.
+        const specHasQuestions = specHasBlockingQuestions(currentSpec);
         const mayor2 = await llm.streamChat({
           messages: phase2Messages,
           systemPrompt: wrapPrompt + buildHeadlessDecisionAddendum(issueNumber),
@@ -2503,11 +2535,21 @@ async function runHeadlessSession({
         const costCents2 = llm.estimateCostCents(mayor2.usage, selectedModel);
 
         if (!mayor2.toolUses.length) {
-          // Text only — today's behaviour: the decision text IS the
-          // wrap-up message; outcome stays 'spec'.
+          // Text only. Without open Questions the decision text IS the
+          // wrap-up message and outcome stays 'spec'. With a Questions
+          // section (#178) the text is the reporter-facing questions:
+          // finalize as 'question' (re-run stays unblocked) and post it.
+          // Blank text posts nothing — the spec itself carries the
+          // questions for the human reviewer.
+          if (specHasQuestions) {
+            outcome = 'question';
+            questionTextToPost = mayorText2.trim();
+          }
           const finalText = mayorText2.trim()
             ? mayorText2
-            : '_Spec drafted — review it in the spec viewer after starting a session from this auto session._';
+            : (specHasQuestions
+              ? '_The spec has open questions — review the Questions section in the spec viewer after starting a session from this auto session._'
+              : '_Spec drafted — review it in the spec viewer after starting a session from this auto session._');
           send('mayor_reasoning', { text: finalText });
           await pool.query(
             `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
@@ -2529,7 +2571,20 @@ async function runHeadlessSession({
           await debitMayorUsage(mayor2.usage);
 
           const decisionToolResults = [];
-          if (buildCall) {
+          if (buildCall && specHasQuestions) {
+            // #178 hard rail: the decision addendum forbids dispatching
+            // over an open Questions section, but enforcement lives here —
+            // the build never runs (no budget check, no dispatch) and the
+            // phase-3 wrap-up writes the reporter-facing questions instead.
+            outcome = 'question';
+            await setHeadlessStep(pool, session.id, 'wrapping', outcome);
+            decisionToolResults.push({
+              type: 'tool_result',
+              tool_use_id: buildCall.id,
+              content: 'Rejected — the spec has an open Questions section; reply with ONLY the numbered questions for the issue reporter instead.',
+              is_error: true,
+            });
+          } else if (buildCall) {
             // Budget re-check before the second dispatch: the scout already
             // spent real money this run. BYOK users skip this, matching the
             // route's gate.
@@ -2593,10 +2648,16 @@ async function runHeadlessSession({
             apiKey: userApiKey,
           });
           let mayorText3 = mayor3.text;
+          // #178: on the rejected-build path the wrap-up text IS the
+          // reporter-facing questions; blank text posts nothing (the spec
+          // carries the questions for the human reviewer).
+          if (outcome === 'question') questionTextToPost = mayorText3.trim();
           if (!mayorText3.trim()) {
             mayorText3 = outcome === 'spec_code'
               ? '_Spec drafted and change committed — start a session from this auto session to open the PR._'
-              : '_Spec drafted — the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
+              : outcome === 'question'
+                ? '_The spec has open questions — review the Questions section in the spec viewer after starting a session from this auto session._'
+                : '_Spec drafted — the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
           }
           send('mayor_reasoning', { text: mayorText3 });
           const costCents3 = llm.estimateCostCents(mayor3.usage, selectedModel);
@@ -2642,15 +2703,16 @@ async function runHeadlessSession({
       [outcome, session.id]
     );
     send('headless_update', { status: 'ready', outcome, issueNumber, appSlug: session.app_slug });
-    // #150: a pure-text phase-1 turn means the Mayor wrote clarifying
-    // questions — post them on the GitHub issue so the reporter sees them
-    // without entering the platform. Deliberately AFTER the terminal
-    // status write: the boot resume only re-drives 'generating' rows, so
-    // double-posting on restart is impossible; a crash between the UPDATE
-    // and the post degrades to no comment (today's behavior).
-    if (shouldPostHeadlessQuestionComment({ outcome, dispatchedTool: activeToolCall, mayorText: mayorText1 })) {
+    // #150/#178: post the reporter-facing questions on the GitHub issue so
+    // the reporter sees them without entering the platform — written by a
+    // pure-text phase-1 turn, or by the decision turn when the scout's spec
+    // still carried a blocking Questions section. Deliberately AFTER the
+    // terminal status write: the boot resume only re-drives 'generating'
+    // rows, so double-posting on restart is impossible; a crash between the
+    // UPDATE and the post degrades to no comment (today's behavior).
+    if (questionTextToPost) {
       const posted = await postHeadlessQuestionComment({
-        repoOwner, repoName, issueNumber, questionText: mayorText1,
+        repoOwner, repoName, issueNumber, questionText: questionTextToPost,
       });
       if (posted) await sendStatus(`Posted clarifying questions to issue #${issueNumber}`);
     }
@@ -2876,7 +2938,10 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
           [session.id, `Scout drafted a ${lineCount}-line spec from the codebase.`,
             JSON.stringify({ specLines: lineCount, scoutOutput: ccText, specVersion })]
         ).catch(() => {});
-        outcome = 'spec';
+        // #178: blocking Questions in the recovered spec finalize as
+        // 'question' so the answer-and-re-run loop survives the restart
+        // (no comment is posted — there is no decision turn on resume).
+        outcome = specHasBlockingQuestions(ccText) ? 'question' : 'spec';
         dispatchSummary = `The scout investigated the repo and drafted a ${lineCount}-line markdown spec. It now lives in the session's spec doc.`;
       } else {
         outcome = 'question';
@@ -2911,6 +2976,14 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
       }
     }
     await setHeadlessStep(pool, session.id, 'wrapping', outcome);
+  }
+
+  // #178: a 'wrapping' checkpoint written before/during the decision turn
+  // carries outcome 'spec' even when the spec still has a blocking
+  // Questions section — flip it so re-running Auto-solve stays unblocked
+  // (no comment is posted; the decision text died with the old process).
+  if (outcome === 'spec' && specHasBlockingQuestions(session.spec_md)) {
+    outcome = 'question';
   }
 
   // step === 'wrapping' (directly, or fallen through from cc_running):
@@ -3208,6 +3281,7 @@ async function runScoutTool({
   send, sendStatus,
   stopHandle,
   userApiKey,
+  headless = false,
 }) {
   activeWorkers.add(session.id);
   const modelLabel = prettyModelLabel(selectedModel);
@@ -3259,7 +3333,9 @@ Do NOT pad the spec with open questions. Only include a "Questions" section for 
 
 Your final assistant message must be ONLY the markdown spec — no preamble, no "I'll investigate...", no "Here's the spec:". The host captures that final message verbatim and stores it as the session's spec doc.
 
-CRITICAL: Output the spec as RAW markdown. Do NOT wrap your whole response in a code fence — no leading \`\`\`markdown line and no trailing \`\`\`. A whole-document fence makes the spec render as one big code block instead of formatted markdown. Fences are only for actual code/quoted snippets INSIDE the spec.`;
+CRITICAL: Output the spec as RAW markdown. Do NOT wrap your whole response in a code fence — no leading \`\`\`markdown line and no trailing \`\`\`. A whole-document fence makes the spec render as one big code block instead of formatted markdown. Fences are only for actual code/quoted snippets INSIDE the spec.${headless ? `
+
+HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue — no human is available to answer questions during the run. If the Mayor's instructions list ambiguities or unresolved points, resolve them from the code BEFORE considering them open: read the relevant files, state what the code shows, and choose a sensible default where one exists. Any "Questions" section you do write will be relayed verbatim to the issue reporter as a GitHub comment, so it must contain ONLY questions a codebase cannot answer (product intent, preferences, reproduction details), each self-contained, numbered, and carrying your suggested default.` : ''}`;
 
   // Ensure the long-lived worker is warm before exec'ing run-cc.sh inside
   // it. Cold-start cost (clone + checkout + sleep wrapper) is paid here on
@@ -4246,4 +4322,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDoneIfArmed, notifyAutoSolveDone, buildHeadlessSeed, shouldPostHeadlessQuestionComment };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDoneIfArmed, notifyAutoSolveDone, buildHeadlessSeed, shouldPostHeadlessQuestionComment, specHasBlockingQuestions };
