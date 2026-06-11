@@ -300,10 +300,15 @@ const Home = {
     // (it implies collab-private); collab-private alone reads as
     // "invite-only build" since anyone can still see/use the app.
     const visChipCls = 'inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-violet-500/10 text-violet-500 dark:text-violet-400';
+    // Inline currentColor SVGs (Heroicons v1 outline) instead of emoji
+    // so the glyphs tint violet with the chip in both themes.
+    const visChipIcon = (d) => `<svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="${d}"/></svg>`;
+    const lockIcon = visChipIcon('M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z');
+    const mailIcon = visChipIcon('M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z');
     const visBadgeHtml = app.view_visibility === 'private'
-      ? `<p><span class="${visChipCls}" title="Only collaborators can see and use this app">🔒 Private</span></p>`
+      ? `<p><span class="${visChipCls}" title="Only collaborators can see and use this app">${lockIcon} Private</span></p>`
       : (app.collab_visibility === 'private'
-        ? `<p><span class="${visChipCls}" title="Anyone can use this app; only invited collaborators can build it">✉️ Invite-only build</span></p>`
+        ? `<p><span class="${visChipCls}" title="Anyone can use this app; only invited collaborators can build it">${mailIcon} Invite-only build</span></p>`
         : '');
 
     const statRows = [];
