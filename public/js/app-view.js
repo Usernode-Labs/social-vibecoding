@@ -980,76 +980,14 @@ const AppView = {
       // Edit section now (see renderDevChatTab) — keeping the group
       // chat panel focused on visible PRs / issues / merged work.
 
+      // Merged (closed) PRs — cached on AppView like the Open Issues list so
+      // the show-more toggle re-renders in place without a panel reload
+      // (#149). Collapse back to the first page on every full reload.
+      AppView._merged = merged;
+      AppView._mergedCtx = { majority, activeUsers };
+      AppView._mergedExpanded = false;
       if (merged.length) {
-        bodyHtml += `<div><div class="text-xs text-zinc-500 mb-1 font-medium">Merged <span class="text-zinc-600 font-normal">(undo opens a revert PR — needs ${majority}/${activeUsers} votes to land)</span></div><div class="divide-y divide-zinc-200 dark:divide-zinc-800 sm:divide-y-0 border-y border-zinc-200 dark:border-zinc-800 sm:border-y-0">`;
-        for (const pr of merged) {
-          const date = new Date(pr.created_at).toLocaleDateString();
-          const mergedLabel = pr.pr_title
-            ? `${escapeHtml(pr.pr_title)} <span class="text-zinc-500">· ${escapeHtml(pr.username)}</span>`
-            : `by ${escapeHtml(pr.username)}`;
-          // #15: merged PR title is also tap-to-quote into group chat.
-          const mergedQuoteTitle = pr.pr_title || `PR #${pr.pr_number || pr.id}`;
-          const mergedQuoteAttrs = `class="text-xs text-zinc-400 flex-1 min-w-0 truncate gc-quote-pr" `
-            + `data-session-id="${pr.id}" data-pr-number="${pr.pr_number || pr.id}" `
-            + `data-pr-title="${escapeHtml(mergedQuoteTitle)}" data-pr-author="${escapeHtml(pr.username)}" `
-            + `data-pr-url="${pr.pr_url || ''}" title="Tap to reply in chat"`;
-          // Merged PRs are still eligible for kudos (promoted + merging
-          // + merged) — that's intentional. People often come back to
-          // a recently-merged PR and want to thank the author.
-          const kudosBtn = window.Kudos
-            ? Kudos.renderButton(pr, { compact: true })
-            : '';
-
-          // #16: undo is a single direct action — clicking Undo opens a
-          // revert PR (like proposing a change) which then needs the
-          // normal merge vote to land. The button only renders on
-          // ordinary merged PRs that don't already have a revert in
-          // flight or merged:
-          //   - revert_of_session_id != null on this row means this
-          //     row IS itself a revert PR; undoing a revert would
-          //     create an infinite undo-undo loop.
-          //   - revert_session_id (from the LEFT JOIN) means a revert
-          //     PR already exists pointing at this row — show its
-          //     status as a label instead.
-          let undoUI = '';
-          if (pr.revert_of_session_id) {
-            // This row is a revert PR. (Shouldn't appear in the
-            // merged list often — revert PRs are short-lived in
-            // 'promoted' before they themselves merge — but show a
-            // breadcrumb if they do.)
-            undoUI = `<span class="text-xs text-zinc-500" title="This PR is itself a revert">↩ revert</span>`;
-          } else if (pr.revert_session_id) {
-            const rs = pr.revert_status;
-            const rpr = pr.revert_pr_number || pr.revert_session_id;
-            const label = rs === 'merged'
-              ? `Undone by PR#${rpr}`
-              : rs === 'merging'
-                ? `Revert merging (PR#${rpr})`
-                : `Revert in vote · PR#${rpr}`;
-            const linkHref = pr.revert_pr_url || '#';
-            undoUI = `<a href="${linkHref}" target="_blank" class="text-xs text-amber-500 hover:text-amber-400 font-medium">${label}</a>`;
-          } else {
-            undoUI = `
-              <button class="gc-vote-btn gc-vote-btn-undo"
-                title="Open a revert PR for this merge. It still needs a merge vote to land."
-                onclick="AppView.undoPr(${pr.id})">Undo</button>`;
-          }
-
-          bodyHtml += `
-            <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
-              <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-emerald-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
-              <span ${mergedQuoteAttrs}>${mergedLabel}</span>
-              ${AppView.closesPillHtml(pr)}
-              <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
-                ${AppView.voteCountPill(pr, majority)}
-                ${AppView.voteButtonsHtml(pr, { collapseVoted: true })}
-                <span class="text-xs text-zinc-600">${date}</span>
-                ${undoUI}
-                ${kudosBtn}
-              </div>
-            </div>`;
-        }
-        bodyHtml += '</div></div>';
+        bodyHtml += `<div id="gc-merged">${AppView._renderMergedInner()}</div>`;
       } else {
         // (#2) Empty vote panel → teach the Dev-Chat ↔ voting connection,
         // the single most important link in the loop. Shown whenever no
@@ -1418,6 +1356,111 @@ const AppView = {
   showMoreIssues() {
     AppView._ghIssuesShown = (AppView._ghIssuesShown || 5) + 5;
     AppView._rerenderOpenIssues();
+  },
+
+  // ---- Merged (closed) PRs section ----------------------------------------
+
+  // #149: only the first 3 closed PRs render by default; the rest sit behind
+  // a show-more toggle, mirroring the Open Issues pattern above.
+  _mergedShownDefault: 3,
+
+  // Build the inner HTML for the Merged section from the cached
+  // AppView._merged list. Rendered once inside loadVotePanel's bodyHtml and
+  // re-rendered in place (into #gc-merged) by toggleMergedPrs so the
+  // show-more/show-less toggle needs no refetch.
+  _renderMergedInner() {
+    const merged = AppView._merged || [];
+    const { majority, activeUsers } = AppView._mergedCtx || { majority: 1, activeUsers: 1 };
+    const shown = AppView._mergedExpanded
+      ? merged.length
+      : Math.min(AppView._mergedShownDefault, merged.length);
+
+    let html = `<div class="text-xs text-zinc-500 mb-1 font-medium">Merged <span class="text-zinc-600 font-normal">(undo opens a revert PR — needs ${majority}/${activeUsers} votes to land)</span></div><div class="divide-y divide-zinc-200 dark:divide-zinc-800 sm:divide-y-0 border-y border-zinc-200 dark:border-zinc-800 sm:border-y-0">`;
+    for (let i = 0; i < shown; i++) {
+      const pr = merged[i];
+      const date = new Date(pr.created_at).toLocaleDateString();
+      const mergedLabel = pr.pr_title
+        ? `${escapeHtml(pr.pr_title)} <span class="text-zinc-500">· ${escapeHtml(pr.username)}</span>`
+        : `by ${escapeHtml(pr.username)}`;
+      // #15: merged PR title is also tap-to-quote into group chat.
+      const mergedQuoteTitle = pr.pr_title || `PR #${pr.pr_number || pr.id}`;
+      const mergedQuoteAttrs = `class="text-xs text-zinc-400 flex-1 min-w-0 truncate gc-quote-pr" `
+        + `data-session-id="${pr.id}" data-pr-number="${pr.pr_number || pr.id}" `
+        + `data-pr-title="${escapeHtml(mergedQuoteTitle)}" data-pr-author="${escapeHtml(pr.username)}" `
+        + `data-pr-url="${pr.pr_url || ''}" title="Tap to reply in chat"`;
+      // Merged PRs are still eligible for kudos (promoted + merging
+      // + merged) — that's intentional. People often come back to
+      // a recently-merged PR and want to thank the author.
+      const kudosBtn = window.Kudos
+        ? Kudos.renderButton(pr, { compact: true })
+        : '';
+
+      // #16: undo is a single direct action — clicking Undo opens a
+      // revert PR (like proposing a change) which then needs the
+      // normal merge vote to land. The button only renders on
+      // ordinary merged PRs that don't already have a revert in
+      // flight or merged:
+      //   - revert_of_session_id != null on this row means this
+      //     row IS itself a revert PR; undoing a revert would
+      //     create an infinite undo-undo loop.
+      //   - revert_session_id (from the LEFT JOIN) means a revert
+      //     PR already exists pointing at this row — show its
+      //     status as a label instead.
+      let undoUI = '';
+      if (pr.revert_of_session_id) {
+        // This row is a revert PR. (Shouldn't appear in the
+        // merged list often — revert PRs are short-lived in
+        // 'promoted' before they themselves merge — but show a
+        // breadcrumb if they do.)
+        undoUI = `<span class="text-xs text-zinc-500" title="This PR is itself a revert">↩ revert</span>`;
+      } else if (pr.revert_session_id) {
+        const rs = pr.revert_status;
+        const rpr = pr.revert_pr_number || pr.revert_session_id;
+        const label = rs === 'merged'
+          ? `Undone by PR#${rpr}`
+          : rs === 'merging'
+            ? `Revert merging (PR#${rpr})`
+            : `Revert in vote · PR#${rpr}`;
+        const linkHref = pr.revert_pr_url || '#';
+        undoUI = `<a href="${linkHref}" target="_blank" class="text-xs text-amber-500 hover:text-amber-400 font-medium">${label}</a>`;
+      } else {
+        undoUI = `
+          <button class="gc-vote-btn gc-vote-btn-undo"
+            title="Open a revert PR for this merge. It still needs a merge vote to land."
+            onclick="AppView.undoPr(${pr.id})">Undo</button>`;
+      }
+
+      html += `
+        <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
+          <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-emerald-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
+          <span ${mergedQuoteAttrs}>${mergedLabel}</span>
+          ${AppView.closesPillHtml(pr)}
+          <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
+            ${AppView.voteCountPill(pr, majority)}
+            ${AppView.voteButtonsHtml(pr, { collapseVoted: true })}
+            <span class="text-xs text-zinc-600">${date}</span>
+            ${undoUI}
+            ${kudosBtn}
+          </div>
+        </div>`;
+    }
+    html += '</div>';
+
+    // Show-more / show-less footer, same styling as the Open Issues pager.
+    if (merged.length > AppView._mergedShownDefault) {
+      const label = AppView._mergedExpanded
+        ? 'Show less'
+        : `Show ${merged.length - shown} more`;
+      html += `<div class="mt-1"><button class="gc-vote-btn" onclick="AppView.toggleMergedPrs()">${label}</button></div>`;
+    }
+    return html;
+  },
+
+  // Expand / collapse the Merged section in place (no panel reload).
+  toggleMergedPrs() {
+    AppView._mergedExpanded = !AppView._mergedExpanded;
+    const el = document.getElementById('gc-merged');
+    if (el) el.innerHTML = AppView._renderMergedInner();
   },
 
   // "Give kudos" — pledge a bounty on a GitHub issue. Debits the shared
