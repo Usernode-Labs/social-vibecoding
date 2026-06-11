@@ -569,7 +569,14 @@ const Home = {
     const beginDrag = () => {
       dragging = true;
       Home._dragActive = true;
-      try { card.setPointerCapture(pointerId); } catch {}
+      // Capture on the grid container, NOT the card: the live reflow
+      // below removes + reinserts the card, and Chromium releases
+      // pointer capture the moment the captured element leaves the
+      // DOM — capture on the card dies on the first reflow and every
+      // subsequent pointer event lands on whatever card is under the
+      // cursor instead. listEl never moves during a drag (Home.load()
+      // is deferred via _dragActive), so capture on it survives.
+      try { listEl.setPointerCapture(pointerId); } catch {}
       card.classList.add('opacity-60', 'ring-2', 'ring-violet-500', 'scale-[1.02]', 'cursor-grabbing');
       // touch-pan-y let the page scroll while the gesture was still
       // ambiguous; now that it's a drag, claim the pointer entirely so
@@ -586,10 +593,10 @@ const Home = {
 
     const cleanup = (didDrag) => {
       clearTimeout(longPressTimer);
-      card.removeEventListener('pointermove', onMove);
-      card.removeEventListener('pointerup', onUp);
-      card.removeEventListener('pointercancel', onCancel);
-      try { card.releasePointerCapture(pointerId); } catch {}
+      listEl.removeEventListener('pointermove', onMove);
+      listEl.removeEventListener('pointerup', onUp);
+      listEl.removeEventListener('pointercancel', onCancel);
+      try { listEl.releasePointerCapture(pointerId); } catch {}
       card.classList.remove('opacity-60', 'ring-2', 'ring-violet-500', 'scale-[1.02]', 'cursor-grabbing');
       card.style.touchAction = '';
       document.body.style.userSelect = '';
@@ -611,6 +618,7 @@ const Home = {
     };
 
     const onMove = (ev) => {
+      if (ev.pointerId !== pointerId) return;
       if (!dragging) {
         const dist = Math.hypot(ev.clientX - startX, ev.clientY - startY);
         if (isTouch) {
@@ -641,10 +649,18 @@ const Home = {
       const before = multiCol
         ? ev.clientX < rect.left + rect.width / 2
         : ev.clientY < rect.top + rect.height / 2;
-      if (before) over.before(card); else over.after(card);
+      // Skip no-op reinserts: before()/after() always remove + re-add
+      // the node even when it already sits in the target slot, which
+      // churns layout on every pointermove for nothing.
+      if (before) {
+        if (card.nextElementSibling !== over) over.before(card);
+      } else {
+        if (over.nextElementSibling !== card) over.after(card);
+      }
     };
 
-    const onUp = async () => {
+    const onUp = async (ev) => {
+      if (ev.pointerId !== pointerId) return;
       const didDrag = dragging;
       cleanup(didDrag);
       if (didDrag) await Home._saveStarredOrder(listEl);
@@ -654,7 +670,8 @@ const Home = {
     // Browser took over the gesture mid-drag (or the pointer died).
     // Dropping at the current position would persist an order the user
     // may not have meant — abort without saving and reload server truth.
-    const onCancel = () => {
+    const onCancel = (ev) => {
+      if (ev.pointerId !== pointerId) return;
       const didDrag = dragging;
       cleanup(didDrag);
       if (didDrag) {
@@ -665,9 +682,16 @@ const Home = {
       }
     };
 
-    card.addEventListener('pointermove', onMove);
-    card.addEventListener('pointerup', onUp);
-    card.addEventListener('pointercancel', onCancel);
+    // Listen on the grid container rather than the card: before the
+    // drag starts, events on the card bubble up here; once listEl
+    // takes pointer capture in beginDrag, events retarget here
+    // directly — either way these handlers keep firing across card
+    // reflows (a card-level listener would go silent as soon as the
+    // pointer left the card, since the card loses capture when the
+    // reflow reinserts it).
+    listEl.addEventListener('pointermove', onMove);
+    listEl.addEventListener('pointerup', onUp);
+    listEl.addEventListener('pointercancel', onCancel);
   },
 
   // Persist the order currently shown in the DOM. On success the DOM
