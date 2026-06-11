@@ -370,11 +370,14 @@ function sessionRoutes(config) {
 
       // One auto session per issue at a time: 'generating' means a run is
       // in flight; 'ready' means the start-from button should be used
-      // instead. 'failed' rows don't block a retry.
+      // instead. 'failed' rows don't block a retry, and neither does a
+      // 'ready' run that ended with outcome 'question' (#150) — the whole
+      // point is to answer on the issue and press Auto-solve again.
       const { rows: existingRows } = await pool.query(
         `SELECT id, headless_status FROM chat_sessions
          WHERE app_id = $1 AND is_headless = TRUE AND headless_issue_number = $2
            AND headless_status IN ('generating', 'ready')
+           AND NOT (headless_status = 'ready' AND headless_outcome = 'question')
          ORDER BY created_at DESC LIMIT 1`,
         [app.id, issueNumber]
       );
@@ -413,8 +416,15 @@ function sessionRoutes(config) {
       const selectedModel = models.resolve(req.body && req.body.model);
 
       // Full issue text for the seed turn (cache-first; degrades to a
-      // number-only seed when GitHub can't be reached right now).
+      // number-only seed when GitHub can't be reached right now). The
+      // issue's comments ride along (#150) so answers to earlier
+      // auto-solve questions are visible to this run; a failed comments
+      // fetch degrades to title + body. The bot username lets the seed
+      // tag the bot's own earlier question comments.
       const { issue } = await github.fetchPublicIssue(repoOwner, repoName, issueNumber);
+      const { comments } = await github.fetchIssueComments(repoOwner, repoName, issueNumber);
+      let botUsername = null;
+      try { botUsername = await github.getBotUsername(); } catch {}
 
       const branchName = `dev/auto-issue-${issueNumber}-${Date.now()}`;
       try {
@@ -454,7 +464,7 @@ function sessionRoutes(config) {
         pool, config, session,
         user: { id: req.user.id, username: req.user.username },
         selectedModel, repoOwner, repoName, userApiKey,
-        issueNumber, issue,
+        issueNumber, issue, comments, botUsername,
       }).catch((err) => {
         log.error('sessions', 'Headless session runner crashed', { sessionId: session.id, err: err.message, stack: err.stack });
       });
@@ -2127,7 +2137,7 @@ function buildHeadlessFollowUpMessage(src) {
     case 'code':
       return `${intro}\n\nWhere things stand: the code change is already committed and pushed on this branch — no PR or staging preview exists yet. Review the summary above, iterate if you want, and when you're ready just tell me to open the PR / build the staging preview.`;
     default:
-      return `${intro}\n\nWhere things stand: the auto session ran into something that needs a human decision — see its last message above. Answer here and we'll continue from where it left off.`;
+      return `${intro}\n\nWhere things stand: the auto session ran into something that needs a human decision — see its last message above (the same questions were also posted as a comment on the GitHub issue). Answer here and we'll continue from where it left off.`;
   }
 }
 
@@ -2137,11 +2147,76 @@ function buildHeadlessFollowUpMessage(src) {
 function buildHeadlessAddendum(issueNumber) {
   return `
 
-HEADLESS AUTO-SESSION MODE: you are running unattended on GitHub issue #${issueNumber} — there is NO human in this chat and there will be NO follow-up turn. Decide ONE action for this single turn:
-- dispatch_scout when the issue needs investigation or design: produce a grounded spec a human will review later. Prefer this for anything non-trivial.
-- dispatch_claude_code ONLY for small, unambiguous fixes the issue text fully specifies. The agent may commit and push its branch, but NO pull request and NO staging preview will be created in this mode — a human will start a session from this auto session later and trigger those.
-- If the issue is too unclear to act on at all, reply in plain text with the specific question(s) a human must answer, and call no tool.
+HEADLESS AUTO-SESSION MODE: you are running unattended on GitHub issue #${issueNumber} — there is NO human in this chat and there will be NO follow-up turn. Decide ONE action for this single turn, in this order:
+1. FIRST apply the CLARITY GATE (above) to the issue, including any ISSUE COMMENTS included in the message — treat the reporter's comments as their input, and comments marked as earlier auto-solve questions as your own previous turn (answers to them may make the issue clear now). If the issue FAILS the gate: reply in plain text containing ONLY the numbered clarifying questions with your suggested defaults, and call no tool. Your reply will be posted verbatim as a comment on GitHub issue #${issueNumber} for the reporter to answer — write it for them (no greetings, no meta-talk about sessions or tools).
+2. dispatch_scout when the issue passes the gate and needs investigation or design: produce a grounded spec a human will review later. Prefer this for anything non-trivial.
+3. dispatch_claude_code ONLY for small, unambiguous fixes the issue text fully specifies. The agent may commit and push its branch, but NO pull request and NO staging preview will be created in this mode — a human will start a session from this auto session later and trigger those.
 Never promise future work and never ask for confirmation — state what you did and what the human reviewer should do next.`;
+}
+
+// #150: build the headless run's seed user message from the issue plus
+// its comments, so answers the reporter left as comments are visible to
+// the run. Comments authored by the platform bot are tagged so the Mayor
+// recognizes its own earlier clarifying questions vs. the reporter's
+// answers. Each comment body is truncated and only the most recent
+// HEADLESS_SEED_MAX_COMMENTS are kept (with an omission marker), so a
+// chatty thread can't blow up the model's context. Exported for tests.
+const HEADLESS_SEED_MAX_COMMENTS = 20;
+const HEADLESS_SEED_COMMENT_MAX_CHARS = 2000;
+function buildHeadlessSeed(issueNumber, issue, comments, botUsername) {
+  const title = issue ? issue.title : '';
+  const body = issue && issue.body ? `\n\n${issue.body}` : '';
+  let seed = `Please work on GitHub issue #${issueNumber}: "${title}".${body}`;
+
+  const list = Array.isArray(comments) ? comments : [];
+  if (!list.length) return seed;
+
+  const kept = list.slice(-HEADLESS_SEED_MAX_COMMENTS);
+  const lines = kept.map((c) => {
+    const author = (c.author || 'unknown').toString();
+    // GitHub App actors comment as `<name>[bot]`; tolerate that suffix.
+    const isBot = !!botUsername
+      && author.toLowerCase().replace(/\[bot\]$/, '') === botUsername.toLowerCase();
+    const date = (c.createdAt || '').slice(0, 10);
+    const tag = isBot
+      ? `[bot — earlier auto-solve questions${date ? `, ${date}` : ''}]`
+      : `[${author}${date ? `, ${date}` : ''}]`;
+    let text = (c.body || '').toString();
+    if (text.length > HEADLESS_SEED_COMMENT_MAX_CHARS) {
+      text = `${text.slice(0, HEADLESS_SEED_COMMENT_MAX_CHARS)}… [truncated]`;
+    }
+    return `${tag} ${text}`;
+  });
+  if (list.length > kept.length) lines.unshift('[earlier comments omitted]');
+
+  seed += `\n\nISSUE COMMENTS (oldest first):\n${lines.join('\n\n')}`;
+  return seed;
+}
+
+// #150: gate for posting phase-1 question text back to the GitHub issue.
+// Only a PURE-TEXT phase-1 turn qualifies: the dispatch-error path also
+// ends outcome='question' but its text is an error summary, not
+// questions for the reporter. Exported for tests.
+function shouldPostHeadlessQuestionComment({ outcome, dispatchedTool, mayorText }) {
+  return outcome === 'question' && !dispatchedTool && !!(mayorText || '').trim();
+}
+
+const HEADLESS_QUESTION_FOOTER = '\n\n— Posted by this issue\'s auto-solve session. '
+  + 'Answer in a comment (or edit the issue body), then press **Auto-solve** on the issue again — the next run reads the answers.';
+
+// Best-effort: a failed post must never fail or change the run's outcome
+// (the parked session remains the fallback channel). Returns whether the
+// comment landed so the caller can decide whether to surface a status.
+async function postHeadlessQuestionComment({ repoOwner, repoName, issueNumber, questionText }) {
+  try {
+    await github.createIssueComment(repoOwner, repoName, issueNumber, questionText + HEADLESS_QUESTION_FOOTER);
+    return true;
+  } catch (err) {
+    log.warn('sessions', 'Failed to post clarifying questions to issue (continuing)', {
+      issueNumber, err: err.message,
+    });
+    return false;
+  }
 }
 
 // Persist where the headless loop currently is so a platform restart can
@@ -2178,6 +2253,7 @@ async function setHeadlessStep(pool, sessionId, step, outcome) {
 async function runHeadlessSession({
   pool, config, session, user, selectedModel,
   repoOwner, repoName, userApiKey, issueNumber, issue,
+  comments = [], botUsername = null,
   resume = false,
 }) {
   const { broadcastGlobal } = require('../services/ws');
@@ -2213,10 +2289,10 @@ async function runHeadlessSession({
   let outcome = 'question';
   try {
     // Seed turn: same shape as the issue panel's "Create PR" seeding, minus
-    // the open-a-PR instruction (headless mode never opens one).
-    const title = issue ? issue.title : '';
-    const body = issue && issue.body ? `\n\n${issue.body}` : '';
-    const seed = `Please work on GitHub issue #${issueNumber}: "${title}".${body}`;
+    // the open-a-PR instruction (headless mode never opens one), plus the
+    // issue's comments (#150) so answers to earlier clarifying questions
+    // are visible to this run.
+    const seed = buildHeadlessSeed(issueNumber, issue, comments, botUsername);
     if (!resume) {
       await pool.query(
         `INSERT INTO chat_session_messages (session_id, role, content) VALUES ($1, 'user', $2)`,
@@ -2386,6 +2462,18 @@ async function runHeadlessSession({
       [outcome, session.id]
     );
     send('headless_update', { status: 'ready', outcome, issueNumber, appSlug: session.app_slug });
+    // #150: a pure-text phase-1 turn means the Mayor wrote clarifying
+    // questions — post them on the GitHub issue so the reporter sees them
+    // without entering the platform. Deliberately AFTER the terminal
+    // status write: the boot resume only re-drives 'generating' rows, so
+    // double-posting on restart is impossible; a crash between the UPDATE
+    // and the post degrades to no comment (today's behavior).
+    if (shouldPostHeadlessQuestionComment({ outcome, dispatchedTool: activeToolCall, mayorText: mayorText1 })) {
+      const posted = await postHeadlessQuestionComment({
+        repoOwner, repoName, issueNumber, questionText: mayorText1,
+      });
+      if (posted) await sendStatus(`Posted clarifying questions to issue #${issueNumber}`);
+    }
     // #161: always notify the user who started the run (no arming —
     // kicking off an auto-solve opts you into its completion ping).
     await notifyAutoSolveDone(pool, {
@@ -2408,7 +2496,9 @@ async function runHeadlessSession({
       userId: user.id, appId: session.app_id, sessionId: session.id, detail: 'failed',
     });
   } finally {
-    setTimeout(() => sessionBus.clearSession(session.id), 30000);
+    // unref: a fire-and-forget cleanup timer must not hold the process
+    // open (it also kept the node:test runner alive for the full delay).
+    setTimeout(() => sessionBus.clearSession(session.id), 30000).unref();
   }
 }
 
@@ -2507,12 +2597,16 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
   if (step === 'planning') {
     // Nothing was dispatched yet — re-issue the whole Mayor turn. The
     // seed user message already exists (resume: true skips re-inserting);
-    // re-fetch the issue for the in-memory seed string the dispatch
-    // helpers receive.
+    // re-fetch the issue (+ its comments, #150) for the in-memory seed
+    // string the dispatch helpers receive.
     const { issue } = await github.fetchPublicIssue(repoOwner, repoName, issueNumber);
+    const { comments } = await github.fetchIssueComments(repoOwner, repoName, issueNumber);
+    let botUsername = null;
+    try { botUsername = await github.getBotUsername(); } catch {}
     return runHeadlessSession({
       pool, config, session, user, selectedModel,
       repoOwner, repoName, userApiKey, issueNumber, issue,
+      comments, botUsername,
       resume: true,
     });
   }
@@ -3754,6 +3848,19 @@ Every session has a markdown SPEC DOC that the user can read in the dev-chat spe
 SPEC QUESTIONS — KEEP THEM RARE:
 Do not pad the spec with open questions. Only include a "Questions" section for things that genuinely BLOCK implementation — decisions the coding agent cannot reasonably make on its own and that would change what gets built. Wherever you can, make a sensible default choice and state it instead of asking. Non-blocking items belong under "Considerations" (trade-offs, assumptions, things to keep in mind) or "Deferred work" (out-of-scope or follow-up items) — never phrase those as questions. When you instruct the scout to write or revise the spec, tell it to prefer decisions over questions.
 
+CLARITY GATE — ask before acting on unclear requests:
+Before dispatching any tool on a request or issue, check whether it is clear enough to act on. A request/issue is UNCLEAR when any of these hold:
+- It has multiple plausible interpretations that would produce materially different builds (which screen, which users, what should happen in case X).
+- It's a bug report with no reproduction signal — no description of what was seen vs. expected, and no hint of where it happens.
+- It references features, screens, or behavior that don't exist in the app, or contradicts itself.
+- After reading it you cannot state the acceptance criteria ("done means…") in one sentence.
+If a request is UNCLEAR, ask clarifying questions INSTEAD of calling any tool. Counter-rules so you don't over-ask:
+- Never ask something the repo can answer — that's a dispatch_scout signal, not a question.
+- Never ask when a sensible default exists — state the assumption in one sentence and proceed.
+- Ask at most 3 numbered questions in a single message, each with your suggested default so a one-word reply ("defaults are fine") unblocks. Ask once — don't drip-feed questions across turns.
+- Never dispatch while also asking for clarification (asking and dispatching in the same turn is forbidden).
+- If the user replies "your call" / "just do it", proceed with stated assumptions instead of re-asking.
+
 TWO TOOLS, in priority order:
 
 1) dispatch_scout(prompt) — read-only repo investigation + ALL spec writing, slow (~30-60s)
@@ -3774,7 +3881,7 @@ GENERAL RULES (apply to all tools):
   * chatting, brainstorming, or just acknowledging
   * giving feedback that isn't a concrete change request ("this looks bad" alone — ask what they want instead)
   * asking for something that looks like a brand-new, standalone app unrelated to "${appName}" (e.g. they're chatting here but describe building a totally different product). In that case, DO NOT dispatch — instead, gently point them to the home page to create a new app, e.g. "That sounds like a separate app from ${appName}. You can head back to the home screen and spin up a new app for it." Only dispatch if they confirm they want it added to this app.
-- If the request is vague, ask a clarifying question INSTEAD of calling any tool. Never dispatch while also asking for clarification.
+- If the request fails the CLARITY GATE above, ask clarifying questions (per its rules) INSTEAD of calling any tool. Never dispatch while also asking for clarification.
 - At most ONE tool call per user message.
 - Never call dispatch_scout and dispatch_claude_code in the same turn. The user dispatches the build themselves.
 
@@ -3939,4 +4046,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDoneIfArmed, notifyAutoSolveDone };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDoneIfArmed, notifyAutoSolveDone, buildHeadlessSeed, shouldPostHeadlessQuestionComment };
