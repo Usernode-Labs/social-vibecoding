@@ -6,7 +6,8 @@
 // group chat), 'reaction' (#25 — someone reacted to your message;
 // `detail` carries the emoji), 'stale_pr' (a promoted PR going quiet),
 // 'pr_proposed' (a PR was promoted for voting — fanned out to the app's
-// active users + creator + favoriters so they come vote), 'session_done'
+// active users + creator + favoriters so they come vote; self-app PRs
+// go to creator + favoriters only), 'session_done'
 // (#161 — a dev-session turn finished after its owner left) and
 // 'auto_solve_done' (#161 — a headless auto-solve run finished; `detail`
 // holds the outcome).
@@ -234,7 +235,9 @@ async function hydrateAndPush(pool, row) {
 // app's currently-active users (the people whose votes actually count
 // per services/active-users.js), plus the app creator and anyone who
 // favorited it — so stakeholders who aren't currently "active" still get
-// nudged. The proposer is always excluded.
+// nudged. The proposer is always excluded. For the platform self-app,
+// active users are skipped entirely (see inline comment below) — only
+// creator + favoriters are pinged.
 //
 // De-dupe: skips any recipient who already has a pr_proposed row for this
 // session, so a re-promote (e.g. a PR that went stale then was proposed
@@ -243,7 +246,19 @@ async function hydrateAndPush(pool, row) {
 async function createPrProposedNotifications(pool, { appId, sessionId, proposerId }) {
   if (!appId || !sessionId) return [];
 
-  const activeIds = await listActiveUserIds(pool, appId);
+  // Self-app exception: active-users.js counts everyone active on ANY
+  // app as "active" on the platform self-app (it has no App tab of its
+  // own), so including activeIds here would ping the entire user base
+  // on every platform self-edit PR. Scope those to opt-in stakeholders
+  // only — creator + favoriters; favoriting the platform app is the
+  // subscription. Child apps keep the active-users fan-out: active-on-
+  // that-app is already a meaningful audience.
+  const { rows: appRows } = await pool.query(
+    'SELECT self_hosted FROM apps WHERE id = $1',
+    [appId]
+  );
+  const selfHosted = !!appRows[0]?.self_hosted;
+  const activeIds = selfHosted ? [] : await listActiveUserIds(pool, appId);
 
   // App creator + favoriters as a stakeholder floor. Either may already
   // be in activeIds; we dedupe via the Set below.
