@@ -1413,7 +1413,9 @@ const AppView = {
       // issue's `headless` field from /github-issues:
       //   none/failed → "Auto-solve" (opens the confirm + model popup)
       //   generating  → disabled progress label
-      //   ready       → "Start session from auto session" (clone for me)
+      //   ready       → contextual clone-for-me label by outcome (#168):
+      //                 "Review spec / Review solution / Answer question
+      //                 & start session", generic fallback otherwise
       const h = issue.headless;
       let autoBtn;
       if (h && h.status === 'generating') {
@@ -1421,8 +1423,13 @@ const AppView = {
       } else if (h && h.status === 'ready') {
         const outcomeNote = h.outcome === 'spec' ? 'it drafted a spec'
           : h.outcome === 'code' ? 'it pushed a code change'
+          : h.outcome === 'spec_code' ? 'it drafted a spec and pushed a code change'
           : 'it has a question for you';
-        autoBtn = `<button class="gc-vote-btn" title="Clone the finished auto session (${outcomeNote}) into your own dev chat — others can clone it too" onclick="AppView.startFromAutoSession(${h.sessionId})">Start session from auto session</button>`;
+        const autoLabel = h.outcome === 'spec' ? 'Review spec &amp; start session'
+          : h.outcome === 'code' ? 'Review solution &amp; start session'
+          : h.outcome === 'question' ? 'Answer question &amp; start session'
+          : 'Start session from auto session';
+        autoBtn = `<button class="gc-vote-btn" title="Clone the finished auto session (${outcomeNote}) into your own dev chat — others can clone it too" onclick="AppView.startFromAutoSession(${h.sessionId})">${autoLabel}</button>`;
         // #150: a question outcome doesn't block re-running — answer the
         // questions on the issue, then press Auto-solve again and the new
         // run reads the answers. Both paths stay available.
@@ -1729,8 +1736,11 @@ const AppView = {
           <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
             This spins up a <b>headless AI session</b> that immediately starts working on the
             issue on its own — investigating the repo and drafting a spec, pushing a code
-            change, or coming back with a question. It is not connected to your dev chat,
-            but it <b>will automatically use your tokens/credits</b> the moment you confirm.
+            change, or coming back with a question. When the drafted spec looks
+            straightforward, the session <b>may also implement it</b> in the same run
+            (committing and pushing to its own branch — never a PR or deploy). It is not
+            connected to your dev chat, but it <b>will automatically use your
+            tokens/credits</b> the moment you confirm.
           </p>
           <p class="text-xs text-amber-500 mb-4">
             Experimental — not recommended for normal users at the moment. Costs are billed
@@ -1798,8 +1808,9 @@ const AppView = {
   },
 
   // While any rendered issue shows a generating auto session, poll the
-  // issues endpoint so the button flips to "Start session from auto
-  // session" (or back to Auto-solve on failure) without a manual refresh.
+  // issues endpoint so the button flips to its outcome-specific "Review
+  // … & start session" label (or back to Auto-solve on failure) without
+  // a manual refresh.
   _syncHeadlessPolling() {
     const generating = (AppView._ghIssues || []).some(
       (i) => i.headless && i.headless.status === 'generating'
