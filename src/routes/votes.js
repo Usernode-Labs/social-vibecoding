@@ -1010,6 +1010,26 @@ async function checkAndMerge(config, pool, session, options = {}) {
       [session.id]
     ).catch(() => {});
 
+    // Un-latch clients. The `merging:true` broadcast above armed the
+    // Phase 3 "Platform updating…" banner on every tab for self-hosted
+    // apps — and that banner only dismisses on a /api/version SHA flip,
+    // which will never come if the GitHub merge itself failed (no
+    // deploy happens). Without this counter-event, a failed self-app
+    // merge leaves the whole platform read-only for everyone until the
+    // 5-minute stuck timer. mergeFailed:false-positives are harmless:
+    // the client just clears a banner that wasn't armed.
+    try {
+      const { pushVoteUpdate } = require('../services/ws');
+      pushVoteUpdate({
+        sessionId: session.id,
+        appSlug: session.app_slug,
+        merged: false,
+        merging: false,
+        mergeFailed: true,
+        selfHosted: !!session.app_self_hosted,
+      });
+    } catch (_) { /* ws failures non-fatal */ }
+
     // #9: detect GitHub's "merge conflict" rejection specifically.
     // Octokit returns status 405 with a message containing "merge
     // conflict" or "not mergeable" when `pulls.merge` is called on

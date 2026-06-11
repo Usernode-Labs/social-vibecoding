@@ -774,7 +774,9 @@ function previewText(n) {
     case 'auto_solve_done':
       return n.detail === 'failed'
         ? `⚠️ Auto-solve for issue #${n.headlessIssueNumber || '?'} failed`
-        : `🤖 Auto-solve for issue #${n.headlessIssueNumber || '?'} is ready`;
+        : n.detail === 'question'
+          ? `🤖 Auto-solve for issue #${n.headlessIssueNumber || '?'} has questions for you`
+          : `🤖 Auto-solve for issue #${n.headlessIssueNumber || '?'} is ready`;
     default:            return who;
   }
 }
@@ -893,7 +895,10 @@ function renderRow(n) {
   if (n.kind === 'auto_solve_done') {
     const failed = n.detail === 'failed';
     const icon = failed ? '⚠️' : '\u{1F916}';
-    const verb = failed ? 'failed' : 'is ready';
+    // #150: a question outcome isn't "ready" work product — it's the run
+    // asking the reporter for input, so say so in the headline.
+    const verb = failed ? 'failed'
+      : (n.detail === 'question' ? 'has questions for you' : 'is ready');
     const issueLabel = n.headlessIssueNumber ? `issue #${n.headlessIssueNumber}` : 'an issue';
     const outcomeText = {
       spec: 'drafted a spec',

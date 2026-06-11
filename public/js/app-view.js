@@ -1424,6 +1424,12 @@ const AppView = {
           : h.outcome === 'spec_code' ? 'it drafted a spec and pushed a code change'
           : 'it has a question for you';
         autoBtn = `<button class="gc-vote-btn" title="Clone the finished auto session (${outcomeNote}) into your own dev chat — others can clone it too" onclick="AppView.startFromAutoSession(${h.sessionId})">Start session from auto session</button>`;
+        // #150: a question outcome doesn't block re-running — answer the
+        // questions on the issue, then press Auto-solve again and the new
+        // run reads the answers. Both paths stay available.
+        if (h.outcome === 'question') {
+          autoBtn += `<button class="gc-vote-btn" title="Questions were posted on the issue — answer them, then run auto-solve again" onclick="AppView.confirmAutoSession(${n})">Auto-solve</button>`;
+        }
       } else {
         autoBtn = `<button class="gc-vote-btn" title="Spin up a headless AI session that starts solving this issue on its own — uses your credits" onclick="AppView.confirmAutoSession(${n})">Auto-solve</button>`;
       }
