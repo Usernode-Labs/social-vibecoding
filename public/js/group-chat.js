@@ -565,7 +565,7 @@ const GroupChat = {
       GroupChat._clearPressTimer();
       // Don't arm long-press on interactive children (links, buttons,
       // pills, the quote block) — those have their own click semantics.
-      if (e.target.closest('a, button, .gc-quoted')) return;
+      if (e.target.closest('a, button, .gc-quoted, .gc-ref')) return;
       const row = e.target.closest(ROW_SEL);
       if (!row || !container.contains(row)) return;
       // Suppress native text selection while the press is stationary, so a
@@ -621,6 +621,26 @@ const GroupChat = {
       // A long-press already opened the bar — swallow the trailing click
       // so it doesn't also quote the row.
       if (GroupChat._longPressed) { GroupChat._longPressed = false; return; }
+      // #130: PR / issue reference chips reveal the matching row in the
+      // activity drawer (GitHub fallback when it isn't there). Handled
+      // before tap-to-quote so a chip click doesn't also stage a reply.
+      const ref = e.target.closest('.gc-ref');
+      if (ref) {
+        if (typeof AppView !== 'undefined' && AppView.revealInDrawer) {
+          AppView.revealInDrawer(ref.dataset.refType, ref.dataset.refNumber);
+        }
+        return;
+      }
+      // #130: the spec-share card's "PR #N" anchor previously rendered
+      // dead — route it through the same drawer reveal as the chips.
+      const specPr = e.target.closest('.gc-spec-pr');
+      if (specPr) {
+        e.preventDefault();
+        if (typeof AppView !== 'undefined' && AppView.revealInDrawer) {
+          AppView.revealInDrawer('pr', specPr.dataset.pr);
+        }
+        return;
+      }
       const quoted = e.target.closest('.gc-quoted');
       if (quoted) { GroupChat._handleQuotedClick(quoted); return; }
       // Real links/buttons (PR link, "View full spec", mentions) win.
@@ -634,6 +654,18 @@ const GroupChat = {
       if (rowId) GroupChat._clearMessageDot(rowId);
       const quote = GroupChat._quoteFromRow(row);
       if (quote) GroupChat.setQuote(quote);
+    });
+
+    // #130: chips are spans with role="link" tabindex="0" — give keyboard
+    // users the same drawer reveal a click gets.
+    container.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const ref = e.target.closest && e.target.closest('.gc-ref');
+      if (!ref) return;
+      e.preventDefault();
+      if (typeof AppView !== 'undefined' && AppView.revealInDrawer) {
+        AppView.revealInDrawer(ref.dataset.refType, ref.dataset.refNumber);
+      }
     });
   },
 
@@ -1507,14 +1539,34 @@ function escapeHtml(str) {
 
 // Render chat content with @mention highlighting. Mentions that match the
 // current viewer's username get the `-self` variant so their own mentions
-// stand out more than someone else's.
+// stand out more than someone else's. A second pass (#130) chips PR#N / #N
+// references so they read as navigable tokens.
 function renderWithMentions(raw) {
   const escaped = escapeHtml(raw || '');
   const me = (App.user?.username || '').toLowerCase();
-  return escaped.replace(/(^|[^\w])@([A-Za-z0-9_]{1,32})/g, (_m, pre, name) => {
+  const withMentions = escaped.replace(/(^|[^\w])@([A-Za-z0-9_]{1,32})/g, (_m, pre, name) => {
     const isMe = name.toLowerCase() === me;
     const cls = isMe ? 'gc-mention gc-mention-self' : 'gc-mention';
     return `${pre}<span class="${cls}">@${name}</span>`;
+  });
+  return renderRefChips(withMentions);
+}
+
+// #130: second replacement pass over the (already escaped, mention-marked)
+// content — `PR#N` / `PR #N` render as violet PR chips and bare `#N` as
+// emerald issue chips. One combined regex so `PR#12` is never double-matched
+// by the issue pattern. The `&` exclusion in the boundary keeps escaped
+// entities from chipping; the trailing lookahead keeps `#12abc` plain.
+// Clicking / Enter / Space on a chip routes to AppView.revealInDrawer (see
+// _attachQuoteHandlers) — refs are a pure display convention, so message
+// content stays plain text on the wire and in the DB.
+function renderRefChips(html) {
+  return html.replace(/(^|[^\w&])(pr ?#|#)(\d{1,7})(?!\w)/gi, (_m, pre, prefix, num) => {
+    const isPr = prefix.length > 1; // `PR#` / `PR #` vs bare `#`
+    const cls = isPr ? 'gc-ref gc-ref-pr' : 'gc-ref gc-ref-issue';
+    const type = isPr ? 'pr' : 'issue';
+    const label = isPr ? `PR#${num}` : `#${num}`;
+    return `${pre}<span class="${cls}" data-ref-type="${type}" data-ref-number="${num}" role="link" tabindex="0">${label}</span>`;
   });
 }
 
@@ -1815,9 +1867,317 @@ const MentionAutocomplete = {
   },
 };
 
+// ── #130: PR / issue reference autocomplete ─────────────────────────────
+//
+// Composer dropdown that opens when the user types `PR#` (open PRs only)
+// or a bare `#` (open issues first, then open PRs) in #gc-input. Modeled
+// directly on MentionAutocomplete above: same menu element pattern,
+// capture-phase keydown, _detectToken/_sync/accept lifecycle, blur/dismiss
+// handling, and positioning anchored above the composer. Candidates come
+// from the endpoints the activity panel already uses (/promoted +
+// /github-issues) — no new API.
+//
+// Unlike @mentions there is no server-side parser to stay in sync with:
+// refs are a pure display convention (renderRefChips above), so the only
+// contract is that accept() inserts the canonical `PR#N` / `#N` forms the
+// renderer chips. Selecting a PR from the bare-`#` combined menu inserts
+// the canonical `PR#N`, not `#N`.
+const RefAutocomplete = {
+  MAX_RESULTS: 50,
+  // Stale list only means a just-opened PR/issue isn't suggested for a
+  // couple of minutes (the issues endpoint is itself cached server-side
+  // for 5) — users can still type the number manually and it chips fine.
+  CACHE_TTL_MS: 2 * 60 * 1000,
+
+  _cacheBySlug: new Map(), // slug -> { prs: [...], issues: [...], fetchedAt }
+  _input: null,
+  _slug: null,
+  _menu: null,
+  _items: [],      // currently-shown { number, title, kind: 'pr'|'issue' }
+  _active: -1,
+  _open: false,
+  _tokenStart: -1, // index of the token start (the `P` or `#`) in input.value
+  _composing: false,
+  _dismissBound: null,
+
+  // Anchored at the caret: boundary (start or non-word, non-& char), then
+  // `PR#` / `PR #` (PR mode) or bare `#` (combined mode), then a
+  // digits-only query, end of substring. Typing a non-digit after the `#`
+  // stops matching and the menu closes. The `&` exclusion mirrors
+  // renderRefChips' boundary so the dropdown never triggers where the
+  // renderer wouldn't chip. The `@` vs `#` triggers are mutually exclusive
+  // at one caret position, so this menu and MentionAutocomplete's can't
+  // both be open at once.
+  _triggerRe: /(^|[^\w&])(pr ?#|#)(\d{0,7})$/i,
+
+  // Wire (or re-wire) the controller onto a freshly-rendered composer.
+  // Idempotent per element; called on every group-chat tab mount. Kicks
+  // off the candidate load so the list is warm by the first keystroke.
+  attach(input, slug) {
+    if (!input) return;
+    RefAutocomplete._input = input;
+    RefAutocomplete._slug = slug;
+    RefAutocomplete._loadCandidates(slug);
+
+    if (input._gcRefBound) return;
+    input._gcRefBound = true;
+
+    input.addEventListener('compositionstart', () => { RefAutocomplete._composing = true; });
+    input.addEventListener('compositionend', () => {
+      RefAutocomplete._composing = false;
+      RefAutocomplete._sync();
+    });
+    input.addEventListener('input', () => RefAutocomplete._sync());
+    input.addEventListener('click', () => RefAutocomplete._sync());
+    input.addEventListener('keyup', (e) => {
+      if (['ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'Escape'].includes(e.key)) return;
+      RefAutocomplete._sync();
+    });
+    // Capture phase so we win over the composer's own keydown handler and
+    // the form's implicit Enter-submit while the menu is open. Only
+    // consumes keys while this menu is open, so it can't fight
+    // MentionAutocomplete's identical handler.
+    input.addEventListener('keydown', (e) => RefAutocomplete._onKeydown(e), true);
+    input.addEventListener('blur', () => {
+      setTimeout(() => { if (document.activeElement !== input) RefAutocomplete.close(); }, 0);
+    });
+  },
+
+  async _loadCandidates(slug) {
+    if (!slug) return;
+    const cached = RefAutocomplete._cacheBySlug.get(slug);
+    if (cached && (Date.now() - cached.fetchedAt) < RefAutocomplete.CACHE_TTL_MS) return;
+    try {
+      const [prRes, issueRes] = await Promise.all([
+        fetch(`/api/apps/${slug}/promoted`),
+        fetch(`/api/apps/${slug}/github-issues`),
+      ]);
+      const prData = prRes.ok ? await prRes.json() : {};
+      const issueData = issueRes.ok ? await issueRes.json() : {};
+      // Open (promoted/merging) PRs — the same set the drawer's "Open PRs"
+      // section shows. Merged PRs are intentionally not suggested; they're
+      // still clickable once rendered as chips.
+      const prs = (Array.isArray(prData.promoted) ? prData.promoted : [])
+        .filter((pr) => pr.pr_number != null)
+        .map((pr) => ({ number: pr.pr_number, title: pr.pr_title || `by ${pr.username || ''}`, kind: 'pr' }));
+      const issues = (Array.isArray(issueData.issues) ? issueData.issues : [])
+        .map((i) => ({ number: i.number, title: i.title || '', kind: 'issue' }));
+      RefAutocomplete._cacheBySlug.set(slug, { prs, issues, fetchedAt: Date.now() });
+      // If the user already has an open token while we were fetching,
+      // refresh the menu now that we have data.
+      if (RefAutocomplete._input === document.activeElement) RefAutocomplete._sync();
+    } catch { /* offline / transient — next keystroke retries via TTL */ }
+  },
+
+  // Detect an active ref token immediately before the caret.
+  // Returns { start, query, mode: 'pr'|'combined' } or null.
+  _detectToken() {
+    const input = RefAutocomplete._input;
+    if (!input) return null;
+    const caret = input.selectionStart;
+    if (caret == null || caret !== input.selectionEnd) return null; // ignore ranges
+    const before = input.value.slice(0, caret);
+    const m = before.match(RefAutocomplete._triggerRe);
+    if (!m) return null;
+    return {
+      start: m.index + m[1].length,
+      query: m[3],
+      mode: m[2].length > 1 ? 'pr' : 'combined',
+    };
+  },
+
+  // Prefix-match on the stringified number ("1" matches #1, #12, #130).
+  // Combined mode lists the issues block first, then PRs.
+  _filter(query, mode) {
+    const c = RefAutocomplete._cacheBySlug.get(RefAutocomplete._slug) || {};
+    const pool = mode === 'pr'
+      ? (c.prs || [])
+      : [...(c.issues || []), ...(c.prs || [])];
+    const out = [];
+    for (const item of pool) {
+      if (!query || String(item.number).startsWith(query)) {
+        out.push(item);
+        if (out.length >= RefAutocomplete.MAX_RESULTS) break;
+      }
+    }
+    return out;
+  },
+
+  // Re-evaluate the token under the caret and open/close/refresh the menu.
+  _sync() {
+    if (RefAutocomplete._composing) return;
+    const token = RefAutocomplete._detectToken();
+    if (!token) { RefAutocomplete.close(); return; }
+    const items = RefAutocomplete._filter(token.query, token.mode);
+    if (!items.length) { RefAutocomplete.close(); return; }
+    RefAutocomplete._tokenStart = token.start;
+    RefAutocomplete._items = items;
+    RefAutocomplete._active = 0;
+    RefAutocomplete._render();
+  },
+
+  _ensureMenu() {
+    if (RefAutocomplete._menu) return RefAutocomplete._menu;
+    const menu = document.createElement('div');
+    menu.id = 'gc-ref-menu';
+    // Reuse the mention menu/option styling so positioning + theming come
+    // for free; gc-ref-option only widens the row gap for the badge.
+    menu.className = 'gc-mention-menu hidden';
+    menu.setAttribute('role', 'listbox');
+    // mousedown (not click) so we can preventDefault and keep the input
+    // focused — a blur-then-click would close the menu before the click.
+    menu.addEventListener('mousedown', (e) => {
+      const opt = e.target.closest('.gc-mention-option');
+      if (!opt) return;
+      e.preventDefault();
+      RefAutocomplete.accept(opt.dataset.kind, opt.dataset.number);
+    });
+    document.body.appendChild(menu);
+    RefAutocomplete._menu = menu;
+    return menu;
+  },
+
+  _render() {
+    const menu = RefAutocomplete._ensureMenu();
+    menu.innerHTML = RefAutocomplete._items.map((item, i) => {
+      const active = i === RefAutocomplete._active ? ' gc-mention-option-active' : '';
+      // The badge reuses the message-chip classes so the dropdown teaches
+      // the rendering: violet PR#N, emerald #N.
+      const badge = item.kind === 'pr'
+        ? `<span class="gc-ref gc-ref-pr">PR#${item.number}</span>`
+        : `<span class="gc-ref gc-ref-issue">#${item.number}</span>`;
+      return `<div class="gc-mention-option gc-ref-option${active}" role="option" data-kind="${item.kind}" data-number="${item.number}" data-index="${i}">`
+        + badge
+        + `<span class="gc-ref-option-title">${escapeHtml(item.title || '')}</span>`
+        + `</div>`;
+    }).join('');
+
+    if (!RefAutocomplete._open) {
+      menu.classList.remove('hidden');
+      RefAutocomplete._open = true;
+      RefAutocomplete._bindDismiss();
+    }
+    RefAutocomplete._position();
+  },
+
+  // Anchor above the composer, flipping below if it would clip the top.
+  // Matches the input width — same mechanics as MentionAutocomplete.
+  _position() {
+    const input = RefAutocomplete._input;
+    const menu = RefAutocomplete._menu;
+    if (!input || !menu) return;
+    const r = input.getBoundingClientRect();
+    menu.style.left = `${r.left}px`;
+    menu.style.width = `${r.width}px`;
+    const h = menu.offsetHeight || 0;
+    let top = r.top - h - 4;
+    if (top < 8) top = Math.min(r.bottom + 4, window.innerHeight - h - 8);
+    menu.style.top = `${top}px`;
+  },
+
+  _bindDismiss() {
+    if (RefAutocomplete._dismissBound) return;
+    RefAutocomplete._dismissBound = (e) => {
+      if (e.type === 'scroll') { RefAutocomplete.close(); return; }
+      if (RefAutocomplete._menu && RefAutocomplete._menu.contains(e.target)) return;
+      if (e.target === RefAutocomplete._input) return;
+      RefAutocomplete.close();
+    };
+    document.addEventListener('mousedown', RefAutocomplete._dismissBound, true);
+    const msgs = document.getElementById('gc-messages');
+    if (msgs) msgs.addEventListener('scroll', RefAutocomplete._dismissBound, true);
+  },
+
+  close() {
+    if (!RefAutocomplete._open) return;
+    RefAutocomplete._open = false;
+    RefAutocomplete._active = -1;
+    RefAutocomplete._items = [];
+    RefAutocomplete._tokenStart = -1;
+    if (RefAutocomplete._menu) {
+      RefAutocomplete._menu.classList.add('hidden');
+      RefAutocomplete._menu.innerHTML = '';
+    }
+    if (RefAutocomplete._dismissBound) {
+      document.removeEventListener('mousedown', RefAutocomplete._dismissBound, true);
+      const msgs = document.getElementById('gc-messages');
+      if (msgs) msgs.removeEventListener('scroll', RefAutocomplete._dismissBound, true);
+      RefAutocomplete._dismissBound = null;
+    }
+  },
+
+  _move(delta) {
+    const n = RefAutocomplete._items.length;
+    if (!n) return;
+    RefAutocomplete._active = (RefAutocomplete._active + delta + n) % n;
+    const menu = RefAutocomplete._menu;
+    if (!menu) return;
+    menu.querySelectorAll('.gc-mention-option').forEach((el, i) => {
+      el.classList.toggle('gc-mention-option-active', i === RefAutocomplete._active);
+      if (i === RefAutocomplete._active) el.scrollIntoView({ block: 'nearest' });
+    });
+  },
+
+  // Capture-phase keydown. Consumes the event only when the menu is open
+  // and the key is one we own.
+  _onKeydown(e) {
+    if (!RefAutocomplete._open) return;
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault(); e.stopPropagation(); RefAutocomplete._move(1); break;
+      case 'ArrowUp':
+        e.preventDefault(); e.stopPropagation(); RefAutocomplete._move(-1); break;
+      case 'Enter':
+      case 'Tab': {
+        const item = RefAutocomplete._items[RefAutocomplete._active];
+        if (item) {
+          e.preventDefault(); e.stopPropagation();
+          RefAutocomplete.accept(item.kind, item.number);
+        }
+        break;
+      }
+      case 'Escape':
+        e.preventDefault(); e.stopPropagation(); RefAutocomplete.close(); break;
+      default:
+        break;
+    }
+  },
+
+  // Replace the active token with the canonical form — `PR#N ` for a PR,
+  // `#N ` for an issue (trailing space) — keep within maxlength, restore
+  // the caret, and fire a synthetic `input` event so draft persistence and
+  // the typing indicator run exactly as if the user typed it.
+  accept(kind, number) {
+    const input = RefAutocomplete._input;
+    if (!input || !number || RefAutocomplete._tokenStart < 0) { RefAutocomplete.close(); return; }
+    const caret = input.selectionStart;
+    const value = input.value;
+    const before = value.slice(0, RefAutocomplete._tokenStart);
+    const after = value.slice(caret);
+    const insert = kind === 'pr' ? `PR#${number} ` : `#${number} `;
+    const next = before + insert + after;
+
+    const max = parseInt(input.getAttribute('maxlength') || '0', 10);
+    if (max && next.length > max) {
+      // Wouldn't fit — leave the user's text untouched rather than
+      // silently truncating their message.
+      RefAutocomplete.close();
+      return;
+    }
+
+    input.value = next;
+    const pos = (before + insert).length;
+    input.setSelectionRange(pos, pos);
+    RefAutocomplete.close();
+    input.focus();
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  },
+};
+
 // Expose on window so app.js's WS dispatcher can reconcile the in-chat
 // unread dots on notification events. (A top-level `const` is a lexical
 // global accessible by bare name within the realm, but is NOT a property
 // of `window` — mirror the `window.Notifications` pattern explicitly.)
 window.GroupChat = GroupChat;
 window.MentionAutocomplete = MentionAutocomplete;
+window.RefAutocomplete = RefAutocomplete;

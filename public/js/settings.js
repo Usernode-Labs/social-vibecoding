@@ -116,6 +116,7 @@
 
     open() {
       this._renderBody();
+      this._refreshSpend();
       this._renderWalletSection();
       this._renderDevConsoleSection();
       this._renderAdminSection();
@@ -198,6 +199,27 @@
       }
     },
 
+    // #119 — "Today's spend" breakdown in the API-key section. Fetched
+    // fresh on every modal open; the block stays hidden while loading,
+    // on fetch failure, or when no key is saved, so it never shows
+    // stale or irrelevant figures.
+    async _refreshSpend() {
+      const block = document.getElementById('settings-spend');
+      if (!block) return;
+      block.classList.add('hidden');
+      if (!this.state.hasApiKey) return;
+      try {
+        const r = await fetch('/api/budget', { credentials: 'same-origin' });
+        if (!r.ok) return;
+        const b = await r.json();
+        document.getElementById('settings-spend-byok').textContent =
+          '$' + ((b.byokSpentCents || 0) / 100).toFixed(2);
+        document.getElementById('settings-spend-platform').textContent =
+          '$' + ((b.spentCents || 0) / 100).toFixed(2) + ' of $' + ((b.limitCents || 0) / 100).toFixed(2);
+        block.classList.remove('hidden');
+      } catch {}
+    },
+
     _setStatus(text, kind) {
       const el = document.getElementById('settings-status');
       el.textContent = text;
@@ -249,6 +271,7 @@
         this._setStatus('Saved. Your chats now bill to your Anthropic account.', 'ok');
         input.value = '';
         this._renderBody();
+        this._refreshSpend();
         setTimeout(() => this.close(), 900);
       } catch (err) {
         this._setStatus(`Network error: ${err.message}`, 'error');
@@ -286,6 +309,7 @@
         this.state.keyLast4 = null;
         this._renderIndicator();
         this._renderBody();
+        this._refreshSpend();
         this._setStatus('Removed.', 'ok');
         setTimeout(() => this.close(), 700);
       } catch (err) {

@@ -4,9 +4,12 @@
 // share one table + pipeline. Kinds today: 'mention' (group-chat @mention),
 // 'kudos' (PR kudos), 'reply' (#15 — someone quoted your message/PR in
 // group chat), 'reaction' (#25 — someone reacted to your message;
-// `detail` carries the emoji), 'stale_pr' (a promoted PR going quiet), and
+// `detail` carries the emoji), 'stale_pr' (a promoted PR going quiet),
 // 'pr_proposed' (a PR was promoted for voting — fanned out to the app's
-// active users + creator + favoriters so they come vote).
+// active users + creator + favoriters so they come vote), 'session_done'
+// (#161 — a dev-session turn finished after its owner left) and
+// 'auto_solve_done' (#161 — a headless auto-solve run finished; `detail`
+// holds the outcome).
 
 const log = require('./logger');
 const { listActiveUserIds } = require('./active-users');
@@ -137,6 +140,87 @@ async function createStalePrNotification(pool, { userId, appId, sessionId }) {
     [userId, appId, sessionId]
   );
   return rows;
+}
+
+// #161: dev-session completion notification (kind='session_done').
+// Fired by the chat handler's done hook when the session owner armed
+// notify_on_done (they left mid-turn), and unconditionally by
+// server.js's resumeDetachedTurn (the pre-restart SSE is guaranteed
+// dead, so nobody was watching). System-generated, so source_user_id
+// is null. Unread dedup: at most one unread session_done per
+// (user, session) — multiple completions while away collapse into the
+// row the user hasn't seen yet (atomic via INSERT … WHERE NOT EXISTS,
+// same pattern as createPrProposedNotifications).
+async function createSessionDoneNotification(pool, { userId, appId, sessionId }) {
+  if (!userId || !sessionId) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
+     SELECT $1, $2, $3, NULL, 'session_done'
+      WHERE NOT EXISTS (
+        SELECT 1 FROM notifications n
+        WHERE n.user_id = $1 AND n.session_id = $3
+          AND n.kind = 'session_done' AND n.read_at IS NULL
+      )
+     RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
+    [userId, appId, sessionId]
+  );
+  return rows;
+}
+
+// #161: headless auto-solve completion (kind='auto_solve_done').
+// Always created at runHeadlessSession's terminal writes (no arming —
+// starting an auto-solve opts you into its completion notification).
+// `detail` carries the outcome: 'spec' | 'code' | 'question' | 'failed'.
+// Same unread dedup as session_done so a resume re-fire can't double up.
+async function createAutoSolveDoneNotification(pool, { userId, appId, sessionId, detail }) {
+  if (!userId || !sessionId) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
+     SELECT $1, $2, $3, NULL, 'auto_solve_done', $4
+      WHERE NOT EXISTS (
+        SELECT 1 FROM notifications n
+        WHERE n.user_id = $1 AND n.session_id = $3
+          AND n.kind = 'auto_solve_done' AND n.read_at IS NULL
+      )
+     RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
+    [userId, appId, sessionId, (detail || '').slice(0, 32) || null]
+  );
+  return rows;
+}
+
+// Hydrate one freshly-inserted notification row with the same joins
+// listForUser performs and push it to its recipient over WS as a
+// notification_new. Best-effort: completion notifications ride inside
+// SSE/turn pipelines that must never fail because of a push.
+async function hydrateAndPush(pool, row) {
+  if (!row || !row.id) return;
+  try {
+    const { rows } = await pool.query(
+      `SELECT n.id, n.kind, n.read_at, n.created_at,
+              n.app_id, a.slug AS app_slug, a.name AS app_name,
+              n.chat_message_id,
+              cm.content AS message_content,
+              n.session_id,
+              cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
+              su.username AS source_username,
+              n.detail
+       FROM notifications n
+       LEFT JOIN apps a ON a.id = n.app_id
+       LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
+       LEFT JOIN chat_sessions cs ON cs.id = n.session_id
+       LEFT JOIN users su ON su.id = n.source_user_id
+       WHERE n.id = $1`,
+      [row.id]
+    );
+    if (!rows.length) return;
+    const { pushNotificationToUser } = require('./ws');
+    pushNotificationToUser(row.user_id, {
+      type: 'notification_new',
+      notification: serialize(rows[0]),
+    });
+  } catch (err) {
+    log.warn('notifications', 'hydrateAndPush failed', { id: row.id, err: err.message });
+  }
 }
 
 // PR-proposed (vote-request) notification. Fired when a session is
@@ -295,7 +379,7 @@ async function listForUser(pool, userId, { limit = 100, before = null } = {}) {
             n.chat_message_id,
             cm.content AS message_content,
             n.session_id,
-            cs.pr_title, cs.pr_number,
+            cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
             su.username AS source_username,
             n.detail
      FROM notifications n
@@ -345,6 +429,14 @@ async function countUnread(pool, userId) {
 const ACTION_COMPLETIONS = {
   vote_cast: { kinds: ['pr_proposed', 'stale_pr'], scope: 'session_id' },
   message_sent: { kinds: ['mention', 'reply', 'reaction'], scope: 'app_id' },
+  // #161: opening a dev session is the canonical "user saw it" signal —
+  // it resolves that session's completion notification even when the
+  // user navigated there on their own. Triggered in GET /api/sessions/:id.
+  session_opened: { kinds: ['session_done'], scope: 'session_id' },
+  // #161: cloning a ready auto-solve session resolves its completion
+  // notification. Triggered in POST /api/sessions/:id/clone-headless,
+  // scoped to the SOURCE (headless) session id.
+  headless_cloned: { kinds: ['auto_solve_done'], scope: 'session_id' },
 };
 
 // The scope columns the registry is allowed to target. A defensive
@@ -472,6 +564,11 @@ function serialize(row) {
     sessionId: row.session_id,
     prTitle: row.pr_title,
     prNumber: row.pr_number,
+    // #161: auto_solve_done rows route back to their issue row; the
+    // session_done renderer falls back to the branch name when the
+    // session has no LLM-generated PR title yet.
+    headlessIssueNumber: row.headless_issue_number,
+    branchName: row.branch_name,
     sourceUsername: row.source_username,
     detail: row.detail,
   };
@@ -483,6 +580,9 @@ module.exports = {
   createReplyNotification,
   createReactionNotification,
   createStalePrNotification,
+  createSessionDoneNotification,
+  createAutoSolveDoneNotification,
+  hydrateAndPush,
   createPrProposedNotifications,
   createCollabInviteNotification,
   createCollabInviteAcceptedNotification,

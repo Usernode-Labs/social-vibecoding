@@ -302,6 +302,14 @@ CREATE INDEX IF NOT EXISTS chat_sessions_headless_idx
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS active_turn   JSONB;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS headless_step VARCHAR(20);
 
+-- #161: "owner left while a turn was in flight; notify on completion".
+-- Armed/disarmed by the client via POST /api/sessions/:id/notify-on-done
+-- the moment the owner stops watching a running turn; checked + cleared
+-- at every turn-completion point (the chat handler's done hook and
+-- server.js resumeDetachedTurn). Persisted rather than in-memory so
+-- restart-recovered turns honor it.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS notify_on_done BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- GitHub issue linkage (#75): the open issues this session's work addresses,
 -- declared by the Mayor via dispatch_claude_code / dispatch_scout's
 -- `addresses_issues` arg. Accumulates (union) across turns. pr-metadata.js
@@ -466,6 +474,12 @@ CREATE TABLE IF NOT EXISTS llm_usage (
   UNIQUE(user_id, date)
 );
 
+-- #119: split daily spend by who paid Anthropic.
+--   total_cost_cents = platform-key spend (drives the daily caps)
+--   byok_cost_cents  = spend billed to the user's own Anthropic key
+--                      (display only — never considered by any cap)
+ALTER TABLE llm_usage ADD COLUMN IF NOT EXISTS byok_cost_cents NUMERIC(10,4) NOT NULL DEFAULT 0;
+
 -- Platform-level admin-tunable settings. Currently only used for the
 -- daily LLM spend caps; designed as a generic key/value store so future
 -- admin knobs can land here without another migration. Values are
@@ -494,9 +508,13 @@ ON CONFLICT (key) DO NOTHING;
 -- chat_message_id points to the reply, set in src/services/ws.js),
 -- 'reaction' (#25 — someone reacted to your message; chat_message_id is
 -- the reacted message, `detail` holds the emoji), 'stale_pr' (a promoted
--- PR is going quiet, addressed to its author), and 'pr_proposed' (a PR
+-- PR is going quiet, addressed to its author), 'pr_proposed' (a PR
 -- was promoted for voting — session_id points to it; fanned out to the
--- app's active users + creator + favoriters in src/routes/votes.js).
+-- app's active users + creator + favoriters in src/routes/votes.js),
+-- 'session_done' (#161 — a dev-session turn finished after its owner
+-- left; session_id points to the session) and 'auto_solve_done' (#161 —
+-- a headless auto-solve run finished; `detail` holds the outcome:
+-- spec | code | question | failed).
 CREATE TABLE IF NOT EXISTS notifications (
   id              SERIAL PRIMARY KEY,
   user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -677,6 +695,13 @@ CREATE TABLE IF NOT EXISTS app_favorites (
   PRIMARY KEY (app_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_app_favorites_user ON app_favorites(user_id);
+-- Per-user manual ordering of starred apps (issue #128). NULL = no
+-- explicit position: such rows sort after all explicitly ordered ones,
+-- falling back to the activity-based list order. Lower = earlier.
+-- Uniqueness is deliberately not enforced — gaps/ties are tolerated and
+-- resolved by the fallback, and PUT /api/favorites/order rewrites the
+-- caller's full set contiguously on every save anyway.
+ALTER TABLE app_favorites ADD COLUMN IF NOT EXISTS sort_order INTEGER;
 
 -- Append-only product-analytics event log. The long-term source of truth
 -- behind the admin /dashboard (growth, retention, and the dapp-usage /

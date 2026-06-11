@@ -21,6 +21,7 @@ const limits = require('../services/limits');
 const events = require('../services/events');
 const { chatLimiter } = require('../middleware/rate-limits');
 const appAccess = require('../services/app-access');
+const notifications = require('../services/notifications');
 // runSyncMain + persistBehindMain now live in services/sync-main.js so
 // the conflict-resolver can drive a sync turn without a route-requires-
 // route cycle. Re-exported below for backwards compatibility.
@@ -90,6 +91,45 @@ function extractSpecSnippet(content, title) {
 // runSyncMain + persistBehindMain moved to services/sync-main.js (see
 // the require at the top of this file). They're re-exported below so
 // any external importer keeps working.
+
+// #161: if the session owner armed notify_on_done (they left while the
+// turn was running), atomically clear the flag and create + push a
+// session_done notification. Called fire-and-forget from the chat
+// handler's done hook — never throws into the SSE path. The UPDATE …
+// RETURNING makes the check-and-clear atomic, so concurrent done sites
+// (or a done racing the arm beacon) can't double-notify.
+async function notifySessionDoneIfArmed(pool, sessionId) {
+  try {
+    const { rows } = await pool.query(
+      `UPDATE chat_sessions SET notify_on_done = FALSE
+       WHERE id = $1 AND notify_on_done = TRUE
+       RETURNING user_id, app_id`,
+      [sessionId]
+    );
+    if (!rows.length) return;
+    const created = await notifications.createSessionDoneNotification(pool, {
+      userId: rows[0].user_id, appId: rows[0].app_id, sessionId,
+    });
+    if (created.length) await notifications.hydrateAndPush(pool, created[0]);
+  } catch (err) {
+    log.warn('sessions', 'session_done notify failed', { sessionId, err: err.message });
+  }
+}
+
+// #161: headless auto-solve completion notification. Always fired at
+// the runner's terminal writes (ready/failed) — starting an auto-solve
+// opts the clicking user into the completion notification, no arming.
+// Best-effort: a failed insert/push must never fail the run itself.
+async function notifyAutoSolveDone(pool, { userId, appId, sessionId, detail }) {
+  try {
+    const created = await notifications.createAutoSolveDoneNotification(pool, {
+      userId, appId, sessionId, detail,
+    });
+    if (created.length) await notifications.hydrateAndPush(pool, created[0]);
+  } catch (err) {
+    log.warn('sessions', 'auto_solve_done notify failed', { sessionId, err: err.message });
+  }
+}
 
 async function loadSessionSpec(pool, sessionId) {
   const { rows } = await pool.query(
@@ -330,11 +370,14 @@ function sessionRoutes(config) {
 
       // One auto session per issue at a time: 'generating' means a run is
       // in flight; 'ready' means the start-from button should be used
-      // instead. 'failed' rows don't block a retry.
+      // instead. 'failed' rows don't block a retry, and neither does a
+      // 'ready' run that ended with outcome 'question' (#150) — the whole
+      // point is to answer on the issue and press Auto-solve again.
       const { rows: existingRows } = await pool.query(
         `SELECT id, headless_status FROM chat_sessions
          WHERE app_id = $1 AND is_headless = TRUE AND headless_issue_number = $2
            AND headless_status IN ('generating', 'ready')
+           AND NOT (headless_status = 'ready' AND headless_outcome = 'question')
          ORDER BY created_at DESC LIMIT 1`,
         [app.id, issueNumber]
       );
@@ -373,8 +416,15 @@ function sessionRoutes(config) {
       const selectedModel = models.resolve(req.body && req.body.model);
 
       // Full issue text for the seed turn (cache-first; degrades to a
-      // number-only seed when GitHub can't be reached right now).
+      // number-only seed when GitHub can't be reached right now). The
+      // issue's comments ride along (#150) so answers to earlier
+      // auto-solve questions are visible to this run; a failed comments
+      // fetch degrades to title + body. The bot username lets the seed
+      // tag the bot's own earlier question comments.
       const { issue } = await github.fetchPublicIssue(repoOwner, repoName, issueNumber);
+      const { comments } = await github.fetchIssueComments(repoOwner, repoName, issueNumber);
+      let botUsername = null;
+      try { botUsername = await github.getBotUsername(); } catch {}
 
       const branchName = `dev/auto-issue-${issueNumber}-${Date.now()}`;
       try {
@@ -414,7 +464,7 @@ function sessionRoutes(config) {
         pool, config, session,
         user: { id: req.user.id, username: req.user.username },
         selectedModel, repoOwner, repoName, userApiKey,
-        issueNumber, issue,
+        issueNumber, issue, comments, botUsername,
       }).catch((err) => {
         log.error('sessions', 'Headless session runner crashed', { sessionId: session.id, err: err.message, stack: err.stack });
       });
@@ -548,6 +598,18 @@ function sessionRoutes(config) {
         metadata: { clonedFrom: src.id, headlessIssue: src.headless_issue_number },
       });
 
+      // #161 auto-dismiss: cloning the auto session resolves its
+      // completion notification for the cloner. Fire-and-forget;
+      // cross-tab badge sync only when something actually cleared.
+      notifications.markReadForAction(pool, req.user.id, 'headless_cloned', src.id)
+        .then((cleared) => {
+          if (cleared > 0) {
+            const { pushNotificationToUser } = require('../services/ws');
+            pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
+          }
+        })
+        .catch((err) => log.warn('sessions', 'headless_cloned dismiss failed', { err: err.message }));
+
       log.info('sessions', 'Cloned headless session', { src: src.id, sessionId: session.id, user: req.user.username });
       res.status(201).json({ session });
     } catch (err) {
@@ -571,9 +633,26 @@ function sessionRoutes(config) {
       // Viewing a session counts as activity so the auto-pause sweeper
       // doesn't pause a session the user is actively reading. Fire-and-
       // forget — the view shouldn't block on this write, and a missed
-      // bump just means the next chat turn / open re-marks it.
-      pool.query(`UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1`, [req.params.id])
-        .catch((err) => log.warn('sessions', 'activity bump on view failed', { err: err.message }));
+      // bump just means the next chat turn / open re-marks it. Opening
+      // also disarms notify_on_done (#161): the owner is looking at the
+      // session again, so a left-mid-turn completion needs no notification.
+      pool.query(
+        `UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1`,
+        [req.params.id]
+      ).catch((err) => log.warn('sessions', 'activity bump on view failed', { err: err.message }));
+
+      // #161 auto-dismiss: opening the session is the canonical "user saw
+      // it" signal — resolve any unread session_done rows for it, even
+      // when the user navigated here on their own rather than via the
+      // notification. Fire-and-forget; cross-tab badge sync on change.
+      notifications.markReadForAction(pool, req.user.id, 'session_opened', rows[0].id)
+        .then((cleared) => {
+          if (cleared > 0) {
+            const { pushNotificationToUser } = require('../services/ws');
+            pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
+          }
+        })
+        .catch((err) => log.warn('sessions', 'session_opened dismiss failed', { err: err.message }));
 
       const { rows: messages } = await pool.query(
         `SELECT id, role, content, model, token_count, cost_cents, metadata, created_at
@@ -609,6 +688,30 @@ function sessionRoutes(config) {
       // Best-effort — a failed heartbeat just risks an earlier auto-pause,
       // which is recoverable (reopening auto-resumes). Don't 500-spam.
       res.json({ ok: false });
+    }
+  });
+
+  // #161: arm/disarm the "notify me when this turn finishes" flag.
+  // Owner-only. The client arms it the moment the owner stops watching a
+  // running turn (tab hidden, window blurred, tab/app switch, pagehide
+  // beacon) and disarms it when they come back mid-run. Idempotent
+  // (plain SET), so duplicate fires — e.g. a pagehide beacon racing an
+  // earlier visibility-arm — are harmless. Accepts navigator.sendBeacon
+  // payloads: a same-origin JSON Blob rides through express.json() and
+  // cookie auth applies as usual.
+  router.post('/api/sessions/:id/notify-on-done', async (req, res) => {
+    try {
+      const armed = !!(req.body && req.body.armed);
+      const { rowCount } = await pool.query(
+        `UPDATE chat_sessions SET notify_on_done = $1
+         WHERE id = $2 AND user_id = $3`,
+        [armed, req.params.id, req.user.id]
+      );
+      if (!rowCount) return res.status(404).json({ error: 'Session not found' });
+      res.status(204).end();
+    } catch (err) {
+      log.error('sessions', 'notify-on-done update failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
     }
   });
 
@@ -934,8 +1037,10 @@ function sessionRoutes(config) {
       // Mark the session as freshly active so the auto-pause sweeper
       // leaves it alone (see server.js session sweeper + schema
       // last_activity_at). A chat turn is the strongest activity signal.
+      // Sending a message also proves presence, so any stale
+      // notify-on-done arming from a previous turn is reset (#161).
       await pool.query(
-        `UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1`,
+        `UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1`,
         [session.id]
       );
 
@@ -980,6 +1085,11 @@ function sessionRoutes(config) {
         // there's no cross-session leakage and the client's existing seq
         // dedup handles any overlap with the primary stream.
         sessionBus.publish(session.id, event);
+        // #161: every turn-completion path funnels through send('done')
+        // — the main exit, the early returns, and the catch fallthrough —
+        // so this is the one hook needed for the left-mid-turn completion
+        // notification. Fire-and-forget; the helper swallows its errors.
+        if (type === 'done') notifySessionDoneIfArmed(pool, session.id);
       };
 
       // Locals used across multiple branches of the CC flow. Previously these
@@ -1145,13 +1255,7 @@ function sessionRoutes(config) {
             // phase-1 accounting just below the loop.)
             if (mayor1.usage) {
               const dataCost = llm.estimateCostCents(mayor1.usage, selectedModel);
-              if (!userApiKey && dataCost) {
-                await pool.query(
-                  `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
-                   ON CONFLICT (user_id, date) DO UPDATE SET total_cost_cents = llm_usage.total_cost_cents + EXCLUDED.total_cost_cents`,
-                  [req.user.id, dataCost]
-                );
-              }
+              await limits.recordSpend(pool, req.user.id, dataCost, { byok: !!userApiKey });
               send('usage', { costCents: dataCost, model: selectedModel, byok: !!userApiKey });
             }
 
@@ -1244,19 +1348,11 @@ function sessionRoutes(config) {
             [session.id, mayorText1, selectedModel, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1]
           );
         }
-        // BYOK users pay Anthropic directly, so we don't track their
-        // spend in `llm_usage` (that table drives the admin-key daily
-        // cap). The per-message cost_cents above + the SSE 'usage'
-        // event still give them live visibility into what each turn
-        // cost on their own key.
+        // BYOK users pay Anthropic directly, so their spend lands in
+        // the display-only byok_cost_cents bucket (#119) — only
+        // platform-key spend counts against the daily caps.
         if (mayor1.usage) {
-          if (!userApiKey) {
-            await pool.query(
-              `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
-               ON CONFLICT (user_id, date) DO UPDATE SET total_cost_cents = llm_usage.total_cost_cents + EXCLUDED.total_cost_cents`,
-              [req.user.id, costCents1]
-            );
-          }
+          await limits.recordSpend(pool, req.user.id, costCents1, { byok: !!userApiKey });
           send('usage', { costCents: costCents1, model: selectedModel, byok: !!userApiKey });
         }
 
@@ -1497,13 +1593,7 @@ function sessionRoutes(config) {
            VALUES ($1, 'assistant', $2, $3, $4, $5)`,
           [session.id, mayorText2, selectedModel, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2]
         );
-        if (!userApiKey) {
-          await pool.query(
-            `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
-             ON CONFLICT (user_id, date) DO UPDATE SET total_cost_cents = llm_usage.total_cost_cents + EXCLUDED.total_cost_cents`,
-            [req.user.id, costCents2]
-          );
-        }
+        await limits.recordSpend(pool, req.user.id, costCents2, { byok: !!userApiKey });
         send('usage', { costCents: costCents2, model: selectedModel, byok: !!userApiKey });
       } catch (err) {
         activeWorkers.delete(session.id);
@@ -1810,6 +1900,13 @@ function sessionRoutes(config) {
 
     handle.stopped = true;
     handle.stoppedBy = req.user.username;
+    // #161: clicking stop proves presence — disarm notify_on_done BEFORE
+    // aborting so the turn's resulting send('done') doesn't create a
+    // spurious "your session finished" notification.
+    await pool.query(
+      `UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1`,
+      [sessionId]
+    ).catch((err) => log.warn('sessions', 'stop disarm failed', { sessionId, err: err.message }));
     log.info('sessions', 'Stop requested', {
       sessionId,
       phase: handle.phase,
@@ -1917,11 +2014,19 @@ function sessionRoutes(config) {
       const budget = await checkBudget(pool, req.user.id);
       const userSpent = budget.error ? userLimit : userLimit - (budget.userRemaining || 0);
       const globalSpent = budget.error ? globalLimit : globalLimit - (budget.globalRemaining || 0);
+      // #119: spend billed to the user's own Anthropic key today —
+      // informational only, never part of the cap math above.
+      const { rows: byokRows } = await pool.query(
+        'SELECT byok_cost_cents FROM llm_usage WHERE user_id = $1 AND date = CURRENT_DATE',
+        [req.user.id]
+      );
+      const byokSpentCents = parseFloat(byokRows[0]?.byok_cost_cents || 0);
       res.json({
         spentCents: userSpent,
         limitCents: userLimit,
         globalSpentCents: globalSpent,
         globalLimitCents: globalLimit,
+        byokSpentCents,
       });
     } catch (err) {
       log.error('sessions', 'Budget check failed', { message: err.message });
@@ -2032,7 +2137,7 @@ function buildHeadlessFollowUpMessage(src) {
     case 'code':
       return `${intro}\n\nWhere things stand: the code change is already committed and pushed on this branch — no PR or staging preview exists yet. Review the summary above, iterate if you want, and when you're ready just tell me to open the PR / build the staging preview.`;
     default:
-      return `${intro}\n\nWhere things stand: the auto session ran into something that needs a human decision — see its last message above. Answer here and we'll continue from where it left off.`;
+      return `${intro}\n\nWhere things stand: the auto session ran into something that needs a human decision — see its last message above (the same questions were also posted as a comment on the GitHub issue). Answer here and we'll continue from where it left off.`;
   }
 }
 
@@ -2042,11 +2147,76 @@ function buildHeadlessFollowUpMessage(src) {
 function buildHeadlessAddendum(issueNumber) {
   return `
 
-HEADLESS AUTO-SESSION MODE: you are running unattended on GitHub issue #${issueNumber} — there is NO human in this chat and there will be NO follow-up turn. Decide ONE action for this single turn:
-- dispatch_scout when the issue needs investigation or design: produce a grounded spec a human will review later. Prefer this for anything non-trivial.
-- dispatch_claude_code ONLY for small, unambiguous fixes the issue text fully specifies. The agent may commit and push its branch, but NO pull request and NO staging preview will be created in this mode — a human will start a session from this auto session later and trigger those.
-- If the issue is too unclear to act on at all, reply in plain text with the specific question(s) a human must answer, and call no tool.
+HEADLESS AUTO-SESSION MODE: you are running unattended on GitHub issue #${issueNumber} — there is NO human in this chat and there will be NO follow-up turn. Decide ONE action for this single turn, in this order:
+1. FIRST apply the CLARITY GATE (above) to the issue, including any ISSUE COMMENTS included in the message — treat the reporter's comments as their input, and comments marked as earlier auto-solve questions as your own previous turn (answers to them may make the issue clear now). If the issue FAILS the gate: reply in plain text containing ONLY the numbered clarifying questions with your suggested defaults, and call no tool. Your reply will be posted verbatim as a comment on GitHub issue #${issueNumber} for the reporter to answer — write it for them (no greetings, no meta-talk about sessions or tools).
+2. dispatch_scout when the issue passes the gate and needs investigation or design: produce a grounded spec a human will review later. Prefer this for anything non-trivial.
+3. dispatch_claude_code ONLY for small, unambiguous fixes the issue text fully specifies. The agent may commit and push its branch, but NO pull request and NO staging preview will be created in this mode — a human will start a session from this auto session later and trigger those.
 Never promise future work and never ask for confirmation — state what you did and what the human reviewer should do next.`;
+}
+
+// #150: build the headless run's seed user message from the issue plus
+// its comments, so answers the reporter left as comments are visible to
+// the run. Comments authored by the platform bot are tagged so the Mayor
+// recognizes its own earlier clarifying questions vs. the reporter's
+// answers. Each comment body is truncated and only the most recent
+// HEADLESS_SEED_MAX_COMMENTS are kept (with an omission marker), so a
+// chatty thread can't blow up the model's context. Exported for tests.
+const HEADLESS_SEED_MAX_COMMENTS = 20;
+const HEADLESS_SEED_COMMENT_MAX_CHARS = 2000;
+function buildHeadlessSeed(issueNumber, issue, comments, botUsername) {
+  const title = issue ? issue.title : '';
+  const body = issue && issue.body ? `\n\n${issue.body}` : '';
+  let seed = `Please work on GitHub issue #${issueNumber}: "${title}".${body}`;
+
+  const list = Array.isArray(comments) ? comments : [];
+  if (!list.length) return seed;
+
+  const kept = list.slice(-HEADLESS_SEED_MAX_COMMENTS);
+  const lines = kept.map((c) => {
+    const author = (c.author || 'unknown').toString();
+    // GitHub App actors comment as `<name>[bot]`; tolerate that suffix.
+    const isBot = !!botUsername
+      && author.toLowerCase().replace(/\[bot\]$/, '') === botUsername.toLowerCase();
+    const date = (c.createdAt || '').slice(0, 10);
+    const tag = isBot
+      ? `[bot — earlier auto-solve questions${date ? `, ${date}` : ''}]`
+      : `[${author}${date ? `, ${date}` : ''}]`;
+    let text = (c.body || '').toString();
+    if (text.length > HEADLESS_SEED_COMMENT_MAX_CHARS) {
+      text = `${text.slice(0, HEADLESS_SEED_COMMENT_MAX_CHARS)}… [truncated]`;
+    }
+    return `${tag} ${text}`;
+  });
+  if (list.length > kept.length) lines.unshift('[earlier comments omitted]');
+
+  seed += `\n\nISSUE COMMENTS (oldest first):\n${lines.join('\n\n')}`;
+  return seed;
+}
+
+// #150: gate for posting phase-1 question text back to the GitHub issue.
+// Only a PURE-TEXT phase-1 turn qualifies: the dispatch-error path also
+// ends outcome='question' but its text is an error summary, not
+// questions for the reporter. Exported for tests.
+function shouldPostHeadlessQuestionComment({ outcome, dispatchedTool, mayorText }) {
+  return outcome === 'question' && !dispatchedTool && !!(mayorText || '').trim();
+}
+
+const HEADLESS_QUESTION_FOOTER = '\n\n— Posted by this issue\'s auto-solve session. '
+  + 'Answer in a comment (or edit the issue body), then press **Auto-solve** on the issue again — the next run reads the answers.';
+
+// Best-effort: a failed post must never fail or change the run's outcome
+// (the parked session remains the fallback channel). Returns whether the
+// comment landed so the caller can decide whether to surface a status.
+async function postHeadlessQuestionComment({ repoOwner, repoName, issueNumber, questionText }) {
+  try {
+    await github.createIssueComment(repoOwner, repoName, issueNumber, questionText + HEADLESS_QUESTION_FOOTER);
+    return true;
+  } catch (err) {
+    log.warn('sessions', 'Failed to post clarifying questions to issue (continuing)', {
+      issueNumber, err: err.message,
+    });
+    return false;
+  }
 }
 
 // Persist where the headless loop currently is so a platform restart can
@@ -2083,6 +2253,7 @@ async function setHeadlessStep(pool, sessionId, step, outcome) {
 async function runHeadlessSession({
   pool, config, session, user, selectedModel,
   repoOwner, repoName, userApiKey, issueNumber, issue,
+  comments = [], botUsername = null,
   resume = false,
 }) {
   const { broadcastGlobal } = require('../services/ws');
@@ -2110,13 +2281,7 @@ async function runHeadlessSession({
   const debitMayorUsage = async (usage) => {
     if (!usage) return;
     const cost = llm.estimateCostCents(usage, selectedModel);
-    if (!userApiKey && cost) {
-      await pool.query(
-        `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
-         ON CONFLICT (user_id, date) DO UPDATE SET total_cost_cents = llm_usage.total_cost_cents + EXCLUDED.total_cost_cents`,
-        [user.id, cost]
-      );
-    }
+    await limits.recordSpend(pool, user.id, cost, { byok: !!userApiKey });
     send('usage', { costCents: cost, model: selectedModel, byok: !!userApiKey });
     return cost;
   };
@@ -2124,10 +2289,10 @@ async function runHeadlessSession({
   let outcome = 'question';
   try {
     // Seed turn: same shape as the issue panel's "Create PR" seeding, minus
-    // the open-a-PR instruction (headless mode never opens one).
-    const title = issue ? issue.title : '';
-    const body = issue && issue.body ? `\n\n${issue.body}` : '';
-    const seed = `Please work on GitHub issue #${issueNumber}: "${title}".${body}`;
+    // the open-a-PR instruction (headless mode never opens one), plus the
+    // issue's comments (#150) so answers to earlier clarifying questions
+    // are visible to this run.
+    const seed = buildHeadlessSeed(issueNumber, issue, comments, botUsername);
     if (!resume) {
       await pool.query(
         `INSERT INTO chat_session_messages (session_id, role, content) VALUES ($1, 'user', $2)`,
@@ -2297,6 +2462,23 @@ async function runHeadlessSession({
       [outcome, session.id]
     );
     send('headless_update', { status: 'ready', outcome, issueNumber, appSlug: session.app_slug });
+    // #150: a pure-text phase-1 turn means the Mayor wrote clarifying
+    // questions — post them on the GitHub issue so the reporter sees them
+    // without entering the platform. Deliberately AFTER the terminal
+    // status write: the boot resume only re-drives 'generating' rows, so
+    // double-posting on restart is impossible; a crash between the UPDATE
+    // and the post degrades to no comment (today's behavior).
+    if (shouldPostHeadlessQuestionComment({ outcome, dispatchedTool: activeToolCall, mayorText: mayorText1 })) {
+      const posted = await postHeadlessQuestionComment({
+        repoOwner, repoName, issueNumber, questionText: mayorText1,
+      });
+      if (posted) await sendStatus(`Posted clarifying questions to issue #${issueNumber}`);
+    }
+    // #161: always notify the user who started the run (no arming —
+    // kicking off an auto-solve opts you into its completion ping).
+    await notifyAutoSolveDone(pool, {
+      userId: user.id, appId: session.app_id, sessionId: session.id, detail: outcome,
+    });
     log.info('sessions', 'Headless session ready', { sessionId: session.id, issueNumber, outcome });
   } catch (err) {
     activeWorkers.delete(session.id);
@@ -2308,8 +2490,15 @@ async function runHeadlessSession({
     ).catch(() => {});
     await sendStatus(`Auto session failed: ${String(err.message || err).substring(0, 200)}`);
     send('headless_update', { status: 'failed', issueNumber, appSlug: session.app_slug });
+    // #161: a failed run is still a completion — the user must come back
+    // and retry (or read the failure), so notify with detail='failed'.
+    await notifyAutoSolveDone(pool, {
+      userId: user.id, appId: session.app_id, sessionId: session.id, detail: 'failed',
+    });
   } finally {
-    setTimeout(() => sessionBus.clearSession(session.id), 30000);
+    // unref: a fire-and-forget cleanup timer must not hold the process
+    // open (it also kept the node:test runner alive for the full delay).
+    setTimeout(() => sessionBus.clearSession(session.id), 30000).unref();
   }
 }
 
@@ -2375,6 +2564,11 @@ async function failHeadlessRun(pool, session, message) {
     type: 'session_event', sessionId: session.id, event: 'headless_update',
     status: 'failed', issueNumber: session.headless_issue_number, appSlug: session.app_slug,
   });
+  // #161: terminal state — same completion notification the live
+  // runner's catch block fires.
+  await notifyAutoSolveDone(pool, {
+    userId: session.user_id, appId: session.app_id, sessionId: session.id, detail: 'failed',
+  });
 }
 
 async function resumeOneHeadlessRun({ pool, config, session }) {
@@ -2403,12 +2597,16 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
   if (step === 'planning') {
     // Nothing was dispatched yet — re-issue the whole Mayor turn. The
     // seed user message already exists (resume: true skips re-inserting);
-    // re-fetch the issue for the in-memory seed string the dispatch
-    // helpers receive.
+    // re-fetch the issue (+ its comments, #150) for the in-memory seed
+    // string the dispatch helpers receive.
     const { issue } = await github.fetchPublicIssue(repoOwner, repoName, issueNumber);
+    const { comments } = await github.fetchIssueComments(repoOwner, repoName, issueNumber);
+    let botUsername = null;
+    try { botUsername = await github.getBotUsername(); } catch {}
     return runHeadlessSession({
       pool, config, session, user, selectedModel,
       repoOwner, repoName, userApiKey, issueNumber, issue,
+      comments, botUsername,
       resume: true,
     });
   }
@@ -2563,13 +2761,7 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
     [session.id, mayorText2, selectedModel,
       mayor2.usage ? mayor2.usage.input_tokens + mayor2.usage.output_tokens : 0, costCents2]
   );
-  if (!userApiKey && costCents2) {
-    await pool.query(
-      `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
-       ON CONFLICT (user_id, date) DO UPDATE SET total_cost_cents = llm_usage.total_cost_cents + EXCLUDED.total_cost_cents`,
-      [user.id, costCents2]
-    ).catch(() => {});
-  }
+  await limits.recordSpend(pool, user.id, costCents2, { byok: !!userApiKey });
 
   await pool.query(
     `UPDATE chat_sessions SET headless_status = 'ready', headless_outcome = $1, headless_step = NULL, last_activity_at = NOW()
@@ -2579,6 +2771,11 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
   broadcastGlobal({
     type: 'session_event', sessionId: session.id, event: 'headless_update',
     status: 'ready', outcome, issueNumber, appSlug: session.app_slug,
+  });
+  // #161: a restart-resumed run completing is the same user-facing
+  // moment as a live one — notify the user who started it.
+  await notifyAutoSolveDone(pool, {
+    userId: user.id, appId: session.app_id, sessionId: session.id, detail: outcome,
   });
   log.info('sessions', 'Headless session resumed to ready', { sessionId: session.id, issueNumber, outcome });
 }
@@ -3008,13 +3205,7 @@ CRITICAL: Output the spec as RAW markdown. Do NOT wrap your whole response in a 
       const ccCostCents = Math.round(result.costUsd * 100);
       // Scout costs land in the same llm_usage table as build dispatches —
       // they're real Anthropic spend on the same daily budget.
-      if (!userApiKey) {
-        await pool.query(
-          `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
-           ON CONFLICT (user_id, date) DO UPDATE SET total_cost_cents = llm_usage.total_cost_cents + EXCLUDED.total_cost_cents`,
-          [req.user.id, ccCostCents]
-        );
-      }
+      await limits.recordSpend(pool, req.user.id, ccCostCents, { byok: !!userApiKey });
       send('usage', { costCents: ccCostCents, model: `scout/${selectedModel}`, byok: !!userApiKey });
     }
   } finally {
@@ -3552,20 +3743,19 @@ path: /relative/path?demo=1
       }
     }
 
-    // Debit the platform's daily ledger for whatever Claude Code spent
-    // — even when the run produced no commit (CC error, no-op turn,
-    // partial-failure with `result.fatalError`). The Anthropic invoice
-    // is paid regardless of whether code changes landed; without this
-    // we'd silently let users burn budget on tool-only / failed turns
-    // and only debit on the success branch.
+    // Debit the daily ledger for whatever Claude Code spent — even when
+    // the run produced no commit (CC error, no-op turn, partial-failure
+    // with `result.fatalError`). The Anthropic invoice is paid
+    // regardless of whether code changes landed; without this we'd
+    // silently let users burn budget on tool-only / failed turns and
+    // only debit on the success branch. BYOK runs were billed to the
+    // user's own key by the worker, so they land in the display-only
+    // byok bucket instead of the capped one (#119 — this site used to
+    // debit BYOK runs against the platform limit by mistake).
     if (result.costUsd) {
       const ccCostCents = Math.round(result.costUsd * 100);
-      await pool.query(
-        `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
-         ON CONFLICT (user_id, date) DO UPDATE SET total_cost_cents = llm_usage.total_cost_cents + EXCLUDED.total_cost_cents`,
-        [req.user.id, ccCostCents]
-      );
-      send('usage', { costCents: ccCostCents, model: `claude-code/${selectedModel}` });
+      await limits.recordSpend(pool, req.user.id, ccCostCents, { byok: !!userApiKey });
+      send('usage', { costCents: ccCostCents, model: `claude-code/${selectedModel}`, byok: !!userApiKey });
     }
 
     if (ccText) {
@@ -3658,6 +3848,19 @@ Every session has a markdown SPEC DOC that the user can read in the dev-chat spe
 SPEC QUESTIONS — KEEP THEM RARE:
 Do not pad the spec with open questions. Only include a "Questions" section for things that genuinely BLOCK implementation — decisions the coding agent cannot reasonably make on its own and that would change what gets built. Wherever you can, make a sensible default choice and state it instead of asking. Non-blocking items belong under "Considerations" (trade-offs, assumptions, things to keep in mind) or "Deferred work" (out-of-scope or follow-up items) — never phrase those as questions. When you instruct the scout to write or revise the spec, tell it to prefer decisions over questions.
 
+CLARITY GATE — ask before acting on unclear requests:
+Before dispatching any tool on a request or issue, check whether it is clear enough to act on. A request/issue is UNCLEAR when any of these hold:
+- It has multiple plausible interpretations that would produce materially different builds (which screen, which users, what should happen in case X).
+- It's a bug report with no reproduction signal — no description of what was seen vs. expected, and no hint of where it happens.
+- It references features, screens, or behavior that don't exist in the app, or contradicts itself.
+- After reading it you cannot state the acceptance criteria ("done means…") in one sentence.
+If a request is UNCLEAR, ask clarifying questions INSTEAD of calling any tool. Counter-rules so you don't over-ask:
+- Never ask something the repo can answer — that's a dispatch_scout signal, not a question.
+- Never ask when a sensible default exists — state the assumption in one sentence and proceed.
+- Ask at most 3 numbered questions in a single message, each with your suggested default so a one-word reply ("defaults are fine") unblocks. Ask once — don't drip-feed questions across turns.
+- Never dispatch while also asking for clarification (asking and dispatching in the same turn is forbidden).
+- If the user replies "your call" / "just do it", proceed with stated assumptions instead of re-asking.
+
 TWO TOOLS, in priority order:
 
 1) dispatch_scout(prompt) — read-only repo investigation + ALL spec writing, slow (~30-60s)
@@ -3678,7 +3881,7 @@ GENERAL RULES (apply to all tools):
   * chatting, brainstorming, or just acknowledging
   * giving feedback that isn't a concrete change request ("this looks bad" alone — ask what they want instead)
   * asking for something that looks like a brand-new, standalone app unrelated to "${appName}" (e.g. they're chatting here but describe building a totally different product). In that case, DO NOT dispatch — instead, gently point them to the home page to create a new app, e.g. "That sounds like a separate app from ${appName}. You can head back to the home screen and spin up a new app for it." Only dispatch if they confirm they want it added to this app.
-- If the request is vague, ask a clarifying question INSTEAD of calling any tool. Never dispatch while also asking for clarification.
+- If the request fails the CLARITY GATE above, ask clarifying questions (per its rules) INSTEAD of calling any tool. Never dispatch while also asking for clarification.
 - At most ONE tool call per user message.
 - Never call dispatch_scout and dispatch_claude_code in the same turn. The user dispatches the build themselves.
 
@@ -3843,4 +4046,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDoneIfArmed, notifyAutoSolveDone, buildHeadlessSeed, shouldPostHeadlessQuestionComment };

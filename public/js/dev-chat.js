@@ -29,18 +29,23 @@ const DevChat = {
   // Handle to the resumable EventSource, if open.
   _eventSource: null,
 
-  // ----- Browser-title status indicator (#108, #142) -----
+  // ----- Browser-title status indicator (#108, #142, #161) -----
   // While the user is on the dev-chat tab, the document title carries a
   // status marker for the current session's turn: "thinking" while the
-  // Mayor / Claude Code is working. When the turn finishes while the
-  // user is away from the browser tab, it flips to "done" and STAYS
-  // there until they actually come back (visibilitychange / window
-  // focus — listeners at the bottom of this file); if they're already
-  // watching when it finishes, the marker just clears — the in-page UI
-  // shows completion. The point is glanceability from another browser
-  // tab — you can kick off a build, go do something else, and the tab
-  // title tells you when it's finished even if you look hours later.
-  _titleStatus: null, // null | 'thinking' | 'done'
+  // Mayor / Claude Code is working. The old streaming-driven "✅ Done"
+  // marker is gone (#161): every "finished while away" case now arms
+  // notify_on_done server-side, so a session_done / auto_solve_done
+  // notification always exists, and its ARRIVAL drives the completion
+  // marker instead (see Notifications.handleIncoming →
+  // setCompletionTitle). The completion marker lives in a separate slot
+  // (_titleCompletion) that outranks the streaming status, is exempt
+  // from the dev-chat-tab scoping, and STAYS until the user actually
+  // comes back (visibilitychange / window focus — listeners at the
+  // bottom of this file) or the triggering notification is read.
+  _titleStatus: null, // null | 'thinking'
+  // null | 'sessionDone' | 'autoSolveDone' | 'autoSolveFailed' (#161).
+  // Single slot, last-write-wins — the badge count carries multiplicity.
+  _titleCompletion: null,
 
   budget: null,
 
@@ -145,6 +150,12 @@ const DevChat = {
   // dev chat tab shows a fresh session list instead of re-rendering the
   // previous app's session.
   reset() {
+    // #161: leaving the app (home / different app) while a turn is
+    // running counts as leaving the session — arm its completion
+    // notification before the state below is dropped.
+    if (DevChat.isStreaming && DevChat.currentSession) {
+      DevChat._setNotifyOnDone(DevChat.currentSession.id, true);
+    }
     DevChat.sessions = [];
     DevChat.currentSession = null;
     DevChat.messages = [];
@@ -187,13 +198,31 @@ const DevChat = {
   renderBudget() {
     const el = document.getElementById('dc-budget');
     if (!el) return;
-    // BYOK (#30): when the user has supplied their own Anthropic key,
-    // show that instead of the shared daily cap — it's irrelevant to
-    // them, and the indicator doubles as a reminder that the shared
-    // budget no longer applies to this session's cost.
+    // BYOK (#30/#119): when the user has supplied their own Anthropic
+    // key, lead with today's spend billed to that key, plus the
+    // platform-limit portion when any exists (mixed days: key added or
+    // removed mid-day). The BYOK figure never gets the red/yellow
+    // threshold coloring — no cap applies to it.
     if (window.Settings?.state?.hasApiKey) {
       const last4 = window.Settings.state.keyLast4 || '••••';
-      el.innerHTML = `<span class="text-emerald-400" title="Using your Anthropic API key">your key · ${last4}</span>`;
+      if (!DevChat.budget) {
+        // Budget fetch hasn't landed yet — static badge until it does.
+        el.innerHTML = `<span class="text-emerald-400" title="Using your Anthropic API key">your key · ${last4}</span>`;
+        return;
+      }
+      const byok = ((DevChat.budget.byokSpentCents || 0) / 100).toFixed(2);
+      const spent = (DevChat.budget.spentCents / 100).toFixed(2);
+      const limit = (DevChat.budget.limitCents / 100).toFixed(2);
+      const tip = `Today: $${byok} billed to your Anthropic key (…${last4}) + $${spent} of your $${limit} platform daily limit. Resets at midnight UTC.`;
+      let html = `<span class="text-emerald-400">your key $${byok}</span>`;
+      // Collapse the platform portion on all-BYOK days (the common
+      // case) to keep the header uncluttered.
+      if (DevChat.budget.spentCents > 0) {
+        const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
+        const color = pct > 80 ? 'text-red-400' : pct > 50 ? 'text-yellow-400' : 'text-emerald-400';
+        html += `<span class="text-zinc-600"> · limit </span><span class="${color}">$${spent}</span><span class="text-zinc-600">/$${limit}</span>`;
+      }
+      el.innerHTML = `<span title="${tip}">${html}</span>`;
       return;
     }
     if (!DevChat.budget) return;
@@ -519,6 +548,14 @@ const DevChat = {
   },
 
   async openSession(sessionId) {
+    // #161: opening a DIFFERENT session while the current one is
+    // mid-turn counts as leaving it — arm its completion notification.
+    // (Returning to the SAME session needs no client call: the server's
+    // GET /api/sessions/:id below disarms it.)
+    if (DevChat.isStreaming && DevChat.currentSession
+        && Number(DevChat.currentSession.id) !== Number(sessionId)) {
+      DevChat._setNotifyOnDone(DevChat.currentSession.id, true);
+    }
     try {
       const res = await fetch(`/api/sessions/${sessionId}`);
       if (!res.ok) return;
@@ -545,20 +582,13 @@ const DevChat = {
 
       DevChat.currentSession = session;
       DevChat._startHeartbeat();
-      // Drop any title marker carried over from the previous session —
-      // a "done" badge from session A must not survive into session B.
-      // If THIS session is mid-run, the busy check below re-applies
-      // "thinking" via _setStreamingUI.
-      //
-      // Exception (#142): while the user is away from the browser tab,
-      // the only way to land here is the background !busy reload of the
-      // SAME session (_startProgressPolling), and clearing there wiped
-      // the freshly-set "done" badge before the user ever saw it. Keep
-      // a sticky "done" while away — the visibility/focus listeners at
-      // the bottom of this file clear it the moment they return.
-      if (!(DevChat._titleStatus === 'done' && DevChat._userIsAway())) {
-        DevChat.setTitleStatus(null);
-      }
+      // Drop any streaming title marker carried over from the previous
+      // session. If THIS session is mid-run, the busy check below
+      // re-applies "thinking" via _setStreamingUI. The #161 completion
+      // marker lives in its own slot (_titleCompletion) and is
+      // deliberately untouched here — it stays sticky while the user is
+      // away and clears on return / notification read.
+      DevChat.setTitleStatus(null);
       // Restore the spec viewer's open/closed state from localStorage
       // before the caller's renderChatView fires, so a refresh on a
       // session that had the viewer open paints with the panel
@@ -1179,7 +1209,11 @@ const DevChat = {
   // name doesn't fit.
   TITLE_STATUS_MARKERS: {
     thinking: '⏳ Thinking… · ',
-    done: '✅ Done · ',
+    // #161 completion tier — set by notification arrival (see
+    // setCompletionTitle), not by stream end.
+    sessionDone: '✅ Session done · ',
+    autoSolveDone: '🤖 Auto-solve ready · ',
+    autoSolveFailed: '⚠️ Auto-solve failed · ',
   },
 
   // "Away" = the user can't currently see this page: the browser tab is
@@ -1188,6 +1222,22 @@ const DevChat = {
   // marker in the title (#142).
   _userIsAway() {
     return document.visibilityState === 'hidden' || !document.hasFocus();
+  },
+
+  // #161: arm/disarm the server-side "notify me when this turn
+  // finishes" flag for a session. Fire-and-forget — arming is
+  // best-effort and the endpoint is idempotent, so duplicate or lost
+  // calls are harmless (the pagehide beacon is the backstop for tab
+  // close / hard navigations, where a normal fetch may be killed).
+  _setNotifyOnDone(sessionId, armed) {
+    if (!sessionId) return;
+    try {
+      fetch(`/api/sessions/${sessionId}/notify-on-done`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ armed: !!armed }),
+      }).catch(() => {});
+    } catch { /* non-fatal */ }
   },
 
   // Set (or clear, with null) the dev-chat status reflected in
@@ -1200,6 +1250,19 @@ const DevChat = {
     }
     if (DevChat._titleStatus === status) return;
     DevChat._titleStatus = status;
+    DevChat.applyTitleStatus();
+  },
+
+  // #161: set (or clear, with null) the completion marker. Unlike
+  // setTitleStatus this is NOT scoped to the dev-chat tab — the whole
+  // point is the user is elsewhere (another tab, another view) when the
+  // completion notification arrives. Cleared by the visibility/focus
+  // return handler at the bottom of this file and by
+  // Notifications._reconcileCompletionTitle when the triggering
+  // notification is read.
+  setCompletionTitle(status) {
+    if (DevChat._titleCompletion === status) return;
+    DevChat._titleCompletion = status;
     DevChat.applyTitleStatus();
   },
 
@@ -1219,9 +1282,11 @@ const DevChat = {
     for (const m of Object.values(DevChat.TITLE_STATUS_MARKERS)) {
       if (base.startsWith(m)) { base = base.slice(m.length); break; }
     }
-    const marker = DevChat._titleStatus
-      ? DevChat.TITLE_STATUS_MARKERS[DevChat._titleStatus]
-      : '';
+    // Precedence (#161): completion marker outranks the streaming
+    // status; clearing the completion falls back to the live status, so
+    // a still-streaming watched session reverts to "⏳ Thinking…".
+    const active = DevChat._titleCompletion || DevChat._titleStatus;
+    const marker = active ? DevChat.TITLE_STATUS_MARKERS[active] : '';
     const next = count + marker + base;
     if (next === full) return;
     document.title = next;
@@ -1244,19 +1309,13 @@ const DevChat = {
 
     // Every streaming state transition funnels through here (send,
     // reconnect, phase change, finish, stop), so this is the one hook
-    // needed for the title indicator: streaming → "thinking"; a
-    // streaming→idle edge → "done". The `=== 'thinking'` guard means we
-    // only flip to "done" when a run was actually live in this tab —
-    // idle re-renders don't conjure a done marker.
+    // needed for the live-status indicator: streaming → "thinking";
+    // streaming→idle just clears it. The legacy stream-end "done"
+    // marker is gone (#161): finishing while away always produces a
+    // session_done notification now, and its arrival sets the
+    // completion marker via setCompletionTitle instead.
     if (streaming) DevChat.setTitleStatus('thinking');
-    else if (DevChat._titleStatus === 'thinking') {
-      // A finished run only needs the "done" badge when the user isn't
-      // looking at this browser tab — it then persists until they
-      // return (cleared by the visibility/focus listeners at the bottom
-      // of this file). If they're already watching, the in-page UI
-      // shows completion, so drop the marker immediately (#142).
-      DevChat.setTitleStatus(DevChat._userIsAway() ? 'done' : null);
-    }
+    else if (DevChat._titleStatus === 'thinking') DevChat.setTitleStatus(null);
 
     const btn = document.getElementById('dc-send-btn');
     if (!btn) return;
@@ -2905,15 +2964,39 @@ DevChat._sanitizeStoredModel();
 // renderChatView() pass will pick up the new entries.
 DevChat.loadModels();
 
-// A sticky "✅ Done" title marker (set when a run finishes while the
-// user is away — see _setStreamingUI) clears the moment they actually
-// come back to the tab (#142). Both events are needed: visibilitychange
-// fires on browser-tab switches, window focus on window-to-window
-// switches where the tab stays "visible" the whole time.
-DevChat._titleDoneReturnHandler = () => {
-  if (DevChat._titleStatus !== 'done') return;
-  if (DevChat._userIsAway()) return;
-  DevChat.setTitleStatus(null);
+// Combined away/return handler (#142, #161). On leaving (tab hidden or
+// window blurred) while a turn is streaming, arm the server-side
+// completion notification for the open session. On returning, clear any
+// sticky completion title marker and — if the user is back on the
+// dev-chat tab with the same turn still streaming — disarm the flag
+// (they're watching again, so no notification needed). All three events
+// matter: visibilitychange fires on browser-tab switches, window
+// blur/focus on window-to-window switches where the tab stays
+// "visible" the whole time.
+DevChat._awayReturnHandler = () => {
+  const away = DevChat._userIsAway();
+  if (!away && DevChat._titleCompletion) DevChat.setCompletionTitle(null);
+  if (DevChat.isStreaming && DevChat.currentSession) {
+    if (away) {
+      DevChat._setNotifyOnDone(DevChat.currentSession.id, true);
+    } else if (typeof App !== 'undefined' && App.currentTab === 'individual-chat') {
+      DevChat._setNotifyOnDone(DevChat.currentSession.id, false);
+    }
+  }
 };
-document.addEventListener('visibilitychange', DevChat._titleDoneReturnHandler);
-window.addEventListener('focus', DevChat._titleDoneReturnHandler);
+document.addEventListener('visibilitychange', DevChat._awayReturnHandler);
+window.addEventListener('focus', DevChat._awayReturnHandler);
+window.addEventListener('blur', DevChat._awayReturnHandler);
+
+// Tab close / hard navigation while a turn is streaming: a normal fetch
+// may be killed mid-flight, so arm via sendBeacon (cookies ride along;
+// the endpoint parses the JSON blob body like any other request).
+window.addEventListener('pagehide', () => {
+  if (!DevChat.isStreaming || !DevChat.currentSession) return;
+  try {
+    if (navigator.sendBeacon) {
+      const blob = new Blob([JSON.stringify({ armed: true })], { type: 'application/json' });
+      navigator.sendBeacon(`/api/sessions/${DevChat.currentSession.id}/notify-on-done`, blob);
+    }
+  } catch { /* best-effort */ }
+});

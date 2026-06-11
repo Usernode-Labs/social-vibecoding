@@ -2,6 +2,7 @@
 
 const log = require('./logger');
 const llm = require('./llm');
+const limits = require('./limits');
 const github = require('./github');
 
 // Coerce an arbitrary array of "issue numbers" into a clean, deduped,
@@ -258,20 +259,12 @@ async function applyPrMetadata({
   // or revised guidance reaches GitHub on a title-unchanged turn.
   const testingChanged = testingBlock !== (appliedTesting || '');
 
-  // Debit the platform Haiku call to the session owner. Skip when
-  // BYOK is in effect (user's own key paid for it) or the fallback
-  // template fired (no API call was made).
-  if (!apiKey && meta.usage && userId != null && pool) {
-    try {
-      const costCents = llm.estimateCostCents(meta.usage, meta.model);
-      await pool.query(
-        `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
-         ON CONFLICT (user_id, date) DO UPDATE SET total_cost_cents = llm_usage.total_cost_cents + EXCLUDED.total_cost_cents`,
-        [userId, costCents]
-      );
-    } catch (err) {
-      log.warn('pr-metadata', 'Failed to record llm_usage', { err: err.message, userId });
-    }
+  // Debit the Haiku call to the session owner — into the BYOK bucket
+  // when the user's own key paid for it (#119). The fallback-template
+  // path produces no usage, which recordSpend treats as a no-op.
+  if (meta.usage && userId != null && pool) {
+    const costCents = llm.estimateCostCents(meta.usage, meta.model);
+    await limits.recordSpend(pool, userId, costCents, { byok: !!apiKey });
   }
 
   if (!session.pr_number) {
