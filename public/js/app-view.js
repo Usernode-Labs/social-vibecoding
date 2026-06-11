@@ -1413,7 +1413,9 @@ const AppView = {
       // issue's `headless` field from /github-issues:
       //   none/failed → "Auto-solve" (opens the confirm + model popup)
       //   generating  → disabled progress label
-      //   ready       → "Start session from auto session" (clone for me)
+      //   ready       → contextual clone-for-me label by outcome (#168):
+      //                 "Review spec / Review solution / Answer question
+      //                 & start session", generic fallback otherwise
       const h = issue.headless;
       let autoBtn;
       if (h && h.status === 'generating') {
@@ -1422,7 +1424,11 @@ const AppView = {
         const outcomeNote = h.outcome === 'spec' ? 'it drafted a spec'
           : h.outcome === 'code' ? 'it pushed a code change'
           : 'it has a question for you';
-        autoBtn = `<button class="gc-vote-btn" title="Clone the finished auto session (${outcomeNote}) into your own dev chat — others can clone it too" onclick="AppView.startFromAutoSession(${h.sessionId})">Start session from auto session</button>`;
+        const autoLabel = h.outcome === 'spec' ? 'Review spec &amp; start session'
+          : h.outcome === 'code' ? 'Review solution &amp; start session'
+          : h.outcome === 'question' ? 'Answer question &amp; start session'
+          : 'Start session from auto session';
+        autoBtn = `<button class="gc-vote-btn" title="Clone the finished auto session (${outcomeNote}) into your own dev chat — others can clone it too" onclick="AppView.startFromAutoSession(${h.sessionId})">${autoLabel}</button>`;
       } else {
         autoBtn = `<button class="gc-vote-btn" title="Spin up a headless AI session that starts solving this issue on its own — uses your credits" onclick="AppView.confirmAutoSession(${n})">Auto-solve</button>`;
       }
@@ -1792,8 +1798,9 @@ const AppView = {
   },
 
   // While any rendered issue shows a generating auto session, poll the
-  // issues endpoint so the button flips to "Start session from auto
-  // session" (or back to Auto-solve on failure) without a manual refresh.
+  // issues endpoint so the button flips to its outcome-specific "Review
+  // … & start session" label (or back to Auto-solve on failure) without
+  // a manual refresh.
   _syncHeadlessPolling() {
     const generating = (AppView._ghIssues || []).some(
       (i) => i.headless && i.headless.status === 'generating'

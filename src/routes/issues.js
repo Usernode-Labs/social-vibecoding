@@ -360,9 +360,10 @@ function issueRoutes(config) {
       const creatorByNumber = new Map(creatorRows.map((r) => [r.n, r.username]));
 
       // #155: latest live headless auto session per issue, so the panel can
-      // render the right button state (Auto-solve / Generating… / Start
-      // session from auto session). 'failed' rows are excluded — the button
-      // recovers to Auto-solve so the run can be retried.
+      // render the right button state (Auto-solve / Generating… / the
+      // outcome-specific "Review … & start session" clone button). 'failed'
+      // rows are excluded — the button recovers to Auto-solve so the run
+      // can be retried.
       const { rows: headlessRows } = await pool.query(
         `SELECT DISTINCT ON (cs.headless_issue_number)
                 cs.headless_issue_number AS n, cs.id, cs.headless_status,
