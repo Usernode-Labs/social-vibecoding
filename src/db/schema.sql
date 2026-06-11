@@ -466,6 +466,12 @@ CREATE TABLE IF NOT EXISTS llm_usage (
   UNIQUE(user_id, date)
 );
 
+-- #119: split daily spend by who paid Anthropic.
+--   total_cost_cents = platform-key spend (drives the daily caps)
+--   byok_cost_cents  = spend billed to the user's own Anthropic key
+--                      (display only — never considered by any cap)
+ALTER TABLE llm_usage ADD COLUMN IF NOT EXISTS byok_cost_cents NUMERIC(10,4) NOT NULL DEFAULT 0;
+
 -- Platform-level admin-tunable settings. Currently only used for the
 -- daily LLM spend caps; designed as a generic key/value store so future
 -- admin knobs can land here without another migration. Values are

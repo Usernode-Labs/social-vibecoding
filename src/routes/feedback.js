@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const log = require('../services/logger');
 const llm = require('../services/llm');
+const limits = require('../services/limits');
 const github = require('../services/github');
 const { pushIssueUpdate } = require('../services/ws');
 const { getPool } = require('../db/pool');
@@ -152,16 +153,8 @@ function feedbackRoutes(config) {
             // off-budget. No-op when usage is missing or user_id is
             // unset (e.g. anonymous feedback in the future).
             if (data.usage && req.user?.id) {
-              try {
-                const costCents = llm.estimateCostCents(data.usage, 'claude-haiku-4-5');
-                await pool.query(
-                  `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
-                   ON CONFLICT (user_id, date) DO UPDATE SET total_cost_cents = llm_usage.total_cost_cents + EXCLUDED.total_cost_cents`,
-                  [req.user.id, costCents]
-                );
-              } catch (err) {
-                log.warn('feedback', 'Failed to record llm_usage', { err: err.message });
-              }
+              const costCents = llm.estimateCostCents(data.usage, 'claude-haiku-4-5');
+              await limits.recordSpend(pool, req.user.id, costCents, { byok: false });
             }
           }
         } catch {}

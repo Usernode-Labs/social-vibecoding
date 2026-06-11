@@ -125,11 +125,35 @@ async function checkBudget(pool, userId) {
   };
 }
 
+// Daily-ledger upsert shared by every spend site (Mayor turns, Claude
+// Code dispatches, PR-metadata Haiku calls, feedback titles). Routes
+// the cost into the bucket matching who paid Anthropic (#119):
+//   byok: false → total_cost_cents (counts against the daily caps)
+//   byok: true  → byok_cost_cents  (billed to the user's own key;
+//                 display only — checkBudget never reads it)
+// No-ops on a missing user or non-positive cost, and swallows+logs DB
+// errors — billing bookkeeping must never fail the request that
+// incurred the spend (same tolerance the call sites had inline).
+async function recordSpend(pool, userId, costCents, { byok = false } = {}) {
+  if (!userId || !(costCents > 0)) return;
+  const column = byok ? 'byok_cost_cents' : 'total_cost_cents';
+  try {
+    await pool.query(
+      `INSERT INTO llm_usage (user_id, date, ${column}) VALUES ($1, CURRENT_DATE, $2)
+       ON CONFLICT (user_id, date) DO UPDATE SET ${column} = llm_usage.${column} + EXCLUDED.${column}`,
+      [userId, costCents]
+    );
+  } catch (err) {
+    log.warn('limits', 'Failed to record llm_usage spend', { userId, costCents, byok, err: err.message });
+  }
+}
+
 module.exports = {
   getGlobalLimitCents,
   getDefaultUserLimitCents,
   getEffectiveUserLimitCents,
   checkBudget,
+  recordSpend,
   invalidate,
   KEY_USER,
   KEY_GLOBAL,
