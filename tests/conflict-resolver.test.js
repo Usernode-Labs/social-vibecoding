@@ -61,18 +61,22 @@ function loadResolverWithGithub(mergeableSequence) {
   let i = 0;
   const requestCalls = [];
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
+  // The resolver reads mergeability through the PAT-preferred
+  // getOctokit (the self-app's repo owner has no App installation).
+  const fakeOctokit = async () => ({
+    request: async (route, params) => {
+      requestCalls.push({ route, params });
+      const mergeable = i < mergeableSequence.length
+        ? mergeableSequence[i]
+        : mergeableSequence[mergeableSequence.length - 1];
+      i += 1;
+      return { data: { mergeable } };
+    },
+  });
   stub(ids.github, {
     isEnabled: () => true,
-    getInstallationOctokit: async () => ({
-      request: async (route, params) => {
-        requestCalls.push({ route, params });
-        const mergeable = i < mergeableSequence.length
-          ? mergeableSequence[i]
-          : mergeableSequence[mergeableSequence.length - 1];
-        i += 1;
-        return { data: { mergeable } };
-      },
-    }),
+    getOctokit: fakeOctokit,
+    getInstallationOctokit: fakeOctokit,
   });
   stub(ids.limits, { checkBudget: async () => ({ error: null }) });
   stub(ids.syncMain, { runSyncMain: async () => ({ ok: true, syncResult: 'clean', behind: 0 }) });
@@ -238,17 +242,19 @@ function loadResolverForCoalesce({ runSyncMainImpl, mergeableSeq = [false, true,
   let mi = 0;
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
+  const fakeOctokit = async () => ({
+    request: async () => {
+      const mergeable = mi < mergeableSeq.length
+        ? mergeableSeq[mi]
+        : mergeableSeq[mergeableSeq.length - 1];
+      mi += 1;
+      return { data: { mergeable } };
+    },
+  });
   stub(ids.github, {
     isEnabled: () => true,
-    getInstallationOctokit: async () => ({
-      request: async () => {
-        const mergeable = mi < mergeableSeq.length
-          ? mergeableSeq[mi]
-          : mergeableSeq[mergeableSeq.length - 1];
-        mi += 1;
-        return { data: { mergeable } };
-      },
-    }),
+    getOctokit: fakeOctokit,
+    getInstallationOctokit: fakeOctokit,
   });
   stub(ids.limits, { checkBudget: async () => ({ error: null }) });
   stub(ids.syncMain, { runSyncMain: runSyncMainImpl });

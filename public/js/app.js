@@ -284,6 +284,22 @@ const App = {
       this.end({ newSha: sha });
     },
 
+    // The merge behind this banner failed before any deploy started
+    // (vote_update { mergeFailed:true }). No new code is coming, so
+    // there's no SHA flip to wait for and no reason to reload — just
+    // clear the latch and lift the write block. Safe when the banner
+    // isn't armed (no-op).
+    cancel() {
+      if (!this.isActive()) return;
+      console.log('[platform-updating] cancelled (merge failed, no deploy)');
+      try { sessionStorage.removeItem(this.SS_KEY); } catch {}
+      this.fromSha = null;
+      this.since = null;
+      this.stopFastPolling();
+      this.disarmStuckTimer();
+      this.hide();
+    },
+
     end({ newSha } = {}) {
       console.log('[platform-updating] dismissing', { fromSha: this.fromSha, newSha });
       try { sessionStorage.removeItem(this.SS_KEY); } catch {}
@@ -792,6 +808,12 @@ const App = {
         appSlug: data.appSlug,
         sessionId: data.sessionId,
       });
+    }
+    // Counter-event: the self-app merge failed before any deploy, so no
+    // SHA flip is coming — unlatch instead of holding the platform
+    // read-only until the stuck timer.
+    if (data.mergeFailed && data.selfHosted) {
+      App.PlatformUpdating.cancel();
     }
     // Refresh vote panel if we're on group chat for this app
     if (App.currentApp === data.appSlug && App.currentTab === 'group-chat') {
