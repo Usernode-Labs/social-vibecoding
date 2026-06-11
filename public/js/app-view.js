@@ -1147,11 +1147,9 @@ const AppView = {
       if (kind === 'issue') {
         // The issue may exist but sit beyond the current "Show 5 more"
         // page — bump the visible count past it and re-render in place.
-        // Same filtered list _renderOpenIssuesInner pages over (env-var
-        // proposal twins render in their own section, already tagged).
-        const issues = (AppView._ghIssues || []).filter(
-          (i) => !(AppView._envIssueNumbers && AppView._envIssueNumbers.has(i.number))
-        );
+        // Same filtered + auto-solve-sorted list _renderOpenIssuesInner
+        // pages over, so the index matches the rendered order (#177).
+        const issues = AppView._visibleGhIssues();
         const idx = issues.findIndex((i) => i.number === n);
         if (idx >= (AppView._ghIssuesShown || 5)) {
           AppView._ghIssuesShown = idx + 1;
@@ -1362,17 +1360,34 @@ const AppView = {
 
   // ---- Open Issues section ------------------------------------------------
 
+  // The Open Issues list exactly as rendered: env-var-proposal twins
+  // filtered out (#131 — those rows render in the dedicated Environment
+  // variables section), then sorted so issues with a live auto-solve
+  // session float to the top (#177): ongoing ('generating') first,
+  // finished ('ready') next, everything else after. Within each group the
+  // fetch order (GitHub updated-desc) is preserved — sort() is stable and
+  // runs on the filter copy, so _ghIssues itself keeps the canonical fetch
+  // order. Sorting happens here at render time (not server-side) because
+  // the optimistic auto-solve start and the headless poller both mutate
+  // `headless` in place and re-render without refetching. Paging
+  // (_renderOpenIssuesInner) and the ref-scroll index lookup must both use
+  // this helper so "Show 5 more" counts match what's on screen.
+  _visibleGhIssues() {
+    const rank = (i) => {
+      const s = i.headless && i.headless.status;
+      return s === 'generating' ? 0 : s === 'ready' ? 1 : 2;
+    };
+    return (AppView._ghIssues || [])
+      .filter((i) => !(AppView._envIssueNumbers && AppView._envIssueNumbers.has(i.number)))
+      .sort((a, b) => rank(a) - rank(b));
+  },
+
   // Build the inner HTML for the Open Issues section from the cached
   // AppView._ghIssues list. Rendered once inside loadVotePanel's bodyHtml and
   // re-rendered in place (into #gc-open-issues) by showMoreIssues /
   // giveIssueBounty so paging + optimistic bounty updates need no refetch.
   _renderOpenIssuesInner() {
-    // #131: hide the GitHub twins of open env-var (secret_change)
-    // proposals — those render in the dedicated Environment variables
-    // section instead of under an issues category.
-    const issues = (AppView._ghIssues || []).filter(
-      (i) => !(AppView._envIssueNumbers && AppView._envIssueNumbers.has(i.number))
-    );
+    const issues = AppView._visibleGhIssues();
     const meta = AppView._ghIssuesMeta || {};
     const heading = `<div class="text-xs text-zinc-500 mb-1 font-medium">Open Issues</div>`;
 
