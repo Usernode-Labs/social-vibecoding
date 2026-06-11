@@ -2810,6 +2810,17 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
     flushProgress();
     await worker.clearActiveTurn(session.id);
 
+    // #174: the journal replay rebuilt the turn's self-reported cost —
+    // debit it before the recovery check below, because the Anthropic
+    // invoice is paid whether or not the turn produced anything (same
+    // rationale as the turn-end debit in runClaudeCodeTool). active_turn
+    // rows persisted before the byok flag shipped fall back to
+    // key-on-file at resume time.
+    if (result.costUsd) {
+      const byok = activeTurn.byok ?? !!userApiKey;
+      await limits.recordSpend(pool, user.id, Math.round(result.costUsd * 100), { byok });
+    }
+
     const producedAnything = result.execExitSeen || result.resultSeen
       || !!(result.lastResultText || '').trim();
     if (!producedAnything) {
