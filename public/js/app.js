@@ -439,6 +439,9 @@ const App = {
   },
 
   eventsWs: null,
+  // Shell-injected staging iframe token, captured at script load so SPA
+  // history rewrites can't lose it before a (re)connect needs it.
+  _bootToken: new URLSearchParams(location.search).get('token'),
   // Set on the very first connect; on every subsequent (re)connect we
   // resync state because the server's broadcast model is fire-and-forget
   // — anything pushed during the disconnect window (a `vote_update
@@ -452,8 +455,10 @@ const App = {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     // Same staging-iframe token fallback as GroupChat._openSocket — the
     // session cookie can be orphaned by a staging redeploy, and the WS
-    // handshake can't re-mint it the way HTTP requests do.
-    const token = new URLSearchParams(location.search).get('token');
+    // handshake can't re-mint it the way HTTP requests do. Prefer the
+    // live URL, fall back to the boot-time capture (SPA history rewrites
+    // may have stripped the query by now).
+    const token = new URLSearchParams(location.search).get('token') || App._bootToken;
     const qs = token ? `?token=${encodeURIComponent(token)}` : '';
     App.eventsWs = new WebSocket(`${proto}//${location.host}/ws/events${qs}`);
 
@@ -1249,7 +1254,11 @@ const App = {
         newHash += `/${DevChat.currentSession.id}`;
       }
     } else {
-      newHash = location.pathname; // home: drop the fragment entirely
+      // Home: drop the fragment entirely — but keep the query string. In
+      // staging previews the shell-injected ?token= lives there, and the
+      // WS connects re-read it as an auth fallback (see connectEvents /
+      // GroupChat._openSocket).
+      newHash = location.pathname + location.search;
     }
 
     const currentFull = location.hash || '';

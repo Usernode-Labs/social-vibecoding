@@ -1,3 +1,4 @@
+const http = require('http');
 const { WebSocketServer } = require('ws');
 const jwt = require('jsonwebtoken');
 const { getPool } = require('../db/pool');
@@ -21,6 +22,30 @@ function attach(server, config) {
   wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', async (req, socket, head) => {
+    // Caddy's forward_auth PRESERVES the Connection/Upgrade headers on its
+    // auth subrequest while rewriting the URI to /__caddy/access. Node
+    // routes any upgrade-flagged request to this 'upgrade' event instead of
+    // the normal request listener, so the gate pre-flight for every proxied
+    // WebSocket lands here — where it used to fall through to
+    // socket.destroy(). forward_auth then read EOF, answered 502, and every
+    // WS behind the wildcard (all staging previews / child apps) was
+    // unreachable: group chat sat on "Reconnecting…" forever. Re-dispatch
+    // anything that isn't one of our real WS endpoints into the regular
+    // handler chain (Express) so /__caddy/access — or any other route — can
+    // answer with a proper HTTP response over this socket.
+    if (!req.url?.startsWith('/ws/')) {
+      const handler = server.listeners('request')[0];
+      if (!handler) { socket.destroy(); return; }
+      const res = new http.ServerResponse(req);
+      res.assignSocket(socket);
+      res.shouldKeepAlive = false;
+      res.on('finish', () => {
+        try { socket.end(); } catch { /* already gone */ }
+      });
+      handler(req, res);
+      return;
+    }
+
     const user = await authenticateWs(req, pool, config);
     if (!user) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');

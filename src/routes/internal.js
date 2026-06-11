@@ -196,9 +196,12 @@ function internalRoutes(_config) {
           && await appAccess.isViewMember(pool, vis.appId, iframeJwt.id)) {
         // WebSocket handshakes can't follow redirects — the 302 cookie-set
         // dance below would kill the upgrade. forward_auth copies the
-        // original request headers, so detect the upgrade and allow it
-        // as-is (the WS carries ?token= for the app's own auth).
-        const isWsUpgrade = String(req.headers.upgrade || '').toLowerCase() === 'websocket';
+        // original request headers (including Upgrade/Sec-WebSocket-*), so
+        // detect the handshake and allow it as-is (the WS carries ?token=
+        // for the app's own auth). Sec-WebSocket-Key is checked too in case
+        // an intermediary strips the hop-by-hop Upgrade header.
+        const isWsUpgrade = String(req.headers.upgrade || '').toLowerCase() === 'websocket'
+          || !!req.headers['sec-websocket-key'];
         if (!queryToken || isWsUpgrade || query.get(RETRY_MARKER) === '1') {
           // Header-credentialed fetch, WS upgrade, or cookie-set retry that
           // came back cookieless: allow this request as-is.

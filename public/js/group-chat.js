@@ -55,6 +55,9 @@ const GroupChat = {
   _reactBar: null,
   _reactBarDismiss: null,
   _reactBarOpenedAt: 0,
+  // Shell-injected staging iframe token, captured at script load so SPA
+  // history rewrites can't lose it before a (re)connect needs it.
+  _bootToken: new URLSearchParams(location.search).get('token'),
   QUICK_REACTIONS: ['\u{1F44D}', '\u2764\uFE0F', '\u{1F602}', '\u{1F62E}', '\u{1F622}', '\u{1F64F}'],
   // Full picker grid, ordered by category (smileys \u2192 gestures \u2192 hearts \u2192
   // animals \u2192 food \u2192 activities \u2192 objects \u2192 symbols) so related emoji sit
@@ -205,8 +208,10 @@ const GroupChat = {
     // shell-injected ?token= JWT; the session cookie may be orphaned by a
     // redeploy (sessions is staging:private). Forward the token on the WS
     // URL so the handshake has the same fallback HTTP requests do. In
-    // prod there is no token param and this is a no-op.
-    const token = new URLSearchParams(location.search).get('token');
+    // prod there is no token param and this is a no-op. Prefer the live
+    // URL, fall back to the boot-time capture (SPA history rewrites may
+    // have stripped the query by now).
+    const token = new URLSearchParams(location.search).get('token') || GroupChat._bootToken;
     const qs = token ? `?token=${encodeURIComponent(token)}` : '';
     const ws = new WebSocket(`${proto}//${location.host}/ws/chat/${appSlug}${qs}`);
     GroupChat.ws = ws;
@@ -228,7 +233,11 @@ const GroupChat = {
       } catch {}
     };
 
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
+      // Surface the close code in the dev console — a clean reconnect
+      // cycle logs 1006s, while e.g. 4004 (access denied) pinpoints a
+      // server-side rejection that retrying will never fix.
+      console.warn(`[gc] chat socket closed code=${ev.code}${ev.reason ? ` reason=${ev.reason}` : ''}`);
       // Bail if disconnect() ran (we changed apps / left the
       // surface entirely); the existing socket reference is stale.
       if (GroupChat.ws !== ws) return;
