@@ -827,6 +827,13 @@ const DevChat = {
               case 'status':
                 DevChat._removeSpinner();
                 DevChat._deactivateLastStatus();
+                // A status line always closes the current streaming bubble
+                // (#99): tokens that arrive after it must render BELOW it,
+                // never append to the bubble above. Same sealing as
+                // assistant_message_end; a no-op when nothing is streaming.
+                if (assistantMsg) assistantMsg._finalized = true;
+                assistantPushed = false;
+                assistantMsg = { role: 'assistant', content: '', created_at: new Date().toISOString() };
                 DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
                 DevChat.renderMessages();
                 DevChat.scrollToBottom();
@@ -1104,13 +1111,19 @@ const DevChat = {
         if (am) am._finalized = true;
         break;
       }
-      case 'status':
+      case 'status': {
         DevChat._removeSpinner();
         DevChat._deactivateLastStatus();
+        // A status line always closes the current streaming bubble (#99):
+        // tokens replayed after it must start a fresh bubble below it,
+        // matching the primary POST-SSE path's seal-on-status.
+        const sealMsg = lastAssistantMsg();
+        if (sealMsg) sealMsg._finalized = true;
         DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;
+      }
       case 'staging_ready':
         DevChat._removeSpinner();
         DevChat._deactivateLastStatus();
