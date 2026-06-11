@@ -582,9 +582,9 @@ const DevChat = {
           if (m.metadata.ccOutput) m.ccOutput = m.metadata.ccOutput;
           if (m.metadata.ccSummary) m.ccSummary = m.metadata.ccSummary;
           if (m.metadata.progressLog) m.progressLog = m.metadata.progressLog;
-          // Spec preview cards: write_spec / scout persist these on the
+          // Spec preview cards: scout dispatches persist these on the
           // status row so a refresh re-renders the same inline card the
-          // user saw mid-stream. See runWriteSpecTool / runScoutTool.
+          // user saw mid-stream. See runScoutTool.
           if (m.metadata.specPreview) m.specPreview = m.metadata.specPreview;
           if (m.metadata.specLines) m.specLines = m.metadata.specLines;
           if (m.metadata.specVersion != null) m.specVersion = m.metadata.specVersion;
@@ -901,8 +901,8 @@ const DevChat = {
                 DevChat.refreshBudget();
                 break;
               case 'spec_updated':
-                // Mayor write_spec / scout drafted (or refreshed) the
-                // live spec_md. The accompanying status event already
+                // A scout dispatch drafted (or revised) the live
+                // spec_md. The accompanying status event already
                 // pushed an inline preview card into the timeline — we
                 // just keep the open viewer in sync if the user
                 // happens to have it open on the live draft.
@@ -1600,7 +1600,7 @@ const DevChat = {
     container.innerHTML = DevChat.messages.map((msg) => {
       // System messages — each is a single immutable status line
       if (msg.role === 'system') {
-        // Inline spec preview card. The Mayor's write_spec / scout
+        // Inline spec preview card. The Mayor's scout dispatch
         // emits this metadata alongside the status line; clicking the
         // card opens the read-only spec viewer (side panel on wide
         // viewports, fullscreen modal on narrow). We clip the snippet

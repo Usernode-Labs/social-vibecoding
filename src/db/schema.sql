@@ -228,8 +228,9 @@ CREATE TABLE IF NOT EXISTS pr_undo_votes (
 CREATE INDEX IF NOT EXISTS pr_undo_votes_session_idx ON pr_undo_votes(session_id);
 
 -- Spec-stage: per-session markdown spec doc + version history.
--- spec_md is the working buffer (written by the Mayor's write_spec tool
--- or by a scout dispatch — user hand-edits via PUT /spec were dropped).
+-- spec_md is the working buffer (written by the Mayor's scout dispatch
+-- — user hand-edits via PUT /spec were dropped, and the Mayor's
+-- in-process write_spec/edit_spec tools were removed in #111).
 -- chat_session_specs holds the immutable numbered versions (v1…vN) that
 -- are the single spec surface the dev-chat viewer presents (#69). Rows
 -- are inserted automatically by snapshotSessionSpec() on every spec
