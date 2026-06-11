@@ -495,6 +495,51 @@ function issueRoutes(config) {
     }
   });
 
+  // Admin force-apply for secret_change proposals — the issue-side
+  // counterpart of POST /api/sessions/:id/admin-merge. Lets an admin
+  // apply an environment-variable proposal right now, bypassing the
+  // active-user majority (and the locked-app admin-up gate, which is
+  // trivially satisfied by the admin acting). Same visibility rules:
+  // the chat message + GitHub comment name the admin so the override
+  // is never silent.
+  router.post('/api/issues/:id/admin-apply', async (req, res) => {
+    if (!req.user?.isAdmin) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    try {
+      const { rows: issueRows } = await pool.query(
+        `SELECT i.*, a.slug AS app_slug
+           FROM issues i JOIN apps a ON a.id = i.app_id
+          WHERE i.id = $1`,
+        [req.params.id]
+      );
+      if (!issueRows.length) return res.status(404).json({ error: 'Issue not found' });
+      const issue = issueRows[0];
+
+      if (issue.status !== 'open') {
+        return res.status(409).json({ error: 'Issue is not open' });
+      }
+      if (issue.kind !== 'secret_change') {
+        return res.status(400).json({ error: 'Only secret-change proposals can be admin-applied' });
+      }
+
+      log.info('issues', 'Admin force-apply requested', {
+        issueId: issue.id, by: req.user.username,
+      });
+
+      const secretChanged = await maybeApplySecretChangeProposal(config, pool, issue, {
+        force: true, forceBy: req.user,
+      });
+
+      pushIssueUpdate({ action: 'voted', appSlug: issue.app_slug, appId: issue.app_id, issueId: issue.id });
+
+      res.json({ ok: true, secretChanged });
+    } catch (err) {
+      log.error('issues', 'Admin force-apply failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Close an issue
   router.post('/api/issues/:id/close', async (req, res) => {
     try {
@@ -655,8 +700,15 @@ async function maybeApplyRenameProposal(pool, issue) {
  * maybeApplyRenameProposal: count up-votes, lock the issue row, write
  * the change atomically, then trigger an async production rebuild so
  * the new value reaches the running container without a manual step.
+ *
+ * `options.force` (admin force-apply, POST /api/issues/:id/admin-apply):
+ * skip the majority + locked-app gates entirely — the row lock below
+ * still prevents a double-apply racing a vote-driven one. `options.forceBy`
+ * is the admin user (id, username) named in the chat message, audit
+ * payload, and GitHub comment so the override is visible.
  */
-async function maybeApplySecretChangeProposal(config, pool, issue) {
+async function maybeApplySecretChangeProposal(config, pool, issue, options = {}) {
+  const force = !!options.force;
   const { active, majority } = await getActiveUserStats(pool, issue.app_id);
 
   const { rows: upRows } = await pool.query(
@@ -664,14 +716,14 @@ async function maybeApplySecretChangeProposal(config, pool, issue) {
     [issue.id]
   );
   const upCount = parseInt(upRows[0].cnt, 10) || 0;
-  if (upCount < majority) {
+  if (!force && upCount < majority) {
     return { applied: false, upCount, majority, active };
   }
 
   // Locked apps additionally require at least one admin up vote (see
   // services/admin-approval.js + the apps.locked column). Same rule as
-  // the rename path above.
-  if (await isAppLocked(pool, issue.app_id)) {
+  // the rename path above. An admin force-apply trivially satisfies it.
+  if (!force && await isAppLocked(pool, issue.app_id)) {
     const adminUp = await hasAdminUpVote(pool, issue.id);
     if (!adminUp) {
       log.info('issues', 'Secret-change majority reached but app is locked; awaiting admin up', {
@@ -744,7 +796,7 @@ async function maybeApplySecretChangeProposal(config, pool, issue) {
       sensitive: !!(payload.private || payload.sensitive),
       valueLast4: payload.valueLast4 || null,
       appliedAt: new Date().toISOString(),
-      appliedBy: 'group-vote',
+      appliedBy: force ? `admin:${options.forceBy?.username || 'unknown'}` : 'group-vote',
       upCount, active,
     };
     await client.query(
@@ -756,8 +808,11 @@ async function maybeApplySecretChangeProposal(config, pool, issue) {
 
     // Side effects (chat + redeploy + GitHub close) live outside the txn.
     const verb = action === 'delete' ? 'removed' : 'set';
+    const appliedHow = force
+      ? `by admin override (${options.forceBy?.username || 'admin'})`
+      : `by group vote (${upCount}/${active})`;
     await sendSystemMessage(pool, issue.app_id,
-      `Secret "${key}" ${verb} by group vote (${upCount}/${active}); redeploying…`,
+      `Secret "${key}" ${verb} ${appliedHow}; redeploying…`,
       'system'
     ).catch((err) => log.warn('issues', 'Secret-change chat msg failed', { err: err.message }));
 
@@ -797,7 +852,9 @@ async function maybeApplySecretChangeProposal(config, pool, issue) {
           await ok.rest.issues.createComment({
             owner, repo, issue_number: locked.github_issue_number,
             body: github.safeMention(
-              `Applied by majority vote (${upCount}/${active}). Secret "${key}" ${verb}.`
+              force
+                ? `Applied by admin override (${options.forceBy?.username || 'admin'}). Secret "${key}" ${verb}.`
+                : `Applied by majority vote (${upCount}/${active}). Secret "${key}" ${verb}.`
             ),
           }).catch(() => {});
         } catch (err) {
@@ -808,8 +865,8 @@ async function maybeApplySecretChangeProposal(config, pool, issue) {
       }
     }
 
-    log.info('issues', 'Secret change applied', { appId: issue.app_id, key, action, upCount, active });
-    return { applied: true, key, action, upCount, majority, active };
+    log.info('issues', 'Secret change applied', { appId: issue.app_id, key, action, upCount, active, force });
+    return { applied: true, key, action, upCount, majority, active, force };
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch {}
     log.error('issues', 'Secret-change apply failed', { issueId: issue.id, err: err.message });
