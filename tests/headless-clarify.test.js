@@ -36,13 +36,15 @@ function stubModule(id, exports) {
 }
 
 // Load ../src/routes/sessions fresh against a mock pool + stubbed
-// services. `overrides.github` / `overrides.llm` shadow the default stubs.
+// services. `overrides.github` / `overrides.llm` / `overrides.worker`
+// shadow the default stubs.
 function loadSessions(mockPool, overrides = {}) {
   const paths = {
     pool: require.resolve('../src/db/pool'),
     ws: require.resolve('../src/services/ws'),
     github: require.resolve('../src/services/github'),
     llm: require.resolve('../src/services/llm'),
+    worker: require.resolve('../src/services/worker'),
     appAccess: require.resolve('../src/services/app-access'),
     limits: require.resolve('../src/services/limits'),
     events: require.resolve('../src/services/events'),
@@ -71,6 +73,18 @@ function loadSessions(mockPool, overrides = {}) {
     estimateCostCents: () => 0,
     ...(overrides.llm || {}),
   };
+  // The scout/build container plumbing. Default stubs satisfy
+  // runScoutTool's call shape but are only reached by tests that make
+  // the Mayor dispatch (the original suite never does).
+  const workerStub = {
+    ensureWorkerImage: async () => {},
+    ensureWorker: async () => 'stub-worker',
+    execInWorker: async () => ({ lastResultText: '' }),
+    resumeTurnFromJournal: async () => ({}),
+    clearActiveTurn: async () => {},
+    stopTurn: async () => false,
+    ...(overrides.worker || {}),
+  };
 
   const originals = [
     [paths.pool, stubModule(paths.pool, { getPool: () => mockPool })],
@@ -80,6 +94,7 @@ function loadSessions(mockPool, overrides = {}) {
     })],
     [paths.github, stubModule(paths.github, githubStub)],
     [paths.llm, stubModule(paths.llm, llmStub)],
+    [paths.worker, stubModule(paths.worker, workerStub)],
     // Keep the real module's other exports (sessionRoutes wires several
     // guards at setup time) — only the app lookup is faked.
     [paths.appAccess, stubModule(paths.appAccess, {
@@ -124,6 +139,7 @@ function makeMockPool(initial = {}) {
     headlessRows: (initial.headlessRows || []).slice(),
     messages: [],      // chat_session_messages inserts: { role, content }
     terminal: null,    // { status, outcome } once the run finishes
+    specMd: '',        // chat_sessions.spec_md written by the scout
     nextId: 1000,
   };
   const calls = [];
@@ -167,6 +183,14 @@ function makeMockPool(initial = {}) {
     if (/INSERT INTO chat_session_messages/i.test(s)) {
       state.messages.push({ role: /'user'/.test(s) ? 'user' : (/'system'/.test(s) ? 'system' : 'assistant'), content: params[1] });
       return { rows: [{ id: state.nextId++ }] };
+    }
+    // Scout output → spec doc (runScoutTool), read back by loadSessionSpec.
+    if (/UPDATE chat_sessions SET spec_md/i.test(s)) {
+      state.specMd = params[0];
+      return { rows: [], rowCount: 1 };
+    }
+    if (/SELECT spec_md FROM chat_sessions/i.test(s)) {
+      return { rows: [{ spec_md: state.specMd }] };
     }
     // Terminal ready / failed writes.
     if (/UPDATE chat_sessions SET headless_status = 'ready'/i.test(s)) {
@@ -423,6 +447,190 @@ test('shouldPostHeadlessQuestionComment: only pure-text question outcomes qualif
     assert.equal(gate({ outcome: 'spec', dispatchedTool: null, mayorText: 'Q?' }), false);
     assert.equal(gate({ outcome: 'question', dispatchedTool: null, mayorText: '   ' }), false);
   } finally {
+    loaded.restore();
+  }
+});
+
+// ── 4. specHasBlockingQuestions (#178) ──────────────────────────────────
+
+test('specHasBlockingQuestions: matches Questions/Open questions ATX headings only', () => {
+  const pool = makeMockPool();
+  const loaded = loadSessions(pool);
+  try {
+    const has = loaded.subject.specHasBlockingQuestions;
+    assert.equal(has('# Goal\n\n## Questions\n\n1. Soft or hard delete?'), true);
+    assert.equal(has('## Goal\n\n### Open questions\n\n1. Which screen?'), true);
+    assert.equal(has('#### QUESTIONS'), true);
+    assert.equal(has('# Open Question\n\n1. One blocker.'), true);
+    // Prose mentions and non-heading lines don't count.
+    assert.equal(has('Questions arise when reading this code.'), false);
+    assert.equal(has('# Goal\n\nNo open items.'), false);
+    assert.equal(has(''), false);
+    assert.equal(has(null), false);
+    // Chosen semantics: the regex keys on the heading PREFIX, so a heading
+    // like "Questions we answered" still matches (a safe false positive —
+    // it only downgrades a buildable spec to a questions round-trip).
+    assert.equal(has('## Questions we answered'), true);
+  } finally {
+    loaded.restore();
+  }
+});
+
+// ── 5. Decision-turn question routing (#178) ────────────────────────────
+// Drive the full route → runner → scout-dispatch → decision-turn path with
+// a sequenced llm stub and a worker stub whose execInWorker returns the
+// "spec" the scout supposedly wrote.
+
+const SPEC_WITH_QUESTIONS = '# Fix the thing\n\n## Plan\n\nDo it.\n\n## Questions\n\n1. Soft or hard delete? (default: soft)';
+const SPEC_WITHOUT_QUESTIONS = '# Fix the thing\n\n## Plan\n\nDo it.\n\n## Considerations\n\nNone blocking.';
+
+// llm.streamChat stub that replays `responses` in order (repeating the
+// last one if called again).
+function sequencedLlm(responses) {
+  let i = 0;
+  return {
+    streamChat: async () => responses[Math.min(i++, responses.length - 1)],
+  };
+}
+
+const USAGE = { input_tokens: 10, output_tokens: 5 };
+const SCOUT_CALL_TURN = {
+  text: 'The issue is ambiguous but repo-answerable — investigating first.',
+  toolUses: [{ id: 'tu-scout', name: 'dispatch_scout', input: { prompt: 'Resolve: which delete semantics exist today.' } }],
+  usage: USAGE,
+  rawContent: [],
+};
+
+async function startHeadlessRun(srv) {
+  const res = await fetch(`${srv.baseUrl}/api/apps/my-app/issues/5/headless-session`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  assert.equal(res.status, 201);
+}
+
+test('scout leaves Questions in the spec → decision text posted, outcome question', async () => {
+  const commentCalls = [];
+  const execCalls = [];
+  const pool = makeMockPool();
+  const loaded = loadSessions(pool, {
+    llm: sequencedLlm([
+      SCOUT_CALL_TURN,
+      // Decision turn: text-only reporter-facing questions.
+      { text: '1. Soft or hard delete? (default: soft)', toolUses: [], usage: USAGE, rawContent: [] },
+    ]),
+    worker: {
+      execInWorker: async (sessionId, opts) => {
+        execCalls.push(opts.mode);
+        return { lastResultText: SPEC_WITH_QUESTIONS, sessionId: 'cc-1' };
+      },
+    },
+    github: {
+      createIssueComment: async (owner, repo, issueNumber, body) => {
+        commentCalls.push({ issueNumber, body });
+      },
+    },
+  });
+  const srv = await startTestServer(loaded);
+  try {
+    await startHeadlessRun(srv);
+    await waitFor(() => commentCalls.length > 0);
+
+    assert.deepEqual(pool.state.terminal, { status: 'ready', outcome: 'question' });
+    assert.deepEqual(execCalls, ['scout']);
+    assert.equal(pool.state.specMd, SPEC_WITH_QUESTIONS);
+    // Exactly one comment: the decision-turn questions plus the footer.
+    assert.equal(commentCalls.length, 1);
+    assert.equal(commentCalls[0].issueNumber, 5);
+    assert.ok(commentCalls[0].body.startsWith('1. Soft or hard delete? (default: soft)'));
+    assert.ok(commentCalls[0].body.includes('press **Auto-solve** on the issue again'));
+  } finally {
+    await srv.close();
+    loaded.restore();
+  }
+});
+
+test('build dispatched over an open Questions section is rejected; phase-3 text posted', async () => {
+  const commentCalls = [];
+  const execCalls = [];
+  const pool = makeMockPool();
+  const loaded = loadSessions(pool, {
+    llm: sequencedLlm([
+      SCOUT_CALL_TURN,
+      // Decision turn violates the prompt and dispatches a build anyway.
+      {
+        text: 'Looks simple, implementing now.',
+        toolUses: [{ id: 'tu-build', name: 'dispatch_claude_code', input: { prompt: 'Build it.' } }],
+        usage: USAGE,
+        rawContent: [],
+      },
+      // Phase-3 wrap-up after the hard-rail rejection: the questions.
+      { text: '1. Soft or hard delete? (default: soft)', toolUses: [], usage: USAGE, rawContent: [] },
+    ]),
+    worker: {
+      execInWorker: async (sessionId, opts) => {
+        execCalls.push(opts.mode);
+        return { lastResultText: SPEC_WITH_QUESTIONS, sessionId: 'cc-1' };
+      },
+    },
+    github: {
+      createIssueComment: async (owner, repo, issueNumber, body) => {
+        commentCalls.push({ issueNumber, body });
+      },
+    },
+  });
+  const srv = await startTestServer(loaded);
+  try {
+    await startHeadlessRun(srv);
+    await waitFor(() => commentCalls.length > 0);
+
+    assert.deepEqual(pool.state.terminal, { status: 'ready', outcome: 'question' });
+    // The build never ran — only the scout reached the worker.
+    assert.deepEqual(execCalls, ['scout']);
+    assert.equal(commentCalls.length, 1);
+    assert.ok(commentCalls[0].body.startsWith('1. Soft or hard delete? (default: soft)'));
+    assert.ok(commentCalls[0].body.includes('press **Auto-solve** on the issue again'));
+  } finally {
+    await srv.close();
+    loaded.restore();
+  }
+});
+
+test('scout resolves everything (no Questions section) → outcome spec, no comment', async () => {
+  const commentCalls = [];
+  const pool = makeMockPool();
+  const loaded = loadSessions(pool, {
+    llm: sequencedLlm([
+      SCOUT_CALL_TURN,
+      // Decision turn declines to build; plain wrap-up text.
+      { text: 'Spec drafted — a human should review before building.', toolUses: [], usage: USAGE, rawContent: [] },
+    ]),
+    worker: {
+      execInWorker: async () => ({ lastResultText: SPEC_WITHOUT_QUESTIONS, sessionId: 'cc-1' }),
+    },
+    github: {
+      createIssueComment: async (owner, repo, issueNumber, body) => {
+        commentCalls.push({ issueNumber, body });
+      },
+    },
+  });
+  const srv = await startTestServer(loaded);
+  try {
+    await startHeadlessRun(srv);
+    await waitFor(() => pool.state.terminal !== null);
+
+    assert.deepEqual(pool.state.terminal, { status: 'ready', outcome: 'spec' });
+    assert.equal(pool.state.specMd, SPEC_WITHOUT_QUESTIONS);
+    // Settle briefly: the (absent) comment post would happen right after
+    // the terminal write.
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(commentCalls.length, 0);
+    assert.ok(!pool.state.messages.some(
+      (m) => /Posted clarifying questions/.test(m.content || '')
+    ));
+  } finally {
+    await srv.close();
     loaded.restore();
   }
 });
