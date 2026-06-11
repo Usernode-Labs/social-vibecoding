@@ -307,6 +307,26 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS archived_at        TIMESTAMPT
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS cc_purged          BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS chat_sessions_archived_idx ON chat_sessions(status, archived_at);
 
+-- #155: headless "auto sessions" dispatched straight from an issue row.
+--   headless              : TRUE for sessions spun up by the issue panel's
+--                           Auto-solve button. They have no interactive dev
+--                           chat driving them — the platform seeds the prompt
+--                           from the issue and runs the build pipeline in the
+--                           background. Billing still lands on user_id (the
+--                           clicker), same as a normal session.
+--   headless_issue_number : the GitHub issue the auto session targets.
+--   headless_state        : 'running' | 'done' | 'failed' — drives the
+--                           per-issue button state in the Open Issues panel
+--                           ("Generating auto session…" while running).
+--   headless_error        : short human-readable failure note when
+--                           headless_state = 'failed'.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS headless              BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS headless_issue_number INTEGER;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS headless_state        VARCHAR(16);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS headless_error        TEXT;
+CREATE INDEX IF NOT EXISTS chat_sessions_headless_issue_idx
+  ON chat_sessions(app_id, headless_issue_number) WHERE headless;
+
 -- Exact merge timestamp. Historically chat_sessions only recorded the
 -- terminal `status = 'merged'` with no time, so "merges over time" could
 -- not be charted (see the note in routes/kudos.js leaderboard query).

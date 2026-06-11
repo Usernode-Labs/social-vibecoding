@@ -2929,4 +2929,7 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, stripSpecWrapperFence };
+// runClaudeCodeTool is exported for the headless auto-session path
+// (services/headless-session.js, #155), which drives the exact same
+// build pipeline without an attached dev-chat SSE stream.
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, stripSpecWrapperFence, runClaudeCodeTool };

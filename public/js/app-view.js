@@ -762,6 +762,9 @@ const AppView = {
       };
       AppView._ghIssuesShown = 5;
       const ghIssues = AppView._ghIssues;
+      // #155: if any issue has a headless auto session generating, keep
+      // polling its state so the badge flips to done/failed live.
+      AppView._syncAutoSessionPolling();
 
       // Activity-only summary (excludes the Users tile, which is
       // always present and isn't really "activity"). Empty when
@@ -1309,6 +1312,9 @@ const AppView = {
         : (budgetSpent ? 'Weekly kudos allowance spent' : 'Pledge a kudos bounty — paid to whoever\'s merged PR closes this issue');
       const kudosBtn = `<button class="gc-vote-btn"${kudosDisabled ? ' disabled' : ''} title="${kudosTitle}" onclick="AppView.giveIssueBounty(${n})">${issue.my_bounty ? '&#9733; Bountied' : 'Pledge kudos'}</button>`;
       const createBtn = `<button class="gc-vote-btn" title="Start a dev chat to solve this issue" onclick="AppView.createPrForIssue(${n})">Create PR</button>`;
+      // #155: headless auto-session affordance — button, in-progress
+      // badge, or result link depending on the issue's auto_session state.
+      const autoUi = AppView._autoSessionUi(issue);
       // #133: show the creating user next to the title, same "· user"
       // treatment as PR rows above. created_by_username comes from the
       // /github-issues route (local issues table → body Source line →
@@ -1328,6 +1334,7 @@ const AppView = {
           <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
             ${kudosBtn}
             ${createBtn}
+            ${autoUi}
           </div>
         </div>`;
     }
@@ -1529,6 +1536,221 @@ const AppView = {
       `Please implement GitHub issue #${issueNumber}: "${title}".${body}\n\n`
       + `Open a PR that closes this issue (include "Closes #${issueNumber}" so it links and closes the issue on merge).`;
     if (typeof DevChat.sendMessage === 'function') DevChat.sendMessage(seed);
+  },
+
+  // ---- Headless auto sessions (#155) ---------------------------------------
+
+  // Per-issue auto-session affordance. Three states off issue.auto_session
+  // (populated by /github-issues and refreshed by the poll below):
+  //   running        → "Generating auto session…" badge (replaces the button)
+  //   done (with PR) → link to the opened PR
+  //   failed / none  → the "Auto-solve" button (failed adds a hint)
+  _autoSessionUi(issue) {
+    const auto = issue.auto_session;
+    if (auto && auto.state === 'running') {
+      return `<span class="gc-merging-badge" title="A headless AI session is implementing this issue">`
+        + `<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Generating auto session…</span>`;
+    }
+    if (auto && auto.state === 'done' && auto.prUrl) {
+      return `<a href="${auto.prUrl}" target="_blank" rel="noopener" class="text-xs text-emerald-400 font-mono hover:underline" `
+        + `title="Opened by a headless auto session">Auto PR#${auto.prNumber || ''}</a>`;
+    }
+    const failedHint = auto && auto.state === 'failed'
+      ? ` &#9888;`
+      : '';
+    const title = auto && auto.state === 'failed'
+      ? `Previous auto session failed${auto.error ? `: ${escapeHtml(auto.error).slice(0, 200)}` : ''}. Click to retry.`
+      : 'Spin up a headless AI session that implements this issue automatically (uses your token budget)';
+    return `<button class="gc-vote-btn" title="${title}" onclick="AppView.autoSolveIssue(${issue.number})">Auto-solve${failedHint}</button>`;
+  },
+
+  // "Auto-solve" — confirm (token-spend warning + model selector), then
+  // POST the auto-session start and flip the row into its in-progress
+  // "Generating auto session…" state. Completion lands via polling.
+  async autoSolveIssue(issueNumber) {
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug) return;
+    const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
+    if (!issue) return;
+    if (issue.auto_session && issue.auto_session.state === 'running') return;
+
+    const model = await AppView._showAutoSolveModal(issue);
+    if (!model) return;
+
+    // Optimistic: show the badge immediately; revert on error.
+    const prev = issue.auto_session || null;
+    issue.auto_session = { state: 'running' };
+    AppView._rerenderOpenIssues();
+
+    try {
+      const resp = await fetch(`/api/apps/${slug}/issues/${issueNumber}/auto-session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        issue.auto_session = prev;
+        AppView._rerenderOpenIssues();
+        alert(data.error || `Couldn't start auto session (HTTP ${resp.status}).`);
+        return;
+      }
+      issue.auto_session = {
+        sessionId: data.session && data.session.id,
+        state: 'running',
+      };
+      AppView._rerenderOpenIssues();
+      AppView._syncAutoSessionPolling();
+    } catch (err) {
+      issue.auto_session = prev;
+      AppView._rerenderOpenIssues();
+      alert(`Couldn't start auto session: ${err.message}`);
+    }
+  },
+
+  // Singleton confirmation modal for auto-solve: token-spend warning +
+  // model selector. Resolves to the chosen model id, or null on cancel.
+  // Built dynamically (same pattern + styling as confirm-modal.js, which
+  // can't host custom controls like a <select>).
+  _autoModalRoot: null,
+  async _showAutoSolveModal(issue) {
+    // Authoritative model list — same endpoint the dev-chat dropdown
+    // uses, fetched lazily and cached for the page's lifetime.
+    if (!AppView._modelList) {
+      try {
+        const res = await fetch('/api/models');
+        const data = res.ok ? await res.json() : null;
+        if (data && Array.isArray(data.models) && data.models.length) {
+          AppView._modelList = data.models;
+          AppView._defaultModel = typeof data.default === 'string' ? data.default : data.models[0].id;
+        }
+      } catch {}
+      if (!AppView._modelList) {
+        AppView._modelList = [{ id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' }];
+        AppView._defaultModel = 'claude-sonnet-4-6';
+      }
+    }
+
+    if (!AppView._autoModalRoot) {
+      const root = document.createElement('div');
+      root.id = 'auto-solve-modal';
+      root.className = 'hidden fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
+      root.innerHTML = `
+        <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
+          <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl relative">
+            <h2 data-role="title" class="text-lg font-bold mb-2 text-zinc-900 dark:text-zinc-100"></h2>
+            <p data-role="message" class="text-sm text-zinc-600 dark:text-zinc-400 mb-3"></p>
+            <p class="text-xs font-medium text-amber-600 dark:text-amber-500 mb-4">&#9888; This automatically spends tokens from your daily budget (or your own API key) with no further confirmation, and is experimental — not recommended for normal users yet.</p>
+            <label class="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1" for="auto-solve-model">Model</label>
+            <select data-role="model" id="auto-solve-model"
+              class="w-full mb-5 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100"></select>
+            <div class="flex justify-end gap-2">
+              <button data-role="cancel" type="button"
+                class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
+              <button data-role="confirm" type="button"
+                class="rounded-lg px-4 py-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-500 transition-colors">Start auto session</button>
+            </div>
+          </div>
+        </div>`;
+      document.body.appendChild(root);
+      AppView._autoModalRoot = root;
+    }
+
+    const root = AppView._autoModalRoot;
+    root.querySelector('[data-role="title"]').textContent = `Auto-solve issue #${issue.number}?`;
+    root.querySelector('[data-role="message"]').textContent =
+      `This spins up a headless AI session — not connected to a dev chat — that implements `
+      + `"${issue.title}" on its own and opens a PR closing the issue.`;
+
+    // Model selector: persisted choice wins when still allowed, else the
+    // server default. Cost-per-MTok in the label so the spend implication
+    // of picking a bigger model is visible right in the popup.
+    const select = root.querySelector('[data-role="model"]');
+    let stored = null;
+    try { stored = localStorage.getItem('usernode:auto:model'); } catch {}
+    const ids = AppView._modelList.map((m) => m.id);
+    const selected = ids.includes(stored) ? stored : AppView._defaultModel;
+    select.innerHTML = AppView._modelList.map((m) => {
+      const cost = typeof m.outputCostPerMTok === 'number' ? ` · $${m.outputCostPerMTok}/MTok out` : '';
+      return `<option value="${escapeHtml(m.id)}"${m.id === selected ? ' selected' : ''}>${escapeHtml(m.label || m.id)}${cost}</option>`;
+    }).join('');
+
+    const cancelBtn = root.querySelector('[data-role="cancel"]');
+    const confirmBtn = root.querySelector('[data-role="confirm"]');
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const cleanup = (result) => {
+        if (settled) return;
+        settled = true;
+        root.classList.add('hidden');
+        cancelBtn.removeEventListener('click', onCancel);
+        confirmBtn.removeEventListener('click', onConfirm);
+        root.removeEventListener('click', onBackdrop);
+        document.removeEventListener('keydown', onKey, true);
+        resolve(result);
+      };
+      const onCancel = () => cleanup(null);
+      const onConfirm = () => {
+        const model = select.value;
+        try { localStorage.setItem('usernode:auto:model', model); } catch {}
+        cleanup(model);
+      };
+      const onBackdrop = (e) => {
+        if (e.target === root || e.target.dataset.modalBackdrop !== undefined) cleanup(null);
+      };
+      const onKey = (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); cleanup(null); }
+      };
+      cancelBtn.addEventListener('click', onCancel);
+      confirmBtn.addEventListener('click', onConfirm);
+      root.addEventListener('click', onBackdrop);
+      document.addEventListener('keydown', onKey, true);
+      root.classList.remove('hidden');
+      setTimeout(() => confirmBtn.focus(), 0);
+    });
+  },
+
+  // Poll /auto-sessions while any issue row shows "Generating auto
+  // session…" so the badge flips to done/failed without a manual reload.
+  // Idempotent: re-syncing while already polling (or with nothing
+  // running) is a no-op / teardown respectively.
+  _autoPollTimer: null,
+  _syncAutoSessionPolling() {
+    const anyRunning = (AppView._ghIssues || []).some(
+      (i) => i.auto_session && i.auto_session.state === 'running'
+    );
+    if (!anyRunning) {
+      if (AppView._autoPollTimer) { clearInterval(AppView._autoPollTimer); AppView._autoPollTimer = null; }
+      return;
+    }
+    if (AppView._autoPollTimer) return;
+    AppView._autoPollTimer = setInterval(() => {
+      AppView._pollAutoSessions().catch(() => {});
+    }, 5000);
+  },
+
+  async _pollAutoSessions() {
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug || !(AppView._ghIssues || []).length) return;
+    const resp = await fetch(`/api/apps/${slug}/auto-sessions`);
+    if (!resp.ok) return;
+    const data = await resp.json().catch(() => ({}));
+    const map = (data && data.autoSessions) || {};
+    let changed = false;
+    for (const issue of AppView._ghIssues) {
+      const next = map[issue.number] || null;
+      // Keep an optimistic 'running' until the server row is visible —
+      // the POST may still be creating the session when the first poll
+      // tick lands.
+      if (!next && issue.auto_session && issue.auto_session.state === 'running') continue;
+      if (JSON.stringify(issue.auto_session || null) !== JSON.stringify(next)) {
+        issue.auto_session = next;
+        changed = true;
+      }
+    }
+    if (changed) AppView._rerenderOpenIssues();
+    AppView._syncAutoSessionPolling();
   },
 
   // Core PR voting controls (Preview / Yes / No / Admin-merge) as an HTML

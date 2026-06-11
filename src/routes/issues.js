@@ -13,6 +13,9 @@ const { issueCreateLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 const { weekStartUtc, countWeeklyAllowanceUsed, WEEKLY_KUDOS_LIMIT } = require('./kudos');
 const appAccess = require('../services/app-access');
+const models = require('../services/models');
+const headlessSession = require('../services/headless-session');
+const { drainGuard } = require('../services/lifecycle');
 
 // Pull owner/repo out of a stored repo_url. Same shape used across the
 // codebase (e.g. the rename-apply path below, routes/votes.js).
@@ -359,6 +362,11 @@ function issueRoutes(config) {
       );
       const creatorByNumber = new Map(creatorRows.map((r) => [r.n, r.username]));
 
+      // #155: latest headless auto session per issue, so the panel can
+      // render "Generating auto session…" / "Auto PR #N" inline without
+      // a second fetch on initial load.
+      const autoSessions = await headlessSession.listAutoSessions(pool, app.id);
+
       const issues = (result.issues || []).map((issue) => {
         const b = byNumber.get(issue.number);
         const ghLogin = issue.user && !issue.user.endsWith('[bot]') && issue.user !== 'usernode-bot'
@@ -368,6 +376,7 @@ function issueRoutes(config) {
           ...issue,
           bounty_count: b ? b.cnt : 0,
           my_bounty: b ? !!b.mine : false,
+          auto_session: autoSessions[issue.number] || null,
           created_by_username: creatorByNumber.get(issue.number)
             || creatorFromSourceLine(issue.body)
             || ghLogin,
@@ -386,6 +395,99 @@ function issueRoutes(config) {
       });
     } catch (err) {
       log.error('issues', 'Failed to list GitHub issues', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ----------------------------------------------------------------
+  // GET /api/apps/:slug/auto-sessions
+  //
+  // #155: lightweight polling endpoint for the Open Issues panel —
+  // returns the latest headless auto session per issue number so the
+  // "Generating auto session…" badge can flip to done/failed without
+  // re-fetching the whole GitHub issue list every few seconds.
+  // ----------------------------------------------------------------
+  router.get('/api/apps/:slug/auto-sessions', async (req, res) => {
+    try {
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const autoSessions = await headlessSession.listAutoSessions(pool, app.id);
+      res.json({ autoSessions });
+    } catch (err) {
+      log.error('issues', 'Failed to list auto sessions', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ----------------------------------------------------------------
+  // POST /api/apps/:slug/issues/:number/auto-session
+  //
+  // #155: spin up a headless AI session that implements this GitHub
+  // issue automatically — no dev chat attached. The session is owned by
+  // (and billed to) the clicking user, runs the standard Claude Code
+  // build pipeline in the background, and opens a PR with `Closes #N`.
+  // The UI gates this behind a confirmation popup (token-spend warning
+  // + model selector); the `model` body param is validated against the
+  // same allowlist the dev-chat dropdown uses.
+  //
+  // Status codes:
+  //   201 created   — auto session started; body carries { session }
+  //   400 bad input — bad issue number / no repo configured
+  //   404 not_found — app or issue doesn't exist
+  //   409 conflict  — an auto session is already running for this issue
+  //   429 too_many  — session caps or daily LLM budget exhausted
+  // ----------------------------------------------------------------
+  router.post('/api/apps/:slug/issues/:number/auto-session', drainGuard, async (req, res) => {
+    try {
+      const issueNumber = parseInt(req.params.number, 10);
+      if (!Number.isFinite(issueNumber) || issueNumber <= 0) {
+        return res.status(400).json({ error: 'Bad issue number' });
+      }
+
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab', `${appAccess.ACCESS_COLUMNS}, name, repo_url`
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+
+      const parsed = parseOwnerRepo(app.repo_url);
+      if (!github.isEnabled() || !parsed) {
+        return res.status(400).json({ error: 'No GitHub repo configured for this app' });
+      }
+
+      // Ground the seed prompt in the real issue. fetchPublicIssues is
+      // cached + never-throws; if the issue isn't in the (possibly
+      // truncated) list we refuse rather than dispatch a guessed prompt.
+      const issuesResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
+      const issue = (issuesResult.issues || []).find((i) => i.number === issueNumber);
+      if (!issue) {
+        return res.status(404).json({ error: 'Open issue not found on this repo' });
+      }
+
+      const result = await headlessSession.startHeadlessIssueSession({
+        config,
+        pool,
+        user: req.user,
+        app,
+        issueNumber,
+        issueTitle: issue.title,
+        issueBody: issue.body,
+        model: models.resolve(req.body && req.body.model),
+      });
+      if (result.error) {
+        return res.status(result.status || 500).json({ error: result.error });
+      }
+
+      res.status(201).json({
+        session: {
+          id: result.session.id,
+          headless_issue_number: issueNumber,
+          headless_state: 'running',
+        },
+      });
+    } catch (err) {
+      log.error('issues', 'Failed to start auto session', { message: err.message, stack: err.stack });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
