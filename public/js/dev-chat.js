@@ -1579,7 +1579,17 @@ const DevChat = {
     try {
       const res = await fetch(`/api/sessions/${DevChat.currentSession.id}/promote`, { method: 'POST' });
       if (res.ok) {
+        // #183: promote may have lazily created the PR (sessions cloned
+        // from a headless auto run arrive PR-less). Fold the returned PR
+        // info into the session so the staging card header flips from
+        // "Changes ready" to the PR link without a refetch.
+        const data = await res.json().catch(() => ({}));
         DevChat.currentSession.status = 'promoted';
+        if (data.prNumber) {
+          DevChat.currentSession.pr_number = data.prNumber;
+          if (data.prUrl) DevChat.currentSession.pr_url = data.prUrl;
+          if (data.prTitle) DevChat.currentSession.pr_title = data.prTitle;
+        }
         DevChat.renderMessages();
       } else {
         const data = await res.json();
@@ -1758,7 +1768,7 @@ const DevChat = {
                   : `<button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.previewStaging('${msg.stagingUrl}', false)">Preview staging</button>`}
                 ${testBtn}
                 ${session?.pr_url ? `<a href="${session.pr_url}" target="_blank" class="dc-pr-btn dc-pr-btn-preview" style="text-decoration:none">View on GitHub</a>` : ''}
-                ${session?.pr_number && session?.status === 'active' ? `<button class="dc-pr-btn dc-pr-btn-promote" onclick="DevChat.promotePR()">Propose to group</button>` : ''}
+                ${session?.status === 'active' ? `<button class="dc-pr-btn dc-pr-btn-promote" onclick="DevChat.promotePR()">Propose to group</button>` : ''}
                 ${session?.status === 'promoted' ? '<span class="text-xs" style="color:var(--accent)">Proposed!</span>' : ''}
               </div>
             </div>`;

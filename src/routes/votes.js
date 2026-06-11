@@ -24,14 +24,52 @@ function voteRoutes(config) {
   // Promote a session's PR for voting
   router.post('/api/sessions/:id/promote', async (req, res) => {
     try {
+      // #183: headless rows are excluded — auto sessions are never
+      // promotable themselves; users clone them and propose the clone.
       const { rows } = await pool.query(
         `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
          FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
-         WHERE cs.id = $1 AND cs.user_id = $2 AND cs.status = 'active'`,
+         WHERE cs.id = $1 AND cs.user_id = $2 AND cs.status = 'active'
+           AND cs.is_headless = FALSE`,
         [req.params.id, req.user.id]
       );
       if (!rows.length) return res.status(404).json({ error: 'Active session not found' });
       const session = rows[0];
+
+      const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+
+      // #183 lazy PR creation: sessions cloned from a headless auto run
+      // arrive here without a PR (the headless contract defers it). Create
+      // it now on THIS session's branch — the clone's, never the auto
+      // branch — so the vote has something to merge. applyPrMetadata reads
+      // the clone's copied history via gatherSessionContext, so the PR
+      // title/body get the full auto-session context.
+      if (!session.pr_number) {
+        const { rows: msgRows } = await pool.query(
+          `SELECT content FROM chat_session_messages
+           WHERE session_id = $1 AND role = 'user'
+           ORDER BY id DESC LIMIT 1`,
+          [session.id]
+        );
+        const prMetadata = require('../services/pr-metadata');
+        let prResult = null;
+        try {
+          prResult = await prMetadata.applyPrMetadata({
+            pool, session, repoOwner, repoName,
+            userMessage: msgRows[0]?.content || '',
+            ccSummary: '',
+            username: req.user.username,
+            userId: req.user.id,
+          });
+        } catch (err) {
+          log.warn('votes', 'Lazy PR creation threw', { sessionId: session.id, err: err.message });
+        }
+        if (!prResult || !session.pr_number) {
+          // Refuse to promote PR-less — a vote with nothing to merge is a
+          // dead end. The user can retry; nothing was mutated yet.
+          return res.status(502).json({ error: 'Could not create the pull request for this change — try again in a moment.' });
+        }
+      }
 
       // Mark PR as ready for review on GitHub. We deliberately DO NOT
       // touch the title here — previously this overwrote the LLM-
@@ -89,7 +127,45 @@ function voteRoutes(config) {
         sessionId: session.id,
         metadata: { prNumber: session.pr_number || null },
       });
-      res.json({ ok: true });
+      // #183: return the PR info so the dev-chat staging card can flip
+      // its "Changes ready" header to the PR link without a refetch —
+      // the promote may have just created the PR lazily.
+      res.json({
+        ok: true,
+        prNumber: session.pr_number || null,
+        prUrl: session.pr_url || null,
+        prTitle: session.pr_title || null,
+      });
+
+      // #183: a clone promoted straight off a headless auto run's pre-built
+      // preview may not have its own staging yet (the copied card points at
+      // the auto session's URL — same content, since the clone branch was
+      // forked from it). Build the clone's own staging from its branch head,
+      // fire-and-forget; the Pass-3 heal sweeper in server.js is the backstop.
+      if (!session.staging_url) {
+        (async () => {
+          let commitHash = 'latest';
+          if (github.isEnabled() && repoOwner && repoName) {
+            try {
+              const octokit = await github.getInstallationOctokit(repoOwner);
+              const { data: ref } = await octokit.request(
+                'GET /repos/{owner}/{repo}/git/ref/{+ref}',
+                { owner: repoOwner, repo: repoName, ref: `heads/${session.branch_name}` }
+              );
+              commitHash = ref.object.sha;
+            } catch {}
+          }
+          const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
+          const result = await staging.buildAndDeployStaging(config, session, app, commitHash);
+          await pool.query(
+            `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
+            [result.containerId, result.stagingUrl, session.id]
+          );
+          await staging.warmStagingCert(session, result.hostname, result.stagingUrl);
+        })().catch((err) => {
+          log.warn('votes', 'Post-promote staging build failed', { sessionId: session.id, err: err.message });
+        });
+      }
 
       // Vote-request fan-out. Non-fatal + post-response: the promote
       // itself has already succeeded, so a notification hiccup must not

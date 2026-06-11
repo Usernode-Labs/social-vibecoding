@@ -2059,10 +2059,13 @@ function sessionRoutes(config) {
   // Deploy staging for a session
   router.post('/api/sessions/:id/deploy-staging', drainGuard, async (req, res) => {
     try {
+      // #183: headless rows are excluded — their staging is built by the
+      // headless runner itself; humans deploy staging from a CLONED session.
       const { rows } = await pool.query(
         `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.id as app_id_val
          FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
-         WHERE cs.id = $1 AND cs.user_id = $2 AND cs.status IN ('active', 'promoted')`,
+         WHERE cs.id = $1 AND cs.user_id = $2 AND cs.status IN ('active', 'promoted')
+           AND cs.is_headless = FALSE`,
         [req.params.id, req.user.id]
       );
       if (!rows.length) return res.status(404).json({ error: 'Session not found' });
@@ -2157,9 +2160,9 @@ function buildHeadlessFollowUpMessage(src) {
     case 'spec':
       return `${intro}\n\nWhere things stand: the auto session investigated the repo and drafted a spec — open the spec viewer to review it. When you're happy with it, tell me to build it and I'll dispatch the coding agent (that turn also opens the PR and staging preview).`;
     case 'code':
-      return `${intro}\n\nWhere things stand: the code change is already committed and pushed on this branch — no PR or staging preview exists yet. Review the summary above, iterate if you want, and when you're ready just tell me to open the PR / build the staging preview.`;
+      return `${intro}\n\nWhere things stand: the code change is already committed and pushed on this branch, and a staging preview was built — see the "Changes ready" card above ("Preview staging" / "Test this change"). No PR exists yet. Review the change, iterate if you want, and when you're ready hit "Propose to group" on the card — that opens the PR on this branch and starts the vote (or just ask me).`;
     case 'spec_code':
-      return `${intro}\n\nWhere things stand: the auto session drafted a spec (open the spec viewer to review it) AND implemented it — the change is already committed and pushed on this branch. No PR or staging preview exists yet. Review both the spec and the change summary above, iterate if you want, and when you're ready just tell me to open the PR / build the staging preview.`;
+      return `${intro}\n\nWhere things stand: the auto session drafted a spec (open the spec viewer to review it) AND implemented it — the change is committed and pushed on this branch, and a staging preview was built (see the "Changes ready" card above). No PR exists yet. Review the spec and the change, iterate if you want, and when you're ready hit "Propose to group" on the card — that opens the PR on this branch and starts the vote (or just ask me).`;
     default:
       return `${intro}\n\nWhere things stand: the auto session ran into something that needs a human decision — see its last message above (the same questions were also posted as a comment on the GitHub issue). Answer here and we'll continue from where it left off.${(src.spec_md || '').trim() ? ' The auto session also drafted a spec — open the spec viewer to review it alongside the questions.' : ''}`;
   }
@@ -2177,7 +2180,7 @@ HEADLESS AUTO-SESSION MODE: you are running unattended on GitHub issue #${issueN
    - HUMAN-ONLY: what the reporter wants, product/priority choices, reproduction details only the reporter has — things no codebase can answer.
    ONLY if EVERY blocking question is human-only: reply in plain text containing ONLY the numbered clarifying questions with your suggested defaults, and call no tool. Your reply will be posted verbatim as a comment on GitHub issue #${issueNumber} for the reporter to answer — write it for them (no greetings, no meta-talk about sessions or tools). Otherwise dispatch_scout per step 2.
 2. dispatch_scout when the issue passes the gate and needs investigation or design — OR when the gate failed for repo-answerable reasons (scouting is also the way to resolve ambiguity): produce a grounded spec a human will review later. Prefer this for anything non-trivial. After the scout returns you will get ONE follow-up decision turn where you may implement the spec immediately if it turned out straightforward — so scouting first never costs you the chance to ship; any questions surviving the scout's investigation will be posted to the issue from that decision turn, so failing the gate is not a reason to avoid scouting.
-3. dispatch_claude_code ONLY for small, unambiguous fixes the issue text fully specifies. The agent may commit and push its branch, but NO pull request and NO staging preview will be created in this mode — a human will start a session from this auto session later and trigger those.
+3. dispatch_claude_code ONLY for small, unambiguous fixes the issue text fully specifies. The agent may commit and push its branch, and a staging preview is built from the pushed commit — but NO pull request is created in this mode; a human will start a session from this auto session later and propose the change (which opens the PR on their branch).
 Never promise future work and never ask for confirmation — state what you did and what the human reviewer should do next.`;
 }
 
@@ -2198,7 +2201,7 @@ Otherwise, dispatch dispatch_claude_code to implement the spec NOW only if ALL o
 - No database schema migrations, no destructive or irreversible operations, no changes to auth, billing, permissions, or security-sensitive code.
 - No new external services, dependencies, or credentials.
 - The spec stays within what issue #${issueNumber} asked for (no scope expansion).
-If ANY criterion fails or you are unsure, reply in plain text instead — summarize the spec and stop; a human will review it. When you do dispatch, the prompt must tell the agent to implement the session's spec doc exactly as written and not redesign it. Remember: headless mode means commit + push only — no PR, no staging preview.`;
+If ANY criterion fails or you are unsure, reply in plain text instead — summarize the spec and stop; a human will review it. When you do dispatch, the prompt must tell the agent to implement the session's spec doc exactly as written and not redesign it. Remember: headless mode means commit + push + staging preview — no PR.`;
 }
 
 // #150: build the headless run's seed user message from the issue plus
@@ -2298,8 +2301,8 @@ async function setHeadlessStep(pool, sessionId, step, outcome) {
 // phase-2 wrap-up) with three deliberate differences: there is no SSE
 // stream (events go to the session bus / global WS only), there is no stop
 // handle (nobody is watching), and a build dispatch runs with
-// `headless: true` so it can push its branch but never opens a PR or
-// staging preview. All spend is billed to the clicking user. On success the
+// `headless: true` so it can push its branch and build a staging preview
+// (#183) but never opens a PR. All spend is billed to the clicking user. On success the
 // session flips to headless_status='ready' with an outcome of 'spec'
 // (scout drafted a spec), 'code' (commit pushed), 'spec_code' (#170 — scout
 // drafted a spec AND the decision turn implemented it), or 'question' (the
@@ -2654,7 +2657,7 @@ async function runHeadlessSession({
           if (outcome === 'question') questionTextToPost = mayorText3.trim();
           if (!mayorText3.trim()) {
             mayorText3 = outcome === 'spec_code'
-              ? '_Spec drafted and change committed — start a session from this auto session to open the PR._'
+              ? '_Spec drafted and change committed — start a session from this auto session to review it and propose it to the group._'
               : outcome === 'question'
                 ? '_The spec has open questions — review the Questions section in the spec viewer after starting a session from this auto session._'
                 : '_Spec drafted — the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
@@ -2684,7 +2687,7 @@ async function runHeadlessSession({
         if (!mayorText2.trim()) {
           mayorText2 = toolResult.isError
             ? "_The auto session's dispatch didn't finish successfully — see the status above._"
-            : '_Change committed and pushed — start a session from this auto session to open the PR._';
+            : '_Change committed and pushed — start a session from this auto session to review it and propose it to the group._';
         }
         send('mayor_reasoning', { text: mayorText2 });
         const costCents2 = llm.estimateCostCents(mayor2.usage, selectedModel);
@@ -3508,6 +3511,61 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
 // change, except that it now returns a summary string instead of
 // emitting a final [CODING AGENT COMPLETED] status at the end of the
 // turn (we still emit that status, but ALSO return the text).
+// Tailored remediation per staging-failure class. The `fix` text ends up
+// in the Mayor's tool_result and on the user's screen, so it has to be
+// self-contained: the Mayor doesn't read code, and the user shouldn't
+// have to either. Keep prose short but concrete enough that
+// "dispatch_claude_code" + this message is sufficient to drive an
+// automated fix on the next turn. Shared by the interactive tail (where
+// the failure is fatal to the turn) and the headless tail (#183, where
+// it's non-fatal — the pushed commit is the deliverable).
+function describeStagingFailure(stagingErr) {
+  let fix;
+  let missingKeys = [];
+  if (stagingErr instanceof staging.PrivateSecretMissingStagingDefaultError) {
+    missingKeys = stagingErr.missingKeys || [];
+    fix =
+      `The PR's \`dapp.json\` declares ${missingKeys.length === 1 ? 'a secret' : 'secrets'} ` +
+      `[${missingKeys.join(', ')}] as \`required\` + \`private\` (or the legacy alias \`sensitive: true\`), ` +
+      `but with no \`staging_default\` (or \`default\`). Private secrets are intentionally NOT ` +
+      `propagated from prod into staging clones, so without a manifest fallback the staging ` +
+      `build refuses to start. ` +
+      `\n\nFix: add \`"staging_default": "<value>"\` to each ${missingKeys.length === 1 ? 'entry' : 'entry'} in \`dapp.json\`. ` +
+      `If the app's code degrades gracefully when the secret is unset, use the empty string \`""\`. ` +
+      `For paid services use a vendor sandbox key (e.g. Stripe \`sk_test_...\`). ` +
+      `Never copy the prod value into \`staging_default\`. ` +
+      `See \`app-conventions.md\` "Public vs private secrets" for the full rubric. ` +
+      `\n\nThe agent can apply this fix directly: dispatch \`dispatch_claude_code\` with a prompt ` +
+      `like "edit dapp.json so each of [${missingKeys.join(', ')}] has staging_default set to <chosen value>".`;
+  } else if (stagingErr instanceof staging.MissingSecretsError) {
+    missingKeys = stagingErr.missingSecrets || [];
+    fix =
+      `The PR's \`dapp.json\` declares ${missingKeys.length === 1 ? 'a required secret' : 'required secrets'} ` +
+      `[${missingKeys.join(', ')}] that ${missingKeys.length === 1 ? 'has' : 'have'} no stored value in this ` +
+      `app's secret store, and no \`default\` in the manifest. ` +
+      `\n\nFix: an admin needs to set ${missingKeys.length === 1 ? 'this value' : 'these values'} in the platform UI ` +
+      `(Settings → Secrets) before staging can build. The agent CANNOT fix this from code — ` +
+      `secret values are intentionally not committed to source. ` +
+      `If a manifest \`default\` is appropriate (i.e. the value is genuinely public), the agent can ` +
+      `instead add it to \`dapp.json\` via \`dispatch_claude_code\`.`;
+  } else {
+    fix =
+      `Underlying error: ${(stagingErr && stagingErr.message) || String(stagingErr)}. ` +
+      `This is most likely an infrastructure or build-time failure (Docker build, network, ` +
+      `image cache, etc.) rather than a manifest issue. The agent can suggest the user retry, ` +
+      `inspect platform logs, or — if the build error message implicates the dapp's own code — ` +
+      `dispatch \`dispatch_claude_code\` to investigate.`;
+  }
+
+  // Defensive: if buildAndDeployStaging ever returned null/undefined
+  // without throwing (it shouldn't — its contract is throw-or-return-
+  // result), stagingErr would be null here. Coerce so callers still emit
+  // a meaningful event instead of NPE'ing.
+  const errMsg = (stagingErr && stagingErr.message) || 'Unknown staging failure (no error thrown but no result returned)';
+  const errName = (stagingErr && stagingErr.name) || 'Error';
+  return { fix, missingKeys, errMsg, errName };
+}
+
 async function runClaudeCodeTool({
   pool, config, req, res, session, selectedModel,
   userMessage, toolPromptArg,
@@ -3515,11 +3573,12 @@ async function runClaudeCodeTool({
   send, sendStatus,
   stopHandle,
   userApiKey,
-  // #155: headless auto sessions may commit + push their branch, but must
-  // NOT open a PR or build a staging preview — those happen later, from a
-  // dev chat cloned off the auto session. Skips the whole PR/staging block
-  // on the success path; everything else (worker exec, push accounting,
-  // cost debit) is identical.
+  // #155/#183: headless auto sessions may commit + push their branch and
+  // deliberately build a staging preview, but must NOT open a PR — that
+  // happens later, lazily, when a dev chat cloned off the auto session is
+  // proposed to the group. Swaps the success-path tail for the headless
+  // variant (staging, no PR); everything else (worker exec, push
+  // accounting, cost debit) is identical.
   headless = false,
 }) {
   activeWorkers.add(session.id);
@@ -3776,11 +3835,13 @@ path: /relative/path?demo=1
       await sendStatus(msg);
       summaryParts.push(msg);
     } else if (headless) {
-      // Success path, headless variant (#155): the commit was already
+      // Success path, headless variant (#155/#183): the commit was already
       // pushed by run-cc.sh inside the worker. Persist testing guidance so
-      // it carries into cloned sessions, but deliberately skip PR creation
-      // and the staging build — the issue button's contract is "branch +
-      // push only"; a user opens the PR from a cloned dev chat later.
+      // it carries into cloned sessions, then deliberately build a staging
+      // preview so reviewers can try the change before (or without)
+      // cloning — while still skipping PR creation. The PR is opened
+      // lazily on a CLONE's branch when its owner hits "Propose to group"
+      // (routes/votes.js); the auto branch itself never gets a PR.
       if (!result.pushOk) {
         await sendStatus('Warning: push reported a failure — the branch may be stale.');
         summaryParts.push('Push reported a failure; the branch may be missing the commit.');
@@ -3794,10 +3855,58 @@ path: /relative/path?demo=1
         session.testing_md = testing.testingMd;
         session.testing_path = testing.testingPath;
       }
-      await sendStatus('Changes committed and pushed (headless) — no PR or staging preview yet.');
+      await sendStatus('Changes committed and pushed (headless) — building staging preview (no PR yet)...');
+
+      const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
+      let stagingResult = null;
+      let stagingErr = null;
+      try {
+        stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
+      } catch (e) {
+        stagingErr = e;
+      }
+
+      if (stagingResult) {
+        await pool.query(
+          `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
+          [stagingResult.containerId, stagingResult.stagingUrl, session.id]
+        );
+        // Same cert pre-warm as the interactive tail: persist staging_url
+        // first (Caddy's `ask` gate keys off it), warm before revealing
+        // the preview anywhere.
+        await staging.warmStagingCert(session, stagingResult.hostname, stagingResult.stagingUrl);
+        stagingUrl = stagingResult.stagingUrl;
+        // The stagingUrl metadata is what makes this row render as the
+        // "Changes ready" staging card (Preview / Test / Propose buttons)
+        // in every dev chat later cloned from this auto session.
+        await sendStatus('Staging preview built', { stagingUrl });
+        send('staging_ready', {
+          url: stagingUrl,
+          testingMd: session.testing_md || null,
+          testingPath: session.testing_path || null,
+        });
+        summaryParts.push(`Staging preview deployed: ${stagingUrl}`);
+      } else {
+        // Non-fatal (#183): the pushed commit is this run's deliverable; a
+        // missing preview only degrades the review experience. Same
+        // tailored remediation as the interactive tail so manifest/secret
+        // problems surface in the Mayor's wrap-up summary — but isError
+        // stays false and the run's outcome is unchanged.
+        const { fix, missingKeys, errMsg, errName } = describeStagingFailure(stagingErr);
+        await sendStatus('Staging preview failed to build — you can build one from a cloned session', { error: errMsg });
+        send('staging_failed', { error: errMsg, errorName: errName, missingKeys });
+        summaryParts.push(
+          `Staging preview failed to build (non-fatal — commit ${commitHash.substring(0, 8)} is pushed; `
+          + `a preview can be built from a cloned session).\n\n${fix}`
+        );
+        log.error('staging', 'Headless staging build failed (non-fatal)', {
+          sessionId: session.id, slug: app.slug, errName, err: errMsg, missingKeys,
+        });
+      }
+
       summaryParts.push(
-        'Headless mode: no PR was opened and no staging preview was built. '
-        + 'A user can start a dev-chat session from this auto session to review the change and open the PR / staging build.'
+        'Headless mode: no PR was opened. A user can start a dev-chat session from this auto session '
+        + 'to review the change and propose it to the group — the PR is created on their cloned branch at propose time.'
       );
     } else {
       if (!result.pushOk) {
@@ -3944,48 +4053,7 @@ path: /relative/path?demo=1
       } else {
         isError = true;
 
-        // Tailored remediation per error class. The `fix` field is what
-        // ends up in the Mayor's tool_result and on the user's screen,
-        // so it has to be self-contained: the Mayor doesn't read code,
-        // and the user shouldn't have to either. Keep prose short but
-        // concrete enough that "dispatch_claude_code" + this message is
-        // sufficient to drive an automated fix on the next turn.
-        let fix;
-        let missingKeys = [];
-        if (stagingErr instanceof staging.PrivateSecretMissingStagingDefaultError) {
-          missingKeys = stagingErr.missingKeys || [];
-          fix =
-            `The PR's \`dapp.json\` declares ${missingKeys.length === 1 ? 'a secret' : 'secrets'} ` +
-            `[${missingKeys.join(', ')}] as \`required\` + \`private\` (or the legacy alias \`sensitive: true\`), ` +
-            `but with no \`staging_default\` (or \`default\`). Private secrets are intentionally NOT ` +
-            `propagated from prod into staging clones, so without a manifest fallback the staging ` +
-            `build refuses to start. ` +
-            `\n\nFix: add \`"staging_default": "<value>"\` to each ${missingKeys.length === 1 ? 'entry' : 'entry'} in \`dapp.json\`. ` +
-            `If the app's code degrades gracefully when the secret is unset, use the empty string \`""\`. ` +
-            `For paid services use a vendor sandbox key (e.g. Stripe \`sk_test_...\`). ` +
-            `Never copy the prod value into \`staging_default\`. ` +
-            `See \`app-conventions.md\` "Public vs private secrets" for the full rubric. ` +
-            `\n\nThe agent can apply this fix directly: dispatch \`dispatch_claude_code\` with a prompt ` +
-            `like "edit dapp.json so each of [${missingKeys.join(', ')}] has staging_default set to <chosen value>".`;
-        } else if (stagingErr instanceof staging.MissingSecretsError) {
-          missingKeys = stagingErr.missingSecrets || [];
-          fix =
-            `The PR's \`dapp.json\` declares ${missingKeys.length === 1 ? 'a required secret' : 'required secrets'} ` +
-            `[${missingKeys.join(', ')}] that ${missingKeys.length === 1 ? 'has' : 'have'} no stored value in this ` +
-            `app's secret store, and no \`default\` in the manifest. ` +
-            `\n\nFix: an admin needs to set ${missingKeys.length === 1 ? 'this value' : 'these values'} in the platform UI ` +
-            `(Settings → Secrets) before staging can build. The agent CANNOT fix this from code — ` +
-            `secret values are intentionally not committed to source. ` +
-            `If a manifest \`default\` is appropriate (i.e. the value is genuinely public), the agent can ` +
-            `instead add it to \`dapp.json\` via \`dispatch_claude_code\`.`;
-        } else {
-          fix =
-            `Underlying error: ${(stagingErr && stagingErr.message) || String(stagingErr)}. ` +
-            `This is most likely an infrastructure or build-time failure (Docker build, network, ` +
-            `image cache, etc.) rather than a manifest issue. The agent can suggest the user retry, ` +
-            `inspect platform logs, or — if the build error message implicates the dapp's own code — ` +
-            `dispatch \`dispatch_claude_code\` to investigate.`;
-        }
+        const { fix, missingKeys, errMsg, errName } = describeStagingFailure(stagingErr);
 
         const message =
           `Staging build failed.\n\n` +
@@ -3993,13 +4061,6 @@ path: /relative/path?demo=1
           (session.pr_number ? ` and PR #${session.pr_number} was created/updated` : '') +
           `. Only the staging preview container is missing — there is no preview URL for this commit.\n\n` +
           fix;
-
-        // Defensive: if buildAndDeployStaging ever returned null/undefined
-        // without throwing (it shouldn't — its contract is throw-or-return-
-        // result), stagingErr would be null here. Coerce so we still emit
-        // a meaningful event instead of NPE'ing inside this branch.
-        const errMsg = (stagingErr && stagingErr.message) || 'Unknown staging failure (no error thrown but no result returned)';
-        const errName = (stagingErr && stagingErr.name) || 'Error';
 
         await sendStatus('Staging build failed', { error: errMsg });
         send('staging_failed', {

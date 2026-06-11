@@ -468,17 +468,27 @@ async function start() {
   return server;
 }
 
-start().catch((err) => {
-  // pg's ECONNREFUSED and some Octokit errors leave `.message` empty, so
-  // also surface `.code` and the stack — otherwise boot failures print
-  // as `{"message":""}` and there's nothing to act on.
-  log.error('server', 'Failed to start', {
-    message: err.message || '(empty)',
-    code: err.code,
-    stack: err.stack,
+// Boot only when run as the entry point (`node server.js` — the Docker CMD
+// and npm start path). Tests require() this module to reach the recovery
+// internals exported below without starting servers or sweepers.
+if (require.main === module) {
+  start().catch((err) => {
+    // pg's ECONNREFUSED and some Octokit errors leave `.message` empty, so
+    // also surface `.code` and the stack — otherwise boot failures print
+    // as `{"message":""}` and there's nothing to act on.
+    log.error('server', 'Failed to start', {
+      message: err.message || '(empty)',
+      code: err.code,
+      stack: err.stack,
+    });
+    process.exit(1);
   });
-  process.exit(1);
-});
+}
+
+// Test-only surface (#183): the orphan-adoption + recovered-turn finalize
+// internals, so the headless-recovery guards stay covered by node --test.
+// Not used by any runtime caller.
+module.exports = { adoptOrphanWorker, finalizeRecoveredTurn };
 
 // Scan existing imported apps for privacy violations. Usernode workers
 // run with zero GitHub credentials and rely on unauthenticated public
@@ -829,6 +839,29 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     return;
   }
 
+  // #183: headless auto sessions own their multi-step loop for ALL
+  // container states — the turn resume AND the Mayor wrap-up continuation
+  // both happen in resumeHeadlessRuns (runs right after worker adoption).
+  // Running containers are registered warm so that loop can drive them;
+  // exited ones are left strictly alone: scraping them here would replay
+  // the interactive post-turn tail (PR + staging on the auto branch — the
+  // original #183 bug) and clearing active_turn would destroy the journal
+  // pointer the cc_running resume step needs. Leftover exited containers
+  // are reaped by the normal worker sweeps once the run goes terminal.
+  if (session.is_headless) {
+    if (containerState === 'running') {
+      log.info('server', 'Adopting headless worker (resume owned by resumeHeadlessRuns)', {
+        containerName, sessionId,
+      });
+      worker.adoptWarmWorker(sessionId, containerName);
+    } else {
+      log.info('server', 'Leaving exited headless worker to resumeHeadlessRuns', {
+        containerName, sessionId,
+      });
+    }
+    return;
+  }
+
   // Long-lived worker reality check: a *running* container could be
   //   (a) a warm-idle wrapper sitting in `sleep infinity` — clean adopt,
   //       no log scrape needed.
@@ -843,18 +876,6 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   //       (no active_turn record). Its output went to a dead pipe and
   //       is unrecoverable; kill it so it can't race the next dispatch.
   if (containerState === 'running') {
-    // Headless auto sessions own their multi-step loop: the turn resume
-    // AND the Mayor wrap-up continuation both happen in
-    // resumeHeadlessRuns (runs right after worker adoption). Just
-    // register the warm container so the loop can drive it.
-    if (session.is_headless) {
-      log.info('server', 'Adopting headless worker (resume owned by resumeHeadlessRuns)', {
-        containerName, sessionId,
-      });
-      worker.adoptWarmWorker(sessionId, containerName);
-      return;
-    }
-
     // Case (c): detached turn with a durable record — resume it.
     const activeTurn = session.active_turn || null;
     if (activeTurn && activeTurn.journal) {
@@ -971,6 +992,18 @@ async function finalizeRecoveredTurn({
   config, pool, staging, session, sessionId, result, repoOwner, repoName,
   emit, containerName, keepWorker,
 }) {
+  // #183 belt-and-braces: headless rows must never get the interactive
+  // post-turn tail (PR on the auto branch + staging + system message) from
+  // any recovery transport — resumeHeadlessRuns owns them. adoptOrphanWorker
+  // already routes headless sessions away before reaching here; this guard
+  // protects against future transports forgetting to.
+  if (session.is_headless) {
+    log.info('server', 'Skipping recovered-turn finalize for headless session (owned by resumeHeadlessRuns)', {
+      sessionId,
+    });
+    return;
+  }
+
   // Capture the CC session id so the next turn can --resume, even though
   // the server process that originally spawned this worker is gone.
   const newCcId = result.sessionId || result.initSessionId || null;

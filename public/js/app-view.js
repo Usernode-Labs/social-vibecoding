@@ -1439,18 +1439,28 @@ const AppView = {
       if (h && h.status === 'generating') {
         autoBtn = `<button class="gc-vote-btn" disabled title="A headless AI session is working on this issue${h.username ? ` (started by ${escapeAttr(h.username)})` : ''}">Generating auto-solve&hellip;</button>`;
       } else if (h && h.status === 'ready') {
+        // #183: a code/spec_code run with a live preview gets the
+        // changes-ready treatment — label + a Preview button that opens
+        // the auto run's staging (plain open, same overlay as PR rows).
+        // stagingUrl is nulled when the preview is GC'd, so the row
+        // degrades back to the plain outcome wording.
+        const hasPreview = !!h.stagingUrl && (h.outcome === 'code' || h.outcome === 'spec_code');
+        const previewBtn = hasPreview
+          ? `<button class="gc-vote-btn gc-vote-btn-preview" title="Open the auto-solve staging preview" onclick="AppView.swapToStagingForSession(${h.sessionId}, '${h.stagingUrl}')">Preview</button>`
+          : '';
         if (h.mySessionId) {
-          autoBtn = `<button class="gc-vote-btn" title="You already started a session from this auto session — open it" onclick="AppView.goToAutoSessionClone(${h.mySessionId})">Go to session</button>`;
+          autoBtn = `${previewBtn}<button class="gc-vote-btn" title="You already started a session from this auto session — open it" onclick="AppView.goToAutoSessionClone(${h.mySessionId})">Go to session</button>`;
         } else {
           const outcomeNote = h.outcome === 'spec' ? 'it drafted a spec'
             : h.outcome === 'code' ? 'it pushed a code change'
             : h.outcome === 'spec_code' ? 'it drafted a spec and pushed a code change'
             : 'it has a question for you';
-          const autoLabel = h.outcome === 'spec' ? 'Review spec &amp; start session'
+          const autoLabel = hasPreview ? 'Changes ready &mdash; review &amp; start session'
+            : h.outcome === 'spec' ? 'Review spec &amp; start session'
             : h.outcome === 'code' ? 'Review solution &amp; start session'
             : h.outcome === 'question' ? 'Answer question &amp; start session'
             : 'Start session from auto session';
-          autoBtn = `<button class="gc-vote-btn" title="Clone the finished auto session (${outcomeNote}) into your own dev chat — others can clone it too" onclick="AppView.startFromAutoSession(${h.sessionId})">${autoLabel}</button>`;
+          autoBtn = `${previewBtn}<button class="gc-vote-btn" title="Clone the finished auto session (${outcomeNote}) into your own dev chat — others can clone it too" onclick="AppView.startFromAutoSession(${h.sessionId})">${autoLabel}</button>`;
         }
         // #150: a question outcome doesn't block re-running — answer the
         // questions on the issue, then press Auto-solve again and the new
