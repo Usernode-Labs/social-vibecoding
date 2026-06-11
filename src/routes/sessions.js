@@ -1253,11 +1253,33 @@ function sessionRoutes(config) {
             // happened and is invoiced whether or not it produced text.
             // (The final iteration's spend is billed by the existing
             // phase-1 accounting just below the loop.)
+            let dataCost = 0;
             if (mayor1.usage) {
-              const dataCost = llm.estimateCostCents(mayor1.usage, selectedModel);
+              dataCost = llm.estimateCostCents(mayor1.usage, selectedModel);
               await limits.recordSpend(pool, req.user.id, dataCost, { byok: !!userApiKey });
               send('usage', { costCents: dataCost, model: selectedModel, byok: !!userApiKey });
             }
+
+            // Persist any preamble text this iteration produced ("Let me
+            // check the open issues…") as its own assistant row BEFORE the
+            // status row — chat_session_messages id order is the
+            // refresh-render order, and without this row the preamble
+            // bubble would vanish on refresh. mayor_reasoning makes the
+            // live bubble authoritative even if token events were lost.
+            if (mayor1.text.trim()) {
+              send('mayor_reasoning', { text: mayor1.text });
+              await pool.query(
+                `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
+                 VALUES ($1, 'assistant', $2, $3, $4, $5)`,
+                [session.id, mayor1.text, selectedModel,
+                  mayor1.usage ? mayor1.usage.input_tokens + mayor1.usage.output_tokens : null,
+                  dataCost]
+              );
+            }
+            // Seal the bubble so the next iteration's tokens land in a
+            // fresh one BELOW the status line (#99) — without this the
+            // follow-up text appends to the bubble above the status.
+            send('assistant_message_end', {});
 
             await sendStatus("Reading the repo's GitHub issues...");
             const issuesResults = await Promise.all(
