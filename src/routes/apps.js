@@ -155,6 +155,7 @@ function appRoutes(config) {
           COALESCE(activity.total_seconds, 0) AS total_seconds,
           COALESCE(au.cnt, 0) AS active_users,
           (favs.app_id IS NOT NULL) AS is_favorited,
+          favs.sort_order AS favorite_order,
           (me.user_id IS NOT NULL) AS is_collaborator
         FROM apps a
         LEFT JOIN (
@@ -182,7 +183,7 @@ function appRoutes(config) {
           GROUP BY a1.app_id
         ) au ON au.app_id = a.id
         LEFT JOIN (
-          SELECT app_id FROM app_favorites WHERE user_id = $2
+          SELECT app_id, sort_order FROM app_favorites WHERE user_id = $2
         ) favs ON favs.app_id = a.id
         LEFT JOIN app_collaborators me
           ON me.app_id = a.id AND me.user_id = $2 AND me.status = 'member'
@@ -276,6 +277,7 @@ function appRoutes(config) {
           deployProgress: appDeployStatus.read(a.slug),
           missingSecrets,
           is_favorited: !!a.is_favorited,
+          favorite_order: a.favorite_order ?? null,
           ...accessFlags(a, req.user, a.is_collaborator),
         };
       }));
@@ -1130,6 +1132,62 @@ function appRoutes(config) {
     } catch (err) {
       log.error('apps', 'Failed to toggle favorite', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Persist the caller's personal ordering of starred apps (issue #128).
+  // Deliberately NOT under /api/apps/… so it can never collide with the
+  // :slug-parameterised routes above. Body is the user's complete starred
+  // list, first-to-last: { order: ["slug-a", "slug-b", ...] }.
+  //
+  // The save is a self-healing full rewrite inside one transaction:
+  // every one of the caller's favorites is reset to NULL, then each
+  // submitted slug that is actually favorited gets sort_order = its
+  // array index. Submitted slugs that aren't favorited (or don't exist)
+  // are silently ignored — favorites are non-sensitive (same trust
+  // level as the toggle's DELETE) and a stale client list shouldn't
+  // 400 the whole save. Favorites missing from the array end up NULL
+  // and fall to the back via the client's fallback ordering. No
+  // per-app access re-check needed: only rows keyed by req.user.id are
+  // touched, and a user can only have favorited apps they could view
+  // at star time.
+  router.put('/api/favorites/order', async (req, res) => {
+    const { order } = req.body || {};
+    if (
+      !Array.isArray(order) ||
+      order.length > 200 ||
+      order.some((s) => typeof s !== 'string')
+    ) {
+      return res.status(400).json({ error: 'order must be an array of at most 200 slugs' });
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        'UPDATE app_favorites SET sort_order = NULL WHERE user_id = $1',
+        [req.user.id]
+      );
+      if (order.length > 0) {
+        await client.query(
+          `UPDATE app_favorites f
+           SET sort_order = ord.idx
+           FROM (
+             SELECT slug, (ordinality - 1)::int AS idx
+             FROM unnest($2::text[]) WITH ORDINALITY AS t(slug, ordinality)
+           ) ord
+           JOIN apps a ON a.slug = ord.slug
+           WHERE f.user_id = $1 AND f.app_id = a.id`,
+          [req.user.id, order]
+        );
+      }
+      await client.query('COMMIT');
+      res.json({ ok: true });
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      log.error('apps', 'Failed to reorder favorites', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    } finally {
+      client.release();
     }
   });
 
