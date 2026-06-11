@@ -1,4 +1,6 @@
+const http = require('http');
 const { WebSocketServer } = require('ws');
+const jwt = require('jsonwebtoken');
 const { getPool } = require('../db/pool');
 const log = require('./logger');
 const notifications = require('./notifications');
@@ -20,7 +22,31 @@ function attach(server, config) {
   wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', async (req, socket, head) => {
-    const user = await authenticateWs(req, pool);
+    // Caddy's forward_auth PRESERVES the Connection/Upgrade headers on its
+    // auth subrequest while rewriting the URI to /__caddy/access. Node
+    // routes any upgrade-flagged request to this 'upgrade' event instead of
+    // the normal request listener, so the gate pre-flight for every proxied
+    // WebSocket lands here — where it used to fall through to
+    // socket.destroy(). forward_auth then read EOF, answered 502, and every
+    // WS behind the wildcard (all staging previews / child apps) was
+    // unreachable: group chat sat on "Reconnecting…" forever. Re-dispatch
+    // anything that isn't one of our real WS endpoints into the regular
+    // handler chain (Express) so /__caddy/access — or any other route — can
+    // answer with a proper HTTP response over this socket.
+    if (!req.url?.startsWith('/ws/')) {
+      const handler = server.listeners('request')[0];
+      if (!handler) { socket.destroy(); return; }
+      const res = new http.ServerResponse(req);
+      res.assignSocket(socket);
+      res.shouldKeepAlive = false;
+      res.on('finish', () => {
+        try { socket.end(); } catch { /* already gone */ }
+      });
+      handler(req, res);
+      return;
+    }
+
+    const user = await authenticateWs(req, pool, config);
     if (!user) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
@@ -94,7 +120,26 @@ function attach(server, config) {
   log.info('ws', 'WebSocket server attached');
 }
 
-async function authenticateWs(req, pool) {
+// Staging-only iframe-JWT fallback, mirroring src/middleware/auth.js.
+// `sessions` is staging:private (truncated on every staging redeploy), so
+// a browser that kept a cookie from the previous deploy fails the cookie
+// path forever: HTTP recovers because the middleware re-mints a session
+// from the shell-injected ?token= JWT, but a WebSocket handshake can't
+// follow that flow — it just 401s and the client shows "Reconnecting…"
+// until the page is reloaded. Accepting the same JWT here (sent by the
+// client as ?token= on the WS URL) closes that gap. Gated on
+// USERNODE_ENV === 'staging' exactly like the middleware, so prod WS auth
+// remains cookie-only.
+const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+
+async function authenticateWs(req, pool, config) {
+  const viaCookie = await authenticateWsCookie(req, pool);
+  if (viaCookie) return viaCookie;
+  if (!IS_STAGING) return null;
+  return authenticateWsStagingJwt(req, pool, config);
+}
+
+async function authenticateWsCookie(req, pool) {
   try {
     const cookies = parseCookies(req.headers.cookie || '');
     const token = cookies.session;
@@ -112,6 +157,43 @@ async function authenticateWs(req, pool) {
     }
 
     return { id: rows[0].user_id, username: rows[0].username, isAdmin: rows[0].is_admin };
+  } catch {
+    return null;
+  }
+}
+
+async function authenticateWsStagingJwt(req, pool, config) {
+  try {
+    let token;
+    try {
+      token = new URL(req.url || '', 'http://x').searchParams.get('token');
+    } catch {
+      return null;
+    }
+    if (!token || !config?.jwtSecret) return null;
+
+    let payload;
+    try {
+      payload = jwt.verify(token, config.jwtSecret);
+    } catch (err) {
+      log.warn('ws', 'Staging iframe-JWT verification failed', { err: err.message });
+      return null;
+    }
+    if (!payload || typeof payload !== 'object' || typeof payload.id !== 'number') return null;
+
+    // Same defense-in-depth as tryMintSessionFromIframeJwt: resolve the
+    // user from the local (cloned) users table and refuse on a username
+    // mismatch (token minted before a rename).
+    const { rows } = await pool.query(
+      'SELECT id, username, is_admin FROM users WHERE id = $1',
+      [payload.id]
+    );
+    if (rows.length === 0) return null;
+    if (typeof payload.username === 'string' && payload.username !== rows[0].username) {
+      return null;
+    }
+
+    return { id: rows[0].id, username: rows[0].username, isAdmin: rows[0].is_admin };
   } catch {
     return null;
   }

@@ -114,6 +114,16 @@
 	# in src/routes/internal.js. On a non-2xx the gate's response
 	# (404 / authorize redirect / cookie-setting redirect) is returned to
 	# the client verbatim and the app container is never reached.
+	#
+	# WebSocket gotcha: forward_auth's subrequest PRESERVES the original
+	# Connection/Upgrade headers, so for a proxied WS handshake the gate
+	# check arrives at usernode:3000 as an upgrade-flagged request. Node
+	# diverts those to the http server's 'upgrade' event — the platform
+	# must re-dispatch non-/ws/* upgrades into its normal request chain
+	# (see src/services/ws.js attach()) or the gate answers EOF and Caddy
+	# 502s every WebSocket behind this wildcard. Keep that in mind before
+	# "simplifying" either side; tests/ws-upgrade-redispatch.test.js
+	# guards the platform half.
 	forward_auth usernode:3000 {
 		uri /__caddy/access
 	}
