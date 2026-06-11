@@ -1173,6 +1173,27 @@ async function resumeDetachedTurn({
       [sessionId, 'Coding turn recovered after a platform restart.', JSON.stringify({})]
     ).catch(() => {});
     emit('status', { text: 'Coding turn recovered after a platform restart.' });
+
+    // #161: the pre-restart SSE is guaranteed dead, so the owner cannot
+    // have been watching this turn finish — treat recovered turns as
+    // armed regardless of the persisted notify_on_done flag: clear it
+    // and always create the session_done notification (the WS push
+    // reaches them if they have a tab open elsewhere in the app).
+    try {
+      const notifications = require('./src/services/notifications');
+      await pool.query(
+        `UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1`,
+        [sessionId]
+      ).catch(() => {});
+      const created = await notifications.createSessionDoneNotification(pool, {
+        userId: session.user_id, appId: session.app_id, sessionId,
+      });
+      if (created.length) await notifications.hydrateAndPush(pool, created[0]);
+    } catch (err) {
+      log.warn('server', 'recovered-turn session_done notify failed', {
+        sessionId, err: err.message,
+      });
+    }
   } finally {
     await worker.clearActiveTurn(sessionId);
   }

@@ -15,6 +15,11 @@ const AppView = {
   _ghIssuesShown: 5,
   _bountyInFlight: new Set(),
 
+  // #161: deferred drawer reveal, set by a notification click before the
+  // info panel has loaded; consumed at the end of loadVotePanel.
+  // Shape: { type: 'issue'|'pr', number } | null.
+  _pendingReveal: null,
+
   _INFO_PANEL_OPEN_KEY_PREFIX: 'gc-info-panel-open-v1:',
   // Persisted height of the "App information and activity" panel,
   // stored as a percentage (10–90) of the group-chat container so it
@@ -1087,6 +1092,16 @@ const AppView = {
       // rendered. Idempotent — Kudos.attach skips wrappers it has
       // already bound (data-kudos-bound flag).
       if (window.Kudos) Kudos.attach(panel);
+
+      // #161: a notification click may have requested an issue/PR reveal
+      // before this panel existed (it loads asynchronously). Consume the
+      // pending reveal now that the rows are rendered — revealInDrawer
+      // falls back to GitHub if the row genuinely isn't present.
+      if (AppView._pendingReveal) {
+        const { type, number } = AppView._pendingReveal;
+        AppView._pendingReveal = null;
+        AppView.revealInDrawer(type, number);
+      }
     } catch {
       panel.innerHTML = '';
     }

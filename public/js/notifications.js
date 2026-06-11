@@ -121,6 +121,7 @@ const Notifications = {
       Notifications.unread = data.unread || 0;
       Notifications.hasMore = !!data.hasMore;
       Notifications.nextBefore = data.nextBefore || null;
+      Notifications._reconcileCompletionTitle();
       Notifications._renderBadge();
       if (Notifications.open) {
         Notifications._renderInvites();
@@ -175,6 +176,18 @@ const Notifications = {
       Notifications.items.unshift(notif);
     }
     if (!notif.readAt) Notifications.unread += 1;
+    // #161: a completion arriving while the user is away from the
+    // browser tab sets the dedicated tab-title marker (the replacement
+    // for the old streaming-driven "✅ Done"). If they're actively
+    // looking at the page, the badge + drawer suffice.
+    if ((notif.kind === 'session_done' || notif.kind === 'auto_solve_done')
+        && !notif.readAt
+        && window.DevChat && DevChat.setCompletionTitle
+        && DevChat._userIsAway && DevChat._userIsAway()) {
+      DevChat.setCompletionTitle(notif.kind === 'session_done'
+        ? 'sessionDone'
+        : (notif.detail === 'failed' ? 'autoSolveFailed' : 'autoSolveDone'));
+    }
     // A live collab invite needs the authoritative pendingInvites list
     // (the notification row alone can't drive the actionable section) —
     // refresh re-pulls it along with the first page.
@@ -225,11 +238,21 @@ const Notifications = {
         ...n,
         readAt: n.readAt || now,
       }));
+      Notifications._reconcileCompletionTitle();
       Notifications._renderBadge();
       Notifications._renderList();
     } catch (err) {
       console.warn('[notifications] markAllRead failed', err);
     }
+  },
+
+  // #161: drop the tab-title completion marker once no unread completion
+  // notification remains (drawer click, group/app mark-read, mark-all,
+  // or a cross-tab notifications_changed refresh). The visibility/focus
+  // return handler in dev-chat.js is the other clearing path.
+  _reconcileCompletionTitle() {
+    if (!window.DevChat || !DevChat.setCompletionTitle || !DevChat._titleCompletion) return;
+    if (!Notifications.items.some(isPriorityNotif)) DevChat.setCompletionTitle(null);
   },
 
   // Per-group "Mark read": clears every unread notification for one app
@@ -259,6 +282,7 @@ const Notifications = {
       Notifications.items = Notifications.items.map((n) =>
         (groupKeyFor(n) === groupKey && !n.readAt) ? { ...n, readAt: now } : n
       );
+      Notifications._reconcileCompletionTitle();
       Notifications._renderBadge();
       Notifications._renderList();
     } catch (err) {
@@ -275,6 +299,7 @@ const Notifications = {
     if (item && !item.readAt) {
       item.readAt = new Date().toISOString();
       if (Notifications.unread > 0) Notifications.unread -= 1;
+      Notifications._reconcileCompletionTitle();
       Notifications._renderBadge();
       if (Notifications.open) Notifications._renderList();
     }
@@ -302,6 +327,29 @@ const Notifications = {
     // notifications. The drawer only dismisses via outside-click or the
     // explicit close button.
     Notifications._markOneRead(id);
+    // #161: completion notifications deep-link past the group-chat
+    // default. session_done opens the dev session itself; auto_solve_done
+    // opens the group-chat tab and reveals the issue row (deferred via
+    // _pendingReveal because the info panel loads asynchronously).
+    if (item.kind === 'session_done' && item.appSlug && item.sessionId) {
+      if (typeof App !== 'undefined' && App.openAppTab) {
+        App.openAppTab(item.appSlug, 'individual-chat', { sessionId: item.sessionId });
+      } else {
+        window.location.hash = `#app/${item.appSlug}/individual-chat/${item.sessionId}`;
+      }
+      return;
+    }
+    if (item.kind === 'auto_solve_done' && item.appSlug) {
+      if (typeof AppView !== 'undefined' && item.headlessIssueNumber) {
+        AppView._pendingReveal = { type: 'issue', number: item.headlessIssueNumber };
+      }
+      if (typeof App !== 'undefined' && App.openAppTab) {
+        App.openAppTab(item.appSlug, 'group-chat');
+      } else {
+        window.location.hash = `#app/${item.appSlug}/group-chat`;
+      }
+      return;
+    }
     if (item.appSlug) {
       // Both mention and kudos notifications land on the app's group
       // chat. Mentions originate there; kudos's PR is rendered in the
@@ -453,9 +501,16 @@ const Notifications = {
     }
   },
 
-  // Pure transform: items (newest-first) -> ordered groups. The first
-  // time an app is seen is its newest notification, so insertion order
-  // already yields most-recent-activity-first group ordering.
+  // Pure transform: items (newest-first) -> ordered groups, in two tiers
+  // (#161). Base tier: the first time an app is seen is its newest
+  // notification, so insertion order yields most-recent-activity-first
+  // group ordering, and each group's items stay newest-first. Priority
+  // tier: UNREAD completion notifications (session_done /
+  // auto_solve_done) pin to the top — their group floats above the
+  // others and the pinned items lead within their group (so they also
+  // become the collapsed header's preview). Both re-sorts are stable
+  // partitions, so ordering inside each tier is unchanged; once a
+  // completion is read it drops back to its chronological spot.
   _groupByApp() {
     const byKey = new Map();
     for (const n of Notifications.items) {
@@ -469,13 +524,23 @@ const Notifications = {
           appSlug: n.appSlug || null,
           items: [],
           unreadCount: 0,
+          hasUnreadPriority: false,
         };
         byKey.set(key, g);
       }
       g.items.push(n);
       if (!n.readAt) g.unreadCount += 1;
+      if (isPriorityNotif(n)) g.hasUnreadPriority = true;
     }
-    return [...byKey.values()];
+    const groups = [...byKey.values()];
+    for (const g of groups) {
+      if (!g.hasUnreadPriority) continue;
+      // Array.prototype.sort is spec-stable, so this is a stable
+      // partition: priority items first, newest-first inside each half.
+      g.items.sort((a, b) => (isPriorityNotif(a) ? 0 : 1) - (isPriorityNotif(b) ? 0 : 1));
+    }
+    groups.sort((a, b) => (a.hasUnreadPriority ? 0 : 1) - (b.hasUnreadPriority ? 0 : 1));
+    return groups;
   },
 
   _renderList() {
@@ -608,6 +673,16 @@ function groupKeyFor(n) {
   return n && n.appId != null ? String(n.appId) : 'general';
 }
 
+// #161: completion notifications pin to the top of the drawer while
+// UNREAD — a finished session demands attention; once read it returns
+// to its natural chronological position. Deliberately limited to these
+// two kinds; grow this set rather than adding a server-side priority
+// column if more "priority" kinds emerge.
+const PRIORITY_KINDS = new Set(['session_done', 'auto_solve_done']);
+function isPriorityNotif(n) {
+  return !!n && PRIORITY_KINDS.has(n.kind) && !n.readAt;
+}
+
 // Unread indicator dot. When unread it's a solid violet dot carrying an
 // accessible "Unread" label; when read it's an equal-width invisible
 // spacer so read/unread rows stay horizontally aligned (no jitter when a
@@ -695,6 +770,11 @@ function previewText(n) {
     case 'mention':     return `${who} mentioned you`;
     case 'collab_invite':          return `✉️ ${who} invited you to collaborate`;
     case 'collab_invite_accepted': return `✅ ${who} accepted your invite`;
+    case 'session_done':           return `✅ Your dev session finished`;
+    case 'auto_solve_done':
+      return n.detail === 'failed'
+        ? `⚠️ Auto-solve for issue #${n.headlessIssueNumber || '?'} failed`
+        : `🤖 Auto-solve for issue #${n.headlessIssueNumber || '?'} is ready`;
     default:            return who;
   }
 }
@@ -785,6 +865,54 @@ function renderRow(n) {
         <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
       </div>
       <div class="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2 font-medium">${prLabel}</div>
+    </button>`;
+  }
+
+  // #161: dev-session completion — the owner left mid-turn and it
+  // finished. Clicking deep-links straight into the dev session.
+  if (n.kind === 'session_done') {
+    const sessionLabel = n.prTitle
+      ? escapeHtml(n.prTitle)
+      : (n.branchName ? escapeHtml(n.branchName) : 'your session');
+    return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
+      <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1 flex-wrap">
+        ${dot}
+        <span aria-hidden="true">✅</span>
+        <span>Your dev session in</span>
+        <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
+        <span>finished</span>
+        <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
+      </div>
+      <div class="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2 font-medium">${sessionLabel}</div>
+    </button>`;
+  }
+
+  // #161: headless auto-solve completion. Clicking lands on the app's
+  // group chat and reveals the issue row (where "Start session from
+  // auto-solve" lives).
+  if (n.kind === 'auto_solve_done') {
+    const failed = n.detail === 'failed';
+    const icon = failed ? '⚠️' : '\u{1F916}';
+    const verb = failed ? 'failed' : 'is ready';
+    const issueLabel = n.headlessIssueNumber ? `issue #${n.headlessIssueNumber}` : 'an issue';
+    const outcomeText = {
+      spec: 'drafted a spec',
+      code: 'pushed code',
+      question: 'replied with a question',
+      failed: 'failed — you can retry',
+    }[n.detail] || 'finished';
+    return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
+      <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1 flex-wrap">
+        ${dot}
+        <span aria-hidden="true">${icon}</span>
+        <span>Auto-solve for</span>
+        <span class="font-medium text-zinc-700 dark:text-zinc-300">${escapeHtml(issueLabel)}</span>
+        <span>in</span>
+        <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
+        <span>${verb}</span>
+        <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
+      </div>
+      <div class="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2 font-medium">${escapeHtml(outcomeText)}</div>
     </button>`;
   }
 
