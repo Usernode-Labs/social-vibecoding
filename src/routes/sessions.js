@@ -370,11 +370,14 @@ function sessionRoutes(config) {
 
       // One auto session per issue at a time: 'generating' means a run is
       // in flight; 'ready' means the start-from button should be used
-      // instead. 'failed' rows don't block a retry.
+      // instead. 'failed' rows don't block a retry, and neither does a
+      // 'ready' run that ended with outcome 'question' (#150) — the whole
+      // point is to answer on the issue and press Auto-solve again.
       const { rows: existingRows } = await pool.query(
         `SELECT id, headless_status FROM chat_sessions
          WHERE app_id = $1 AND is_headless = TRUE AND headless_issue_number = $2
            AND headless_status IN ('generating', 'ready')
+           AND NOT (headless_status = 'ready' AND headless_outcome = 'question')
          ORDER BY created_at DESC LIMIT 1`,
         [app.id, issueNumber]
       );
@@ -413,8 +416,15 @@ function sessionRoutes(config) {
       const selectedModel = models.resolve(req.body && req.body.model);
 
       // Full issue text for the seed turn (cache-first; degrades to a
-      // number-only seed when GitHub can't be reached right now).
+      // number-only seed when GitHub can't be reached right now). The
+      // issue's comments ride along (#150) so answers to earlier
+      // auto-solve questions are visible to this run; a failed comments
+      // fetch degrades to title + body. The bot username lets the seed
+      // tag the bot's own earlier question comments.
       const { issue } = await github.fetchPublicIssue(repoOwner, repoName, issueNumber);
+      const { comments } = await github.fetchIssueComments(repoOwner, repoName, issueNumber);
+      let botUsername = null;
+      try { botUsername = await github.getBotUsername(); } catch {}
 
       const branchName = `dev/auto-issue-${issueNumber}-${Date.now()}`;
       try {
@@ -454,7 +464,7 @@ function sessionRoutes(config) {
         pool, config, session,
         user: { id: req.user.id, username: req.user.username },
         selectedModel, repoOwner, repoName, userApiKey,
-        issueNumber, issue,
+        issueNumber, issue, comments, botUsername,
       }).catch((err) => {
         log.error('sessions', 'Headless session runner crashed', { sessionId: session.id, err: err.message, stack: err.stack });
       });
@@ -2126,8 +2136,10 @@ function buildHeadlessFollowUpMessage(src) {
       return `${intro}\n\nWhere things stand: the auto session investigated the repo and drafted a spec — open the spec viewer to review it. When you're happy with it, tell me to build it and I'll dispatch the coding agent (that turn also opens the PR and staging preview).`;
     case 'code':
       return `${intro}\n\nWhere things stand: the code change is already committed and pushed on this branch — no PR or staging preview exists yet. Review the summary above, iterate if you want, and when you're ready just tell me to open the PR / build the staging preview.`;
+    case 'spec_code':
+      return `${intro}\n\nWhere things stand: the auto session drafted a spec (open the spec viewer to review it) AND implemented it — the change is already committed and pushed on this branch. No PR or staging preview exists yet. Review both the spec and the change summary above, iterate if you want, and when you're ready just tell me to open the PR / build the staging preview.`;
     default:
-      return `${intro}\n\nWhere things stand: the auto session ran into something that needs a human decision — see its last message above. Answer here and we'll continue from where it left off.`;
+      return `${intro}\n\nWhere things stand: the auto session ran into something that needs a human decision — see its last message above (the same questions were also posted as a comment on the GitHub issue). Answer here and we'll continue from where it left off.`;
   }
 }
 
@@ -2137,11 +2149,94 @@ function buildHeadlessFollowUpMessage(src) {
 function buildHeadlessAddendum(issueNumber) {
   return `
 
-HEADLESS AUTO-SESSION MODE: you are running unattended on GitHub issue #${issueNumber} — there is NO human in this chat and there will be NO follow-up turn. Decide ONE action for this single turn:
-- dispatch_scout when the issue needs investigation or design: produce a grounded spec a human will review later. Prefer this for anything non-trivial.
-- dispatch_claude_code ONLY for small, unambiguous fixes the issue text fully specifies. The agent may commit and push its branch, but NO pull request and NO staging preview will be created in this mode — a human will start a session from this auto session later and trigger those.
-- If the issue is too unclear to act on at all, reply in plain text with the specific question(s) a human must answer, and call no tool.
+HEADLESS AUTO-SESSION MODE: you are running unattended on GitHub issue #${issueNumber} — there is NO human in this chat and there will be NO follow-up turn. Decide ONE action for this single turn, in this order:
+1. FIRST apply the CLARITY GATE (above) to the issue, including any ISSUE COMMENTS included in the message — treat the reporter's comments as their input, and comments marked as earlier auto-solve questions as your own previous turn (answers to them may make the issue clear now). If the issue FAILS the gate: reply in plain text containing ONLY the numbered clarifying questions with your suggested defaults, and call no tool. Your reply will be posted verbatim as a comment on GitHub issue #${issueNumber} for the reporter to answer — write it for them (no greetings, no meta-talk about sessions or tools).
+2. dispatch_scout when the issue passes the gate and needs investigation or design: produce a grounded spec a human will review later. Prefer this for anything non-trivial. After the scout returns you will get ONE follow-up decision turn where you may implement the spec immediately if it turned out straightforward — so scouting first never costs you the chance to ship.
+3. dispatch_claude_code ONLY for small, unambiguous fixes the issue text fully specifies. The agent may commit and push its branch, but NO pull request and NO staging preview will be created in this mode — a human will start a session from this auto session later and trigger those.
 Never promise future work and never ask for confirmation — state what you did and what the human reviewer should do next.`;
+}
+
+// #170: the addendum for the headless DECISION turn — the one extra Mayor
+// call offered after a successful scout, where the run may proceed straight
+// into implementation if (and only if) the spec is straightforward. The
+// criteria live here in prompt text so they're tunable without flow
+// changes; the hard limits (one build max, budget re-check, no PR/staging)
+// are enforced in code in runHeadlessSession.
+function buildHeadlessDecisionAddendum(issueNumber) {
+  return `
+
+DECISION TURN: the scout's spec is now in your system prompt (CURRENT SPEC DOC). You get exactly ONE more action. Dispatch dispatch_claude_code to implement the spec NOW only if ALL of these hold:
+- The spec has no "Questions" section, no open decisions, and no choices deferred to a human.
+- It describes a small, bounded change with concrete file paths — roughly a handful of files, no broad refactor.
+- No database schema migrations, no destructive or irreversible operations, no changes to auth, billing, permissions, or security-sensitive code.
+- No new external services, dependencies, or credentials.
+- The spec stays within what issue #${issueNumber} asked for (no scope expansion).
+If ANY criterion fails or you are unsure, reply in plain text instead — summarize the spec and stop; a human will review it. When you do dispatch, the prompt must tell the agent to implement the session's spec doc exactly as written and not redesign it. Remember: headless mode means commit + push only — no PR, no staging preview.`;
+}
+
+// #150: build the headless run's seed user message from the issue plus
+// its comments, so answers the reporter left as comments are visible to
+// the run. Comments authored by the platform bot are tagged so the Mayor
+// recognizes its own earlier clarifying questions vs. the reporter's
+// answers. Each comment body is truncated and only the most recent
+// HEADLESS_SEED_MAX_COMMENTS are kept (with an omission marker), so a
+// chatty thread can't blow up the model's context. Exported for tests.
+const HEADLESS_SEED_MAX_COMMENTS = 20;
+const HEADLESS_SEED_COMMENT_MAX_CHARS = 2000;
+function buildHeadlessSeed(issueNumber, issue, comments, botUsername) {
+  const title = issue ? issue.title : '';
+  const body = issue && issue.body ? `\n\n${issue.body}` : '';
+  let seed = `Please work on GitHub issue #${issueNumber}: "${title}".${body}`;
+
+  const list = Array.isArray(comments) ? comments : [];
+  if (!list.length) return seed;
+
+  const kept = list.slice(-HEADLESS_SEED_MAX_COMMENTS);
+  const lines = kept.map((c) => {
+    const author = (c.author || 'unknown').toString();
+    // GitHub App actors comment as `<name>[bot]`; tolerate that suffix.
+    const isBot = !!botUsername
+      && author.toLowerCase().replace(/\[bot\]$/, '') === botUsername.toLowerCase();
+    const date = (c.createdAt || '').slice(0, 10);
+    const tag = isBot
+      ? `[bot — earlier auto-solve questions${date ? `, ${date}` : ''}]`
+      : `[${author}${date ? `, ${date}` : ''}]`;
+    let text = (c.body || '').toString();
+    if (text.length > HEADLESS_SEED_COMMENT_MAX_CHARS) {
+      text = `${text.slice(0, HEADLESS_SEED_COMMENT_MAX_CHARS)}… [truncated]`;
+    }
+    return `${tag} ${text}`;
+  });
+  if (list.length > kept.length) lines.unshift('[earlier comments omitted]');
+
+  seed += `\n\nISSUE COMMENTS (oldest first):\n${lines.join('\n\n')}`;
+  return seed;
+}
+
+// #150: gate for posting phase-1 question text back to the GitHub issue.
+// Only a PURE-TEXT phase-1 turn qualifies: the dispatch-error path also
+// ends outcome='question' but its text is an error summary, not
+// questions for the reporter. Exported for tests.
+function shouldPostHeadlessQuestionComment({ outcome, dispatchedTool, mayorText }) {
+  return outcome === 'question' && !dispatchedTool && !!(mayorText || '').trim();
+}
+
+const HEADLESS_QUESTION_FOOTER = '\n\n— Posted by this issue\'s auto-solve session. '
+  + 'Answer in a comment (or edit the issue body), then press **Auto-solve** on the issue again — the next run reads the answers.';
+
+// Best-effort: a failed post must never fail or change the run's outcome
+// (the parked session remains the fallback channel). Returns whether the
+// comment landed so the caller can decide whether to surface a status.
+async function postHeadlessQuestionComment({ repoOwner, repoName, issueNumber, questionText }) {
+  try {
+    await github.createIssueComment(repoOwner, repoName, issueNumber, questionText + HEADLESS_QUESTION_FOOTER);
+    return true;
+  } catch (err) {
+    log.warn('sessions', 'Failed to post clarifying questions to issue (continuing)', {
+      issueNumber, err: err.message,
+    });
+    return false;
+  }
 }
 
 // Persist where the headless loop currently is so a platform restart can
@@ -2169,8 +2264,16 @@ async function setHeadlessStep(pool, sessionId, step, outcome) {
 // `headless: true` so it can push its branch but never opens a PR or
 // staging preview. All spend is billed to the clicking user. On success the
 // session flips to headless_status='ready' with an outcome of 'spec'
-// (scout drafted a spec), 'code' (commit pushed), or 'question' (the Mayor
-// replied in text / the dispatch errored — either way a human needs to look).
+// (scout drafted a spec), 'code' (commit pushed), 'spec_code' (#170 — scout
+// drafted a spec AND the decision turn implemented it), or 'question' (the
+// Mayor replied in text / the dispatch errored — either way a human needs
+// to look).
+//
+// #170: after a SUCCESSFUL scout, phase-2 becomes a DECISION turn — the
+// Mayor sees the spec in its system prompt and may dispatch one (and only
+// one) headless build when the spec is straightforward, followed by a
+// tool-less phase-3 wrap-up. Every other path keeps the original tool-less
+// phase-2 wrap-up.
 //
 // `resume` is set by resumeHeadlessRuns when re-driving a 'planning'-step
 // run after a restart: the seed user message already exists in
@@ -2178,6 +2281,7 @@ async function setHeadlessStep(pool, sessionId, step, outcome) {
 async function runHeadlessSession({
   pool, config, session, user, selectedModel,
   repoOwner, repoName, userApiKey, issueNumber, issue,
+  comments = [], botUsername = null,
   resume = false,
 }) {
   const { broadcastGlobal } = require('../services/ws');
@@ -2213,10 +2317,10 @@ async function runHeadlessSession({
   let outcome = 'question';
   try {
     // Seed turn: same shape as the issue panel's "Create PR" seeding, minus
-    // the open-a-PR instruction (headless mode never opens one).
-    const title = issue ? issue.title : '';
-    const body = issue && issue.body ? `\n\n${issue.body}` : '';
-    const seed = `Please work on GitHub issue #${issueNumber}: "${title}".${body}`;
+    // the open-a-PR instruction (headless mode never opens one), plus the
+    // issue's comments (#150) so answers to earlier clarifying questions
+    // are visible to this run.
+    const seed = buildHeadlessSeed(issueNumber, issue, comments, botUsername);
     if (!resume) {
       await pool.query(
         `INSERT INTO chat_session_messages (session_id, role, content) VALUES ($1, 'user', $2)`,
@@ -2320,9 +2424,12 @@ async function runHeadlessSession({
       }
       // Checkpoint the outcome with the wrapping transition so a restart
       // during the phase-2 Mayor call can finalize with the right state.
+      // (#170: a restart mid-decision-turn deliberately lands here too —
+      // the 'wrapping' resume re-issues a tool-less wrap-up and finalizes
+      // as 'spec', degrading to "stop for human review".)
       await setHeadlessStep(pool, session.id, 'wrapping', outcome);
 
-      // --- Phase 2: Mayor wrap-up (mirrors the chat handler) ---
+      // Tool results fed back to the Mayor for phase 2.
       const phase2ToolResults = [];
       for (const tu of mayor1.toolUses) {
         if (tu.id === activeToolCall.id) {
@@ -2349,35 +2456,162 @@ async function runHeadlessSession({
       }
       const currentSpec = await loadSessionSpec(pool, session.id);
       const wrapPrompt = getMayorSystemPrompt(session.app_name, false, currentSpec, !!session.app_self_hosted, null) + headlessAddendum;
-      const mayor2 = await llm.streamChat({
-        messages: [
-          ...mayorConvo,
-          { role: 'assistant', content: mayor1.rawContent },
-          { role: 'user', content: phase2ToolResults },
-        ],
-        systemPrompt: wrapPrompt,
-        model: selectedModel,
-        tools,
-        toolChoice: { type: 'none' },
-        apiKey: userApiKey,
-      });
+      const phase2Messages = [
+        ...mayorConvo,
+        { role: 'assistant', content: mayor1.rawContent },
+        { role: 'user', content: phase2ToolResults },
+      ];
 
-      let mayorText2 = mayor2.text;
-      if (!mayorText2.trim()) {
-        mayorText2 = toolResult.isError
-          ? "_The auto session's dispatch didn't finish successfully — see the status above._"
-          : (toolKind === 'scout'
-            ? '_Spec drafted — review it in the spec viewer after starting a session from this auto session._'
-            : '_Change committed and pushed — start a session from this auto session to open the PR._');
+      if (toolKind === 'scout' && !toolResult.isError) {
+        // --- Phase 2 = DECISION turn (#170): the spec is in the system
+        // prompt (wrapPrompt embeds currentSpec); the Mayor may dispatch
+        // ONE headless build if the spec is straightforward, else reply in
+        // plain text (identical to the old behaviour). Only DISPATCH_TOOL
+        // is exposed — there is structurally no path to a second scout.
+        const mayor2 = await llm.streamChat({
+          messages: phase2Messages,
+          systemPrompt: wrapPrompt + buildHeadlessDecisionAddendum(issueNumber),
+          model: selectedModel,
+          tools: [DISPATCH_TOOL],
+          apiKey: userApiKey,
+        });
+        const buildCall = mayor2.toolUses.find((t) => t.name === 'dispatch_claude_code');
+        const strayCalls = mayor2.toolUses.filter((t) => t.name !== 'dispatch_claude_code');
+        const mayorText2 = mayor2.text;
+        const costCents2 = llm.estimateCostCents(mayor2.usage, selectedModel);
+
+        if (!mayor2.toolUses.length) {
+          // Text only — today's behaviour: the decision text IS the
+          // wrap-up message; outcome stays 'spec'.
+          const finalText = mayorText2.trim()
+            ? mayorText2
+            : '_Spec drafted — review it in the spec viewer after starting a session from this auto session._';
+          send('mayor_reasoning', { text: finalText });
+          await pool.query(
+            `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
+             VALUES ($1, 'assistant', $2, $3, $4, $5)`,
+            [session.id, finalText, selectedModel, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2]
+          );
+          await debitMayorUsage(mayor2.usage);
+        } else {
+          // The Mayor called a tool — persist its stated rationale first
+          // (same text-plus-dispatch pattern phase-1 uses).
+          if (mayorText2.trim()) {
+            send('mayor_reasoning', { text: mayorText2 });
+            await pool.query(
+              `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
+               VALUES ($1, 'assistant', $2, $3, $4, $5)`,
+              [session.id, mayorText2, selectedModel, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2]
+            );
+          }
+          await debitMayorUsage(mayor2.usage);
+
+          const decisionToolResults = [];
+          if (buildCall) {
+            // Budget re-check before the second dispatch: the scout already
+            // spent real money this run. BYOK users skip this, matching the
+            // route's gate.
+            let budgetError = null;
+            if (!userApiKey) {
+              const budgetCheck = await checkBudget(pool, user.id);
+              if (budgetCheck.error) budgetError = budgetCheck.error;
+            }
+            let buildResult;
+            if (budgetError) {
+              await sendStatus('Spec drafted; implementation skipped — daily budget reached.');
+              buildResult = {
+                toolResultText: 'Implementation skipped — the daily LLM budget is exhausted. The spec remains the deliverable; a human will review and build it later.',
+                isError: true,
+              };
+            } else {
+              await sendStatus('Auto session: spec looks straightforward — implementing it now...');
+              const buildPromptArg = typeof buildCall.input?.prompt === 'string' && buildCall.input.prompt.trim()
+                ? buildCall.input.prompt.trim()
+                : seed;
+              // Same pre-dispatch checkpoint as phase-1: the step machine
+              // reuses 'cc_running'; active_turn.mode === 'build'
+              // disambiguates scout vs build on resume.
+              await setHeadlessStep(pool, session.id, 'cc_running');
+              buildResult = await runClaudeCodeTool({
+                ...toolArgs, toolPromptArg: buildPromptArg, headless: true,
+              });
+            }
+            // Build error degrades to 'spec' (NOT 'question' like the
+            // phase-1 build path): the spec is the durable artifact and a
+            // failed implementation attempt must not mask it.
+            outcome = buildResult.isError ? 'spec' : 'spec_code';
+            await setHeadlessStep(pool, session.id, 'wrapping', outcome);
+            decisionToolResults.push({
+              type: 'tool_result',
+              tool_use_id: buildCall.id,
+              content: buildResult.toolResultText,
+              ...(buildResult.isError ? { is_error: true } : {}),
+            });
+          }
+          // Any other tool call is rejected without running — the
+          // structural enforcement of "max one scout per run".
+          for (const tu of strayCalls) {
+            decisionToolResults.push({
+              type: 'tool_result',
+              tool_use_id: tu.id,
+              content: 'Only dispatch_claude_code is available in the decision turn.',
+              is_error: true,
+            });
+          }
+
+          // --- Phase 3: tool-less wrap-up (mirrors the old phase-2). ---
+          const mayor3 = await llm.streamChat({
+            messages: [
+              ...phase2Messages,
+              { role: 'assistant', content: mayor2.rawContent },
+              { role: 'user', content: decisionToolResults },
+            ],
+            systemPrompt: wrapPrompt,
+            model: selectedModel,
+            apiKey: userApiKey,
+          });
+          let mayorText3 = mayor3.text;
+          if (!mayorText3.trim()) {
+            mayorText3 = outcome === 'spec_code'
+              ? '_Spec drafted and change committed — start a session from this auto session to open the PR._'
+              : '_Spec drafted — the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
+          }
+          send('mayor_reasoning', { text: mayorText3 });
+          const costCents3 = llm.estimateCostCents(mayor3.usage, selectedModel);
+          await pool.query(
+            `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
+             VALUES ($1, 'assistant', $2, $3, $4, $5)`,
+            [session.id, mayorText3, selectedModel, mayor3.usage.input_tokens + mayor3.usage.output_tokens, costCents3]
+          );
+          await debitMayorUsage(mayor3.usage);
+        }
+      } else {
+        // --- Phase 2: Mayor wrap-up (mirrors the chat handler) — scout
+        // error, direct phase-1 build, or any other dispatch path. ---
+        const mayor2 = await llm.streamChat({
+          messages: phase2Messages,
+          systemPrompt: wrapPrompt,
+          model: selectedModel,
+          tools,
+          toolChoice: { type: 'none' },
+          apiKey: userApiKey,
+        });
+
+        let mayorText2 = mayor2.text;
+        if (!mayorText2.trim()) {
+          mayorText2 = toolResult.isError
+            ? "_The auto session's dispatch didn't finish successfully — see the status above._"
+            : '_Change committed and pushed — start a session from this auto session to open the PR._';
+        }
+        send('mayor_reasoning', { text: mayorText2 });
+        const costCents2 = llm.estimateCostCents(mayor2.usage, selectedModel);
+        await pool.query(
+          `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
+           VALUES ($1, 'assistant', $2, $3, $4, $5)`,
+          [session.id, mayorText2, selectedModel, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2]
+        );
+        await debitMayorUsage(mayor2.usage);
       }
-      send('mayor_reasoning', { text: mayorText2 });
-      const costCents2 = llm.estimateCostCents(mayor2.usage, selectedModel);
-      await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
-         VALUES ($1, 'assistant', $2, $3, $4, $5)`,
-        [session.id, mayorText2, selectedModel, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2]
-      );
-      await debitMayorUsage(mayor2.usage);
     }
 
     await pool.query(
@@ -2386,6 +2620,18 @@ async function runHeadlessSession({
       [outcome, session.id]
     );
     send('headless_update', { status: 'ready', outcome, issueNumber, appSlug: session.app_slug });
+    // #150: a pure-text phase-1 turn means the Mayor wrote clarifying
+    // questions — post them on the GitHub issue so the reporter sees them
+    // without entering the platform. Deliberately AFTER the terminal
+    // status write: the boot resume only re-drives 'generating' rows, so
+    // double-posting on restart is impossible; a crash between the UPDATE
+    // and the post degrades to no comment (today's behavior).
+    if (shouldPostHeadlessQuestionComment({ outcome, dispatchedTool: activeToolCall, mayorText: mayorText1 })) {
+      const posted = await postHeadlessQuestionComment({
+        repoOwner, repoName, issueNumber, questionText: mayorText1,
+      });
+      if (posted) await sendStatus(`Posted clarifying questions to issue #${issueNumber}`);
+    }
     // #161: always notify the user who started the run (no arming —
     // kicking off an auto-solve opts you into its completion ping).
     await notifyAutoSolveDone(pool, {
@@ -2408,7 +2654,9 @@ async function runHeadlessSession({
       userId: user.id, appId: session.app_id, sessionId: session.id, detail: 'failed',
     });
   } finally {
-    setTimeout(() => sessionBus.clearSession(session.id), 30000);
+    // unref: a fire-and-forget cleanup timer must not hold the process
+    // open (it also kept the node:test runner alive for the full delay).
+    setTimeout(() => sessionBus.clearSession(session.id), 30000).unref();
   }
 }
 
@@ -2507,12 +2755,16 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
   if (step === 'planning') {
     // Nothing was dispatched yet — re-issue the whole Mayor turn. The
     // seed user message already exists (resume: true skips re-inserting);
-    // re-fetch the issue for the in-memory seed string the dispatch
-    // helpers receive.
+    // re-fetch the issue (+ its comments, #150) for the in-memory seed
+    // string the dispatch helpers receive.
     const { issue } = await github.fetchPublicIssue(repoOwner, repoName, issueNumber);
+    const { comments } = await github.fetchIssueComments(repoOwner, repoName, issueNumber);
+    let botUsername = null;
+    try { botUsername = await github.getBotUsername(); } catch {}
     return runHeadlessSession({
       pool, config, session, user, selectedModel,
       repoOwner, repoName, userApiKey, issueNumber, issue,
+      comments, botUsername,
       resume: true,
     });
   }
@@ -2600,6 +2852,11 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
     } else {
       const testing = testingNotes.extract(result.lastResultText || '');
       const hasChanges = result.ahead > 0 && !!result.sha;
+      // #170: a headless session only ever has spec_md if its own scout
+      // wrote it this run — so spec_md present means this build was the
+      // decision turn's dispatch: success is 'spec_code', and failure
+      // degrades to 'spec' (the spec is the durable artifact), not
+      // 'question' like the phase-1 direct-build path.
       if (hasChanges && !result.fatalError) {
         if (testing.testingMd || testing.testingPath) {
           await pool.query(
@@ -2607,15 +2864,17 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
             [testing.testingMd, testing.testingPath, session.id]
           ).catch(() => {});
         }
-        outcome = 'code';
+        outcome = session.spec_md ? 'spec_code' : 'code';
         dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}. `
           + 'Headless mode: no PR was opened and no staging preview was built.'
+          + (session.spec_md ? ' The change implements the spec drafted earlier this run (in the session spec doc).' : '')
           + (testing.cleanedText ? `\n\nWhat the agent did:\n${testing.cleanedText.slice(0, 2000)}` : '');
       } else {
-        outcome = 'question';
-        dispatchSummary = result.fatalError
+        outcome = session.spec_md ? 'spec' : 'question';
+        dispatchSummary = (result.fatalError
           ? `The coding agent hit an error: ${result.fatalError.substring(0, 200)}`
-          : 'The coding agent finished without pushing any changes.';
+          : 'The coding agent finished without pushing any changes.')
+          + (session.spec_md ? ' The spec drafted earlier this run is still the reviewable artifact.' : '');
       }
     }
     await setHeadlessStep(pool, session.id, 'wrapping', outcome);
@@ -2656,9 +2915,11 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
   if (!mayorText2) {
     mayorText2 = outcome === 'spec'
       ? '_Spec drafted — review it in the spec viewer after starting a session from this auto session._'
-      : outcome === 'code'
-        ? '_Change committed and pushed — start a session from this auto session to open the PR._'
-        : "_The auto session's dispatch didn't finish successfully — see the status above._";
+      : outcome === 'spec_code'
+        ? '_Spec drafted and change committed — start a session from this auto session to open the PR._'
+        : outcome === 'code'
+          ? '_Change committed and pushed — start a session from this auto session to open the PR._'
+          : "_The auto session's dispatch didn't finish successfully — see the status above._";
   }
   const costCents2 = mayor2.usage ? llm.estimateCostCents(mayor2.usage, selectedModel) : 0;
   await pool.query(
@@ -3754,6 +4015,19 @@ Every session has a markdown SPEC DOC that the user can read in the dev-chat spe
 SPEC QUESTIONS — KEEP THEM RARE:
 Do not pad the spec with open questions. Only include a "Questions" section for things that genuinely BLOCK implementation — decisions the coding agent cannot reasonably make on its own and that would change what gets built. Wherever you can, make a sensible default choice and state it instead of asking. Non-blocking items belong under "Considerations" (trade-offs, assumptions, things to keep in mind) or "Deferred work" (out-of-scope or follow-up items) — never phrase those as questions. When you instruct the scout to write or revise the spec, tell it to prefer decisions over questions.
 
+CLARITY GATE — ask before acting on unclear requests:
+Before dispatching any tool on a request or issue, check whether it is clear enough to act on. A request/issue is UNCLEAR when any of these hold:
+- It has multiple plausible interpretations that would produce materially different builds (which screen, which users, what should happen in case X).
+- It's a bug report with no reproduction signal — no description of what was seen vs. expected, and no hint of where it happens.
+- It references features, screens, or behavior that don't exist in the app, or contradicts itself.
+- After reading it you cannot state the acceptance criteria ("done means…") in one sentence.
+If a request is UNCLEAR, ask clarifying questions INSTEAD of calling any tool. Counter-rules so you don't over-ask:
+- Never ask something the repo can answer — that's a dispatch_scout signal, not a question.
+- Never ask when a sensible default exists — state the assumption in one sentence and proceed.
+- Ask at most 3 numbered questions in a single message, each with your suggested default so a one-word reply ("defaults are fine") unblocks. Ask once — don't drip-feed questions across turns.
+- Never dispatch while also asking for clarification (asking and dispatching in the same turn is forbidden).
+- If the user replies "your call" / "just do it", proceed with stated assumptions instead of re-asking.
+
 TWO TOOLS, in priority order:
 
 1) dispatch_scout(prompt) — read-only repo investigation + ALL spec writing, slow (~30-60s)
@@ -3774,7 +4048,7 @@ GENERAL RULES (apply to all tools):
   * chatting, brainstorming, or just acknowledging
   * giving feedback that isn't a concrete change request ("this looks bad" alone — ask what they want instead)
   * asking for something that looks like a brand-new, standalone app unrelated to "${appName}" (e.g. they're chatting here but describe building a totally different product). In that case, DO NOT dispatch — instead, gently point them to the home page to create a new app, e.g. "That sounds like a separate app from ${appName}. You can head back to the home screen and spin up a new app for it." Only dispatch if they confirm they want it added to this app.
-- If the request is vague, ask a clarifying question INSTEAD of calling any tool. Never dispatch while also asking for clarification.
+- If the request fails the CLARITY GATE above, ask clarifying questions (per its rules) INSTEAD of calling any tool. Never dispatch while also asking for clarification.
 - At most ONE tool call per user message.
 - Never call dispatch_scout and dispatch_claude_code in the same turn. The user dispatches the build themselves.
 
@@ -3939,4 +4213,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDoneIfArmed, notifyAutoSolveDone };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDoneIfArmed, notifyAutoSolveDone, buildHeadlessSeed, shouldPostHeadlessQuestionComment };

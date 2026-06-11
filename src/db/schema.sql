@@ -269,8 +269,10 @@ CREATE INDEX IF NOT EXISTS chat_sessions_activity_idx ON chat_sessions(status, l
 --                            NULL on ordinary sessions.
 --   headless_issue_number  = the GitHub issue the auto session was started for.
 --   headless_outcome       = what the run arrived at: 'spec' | 'code' |
---                            'question'. Drives the cloned session's follow-up
---                            message. NULL until the run finishes.
+--                            'spec_code' (#170 — scout drafted a spec AND the
+--                            decision turn implemented it) | 'question'. Drives
+--                            the cloned session's follow-up message. NULL until
+--                            the run finishes.
 --   cloned_from_session_id = on ORDINARY sessions: the headless session this
 --                            dev chat was cloned from (many clones per source).
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS is_headless BOOLEAN NOT NULL DEFAULT FALSE;
@@ -514,7 +516,7 @@ ON CONFLICT (key) DO NOTHING;
 -- 'session_done' (#161 — a dev-session turn finished after its owner
 -- left; session_id points to the session) and 'auto_solve_done' (#161 —
 -- a headless auto-solve run finished; `detail` holds the outcome:
--- spec | code | question | failed).
+-- spec | code | spec_code | question | failed).
 CREATE TABLE IF NOT EXISTS notifications (
   id              SERIAL PRIMARY KEY,
   user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -695,6 +697,13 @@ CREATE TABLE IF NOT EXISTS app_favorites (
   PRIMARY KEY (app_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_app_favorites_user ON app_favorites(user_id);
+-- Per-user manual ordering of starred apps (issue #128). NULL = no
+-- explicit position: such rows sort after all explicitly ordered ones,
+-- falling back to the activity-based list order. Lower = earlier.
+-- Uniqueness is deliberately not enforced — gaps/ties are tolerated and
+-- resolved by the fallback, and PUT /api/favorites/order rewrites the
+-- caller's full set contiguously on every save anyway.
+ALTER TABLE app_favorites ADD COLUMN IF NOT EXISTS sort_order INTEGER;
 
 -- Append-only product-analytics event log. The long-term source of truth
 -- behind the admin /dashboard (growth, retention, and the dapp-usage /

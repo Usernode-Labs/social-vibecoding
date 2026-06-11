@@ -411,6 +411,19 @@ async function createIssue(owner, repo, { title, body }) {
   return data;
 }
 
+// Post a comment on an issue. Used by the headless auto-solve path (#150)
+// to surface the Mayor's clarifying questions to the issue reporter
+// without them entering the platform. Body passes through safeMention so
+// model-written text can never ping arbitrary GitHub accounts.
+async function createIssueComment(owner, repo, issueNumber, body) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.issues.createComment({
+    owner, repo, issue_number: issueNumber, body: safeMention(body),
+  });
+  log.info('github', 'Issue comment posted', { repo: `${owner}/${repo}`, issue: issueNumber });
+  return data;
+}
+
 // Worker containers carry no GitHub credentials — we restrict imports
 // to public repos, so `git clone` over plain HTTPS just works. This
 // used to return a token-embedded URL; that capability moved to the
@@ -825,6 +838,64 @@ async function fetchPublicIssue(owner, repo, number) {
   }
 }
 
+// Fetch an issue's comments via the same unauthenticated public REST
+// pattern as fetchPublicIssue (timeout, User-Agent, rate-limit
+// handling). Used by the headless auto-solve seed (#150) so answers the
+// reporter left as comments are visible to the run. NEVER throws: every
+// outcome resolves to `{ comments: [{ author, body, createdAt }], note? }`
+// — on any failure the list is empty with a `note` naming why. No
+// caching: it's called once per auto-solve click. GitHub returns issue
+// comments oldest-first; per_page bounds the fetch to one page.
+async function fetchIssueComments(owner, repo, number, { max = 20 } = {}) {
+  const n = Number(number);
+  if (!owner || !repo || !Number.isInteger(n) || n <= 0) {
+    return { comments: [], note: 'bad issue number' };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ISSUES_FETCH_TIMEOUT_MS);
+    let resp;
+    try {
+      resp = await fetch(
+        `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${n}/comments?per_page=${max}`,
+        {
+          headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': GITHUB_USER_AGENT },
+          signal: controller.signal,
+        }
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if ((resp.status === 403 && resp.headers.get('x-ratelimit-remaining') === '0') || resp.status === 429) {
+      log.warn('github', 'Issue-comments fetch rate-limited', { repo: `${owner}/${repo}`, issue: n });
+      return { comments: [], note: 'rate limited' };
+    }
+    if (resp.status === 404) {
+      return { comments: [], note: 'not found' };
+    }
+    if (!resp.ok) {
+      return { comments: [], note: 'fetch failed' };
+    }
+
+    const raw = await resp.json();
+    if (!Array.isArray(raw)) {
+      return { comments: [], note: 'fetch failed' };
+    }
+    return {
+      comments: raw.map((c) => ({
+        author: (c.user && c.user.login) || '',
+        body: c.body || '',
+        createdAt: c.created_at || '',
+      })),
+    };
+  } catch (err) {
+    log.warn('github', 'Issue-comments fetch failed', { repo: `${owner}/${repo}`, issue: n, err: err.message });
+    return { comments: [], note: 'fetch failed' };
+  }
+}
+
 // Drop the cached open-issues list for a repo so the next fetchPublicIssues
 // call re-reads from GitHub. Called from the merge path (routes/votes.js
 // checkAndMerge) when a PR that closed one or more issues lands, so the
@@ -894,6 +965,7 @@ module.exports = {
   getPR,
   getIssue,
   createIssue,
+  createIssueComment,
   closeIssue,
   getCloneUrl,
   safeMention,
@@ -904,6 +976,7 @@ module.exports = {
   fetchPublicRepoInfo,
   fetchPublicIssues,
   fetchPublicIssue,
+  fetchIssueComments,
   truncateIssueBodies,
   invalidateIssuesCache,
   noteIssueCreated,

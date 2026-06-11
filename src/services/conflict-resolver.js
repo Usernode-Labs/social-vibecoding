@@ -36,6 +36,25 @@ const MERGEABLE_AFTER_PUSH_INITIAL_MS = Number.isFinite(parseInt(process.env.CON
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Existence check only — the resolver never needs the decrypted key
+// (runSyncMain does its own lookup at turn time); it just needs to know
+// whether the owner self-bills so the shared-budget gate can be skipped.
+async function ownerHasByokKey(pool, userId) {
+  if (!userId) return false;
+  try {
+    const { rows } = await pool.query(
+      'SELECT 1 FROM users WHERE id = $1 AND anthropic_key_enc IS NOT NULL',
+      [userId]
+    );
+    return rows.length > 0;
+  } catch (err) {
+    log.warn('conflict', 'BYOK lookup failed (falling back to budget gate)', {
+      userId, err: err.message,
+    });
+    return false;
+  }
+}
+
 function parseRepo(repoUrl) {
   const [, owner, repo] = (repoUrl || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/) || [];
   return owner && repo ? { owner, repo } : null;
@@ -45,7 +64,13 @@ function parseRepo(repoUrl) {
 // boolean (`true` mergeable / `false` conflicting) or `null` if it
 // never settled within the budget. Throws are surfaced to the caller.
 async function pollMergeable(owner, repo, prNumber) {
-  const octokit = await github.getInstallationOctokit(owner);
+  // getOctokit (PAT-preferred), NOT getInstallationOctokit: the
+  // self-app's repo owner (e.g. Usernode-Labs) has no GitHub App
+  // installation, so the installation path throws on every poll and
+  // the resolver flies blind on exactly the PR class (selfHosted)
+  // where a wrong merge decision hurts most. mergePR already goes
+  // through the PAT path; mergeability reads must match.
+  const octokit = await github.getOctokit(owner);
   for (let i = 0; i < MERGEABLE_POLL_TRIES; i++) {
     const { data: pr } = await octokit.request(
       'GET /repos/{owner}/{repo}/pulls/{pull_number}',
@@ -65,7 +90,8 @@ async function pollMergeable(owner, repo, prNumber) {
 // should NOT merge, to avoid the null-window 405). `afterPush` adds a
 // short initial delay so we don't read the stale pre-push value.
 async function waitForMergeableTrue(owner, repo, prNumber, { afterPush = false } = {}) {
-  const octokit = await github.getInstallationOctokit(owner);
+  // PAT-preferred for the same reason as pollMergeable above.
+  const octokit = await github.getOctokit(owner);
   if (afterPush && MERGEABLE_AFTER_PUSH_INITIAL_MS > 0) {
     await sleep(MERGEABLE_AFTER_PUSH_INITIAL_MS);
   }
@@ -202,18 +228,25 @@ async function resolveAndMaybeRetryInner(config, target) {
     });
 
     // The worker sync charges the session owner (their BYOK key, or the
-    // platform proxy). Gate on their daily cap so a runaway conflict
-    // loop can't blow the budget; surface the skip in group chat so the
-    // owner knows to sync manually or wait for the cap to reset.
-    const budgetCheck = await limits.checkBudget(pool, session.user_id);
-    if (budgetCheck.error) {
-      log.info('conflict', 'Skipped — session owner over daily cap', {
-        sessionId: session.id, ownerId: session.user_id, reason: budgetCheck.error,
-      });
-      await postGroupMessage(pool, session,
-        `Auto-conflict-resolution skipped on PR #${session.pr_number}: the PR owner has hit their daily LLM limit. Resolve manually via "Sync with main" or wait for the cap to reset.`
-      );
-      return { ok: false, reason: 'over_budget' };
+    // platform proxy). BYOK owners bill themselves — runSyncMain picks
+    // their key up — so the shared daily cap doesn't apply to them
+    // (mirrors the gate order in POST /chat and the headless route:
+    // key first, budget only as the fallback). Only proxy-billed owners
+    // are gated, so a runaway conflict loop can't blow the shared
+    // budget; surface the skip in group chat so the owner knows to sync
+    // manually or wait for the cap to reset.
+    const hasByok = await ownerHasByokKey(pool, session.user_id);
+    if (!hasByok) {
+      const budgetCheck = await limits.checkBudget(pool, session.user_id);
+      if (budgetCheck.error) {
+        log.info('conflict', 'Skipped — session owner over daily cap', {
+          sessionId: session.id, ownerId: session.user_id, reason: budgetCheck.error,
+        });
+        await postGroupMessage(pool, session,
+          `Auto-conflict-resolution skipped on PR #${session.pr_number}: the PR owner has hit their daily LLM limit. Resolve manually via "Sync with main" or wait for the cap to reset.`
+        );
+        return { ok: false, reason: 'over_budget' };
+      }
     }
 
     let sync;
