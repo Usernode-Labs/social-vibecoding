@@ -220,6 +220,54 @@ test('unarchiveSession: returns unarchived=false for a non-archived row', async 
   }
 });
 
+// ── pauseSession ──────────────────────────────────────────────────────────
+// The status predicate here is load-bearing for the per-user session cap
+// (#193): the cap counts only status='active' rows precisely because
+// pauseSession refuses to demote 'promoted' ones (their PR must stay up
+// for the merge vote). If pauseSession ever started flipping promoted
+// rows — or stopped being scoped to 'active' — the cap's accounting and
+// the vote endpoints would both break.
+
+test('pauseSession: pauses an active row, destroys worker, leaves staging up', async () => {
+  const { subject, spies, restore } = loadWithStubs();
+  try {
+    const pool = makePool([
+      [/SET status = 'paused'\s+WHERE/, [{ id: 7 }]],
+      [/SELECT cs\.\*/, [{ id: 7, app_slug: 'widget', repo_url: REPO, pr_number: 12 }]],
+    ]);
+    const res = await subject.pauseSession({ pool, sessionId: 7, userId: 3, reason: 'manual' });
+    assert.equal(res.paused, true);
+    assert.equal(res.appSlug, 'widget');
+    assert.deepEqual(spies.destroyWorker, ['usernode-worker-7']);
+    assert.deepEqual(spies.workerProgressClear, [7]);
+    // Staging is intentionally NOT torn down on pause (kept warm for resume).
+    assert.equal(spies.teardownStaging.length, 0);
+    assert.equal(spies.pushSessionUpdate[0].action, 'paused');
+  } finally {
+    restore();
+  }
+});
+
+test('pauseSession: only targets status=active rows (promoted are refused)', async () => {
+  const { subject, spies, restore } = loadWithStubs();
+  try {
+    // No handler returns a row for the UPDATE — same as the DB seeing a
+    // 'promoted' (or already-paused/archived) row: zero rows match.
+    const pool = makePool([[/SET status = 'paused'\s+WHERE/, []]]);
+    const res = await subject.pauseSession({ pool, sessionId: 11, userId: 3, reason: 'manual' });
+    assert.equal(res.paused, false);
+    // Nothing torn down, nobody notified.
+    assert.deepEqual(spies.destroyWorker, []);
+    assert.deepEqual(spies.pushSessionUpdate, []);
+    // The UPDATE itself must be scoped to status = 'active' — that's the
+    // guarantee the cap predicate relies on.
+    const upd = pool.calls.find((c) => /SET status = 'paused'/.test(c.sql));
+    assert.ok(/status = 'active'/.test(upd.sql), "pause UPDATE must be scoped to status = 'active'");
+  } finally {
+    restore();
+  }
+});
+
 test('purgeArchivedCc: destroys the volume and flips cc_purged', async () => {
   const { subject, spies, restore } = loadWithStubs();
   try {

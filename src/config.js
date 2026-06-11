@@ -60,7 +60,10 @@ function load() {
     // src/routes/sessions.js; lifted here so prod can tune them via env
     // without a code deploy. See the scaling notes in README / SPEC.
     //   - maxGlobalSessions: platform-wide active+promoted session ceiling.
-    //   - maxUserSessions:   per-user active+promoted session ceiling.
+    //   - maxUserSessions:   per-user ceiling on 'active'-status sessions
+    //     only (#193). Promoted sessions are exempt: they're un-pausable
+    //     while their PR is up for a merge vote, so counting them would
+    //     leave the user no way to free a slot by pausing.
     maxGlobalSessions: parseInt(process.env.MAX_GLOBAL_SESSIONS || '25', 10),
     maxUserSessions: parseInt(process.env.MAX_USER_SESSIONS || '3', 10),
     // Per-session worker container resource limits, passed to `docker run`

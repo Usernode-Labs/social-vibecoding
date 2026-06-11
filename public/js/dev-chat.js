@@ -63,7 +63,7 @@ const DevChat = {
   // enough that the busy indicator feels live, slow enough that we
   // don't hammer the cross-app endpoint just because the user is
   // sitting on the dev-chat tab.
-  activeSessions: { sessions: [], totals: { active: 0, paused: 0, busy: 0, total: 0 } },
+  activeSessions: { sessions: [], totals: { active: 0, promoted: 0, paused: 0, busy: 0, total: 0 } },
   _activePollTimer: null,
 
   // ----- Spec viewer state -----
@@ -256,7 +256,7 @@ const DevChat = {
       const data = await res.json();
       DevChat.activeSessions = {
         sessions: Array.isArray(data.sessions) ? data.sessions : [],
-        totals: data.totals || { active: 0, paused: 0, busy: 0, total: 0 },
+        totals: data.totals || { active: 0, promoted: 0, paused: 0, busy: 0, total: 0 },
       };
       DevChat.renderActiveSessions();
     } catch {}
@@ -288,17 +288,20 @@ const DevChat = {
     if (!container || !counter) return;
 
     const { sessions, totals } = DevChat.activeSessions;
-    // Counter shows running-vs-cap on the left and the paused
-    // backlog on the right. The "/3" denominator is the per-user
+    // Counter shows running-vs-cap on the left and the promoted/paused
+    // backlogs on the right. The "/3" denominator is the per-user
     // active-session cap enforced by /api/apps/:slug/sessions and
-    // /api/sessions/:id/resume. Paused sessions are unlimited so
-    // they're surfaced separately rather than rolled into the
-    // denominator. The trailing " · N paused" is omitted when zero
-    // to keep the common case clean.
+    // /api/sessions/:id/resume — which counts only 'active' sessions
+    // (#193): promoted ones (PR in a merge vote) are un-pausable and
+    // exempt from the cap, so they're surfaced as their own " · N in
+    // vote" segment instead of inflating the numerator. Paused sessions
+    // are unlimited so they're surfaced separately too. Zero-count
+    // segments are omitted to keep the common case clean.
     const ACTIVE_CAP = 3;
-    counter.textContent = totals.paused > 0
-      ? `(${totals.active}/${ACTIVE_CAP}) · ${totals.paused} paused`
-      : `(${totals.active}/${ACTIVE_CAP})`;
+    const segments = [`(${totals.active}/${ACTIVE_CAP})`];
+    if (totals.promoted > 0) segments.push(`${totals.promoted} in vote`);
+    if (totals.paused > 0) segments.push(`${totals.paused} paused`);
+    counter.textContent = segments.join(' · ');
 
     if (totals.total === 0) {
       container.innerHTML = `
@@ -385,11 +388,12 @@ const DevChat = {
         const original = btn.textContent;
         btn.textContent = action === 'pause' ? 'Pausing…' : 'Resuming…';
         btn.disabled = true;
+        let body = {};
         try {
           const resp = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
+          body = await resp.json().catch(() => ({}));
           if (!resp.ok) {
-            const data = await resp.json().catch(() => ({}));
-            alert(data.error || `Failed to ${action} session`);
+            alert(body.error || `Failed to ${action} session`);
             btn.textContent = original;
             btn.disabled = false;
             return;
@@ -398,6 +402,15 @@ const DevChat = {
           btn.textContent = original;
           btn.disabled = false;
           return;
+        }
+        // Deliberate pause of the session that's open in the chat view:
+        // sync the local copy so the heartbeat's refocus auto-resume
+        // (which only heals *sweeper* pauses the client doesn't know
+        // about) doesn't silently undo it (#193). keptPromoted means the
+        // server left the status 'promoted', so don't mislabel it.
+        if (action === 'pause' && !body.keptPromoted
+            && DevChat.currentSession && Number(DevChat.currentSession.id) === id) {
+          DevChat.currentSession.status = 'paused';
         }
         await DevChat._refreshSessionListsAfterMutation();
       });
@@ -536,9 +549,18 @@ const DevChat = {
       // already auto-paused while the tab was hidden (>5 min), the bump
       // alone can't revive it — /activity only touches active/promoted
       // rows — so also re-sync and resume so the next send doesn't 404.
+      //
+      // Skip the resume when the LOCAL status already says 'paused':
+      // that means the user deliberately paused this session (the pause
+      // click-handlers sync the local copy), and silently re-activating
+      // it would re-occupy the slot they just freed (#193). The heal is
+      // only for the stale-client case where local status still says
+      // 'active'. Sending a chat message or reopening the session still
+      // resumes explicitly via their own paths.
       DevChat._heartbeatVisHandler = () => {
         if (document.visibilityState !== 'visible') return;
         beat();
+        if (DevChat.currentSession && DevChat.currentSession.status === 'paused') return;
         DevChat._resumeCurrentSessionIfPaused({ silent: true });
       };
       document.addEventListener('visibilitychange', DevChat._heartbeatVisHandler);
@@ -2225,11 +2247,12 @@ const DevChat = {
         const original = btn.textContent;
         btn.textContent = action === 'pause' ? 'Pausing…' : 'Resuming…';
         btn.disabled = true;
+        let body = {};
         try {
           const resp = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
+          body = await resp.json().catch(() => ({}));
           if (!resp.ok) {
-            const data = await resp.json().catch(() => ({}));
-            alert(data.error || `Failed to ${action} session`);
+            alert(body.error || `Failed to ${action} session`);
             btn.textContent = original;
             btn.disabled = false;
             return;
@@ -2238,6 +2261,14 @@ const DevChat = {
           btn.textContent = original;
           btn.disabled = false;
           return;
+        }
+        // Same deliberate-pause sync as the cross-app panel (#193): keep
+        // the local currentSession copy honest so the refocus auto-resume
+        // doesn't silently re-activate a session the user just paused.
+        // keptPromoted = server left the status 'promoted'; don't mislabel.
+        if (action === 'pause' && !body.keptPromoted
+            && DevChat.currentSession && Number(DevChat.currentSession.id) === Number(id)) {
+          DevChat.currentSession.status = 'paused';
         }
         if (AppView.appData) {
           await DevChat.loadSessions(AppView.appData.slug);
