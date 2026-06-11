@@ -1145,13 +1145,7 @@ function sessionRoutes(config) {
             // phase-1 accounting just below the loop.)
             if (mayor1.usage) {
               const dataCost = llm.estimateCostCents(mayor1.usage, selectedModel);
-              if (!userApiKey && dataCost) {
-                await pool.query(
-                  `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
-                   ON CONFLICT (user_id, date) DO UPDATE SET total_cost_cents = llm_usage.total_cost_cents + EXCLUDED.total_cost_cents`,
-                  [req.user.id, dataCost]
-                );
-              }
+              await limits.recordSpend(pool, req.user.id, dataCost, { byok: !!userApiKey });
               send('usage', { costCents: dataCost, model: selectedModel, byok: !!userApiKey });
             }
 
@@ -1244,19 +1238,11 @@ function sessionRoutes(config) {
             [session.id, mayorText1, selectedModel, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1]
           );
         }
-        // BYOK users pay Anthropic directly, so we don't track their
-        // spend in `llm_usage` (that table drives the admin-key daily
-        // cap). The per-message cost_cents above + the SSE 'usage'
-        // event still give them live visibility into what each turn
-        // cost on their own key.
+        // BYOK users pay Anthropic directly, so their spend lands in
+        // the display-only byok_cost_cents bucket (#119) — only
+        // platform-key spend counts against the daily caps.
         if (mayor1.usage) {
-          if (!userApiKey) {
-            await pool.query(
-              `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
-               ON CONFLICT (user_id, date) DO UPDATE SET total_cost_cents = llm_usage.total_cost_cents + EXCLUDED.total_cost_cents`,
-              [req.user.id, costCents1]
-            );
-          }
+          await limits.recordSpend(pool, req.user.id, costCents1, { byok: !!userApiKey });
           send('usage', { costCents: costCents1, model: selectedModel, byok: !!userApiKey });
         }
 
@@ -1497,13 +1483,7 @@ function sessionRoutes(config) {
            VALUES ($1, 'assistant', $2, $3, $4, $5)`,
           [session.id, mayorText2, selectedModel, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2]
         );
-        if (!userApiKey) {
-          await pool.query(
-            `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
-             ON CONFLICT (user_id, date) DO UPDATE SET total_cost_cents = llm_usage.total_cost_cents + EXCLUDED.total_cost_cents`,
-            [req.user.id, costCents2]
-          );
-        }
+        await limits.recordSpend(pool, req.user.id, costCents2, { byok: !!userApiKey });
         send('usage', { costCents: costCents2, model: selectedModel, byok: !!userApiKey });
       } catch (err) {
         activeWorkers.delete(session.id);
@@ -1917,11 +1897,19 @@ function sessionRoutes(config) {
       const budget = await checkBudget(pool, req.user.id);
       const userSpent = budget.error ? userLimit : userLimit - (budget.userRemaining || 0);
       const globalSpent = budget.error ? globalLimit : globalLimit - (budget.globalRemaining || 0);
+      // #119: spend billed to the user's own Anthropic key today —
+      // informational only, never part of the cap math above.
+      const { rows: byokRows } = await pool.query(
+        'SELECT byok_cost_cents FROM llm_usage WHERE user_id = $1 AND date = CURRENT_DATE',
+        [req.user.id]
+      );
+      const byokSpentCents = parseFloat(byokRows[0]?.byok_cost_cents || 0);
       res.json({
         spentCents: userSpent,
         limitCents: userLimit,
         globalSpentCents: globalSpent,
         globalLimitCents: globalLimit,
+        byokSpentCents,
       });
     } catch (err) {
       log.error('sessions', 'Budget check failed', { message: err.message });
@@ -2110,13 +2098,7 @@ async function runHeadlessSession({
   const debitMayorUsage = async (usage) => {
     if (!usage) return;
     const cost = llm.estimateCostCents(usage, selectedModel);
-    if (!userApiKey && cost) {
-      await pool.query(
-        `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
-         ON CONFLICT (user_id, date) DO UPDATE SET total_cost_cents = llm_usage.total_cost_cents + EXCLUDED.total_cost_cents`,
-        [user.id, cost]
-      );
-    }
+    await limits.recordSpend(pool, user.id, cost, { byok: !!userApiKey });
     send('usage', { costCents: cost, model: selectedModel, byok: !!userApiKey });
     return cost;
   };
@@ -2563,13 +2545,7 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
     [session.id, mayorText2, selectedModel,
       mayor2.usage ? mayor2.usage.input_tokens + mayor2.usage.output_tokens : 0, costCents2]
   );
-  if (!userApiKey && costCents2) {
-    await pool.query(
-      `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
-       ON CONFLICT (user_id, date) DO UPDATE SET total_cost_cents = llm_usage.total_cost_cents + EXCLUDED.total_cost_cents`,
-      [user.id, costCents2]
-    ).catch(() => {});
-  }
+  await limits.recordSpend(pool, user.id, costCents2, { byok: !!userApiKey });
 
   await pool.query(
     `UPDATE chat_sessions SET headless_status = 'ready', headless_outcome = $1, headless_step = NULL, last_activity_at = NOW()
@@ -3008,13 +2984,7 @@ CRITICAL: Output the spec as RAW markdown. Do NOT wrap your whole response in a 
       const ccCostCents = Math.round(result.costUsd * 100);
       // Scout costs land in the same llm_usage table as build dispatches —
       // they're real Anthropic spend on the same daily budget.
-      if (!userApiKey) {
-        await pool.query(
-          `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
-           ON CONFLICT (user_id, date) DO UPDATE SET total_cost_cents = llm_usage.total_cost_cents + EXCLUDED.total_cost_cents`,
-          [req.user.id, ccCostCents]
-        );
-      }
+      await limits.recordSpend(pool, req.user.id, ccCostCents, { byok: !!userApiKey });
       send('usage', { costCents: ccCostCents, model: `scout/${selectedModel}`, byok: !!userApiKey });
     }
   } finally {
@@ -3552,20 +3522,19 @@ path: /relative/path?demo=1
       }
     }
 
-    // Debit the platform's daily ledger for whatever Claude Code spent
-    // — even when the run produced no commit (CC error, no-op turn,
-    // partial-failure with `result.fatalError`). The Anthropic invoice
-    // is paid regardless of whether code changes landed; without this
-    // we'd silently let users burn budget on tool-only / failed turns
-    // and only debit on the success branch.
+    // Debit the daily ledger for whatever Claude Code spent — even when
+    // the run produced no commit (CC error, no-op turn, partial-failure
+    // with `result.fatalError`). The Anthropic invoice is paid
+    // regardless of whether code changes landed; without this we'd
+    // silently let users burn budget on tool-only / failed turns and
+    // only debit on the success branch. BYOK runs were billed to the
+    // user's own key by the worker, so they land in the display-only
+    // byok bucket instead of the capped one (#119 — this site used to
+    // debit BYOK runs against the platform limit by mistake).
     if (result.costUsd) {
       const ccCostCents = Math.round(result.costUsd * 100);
-      await pool.query(
-        `INSERT INTO llm_usage (user_id, date, total_cost_cents) VALUES ($1, CURRENT_DATE, $2)
-         ON CONFLICT (user_id, date) DO UPDATE SET total_cost_cents = llm_usage.total_cost_cents + EXCLUDED.total_cost_cents`,
-        [req.user.id, ccCostCents]
-      );
-      send('usage', { costCents: ccCostCents, model: `claude-code/${selectedModel}` });
+      await limits.recordSpend(pool, req.user.id, ccCostCents, { byok: !!userApiKey });
+      send('usage', { costCents: ccCostCents, model: `claude-code/${selectedModel}`, byok: !!userApiKey });
     }
 
     if (ccText) {
