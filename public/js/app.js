@@ -450,7 +450,12 @@ const App = {
 
   connectEvents() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    App.eventsWs = new WebSocket(`${proto}//${location.host}/ws/events`);
+    // Same staging-iframe token fallback as GroupChat._openSocket — the
+    // session cookie can be orphaned by a staging redeploy, and the WS
+    // handshake can't re-mint it the way HTTP requests do.
+    const token = new URLSearchParams(location.search).get('token');
+    const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+    App.eventsWs = new WebSocket(`${proto}//${location.host}/ws/events${qs}`);
 
     App.eventsWs.onopen = () => {
       const isReconnect = App._eventsWsHasConnected;

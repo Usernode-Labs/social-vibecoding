@@ -201,7 +201,14 @@ const GroupChat = {
     const appSlug = GroupChat.appSlug;
     if (!appSlug) return;
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${location.host}/ws/chat/${appSlug}`);
+    // Staging previews run in an iframe and authenticate via the
+    // shell-injected ?token= JWT; the session cookie may be orphaned by a
+    // redeploy (sessions is staging:private). Forward the token on the WS
+    // URL so the handshake has the same fallback HTTP requests do. In
+    // prod there is no token param and this is a no-op.
+    const token = new URLSearchParams(location.search).get('token');
+    const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+    const ws = new WebSocket(`${proto}//${location.host}/ws/chat/${appSlug}${qs}`);
     GroupChat.ws = ws;
 
     ws.onopen = () => {

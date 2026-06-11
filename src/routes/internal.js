@@ -194,9 +194,14 @@ function internalRoutes(_config) {
       const iframeJwt = verifyJwt(queryToken || headerToken || '', _config.jwtSecret);
       if (iframeJwt && Number.isInteger(iframeJwt.id)
           && await appAccess.isViewMember(pool, vis.appId, iframeJwt.id)) {
-        if (!queryToken || query.get(RETRY_MARKER) === '1') {
-          // Header-credentialed fetch, or cookie-set retry that came back
-          // cookieless: allow this request as-is.
+        // WebSocket handshakes can't follow redirects — the 302 cookie-set
+        // dance below would kill the upgrade. forward_auth copies the
+        // original request headers, so detect the upgrade and allow it
+        // as-is (the WS carries ?token= for the app's own auth).
+        const isWsUpgrade = String(req.headers.upgrade || '').toLowerCase() === 'websocket';
+        if (!queryToken || isWsUpgrade || query.get(RETRY_MARKER) === '1') {
+          // Header-credentialed fetch, WS upgrade, or cookie-set retry that
+          // came back cookieless: allow this request as-is.
           return res.status(200).send('ok');
         }
         // Initial iframe document load: set the scoped cookie and bounce
