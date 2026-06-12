@@ -22,6 +22,8 @@ const { statusRoutes } = require('./src/routes/status');
 const { internalRoutes } = require('./src/routes/internal');
 const { visualsRoutes } = require('./src/routes/visuals');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
+const appLlmProxyRoutes = require('./src/routes/app-llm-proxy');
+const { llmGrantsRoutes } = require('./src/routes/llm-grants');
 const github = require('./src/services/github');
 const llm = require('./src/services/llm');
 const worker = require('./src/services/worker');
@@ -123,6 +125,7 @@ app.use('/explorer-api', (req, res) => {
 // large limit. See routes/anthropic-proxy.js for the scoped parser.
 app.use((req, res, next) => {
   if (req.path.startsWith('/api/internal/anthropic/')) return next();
+  if (req.path.startsWith('/api/app-llm/')) return next();
   express.json()(req, res, next);
 });
 app.use(cookieParser());
@@ -263,6 +266,17 @@ app.use(internalRoutes(config));
 // gate as internalRoutes; not reachable through Caddy externally.
 app.use(anthropicProxyRoutes(config));
 
+// Dapp → platform LLM proxy (issue #34). App containers call
+// /api/app-llm/v1/messages with their per-app token
+// (USERNODE_LLM_PROXY_TOKEN) plus the user's iframe JWT; the proxy
+// verifies both, requires an active per-(app,user) grant, swaps in the
+// real key (platform or the user's own, per the grant), meters spend
+// against the user's daily budget AND the grant's per-app cap, and
+// forwards to api.anthropic.com. Same private-IP gate as the worker
+// proxy; mounted before authMiddleware because callers are app
+// containers, not browser sessions.
+app.use(appLlmProxyRoutes(config));
+
 // Before/after visuals artifacts (#195). Public by design: GitHub's camo
 // proxy fetches the PR-body embeds anonymously, so this must not redirect
 // to login. Access control is the unguessable 32-hex artifact id.
@@ -281,6 +295,7 @@ app.use(dashboardRoutes(config));
 app.use(feedbackRoutes(config));
 app.use(notificationsRoutes(config));
 app.use(collaboratorRoutes(config));
+app.use(llmGrantsRoutes(config));
 
 app.get('/api/iframe-token', async (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Not authenticated' });

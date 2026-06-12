@@ -3234,7 +3234,198 @@ const AppView = {
       }
     }
   },
+
+  // ── App LLM access consent flow (issue #34) ────────────────────────
+  //
+  // The bridge's usernode.requestLlmAccess()/getLlmAccess() post a
+  // `__usernode_llm` message to window.parent; the shell (this file —
+  // it owns the app iframe) answers. The consent dialog is
+  // platform-owned: it renders over the app, from our origin, so an
+  // app cannot approve itself. Wired via the top-level message
+  // listener at the bottom of this file.
+
+  async handleLlmBridgeMessage(e) {
+    const data = e.data;
+    if (!data || !data.id) return;
+    const type = data.__usernode_llm;
+    if (type !== 'request-access' && type !== 'get-access') return;
+
+    // Only the app iframes this shell owns may ask. The staging
+    // preview iframe is accepted too so AI-consent flows are
+    // exercisable in PR previews (the staging proxy path itself is
+    // disabled server-side — staging containers hold no proxy token).
+    const appIframe = document.getElementById('app-iframe');
+    const stagingIframe = document.getElementById('staging-iframe');
+    const fromApp = appIframe && e.source === appIframe.contentWindow;
+    const fromStaging = stagingIframe && e.source === stagingIframe.contentWindow;
+    if (!fromApp && !fromStaging) return;
+    const slug = AppView.appData?.slug;
+    if (!slug) return;
+
+    const reply = (value, error) => {
+      try {
+        e.source.postMessage(
+          { __usernode_llm: 'response', id: data.id, value: value ?? null, error: error ?? null },
+          '*'
+        );
+      } catch {}
+    };
+    // Ack immediately so the bridge stops its "no shell here" timer —
+    // the user may take minutes on the dialog below.
+    try { e.source.postMessage({ __usernode_llm: 'ack', id: data.id }, '*'); } catch {}
+
+    let info;
+    try {
+      const r = await fetch(`/api/apps/${slug}/llm-grant`, { credentials: 'same-origin' });
+      if (!r.ok) throw new Error(`status ${r.status}`);
+      info = await r.json();
+    } catch (err) {
+      reply(null, 'Failed to load AI permission state.');
+      return;
+    }
+
+    const active = info.grant && info.grant.status === 'active';
+    const current = active
+      ? { granted: true, dailyCapCents: info.grant.dailyCapCents, allowByok: info.grant.allowByok }
+      : { granted: false };
+    if (type === 'get-access' || active) {
+      reply(current);
+      return;
+    }
+
+    const decision = await AppView.showLlmConsentModal(info);
+    if (!decision) {
+      reply({ granted: false, declined: true });
+      return;
+    }
+    try {
+      const r = await fetch('/api/me/llm-grants', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          appSlug: slug,
+          dailyCapCents: decision.dailyCapCents,
+          allowByok: decision.allowByok,
+        }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        reply(null, j.error || 'Failed to save permission.');
+        return;
+      }
+      reply({
+        granted: true,
+        dailyCapCents: j.grant.dailyCapCents,
+        allowByok: j.grant.allowByok,
+      });
+    } catch (err) {
+      reply(null, 'Network error saving permission.');
+    }
+  },
+
+  // Singleton consent dialog, same scrim/card pattern as
+  // confirm-modal.js. Resolves { dailyCapCents, allowByok } on Allow,
+  // null on "Not now" / backdrop / Esc.
+  _llmModalEl: null,
+  showLlmConsentModal(info) {
+    return new Promise((resolve) => {
+      // Recreate the element on every open so listeners from a prior
+      // dialog don't accumulate on the reused node.
+      if (AppView._llmModalEl) {
+        AppView._llmModalEl.remove();
+        AppView._llmModalEl = null;
+      }
+      const root = document.createElement('div');
+      root.id = 'llm-consent-modal';
+      root.className = 'hidden fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
+      document.body.appendChild(root);
+      AppView._llmModalEl = root;
+
+      const appName = info.app?.name || info.app?.slug || 'This app';
+      const suggested = info.llm?.suggestedCapCents ?? null;
+      const prefillCents = suggested ?? info.defaultCapCents ?? 100;
+      const maxCents = info.maxCapCents || 2500;
+      const purposeLine = info.llm?.purpose
+        ? `<p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3 italic">&ldquo;${escapeHtml(info.llm.purpose)}&rdquo;</p>`
+        : '';
+      const suggestedNote = suggested != null
+        ? `<p class="text-xs text-zinc-500 dark:text-zinc-500 mt-1">Suggested by this app &mdash; you can change it.</p>`
+        : `<p class="text-xs text-zinc-500 dark:text-zinc-500 mt-1">You can change this anytime in Settings.</p>`;
+      const byokBlock = info.hasApiKey
+        ? `<label class="flex items-start gap-2 cursor-pointer select-none mt-4">
+             <input id="llm-consent-byok" type="checkbox" class="accent-violet-500 w-4 h-4 mt-0.5" />
+             <span class="text-xs text-zinc-700 dark:text-zinc-300">If my daily platform budget runs out, let this app keep going on my own API key (still limited by the cap above).</span>
+           </label>`
+        : '';
+
+      root.innerHTML = `
+        <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
+          <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl relative">
+            <h2 class="text-lg font-bold mb-2 text-zinc-900 dark:text-zinc-100">Allow ${escapeHtml(appName)} to use AI?</h2>
+            ${purposeLine}
+            <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
+              This lets <strong>${escapeHtml(appName)}</strong> spend from your daily AI budget &mdash; the same one your dev chats use &mdash; up to the daily cap below.
+            </p>
+            <label class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1" for="llm-consent-cap">Daily cap for this app ($ per day)</label>
+            <input id="llm-consent-cap" type="number" min="0.01" step="0.01"
+              value="${(prefillCents / 100).toFixed(2)}"
+              class="w-32 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono" />
+            ${suggestedNote}
+            ${byokBlock}
+            <div id="llm-consent-error" class="hidden text-sm text-red-500 mt-3"></div>
+            <div class="flex justify-end gap-2 mt-5">
+              <button id="llm-consent-decline" type="button"
+                class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Not now</button>
+              <button id="llm-consent-allow" type="button"
+                class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Allow</button>
+            </div>
+          </div>
+        </div>`;
+
+      const done = (result) => {
+        root.classList.add('hidden');
+        document.removeEventListener('keydown', onKey);
+        resolve(result);
+      };
+      const onKey = (ev) => {
+        if (ev.key === 'Escape') done(null);
+      };
+      document.addEventListener('keydown', onKey);
+
+      root.addEventListener('click', (ev) => {
+        if (ev.target === root || ev.target.dataset.modalBackdrop !== undefined) done(null);
+      }, { once: false });
+      root.querySelector('#llm-consent-decline').addEventListener('click', () => done(null));
+      root.querySelector('#llm-consent-allow').addEventListener('click', () => {
+        const errEl = root.querySelector('#llm-consent-error');
+        const dollars = parseFloat(root.querySelector('#llm-consent-cap').value);
+        const cents = Math.round(dollars * 100);
+        if (!Number.isFinite(dollars) || !Number.isInteger(cents) || cents <= 0) {
+          errEl.textContent = 'Enter a valid daily cap (at least $0.01).';
+          errEl.classList.remove('hidden');
+          return;
+        }
+        if (cents > maxCents) {
+          errEl.textContent = `The cap can't exceed your own daily limit ($${(maxCents / 100).toFixed(2)}).`;
+          errEl.classList.remove('hidden');
+          return;
+        }
+        const byokInput = root.querySelector('#llm-consent-byok');
+        done({ dailyCapCents: cents, allowByok: !!(byokInput && byokInput.checked) });
+      });
+
+      root.classList.remove('hidden');
+    });
+  },
 };
+
+// Bridge → shell consent relay for app LLM access (issue #34). One
+// top-level listener; handleLlmBridgeMessage verifies the source is an
+// iframe this shell owns and ignores everything else.
+window.addEventListener('message', (e) => {
+  try { AppView.handleLlmBridgeMessage(e); } catch {}
+});
 
 // Small helpers used by the #21 version pill. Kept local so app-view
 // stays self-contained — the dev-console has its own copy of these.
