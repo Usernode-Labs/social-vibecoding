@@ -28,7 +28,9 @@ const AppView = {
   // version of the home tiles' avatar square. [tint classes, SVG path].
   DEV_CARD_ICONS: {
     chat: ['bg-violet-600/15 text-violet-500', 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z'],
-    session: ['bg-emerald-500/15 text-emerald-500', 'M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z'],
+    // Pencil (Heroicons outline) — sessions are edits-in-progress, not
+    // terminals (#219). Distinct from the issue icon's pencil-in-bubble.
+    session: ['bg-emerald-500/15 text-emerald-500', 'M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z'],
     // Comment-bubble-with-pencil: the chat bubble outline (dots removed)
     // plus the Heroicons pencil-alt tip scaled to sit inside it — issues
     // are written feedback, not warnings (hence no more exclamation).
