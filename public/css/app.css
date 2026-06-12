@@ -2147,21 +2147,11 @@ html.in-native-webview #header-title {
     display: none;
   }
 
-  /* Header icons that move into the slide-out drawer at narrow widths. */
-  #leaderboard-btn,
-  #dev-console-btn,
-  #app-github-link,
-  #app-share-btn,
-  #feedback-btn,
-  #settings-btn {
-    display: none !important;
-  }
-
-  /* Hamburger trigger: hidden via Tailwind `hidden` class by default;
-     this rule makes it visible at the mobile breakpoint. */
-  #header-menu-btn {
-    display: inline-flex !important;
-  }
+  /* #122: no per-breakpoint icon hiding anymore — the secondary header
+     actions (GitHub, Share, Members, Settings) live in the slide-out
+     drawer at every width, and the remaining icons (leaderboard,
+     dev console, feedback, hamburger, notifications) are visible at
+     every width too. */
 }
 
 /* Slide-out drawer panel transition. The panel starts off-screen to

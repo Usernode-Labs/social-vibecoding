@@ -626,10 +626,8 @@ const App = {
       if (data.status === 'running' && AppView.appData) {
         AppView.appData.status = 'running';
         AppView.appData.url = data.url;
-        // The Share button was hidden in openApp() because the app wasn't
-        // running yet. Now that we have a URL, surface it.
-        const shareBtn = document.getElementById('app-share-btn');
-        if (shareBtn) shareBtn.classList.remove('hidden');
+        // The Share drawer row was hidden in openApp() because the app
+        // wasn't running yet. Now that we have a URL, surface it.
         const drawerShareRow = document.getElementById('drawer-row-share');
         if (drawerShareRow) drawerShareRow.classList.remove('hidden');
         AppView.refreshToken().then(() => {
@@ -865,19 +863,15 @@ const App = {
     }
   },
 
-  // Slide-out navigation drawer for ≤640px viewports.
+  // Slide-out navigation drawer — available at every viewport width
+  // (#122). Holds the secondary header actions: GitHub, Share,
+  // Members & visibility, Settings.
   HeaderMenu: {
     open() {
       const panel = document.getElementById('header-menu-panel');
       const overlay = document.getElementById('header-menu-overlay');
       const btn = document.getElementById('header-menu-btn');
       if (!panel) return;
-      // Sync the BYOK dot state at open time.
-      const byokSrc = document.getElementById('settings-byok-dot');
-      const byokDst = document.getElementById('drawer-byok-dot');
-      if (byokSrc && byokDst) {
-        byokDst.classList.toggle('hidden', byokSrc.classList.contains('hidden'));
-      }
       overlay.classList.remove('hidden');
       // Force a reflow so the transition fires (element was display:none).
       overlay.getBoundingClientRect();
@@ -915,28 +909,22 @@ const App = {
         }
       });
       // Drawer row actions — each closes the menu after triggering its action.
-      document.getElementById('drawer-row-leaderboard')
+      document.getElementById('drawer-row-github')
         .addEventListener('click', () => App.HeaderMenu.close());
-      document.getElementById('drawer-row-dev-console')
-        .addEventListener('click', () => {
-          App.HeaderMenu.close();
-          if (window.DevConsole) DevConsole.toggle();
-        });
       document.getElementById('drawer-row-share')
         .addEventListener('click', () => {
           App.HeaderMenu.close();
           if (window.AppView) AppView.openShareModal();
         });
-      document.getElementById('drawer-row-feedback')
+      document.getElementById('drawer-row-members')
         .addEventListener('click', () => {
           App.HeaderMenu.close();
-          // Reuse the existing feedback button click to avoid duplicating logic.
-          document.getElementById('feedback-btn').click();
+          if (window.AppView) AppView.openMembersModal();
         });
       document.getElementById('drawer-row-settings')
         .addEventListener('click', () => {
           App.HeaderMenu.close();
-          document.getElementById('settings-btn').click();
+          if (window.Settings) Settings.open();
         });
     },
   },
@@ -970,9 +958,8 @@ const App = {
     });
     App.setCreateVisibility('collab', 'public');
 
-    // Members & visibility modal (header button + close/backdrop).
-    const membersBtn = document.getElementById('app-members-btn');
-    if (membersBtn) membersBtn.addEventListener('click', () => AppView.openMembersModal());
+    // Members & visibility modal (close/backdrop; the open entry point
+    // is the drawer's Members row, wired in HeaderMenu.init).
     const membersClose = document.getElementById('members-close');
     if (membersClose) membersClose.addEventListener('click', () => AppView.hideMembersModal());
     const membersModal = document.getElementById('members-modal');
@@ -1191,12 +1178,10 @@ const App = {
       }
     });
 
-    // Share modal — opens AppView's share dialog with the bare subdomain
-    // URL. The button's hidden state is managed in openApp / navigateHome
-    // (and in handleAppStatus for the creating→running flip), so we only
-    // wire the click-to-open + dismiss handlers here.
-    const shareBtn = document.getElementById('app-share-btn');
-    if (shareBtn) shareBtn.addEventListener('click', () => AppView.openShareModal());
+    // Share modal — opened from the drawer's Share row (wired in
+    // HeaderMenu.init). The row's hidden state is managed in openApp /
+    // navigateHome (and in handleAppStatus for the creating→running
+    // flip), so we only wire the dismiss handlers here.
     const shareClose = document.getElementById('share-close');
     if (shareClose) shareClose.addEventListener('click', () => AppView.closeShareModal());
     const shareModal = document.getElementById('share-modal');
@@ -1333,12 +1318,12 @@ const App = {
     const screen = document.getElementById('leaderboard-screen');
     if (screen) screen.classList.remove('hidden');
     document.getElementById('back-btn').classList.remove('hidden');
-    document.getElementById('app-github-link').classList.add('hidden');
-    document.getElementById('app-share-btn').classList.add('hidden');
     const _drg = document.getElementById('drawer-row-github');
     const _drs = document.getElementById('drawer-row-share');
+    const _drm = document.getElementById('drawer-row-members');
     if (_drg) _drg.classList.add('hidden');
     if (_drs) _drs.classList.add('hidden');
+    if (_drm) _drm.classList.add('hidden');
     App.setHeaderTitle('Kudos leaderboard');
     App._inLeaderboard = true;
     // Apply the deep-linked sub-view (prs|users|history) before open()
@@ -1670,34 +1655,30 @@ const App = {
       App.setHeaderTitle(AppView.appData.name);
     }
 
-    // Show GitHub link if app has a repo
-    const ghLink = document.getElementById('app-github-link');
-    if (ghLink && AppView.appData?.repo_url) {
-      ghLink.href = AppView.appData.repo_url;
-      ghLink.classList.remove('hidden');
-      const drg = document.getElementById('drawer-row-github');
-      if (drg) { drg.href = AppView.appData.repo_url; drg.classList.remove('hidden'); }
+    // Show the GitHub drawer row if app has a repo
+    const drg = document.getElementById('drawer-row-github');
+    if (drg && AppView.appData?.repo_url) {
+      drg.href = AppView.appData.repo_url;
+      drg.classList.remove('hidden');
     }
-    // Show Share button only for apps that have a real running URL.
-    // Apps in `creating`/`error`/`awaiting_secrets` have no URL to share;
-    // the SSE handler below re-shows the button when they flip to `running`.
-    const shareBtn = document.getElementById('app-share-btn');
-    if (shareBtn && AppView.appData?.status === 'running' && AppView.appData?.url) {
-      shareBtn.classList.remove('hidden');
-      const drs = document.getElementById('drawer-row-share');
-      if (drs) drs.classList.remove('hidden');
+    // Show the Share drawer row only for apps that have a real running
+    // URL. Apps in `creating`/`error`/`awaiting_secrets` have no URL to
+    // share; the SSE handler re-shows the row when they flip to `running`.
+    const drs = document.getElementById('drawer-row-share');
+    if (drs && AppView.appData?.status === 'running' && AppView.appData?.url) {
+      drs.classList.remove('hidden');
     }
-    // Members & visibility button: creator/admin always (visibility
+    // Members & visibility drawer row: creator/admin always (visibility
     // control), collaborators of an invite-only app too (member list +
     // invites). Hidden for the self-app (no invites there) and for
     // everyone else.
-    const membersBtn = document.getElementById('app-members-btn');
-    if (membersBtn) {
+    const drm = document.getElementById('drawer-row-members');
+    if (drm) {
       const a = AppView.appData;
       const showMembers = !!a && !a.self_hosted && (
         a.can_manage || (a.collab_visibility === 'private' && a.can_collaborate)
       );
-      membersBtn.classList.toggle('hidden', !showMembers);
+      drm.classList.toggle('hidden', !showMembers);
     }
     // The App tab iframes appData.url, which doesn't resolve for the self-
     // hosted platform row (no per-slug subdomain). Land on the Dev forum
@@ -1714,14 +1695,12 @@ const App = {
     if (App._inLeaderboard) App._exitLeaderboard();
     document.getElementById('home-screen').classList.remove('hidden');
     document.getElementById('back-btn').classList.add('hidden');
-    document.getElementById('app-github-link').classList.add('hidden');
-    document.getElementById('app-share-btn').classList.add('hidden');
-    const _membersH = document.getElementById('app-members-btn');
-    if (_membersH) _membersH.classList.add('hidden');
     const _drgH = document.getElementById('drawer-row-github');
     const _drsH = document.getElementById('drawer-row-share');
+    const _drmH = document.getElementById('drawer-row-members');
     if (_drgH) _drgH.classList.add('hidden');
     if (_drsH) _drsH.classList.add('hidden');
+    if (_drmH) _drmH.classList.add('hidden');
     App.setHeaderTitle('dApps');
     document.getElementById('app-content').innerHTML = '';
     App.updateHash();
