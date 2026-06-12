@@ -271,15 +271,25 @@ function sessionRoutes(config) {
   //                  we returned)
   router.get('/api/me/active-sessions', async (req, res) => {
     try {
+      // last_activity_at = the newest message in the session's thread,
+      // falling back to the session's own creation time. The dev tab's
+      // card list sorts session rows by this ("most recent activity"),
+      // not by creation order.
       const { rows } = await pool.query(
         `SELECT cs.id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
                 cs.status, cs.linked_issues, cs.created_at,
+                GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
                 a.slug AS app_slug, a.name AS app_name
          FROM chat_sessions cs
          JOIN apps a ON cs.app_id = a.id
+         LEFT JOIN LATERAL (
+           SELECT MAX(created_at) AS last_message_at
+           FROM chat_session_messages
+           WHERE session_id = cs.id
+         ) m ON TRUE
          WHERE cs.user_id = $1 AND cs.status IN ('active', 'promoted', 'paused')
            AND cs.is_headless = FALSE
-         ORDER BY cs.created_at DESC`,
+         ORDER BY last_activity_at DESC`,
         [req.user.id]
       );
       const sessions = rows.map((s) => ({
