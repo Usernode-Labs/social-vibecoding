@@ -18,7 +18,10 @@ const AppView = {
   // Recently-merged rows — so the whole page reads as one uniform list
   // (same row structure, padding, border, radius). Tappable cards add
   // DEV_CARD_HOVER_CLS on top.
-  DEV_CARD_CLS: 'w-full flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 px-3.5 py-3 text-left transition-colors',
+  DEV_CARD_CLS: 'w-full flex items-center gap-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 px-3.5 py-3 text-left transition-colors',
+  // Trailing chevron marking a card as tappable (same affordance as the
+  // General chat card).
+  DEV_CARD_CHEVRON: '<svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>',
   DEV_CARD_HOVER_CLS: 'hover:border-violet-300 dark:hover:border-violet-700 cursor-pointer',
 
   // Per-type tinted icon chips — the Dev list's identity system, a mini
@@ -421,11 +424,15 @@ const AppView = {
           <div class="relative">
             <button id="dev-plus-btn" aria-haspopup="true" aria-expanded="false"
               class="rounded-lg bg-violet-600 hover:bg-violet-500 w-7 h-7 flex items-center justify-center text-base font-bold leading-none text-white transition-colors"
-              title="Propose a change or open app settings">+</button>
+              title="Propose a change, file an issue, or open app settings">+</button>
             <div id="dev-plus-menu" class="hidden absolute right-0 top-9 z-30 w-64 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden">
               <button data-plus="proposal" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Propose a change</span>
                 <span class="block text-xs text-zinc-500 dark:text-zinc-400">Start an AI dev session — promoting its PR creates the proposal</span>
+              </button>
+              <button data-plus="issue" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
+                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">New issue</span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Report a problem or idea without building it yourself</span>
               </button>
               <button data-plus="settings" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">App settings</span>
@@ -727,6 +734,10 @@ const AppView = {
     menu.querySelector('[data-plus="proposal"]').addEventListener('click', () => {
       close();
       AppView.createProposal();
+    });
+    menu.querySelector('[data-plus="issue"]').addEventListener('click', () => {
+      close();
+      AppView.openNewIssueModal();
     });
     menu.querySelector('[data-plus="settings"]').addEventListener('click', () => {
       close();
@@ -1094,7 +1105,7 @@ const AppView = {
     const meta = AppView._ghIssuesMeta || {};
     const items = AppView._feedItems();
 
-    let html = `<div class="flex justify-end mb-2"><button class="gc-vote-btn" title="Report a problem or idea without building it yourself" onclick="AppView.openNewIssueModal()">+ New issue</button></div>`;
+    let html = '';
     if (!items.length) {
       const note = meta.note
         ? 'Couldn&#39;t load open issues right now. '
@@ -1325,8 +1336,6 @@ const AppView = {
     // Sessions are owner-scoped (GET /api/sessions/:id), so the session
     // button only renders for the proposer.
     const chatN = parseInt(pr.chat_count) || 0;
-    const discussBtn = noNav ? ''
-      : `<button class="gc-vote-btn dev-discuss-btn" data-count="${chatN}" title="Open this proposal's discussion thread" onclick="AppView.openTopic('proposal', ${pr.id})">&#128172; Discussion${chatN ? ` (${chatN})` : ''}</button>`;
     const sessionBtn = (App.user && pr.user_id === App.user.id)
       ? `<button class="gc-vote-btn" title="Open the dev session behind this proposal" onclick="AppView.openProposalSession(${pr.id})">Open session</button>`
       : '';
@@ -1338,21 +1347,27 @@ const AppView = {
     // the vote is settled; kudos stays open.
     const actions = (isMerged
       ? [kudosBtn, sessionBtn]
-      : [AppView.voteButtonsHtml(pr), kudosBtn, discussBtn, sessionBtn]
+      : [AppView.voteButtonsHtml(pr), kudosBtn, sessionBtn]
     ).filter(Boolean).join('');
 
     return `
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}"${noNav ? '' : ` data-proposal-row="${pr.id}" title="Open this proposal's discussion"`}>
         ${AppView._devCardIcon(isMerged ? 'done' : 'proposal')}
         <div class="flex-1 min-w-0">
-          <div class="text-sm text-zinc-800 dark:text-zinc-200 truncate">${titleHtml}</div>
-          <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate">${metaParts.join(' · ')}${closesPills ? ` ${closesPills}` : ''}</div>
+          <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <div class="flex-1 min-w-0">
+              <div class="text-sm text-zinc-800 dark:text-zinc-200 truncate">${titleHtml}</div>
+              <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate">${metaParts.join(' · ')}${closesPills ? ` ${closesPills}` : ''}</div>
+            </div>
+            ${unvotedBadge}
+            ${AppView.voteCountPill(pr, majority)}
+            ${stateBadge}
+            ${AppView._devChatBadge(chatN)}
+          </div>
+          ${visualsHtml ? `<div class="mt-1.5">${visualsHtml}</div>` : ''}
+          ${actions ? `<div class="flex flex-wrap items-center gap-1.5 mt-1.5">${actions}</div>` : ''}
         </div>
-        ${unvotedBadge}
-        ${AppView.voteCountPill(pr, majority)}
-        ${stateBadge}
-        ${visualsHtml ? `<div class="basis-full">${visualsHtml}</div>` : ''}
-        ${actions ? `<div class="basis-full flex flex-wrap items-center gap-1.5 mt-1.5">${actions}</div>` : ''}
+        ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
       </div>`;
   },
 
@@ -1411,23 +1426,26 @@ const AppView = {
       ? `<button class="gc-vote-btn gc-vote-btn-admin" title="Admin: apply this change right now, bypassing the vote majority" onclick="AppView.castIssueAdminApply(${issue.id})">Admin merge</button>`
       : '';
     const govChatN = parseInt(issue.chat_count) || 0;
-    const govDiscussBtn = noNav ? ''
-      : `<button class="gc-vote-btn dev-discuss-btn" data-count="${govChatN}" title="Open this proposal's discussion thread" onclick="AppView.openTopic('gov', ${issue.id})">&#128172; Discussion${govChatN ? ` (${govChatN})` : ''}</button>`;
 
     return `
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" data-gov-row="${issue.id}"${issue.github_issue_number ? ` data-ref-issue="${issue.github_issue_number}"` : ''}${noNav ? '' : ' title="Open this proposal\'s discussion"'}>
         ${AppView._devCardIcon('gov')}
         <div class="flex-1 min-w-0">
-          <div class="text-sm text-zinc-800 dark:text-zinc-200 truncate" title="${escapeHtml(titleText)}">${escapeHtml(titleText)}</div>
-          <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate">${metaParts.join(' · ')}</div>
+          <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <div class="flex-1 min-w-0">
+              <div class="text-sm text-zinc-800 dark:text-zinc-200 truncate" title="${escapeHtml(titleText)}">${escapeHtml(titleText)}</div>
+              <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate">${metaParts.join(' · ')}</div>
+            </div>
+            ${tallyPill}
+            ${AppView._devChatBadge(govChatN)}
+          </div>
+          <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
+            ${yesBtn}
+            ${noBtn}
+            ${adminBtn}
+          </div>
         </div>
-        ${tallyPill}
-        <div class="basis-full flex flex-wrap items-center gap-1.5 mt-1.5">
-          ${yesBtn}
-          ${noBtn}
-          ${adminBtn}
-          ${govDiscussBtn}
-        </div>
+        ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
       </div>`;
   },
 
@@ -1484,37 +1502,27 @@ const AppView = {
   // Live badge bump for a thread the viewer doesn't have open (called
   // from GroupChat when a threaded message arrives).
   bumpThreadBadge(type, ref) {
-    let el = null;
+    let sel = null;
     if (type === 'issue') {
       const issue = (AppView._ghIssues || []).find((i) => i.number === ref);
       if (issue) issue.chatCount = (parseInt(issue.chatCount) || 0) + 1;
-      el = document.querySelector(`[data-issue-row="${ref}"] .dev-chat-badge`);
-      if (el) {
-        const n = (parseInt(el.dataset.count) || 0) + 1;
-        el.dataset.count = String(n);
-        el.innerHTML = `&#128172; ${n}`;
-        el.classList.remove('bg-zinc-500/10', 'text-zinc-500');
-        el.classList.add('bg-violet-500/10', 'text-violet-400');
-      }
-      return;
-    }
-    // Proposal / governance cards carry the count on their Discussion
-    // button (forum revision) — bump the cache + the button label.
-    let sel = null;
-    if (type === 'session') {
+      sel = `[data-issue-row="${ref}"] .dev-chat-badge`;
+    } else if (type === 'session') {
       const pr = (AppView._proposals || []).find((p) => p.id === ref);
       if (pr) pr.chat_count = (parseInt(pr.chat_count) || 0) + 1;
-      sel = `[data-proposal-row="${ref}"] .dev-discuss-btn`;
+      sel = `[data-proposal-row="${ref}"] .dev-chat-badge`;
     } else if (type === 'governance') {
       const g = (AppView._govProposals || []).find((i) => i.id === ref);
       if (g) g.chat_count = (parseInt(g.chat_count) || 0) + 1;
-      sel = `[data-gov-row="${ref}"] .dev-discuss-btn`;
+      sel = `[data-gov-row="${ref}"] .dev-chat-badge`;
     }
-    el = sel && document.querySelector(sel);
+    const el = sel && document.querySelector(sel);
     if (el) {
       const n = (parseInt(el.dataset.count) || 0) + 1;
       el.dataset.count = String(n);
-      el.innerHTML = `&#128172; Discussion (${n})`;
+      el.innerHTML = `&#128172; ${n}`;
+      el.classList.remove('bg-zinc-500/10', 'text-zinc-500');
+      el.classList.add('bg-violet-500/10', 'text-violet-400');
     }
   },
 
@@ -1738,16 +1746,21 @@ const AppView = {
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" data-ref-issue="${n}"${noNav ? '' : ` data-issue-row="${n}" title="Open this issue's discussion"`}>
         ${AppView._devCardIcon('issue')}
         <div class="flex-1 min-w-0">
-          <div class="text-sm text-zinc-800 dark:text-zinc-200 truncate" title="${escapeHtml(rowTitle)}">${escapeHtml(issue.title)}</div>
-          <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate"><a href="${href}" target="_blank" rel="noopener" class="font-mono text-violet-400 hover:underline">#${n}</a>${issue.created_by_username ? ` · ${escapeHtml(issue.created_by_username)}` : ''}</div>
+          <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <div class="flex-1 min-w-0">
+              <div class="text-sm text-zinc-800 dark:text-zinc-200 truncate" title="${escapeHtml(rowTitle)}">${escapeHtml(issue.title)}</div>
+              <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate"><a href="${href}" target="_blank" rel="noopener" class="font-mono text-violet-400 hover:underline">#${n}</a>${issue.created_by_username ? ` · ${escapeHtml(issue.created_by_username)}` : ''}</div>
+            </div>
+            ${bountyPill}
+            ${AppView._devChatBadge(issue.chatCount)}
+          </div>
+          <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
+            ${kudosBtn}
+            ${createBtn}
+            ${autoBtn}
+          </div>
         </div>
-        ${bountyPill}
-        ${AppView._devChatBadge(issue.chatCount)}
-        <div class="basis-full flex flex-wrap items-center gap-1.5 mt-1.5">
-          ${kudosBtn}
-          ${createBtn}
-          ${autoBtn}
-        </div>
+        ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
       </div>`;
     return html;
   },
@@ -1823,14 +1836,18 @@ const AppView = {
         <div class="gc-vote-item ${AppView.DEV_CARD_CLS}" data-ref-pr="${pr.pr_number || pr.id}">
           ${AppView._devCardIcon('done')}
           <div class="flex-1 min-w-0">
-            <div class="text-sm text-zinc-800 dark:text-zinc-200 truncate" title="${escapeHtml(mergedQuoteTitle)}">${mergedLabel}</div>
-            <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate"><a href="${pr.pr_url || '#'}" target="_blank" rel="noopener" class="font-mono text-emerald-400 hover:underline">PR#${pr.pr_number || pr.id}</a> · ${date}${AppView.closesPillHtml(pr) ? ` ${AppView.closesPillHtml(pr)}` : ''}</div>
-          </div>
-          ${AppView.voteCountPill(pr, majority)}
-          <div class="basis-full flex flex-wrap items-center gap-1.5 mt-1.5">
-            ${AppView.voteButtonsHtml(pr, { collapseVoted: true })}
-            ${undoUI}
-            ${kudosBtn}
+            <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <div class="flex-1 min-w-0">
+                <div class="text-sm text-zinc-800 dark:text-zinc-200 truncate" title="${escapeHtml(mergedQuoteTitle)}">${mergedLabel}</div>
+                <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate"><a href="${pr.pr_url || '#'}" target="_blank" rel="noopener" class="font-mono text-emerald-400 hover:underline">PR#${pr.pr_number || pr.id}</a> · ${date}${AppView.closesPillHtml(pr) ? ` ${AppView.closesPillHtml(pr)}` : ''}</div>
+              </div>
+              ${AppView.voteCountPill(pr, majority)}
+            </div>
+            <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
+              ${AppView.voteButtonsHtml(pr, { collapseVoted: true })}
+              ${undoUI}
+              ${kudosBtn}
+            </div>
           </div>
         </div>`;
     }
