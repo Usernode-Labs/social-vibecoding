@@ -395,7 +395,13 @@ const Leaderboard = {
       el.addEventListener('click', () => {
         const slug = el.dataset.lbPrRoute;
         if (!slug) return;
-        window.location.hash = `#app/${slug}/group-chat`;
+        // Land on the app's Proposals tab. The PR appears in the
+        // open/merged list there; the user can hit kudos right
+        // from the card. Deep-link to the session when we have it.
+        const sid = el.dataset.lbPrSession || '';
+        window.location.hash = sid
+          ? `#app/${slug}/dev/proposals/${sid}`
+          : `#app/${slug}/dev/proposals`;
       });
     });
   },

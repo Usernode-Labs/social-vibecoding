@@ -126,22 +126,46 @@ const GroupChat = {
   ],
 
   // In-progress draft helpers — preserved across tab switches *and* page
-  // refreshes (via localStorage). Keyed by app slug so each app has its
-  // own draft. Cleared on send.
-  _draftKey(slug) {
-    return `usernode:gc-draft:${slug}`;
+  // refreshes (via localStorage). Keyed by app slug (plus the thread key
+  // for thread composers, #194) so each surface has its own draft.
+  // Cleared on send.
+  _draftKey(slug, threadKey) {
+    return threadKey
+      ? `usernode:gc-draft:${slug}:${threadKey}`
+      : `usernode:gc-draft:${slug}`;
   },
-  getDraft(slug) {
+  getDraft(slug, threadKey) {
     if (!slug) return '';
-    try { return localStorage.getItem(GroupChat._draftKey(slug)) || ''; }
+    try { return localStorage.getItem(GroupChat._draftKey(slug, threadKey)) || ''; }
     catch { return ''; }
   },
-  setDraft(slug, value) {
+  setDraft(slug, value, threadKey) {
     if (!slug) return;
     try {
-      if (value) localStorage.setItem(GroupChat._draftKey(slug), value);
-      else localStorage.removeItem(GroupChat._draftKey(slug));
+      if (value) localStorage.setItem(GroupChat._draftKey(slug, threadKey), value);
+      else localStorage.removeItem(GroupChat._draftKey(slug, threadKey));
     } catch {}
+  },
+
+  // ── #194: thread-scoped chat state ──────────────────────────────────
+  // One WS connection, multiple render targets: the general stream
+  // (#gc-messages) plus at most one mounted thread (#gc-thread-messages,
+  // inside an Issues/Proposals accordion). Per-thread history caches
+  // live in `threads`, keyed by `${type}:${ref}`.
+  threads: new Map(),       // key -> { messages, oldestId, hasMore, loaded }
+  activeThread: null,       // { type, ref } | null — the mounted thread
+  _threadTypingTimer: null,
+
+  threadKey(type, ref) {
+    return `${type}:${ref}`;
+  },
+
+  _threadState(type, ref) {
+    const key = GroupChat.threadKey(type, ref);
+    if (!GroupChat.threads.has(key)) {
+      GroupChat.threads.set(key, { messages: [], oldestId: null, hasMore: true, loaded: false });
+    }
+    return GroupChat.threads.get(key);
   },
 
   // Called by AppView.renderGroupChatTab on every tab (re-)entry. On first
@@ -178,6 +202,8 @@ const GroupChat = {
     GroupChat.disconnect();
     GroupChat.appSlug = appSlug;
     GroupChat.messages = [];
+    GroupChat.threads = new Map();
+    GroupChat.activeThread = null;
     GroupChat.oldestMessageId = null;
     GroupChat.hasMore = true;
     GroupChat._lockedToBottom = true;
@@ -304,6 +330,8 @@ const GroupChat = {
       GroupChat.ws = null;
     }
     GroupChat.appSlug = null;
+    GroupChat.threads = new Map();
+    GroupChat.activeThread = null;
     GroupChat.typingUsers.clear();
     GroupChat._lockedToBottom = true;
     GroupChat._savedScrollTop = null;
@@ -355,6 +383,13 @@ const GroupChat = {
   handleIncoming(msg) {
     switch (msg.type) {
       case 'chat': {
+        // #194: thread messages never land in the general stream — they
+        // route to the mounted thread (if it matches) or bump the
+        // chat-count badge on their issue/proposal row.
+        if (msg.thread && msg.thread.type) {
+          GroupChat._handleThreadIncoming(msg);
+          break;
+        }
         const shouldStick = GroupChat._lockedToBottom;
         GroupChat.messages.push(msg);
         GroupChat.appendMessage(msg);
@@ -367,6 +402,15 @@ const GroupChat = {
         break;
       }
       case 'typing': {
+        // #194: thread typing renders inside the mounted thread only;
+        // general typing keeps the original #gc-typing slot.
+        if (msg.thread && msg.thread.type) {
+          const a = GroupChat.activeThread;
+          if (a && a.type === msg.thread.type && Number(a.ref) === Number(msg.thread.ref)) {
+            GroupChat._renderThreadTyping(msg.username);
+          }
+          break;
+        }
         GroupChat.typingUsers.set(msg.userId, msg.username);
         GroupChat.renderTyping();
         setTimeout(() => {
@@ -376,6 +420,36 @@ const GroupChat = {
         break;
       }
     }
+  },
+
+  // Incoming message scoped to a thread: store it, and either append it
+  // to the mounted thread's DOM or bump the row badge.
+  _handleThreadIncoming(msg) {
+    const { type, ref } = msg.thread;
+    const st = GroupChat._threadState(type, ref);
+    st.messages.push(msg);
+    const a = GroupChat.activeThread;
+    if (a && a.type === type && Number(a.ref) === Number(ref)) {
+      const el = document.getElementById('gc-thread-messages');
+      if (el) {
+        el.insertAdjacentHTML('beforeend', GroupChat.renderMessageHtml(msg));
+        el.scrollTop = el.scrollHeight;
+        return;
+      }
+    }
+    if (typeof AppView !== 'undefined' && AppView.bumpThreadBadge) {
+      AppView.bumpThreadBadge(type, Number(ref));
+    }
+  },
+
+  _renderThreadTyping(username) {
+    const el = document.getElementById('gc-thread-typing');
+    if (!el || username === App.user?.username) return;
+    el.textContent = `${username} is typing...`;
+    clearTimeout(GroupChat._threadTypingTimer);
+    GroupChat._threadTypingTimer = setTimeout(() => {
+      if (el.isConnected) el.textContent = '';
+    }, 3000);
   },
 
   // Hard cap on the offline queue. Picked to be large enough that
@@ -390,15 +464,21 @@ const GroupChat = {
   // was the visible half of #7 ("messages fail to send without
   // page refresh"). The caller can clear the input as soon as we
   // return without losing user-typed content.
-  send(content) {
-    // #15: consume the pending reply quote (if any) for this message and
-    // clear it so it only attaches once. We send a minimal reference; the
-    // server re-derives author/snippet from the source row.
-    const quote = GroupChat.replyDraft;
-    GroupChat.replyDraft = null;
-    GroupChat._renderQuotePreview();
+  send(content, thread) {
+    // #194: thread sends carry their scope and never consume the general
+    // composer's staged reply quote.
     const payload = { type: 'chat', content };
-    if (quote) payload.quote = GroupChat._wireQuote(quote);
+    if (thread && thread.type && thread.ref) {
+      payload.thread = { type: thread.type, ref: Number(thread.ref) };
+    } else {
+      // #15: consume the pending reply quote (if any) for this message
+      // and clear it so it only attaches once. We send a minimal
+      // reference; the server re-derives author/snippet from the source.
+      const quote = GroupChat.replyDraft;
+      GroupChat.replyDraft = null;
+      GroupChat._renderQuotePreview();
+      if (quote) payload.quote = GroupChat._wireQuote(quote);
+    }
 
     if (GroupChat.ws && GroupChat.ws.readyState === 1) {
       GroupChat.ws.send(JSON.stringify(payload));
@@ -421,10 +501,14 @@ const GroupChat = {
     GroupChat._renderStatusLine();
   },
 
-  sendTyping() {
+  sendTyping(thread) {
     if (!GroupChat.ws || GroupChat.ws.readyState !== 1) return;
     if (GroupChat.typingTimeout) return;
-    GroupChat.ws.send(JSON.stringify({ type: 'typing' }));
+    const payload = { type: 'typing' };
+    if (thread && thread.type && thread.ref) {
+      payload.thread = { type: thread.type, ref: Number(thread.ref) };
+    }
+    GroupChat.ws.send(JSON.stringify(payload));
     GroupChat.typingTimeout = setTimeout(() => { GroupChat.typingTimeout = null; }, 2000);
   },
 
@@ -438,6 +522,162 @@ const GroupChat = {
     const container = document.getElementById('gc-messages');
     if (!container) return;
     container.insertAdjacentHTML('beforeend', GroupChat.renderMessageHtml(msg));
+  },
+
+  // ── #194: thread chat (mounted inside Issues / Proposals accordions) ─
+
+  // Render a thread chat (scoped message list + composer) into
+  // `container` and make it the active thread render target. Reuses the
+  // same renderMessageHtml pipeline and the one per-app WS connection —
+  // which is opened on demand here, since the user can land on the
+  // Issues/Proposals tabs without ever mounting the Chat sub-tab.
+  // opts: { type, ref, container, readOnly?, notice?, placeholder? }
+  mountThread(opts) {
+    const { type, ref, container } = opts || {};
+    if (!type || !ref || !container) return;
+    const slug = (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug)
+      || GroupChat.appSlug;
+    if (!slug) return;
+
+    const liveWs = GroupChat.ws && GroupChat.ws.readyState <= 1;
+    if (!(GroupChat.appSlug === slug && liveWs)) {
+      GroupChat.connect(slug);
+    }
+    GroupChat.activeThread = { type, ref: Number(ref) };
+
+    const threadKey = GroupChat.threadKey(type, ref);
+    // fullHeight (#194 card-list revision): the topic sub-view's thread
+    // fills its flex container — messages take the remaining height and
+    // the composer pins to the bottom — instead of the inline 40vh cap.
+    const fill = !!opts.fullHeight;
+    container.innerHTML = `
+      <div class="dev-thread border border-zinc-200 dark:border-zinc-800 rounded-xl flex flex-col bg-zinc-50/50 dark:bg-zinc-900/40${fill ? ' h-full min-h-0' : ''}">
+        <div id="gc-thread-messages" class="overflow-y-auto px-2 py-1 space-y-0.5${fill ? ' flex-1 min-h-0' : ''}"${fill ? '' : ' style="max-height:40vh;min-height:60px"'}></div>
+        <div id="gc-thread-typing" class="px-3 text-xs text-zinc-500 h-4 shrink-0"></div>
+        ${opts.readOnly
+          ? `<div class="px-3 py-2 text-xs text-zinc-500 border-t border-zinc-200 dark:border-zinc-800">${escapeHtml(opts.notice || 'This thread is read-only.')}</div>`
+          : `<form id="gc-thread-form" class="flex gap-2 p-2 border-t border-zinc-200 dark:border-zinc-800">
+              <input id="gc-thread-input" type="text" maxlength="2000" autocomplete="off"
+                placeholder="${escapeHtml(opts.placeholder || 'Reply in thread…')}"
+                class="flex-1 min-w-0 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent">
+              <button type="submit" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-sm font-medium text-white transition-colors shrink-0">Send</button>
+            </form>`}
+      </div>`;
+
+    const msgsEl = container.querySelector('#gc-thread-messages');
+    if (msgsEl) GroupChat._attachThreadHandlers(msgsEl);
+
+    const form = container.querySelector('#gc-thread-form');
+    const input = container.querySelector('#gc-thread-input');
+    if (form && input) {
+      const saved = GroupChat.getDraft(slug, threadKey);
+      if (saved) input.value = saved;
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const content = input.value.trim();
+        if (!content) return;
+        GroupChat.send(content, { type, ref });
+        input.value = '';
+        GroupChat.setDraft(slug, '', threadKey);
+      });
+      input.addEventListener('input', () => {
+        GroupChat.setDraft(slug, input.value, threadKey);
+        GroupChat.sendTyping({ type, ref });
+      });
+    }
+
+    GroupChat.renderThread();
+    // Only fetch on first open — the per-thread cache stays current
+    // while connected (incoming WS messages are stored even when the
+    // thread isn't mounted), and loadThreadHistory with an oldestId set
+    // pages BACKWARD (that's the "Load earlier" button's job).
+    const st = GroupChat._threadState(type, ref);
+    if (!st.loaded) GroupChat.loadThreadHistory(type, ref);
+  },
+
+  // Drop the active thread render target (its history cache survives in
+  // `threads` for instant re-open). Called when an accordion collapses
+  // or the user leaves the sub-tab.
+  unmountThread() {
+    GroupChat.activeThread = null;
+    clearTimeout(GroupChat._threadTypingTimer);
+  },
+
+  async loadThreadHistory(type, ref) {
+    const slug = GroupChat.appSlug;
+    if (!slug) return;
+    const st = GroupChat._threadState(type, ref);
+    const beforeParam = st.oldestId ? `&before=${st.oldestId}` : '';
+    try {
+      const res = await fetch(
+        `/api/apps/${slug}/messages?thread_type=${encodeURIComponent(type)}&thread_ref=${encodeURIComponent(ref)}&limit=50${beforeParam}`
+      );
+      if (!res.ok) return;
+      const { messages } = await res.json();
+      if (messages.length < 50) st.hasMore = false;
+      if (messages.length > 0) {
+        st.messages = [...messages, ...st.messages];
+        st.oldestId = messages[0].id;
+      }
+      st.loaded = true;
+      const a = GroupChat.activeThread;
+      if (a && a.type === type && Number(a.ref) === Number(ref)) {
+        GroupChat.renderThread();
+      }
+    } catch { /* transient — re-open retries */ }
+  },
+
+  // Paint the active thread's cached messages into #gc-thread-messages.
+  renderThread() {
+    const a = GroupChat.activeThread;
+    const el = document.getElementById('gc-thread-messages');
+    if (!a || !el) return;
+    const st = GroupChat._threadState(a.type, a.ref);
+    // Preserve the reading position across "Load earlier" prepends.
+    const prevHeight = el.scrollHeight;
+    const prevTop = el.scrollTop;
+    const wasLoaded = el.dataset.loaded === '1';
+
+    const earlier = (st.loaded && st.hasMore && st.messages.length)
+      ? '<div class="text-center py-1"><button id="gc-thread-earlier" class="gc-vote-btn">Load earlier</button></div>'
+      : '';
+    const empty = (st.loaded && !st.messages.length)
+      ? '<div class="text-xs text-zinc-500 px-2 py-2">No messages yet — start the thread.</div>'
+      : (!st.loaded ? '<div class="text-xs text-zinc-500 px-2 py-2">Loading…</div>' : '');
+    el.innerHTML = earlier + empty + st.messages.map(GroupChat.renderMessageHtml).join('');
+    el.dataset.loaded = st.loaded ? '1' : '';
+
+    const btn = document.getElementById('gc-thread-earlier');
+    if (btn) btn.addEventListener('click', () => GroupChat.loadThreadHistory(a.type, a.ref));
+
+    if (wasLoaded) {
+      el.scrollTop = prevTop + (el.scrollHeight - prevHeight);
+    } else {
+      el.scrollTop = el.scrollHeight;
+    }
+  },
+
+  // Lightweight delegated handlers for a thread's message list: reaction
+  // pills + the hover react button. (Tap-to-quote stays a general-chat
+  // affordance — a quote staged from a thread would land in the general
+  // composer the user can't see from here.)
+  _attachThreadHandlers(container) {
+    if (container._gcThreadBound) return;
+    container._gcThreadBound = true;
+    container.addEventListener('click', (e) => {
+      const pill = e.target.closest('.gc-react-pill');
+      if (pill) {
+        const row = pill.closest('[data-msg-id]');
+        const id = row && parseInt(row.dataset.msgId || '', 10);
+        if (id) GroupChat.sendReact(id, pill.dataset.emoji);
+        return;
+      }
+      const addBtn = e.target.closest('.gc-react-add');
+      if (addBtn) {
+        const row = addBtn.closest('[data-msg-id]');
+        if (row) GroupChat._openReactionBar(row);
+      }
+    });
   },
 
   // ── #15: reply / quote ──────────────────────────────────────────────
@@ -718,9 +958,16 @@ const GroupChat = {
   },
 
   // Apply a fresh reaction aggregate (from the WS 'reaction' broadcast or
-  // history) to a message — update state + patch just its pill row.
+  // history) to a message — update state + patch just its pill row. The
+  // message may live in the general stream or any cached thread (#194).
   _updateMessageReactions(messageId, reactions) {
-    const msg = GroupChat.messages.find((m) => String(m.id) === String(messageId));
+    let msg = GroupChat.messages.find((m) => String(m.id) === String(messageId));
+    if (!msg) {
+      for (const st of GroupChat.threads.values()) {
+        msg = st.messages.find((m) => String(m.id) === String(messageId));
+        if (msg) break;
+      }
+    }
     if (msg) msg.reactions = reactions || [];
     const el = document.getElementById(`gc-react-${messageId}`);
     if (el) el.innerHTML = GroupChat._renderReactionPills(msg || { reactions: reactions || [] });

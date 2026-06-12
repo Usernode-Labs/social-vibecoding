@@ -516,9 +516,10 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 /* ── Vote panel ─────────────────────────────────────────── */
 
 .gc-vote-btn {
-  padding: 2px 8px;
-  border-radius: 4px;
+  padding: 3px 10px;
+  border-radius: 9999px;
   font-size: 11px;
+  font-weight: 500;
   cursor: pointer;
   border: 1px solid var(--border);
   background: var(--bg-secondary);

@@ -377,7 +377,7 @@ const DevChat = {
             if (typeof App !== 'undefined' && App.updateHash) App.updateHash();
           });
         } else {
-          location.hash = `#app/${slug}/individual-chat/${id}`;
+          location.hash = `#app/${slug}/dev/sessions/${id}`;
         }
       });
     });
@@ -1301,7 +1301,7 @@ const DevChat = {
   // is the mounted tab — a turn finishing while the user is on the App
   // or Group Chat tab must not decorate those views' titles.
   setTitleStatus(status) {
-    if (status && (typeof App === 'undefined' || App.currentTab !== 'individual-chat')) {
+    if (status && (typeof App === 'undefined' || !(App.currentTab === 'dev' && App.currentSubTab === 'sessions'))) {
       status = null;
     }
     if (DevChat._titleStatus === status) return;
@@ -2655,10 +2655,15 @@ const DevChat = {
       DevChat.currentSession = null;
       DevChat.messages = [];
       // The title marker describes the session we just left — drop it
-      // so the session list doesn't claim to be thinking / done.
+      // so the forum doesn't claim to be thinking / done.
       DevChat.setTitleStatus(null);
-      DevChat.renderChatView();
-      App.updateHash();
+      // Forum revision: backing out of a session returns to the dev
+      // forum page (there is no session-list screen anymore).
+      if (typeof App !== 'undefined' && App.switchTab) {
+        App.switchTab('dev');
+      } else {
+        DevChat.renderChatView();
+      }
     });
 
     DevChat._wireSyncBanner();
@@ -3124,7 +3129,7 @@ DevChat._awayReturnHandler = () => {
   if (DevChat.isStreaming && DevChat.currentSession) {
     if (away) {
       DevChat._setNotifyOnDone(DevChat.currentSession.id, true);
-    } else if (typeof App !== 'undefined' && App.currentTab === 'individual-chat') {
+    } else if (typeof App !== 'undefined' && (App.currentTab === 'dev' && App.currentSubTab === 'sessions')) {
       DevChat._setNotifyOnDone(DevChat.currentSession.id, false);
     }
   }

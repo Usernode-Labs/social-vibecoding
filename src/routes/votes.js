@@ -319,7 +319,11 @@ function voteRoutes(config) {
         'vote',
         // Lets the group-chat client render live vote buttons inline on
         // this activity row (see group-chat.js renderMessageHtml).
-        { vote: { sessionId: session.id, prNumber: session.pr_number || null } }
+        { vote: { sessionId: session.id, prNumber: session.pr_number || null } },
+        // #194: per-vote activity lands in the proposal's own thread, not
+        // general chat — the promote/merge announcements remain the
+        // general-chat entry points.
+        { type: 'session', ref: session.id }
       );
 
       // Broadcast the new tally *before* we try to merge, and respond
@@ -397,6 +401,65 @@ function voteRoutes(config) {
     }
   });
 
+  // #194: the viewer's own proposals currently open for voting, across
+  // all apps — PR proposals (their promoted/merging sessions) plus their
+  // open governance (secret_change) proposals. Backs the home screen's
+  // "Your proposals" section. Like /api/me/active-sessions, no extra
+  // visibility filter is needed: these are the viewer's own rows, so the
+  // apps are by construction ones they can collaborate on.
+  router.get('/api/me/proposals', async (req, res) => {
+    try {
+      const { rows: sessions } = await pool.query(
+        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status,
+                cs.created_at, cs.promoted_at,
+                a.id AS app_id, a.slug AS app_slug, a.name AS app_name,
+                (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count,
+                (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'no') AS no_count
+         FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+         WHERE cs.user_id = $1 AND cs.status IN ('promoted', 'merging')
+           AND cs.is_headless = FALSE
+         ORDER BY cs.promoted_at DESC NULLS LAST, cs.created_at DESC`,
+        [req.user.id]
+      );
+
+      const { rows: governance } = await pool.query(
+        `SELECT i.id, i.title, i.kind, i.created_at,
+                a.id AS app_id, a.slug AS app_slug, a.name AS app_name,
+                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'up') AS up_count,
+                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'down') AS down_count
+         FROM issues i JOIN apps a ON a.id = i.app_id
+         WHERE i.created_by = $1 AND i.kind = 'secret_change' AND i.status = 'open'
+         ORDER BY i.created_at DESC`,
+        [req.user.id]
+      );
+
+      // Per-app active-user majority (the denominator for the tally
+      // pill). One getActiveUserStats call per distinct app, cached in
+      // a map — most users have proposals on a handful of apps at most.
+      const appIds = [...new Set([...sessions, ...governance].map((r) => r.app_id))];
+      const statsByApp = {};
+      for (const appId of appIds) {
+        statsByApp[appId] = await getActiveUserStats(pool, appId);
+      }
+
+      res.json({
+        proposals: sessions.map((s) => ({
+          ...s,
+          majority: statsByApp[s.app_id]?.majority || 1,
+          activeUsers: statsByApp[s.app_id]?.active || 1,
+        })),
+        governance: governance.map((g) => ({
+          ...g,
+          majority: statsByApp[g.app_id]?.majority || 1,
+          activeUsers: statsByApp[g.app_id]?.active || 1,
+        })),
+      });
+    } catch (err) {
+      log.error('votes', 'Failed to list my proposals', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // List promoted sessions (for the vote panel in group chat)
   router.get('/api/apps/:slug/promoted', async (req, res) => {
     try {
@@ -443,6 +506,16 @@ function voteRoutes(config) {
            cs.revert_of_session_id,
            orig.pr_number as original_pr_number,
            orig.pr_title  as original_pr_title,
+           -- #194: per-proposal thread message count for the chat badge,
+           -- plus the latest thread-message timestamp for the forum
+           -- feed's activity sort. The partial thread index makes these
+           -- index-only probes per row. promoted_at is the proposal's own
+           -- activity anchor (falls back to created_at client-side).
+           cs.promoted_at,
+           (SELECT COUNT(*)::int FROM chat_messages cm
+             WHERE cm.app_id = cs.app_id AND cm.thread_type = 'session' AND cm.thread_ref = cs.id) as chat_count,
+           (SELECT MAX(cm.created_at) FROM chat_messages cm
+             WHERE cm.app_id = cs.app_id AND cm.thread_type = 'session' AND cm.thread_ref = cs.id) as last_message_at,
            -- #195: before/after capture artifact ids, aggregated to one
            -- jsonb per row ('before_png' -> id, 'after_webm' -> id, ...)
            -- so the vote card can render media tiles without N extra

@@ -6,7 +6,17 @@
 const App = {
   user: null,
   currentApp: null,
+  // Top-level mode: 'app' (the running iframe) or 'dev' (#194). The
+  // legacy tab names 'group-chat' / 'individual-chat' are normalized to
+  // dev sub-tabs by _normalizeTab so old links, notification hrefs, and
+  // call sites keep working.
   currentTab: 'app',
+  // Active Dev view: 'forum' (the card list, default), 'chat'
+  // (full-screen general chat), 'topic' (an issue/proposal discussion
+  // open full-screen), 'sessions' (a dev session open full-screen), or
+  // 'settings' (the app-settings page). Only meaningful while
+  // currentTab === 'dev'.
+  currentSubTab: 'forum',
   // Tracks whether the dedicated #leaderboard-screen is visible.
   // Sibling state to `currentApp`: home / app / leaderboard are the
   // three top-level screens, and they're mutually exclusive. Flipped
@@ -590,8 +600,8 @@ const App = {
       // Re-fetch tab-specific state. We don't blow away the DOM —
       // these helpers update in place — so scroll positions, drafts,
       // etc. survive the resync.
-      if (App.currentTab === 'group-chat') {
-        AppView.loadVotePanel(AppView.appData.slug);
+      if (App.currentTab === 'dev') {
+        AppView.refreshDevData('all');
       } else if (App.currentTab === 'app') {
         AppView.refreshToken?.();
       }
@@ -646,18 +656,22 @@ const App = {
       }
       return;
     }
-    // Refresh session list if we're on the dev chat tab for this app
-    if (App.currentApp === data.appSlug && App.currentTab === 'individual-chat') {
+    // Refresh session list if we're on the Sessions sub-tab for this app
+    if (App.currentApp === data.appSlug && App.currentTab === 'dev'
+        && App.currentSubTab === 'sessions') {
       if (AppView.appData) {
         DevChat.loadSessions(AppView.appData.slug).then(() => {
           if (!DevChat.currentSession) DevChat.renderSessionList();
         });
       }
     }
-    // Refresh vote panel if we're on group chat
-    if (App.currentApp === data.appSlug && App.currentTab === 'group-chat') {
-      AppView.loadVotePanel(data.appSlug);
+    // Refresh proposals / inline chat vote state on the other dev sub-tabs
+    if (App.currentApp === data.appSlug && App.currentTab === 'dev'
+        && App.currentSubTab !== 'sessions') {
+      AppView.refreshDevData('session');
     }
+    // Home screen's "Your proposals" strip tracks session status changes.
+    App.refreshHomeProposals();
   },
 
   handleSessionEvent(data) {
@@ -778,9 +792,9 @@ const App = {
         Home.updateAppCardLock(data.appSlug, data.locked);
       }
       if (App.currentApp === data.appSlug
-          && App.currentTab === 'group-chat'
-          && typeof AppView !== 'undefined' && AppView.loadVotePanel) {
-        AppView.loadVotePanel(data.appSlug);
+          && App.currentTab === 'dev'
+          && typeof AppView !== 'undefined' && AppView.refreshDevData) {
+        AppView.refreshDevData('lock');
       }
     } else if (data.action === 'visibility_changed') {
       // Visibility flipped (PATCH /api/apps/:slug/visibility). Reload
@@ -799,11 +813,21 @@ const App = {
     }
   },
 
-  // Refresh the vote panel when another user creates, votes on, or closes
-  // an issue / rename proposal so everyone sees it without reloading.
+  // Refresh the relevant dev sub-tab when another user creates, votes on,
+  // or closes an issue / governance proposal so everyone sees it live.
   handleIssueUpdate(data) {
-    if (App.currentApp === data.appSlug && App.currentTab === 'group-chat') {
-      AppView.loadVotePanel(data.appSlug);
+    if (App.currentApp === data.appSlug && App.currentTab === 'dev') {
+      AppView.refreshDevData('issue');
+    }
+  },
+
+  // Re-render the home screen's "Your proposals" strip (and the rest of
+  // the grid — Home.load is cheap and already the live-update pattern)
+  // when a vote/session event lands while the home screen is visible.
+  refreshHomeProposals() {
+    const homeScreen = document.getElementById('home-screen');
+    if (typeof Home !== 'undefined' && homeScreen && !homeScreen.classList.contains('hidden')) {
+      Home.load();
     }
   },
 
@@ -825,10 +849,13 @@ const App = {
     if (data.mergeFailed && data.selfHosted) {
       App.PlatformUpdating.cancel();
     }
-    // Refresh vote panel if we're on group chat for this app
-    if (App.currentApp === data.appSlug && App.currentTab === 'group-chat') {
-      AppView.loadVotePanel(data.appSlug);
+    // Refresh the proposals tab / inline chat vote state if we're in
+    // this app's Dev view.
+    if (App.currentApp === data.appSlug && App.currentTab === 'dev') {
+      AppView.refreshDevData('vote');
     }
+    // Home screen's "Your proposals" strip tracks tallies live.
+    App.refreshHomeProposals();
     // If merged, refresh the app view
     if (data.merged && App.currentApp === data.appSlug) {
       if (App.currentTab === 'app') {
@@ -1097,8 +1124,8 @@ const App = {
           // other clients; this direct refresh covers the submitting tab
           // even if its events socket is momentarily down.
           if (target === 'app' && body.appSlug && App.currentApp === body.appSlug
-              && typeof AppView !== 'undefined') {
-            AppView.loadVotePanel(body.appSlug);
+              && typeof AppView !== 'undefined' && App.currentTab === 'dev') {
+            AppView.refreshDevData('issue');
           }
           setTimeout(() => document.getElementById('feedback-cancel').click(), 1500);
           return;
@@ -1227,13 +1254,61 @@ const App = {
       }
       if (parts[0] === 'app' && parts[1]) {
         const slug = parts[1];
-        const tab = parts[2] || 'app';
-        const sessionId = parts[3] ? parseInt(parts[3]) : null;
+        // Card-list hashes (#194 revision): app/{slug}/app,
+        // app/{slug}/dev (the card list), app/{slug}/dev/chat (general
+        // chat), app/{slug}/dev/issues/{n} / dev/proposals/{id} /
+        // dev/governance/{id} (full-screen topic views),
+        // app/{slug}/dev/sessions/{id} (session view), dev/settings.
+        // Legacy hashes — group-chat, individual-chat[/{sessionId}], and
+        // the old dev/chat|issues|proposals sub-tab forms — all map onto
+        // the forum so old links and notification hrefs keep working.
+        let tab = parts[2] || 'app';
+        let subTab = null;
+        let ref = null;
+        if (tab === 'dev') {
+          const sec = parts[3] || null;
+          if (sec === 'sessions' && parts[4]) {
+            subTab = 'sessions';
+            ref = parseInt(parts[4]) || null;
+          } else if (sec === 'chat') {
+            // Full-screen general chat (also where legacy group-chat
+            // links land — the old Chat sub-tab's original meaning).
+            subTab = 'chat';
+          } else if (sec === 'settings') {
+            subTab = 'settings';
+          } else if (sec === 'issues' && parts[4]) {
+            subTab = 'topic';
+            ref = { kind: 'issue', id: parseInt(parts[4]) || null };
+          } else if (sec === 'proposals' && parts[4]) {
+            subTab = 'topic';
+            ref = { kind: 'proposal', id: parseInt(parts[4]) || null };
+          } else if (sec === 'governance' && parts[4]) {
+            subTab = 'topic';
+            ref = { kind: 'gov', id: parseInt(parts[4]) || null };
+          } else {
+            // dev, dev/issues, dev/proposals, dev/sessions (no id) —
+            // all land on the plain card list.
+            subTab = 'forum';
+          }
+        } else if (tab === 'group-chat') {
+          tab = 'dev'; subTab = 'chat';
+        } else if (tab === 'individual-chat') {
+          tab = 'dev';
+          subTab = parts[3] ? 'sessions' : 'forum';
+          ref = parts[3] ? parseInt(parts[3]) : null;
+        } else {
+          tab = 'app';
+        }
         if (App._inLeaderboard) App._exitLeaderboard();
         if (App.currentApp !== slug) {
-          App.navigateToApp(slug, tab, sessionId);
-        } else if (App.currentTab !== tab) {
-          App.switchTab(tab, sessionId);
+          App.navigateToApp(slug, tab, ref, subTab);
+        } else if (App.currentTab !== tab
+            || (tab === 'dev' && App.currentSubTab !== subTab)
+            // Same tab + sub-tab but a (possibly different) deep-link
+            // target — re-dispatch so the accordion / session moves.
+            // switchTab is idempotent, so a same-target re-render is fine.
+            || (tab === 'dev' && ref != null)) {
+          App.switchTab(tab, ref, subTab);
         }
       } else {
         if (App._inLeaderboard) App._exitLeaderboard();
@@ -1295,9 +1370,24 @@ const App = {
 
     let newHash;
     if (App.currentApp) {
-      newHash = `#app/${App.currentApp}/${App.currentTab}`;
-      if (App.currentTab === 'individual-chat' && DevChat.currentSession) {
-        newHash += `/${DevChat.currentSession.id}`;
+      if (App.currentTab === 'dev') {
+        if (App.currentSubTab === 'sessions' && DevChat.currentSession) {
+          newHash = `#app/${App.currentApp}/dev/sessions/${DevChat.currentSession.id}`;
+        } else if (App.currentSubTab === 'chat') {
+          newHash = `#app/${App.currentApp}/dev/chat`;
+        } else if (App.currentSubTab === 'settings') {
+          newHash = `#app/${App.currentApp}/dev/settings`;
+        } else if (App.currentSubTab === 'topic'
+            && typeof AppView !== 'undefined' && AppView._devTopic) {
+          const t = AppView._devTopic;
+          const seg = t.kind === 'issue' ? 'issues'
+            : t.kind === 'proposal' ? 'proposals' : 'governance';
+          newHash = `#app/${App.currentApp}/dev/${seg}/${t.id}`;
+        } else {
+          newHash = `#app/${App.currentApp}/dev`;
+        }
+      } else {
+        newHash = `#app/${App.currentApp}/app`;
       }
     } else {
       // Home: drop the fragment entirely — but keep the query string. In
@@ -1311,8 +1401,21 @@ const App = {
     const targetFull = newHash.startsWith('#') ? newHash : '';
     if (currentFull === targetFull) return;
 
-    const screenIdOf = (h) =>
-      String(h || '').replace(/^#/, '').split('/').slice(0, 3).join('/');
+    // Screen ids: every full-screen sub-view (chat, settings, topics,
+    // sessions) is its own screen — list ↔ sub-view pushes a history
+    // entry, so device/browser back mirrors the in-page back buttons —
+    // but which session/topic isn't part of the id (moving between two
+    // topics of the same kind replaces in place).
+    const SUB_SCREENS = new Set(['sessions', 'chat', 'settings', 'issues', 'proposals', 'governance']);
+    const screenIdOf = (h) => {
+      const segs = String(h || '').replace(/^#/, '').split('/');
+      if (segs[0] === 'app' && segs[2] === 'dev') {
+        return SUB_SCREENS.has(segs[3])
+          ? segs.slice(0, 4).join('/')
+          : segs.slice(0, 3).join('/');
+      }
+      return segs.slice(0, 3).join('/');
+    };
     const sameScreen = screenIdOf(currentFull) === screenIdOf(targetFull);
 
     if (sameScreen) {
@@ -1524,7 +1627,7 @@ const App = {
     }
   },
 
-  async navigateToApp(slug, tab, sessionId) {
+  async navigateToApp(slug, tab, ref, subTab) {
     // Clean up whatever app we had mounted. This is a no-op on the first
     // navigation into any app, but without it a direct app-A → app-B
     // jump (e.g. via hash) would carry the previous app's dev-chat
@@ -1597,11 +1700,11 @@ const App = {
       membersBtn.classList.toggle('hidden', !showMembers);
     }
     // The App tab iframes appData.url, which doesn't resolve for the self-
-    // hosted platform row (no per-slug subdomain). Land on Group Chat
+    // hosted platform row (no per-slug subdomain). Land on the Dev forum
     // instead — that's where votes/discussion happen and what users
     // actually want when they open the self-app.
-    const defaultTab = AppView.appData?.self_hosted ? 'group-chat' : 'app';
-    App.switchTab(tab || defaultTab, sessionId);
+    const defaultTab = AppView.appData?.self_hosted ? 'dev' : 'app';
+    App.switchTab(tab || defaultTab, ref, subTab);
   },
 
   navigateHome() {
@@ -1679,32 +1782,85 @@ const App = {
     }
   },
 
-  async switchTab(tab, sessionId) {
+  // Normalize every tab vocabulary onto the forum-era model (#194
+  // revision). Returns { tab, subTab, ref } where tab ∈ 'app'|'dev' and
+  // subTab ∈ 'forum'|'sessions'. Legacy names (group-chat,
+  // individual-chat, and the old dev sub-tabs chat/issues/proposals)
+  // keep working at every entry point — old sub-tab refs are converted
+  // into typed forum deep links ({ kind: 'issue'|'proposal', id }).
+  _normalizeTab(tab, ref, subTab) {
+    if (tab === 'group-chat') { tab = 'dev'; subTab = 'chat'; }
+    else if (tab === 'individual-chat') { tab = 'dev'; subTab = subTab || 'sessions'; }
+    if (tab !== 'dev') return { tab: 'app', subTab: null, ref: null };
+
+    if (subTab === 'sessions') {
+      const id = (ref && typeof ref === 'object') ? ref.id : parseInt(ref, 10);
+      // No session id → the card list (there is no session-list screen).
+      return Number.isInteger(id) && id > 0
+        ? { tab: 'dev', subTab: 'sessions', ref: id }
+        : { tab: 'dev', subTab: 'forum', ref: null };
+    }
+
+    // Full-screen sub-views with no deep-link payload.
+    if (subTab === 'chat') return { tab: 'dev', subTab: 'chat', ref: null };
+    if (subTab === 'settings') return { tab: 'dev', subTab: 'settings', ref: null };
+
+    // A typed topic ref — from the 'topic' sub-view itself or the
+    // legacy issues/proposals sub-tab vocabulary — opens that topic
+    // full-screen; everything else lands on the card list.
+    let fref = null;
+    if (ref && typeof ref === 'object' && ref.kind && ref.id) {
+      fref = { kind: ref.kind, id: ref.id };
+    } else if (ref != null && subTab === 'issues') {
+      const id = parseInt(ref, 10);
+      if (Number.isInteger(id) && id > 0) fref = { kind: 'issue', id };
+    } else if (ref != null && subTab === 'proposals') {
+      const id = parseInt(ref, 10);
+      if (Number.isInteger(id) && id > 0) fref = { kind: 'proposal', id };
+    }
+    return fref
+      ? { tab: 'dev', subTab: 'topic', ref: fref }
+      : { tab: 'dev', subTab: 'forum', ref: null };
+  },
+
+  // `ref` is the view's deep-link target: a dev-session id for the
+  // session view, or { kind: 'issue'|'proposal', id } for a forum card
+  // to expand. Ignored on the App tab.
+  async switchTab(tab, ref, subTab) {
+    const norm = App._normalizeTab(tab, ref, subTab);
+    tab = norm.tab;
+    subTab = norm.subTab;
+    ref = norm.ref;
     // The App tab is hidden for self-hosted apps (its iframe target doesn't
     // resolve — see app-view.js renderAppTab). Coerce any incoming request
-    // for it (URL hash, browser back/forward, programmatic) to Group Chat
-    // so we never render an unreachable iframe.
+    // for it (URL hash, browser back/forward, programmatic) to the Dev
+    // forum so we never render an unreachable iframe.
     if (tab === 'app' && AppView.appData?.self_hosted) {
-      tab = 'group-chat';
+      tab = 'dev';
+      subTab = 'forum';
+      ref = null;
     }
-    // Collaboration tabs are gated for non-collaborators of an
-    // invite-only app (the buttons are hidden by AppView.open; this
-    // catches hash/back-forward/programmatic requests). The server
-    // enforces the same gate on every API these tabs would hit.
-    if ((tab === 'group-chat' || tab === 'individual-chat')
-        && AppView.appData && AppView.appData.can_collaborate === false) {
+    // The Dev mode is gated for non-collaborators of an invite-only app
+    // (the button is hidden by AppView.open; this catches hash/back-
+    // forward/programmatic requests). The server enforces the same gate
+    // on every API behind it.
+    if (tab === 'dev' && AppView.appData && AppView.appData.can_collaborate === false) {
       tab = 'app';
+      subTab = null;
+      ref = null;
     }
     App.currentTab = tab;
+    App.currentSubTab = tab === 'dev' ? (subTab || 'forum') : null;
     document.querySelectorAll('.app-tab').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.tab === tab);
     });
 
     // Tear down the cross-app active-sessions poll when leaving the
-    // dev-chat tab. renderDevChatTab will spin it back up on re-entry.
-    // Without this the poll keeps firing on the group-chat / app tabs
-    // even though there's no UI to update.
-    if (tab !== 'individual-chat' && typeof DevChat !== 'undefined' && DevChat.stopActiveSessionsPoll) {
+    // Sessions sub-tab. renderDevChatTab will spin it back up on
+    // re-entry. Without this the poll keeps firing on the other
+    // surfaces even though there's no UI to update.
+    const onSessions = tab === 'dev' && App.currentSubTab === 'sessions';
+    if (!onSessions && typeof DevChat !== 'undefined' && DevChat.stopActiveSessionsPoll) {
       DevChat.stopActiveSessionsPoll();
       // The title status indicator (#108) is scoped to "user is on the
       // dev-chat tab" — leaving the tab clears it. Re-entering while a
@@ -1717,16 +1873,10 @@ const App = {
       }
     }
 
-    switch (tab) {
-      case 'app':
-        AppView.renderAppTab();
-        break;
-      case 'group-chat':
-        AppView.renderGroupChatTab();
-        break;
-      case 'individual-chat':
-        await AppView.renderDevChatTab(sessionId);
-        break;
+    if (tab === 'app') {
+      AppView.renderAppTab();
+    } else {
+      await AppView.renderDevView(App.currentSubTab, ref);
     }
 
     // Dev console icon: only meaningful when an iframe is on screen. The
@@ -1749,17 +1899,16 @@ const App = {
   // app/tab dispatch, plus a force-rerender branch for same app+tab.
   openAppTab(slug, tab, opts) {
     if (!slug) return;
-    const sessionId = opts && opts.sessionId != null ? opts.sessionId : null;
+    const ref = opts && opts.sessionId != null ? opts.sessionId
+      : (opts && opts.ref != null ? opts.ref : null);
+    const subTab = (opts && opts.subTab) || null;
     if (App.currentApp !== slug) {
-      App.navigateToApp(slug, tab, sessionId);
-    } else if (App.currentTab !== tab) {
-      App.switchTab(tab, sessionId);
+      App.navigateToApp(slug, tab, ref, subTab);
     } else {
-      // Same app AND same tab: re-invoke the render so the content
-      // refreshes (reloads group-chat messages, etc.). switchTab is
-      // idempotent — it re-renders and calls updateHash (a no-op when
-      // the hash already matches).
-      App.switchTab(tab, sessionId);
+      // Same app: switchTab normalizes legacy names, re-renders, and
+      // syncs the hash — idempotent when nothing changed, a forced
+      // refresh when the target equals the current view.
+      App.switchTab(tab, ref, subTab);
     }
   },
 };

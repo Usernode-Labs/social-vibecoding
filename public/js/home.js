@@ -18,9 +18,19 @@ const Home = {
     const canCreate = Home.canCreate();
 
     try {
-      const res = await fetch('/api/apps');
+      // #194: the viewer's own open proposals ride along with the app
+      // grid. Non-fatal — a failure just hides the section.
+      const [res, proposalsRes] = await Promise.all([
+        fetch('/api/apps'),
+        fetch('/api/me/proposals').catch(() => null),
+      ]);
       if (!res.ok) throw new Error('Failed to load apps');
       const { apps } = await res.json();
+      let myProposals = { proposals: [], governance: [] };
+      try {
+        if (proposalsRes && proposalsRes.ok) myProposals = await proposalsRes.json();
+      } catch { /* section stays hidden */ }
+      Home._myProposals = myProposals;
 
       if (apps.length === 0) {
         listEl.innerHTML = '';
@@ -55,7 +65,7 @@ const Home = {
       // affordance and the drag wiring below when there's only one.
       const canDragStars = starred.length >= 2;
 
-      let html = '';
+      let html = Home.renderMyProposalsSection();
       if (hasStarred) {
         html += '<div class="home-section-header col-span-full">Starred</div>';
         // Starred apps only ever render in this section, so tag the
@@ -222,6 +232,60 @@ const Home = {
       default:
         alert(`Check finished: ${data.status}`);
     }
+  },
+
+  // #194: "Your proposals" — one compact row per proposal the viewer
+  // currently has open for voting, across all apps. Hidden when empty.
+  // Rendered above the Starred / All Apps sections inside the #app-list
+  // grid (col-span-full rows, same section-header pattern). Each row
+  // deep-links to the proposal's detail in that app's Proposals tab;
+  // refreshed live via the vote_update / session_update WS events
+  // (App.refreshHomeProposals → Home.load).
+  _myProposals: { proposals: [], governance: [] },
+
+  renderMyProposalsSection() {
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
+    const data = Home._myProposals || {};
+    const prs = Array.isArray(data.proposals) ? data.proposals : [];
+    const govs = Array.isArray(data.governance) ? data.governance : [];
+    if (!prs.length && !govs.length) return '';
+
+    const pill = (yes, majority, state) => {
+      const cls = state === 'merging'
+        ? 'bg-amber-500/10 text-amber-500'
+        : (yes >= majority ? 'bg-emerald-500/10 text-emerald-500' : 'bg-violet-500/10 text-violet-400');
+      return `<span class="inline-flex items-center text-[0.7rem] font-mono font-medium px-1.5 py-0.5 rounded ${cls}">${yes} / ${majority}</span>`;
+    };
+
+    let rows = '';
+    for (const p of prs) {
+      const title = p.pr_title || `PR #${p.pr_number || p.id}`;
+      const status = p.status === 'merging'
+        ? '<span class="text-[0.65rem] font-medium text-amber-500 uppercase">Merging</span>'
+        : '<span class="text-[0.65rem] font-medium text-violet-400 uppercase">In vote</span>';
+      rows += `
+        <a href="#app/${esc(p.app_slug)}/dev/proposals/${p.id}"
+           class="col-span-full flex items-center gap-2 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-violet-500/50 transition-colors">
+          <span class="text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0 max-w-[30%] truncate">${esc(p.app_name)}</span>
+          <span class="text-sm text-zinc-800 dark:text-zinc-200 flex-1 min-w-0 truncate">${esc(title)}</span>
+          ${pill(parseInt(p.yes_count) || 0, p.majority || 1, p.status)}
+          ${status}
+        </a>`;
+    }
+    for (const g of govs) {
+      rows += `
+        <a href="#app/${esc(g.app_slug)}/dev/proposals"
+           class="col-span-full flex items-center gap-2 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-violet-500/50 transition-colors">
+          <span class="text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0 max-w-[30%] truncate">${esc(g.app_name)}</span>
+          <span class="text-sm text-zinc-800 dark:text-zinc-200 flex-1 min-w-0 truncate">${esc(g.title)}</span>
+          ${pill(parseInt(g.up_count) || 0, g.majority || 1, 'open')}
+          <span class="text-[0.65rem] font-medium text-violet-400 uppercase">In vote</span>
+        </a>`;
+    }
+
+    return '<div class="home-section-header col-span-full">Your proposals</div>' + rows;
   },
 
   renderAppCard(app) {
