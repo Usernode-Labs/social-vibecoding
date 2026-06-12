@@ -5,6 +5,7 @@ const dbManager = require('./db-manager');
 const github = require('./github');
 const appManifest = require('./app-manifest');
 const appSecrets = require('./app-secrets');
+const appLlmEnv = require('./app-llm-env');
 const { getPool } = require('../db/pool');
 
 // Custom error thrown by both staging + prod build paths when the cloned
@@ -391,6 +392,10 @@ async function rebuildProductionInner(config, app) {
       );
     }
     const dbUrl = dbManager.connectionUrl(dbManager.appDbName(app.slug), appDbPassword);
+    // Production containers get the LLM-proxy env pair (URL + per-app
+    // token); the staging path above deliberately does not — staging
+    // containers must not be able to spend LLM grants (issue #34).
+    const llmEnv = await appLlmEnv.productionLlmEnv(prodPool, app.id);
     const containerId = await docker.runContainer(containerName, {
       image: imageName,
       env: {
@@ -398,6 +403,7 @@ async function rebuildProductionInner(config, app) {
         JWT_SECRET: config.jwtSecret,
         PORT: '3000',
         USERNODE_ENV: 'production',
+        ...llmEnv,
         ...merge.env,
       },
       port: 3000,

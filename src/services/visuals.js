@@ -20,6 +20,7 @@
 
 const crypto = require('crypto');
 const path = require('path');
+const jwt = require('jsonwebtoken');
 const log = require('./logger');
 const docker = require('./docker');
 const github = require('./github');
@@ -29,6 +30,14 @@ const sessionBus = require('./session-bus');
 const { getPool } = require('../db/pool');
 
 const CAPTURE_IMAGE = 'usernode-capture:latest';
+
+// Dedicated capture identity (seeded by src/db/migrate.js). A non-admin
+// service account so the public artifacts (/visuals/:id is unauthenticated;
+// PR bodies embed them on GitHub) never show anyone's personal data or
+// admin-only UI. The capture run is capped at RUN_TIMEOUT_MS (240s); 15
+// minutes covers the lazy image build + retry comfortably.
+const CAPTURE_USERNAME = 'usernode-capture';
+const CAPTURE_AUTH_TTL_MS = 15 * 60 * 1000;
 
 // ── "Is this UI-affecting?" heuristic ──────────────────────────────────
 // Deterministic and cheap — no LLM call. A changed file counts as
@@ -64,6 +73,26 @@ const CONTENT_TYPES = {
 // the worst-case stdout is six base64 artifacts (2 png + 2 webm + 2 gif).
 const RUN_TIMEOUT_MS = 240 * 1000;
 const RUN_MAX_BUFFER = 128 * 1024 * 1024;
+
+// Append the capture JWT as a `token` query param. testing_path can
+// legitimately carry its own query string (e.g. `/board?demo-pr=1`, see
+// testing-notes.js), so the join must pick '?' vs '&'. An empty token
+// returns the URL unchanged (unauthenticated capture — current behaviour).
+function withToken(url, token) {
+  if (!token) return url;
+  return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token);
+}
+
+// "Before" (production) target container for an app. Child apps run as
+// `usernode-app-<slug>`; the platform itself runs as the compose service
+// named by config.selfAppContainer (default 'usernode'), NOT as
+// `usernode-app-<selfAppSlug>` — which is why self-app sessions used to
+// get no "before" image at all (#195 follow-up).
+function beforeContainerName(config, slug) {
+  return slug === config.selfAppSlug
+    ? (config.selfAppContainer || 'usernode')
+    : `usernode-app-${slug}`;
+}
 
 function isFrontendFile(file) {
   const f = String(file || '').replace(/\\/g, '/');
@@ -282,36 +311,120 @@ async function captureForSession(config, session, app, commitHash, stagingResult
 
     await ensureCaptureImage();
 
+    // Capture identity: sign every target visit as the seeded non-admin
+    // usernode-capture user so screenshots show the real logged-in app
+    // instead of the login screen. Strictly best-effort — a missing row
+    // (migration not yet run) degrades to unauthenticated capture, never
+    // a failed one. JWT payload mirrors /api/iframe-token (server.js):
+    // child apps verify it in prod and staging, and the self-app staging
+    // clone exchanges it for a local session via middleware/auth.js.
+    let captureUser = null;
+    let captureToken = '';
+    try {
+      const { rows } = await pool.query(
+        'SELECT id, username, usernode_pubkey FROM users WHERE username = $1',
+        [CAPTURE_USERNAME]
+      );
+      captureUser = rows[0] || null;
+      if (captureUser) {
+        captureToken = jwt.sign(
+          {
+            id: captureUser.id,
+            username: captureUser.username,
+            usernode_pubkey: captureUser.usernode_pubkey || null,
+          },
+          config.jwtSecret,
+          { expiresIn: '15m' }
+        );
+      } else {
+        log.warn('visuals', 'Capture user missing — capturing unauthenticated', {
+          sessionId: session.id, username: CAPTURE_USERNAME,
+        });
+      }
+    } catch (err) {
+      log.warn('visuals', 'Capture user lookup failed — capturing unauthenticated', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+
     // Targets, reached directly over the shared docker network — same
     // access model waitForHealthy uses, bypassing Caddy's forward-auth
     // gate. testing_path was validated by testing-notes.validatePath
     // before it was persisted.
     const capturePath = (session.testing_path || '/');
     const stagingName = `usernode-staging-${app.slug}--${session.id}`;
-    const afterUrl = `http://${stagingName}:3000${capturePath}`;
-    const prodName = `usernode-app-${app.slug}`;
+    const afterUrl = withToken(`http://${stagingName}:3000${capturePath}`, captureToken);
+    const isSelfApp = app.slug === config.selfAppSlug;
+    const prodName = beforeContainerName(config, app.slug);
     let beforeUrl = '';
     let beforeFallbackUrl = '';
+    let beforeCookie = '';
+    let beforeSessionToken = '';
     if ((await docker.getContainerStatus(prodName)) === 'running') {
-      beforeUrl = `http://${prodName}:3000${capturePath}`;
-      // A newly-added page 404s on prod — capture.js retries at / so
-      // "before" shows the app's prior state rather than an error page.
-      if (capturePath !== '/') beforeFallbackUrl = `http://${prodName}:3000/`;
+      if (isSelfApp) {
+        // The production platform never honours the query token by design
+        // (replay protection — middleware/auth.js gates the iframe-JWT
+        // path on USERNODE_ENV === 'staging'). For the self-app, `pool`
+        // IS the platform's own DB, so mint a transient sessions-table
+        // cookie for the capture user instead; deleted after the run,
+        // with the short expiry as the backstop if the process dies.
+        beforeUrl = `http://${prodName}:3000${capturePath}`;
+        // A newly-added page 404s on prod — capture.js retries at / so
+        // "before" shows the app's prior state rather than an error page.
+        if (capturePath !== '/') beforeFallbackUrl = `http://${prodName}:3000/`;
+        if (captureUser) {
+          try {
+            beforeSessionToken = crypto.randomBytes(32).toString('hex');
+            await pool.query(
+              'INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)',
+              [beforeSessionToken, captureUser.id, new Date(Date.now() + CAPTURE_AUTH_TTL_MS)]
+            );
+            beforeCookie = `session=${beforeSessionToken}`;
+          } catch (err) {
+            beforeSessionToken = '';
+            log.warn('visuals', 'Capture session-cookie mint failed — "before" unauthenticated', {
+              sessionId: session.id, err: err.message,
+            });
+          }
+        }
+      } else {
+        // Child-app prod verifies the query token directly (scaffold
+        // middleware, app-conventions.md "Auth — iframe token injection").
+        beforeUrl = withToken(`http://${prodName}:3000${capturePath}`, captureToken);
+        if (capturePath !== '/') {
+          beforeFallbackUrl = withToken(`http://${prodName}:3000/`, captureToken);
+        }
+      }
     }
 
     log.info('visuals', 'Starting capture', {
       sessionId: session.id, slug: app.slug, before: !!beforeUrl, path: capturePath,
+      authenticated: !!captureToken, selfApp: isSelfApp,
     });
-    const { stdout } = await docker.runOneShot(`usernode-capture-${session.id}`, {
-      image: CAPTURE_IMAGE,
-      env: {
-        BEFORE_URL: beforeUrl,
-        AFTER_URL: afterUrl,
-        BEFORE_FALLBACK_URL: beforeFallbackUrl,
-      },
-      timeoutMs: RUN_TIMEOUT_MS,
-      maxBuffer: RUN_MAX_BUFFER,
-    });
+    let stdout;
+    try {
+      ({ stdout } = await docker.runOneShot(`usernode-capture-${session.id}`, {
+        image: CAPTURE_IMAGE,
+        env: {
+          BEFORE_URL: beforeUrl,
+          AFTER_URL: afterUrl,
+          BEFORE_FALLBACK_URL: beforeFallbackUrl,
+          BEFORE_COOKIE: beforeCookie,
+          // Plumbed for symmetry; unused today (the after side always
+          // authenticates via the query token).
+          AFTER_COOKIE: '',
+        },
+        timeoutMs: RUN_TIMEOUT_MS,
+        maxBuffer: RUN_MAX_BUFFER,
+      }));
+    } finally {
+      if (beforeSessionToken) {
+        await pool.query('DELETE FROM sessions WHERE token = $1', [beforeSessionToken])
+          .catch((err) => log.warn('visuals', 'Capture session-cookie cleanup failed', {
+            sessionId: session.id, err: err.message,
+          }));
+      }
+    }
 
     const { shots, failures } = parseShots(stdout);
     for (const f of failures) {
@@ -378,5 +491,7 @@ module.exports = {
   isFrontendFile,
   isUiAffecting,
   parseShots,
+  withToken,
+  beforeContainerName,
   CAPTURE_IMAGE,
 };

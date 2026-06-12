@@ -57,7 +57,14 @@ const RESERVED_KEYS = new Set([
   'PORT',
   'USERNODE_ENV',
   'USERNODE_MISSING_SECRETS',
+  'USERNODE_LLM_PROXY_URL',
+  'USERNODE_LLM_PROXY_TOKEN',
 ]);
+
+// Reserved prefix for the LLM-proxy env-var family (issue #34) — any
+// future USERNODE_LLM_PROXY_* addition stays platform-owned without
+// another set entry.
+const RESERVED_KEY_PREFIXES = ['USERNODE_LLM_PROXY'];
 
 const KEY_RE = /^[A-Z][A-Z0-9_]{0,127}$/;
 
@@ -77,15 +84,48 @@ function readName(parsed) {
   return raw;
 }
 
+// Bound on the consent dialog's purpose line — one short sentence, not
+// a marketing paragraph.
+const MAX_LLM_PURPOSE_LENGTH = 140;
+
+// Normalize the optional top-level `llm` block (issue #34) — consent
+// metadata for the platform's app-LLM proxy:
+//   "llm": {
+//     "purpose": "Summarizes long threads for you",
+//     "suggested_daily_cap_cents": 300
+//   }
+// `purpose` is shown in the platform's consent dialog; the suggested
+// cap pre-fills the dialog's editable cap field (instead of the $1.00
+// default). Both presentation-only — the dialog's server-side grant
+// validation is the authority on what cap actually gets stored, and
+// the user can always edit the pre-fill. Lenient like everything else
+// here: garbage values (non-string purpose, non-positive or
+// non-integer cap) are dropped, an absent/empty block resolves to
+// null and the dialog falls back to generic copy. Never throws.
+function readLlm(parsed) {
+  const raw = parsed?.llm;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const purpose = typeof raw.purpose === 'string' && raw.purpose.trim()
+    ? raw.purpose.trim().slice(0, MAX_LLM_PURPOSE_LENGTH)
+    : null;
+  const cap = raw.suggested_daily_cap_cents;
+  const suggestedCap = Number.isInteger(cap) && cap > 0 ? cap : null;
+  if (purpose == null && suggestedCap == null) return null;
+  const out = {};
+  if (purpose != null) out.purpose = purpose;
+  if (suggestedCap != null) out.suggested_daily_cap_cents = suggestedCap;
+  return out;
+}
+
 function read(cloneDir) {
   const filePath = path.join(cloneDir, MANIFEST_FILENAME);
   let raw;
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
-    if (err.code === 'ENOENT') return { name: null, secrets: [] };
+    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null };
     log.warn('app-manifest', 'Read failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [] };
+    return { name: null, secrets: [], llm: null };
   }
 
   let parsed;
@@ -93,7 +133,7 @@ function read(cloneDir) {
     parsed = JSON.parse(raw);
   } catch (err) {
     log.warn('app-manifest', 'Parse failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [] };
+    return { name: null, secrets: [], llm: null };
   }
 
   const secretsIn = Array.isArray(parsed?.secrets) ? parsed.secrets : [];
@@ -107,7 +147,7 @@ function read(cloneDir) {
       log.warn('app-manifest', 'Skipping invalid key', { filePath, key: s.key });
       continue;
     }
-    if (RESERVED_KEYS.has(key)) {
+    if (RESERVED_KEYS.has(key) || RESERVED_KEY_PREFIXES.some((p) => key.startsWith(p))) {
       log.warn('app-manifest', 'Skipping reserved key', { filePath, key });
       continue;
     }
@@ -129,7 +169,7 @@ function read(cloneDir) {
     });
   }
 
-  return { name: readName(parsed), secrets };
+  return { name: readName(parsed), secrets, llm: readLlm(parsed) };
 }
 
 /**
@@ -178,8 +218,10 @@ async function reconcileAppName(pool, app, manifest) {
 module.exports = {
   read,
   readName,
+  readLlm,
   reconcileAppName,
   RESERVED_KEYS,
+  RESERVED_KEY_PREFIXES,
   KEY_RE,
   MANIFEST_FILENAME,
   MAX_APP_NAME_LENGTH,

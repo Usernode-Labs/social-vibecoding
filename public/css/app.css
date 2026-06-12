@@ -376,6 +376,68 @@ html, body {
 .dc-pr-btn-promote:hover { background: #6d28d9; }
 .dc-pr-btn-promote:disabled { background: #3f3f46; cursor: not-allowed; }
 
+/* ── Q/A mode: suggested-answer chips (#32) ─────────────── */
+
+.dc-qa-chips { margin: 8px 0 2px; display: flex; flex-direction: column; gap: 8px; }
+
+.dc-qa-group-label { font-size: 11px; color: var(--text-muted); }
+
+.dc-qa-chip-row { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.dc-qa-chip {
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  background: var(--bg-secondary);
+  color: var(--accent);
+  border: 1px solid var(--border);
+  transition: background 150ms, border-color 150ms;
+  max-width: 100%;
+  text-align: left;
+}
+.dc-qa-chip:hover { background: var(--bg-tertiary); }
+.dc-qa-chip-default { border-color: var(--accent); }
+.dc-qa-chip-selected { background: #7c3aed; border-color: #7c3aed; color: #fff; }
+.dc-qa-chip-selected:hover { background: #6d28d9; }
+
+.dc-qa-chip-hint {
+  font-size: 9px;
+  margin-left: 6px;
+  opacity: 0.6;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.dc-qa-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 2px; }
+
+.dc-qa-send {
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  background: #7c3aed;
+  color: #fff;
+  transition: background 150ms;
+}
+.dc-qa-send:hover { background: #6d28d9; }
+
+.dc-qa-defaults {
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  transition: background 150ms;
+}
+.dc-qa-defaults:hover { background: var(--bg-tertiary); }
+
 /* ── Claude Code log (collapsible) ─────────────────────── */
 
 .dc-cc-log {
@@ -666,6 +728,12 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   font-weight: 600;
   color: #10b981;
   white-space: nowrap;
+}
+/* #239: "Resolving conflicts…" badge — extends .gc-merging-badge, amber
+   instead of green so an in-flight auto-conflict-resolution reads as
+   "working on it" rather than "merging". */
+.gc-resolving-badge {
+  color: #f59e0b;
 }
 /* Settled "✓ Merged" badge — same slot as the merging badge, shown after a
    PR lands so the row's voting info stays put. */

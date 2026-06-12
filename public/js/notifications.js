@@ -802,10 +802,10 @@ function previewText(n) {
     case 'session_done':           return `✅ Your dev session finished`;
     case 'auto_solve_done':
       return n.detail === 'failed'
-        ? `⚠️ Auto-solve for issue #${n.headlessIssueNumber || '?'} failed`
+        ? `⚠️ Proposal for issue #${n.headlessIssueNumber || '?'} failed`
         : n.detail === 'question'
-          ? `🤖 Auto-solve for issue #${n.headlessIssueNumber || '?'} has questions for you`
-          : `🤖 Auto-solve for issue #${n.headlessIssueNumber || '?'} is ready`;
+          ? `🤖 Proposal for issue #${n.headlessIssueNumber || '?'} has questions for you`
+          : `🤖 Proposal for issue #${n.headlessIssueNumber || '?'} is ready`;
     default:            return who;
   }
 }
@@ -918,9 +918,9 @@ function renderRow(n) {
     </button>`;
   }
 
-  // #161: headless auto-solve completion. Clicking lands on the app's
+  // #161: headless proposal-run completion. Clicking lands on the app's
   // group chat and reveals the issue row (where "Start session from
-  // auto-solve" lives).
+  // proposal" lives).
   if (n.kind === 'auto_solve_done') {
     const failed = n.detail === 'failed';
     const icon = failed ? '⚠️' : '\u{1F916}';
@@ -940,7 +940,7 @@ function renderRow(n) {
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1 flex-wrap">
         ${dot}
         <span aria-hidden="true">${icon}</span>
-        <span>Auto-solve for</span>
+        <span>Proposal for</span>
         <span class="font-medium text-zinc-700 dark:text-zinc-300">${escapeHtml(issueLabel)}</span>
         <span>in</span>
         <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>

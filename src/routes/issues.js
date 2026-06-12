@@ -504,10 +504,10 @@ function issueRoutes(config) {
       const chatByNumber = new Map(chatRows.map((r) => [r.n, r]));
 
       // #155: latest live headless auto session per issue, so the panel can
-      // render the right button state (Auto-solve / Generating… / the
+      // render the right button state (Generate proposal / Generating… / the
       // outcome-specific "Review … & start session" clone button). 'failed'
-      // rows are excluded — the button recovers to Auto-solve so the run
-      // can be retried.
+      // rows are excluded — the button recovers to Generate proposal so the
+      // run can be retried.
       // staging_url/pr_number ride along (#183) so the panel can render the
       // changes-ready label + Preview button for auto runs that pushed code
       // and built a preview. staging_url is nulled on teardown, so a GC'd
@@ -573,6 +573,35 @@ function issueRoutes(config) {
           lastMessageAt: chatByNumber.get(issue.number)?.last_at || null,
         };
       });
+
+      // #227: the staging mocks have no chat_sessions rows, so the feed's
+      // auto-solve-first ordering would be unreviewable in a preview.
+      // Attach synthetic headless state to two [Mock] rows — 900003
+      // 'generating' (30h old, naturally last by recency, so the re-rank
+      // is unmistakable) and 900005 'ready'/spec — only where no real
+      // headless row already claimed the number, so prod-cloned data is
+      // never overridden. Request-time and read-only; strictly a no-op
+      // in production.
+      if (IS_STAGING) {
+        const mockHeadless = new Map([
+          [900003, { status: 'generating', outcome: null }],
+          [900005, { status: 'ready', outcome: 'spec' }],
+        ]);
+        for (const issue of issues) {
+          const m = mockHeadless.get(issue.number);
+          if (m && !issue.headless) {
+            issue.headless = {
+              sessionId: issue.number,
+              status: m.status,
+              outcome: m.outcome,
+              username: 'staging-tester',
+              mySessionId: null,
+              stagingUrl: null,
+              prNumber: null,
+            };
+          }
+        }
+      }
 
       const used = await countWeeklyAllowanceUsed(pool, req.user.id, weekStartUtc());
       const myRemaining = Math.max(0, WEEKLY_KUDOS_LIMIT - used);
