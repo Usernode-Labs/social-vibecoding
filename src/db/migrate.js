@@ -28,6 +28,7 @@ async function migrate(config) {
   await seedStagingDemoAppCard(pool);
   await seedStagingLeaderboardProfile(pool);
   await seedStagingQaSession(pool, config);
+  await seedStagingSpecViewerSessions(pool, config);
   await seedStagingHeadlessFixtures(pool, config);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
@@ -1290,6 +1291,136 @@ async function seedStagingQaSession(pool, config) {
     appId,
     owner: owner.username,
     sessionId,
+  });
+}
+
+// Spec-viewer fixtures (#233): three dev-chat sessions in differing
+// spec states so a tester can verify that switching sessions never
+// shows another session's spec. A and C each carry a (different) spec —
+// spec_md + a frozen v1 in chat_session_specs + the inline preview card
+// message that opens the viewer — while B has no spec at all, so the
+// viewer's "No spec yet" empty state is reachable. chat_sessions /
+// chat_session_messages / chat_session_specs are staging:private
+// (schema-only in staging), hence the seed. Owner is the user the
+// tester logs in as (first admin), same selection as the other session
+// fixtures. Idempotent via the branch-name existence check; spec
+// content conforms to the two-half convention (#196) so the viewer's
+// User-facing / Technical tabs render too.
+async function seedStagingSpecViewerSessions(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging spec-viewer fixtures skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username, is_admin
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging spec-viewer fixtures skipped: no users');
+    return;
+  }
+  const owner = userRows[0];
+
+  const specA = [
+    '# Staging demo spec A: welcome banner',
+    '',
+    'Fixture spec for session A — if you see this in session B or C, that is bug #233.',
+    '',
+    '## User-facing changes',
+    '',
+    '- A "Welcome back" banner appears at the top of the home screen.',
+    '- It can be dismissed and stays dismissed for the rest of the day.',
+    '',
+    '## Technical implementation',
+    '',
+    '- Render the banner in the home view; persist dismissal in localStorage.',
+  ].join('\n');
+
+  const specC = [
+    '# Staging demo spec C: compact session rows',
+    '',
+    'Fixture spec for session C — if you see this in session A or B, that is bug #233.',
+    '',
+    '## User-facing changes',
+    '',
+    '- Session rows in the dev tab get a tighter, single-line layout.',
+    '- Long titles truncate with an ellipsis instead of wrapping.',
+    '',
+    '## Technical implementation',
+    '',
+    '- CSS-only change to the session list row component.',
+  ].join('\n');
+
+  const fixtures = [
+    { branch: 'staging-fixture/spec-viewer-a', title: 'Staging demo: spec session A', spec: specA, minutesAgo: 60 },
+    { branch: 'staging-fixture/spec-viewer-b', title: 'Staging demo: spec-less session B', spec: null, minutesAgo: 55 },
+    { branch: 'staging-fixture/spec-viewer-c', title: 'Staging demo: spec session C', spec: specC, minutesAgo: 50 },
+  ];
+
+  let inserted = 0;
+  for (const f of fixtures) {
+    const { rows: existing } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, f.branch]
+    );
+    if (existing.length) continue;
+
+    const { rows: sessionRows } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_title, status, spec_md, created_at)
+       VALUES ($1, $2, $3, $4, 'active', $5, NOW() - ($6::int * INTERVAL '1 minute'))
+       RETURNING id`,
+      [appId, owner.id, f.branch, `[staging fixture] ${f.title}`, f.spec || '', f.minutesAgo]
+    );
+    const sessionId = sessionRows[0].id;
+    inserted++;
+
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, created_at)
+       VALUES ($1, 'user', $2, NOW() - ($3::int * INTERVAL '1 minute'))`,
+      [sessionId, f.spec
+        ? 'Draft a spec for this change please.'
+        : 'Just exploring — no spec here yet.', f.minutesAgo]
+    );
+
+    if (f.spec) {
+      // Mirror the real scout flow: freeze v1 (spec_md stays
+      // byte-identical to the latest version) and persist the inline
+      // preview card the viewer opens from.
+      await pool.query(
+        `INSERT INTO chat_session_specs (session_id, version, content, built_at)
+         VALUES ($1, 1, $2, NOW() - ($3::int * INTERVAL '1 minute'))
+         ON CONFLICT (session_id, version) DO NOTHING`,
+        [sessionId, f.spec, f.minutesAgo - 1]
+      );
+      const lineCount = f.spec.split('\n').length;
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+         VALUES ($1, 'system', $2, $3, NOW() - ($4::int * INTERVAL '1 minute'))`,
+        [sessionId, `Scout drafted a ${lineCount}-line spec from the codebase.`,
+         JSON.stringify({ specPreview: f.spec, specLines: lineCount, specVersion: 1 }),
+         f.minutesAgo - 1]
+      );
+    }
+  }
+
+  log.info('db', 'Staging spec-viewer fixtures seeded', {
+    appId,
+    owner: owner.username,
+    total: fixtures.length,
+    inserted,
   });
 }
 
