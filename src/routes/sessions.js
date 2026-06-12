@@ -5,6 +5,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const llm = require('../services/llm');
 const github = require('../services/github');
+const webFetch = require('../services/web-fetch');
 const prMetadata = require('../services/pr-metadata');
 const testingNotes = require('../services/testing-notes');
 const staging = require('../services/staging');
@@ -1313,25 +1314,26 @@ function sessionRoutes(config) {
         // enforced both by the system prompt AND by the resolution code
         // below — models sometimes ignore prose constraints, so we
         // belt-and-suspenders it server-side.
-        // The issue data tools (list_github_issues / get_github_issue) stay
-        // available even when a worker is busy: they're read-only and cheap,
-        // and reading the tracker while a build runs is a legitimate chat
-        // action. The dispatch tools remain gated by isWorkerBusy as before.
+        // The data tools (list_github_issues / get_github_issue / web_fetch)
+        // stay available even when a worker is busy: they're read-only and
+        // cheap, and reading the tracker or a linked page while a build runs
+        // is a legitimate chat action. The dispatch tools remain gated by
+        // isWorkerBusy as before.
         const tools = isWorkerBusy
-          ? [LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL]
-          : [DISPATCH_TOOL, DISPATCH_SCOUT_TOOL, LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL];
+          ? [LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL, WEB_FETCH_TOOL]
+          : [DISPATCH_TOOL, DISPATCH_SCOUT_TOOL, LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL, WEB_FETCH_TOOL];
 
         setPhase('mayor1');
         let mayor1;
-        // The conversation we feed the Mayor. list_github_issues and
-        // get_github_issue are read-only DATA tools: when the Mayor calls
-        // one, we resolve it in-process, append the result as a tool_result,
-        // and re-invoke so the Mayor reasons with it in the SAME turn. This
-        // loop drains issue-calls out BEFORE the terminal-tool (dispatch/spec)
-        // selection below, so in the common case mayor1.rawContent carries no
-        // dangling issue-data tool_use into phase-2.
+        // The conversation we feed the Mayor. list_github_issues,
+        // get_github_issue, and web_fetch are read-only DATA tools: when the
+        // Mayor calls one, we resolve it in-process, append the result as a
+        // tool_result, and re-invoke so the Mayor reasons with it in the SAME
+        // turn. This loop drains data-calls out BEFORE the terminal-tool
+        // (dispatch/spec) selection below, so in the common case
+        // mayor1.rawContent carries no dangling data tool_use into phase-2.
         let mayorConvo = messages;
-        let issuesIters = 0;
+        let dataIters = 0;
         try {
           for (;;) {
             mayor1 = await llm.streamChat({
@@ -1344,19 +1346,19 @@ function sessionRoutes(config) {
               apiKey: userApiKey,
             });
 
-            const issuesCalls = mayor1.toolUses.filter((t) => ISSUE_DATA_TOOL_NAMES.has(t.name));
+            const dataCalls = mayor1.toolUses.filter((t) => DATA_TOOL_NAMES.has(t.name));
             // Parallel tool use is enabled, so the Mayor may emit
-            // an issue data tool ALONGSIDE a terminal tool in one response.
+            // a data tool ALONGSIDE a terminal tool in one response.
             // If a terminal tool is present we must NOT re-invoke here: the
-            // re-invocation only answers the issues tool_use, leaving the
+            // re-invocation only answers the data tool_use, leaving the
             // terminal tool_use dangling -> Anthropic 400. Break instead and
             // let the phase-2 wrap-up resolve every tool_use (it already
-            // re-fetches any stray list_github_issues).
+            // re-fetches any stray data call).
             const hasTerminalTool = mayor1.toolUses.some((t) =>
               t.name === 'dispatch_claude_code'
               || t.name === 'dispatch_scout');
-            if (!issuesCalls.length || hasTerminalTool || issuesIters >= MAYOR_ISSUES_MAX_ITERS) break;
-            issuesIters += 1;
+            if (!dataCalls.length || hasTerminalTool || dataIters >= MAYOR_DATA_TOOLS_MAX_ITERS) break;
+            dataIters += 1;
 
             // Bill each intermediate data-tool turn — the Anthropic call
             // happened and is invoiced whether or not it produced text.
@@ -1390,9 +1392,9 @@ function sessionRoutes(config) {
             // follow-up text appends to the bubble above the status.
             send('assistant_message_end', {});
 
-            await sendStatus("Reading the repo's GitHub issues...");
-            const issuesResults = await Promise.all(
-              issuesCalls.map((tc) => resolveIssueDataToolResult(tc, repoOwner, repoName))
+            await sendStatus(dataToolStatusLine(dataCalls));
+            const dataResults = await Promise.all(
+              dataCalls.map((tc) => resolveDataToolResult(tc, repoOwner, repoName))
             );
             mayorConvo = [
               ...mayorConvo,
@@ -1401,10 +1403,10 @@ function sessionRoutes(config) {
               { role: 'assistant', content: mayor1.rawContent },
               {
                 role: 'user',
-                content: issuesCalls.map((tc, i) => ({
+                content: dataCalls.map((tc, i) => ({
                   type: 'tool_result',
                   tool_use_id: tc.id,
-                  content: issuesResults[i],
+                  content: dataResults[i],
                 })),
               },
             ];
@@ -1626,14 +1628,14 @@ function sessionRoutes(config) {
         // the `activeWorkers` race check or accidentally re-dispatch).
         //
         // Base on mayorConvo (not the original `messages`) so any
-        // issue-data round-trips resolved above stay in context for
+        // data-tool round-trips resolved above stay in context for
         // the wrap-up. Answer EVERY tool_use in the final assistant turn —
-        // not just the terminal one we ran: if the Mayor combined an
-        // issue-data call with a terminal tool (or hit the issues
+        // not just the terminal one we ran: if the Mayor combined a
+        // data call with a terminal tool (or hit the data-tool
         // loop cap), a leftover tool_use would otherwise dangle and Anthropic
         // would 400 the wrap-up. The terminal tool gets the real result; any
-        // stray issue-data call gets a fresh fetch; anything else gets a
-        // benign skip note.
+        // stray data call gets a fresh fetch (re-fetching is acceptable);
+        // anything else gets a benign skip note.
         const phase2ToolResults = [];
         for (const tu of mayor1.toolUses) {
           if (tu.id === activeToolCall.id) {
@@ -1643,11 +1645,11 @@ function sessionRoutes(config) {
               content: toolResult.toolResultText,
               ...(toolResult.isError ? { is_error: true } : {}),
             });
-          } else if (ISSUE_DATA_TOOL_NAMES.has(tu.name)) {
+          } else if (DATA_TOOL_NAMES.has(tu.name)) {
             phase2ToolResults.push({
               type: 'tool_result',
               tool_use_id: tu.id,
-              content: await resolveIssueDataToolResult(tu, repoOwner, repoName),
+              content: await resolveDataToolResult(tu, repoOwner, repoName),
             });
           } else {
             phase2ToolResults.push({
@@ -2476,12 +2478,14 @@ async function runHeadlessSession({
 
     const headlessAddendum = buildHeadlessAddendum(issueNumber);
     const mayorPrompt = getMayorSystemPrompt(session.app_name, false, '', !!session.app_self_hosted, null) + headlessAddendum;
-    const tools = [DISPATCH_TOOL, DISPATCH_SCOUT_TOOL, LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL];
+    const tools = [DISPATCH_TOOL, DISPATCH_SCOUT_TOOL, LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL, WEB_FETCH_TOOL];
 
-    // --- Phase 1: Mayor turn (same issue-data loop as the chat handler) ---
+    // --- Phase 1: Mayor turn (same data-tool loop as the chat handler) ---
+    // web_fetch is available here too (#30): if the issue links to a web
+    // page, the auto-solve run can read it before dispatching.
     let mayor1;
     let mayorConvo = [{ role: 'user', content: seed }];
-    let issuesIters = 0;
+    let dataIters = 0;
     for (;;) {
       mayor1 = await llm.streamChat({
         messages: mayorConvo,
@@ -2491,25 +2495,25 @@ async function runHeadlessSession({
         apiKey: userApiKey,
       });
 
-      const issuesCalls = mayor1.toolUses.filter((t) => ISSUE_DATA_TOOL_NAMES.has(t.name));
+      const dataCalls = mayor1.toolUses.filter((t) => DATA_TOOL_NAMES.has(t.name));
       const hasTerminalTool = mayor1.toolUses.some((t) =>
         t.name === 'dispatch_claude_code' || t.name === 'dispatch_scout');
-      if (!issuesCalls.length || hasTerminalTool || issuesIters >= MAYOR_ISSUES_MAX_ITERS) break;
-      issuesIters += 1;
+      if (!dataCalls.length || hasTerminalTool || dataIters >= MAYOR_DATA_TOOLS_MAX_ITERS) break;
+      dataIters += 1;
 
       await debitMayorUsage(mayor1.usage);
-      const issuesResults = await Promise.all(
-        issuesCalls.map((tc) => resolveIssueDataToolResult(tc, repoOwner, repoName))
+      const dataResults = await Promise.all(
+        dataCalls.map((tc) => resolveDataToolResult(tc, repoOwner, repoName))
       );
       mayorConvo = [
         ...mayorConvo,
         { role: 'assistant', content: mayor1.rawContent },
         {
           role: 'user',
-          content: issuesCalls.map((tc, i) => ({
+          content: dataCalls.map((tc, i) => ({
             type: 'tool_result',
             tool_use_id: tc.id,
-            content: issuesResults[i],
+            content: dataResults[i],
           })),
         },
       ];
@@ -2588,11 +2592,11 @@ async function runHeadlessSession({
             content: toolResult.toolResultText,
             ...(toolResult.isError ? { is_error: true } : {}),
           });
-        } else if (ISSUE_DATA_TOOL_NAMES.has(tu.name)) {
+        } else if (DATA_TOOL_NAMES.has(tu.name)) {
           phase2ToolResults.push({
             type: 'tool_result',
             tool_use_id: tu.id,
-            content: await resolveIssueDataToolResult(tu, repoOwner, repoName),
+            content: await resolveDataToolResult(tu, repoOwner, repoName),
           });
         } else {
           phase2ToolResults.push({
@@ -3295,14 +3299,45 @@ const GET_GITHUB_ISSUE_TOOL = {
   },
 };
 
-// The Mayor's read-only issue DATA tools — resolved in-process and looped
-// back as tool_results (unlike the terminal dispatch tools).
-const ISSUE_DATA_TOOL_NAMES = new Set(['list_github_issues', 'get_github_issue']);
+// Third data tool (#30): fetch ONE public web page and return its text,
+// so the Mayor can read a URL the user linked (docs, an example site, an
+// API reference) inline in the turn instead of guessing or burning a
+// 30-60s scout container on one page. Same read-only, available-every-
+// turn posture as the issue tools; resolves in-process via
+// services/web-fetch.js, which never throws and enforces SSRF blocking,
+// redirect re-validation, a 10s budget, and size/content caps.
+const WEB_FETCH_TOOL = {
+  name: 'web_fetch',
+  description:
+    'Fetch ONE public web page and return its extracted text as JSON (read-only). '
+    + 'Returns `{ url, finalUrl, status, contentType, title, content, truncated }` on success, or '
+    + '`{ url, content: null, note }` when the page cannot be fetched (private/internal address, timeout, '
+    + 'redirect limit, non-text content, network error). '
+    + 'Call it when the user shares a URL, or when answering depends on the content of an external page — '
+    + 'read the page BEFORE writing scout/build prompts grounded in it, so dispatches reflect the real content. '
+    + 'It fetches public pages only: it cannot log in, click, run scripts, or reach private/internal network '
+    + 'addresses. HTML is returned as plain text (scripts/styles stripped); very large pages are truncated '
+    + 'with `truncated: true` and an explicit marker. Images, PDFs, and other binary content are refused with a note.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      url: {
+        type: 'string',
+        description: 'The absolute http(s) URL of the page to fetch (e.g. https://example.com/docs/api).',
+      },
+    },
+    required: ['url'],
+  },
+};
 
-// Cap on how many consecutive issue-data-tool fetches we'll service
+// The Mayor's read-only DATA tools — resolved in-process and looped
+// back as tool_results (unlike the terminal dispatch tools).
+const DATA_TOOL_NAMES = new Set(['list_github_issues', 'get_github_issue', 'web_fetch']);
+
+// Cap on how many consecutive data-tool fetches we'll service
 // within a single Mayor turn before forcing the model to move on. Bounds
 // the worst case where the model loops on the data tools instead of acting.
-const MAYOR_ISSUES_MAX_ITERS = 3;
+const MAYOR_DATA_TOOLS_MAX_ITERS = 3;
 
 // Resolve a list_github_issues tool call to the JSON string we hand back as
 // tool_result content. Owner/repo come straight from apps.repo_url; when
@@ -3328,12 +3363,37 @@ async function resolveGithubIssueToolResult(repoOwner, repoName, number) {
   return JSON.stringify(await github.fetchPublicIssue(repoOwner, repoName, number));
 }
 
-// Route one issue-data tool_use to its resolver. Callers guard on
-// ISSUE_DATA_TOOL_NAMES so `tu.name` is always one of the two.
-function resolveIssueDataToolResult(tu, repoOwner, repoName) {
+// Resolve a web_fetch tool call (#30). webFetch.fetchUrl never throws —
+// SSRF refusals, timeouts, and network errors all come back as
+// { url, content: null, note } and the Mayor reasons with the note.
+async function resolveWebFetchToolResult(rawUrl) {
+  return JSON.stringify(await webFetch.fetchUrl(rawUrl));
+}
+
+// Route one data tool_use to its resolver. Callers guard on
+// DATA_TOOL_NAMES so `tu.name` is always one of the three.
+function resolveDataToolResult(tu, repoOwner, repoName) {
+  if (tu.name === 'web_fetch') {
+    return resolveWebFetchToolResult(tu.input && tu.input.url);
+  }
   return tu.name === 'get_github_issue'
     ? resolveGithubIssueToolResult(repoOwner, repoName, tu.input && tu.input.number)
     : resolveGithubIssuesToolResult(repoOwner, repoName);
+}
+
+// Status line for a batch of data-tool calls being resolved. web_fetch
+// shows the hostname (not the full URL — the persisted system row stays
+// tidy); issue calls keep the historical wording.
+function dataToolStatusLine(calls) {
+  const wf = calls.find((tc) => tc.name === 'web_fetch');
+  if (wf) {
+    try {
+      return `Fetching ${new URL(String(wf.input && wf.input.url)).hostname}...`;
+    } catch {
+      return 'Fetching a web page...';
+    }
+  }
+  return "Reading the repo's GitHub issues...";
 }
 
 // Build the Mayor's message history from chat_session_messages rows.
