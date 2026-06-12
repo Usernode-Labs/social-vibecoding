@@ -36,25 +36,6 @@ const MERGEABLE_AFTER_PUSH_INITIAL_MS = Number.isFinite(parseInt(process.env.CON
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Existence check only — the resolver never needs the decrypted key
-// (runSyncMain does its own lookup at turn time); it just needs to know
-// whether the owner self-bills so the shared-budget gate can be skipped.
-async function ownerHasByokKey(pool, userId) {
-  if (!userId) return false;
-  try {
-    const { rows } = await pool.query(
-      'SELECT 1 FROM users WHERE id = $1 AND anthropic_key_enc IS NOT NULL',
-      [userId]
-    );
-    return rows.length > 0;
-  } catch (err) {
-    log.warn('conflict', 'BYOK lookup failed (falling back to budget gate)', {
-      userId, err: err.message,
-    });
-    return false;
-  }
-}
-
 function parseRepo(repoUrl) {
   const [, owner, repo] = (repoUrl || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/) || [];
   return owner && repo ? { owner, repo } : null;
@@ -227,26 +208,22 @@ async function resolveAndMaybeRetryInner(config, target) {
       sessionId: session.id, pr: session.pr_number, behind, mergeable0,
     });
 
-    // The worker sync charges the session owner (their BYOK key, or the
-    // platform proxy). BYOK owners bill themselves — runSyncMain picks
-    // their key up — so the shared daily cap doesn't apply to them
-    // (mirrors the gate order in POST /chat and the headless route:
-    // key first, budget only as the fallback). Only proxy-billed owners
-    // are gated, so a runaway conflict loop can't blow the shared
-    // budget; surface the skip in group chat so the owner knows to sync
-    // manually or wait for the cap to reset.
-    const hasByok = await ownerHasByokKey(pool, session.user_id);
-    if (!hasByok) {
-      const budgetCheck = await limits.checkBudget(pool, session.user_id);
-      if (budgetCheck.error) {
-        log.info('conflict', 'Skipped — session owner over daily cap', {
-          sessionId: session.id, ownerId: session.user_id, reason: budgetCheck.error,
-        });
-        await postGroupMessage(pool, session,
-          `Auto-conflict-resolution skipped on PR #${session.pr_number}: the PR owner has hit their daily LLM limit. Resolve manually via "Sync with main" or wait for the cap to reset.`
-        );
-        return { ok: false, reason: 'over_budget' };
-      }
+    // The worker sync charges the session owner, limit-first (#212):
+    // their daily allowance while it has headroom, then their BYOK key
+    // once it's exhausted (runSyncMain resolves the same way at turn
+    // time — mirrors the gate order in POST /chat and the headless
+    // route). Skip — and surface it in group chat — only when the owner
+    // is over the cap AND has no key on file, so a runaway conflict
+    // loop can't blow the shared budget.
+    const billing = await limits.resolveBillingPath(pool, config.jwtSecret, session.user_id);
+    if (billing.error) {
+      log.info('conflict', 'Skipped — session owner over daily cap with no BYOK key', {
+        sessionId: session.id, ownerId: session.user_id, reason: billing.error,
+      });
+      await postGroupMessage(pool, session,
+        `Auto-conflict-resolution skipped on PR #${session.pr_number}: the PR owner has hit their daily LLM limit. Resolve manually via "Sync with main" or wait for the cap to reset.`
+      );
+      return { ok: false, reason: 'over_budget' };
     }
 
     let sync;

@@ -10,6 +10,7 @@
 // calling the same implementation.
 const log = require('./logger');
 const worker = require('./worker');
+const limits = require('./limits');
 const { activeWorkers } = require('./active-workers');
 
 // #8: persist the latest behind-origin/main count for a session and
@@ -67,22 +68,16 @@ async function runSyncMain(config, pool, sessionId, { sessionRow } = {}) {
   if (!m) throw new Error(`Unparseable repo_url: ${session.repo_url}`);
   const [, repoOwner, repoName] = m;
 
-  // Look up the owner's BYOK key (matches the build-turn flow).
   // Sync turns charge to the session owner — they're the one who
-  // benefits from the integration. If decryption fails the worker
-  // falls back to the platform proxy via WORKER_JWT just like build
-  // turns do.
-  let userApiKey = null;
-  try {
-    const { rows: keyRows } = await pool.query(
-      'SELECT anthropic_key_enc FROM users WHERE id = $1',
-      [session.user_id]
-    );
-    if (keyRows[0]?.anthropic_key_enc) {
-      const secrets = require('./secrets');
-      userApiKey = secrets.decrypt(keyRows[0].anthropic_key_enc, config.jwtSecret);
-    }
-  } catch (_) { userApiKey = null; }
+  // benefits from the integration. Limit-first (#212), matching the
+  // build-turn flow: the owner's daily allowance while it has headroom
+  // (worker bills the platform proxy via WORKER_JWT), then their BYOK
+  // key once it's exhausted. Allowance gone and no key → throw; the
+  // route 500s with the budget message and the conflict-resolver gates
+  // with the same resolver before ever calling us.
+  const billing = await limits.resolveBillingPath(pool, config.jwtSecret, session.user_id);
+  if (billing.error) throw new Error(billing.error);
+  const userApiKey = billing.apiKey;
 
   await worker.ensureWorkerImage();
   await worker.ensureWorker(session.id, {

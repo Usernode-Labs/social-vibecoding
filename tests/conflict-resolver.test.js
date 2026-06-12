@@ -78,7 +78,7 @@ function loadResolverWithGithub(mergeableSequence) {
     getOctokit: fakeOctokit,
     getInstallationOctokit: fakeOctokit,
   });
-  stub(ids.limits, { checkBudget: async () => ({ error: null }) });
+  stub(ids.limits, { resolveBillingPath: async () => ({ apiKey: null, byok: false }) });
   stub(ids.syncMain, { runSyncMain: async () => ({ ok: true, syncResult: 'clean', behind: 0 }) });
   stub(ids.pool, { getPool: () => makePool([]) });
 
@@ -219,7 +219,15 @@ test('runSyncMain: conflict outcome reports not-ok and still avoids vote deletio
 // worker's "a turn is already in flight for session N" guard — the exact
 // error seen on the whiteboard #26 run. The wrapper must collapse
 // concurrent resolves of one session onto a single in-flight promise.
-function loadResolverForCoalesce({ runSyncMainImpl, mergeableSeq = [false, true, true, true] }) {
+function loadResolverForCoalesce({
+  runSyncMainImpl,
+  mergeableSeq = [false, true, true, true],
+  // Limit-first (#212): default to "allowance has headroom" so existing
+  // tests keep gating through the platform path; over-budget cases
+  // override this with a BYOK spillover or an error.
+  limitsImpl = { resolveBillingPath: async () => ({ apiKey: null, byok: false }) },
+  onSystemMessage = null,
+}) {
   const ids = {
     logger: require.resolve('../src/services/logger'),
     github: require.resolve('../src/services/github'),
@@ -256,13 +264,18 @@ function loadResolverForCoalesce({ runSyncMainImpl, mergeableSeq = [false, true,
     getOctokit: fakeOctokit,
     getInstallationOctokit: fakeOctokit,
   });
-  stub(ids.limits, { checkBudget: async () => ({ error: null }) });
+  stub(ids.limits, limitsImpl);
   stub(ids.syncMain, { runSyncMain: runSyncMainImpl });
   stub(ids.pool, {
     getPool: () => makePool([[/SELECT cs\.\*, a\.slug/, [sessionRow]]]),
   });
   stub(ids.votes, { checkAndMerge: async () => ({ merged: true }) });
-  stub(ids.ws, { pushVoteUpdate() {}, sendSystemMessage: async () => {} });
+  stub(ids.ws, {
+    pushVoteUpdate() {},
+    sendSystemMessage: async (_pool, _appId, content) => {
+      if (onSystemMessage) onSystemMessage(content);
+    },
+  });
 
   delete require.cache[ids.subject];
   const subject = require(ids.subject);
@@ -315,6 +328,54 @@ test('resolveAndMaybeRetry: a later, non-overlapping resolve runs a fresh worker
     // a subsequent trigger is free to run again (not wrongly deduped).
     await subject.resolveAndMaybeRetry({ jwtSecret: 's' }, { sessionId: 7 });
     assert.equal(syncCalls, 2, 'sequential resolves are independent once the prior one settles');
+  } finally {
+    restore();
+  }
+});
+
+// ── Limit-first billing gate (#212) ─────────────────────────────────────
+// The sync charges the owner's daily allowance first; once exhausted it
+// falls back to their BYOK key. Only over-budget AND key-less owners are
+// skipped (with the group-chat breadcrumb).
+
+test('resolveAndMaybeRetry: over-budget owner WITH a BYOK key syncs on the key instead of skipping', async () => {
+  let syncCalls = 0;
+  const { subject, restore } = loadResolverForCoalesce({
+    // Allowance exhausted, key on file → spillover path.
+    limitsImpl: { resolveBillingPath: async () => ({ apiKey: 'sk-ant-test', byok: true }) },
+    runSyncMainImpl: async () => {
+      syncCalls += 1;
+      return { ok: true, syncResult: 'resolved', behind: 0 };
+    },
+  });
+  try {
+    const r = await subject.resolveAndMaybeRetry({ jwtSecret: 's' }, { sessionId: 7 });
+    assert.equal(syncCalls, 1, 'the sync must proceed on the owner key, not skip');
+    assert.equal(r.reason, 'synced_and_merged');
+  } finally {
+    restore();
+  }
+});
+
+test('resolveAndMaybeRetry: over-budget owner with NO key skips and posts the group-chat message', async () => {
+  let syncCalls = 0;
+  const messages = [];
+  const { subject, restore } = loadResolverForCoalesce({
+    mergeableSeq: [false],
+    limitsImpl: { resolveBillingPath: async () => ({ error: 'Daily limit reached ($25.00). Resets at midnight UTC.' }) },
+    runSyncMainImpl: async () => {
+      syncCalls += 1;
+      return { ok: true, syncResult: 'resolved', behind: 0 };
+    },
+    onSystemMessage: (content) => messages.push(content),
+  });
+  try {
+    const r = await subject.resolveAndMaybeRetry({ jwtSecret: 's' }, { sessionId: 7 });
+    assert.equal(r.ok, false);
+    assert.equal(r.reason, 'over_budget');
+    assert.equal(syncCalls, 0, 'no worker turn may run for an over-budget key-less owner');
+    assert.ok(messages.some((m) => /daily LLM limit/.test(m)),
+      'the owner is told in group chat why the auto-resolve was skipped');
   } finally {
     restore();
   }
