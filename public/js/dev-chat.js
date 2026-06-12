@@ -63,7 +63,7 @@ const DevChat = {
   // enough that the busy indicator feels live, slow enough that we
   // don't hammer the cross-app endpoint just because the user is
   // sitting on the dev-chat tab.
-  activeSessions: { sessions: [], totals: { active: 0, paused: 0, busy: 0, total: 0 } },
+  activeSessions: { sessions: [], totals: { active: 0, promoted: 0, paused: 0, busy: 0, total: 0 } },
   _activePollTimer: null,
 
   // ----- Spec viewer state -----
@@ -82,6 +82,7 @@ const DevChat = {
     viewVersion: 'latest',     // 'latest' (follow the highest version) or a specific version number
     viewVersionContent: null,  // cached content for a non-latest selection
     isLoading: false,
+    activeTab: 'user',         // #196: 'user' | 'tech' — selected half of a two-section spec
   },
 
   // Initial MODELS map. Populated authoritatively from GET /api/models
@@ -184,6 +185,7 @@ const DevChat = {
       viewVersion: 'latest',
       viewVersionContent: null,
       isLoading: false,
+      activeTab: 'user',
     };
   },
 
@@ -256,7 +258,7 @@ const DevChat = {
       const data = await res.json();
       DevChat.activeSessions = {
         sessions: Array.isArray(data.sessions) ? data.sessions : [],
-        totals: data.totals || { active: 0, paused: 0, busy: 0, total: 0 },
+        totals: data.totals || { active: 0, promoted: 0, paused: 0, busy: 0, total: 0 },
       };
       DevChat.renderActiveSessions();
     } catch {}
@@ -288,17 +290,20 @@ const DevChat = {
     if (!container || !counter) return;
 
     const { sessions, totals } = DevChat.activeSessions;
-    // Counter shows running-vs-cap on the left and the paused
-    // backlog on the right. The "/3" denominator is the per-user
+    // Counter shows running-vs-cap on the left and the promoted/paused
+    // backlogs on the right. The "/3" denominator is the per-user
     // active-session cap enforced by /api/apps/:slug/sessions and
-    // /api/sessions/:id/resume. Paused sessions are unlimited so
-    // they're surfaced separately rather than rolled into the
-    // denominator. The trailing " · N paused" is omitted when zero
-    // to keep the common case clean.
+    // /api/sessions/:id/resume — which counts only 'active' sessions
+    // (#193): promoted ones (PR in a merge vote) are un-pausable and
+    // exempt from the cap, so they're surfaced as their own " · N in
+    // vote" segment instead of inflating the numerator. Paused sessions
+    // are unlimited so they're surfaced separately too. Zero-count
+    // segments are omitted to keep the common case clean.
     const ACTIVE_CAP = 3;
-    counter.textContent = totals.paused > 0
-      ? `(${totals.active}/${ACTIVE_CAP}) · ${totals.paused} paused`
-      : `(${totals.active}/${ACTIVE_CAP})`;
+    const segments = [`(${totals.active}/${ACTIVE_CAP})`];
+    if (totals.promoted > 0) segments.push(`${totals.promoted} in vote`);
+    if (totals.paused > 0) segments.push(`${totals.paused} paused`);
+    counter.textContent = segments.join(' · ');
 
     if (totals.total === 0) {
       container.innerHTML = `
@@ -385,11 +390,12 @@ const DevChat = {
         const original = btn.textContent;
         btn.textContent = action === 'pause' ? 'Pausing…' : 'Resuming…';
         btn.disabled = true;
+        let body = {};
         try {
           const resp = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
+          body = await resp.json().catch(() => ({}));
           if (!resp.ok) {
-            const data = await resp.json().catch(() => ({}));
-            alert(data.error || `Failed to ${action} session`);
+            alert(body.error || `Failed to ${action} session`);
             btn.textContent = original;
             btn.disabled = false;
             return;
@@ -398,6 +404,15 @@ const DevChat = {
           btn.textContent = original;
           btn.disabled = false;
           return;
+        }
+        // Deliberate pause of the session that's open in the chat view:
+        // sync the local copy so the heartbeat's refocus auto-resume
+        // (which only heals *sweeper* pauses the client doesn't know
+        // about) doesn't silently undo it (#193). keptPromoted means the
+        // server left the status 'promoted', so don't mislabel it.
+        if (action === 'pause' && !body.keptPromoted
+            && DevChat.currentSession && Number(DevChat.currentSession.id) === id) {
+          DevChat.currentSession.status = 'paused';
         }
         await DevChat._refreshSessionListsAfterMutation();
       });
@@ -536,9 +551,18 @@ const DevChat = {
       // already auto-paused while the tab was hidden (>5 min), the bump
       // alone can't revive it — /activity only touches active/promoted
       // rows — so also re-sync and resume so the next send doesn't 404.
+      //
+      // Skip the resume when the LOCAL status already says 'paused':
+      // that means the user deliberately paused this session (the pause
+      // click-handlers sync the local copy), and silently re-activating
+      // it would re-occupy the slot they just freed (#193). The heal is
+      // only for the stale-client case where local status still says
+      // 'active'. Sending a chat message or reopening the session still
+      // resumes explicitly via their own paths.
       DevChat._heartbeatVisHandler = () => {
         if (document.visibilityState !== 'visible') return;
         beat();
+        if (DevChat.currentSession && DevChat.currentSession.status === 'paused') return;
         DevChat._resumeCurrentSessionIfPaused({ silent: true });
       };
       document.addEventListener('visibilitychange', DevChat._heartbeatVisHandler);
@@ -600,6 +624,7 @@ const DevChat = {
         DevChat.specViewer.sessionId = sessionId;
         DevChat.specViewer.viewVersion = 'latest';
         DevChat.specViewer.viewVersionContent = null;
+        DevChat.specViewer.activeTab = 'user';
         // Don't await — caller's renderChatView shouldn't block on
         // the fetch. _loadSpecViewer calls _renderSpecViewer when it
         // resolves, which patches the body in place.
@@ -2218,10 +2243,16 @@ const DevChat = {
         s.status === 'promoted' ? 'text-violet-400' :
         s.status === 'paused' ? 'text-zinc-400' :
         'text-zinc-500';
-      const isPausable = s.status === 'active' || s.status === 'promoted';
+      // Promoted sessions can't be demoted to 'paused' (their PR must
+      // stay votable), but a warm worker can still be freed — same
+      // endpoint, server keeps status 'promoted' (keptPromoted). Once
+      // the worker is gone (`warm` false) there's nothing left to free,
+      // so no button.
+      const isPausable = s.status === 'active';
+      const isFreeable = s.status === 'promoted' && s.warm;
       const isPaused = s.status === 'paused';
       const isArchived = s.status === 'archived';
-      const isActionable = isPausable || isPaused;
+      const isActionable = isPausable || isFreeable || isPaused;
       const date = new Date(s.created_at).toLocaleDateString();
       return `
         <div class="dc-session-item px-3 py-2 cursor-pointer hover:bg-zinc-800/50 flex items-center gap-2" data-id="${s.id}">
@@ -2229,6 +2260,7 @@ const DevChat = {
           <span class="text-sm text-zinc-300 flex-1 truncate" title="${escapeHtml(s.branch_name || '')}">${escapeHtml(s.pr_title || s.branch_name || 'Session')}</span>
           ${s.pr_url ? `<a href="${s.pr_url}" target="_blank" class="text-xs text-violet-400 hover:text-violet-300" onclick="event.stopPropagation()">PR#${s.pr_number}</a>` : ''}
           ${isPausable ? `<button class="dc-pause-btn text-xs text-zinc-400 hover:text-emerald-400" data-id="${s.id}" data-action="pause" onclick="event.stopPropagation()">Pause</button>` : ''}
+          ${isFreeable ? `<button class="dc-pause-btn text-xs text-zinc-400 hover:text-emerald-400" data-id="${s.id}" data-action="pause" data-freeing="1" title="Frees the AI worker. The PR stays up for voting." onclick="event.stopPropagation()">Free worker</button>` : ''}
           ${isPaused ? `<button class="dc-pause-btn text-xs text-emerald-400 hover:text-emerald-300" data-id="${s.id}" data-action="resume" onclick="event.stopPropagation()">Resume</button>` : ''}
           ${isArchived ? `<button class="dc-unarchive-btn text-xs text-emerald-400 hover:text-emerald-300" data-id="${s.id}" onclick="event.stopPropagation()" title="Restore this session (reopens the PR)">Unarchive</button>` : ''}
           ${isActionable ? `<button class="dc-archive-btn text-xs text-zinc-500 hover:text-red-400" data-id="${s.id}" data-name="${escapeHtml(s.pr_title || s.branch_name || 'Session')}" title="Archive (frees the slot; restorable for a while)" onclick="event.stopPropagation()">Archive</button>` : ''}
@@ -2244,30 +2276,46 @@ const DevChat = {
       });
     });
 
-    // Pause / Resume buttons. Both share the .dc-pause-btn class
-    // and dispatch via data-action so we don't have two near-identical
-    // handlers. On 4xx (e.g. cap reached on resume), surface the
-    // server's error message rather than silently failing.
+    // Pause / Free-worker / Resume buttons. All share the .dc-pause-btn
+    // class and dispatch via data-action so we don't have near-identical
+    // handlers ("Free worker" is the pause endpoint hitting a promoted
+    // session — the server frees the worker and answers keptPromoted).
+    // On 4xx (e.g. cap reached on resume), surface the server's error
+    // message rather than silently failing.
     container.querySelectorAll('.dc-pause-btn').forEach((btn) => {
       btn.addEventListener('click', async () => {
         const id = btn.dataset.id;
         const action = btn.dataset.action;
+        const freeing = !!btn.dataset.freeing;
         const original = btn.textContent;
-        btn.textContent = action === 'pause' ? 'Pausing…' : 'Resuming…';
+        btn.textContent = action === 'pause' ? (freeing ? 'Freeing…' : 'Pausing…') : 'Resuming…';
         btn.disabled = true;
+        let body = {};
         try {
           const resp = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
+          body = await resp.json().catch(() => ({}));
           if (!resp.ok) {
-            const data = await resp.json().catch(() => ({}));
-            alert(data.error || `Failed to ${action} session`);
+            alert(body.error || `Failed to ${action} session`);
             btn.textContent = original;
             btn.disabled = false;
             return;
           }
+          const data = await resp.json().catch(() => ({}));
+          // The row will re-render without the button (warm flips false),
+          // so flash the outcome here where the user just clicked.
+          if (data.keptPromoted) btn.textContent = 'Worker freed';
         } catch {
           btn.textContent = original;
           btn.disabled = false;
           return;
+        }
+        // Same deliberate-pause sync as the cross-app panel (#193): keep
+        // the local currentSession copy honest so the refocus auto-resume
+        // doesn't silently re-activate a session the user just paused.
+        // keptPromoted = server left the status 'promoted'; don't mislabel.
+        if (action === 'pause' && !body.keptPromoted
+            && DevChat.currentSession && Number(DevChat.currentSession.id) === Number(id)) {
+          DevChat.currentSession.status = 'paused';
         }
         if (AppView.appData) {
           await DevChat.loadSessions(AppView.appData.slug);
@@ -2918,10 +2966,39 @@ const DevChat = {
       ? `<button class="dc-spec-action-btn" disabled title="No spec version to share yet">Share to group</button>`
       : `<button id="dc-spec-viewer-share" class="dc-spec-action-btn" ${alreadyShared ? 'disabled' : ''} title="${alreadyShared ? 'Already shared to group chat' : 'Post a card linking to this spec in the group chat'}">${alreadyShared ? 'Shared' : 'Share to group'}</button>`;
 
+    // #196: a conforming spec (BOTH marker headings present — see
+    // public/js/spec-sections.js) renders as two tabs so non-technical
+    // readers land on the plain-language half. The preamble (title +
+    // summary before the first marker) stays visible above the tabs.
+    // A null split — legacy or non-conforming doc — renders the single
+    // untabbed body exactly as before.
+    const split = displayContent ? splitSpecSections(displayContent) : null;
+    let specBodyHtml = '';
+    if (split) {
+      const activeTab = DevChat.specViewer.activeTab === 'tech' ? 'tech' : 'user';
+      const activeHalf = activeTab === 'tech' ? split.technical : split.userFacing;
+      const tabBtn = (key, label) =>
+        `<button class="dc-spec-viewer-tab${activeTab === key ? ' dc-spec-viewer-tab-active' : ''}" role="tab" aria-selected="${activeTab === key}" data-spec-tab="${key}">${label}</button>`;
+      // An empty-but-present half still gets its tab (with a muted
+      // placeholder) so the toggle doesn't appear/disappear between
+      // versions.
+      specBodyHtml = `${split.preamble ? `<div class="dc-spec-viewer-body dc-spec-viewer-preamble">${DevChat.renderMarkdown(split.preamble, { breaks: false })}</div>` : ''}
+        <div class="dc-spec-viewer-tabs" role="tablist" aria-label="Spec sections">
+          ${tabBtn('user', 'User-facing')}
+          ${tabBtn('tech', 'Technical')}
+        </div>
+        <div class="dc-spec-viewer-body" role="tabpanel">${
+          activeHalf
+            ? DevChat.renderMarkdown(activeHalf, { breaks: false })
+            : '<p class="dc-spec-tab-empty">Nothing in this section.</p>'
+        }</div>`;
+    } else if (displayContent) {
+      specBodyHtml = `<div class="dc-spec-viewer-body">${DevChat.renderMarkdown(displayContent, { breaks: false })}</div>`;
+    }
     const bodyHtml = DevChat.specViewer.isLoading && !displayContent
       ? `<div class="p-4 text-sm text-zinc-500">Loading spec…</div>`
       : displayContent
-        ? `<div class="dc-spec-viewer-body">${DevChat.renderMarkdown(displayContent, { breaks: false })}</div>`
+        ? specBodyHtml
         : `<div class="p-4 text-sm text-zinc-500">No spec yet. Ask the AI to draft one.</div>`;
 
     // Spec planning and building are two separate steps: drafting a spec
@@ -2960,6 +3037,19 @@ const DevChat = {
 
     const shareBtn = pane.querySelector('#dc-spec-viewer-share');
     if (shareBtn && selectedVersion) shareBtn.addEventListener('click', () => DevChat._shareSpecVersion(selectedVersion.version));
+
+    // #196: tab switches are pure re-renders of cached content — no
+    // refetch. The selection lives in specViewer.activeTab so it
+    // survives version switches and spec_updated refreshes within the
+    // panel's lifetime.
+    pane.querySelectorAll('.dc-spec-viewer-tab').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const tab = btn.dataset.specTab === 'tech' ? 'tech' : 'user';
+        if (DevChat.specViewer.activeTab === tab) return;
+        DevChat.specViewer.activeTab = tab;
+        DevChat._renderSpecViewer();
+      });
+    });
 
     // Lazy-fetch frozen content when an older (non-latest) version is
     // selected and we don't have it cached.

@@ -152,6 +152,54 @@ function buildSpecPreview(content, max = 400) {
   return `${cut}…`;
 }
 
+// #199: render the OPEN PROPOSALS block injected into the Mayor's system
+// prompt on the FIRST turn of a fresh session, so the Mayor can spot when
+// the user's request duplicates an existing promoted/merging proposal and
+// suggest voting on that instead of starting redundant work. Pure function
+// over rows from the candidate query in the chat handler; returns '' when
+// there is nothing to show. Advisory only — every caller fails open.
+const OPEN_PROPOSALS_MAX = 10;
+
+function buildOpenProposalsBlock(proposals, currentUsername) {
+  const list = Array.isArray(proposals) ? proposals.filter(Boolean) : [];
+  if (!list.length) return '';
+
+  const entries = list.slice(0, OPEN_PROPOSALS_MAX).map((p) => {
+    const title = (p.pr_title || '').trim();
+    const prRef = p.pr_number
+      ? `PR #${p.pr_number}${title ? ` — "${title}"` : ''}`
+      : `${title ? `"${title}"` : 'Untitled proposal'} (no PR yet)`;
+    const author = p.username
+      ? `${p.username}${currentUsername && p.username === currentUsername ? " (this user's own proposal)" : ''}`
+      : 'unknown';
+    const lines = [
+      `- ${prRef}`,
+      `  Author: ${author} · Status: ${p.status || 'promoted'}${p.pr_url ? ` · ${p.pr_url}` : ''}`,
+    ];
+    const issues = Array.isArray(p.linked_issues) ? p.linked_issues.filter((n) => Number.isInteger(n)) : [];
+    if (issues.length) lines.push(`  Issues: ${issues.map((n) => `#${n}`).join(', ')}`);
+    const spec = buildSpecPreview((p.spec_md || '').trim(), 500);
+    if (spec) lines.push(`  Spec excerpt: ${spec.replace(/\s+/g, ' ')}`);
+    return lines.join('\n');
+  });
+
+  return `
+
+==== OPEN PROPOSALS IN THIS APP ====
+
+This is the user's FIRST message in a new session. The app already has the following open proposals (promoted/merging PRs the group is voting on):
+
+${entries.join('\n')}
+
+Before dispatching ANY tool, check whether the user's request SUBSTANTIALLY duplicates one of these proposals — i.e. the existing proposal would deliver the same feature or fix. Touching the same area with a different goal is NOT a duplicate; when unsure, do not raise it.
+
+- If it duplicates one: do NOT dispatch any tool. Instead ask, in 1-2 sentences, naming the PR number and title explicitly so the reference survives into later turns, e.g. "There's already an open proposal — PR #N 'title' by author — that looks like it covers this. Want to vote on that in the group chat instead?" Include the PR link when there is one. If the matching proposal is the user's own, suggest returning to that session instead of voting. This follows the same rule as the clarity gate: never ask and dispatch in the same turn.
+- If the user then confirms they want the existing one: point them to the group-chat vote panel; do not dispatch anything.
+- If the user says theirs is different or additive: proceed as normal, AND ensure the differentiation is captured — when dispatching the scout, tell it to include a short "How this differs from PR #N" section in the spec; when dispatching the coding agent directly, restate the user's differentiation in your one-sentence preamble and include it in the dispatch prompt.
+
+==== END OPEN PROPOSALS ====`;
+}
+
 // Unwrap a whole-document ```markdown fence a scout/spec-author LLM sometimes
 // emits around the entire spec (see src/services/spec-format.js for the why
 // and the conservative rules). Re-exported below so existing importers and
@@ -211,11 +259,16 @@ function sessionRoutes(config) {
   //
   //   "totals" lets the caller render the (x/y) header without a
   //   second pass through the array:
-  //     - active = active + promoted (the sessions counting against
-  //                the 3-slot cap; visually green/violet in the UI)
-  //     - paused = paused-status sessions (no warm worker)
-  //     - busy   = subset of `active` where CC is mid-turn right now
-  //     - total  = active + paused (i.e. every non-archived row we returned)
+  //     - active   = 'active'-status sessions only — the set counting
+  //                  against the per-user slot cap (#193). Promoted
+  //                  sessions no longer count (they're un-pausable while
+  //                  their PR is up for vote).
+  //     - promoted = 'promoted'-status sessions (PR in a merge vote;
+  //                  violet in the UI, exempt from the per-user cap)
+  //     - paused   = paused-status sessions (no warm worker)
+  //     - busy     = subset of active+promoted where CC is mid-turn right now
+  //     - total    = active + promoted + paused (every non-archived row
+  //                  we returned)
   router.get('/api/me/active-sessions', async (req, res) => {
     try {
       const { rows } = await pool.query(
@@ -236,11 +289,12 @@ function sessionRoutes(config) {
       const totals = sessions.reduce(
         (acc, s) => {
           if (s.status === 'paused') acc.paused += 1;
-          else acc.active += 1; // 'active' or 'promoted'
+          else if (s.status === 'promoted') acc.promoted += 1;
+          else acc.active += 1;
           if (s.busy) acc.busy += 1;
           return acc;
         },
-        { active: 0, paused: 0, busy: 0 }
+        { active: 0, promoted: 0, paused: 0, busy: 0 }
       );
       totals.total = sessions.length;
       res.json({ sessions, totals });
@@ -267,6 +321,12 @@ function sessionRoutes(config) {
         [appRows[0].id, req.user.id]
       );
 
+      // `warm` = a worker container currently exists for the session. The
+      // session list uses it to decide whether a promoted row still has a
+      // worker to free (and the create-session cap counts the same thing).
+      const warmIds = new Set(worker.warmRegistrySnapshot().map((w) => w.sessionId));
+      for (const s of rows) s.warm = warmIds.has(s.id);
+
       res.json({ sessions: rows });
     } catch (err) {
       log.error('sessions', 'Failed to list sessions', { message: err.message });
@@ -280,14 +340,20 @@ function sessionRoutes(config) {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
       if (!app) return res.status(404).json({ error: 'App not found' });
 
-      // Check staging container limits
+      // Per-user cap (#193): only 'active' sessions count toward the
+      // slot budget. Promoted sessions (PRs up for a merge vote) are
+      // deliberately un-pausable — their status must stay 'promoted' so
+      // the vote endpoints keep working — so counting them here would
+      // leave the user no way to free a slot by pausing. The separate
+      // maxUserPromotedSessions cap (enforced at promote time) bounds
+      // how many vote-only sessions one user can accumulate.
       const { rows: countRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
-         WHERE user_id = $1 AND status IN ('active', 'promoted') AND is_headless = FALSE`,
+         WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE`,
         [req.user.id]
       );
       if (parseInt(countRows[0].cnt) >= config.maxUserSessions) {
-        return res.status(429).json({ error: `You already have ${config.maxUserSessions} active sessions. Pause, archive, or merge one first.` });
+        return res.status(429).json({ error: `You already have ${config.maxUserSessions} running sessions. Pause or archive one first.` });
       }
 
       const { rows: globalRows } = await pool.query(
@@ -507,13 +573,15 @@ function sessionRoutes(config) {
       }
 
       // The clone is an ordinary dev-chat session, so the usual caps apply.
+      // Per-user cap counts only 'active' sessions (#193) — promoted ones
+      // are un-pausable while their PR is in a vote, so they're exempt.
       const { rows: countRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
-         WHERE user_id = $1 AND status IN ('active', 'promoted') AND is_headless = FALSE`,
+         WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE`,
         [req.user.id]
       );
       if (parseInt(countRows[0].cnt) >= config.maxUserSessions) {
-        return res.status(429).json({ error: `You already have ${config.maxUserSessions} active sessions. Pause, archive, or merge one first.` });
+        return res.status(429).json({ error: `You already have ${config.maxUserSessions} running sessions. Pause or archive one first.` });
       }
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
@@ -871,9 +939,13 @@ function sessionRoutes(config) {
         }
       }
 
+      // Per-user cap counts only 'active' sessions (#193) — promoted ones
+      // are un-pausable while their PR is in a vote, so they're exempt.
+      // This also keeps the count consistent with the LRU eviction below,
+      // which has always only considered 'active' victims.
       const { rows: countRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
-         WHERE user_id = $1 AND status IN ('active', 'promoted')`,
+         WHERE user_id = $1 AND status = 'active'`,
         [req.user.id]
       );
       if (parseInt(countRows[0].cnt) >= config.maxUserSessions) {
@@ -1186,7 +1258,35 @@ function sessionRoutes(config) {
         const prContext = session.pr_number
           ? { prNumber: session.pr_number, prTitle: session.pr_title, status: session.status }
           : null;
-        let mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext);
+        // #199: on the FIRST turn of a fresh session — exactly one user row
+        // in the just-loaded history (the message inserted above) and not a
+        // headless clone (clones arrive with copied history AND a non-null
+        // cloned_from_session_id; headless sessions themselves never reach
+        // this route) — surface the app's open promoted/merging proposals so
+        // the Mayor can flag a duplicate request before any dispatch.
+        // Advisory only: any failure skips the block and the turn proceeds.
+        let openProposalsBlock = '';
+        const isFirstFreshTurn = !session.cloned_from_session_id
+          && history.filter((m) => m.role === 'user').length === 1;
+        if (isFirstFreshTurn) {
+          try {
+            const { rows: proposalRows } = await pool.query(
+              `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status,
+                      cs.linked_issues, cs.spec_md, u.username
+               FROM chat_sessions cs
+               LEFT JOIN users u ON cs.user_id = u.id
+               WHERE cs.app_id = $1 AND cs.id <> $2
+                 AND cs.status IN ('promoted', 'merging')
+               ORDER BY cs.last_activity_at DESC
+               LIMIT 10`,
+              [session.app_id, session.id]
+            );
+            openProposalsBlock = buildOpenProposalsBlock(proposalRows, req.user.username);
+          } catch (err) {
+            log.warn('sessions', 'Open-proposals lookup failed (continuing without block)', { sessionId: session.id, err: err.message });
+          }
+        }
+        let mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext, openProposalsBlock);
         const messages = buildMayorMessages(history);
 
         if (!llm.isEnabled()) {
@@ -1583,7 +1683,10 @@ function sessionRoutes(config) {
         const prContext2 = session.pr_number
           ? { prNumber: session.pr_number, prTitle: session.pr_title, status: session.status }
           : null;
-        mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext2);
+        // Same open-proposals block as phase-1 so the wrap-up turn sees a
+        // consistent prompt (the instruction is scoped to "before
+        // dispatching", so it's inert after a tool has already run).
+        mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext2, openProposalsBlock);
         const mayor2 = await llm.streamChat({
           messages: followUpMessages,
           systemPrompt: mayorPrompt,
@@ -3129,9 +3232,10 @@ const DISPATCH_SCOUT_TOOL = {
       prompt: {
         type: 'string',
         description:
-          'Instructions for the scout. For an initial draft, describe what to investigate and what shape the resulting '
-          + 'spec should take (e.g. "Read the relevant files for the leaderboard and draft a markdown spec covering screens, '
-          + 'data model, and edge cases for adding realtime updates"). For a revision, describe precisely what to change in '
+          'Instructions for the scout. For an initial draft, describe what to investigate (e.g. "Read the relevant files '
+          + 'for the leaderboard and draft a spec for adding realtime updates"). The document structure is fixed by the '
+          + 'platform — a user-facing half and a technical half, rendered as tabs — so do not specify a shape; describe '
+          + 'what to investigate or change, not how to organize it. For a revision, describe precisely what to change in '
           + 'the existing spec (the current spec doc is auto-injected into the scout\'s prompt — do not restate it). 1-3 sentences.',
       },
       addresses_issues: {
@@ -3311,7 +3415,7 @@ async function runScoutTool({
   const revisionBlock = existingSpec
     ? `
 
-This session ALREADY HAS a spec doc, shown verbatim below. Your task is a REVISION of it, not a from-scratch rewrite: apply the requested changes, keep everything else intact (the user may have already reviewed and accepted the rest), and re-verify against the repo only where the change requires it. Your final message must be the COMPLETE revised spec document — it replaces the doc wholesale.
+This session ALREADY HAS a spec doc, shown verbatim below. Your task is a REVISION of it, not a from-scratch rewrite: apply the requested changes, keep everything else intact (the user may have already reviewed and accepted the rest), and re-verify against the repo only where the change requires it. Your final message must be the COMPLETE revised spec document — it replaces the doc wholesale. If the existing spec does not follow the two-section structure mandated below ("## User-facing changes" / "## Technical implementation"), reorganize it into those two sections as part of this revision while preserving its content.
 
 ==== CURRENT SPEC DOC (revise this) ====
 
@@ -3337,18 +3441,18 @@ A read-only helper \`usernode-issues\` is available (run it via Bash) — it pri
 Your job is to investigate this repo and produce a MARKDOWN SPEC for the change. The spec should be:
 - A complete, self-contained markdown document the user can review on its own.
 - Grounded in real file evidence — reference actual file paths and current behaviour, not guesses.
-- Structured with sensible headings (e.g. Goal, Affected Screens, Data Model, Edge Cases). Pick whatever sections fit the task; one size does not fit all.
+- Structured as TWO halves under these exact H2 headings, in this order: "## User-facing changes" then "## Technical implementation". The spec viewer renders the two halves as tabs, so content outside them is undesirable — keep everything except the title and an optional 1-2 sentence summary inside one of the two halves. "User-facing changes" must be readable by a non-developer: describe what the user will see and do differently (screens, behaviour, before/after) — no file paths, no schema, no code. "Technical implementation" holds everything else: affected files, data model, edge cases, tests, considerations, deferred work. All other headings must be ### or deeper — no other ## headings anywhere in the document.
 - Specific enough that a coding agent could implement it without re-doing your investigation, but NOT a literal diff or code block.
 
 The spec is rendered as markdown in a viewer that follows standard CommonMark fencing. If you include a fenced code block that ITSELF contains a triple-backtick fence (common when quoting markdown examples or the platform's \`\`\`filepath:...\`\`\` output convention), wrap the OUTER block in a four-backtick fence (\`\`\`\`) — a longer fence can safely contain shorter ones. Otherwise the inner \`\`\` closes the block early and the rest of the spec renders broken. When in doubt, prefer fewer/inline code samples over deeply nested fences.
 
-Do NOT pad the spec with open questions. Only include a "Questions" section for things that genuinely BLOCK implementation — decisions the coding agent cannot reasonably make on its own and that would change what gets built. Make a sensible default choice wherever you can and state it, rather than asking. Non-blocking items — things worth noting but not required to answer before building — belong under "Considerations" (trade-offs, assumptions, things to keep in mind) or "Deferred work" (out-of-scope or follow-up items), NOT as questions.
+Do NOT pad the spec with open questions. Only include a "### Questions" subsection — placed at the END of the "User-facing changes" half, since questions are for the (possibly non-technical) requester — for things that genuinely BLOCK implementation: decisions the coding agent cannot reasonably make on its own and that would change what gets built. Make a sensible default choice wherever you can and state it, rather than asking. Non-blocking items — things worth noting but not required to answer before building — belong in the "Technical implementation" half under "### Considerations" (trade-offs, assumptions, things to keep in mind) or "### Deferred work" (out-of-scope or follow-up items), NOT as questions.
 
 Your final assistant message must be ONLY the markdown spec — no preamble, no "I'll investigate...", no "Here's the spec:". The host captures that final message verbatim and stores it as the session's spec doc.
 
 CRITICAL: Output the spec as RAW markdown. Do NOT wrap your whole response in a code fence — no leading \`\`\`markdown line and no trailing \`\`\`. A whole-document fence makes the spec render as one big code block instead of formatted markdown. Fences are only for actual code/quoted snippets INSIDE the spec.${headless ? `
 
-HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue — no human is available to answer questions during the run. If the Mayor's instructions list ambiguities or unresolved points, resolve them from the code BEFORE considering them open: read the relevant files, state what the code shows, and choose a sensible default where one exists. Any "Questions" section you do write will be relayed verbatim to the issue reporter as a GitHub comment, so it must contain ONLY questions a codebase cannot answer (product intent, preferences, reproduction details), each self-contained, numbered, and carrying your suggested default.` : ''}`;
+HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue — no human is available to answer questions during the run. If the Mayor's instructions list ambiguities or unresolved points, resolve them from the code BEFORE considering them open: read the relevant files, state what the code shows, and choose a sensible default where one exists. Any "### Questions" section you do write (at the end of the "User-facing changes" half) will be relayed verbatim to the issue reporter as a GitHub comment, so it must contain ONLY questions a codebase cannot answer (product intent, preferences, reproduction details), each self-contained, numbered, and carrying your suggested default.` : ''}`;
 
   // Ensure the long-lived worker is warm before exec'ing run-cc.sh inside
   // it. Cold-start cost (clone + checkout + sleep wrapper) is paid here on
@@ -4147,7 +4251,7 @@ path: /relative/path?demo=1
   return { toolResultText, ccLog, stagingUrl, isError, commitSha: commitHash || null };
 }
 
-function getMayorSystemPrompt(appName, isWorkerBusy, currentSpec, selfHosted, prContext) {
+function getMayorSystemPrompt(appName, isWorkerBusy, currentSpec, selfHosted, prContext, openProposalsBlock = '') {
   const specIsEmpty = !((currentSpec || '').trim());
 
   const toolNote = isWorkerBusy
@@ -4267,7 +4371,7 @@ Some assistant turns in this conversation contain "[CODING AGENT COMPLETED]:" �
 
 You MUST NOT, under any circumstances:
 - Write the literal string "[CODING AGENT COMPLETED]" in your reply. That marker is reserved for the harness; emitting it yourself fakes a coding-agent run that never happened.
-- Paraphrase a past summary as a substitute for dispatching a new run. If the user reports a bug, regression, or "still not quite right" — even if a previous run targeted the same area — that is a NEW change request and you MUST call dispatch_claude_code (assuming the tool is available per STATUS). Past summaries are read-only history; they cannot fix new bugs.${toolNote}${conventionsBlock}${selfHosted ? getSelfHostedRefuseList() : ''}${prBlock}${specBlock}`;
+- Paraphrase a past summary as a substitute for dispatching a new run. If the user reports a bug, regression, or "still not quite right" — even if a previous run targeted the same area — that is a NEW change request and you MUST call dispatch_claude_code (assuming the tool is available per STATUS). Past summaries are read-only history; they cannot fix new bugs.${toolNote}${conventionsBlock}${selfHosted ? getSelfHostedRefuseList() : ''}${prBlock}${openProposalsBlock || ''}${specBlock}`;
 }
 
 async function getFilesFromContainer(appSlug) {
@@ -4413,4 +4517,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDoneIfArmed, notifyAutoSolveDone, buildHeadlessSeed, shouldPostHeadlessQuestionComment, specHasBlockingQuestions };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDoneIfArmed, notifyAutoSolveDone, buildHeadlessSeed, shouldPostHeadlessQuestionComment, specHasBlockingQuestions };
