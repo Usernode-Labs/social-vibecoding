@@ -19,10 +19,12 @@ const Home = {
 
     try {
       // #194: the viewer's own open proposals ride along with the app
-      // grid. Non-fatal — a failure just hides the section.
-      const [res, proposalsRes] = await Promise.all([
+      // grid, and the viewer's own active dev sessions ride along the
+      // same way. Both non-fatal — a failure just hides the section.
+      const [res, proposalsRes, sessionsRes] = await Promise.all([
         fetch('/api/apps'),
         fetch('/api/me/proposals').catch(() => null),
+        fetch('/api/me/active-sessions').catch(() => null),
       ]);
       if (!res.ok) throw new Error('Failed to load apps');
       const { apps } = await res.json();
@@ -31,6 +33,18 @@ const Home = {
         if (proposalsRes && proposalsRes.ok) myProposals = await proposalsRes.json();
       } catch { /* section stays hidden */ }
       Home._myProposals = myProposals;
+      let mySessions = [];
+      try {
+        if (sessionsRes && sessionsRes.ok) {
+          const data = await sessionsRes.json();
+          if (Array.isArray(data.sessions)) mySessions = data.sessions;
+        }
+      } catch { /* section stays hidden */ }
+      Home._activeSessions = mySessions;
+      // Busy spinners flip on turn start/finish, which doesn't broadcast
+      // a session_update — keep them fresh with a slow poll while the
+      // section has rows to show (see _syncSessionPolling).
+      if (mySessions.some((s) => s.status === 'active')) Home._syncSessionPolling();
 
       if (apps.length === 0) {
         listEl.innerHTML = '';
@@ -66,6 +80,7 @@ const Home = {
       const canDragStars = starred.length >= 2;
 
       let html = Home.renderMyProposalsSection();
+      html += Home.renderActiveSessionsSection();
       if (hasStarred) {
         html += '<div class="home-section-header col-span-full">Starred</div>';
         // Starred apps only ever render in this section, so tag the
@@ -286,6 +301,80 @@ const Home = {
     }
 
     return '<div class="home-section-header col-span-full">Your proposals</div>' + rows;
+  },
+
+  // "Your active sessions" — one compact row per dev session the viewer
+  // currently has in 'active' status, across all apps. Promoted rows are
+  // deliberately absent (they render in "Your proposals" just above) and
+  // paused rows are idle by definition, so this stays a "what's in
+  // progress right now" list. Hidden when empty. Same col-span-full row
+  // pattern as the proposals strip; each row deep-links straight into
+  // its session via the #app/{slug}/dev/sessions/{id} hash route.
+  _activeSessions: [],
+
+  renderActiveSessionsSection() {
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
+    const all = Array.isArray(Home._activeSessions) ? Home._activeSessions : [];
+    const active = all.filter((s) => s.status === 'active');
+    if (!active.length) return '';
+
+    // Busy-first on top of the server's last_activity_at DESC order
+    // (Array.prototype.sort is stable, so within each busy bucket the
+    // activity order is preserved). Cap at 10 — the per-user slot caps
+    // keep the real-world count small, this is just a safety bound.
+    const shown = [...active]
+      .sort((a, b) => (b.busy ? 1 : 0) - (a.busy ? 1 : 0))
+      .slice(0, 10);
+
+    let rows = '';
+    for (const s of shown) {
+      const title = s.pr_title || s.branch_name || `Session #${s.id}`;
+      const rel = formatRelativeTime(s.last_activity_at || s.created_at);
+      const busyTag = s.busy
+        ? '<span class="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
+        : '';
+      const timeTag = rel
+        ? `<span class="text-[0.7rem] text-zinc-400 dark:text-zinc-500 shrink-0">${esc(rel)}</span>`
+        : '';
+      rows += `
+        <a href="#app/${esc(s.app_slug)}/dev/sessions/${s.id}"
+           class="col-span-full flex items-center gap-2 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-violet-500/50 transition-colors">
+          <span class="text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0 max-w-[30%] truncate">${esc(s.app_name)}</span>
+          <span class="text-sm text-zinc-800 dark:text-zinc-200 flex-1 min-w-0 truncate">${esc(title)}</span>
+          ${timeTag}
+          ${busyTag}
+        </a>`;
+    }
+
+    return '<div class="home-section-header col-span-full">Your active sessions</div>' + rows;
+  },
+
+  // Slow refresh tick for the active-sessions busy spinners while the
+  // home screen is visible (same 15s cadence as AppView's dev-sessions
+  // strip poll). Turn start/finish doesn't broadcast a session_update,
+  // so without this a spinner would only flip on the next WS-driven
+  // reload. Self-clears when the home screen is hidden; Home.load()'s
+  // _dragActive guard keeps the tick from re-rendering mid-drag.
+  _sessionPollTimer: null,
+
+  _syncSessionPolling() {
+    if (Home._sessionPollTimer) return;
+    Home._sessionPollTimer = setInterval(() => {
+      const homeScreen = document.getElementById('home-screen');
+      const hasActive = (Home._activeSessions || []).some((s) => s.status === 'active');
+      // Stop ticking when home is hidden or the section emptied out —
+      // with no active rows there's no spinner to refresh, and any new
+      // or resumed session re-arms the poll via the session_update
+      // WS event → Home.load() path.
+      if (!homeScreen || homeScreen.classList.contains('hidden') || !hasActive) {
+        clearInterval(Home._sessionPollTimer);
+        Home._sessionPollTimer = null;
+        return;
+      }
+      Home.load();
+    }, 15000);
   },
 
   renderAppCard(app) {
