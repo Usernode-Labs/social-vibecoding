@@ -26,6 +26,8 @@ async function migrate(config) {
   await seedStagingMergedPrs(pool, config);
   await seedStagingActiveSessions(pool, config);
   await seedStagingDemoAppCard(pool);
+  await seedStagingLeaderboardProfile(pool);
+  await seedStagingQaSession(pool, config);
   await seedStagingHeadlessFixtures(pool, config);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
@@ -1118,6 +1120,177 @@ async function seedStagingDemoAppCard(pool) {
   } catch (err) {
     log.warn('db', 'Staging demo app-card seeding failed', { message: err.message });
   }
+}
+
+// (#60) Fixtures for the leaderboard user-profile drill-in. The profile
+// view lists a user's PROPOSED PRs (chat_sessions) with kudos counts
+// (pr_kudos) — both staging:private tables, so without seeding the view
+// is empty for every user in staging. Seeds two obviously-fake users
+// (never reference real ones) at high fixed ids, a handful of sessions
+// covering each status badge the view renders (merged / open / merging
+// / closed), and kudos from the second user so counts are non-zero and
+// @staging-demo-author ranks visibly on the Top users tab. Idempotent
+// via ON CONFLICT DO NOTHING on the fixed ids; strictly a no-op outside
+// staging.
+async function seedStagingLeaderboardProfile(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    `SELECT id FROM apps WHERE view_visibility = 'public' ORDER BY id LIMIT 1`
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging leaderboard-profile fixtures skipped: no public app');
+    return;
+  }
+
+  // Password is a non-bcrypt sentinel — these accounts can never log in.
+  const AUTHOR_ID = 900001;
+  const GIVER_ID = 900002;
+  await pool.query(
+    `INSERT INTO users (id, username, password)
+     VALUES ($1, 'staging-demo-author', '!staging-fixture-no-login!'),
+            ($2, 'staging-demo-giver',  '!staging-fixture-no-login!')
+     ON CONFLICT DO NOTHING`,
+    [AUTHOR_ID, GIVER_ID]
+  );
+
+  // One session per status the profile renders a badge for. created_at
+  // is staggered so the newest-first ordering is visible; merged_at /
+  // promoted_at follow what the real lifecycle would have written. The
+  // archived row keeps promoted_at set — that's what makes it a CLOSED
+  // PR (proposed, then abandoned) rather than a private draft, which
+  // the profile endpoint excludes. pr_url present on the merged row so
+  // the external GitHub icon renders on at least one fixture.
+  const sessions = [
+    { id: 9000201, pr: 900301, status: 'merged', hoursAgo: 6,
+      title: '[Mock] Staging demo PR — merged: tidy profile chips',
+      promoted: true, merged: true, url: true },
+    { id: 9000202, pr: 900302, status: 'promoted', hoursAgo: 30,
+      title: '[Mock] Staging demo PR — open for vote: dark-mode polish',
+      promoted: true, merged: false, url: false },
+    { id: 9000203, pr: 900303, status: 'merging', hoursAgo: 54,
+      title: '[Mock] Staging demo PR — merging: debounce search box',
+      promoted: true, merged: false, url: false },
+    { id: 9000204, pr: 900304, status: 'archived', hoursAgo: 80,
+      title: '[Mock] Staging demo PR — closed without merging',
+      promoted: true, merged: false, url: false },
+  ];
+  for (const s of sessions) {
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_title, pr_url,
+          status, created_at, promoted_at, merged_at)
+       VALUES
+         ($1, $2, $3, $4, $5, $6, $7, $8,
+          NOW() - ($9::int * INTERVAL '1 hour'),
+          CASE WHEN $10 THEN NOW() - ($9::int * INTERVAL '1 hour') END,
+          CASE WHEN $11 THEN NOW() - (($9 - 1)::int * INTERVAL '1 hour') END)
+       ON CONFLICT (id) DO NOTHING`,
+      [s.id, appId, AUTHOR_ID, `staging-fixture/profile-pr-${s.id}`,
+       s.pr, s.title,
+       s.url ? `https://github.com/usernode-staging/demo/pull/${s.pr}` : null,
+       s.status, s.hoursAgo, s.promoted, s.merged]
+    );
+  }
+
+  // Kudos from the giver on the merged + open PRs: non-zero per-row
+  // counts, and merged credit so the author scores on Top users.
+  for (const sessionId of [9000201, 9000202]) {
+    await pool.query(
+      `INSERT INTO pr_kudos (session_id, giver_user_id, week_start, created_at)
+       SELECT $1, $2, date_trunc('week', NOW() AT TIME ZONE 'UTC')::date, NOW()
+        WHERE EXISTS (SELECT 1 FROM chat_sessions WHERE id = $1)
+       ON CONFLICT (session_id, giver_user_id) DO NOTHING`,
+      [sessionId, GIVER_ID]
+    );
+  }
+
+  log.info('db', 'Staging leaderboard-profile fixtures seeded', { appId });
+}
+
+// Q/A-mode fixture (#32): one demo dev-chat session whose latest Mayor
+// turn asks two numbered clarifying questions and carries a matching
+// metadata.suggestions payload, so a tester can see and tap the
+// suggested-answer chips without burning a live LLM call.
+// chat_sessions / chat_session_messages are staging:private (copied
+// schema-only into staging), hence the seed. Same owner selection as
+// the other session fixtures — the user the tester logs in as.
+// Idempotent via the branch-name existence check.
+async function seedStagingQaSession(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging Q/A fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username, is_admin
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging Q/A fixture skipped: no users');
+    return;
+  }
+  const owner = userRows[0];
+
+  const branch = 'staging-fixture/qa-suggestions';
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, branch]
+  );
+  if (existing.length) return;
+
+  const { rows: sessionRows } = await pool.query(
+    `INSERT INTO chat_sessions
+       (app_id, user_id, branch_name, pr_title, status, created_at)
+     VALUES
+       ($1, $2, $3, $4, 'active', NOW() - INTERVAL '30 minutes')
+     RETURNING id`,
+    [appId, owner.id, branch, '[staging fixture] Staging demo: Q/A suggested answers']
+  );
+  const sessionId = sessionRows[0].id;
+
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, created_at)
+     VALUES ($1, 'user', $2, NOW() - INTERVAL '29 minutes')`,
+    [sessionId, 'Make the header nicer']
+  );
+
+  const assistantContent = 'Happy to! Two quick questions before I dispatch anything:\n\n'
+    + '1. Which header — the platform-wide top bar, or the app view header? (suggested: the platform-wide top bar)\n'
+    + '2. What does "nicer" mean here — tidier spacing, or a bolder visual refresh? (suggested: tidier spacing)';
+  const suggestions = [
+    {
+      question: 'Which header?',
+      answers: ['The platform-wide top bar', 'The app view header'],
+    },
+    {
+      question: 'What does "nicer" mean?',
+      answers: ['Tidier spacing', 'A bolder visual refresh'],
+    },
+  ];
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+     VALUES ($1, 'assistant', $2, $3, NOW() - INTERVAL '28 minutes')`,
+    [sessionId, assistantContent, JSON.stringify({ suggestions })]
+  );
+
+  log.info('db', 'Staging Q/A fixture seeded', {
+    appId,
+    owner: owner.username,
+    sessionId,
+  });
 }
 
 // Staging fixtures for the issue panel's headless proposal-run states
