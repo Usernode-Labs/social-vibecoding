@@ -38,12 +38,21 @@ const AppView = {
     proposal: ['bg-sky-500/15 text-sky-500', 'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-11h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5'],
     gov: ['bg-slate-500/15 text-slate-400', 'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z'],
     done: ['bg-emerald-500/10 text-emerald-500', 'M5 13l4 4L19 7'],
+    // Document-text (Heroicons outline) — an issue with an auto-generated
+    // proposal attached (#250). Sky keeps "blue = proposal" consistent with
+    // the proposal cards, while the page shape stays distinct from their
+    // thumbs-up: this is a drafted spec on an issue, not a PR up for a vote.
+    issueProposal: ['bg-sky-500/15 text-sky-500', 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'],
   },
 
   _devCardIcon(type, opts) {
     const [tint, d] = AppView.DEV_CARD_ICONS[type] || AppView.DEV_CARD_ICONS.issue;
     const small = !!(opts && opts.small);
-    return `<span class="${small ? 'w-7 h-7' : 'w-9 h-9'} rounded-lg ${tint} flex items-center justify-center shrink-0">`
+    // pulse: animate the whole chip for in-progress states (#250).
+    // title: hover tooltip naming the state the tint encodes.
+    const pulse = opts && opts.pulse ? ' animate-pulse' : '';
+    const title = opts && opts.title ? ` title="${escapeAttr(opts.title)}"` : '';
+    return `<span class="${small ? 'w-7 h-7' : 'w-9 h-9'} rounded-lg ${tint} flex items-center justify-center shrink-0${pulse}"${title}>`
       + `<svg class="${small ? 'w-4 h-4' : 'w-5 h-5'}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="${d}"/></svg></span>`;
   },
 
@@ -1714,6 +1723,16 @@ const AppView = {
     } else {
       autoBtn = `<button class="gc-vote-btn" title="Spin up a headless AI session that starts solving this issue on its own — uses your credits" onclick="AppView.confirmAutoSession(${n})">Generate proposal</button>`;
     }
+    // #250: the chip icon mirrors the auto-solve state so proposal issues
+    // read at a glance — pulsing sky document while generating, steady sky
+    // document once ready (any outcome, question included: there's something
+    // to review either way), plain amber issue chip otherwise. Unknown
+    // statuses fall through to the plain chip like _headlessRank's bucket.
+    const icon = h && h.status === 'generating'
+      ? AppView._devCardIcon('issueProposal', { pulse: true, title: 'A proposal is being generated for this issue' })
+      : h && h.status === 'ready'
+        ? AppView._devCardIcon('issueProposal', { title: 'Proposal ready — review it to start a session' })
+        : AppView._devCardIcon('issue');
     // #133: the creating user renders in the meta line below the title.
     // created_by_username comes from the /github-issues route (local
     // issues table → body Source line → GitHub login); omitted when the
@@ -1724,7 +1743,7 @@ const AppView = {
 
     html += `
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" data-ref-issue="${n}"${noNav ? '' : ` data-issue-row="${n}" title="Open this issue's discussion"`}>
-        ${AppView._devCardIcon('issue')}
+        ${icon}
         <div class="flex-1 min-w-0">
           <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
             <div class="dev-card-headline">
