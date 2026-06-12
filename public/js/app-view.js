@@ -12,14 +12,6 @@ const AppView = {
   _ghIssues: [],
   _ghIssuesMeta: { truncatedList: false, note: null, repoUrl: null, myRemaining: null },
   _bountyInFlight: new Set(),
-  // #192: manual-refresh state for the Open Issues section. `_ghRefreshing`
-  // guards re-entrancy while a ?refresh=1 fetch is in flight;
-  // `_ghRefreshNextAt` is the epoch-ms end of the server-reported cooldown
-  // (the button renders disabled until then); `_ghRefreshTimer` re-renders
-  // once at expiry so the button re-enables without user interaction.
-  _ghRefreshing: false,
-  _ghRefreshNextAt: 0,
-  _ghRefreshTimer: null,
 
   // ── Dev view state (#194, forum revision) ─────────────────────────
   // The Dev mode is one forum page (pinned chat + sessions strip + a
@@ -938,13 +930,7 @@ const AppView = {
     const meta = AppView._ghIssuesMeta || {};
     const items = AppView._feedItems();
 
-    // #192: throttled manual refresh — covers issues created directly
-    // on GitHub that the server's 5-minute cache would otherwise hide.
-    const refreshDisabled = AppView._ghRefreshing || Date.now() < (AppView._ghRefreshNextAt || 0);
-    const refreshTitle = AppView._ghRefreshing
-      ? 'Refreshing…'
-      : (refreshDisabled ? 'Just refreshed — try again in a moment' : 'Check GitHub for new issues');
-    let html = `<div class="flex items-center justify-between mb-1"><span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider">Topics</span><span class="flex items-center gap-2"><button class="gc-vote-btn" title="Report a problem or idea without building it yourself" onclick="AppView.openNewIssueModal()">+ New issue</button><button class="gc-vote-btn"${refreshDisabled ? ' disabled' : ''} title="${refreshTitle}" onclick="AppView.refreshOpenIssues()">&#8635; Refresh</button></span></div>`;
+    let html = `<div class="flex items-center justify-between mb-1"><span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider">Topics</span><button class="gc-vote-btn" title="Report a problem or idea without building it yourself" onclick="AppView.openNewIssueModal()">+ New issue</button></div>`;
     if (ctx.locked) {
       html += '<div class="mb-2 text-xs text-amber-500">App is locked — an admin must approve any proposal before it applies.</div>';
     }
@@ -1705,47 +1691,6 @@ const AppView = {
       </div>`;
     if (expanded) html += AppView._issueExpansionHtml(issue);
     return html;
-  },
-
-  // #192: manual refresh — re-pull the Open Issues list with ?refresh=1,
-  // which forces the server past its 5-minute cache (throttled per repo
-  // server-side; within the cooldown it serves the cache and reports
-  // refreshed:false). Replaces the cached list in place (an explicit user
-  // refresh may clobber optimistic bounty/headless tweaks — same trade
-  // loadVotePanel makes on every WS-triggered reload) but preserves the
-  // user's "Show 5 more" paging. On failure it silently re-enables the
-  // button, mirroring the section's muted degraded states — no toast.
-  async refreshOpenIssues() {
-    if (AppView._ghRefreshing) return;
-    const slug = AppView.appData && AppView.appData.slug;
-    if (!slug) return;
-    AppView._ghRefreshing = true;
-    AppView._rerenderFeed();
-    try {
-      const res = await fetch(`/api/apps/${slug}/github-issues?refresh=1`);
-      if (res.ok) {
-        const data = await res.json();
-        AppView._ghIssues = Array.isArray(data.issues) ? data.issues : [];
-        AppView._ghIssuesMeta = {
-          truncatedList: !!data.truncatedList,
-          note: data.note || null,
-          repoUrl: (AppView.appData && AppView.appData.repo_url) || null,
-          myRemaining: typeof data.myRemaining === 'number' ? data.myRemaining : null,
-        };
-        AppView._ghRefreshNextAt = Date.now()
-          + (typeof data.refreshRetryMs === 'number' ? data.refreshRetryMs : 60000);
-        // One timer (replacing any prior) re-renders at cooldown expiry so
-        // the button re-enables without user interaction. The renderer
-        // already syncs headless polling, so no extra wiring needed.
-        if (AppView._ghRefreshTimer) clearTimeout(AppView._ghRefreshTimer);
-        AppView._ghRefreshTimer = setTimeout(() => {
-          AppView._ghRefreshTimer = null;
-          if (document.getElementById('dev-feed')) AppView._rerenderFeed();
-        }, Math.max(0, AppView._ghRefreshNextAt - Date.now()) + 50);
-      }
-    } catch {}
-    AppView._ghRefreshing = false;
-    AppView._rerenderFeed();
   },
 
   // ---- Merged (closed) PRs section ----------------------------------------
