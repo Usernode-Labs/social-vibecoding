@@ -615,6 +615,17 @@ const DevChat = {
       // deliberately untouched here — it stays sticky while the user is
       // away and clears on return / notification read.
       DevChat.setTitleStatus(null);
+      // #233: the spec viewer is a single global state slot, not keyed
+      // per session — switching sessions must drop the previous
+      // session's content (and open flag) or it leaks into the new
+      // session's panel. Number-compare because openSession receives
+      // the id from DOM datasets (string) while openSpecViewer stores
+      // currentSession.id (number). Re-opening the SAME session keeps
+      // the cached content so returning repaints instantly.
+      if (DevChat.specViewer.sessionId != null
+          && Number(DevChat.specViewer.sessionId) !== Number(sessionId)) {
+        DevChat._resetSpecViewer();
+      }
       // Restore the spec viewer's open/closed state from localStorage
       // before the caller's renderChatView fires, so a refresh on a
       // session that had the viewer open paints with the panel
@@ -3092,6 +3103,11 @@ const DevChat = {
     const pane = document.getElementById('dc-spec-viewer');
     if (!pane || !DevChat.currentSession) return;
     if (!DevChat.specViewer.open) return;
+    // #233 fail-closed guard: never render another session's spec. Any
+    // path that forgets to reset the global specViewer slot on a
+    // session switch gets a blank panel, not stale content.
+    if (DevChat.specViewer.sessionId != null
+        && Number(DevChat.specViewer.sessionId) !== Number(DevChat.currentSession.id)) return;
 
     // Numbered versions are the single spec surface now (#69). The
     // dropdown lists v1…vN; the highest is the live latest and its
