@@ -1,11 +1,12 @@
 // #30 — Settings modal (BYOK: bring your own Anthropic API key).
 //
-// The gear button in the header opens this modal. Users can paste an
-// `sk-ant-...` key; the server verifies it with a cheap 1-token call
-// and only then encrypts + stores it. Once saved, a small emerald dot
-// appears on the gear icon so the user can tell at a glance that their
-// key is active — and so can any other user viewing over their
-// shoulder (no secrets leak, just the indicator).
+// The Settings row in the header drawer opens this modal (wired in
+// app.js HeaderMenu.init). Users can paste an `sk-ant-...` key; the
+// server verifies it with a cheap 1-token call and only then encrypts
+// + stores it. Once saved, a small emerald dot appears on the drawer's
+// Settings row so the user can tell at a glance that their key is
+// active — and so can any other user viewing over their shoulder
+// (no secrets leak, just the indicator).
 (function () {
   'use strict';
 
@@ -18,7 +19,8 @@
 
     init() {
       this.modal = document.getElementById('settings-modal');
-      document.getElementById('settings-btn').addEventListener('click', () => this.open());
+      // The open entry point is the drawer's Settings row, wired in
+      // app.js HeaderMenu.init → Settings.open().
       document.getElementById('settings-close').addEventListener('click', () => this.close());
       document.getElementById('settings-save').addEventListener('click', () => this.save());
       document.getElementById('settings-remove').addEventListener('click', () => this.remove());
@@ -105,7 +107,7 @@
     },
 
     _renderIndicator() {
-      const dot = document.getElementById('settings-byok-dot');
+      const dot = document.getElementById('drawer-byok-dot');
       if (dot) dot.classList.toggle('hidden', !this.state.hasApiKey);
       // Let dev-chat swap its budget indicator for the BYOK badge
       // without having to observe us directly.

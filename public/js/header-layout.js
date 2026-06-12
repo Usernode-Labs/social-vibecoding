@@ -3,10 +3,11 @@
 //
 // The page header is a flex row of [back-btn wrapper][title][right group].
 // In flex flow, the title's flex-1 cell sits between the back-btn wrapper
-// (~20px) and the right group (variable width: 2 commit pills + ~5 icon
-// buttons, anywhere from ~180px on mobile to ~560px on desktop). Centering
-// the title within its own cell yields a position that's offset from
-// viewport center because the side groups have very different widths.
+// (~20px) and the right group (variable width: 2 commit pills, the kudos
+// badge, and ~3-5 icon buttons depending on app state — most secondary
+// actions live in the drawer since #122). Centering the title within its
+// own cell yields a position that's offset from viewport center because
+// the side groups have very different widths.
 //
 // This script restores true viewport-centering when there's enough room
 // for it, by switching the title to absolute positioning at left:50%.
