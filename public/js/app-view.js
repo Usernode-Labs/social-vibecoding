@@ -1289,8 +1289,12 @@ const AppView = {
     const unvotedBadge = isUnvoted
       ? '<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 shrink-0" title="You haven\'t voted on this yet"><span class="relative flex h-1.5 w-1.5"><span class="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75 animate-ping"></span><span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-violet-500"></span></span>Vote</span>'
       : '';
+    // #239: resolving badge only when not already merging/merged — the
+    // merge pipeline states outrank the resolver's. No opacity-70 fade
+    // and no disabled vote controls: voting during resolution is valid.
     const stateBadge = isMerging ? AppView.mergingBadgeHtml()
-      : isMerged ? AppView.mergedBadgeHtml() : '';
+      : isMerged ? AppView.mergedBadgeHtml()
+      : pr.resolving ? AppView.resolvingBadgeHtml() : '';
     // Sessions are owner-scoped (GET /api/sessions/:id), so the session
     // button only renders for the proposer.
     const chatN = parseInt(pr.chat_count) || 0;
@@ -2160,6 +2164,15 @@ const AppView = {
   // Shared by the vote panel rows and the inline group-chat rows.
   mergingBadgeHtml() {
     return `<span class="gc-merging-badge"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Merging…</span>`;
+  },
+
+  // #239: "Resolving conflicts…" badge — same slot and treatment as the
+  // merging badge, shown while the auto-conflict-resolver has a sync in
+  // flight for the PR (row.resolving from GET /api/apps/:slug/promoted).
+  // Voting stays enabled while it's up: votes cast during resolution
+  // count toward the retried merge.
+  resolvingBadgeHtml() {
+    return `<span class="gc-merging-badge gc-resolving-badge"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Resolving conflicts…</span>`;
   },
 
   // "Merged" badge — the settled counterpart of the merging badge, shown
