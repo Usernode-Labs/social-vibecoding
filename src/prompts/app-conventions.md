@@ -125,6 +125,56 @@ Canonical helper:
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 ```
 
+## Staging mock data
+
+Testing instructions for a staging preview are only useful if the data
+they reference actually exists there. Staging starts from a copy of the
+production database (see "Public vs private tables"), so three kinds of
+data are MISSING and need seeding when a testing step depends on them:
+
+1. **Tables newly created by this change** — they don't exist in prod
+   yet, so the boot migration creates them empty in staging.
+2. **`staging:private` tables** — copied schema-only, always empty.
+3. **States hard to reach by clicking around** — a populated
+   leaderboard, a multi-user interaction, a half-finished game.
+
+Two sanctioned mechanisms, both guarded by the `IS_STAGING` helper
+above:
+
+- **Boot-time seed block**, run right after the idempotent migration:
+
+  ```js
+  if (IS_STAGING) {
+    await pool.query(
+      `INSERT INTO posts (id, username, title)
+       VALUES (900001, 'staging-demo-user', 'Staging demo post #1')
+       ON CONFLICT (id) DO NOTHING`
+    );
+  }
+  ```
+
+- **Request-time demo injection** behind
+  `IS_STAGING && req.query.demo === '1'` — for read-only demo state
+  that shouldn't persist in the DB. Point the testing block's `path:`
+  at the `?demo=1` URL.
+
+Seed rules:
+
+- **Idempotent.** Staging containers rebuild on every push, so seeds
+  re-run on each boot — use an existence check or
+  `ON CONFLICT DO NOTHING`.
+- **Obviously fake.** Give seeded rows a consistent "Staging demo …"
+  prefix so they can't be mistaken for real user content.
+- **Small.** A handful of rows — just enough for the testing steps.
+- **Never reference real users.** Use fake usernames/IDs
+  (e.g. `staging-demo-user`), never rows cloned from prod.
+- **Strictly a no-op outside staging.** The whole block is gated on
+  `USERNODE_ENV === 'staging'`; production data is never touched.
+
+Tie-in with testing instructions: the testing steps you emit must
+reference the seeded entities by name ("Open the thread 'Staging demo
+thread' and …"), so a tester knows exactly what they should be seeing.
+
 ## Public vs private tables — **IMPORTANT**
 
 Staging containers get a **copy of the production database** so PRs

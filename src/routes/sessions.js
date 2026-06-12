@@ -3437,6 +3437,7 @@ Your job is to investigate this repo and produce a MARKDOWN SPEC for the change.
 - Grounded in real file evidence — reference actual file paths and current behaviour, not guesses.
 - Structured as TWO halves under these exact H2 headings, in this order: "## User-facing changes" then "## Technical implementation". The spec viewer renders the two halves as tabs, so content outside them is undesirable — keep everything except the title and an optional 1-2 sentence summary inside one of the two halves. "User-facing changes" must be readable by a non-developer: describe what the user will see and do differently (screens, behaviour, before/after) — no file paths, no schema, no code. "Technical implementation" holds everything else: affected files, data model, edge cases, tests, considerations, deferred work. All other headings must be ### or deeper — no other ## headings anywhere in the document.
 - Specific enough that a coding agent could implement it without re-doing your investigation, but NOT a literal diff or code block.
+- If the planned change introduces data-dependent UI (lists, threads, leaderboards, anything that renders rows), the "Technical implementation" half should name the staging seed data the build will need (per the "Staging mock data" platform convention), so seeding is planned rather than improvised at build time.
 
 The spec is rendered as markdown in a viewer that follows standard CommonMark fencing. If you include a fenced code block that ITSELF contains a triple-backtick fence (common when quoting markdown examples or the platform's \`\`\`filepath:...\`\`\` output convention), wrap the OUTER block in a four-backtick fence (\`\`\`\`) — a longer fence can safely contain shorter ones. Otherwise the inner \`\`\` closes the block early and the rest of the spec renders broken. When in doubt, prefer fewer/inline code samples over deeply nested fences.
 
@@ -3783,10 +3784,17 @@ path: /relative/path?demo=1
   - The steps are short markdown (numbered list preferred), written for a
     non-technical tester looking at a staging preview seeded with a copy of
     production data.
-  - If the change is hard to demonstrate with production-cloned data, you
-    MAY add a small staging-gated demo state (route or query param guarded
-    by USERNODE_ENV === 'staging') and point "path:" at it. It must be a
-    no-op in production.
+  - DATA AVAILABILITY: before writing the steps, check what each step's
+    data actually looks like in staging — existing public tables carry a
+    copy of production data, but tables created by THIS change and
+    staging:private tables are EMPTY. If a step needs data that won't
+    exist, you MUST seed it in this same commit per the "Staging mock
+    data" convention above (IS_STAGING boot-time seed, or a
+    staging-gated ?demo=1 route — always a no-op in production), and
+    write the steps against the seeded entities by name ("Open the
+    thread 'Staging demo thread' and …"). Point "path:" at a view where
+    the seeded data is visible (or at the ?demo=1 route). Changes
+    testable purely against production-cloned data need no seeding.
   - The block must be the LAST thing in your final message. Skip the block
     entirely for changes with nothing user-visible to test.`;
 
