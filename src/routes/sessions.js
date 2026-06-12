@@ -1853,6 +1853,10 @@ function sessionRoutes(config) {
   //     share card; the body of the spec should be reachable too,
   //     otherwise the "View full spec" affordance on the card 404s
   //     for everyone except the original sharer (#6).
+  //   - (#86) A user the owner privately shared this exact version with
+  //     via POST /specs/:version/share-user — the
+  //     chat_session_spec_user_shares row is the authorization source
+  //     of truth, scoped to (session, version, recipient).
   router.get('/api/sessions/:id/specs/:version', async (req, res) => {
     const sessionId = parseInt(req.params.id, 10);
     const version = parseInt(req.params.version, 10);
@@ -1866,7 +1870,13 @@ function sessionRoutes(config) {
          JOIN chat_sessions cs ON cs.id = s.session_id
          WHERE s.session_id = $1
            AND s.version = $2
-           AND (cs.user_id = $3 OR s.shared_to_group_at IS NOT NULL)`,
+           AND (cs.user_id = $3 OR s.shared_to_group_at IS NOT NULL
+                OR EXISTS (
+                  SELECT 1 FROM chat_session_spec_user_shares us
+                   WHERE us.session_id = s.session_id
+                     AND us.version = s.version
+                     AND us.recipient_id = $3
+                ))`,
         [sessionId, version, req.user.id]
       );
       if (!rows.length) return res.status(404).json({ error: 'Spec version not found' });
@@ -1979,6 +1989,83 @@ function sessionRoutes(config) {
       res.json({ ok: true, appSlug, messageId: msgRows[0].id });
     } catch (err) {
       log.error('sessions', 'Share spec failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // (#86) Privately share a frozen spec version with ONE user. Unlike
+  // the group share above, nothing is posted to chat and the spec is
+  // NOT marked shared_to_group_at — the recipient gets a 'spec_shared'
+  // notification that deep-links into the read-only spec panel, and the
+  // chat_session_spec_user_shares row widens the GET /specs/:version
+  // gate for exactly (session, version, recipient). Repeatable: the
+  // owner can share with several people one at a time; re-sharing with
+  // the same person is an idempotent no-op (no second notification).
+  router.post('/api/sessions/:id/specs/:version/share-user', async (req, res) => {
+    const sessionId = parseInt(req.params.id, 10);
+    const version = parseInt(req.params.version, 10);
+    if (Number.isNaN(sessionId) || Number.isNaN(version)) {
+      return res.status(400).json({ error: 'Bad id/version' });
+    }
+    const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
+    if (!username) return res.status(400).json({ error: 'Username required' });
+
+    try {
+      // Owner-only, same as the group-share route.
+      const { rows: sessionRows } = await pool.query(
+        `SELECT cs.id, cs.app_id
+         FROM chat_sessions cs
+         WHERE cs.id = $1 AND cs.user_id = $2`,
+        [sessionId, req.user.id]
+      );
+      if (!sessionRows.length) return res.status(404).json({ error: 'Session not found' });
+      const appId = sessionRows[0].app_id;
+
+      const { rows: specRows } = await pool.query(
+        `SELECT version FROM chat_session_specs
+         WHERE session_id = $1 AND version = $2`,
+        [sessionId, version]
+      );
+      if (!specRows.length) return res.status(404).json({ error: 'Spec version not found' });
+
+      const users = await notifications.resolveUsers(pool, [username.toLowerCase()]);
+      if (!users.length) return res.status(404).json({ error: 'User not found' });
+      const recipient = users[0];
+      if (recipient.id === req.user.id) {
+        return res.status(400).json({ error: 'You already have this spec' });
+      }
+
+      // Collab-private apps: a share must not grant a non-member a spec
+      // they'd have no app context for. Explicit error (not a silent
+      // drop) — the sharer needs the feedback.
+      const allowed = await notifications.filterToCollaborators(pool, appId, [recipient.id]);
+      if (!allowed.includes(recipient.id)) {
+        return res.status(400).json({ error: "That user doesn't have access to this app" });
+      }
+
+      const { rowCount } = await pool.query(
+        `INSERT INTO chat_session_spec_user_shares (session_id, version, recipient_id, shared_by)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (session_id, version, recipient_id) DO NOTHING`,
+        [sessionId, version, recipient.id, req.user.id]
+      );
+      if (rowCount === 0) {
+        // Already shared with this person — re-shares must not re-ping.
+        return res.json({ ok: true, alreadyShared: true, recipient: { username: recipient.username } });
+      }
+
+      const rows = await notifications.createSpecSharedNotification(pool, {
+        recipientId: recipient.id,
+        appId,
+        sessionId,
+        sharerId: req.user.id,
+        version,
+      });
+      for (const row of rows) await notifications.hydrateAndPush(pool, row);
+
+      res.json({ ok: true, recipient: { username: recipient.username } });
+    } catch (err) {
+      log.error('sessions', 'Share spec to user failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

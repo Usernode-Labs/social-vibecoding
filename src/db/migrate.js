@@ -31,6 +31,7 @@ async function migrate(config) {
   await seedStagingLeaderboardProfile(pool);
   await seedStagingQaSession(pool, config);
   await seedStagingSpecViewerSessions(pool, config);
+  await seedStagingSpecUserShareFixtures(pool, config);
   await seedStagingHeadlessFixtures(pool, config);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
@@ -1459,6 +1460,123 @@ async function seedStagingSpecViewerSessions(pool, config) {
     owner: owner.username,
     total: fixtures.length,
     inserted,
+  });
+}
+
+// (#86) Staging fixtures for the private "Share to user" spec flow.
+// chat_sessions, chat_session_specs, chat_session_spec_user_shares and
+// notifications are all staging:private (schema-only in clones), so
+// without seeding the recipient-side path — the 'spec_shared' drawer
+// row and its click-through into the read-only spec panel — would be
+// unreachable in a staging preview. Must run AFTER
+// seedStagingSpecViewerSessions (shares the admin-first "staging login
+// user" convention with seedStagingNotifications).
+//
+// The fixture session is owned by the SECOND user (when one exists) so
+// the recipient genuinely exercises the share-widened read gate rather
+// than the owner fast-path. Idempotent: session keyed off its fixture
+// branch, the share row off its UNIQUE constraint + ON CONFLICT, the
+// notification off an existence check.
+async function seedStagingSpecUserShareFixtures(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging spec-user-share fixtures skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username, is_admin
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 2`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging spec-user-share fixtures skipped: no users');
+    return;
+  }
+  const recipient = userRows.find((u) => u.is_admin) || userRows[0];
+  const sharer = userRows.find((u) => u.id !== recipient.id) || recipient;
+
+  const specContent = [
+    '# Staging demo spec: privately shared',
+    '',
+    'This spec was shared privately with you via the "Share to user"',
+    'button — nobody else can see it, and nothing was posted to the',
+    'group chat.',
+    '',
+    '## User-facing changes',
+    '',
+    '- A "Share to user" button appears in the dev-session spec viewer.',
+    '- The recipient gets a notification that opens this read-only panel.',
+    '',
+    '## Technical implementation',
+    '',
+    '- chat_session_spec_user_shares rows gate the private read access.',
+  ].join('\n');
+
+  const fixtureBranch = 'staging-fixture/spec-user-share';
+  let sessionId;
+  const { rows: sessionRows } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, fixtureBranch]
+  );
+  if (sessionRows.length) {
+    sessionId = sessionRows[0].id;
+  } else {
+    const { rows } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_title, status, spec_md, created_at)
+       VALUES ($1, $2, $3, '[staging fixture] Privately shared spec session', 'active',
+               $4, NOW() - INTERVAL '45 minutes')
+       RETURNING id`,
+      [appId, sharer.id, fixtureBranch, specContent]
+    );
+    sessionId = rows[0].id;
+  }
+
+  await pool.query(
+    `INSERT INTO chat_session_specs (session_id, version, content, built_at)
+     VALUES ($1, 1, $2, NOW() - INTERVAL '44 minutes')
+     ON CONFLICT (session_id, version) DO NOTHING`,
+    [sessionId, specContent]
+  );
+
+  await pool.query(
+    `INSERT INTO chat_session_spec_user_shares (session_id, version, recipient_id, shared_by)
+     VALUES ($1, 1, $2, $3)
+     ON CONFLICT (session_id, version, recipient_id) DO NOTHING`,
+    [sessionId, recipient.id, sharer.id]
+  );
+
+  const { rows: existingNotif } = await pool.query(
+    `SELECT id FROM notifications
+      WHERE user_id = $1 AND app_id = $2 AND kind = 'spec_shared'
+        AND session_id = $3
+      LIMIT 1`,
+    [recipient.id, appId, sessionId]
+  );
+  if (!existingNotif.length) {
+    await pool.query(
+      `INSERT INTO notifications
+         (user_id, app_id, session_id, source_user_id, kind, detail, created_at)
+       VALUES ($1, $2, $3, $4, 'spec_shared', '1', NOW() - INTERVAL '40 minutes')`,
+      [recipient.id, appId, sessionId, sharer.id]
+    );
+  }
+
+  log.info('db', 'Staging spec-user-share fixtures seeded', {
+    appId,
+    sessionId,
+    recipient: recipient.username,
+    sharer: sharer.username,
   });
 }
 
