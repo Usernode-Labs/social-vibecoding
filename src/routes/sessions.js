@@ -4145,11 +4145,11 @@ path: /relative/path?demo=1
               appSlug: session.app_slug,
               merged: false,
             });
-            await sendSystemMessage(
-              pool, session.app_id,
-              `Votes reset on PR #${session.pr_number || session.id} — new commit ${commitHash.substring(0, 8)} pushed.`,
-              'system'
-            ).catch(() => {});
+            const resetMsg = `Votes reset on PR #${session.pr_number || session.id} — new commit ${commitHash.substring(0, 8)} pushed.`;
+            await sendSystemMessage(pool, session.app_id, resetMsg, 'system').catch(() => {});
+            // Dual-post into the proposal's thread (lifecycle in context).
+            await sendSystemMessage(pool, session.app_id, resetMsg, 'system',
+              null, { type: 'session', ref: session.id }).catch(() => {});
             log.info('sessions', 'Reset PR votes after new commit', {
               sessionId: session.id, commitHash: commitHash.substring(0, 8), votesDropped: rowCount,
             });

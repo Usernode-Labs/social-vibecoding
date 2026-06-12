@@ -187,6 +187,15 @@ function voteRoutes(config) {
         // this activity row (see group-chat.js renderMessageHtml).
         { vote: { sessionId: session.id, prNumber: session.pr_number || null } }
       );
+      // Dual-post into the proposal's own thread so the topic discussion
+      // carries its lifecycle in context (general chat stays the
+      // app-wide entry point).
+      await sendSystemMessage(pool, session.app_id,
+        `${req.user.username} promoted ${promoLabel} for voting`,
+        'vote',
+        { vote: { sessionId: session.id, prNumber: session.pr_number || null } },
+        { type: 'session', ref: session.id }
+      ).catch(() => {});
 
       const { pushSessionUpdate } = require('../services/ws');
       pushSessionUpdate({ action: 'promoted', sessionId: session.id, appSlug: session.app_slug });
@@ -564,9 +573,13 @@ function voteRoutes(config) {
            -- feed's activity sort. The partial thread index makes these
            -- index-only probes per row. promoted_at is the proposal's own
            -- activity anchor (falls back to created_at client-side).
+           -- chat_count counts human messages only (msg_type='message')
+           -- so dual-posted lifecycle/vote system rows don't make the 💬
+           -- badge claim a discussion that hasn't happened.
            cs.promoted_at,
            (SELECT COUNT(*)::int FROM chat_messages cm
-             WHERE cm.app_id = cs.app_id AND cm.thread_type = 'session' AND cm.thread_ref = cs.id) as chat_count,
+             WHERE cm.app_id = cs.app_id AND cm.thread_type = 'session' AND cm.thread_ref = cs.id
+               AND cm.msg_type = 'message') as chat_count,
            (SELECT MAX(cm.created_at) FROM chat_messages cm
              WHERE cm.app_id = cs.app_id AND cm.thread_type = 'session' AND cm.thread_ref = cs.id) as last_message_at,
            -- #195: before/after capture artifact ids, aggregated to one
@@ -940,10 +953,11 @@ async function checkAndMerge(config, pool, session, options = {}) {
       const label = session.pr_title
         ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
-      await sendSystemMessage(pool, session.app_id,
-        `${label} is ${session.behind_main} commit${session.behind_main === 1 ? '' : 's'} behind main — syncing automatically and will retry the merge. ${owner}: you can also resolve it from the session's dev-chat.`,
-        'system'
-      );
+      const behindMsg = `${label} is ${session.behind_main} commit${session.behind_main === 1 ? '' : 's'} behind main — syncing automatically and will retry the merge. ${owner}: you can also resolve it from the session's dev-chat.`;
+      await sendSystemMessage(pool, session.app_id, behindMsg, 'system');
+      // Dual-post into the proposal's thread (lifecycle in context).
+      await sendSystemMessage(pool, session.app_id, behindMsg, 'system',
+        null, { type: 'session', ref: session.id }).catch(() => {});
       log.info('votes', 'Merge blocked: branch behind main', {
         sessionId: session.id, behind: session.behind_main,
       });
@@ -1151,10 +1165,11 @@ async function checkAndMerge(config, pool, session, options = {}) {
           metadata: { issueNumber: n, prNumber: session.pr_number || null, count: awarded.length },
         });
         const recipient = session.user_id ? `<@${session.user_id}>` : 'the author';
-        await sendSystemMessage(pool, session.app_id,
-          `Bounty on issue #${n} (${awarded.length} kudos) awarded to ${recipient} — PR #${session.pr_number || session.id} merged`,
-          'system'
-        ).catch(() => {});
+        const bountyMsg = `Bounty on issue #${n} (${awarded.length} kudos) awarded to ${recipient} — PR #${session.pr_number || session.id} merged`;
+        await sendSystemMessage(pool, session.app_id, bountyMsg, 'system').catch(() => {});
+        // Dual-post into the proposal's thread (lifecycle in context).
+        await sendSystemMessage(pool, session.app_id, bountyMsg, 'system',
+          null, { type: 'session', ref: session.id }).catch(() => {});
       }
     } catch (err) {
       log.warn('votes', 'Bounty payout failed', { sessionId: session.id, err: err.message });
@@ -1241,7 +1256,8 @@ async function checkAndMerge(config, pool, session, options = {}) {
       log.warn('votes', 'Failed to destroy CC volume', { sessionId: session.id, err: err.message });
     }
 
-    // Announce in group chat
+    // Announce in group chat, and dual-post into the proposal's own
+    // thread so its discussion carries the outcome in context.
     const mergedLabel = session.pr_title
       ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
       : `PR #${session.pr_number || session.id}`;
@@ -1252,6 +1268,10 @@ async function checkAndMerge(config, pool, session, options = {}) {
       `${mergedLabel} ${mergedSuffix}`,
       'system'
     );
+    await sendSystemMessage(pool, session.app_id,
+      `${mergedLabel} ${mergedSuffix}`,
+      'system', null, { type: 'session', ref: session.id }
+    ).catch(() => {});
 
     // Check for conflicts on other promoted PRs and resolve them
     checkAndResolveConflicts(config, session).catch((err) => {

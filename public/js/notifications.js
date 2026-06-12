@@ -353,14 +353,36 @@ const Notifications = {
       return;
     }
     if (item.appSlug) {
-      // Mentions/replies/reactions land on the app's Dev → Chat;
-      // vote nudges and kudos land on the Proposals tab where their PR
-      // card lives (deep-linked when we know the session).
+      // Mentions/replies/reactions land on the app's Dev → Chat — unless
+      // the message lives in a topic thread (#194 parity), in which case
+      // the click opens that issue/proposal/governance discussion where
+      // the message is actually visible. Vote nudges and kudos land on
+      // the Proposals tab where their PR card lives (deep-linked when we
+      // know the session).
       //
       // Navigate via App.openAppTab rather than assigning location.hash:
       // a same-value hash assignment fires no `hashchange`, so clicking a
       // notification for the app/tab already on screen wouldn't re-render.
       // openAppTab always renders (and keeps the URL in sync internally).
+      const chatKinds = new Set(['mention', 'reply', 'reaction']);
+      if (chatKinds.has(item.kind) && item.threadType && item.threadRef != null) {
+        const kindMap = { issue: 'issue', session: 'proposal', governance: 'gov' };
+        const topicKind = kindMap[item.threadType];
+        const topicId = parseInt(item.threadRef, 10);
+        if (topicKind && Number.isInteger(topicId) && topicId > 0) {
+          if (typeof App !== 'undefined' && App.openAppTab) {
+            App.openAppTab(item.appSlug, 'dev', {
+              subTab: 'topic',
+              ref: { kind: topicKind, id: topicId },
+            });
+          } else {
+            const seg = topicKind === 'issue' ? 'issues'
+              : topicKind === 'proposal' ? 'proposals' : 'governance';
+            window.location.hash = `#app/${item.appSlug}/dev/${seg}/${topicId}`;
+          }
+          return;
+        }
+      }
       const voteKinds = new Set(['pr_proposed', 'stale_pr', 'kudos']);
       const toProposals = voteKinds.has(item.kind);
       if (typeof App !== 'undefined' && App.openAppTab) {

@@ -437,7 +437,11 @@ const GroupChat = {
         return;
       }
     }
-    if (typeof AppView !== 'undefined' && AppView.bumpThreadBadge) {
+    // Only human messages bump the 💬 badge — dual-posted lifecycle
+    // system rows would otherwise inflate a count that the server now
+    // computes from msg_type='message' rows only.
+    if (msg.msgType === 'message'
+        && typeof AppView !== 'undefined' && AppView.bumpThreadBadge) {
       AppView.bumpThreadBadge(type, Number(ref));
     }
   },
@@ -465,20 +469,20 @@ const GroupChat = {
   // page refresh"). The caller can clear the input as soon as we
   // return without losing user-typed content.
   send(content, thread) {
-    // #194: thread sends carry their scope and never consume the general
-    // composer's staged reply quote.
+    // #194: thread sends carry their scope.
     const payload = { type: 'chat', content };
     if (thread && thread.type && thread.ref) {
       payload.thread = { type: thread.type, ref: Number(thread.ref) };
-    } else {
-      // #15: consume the pending reply quote (if any) for this message
-      // and clear it so it only attaches once. We send a minimal
-      // reference; the server re-derives author/snippet from the source.
-      const quote = GroupChat.replyDraft;
-      GroupChat.replyDraft = null;
-      GroupChat._renderQuotePreview();
-      if (quote) payload.quote = GroupChat._wireQuote(quote);
     }
+    // #15: consume the pending reply quote (if any) for this message and
+    // clear it so it only attaches once. Both composers stage into the
+    // same replyDraft, and mount/unmount of a thread clears it, so the
+    // quote always belongs to the surface doing the send. We send a
+    // minimal reference; the server re-derives author/snippet.
+    const quote = GroupChat.replyDraft;
+    GroupChat.replyDraft = null;
+    GroupChat._renderQuotePreview();
+    if (quote) payload.quote = GroupChat._wireQuote(quote);
 
     if (GroupChat.ws && GroupChat.ws.readyState === 1) {
       GroupChat.ws.send(JSON.stringify(payload));
@@ -546,26 +550,43 @@ const GroupChat = {
     GroupChat.activeThread = { type, ref: Number(ref) };
 
     const threadKey = GroupChat.threadKey(type, ref);
+    // A quote staged in the general composer must not ride along into a
+    // thread send (and vice versa — see unmountThread): entering a thread
+    // is a fresh composer context.
+    GroupChat.clearQuote();
     // fullHeight (#194 card-list revision): the topic sub-view's thread
-    // fills its flex container — messages take the remaining height and
-    // the composer pins to the bottom — instead of the inline 40vh cap.
+    // fills its flex container and mirrors the general chat pane's look —
+    // full-width message list, h-5 typing slot, bordered-top composer with
+    // the same input/Send sizing — instead of the boxed inline 40vh layout
+    // kept for any legacy (non-fullHeight) caller.
     const fill = !!opts.fullHeight;
-    container.innerHTML = `
-      <div class="dev-thread border border-zinc-200 dark:border-zinc-800 rounded-xl flex flex-col bg-zinc-50/50 dark:bg-zinc-900/40${fill ? ' h-full min-h-0' : ''}">
-        <div id="gc-thread-messages" class="overflow-y-auto px-2 py-1 space-y-0.5${fill ? ' flex-1 min-h-0' : ''}"${fill ? '' : ' style="max-height:40vh;min-height:60px"'}></div>
-        <div id="gc-thread-typing" class="px-3 text-xs text-zinc-500 h-4 shrink-0"></div>
-        ${opts.readOnly
-          ? `<div class="px-3 py-2 text-xs text-zinc-500 border-t border-zinc-200 dark:border-zinc-800">${escapeHtml(opts.notice || 'This thread is read-only.')}</div>`
-          : `<form id="gc-thread-form" class="flex gap-2 p-2 border-t border-zinc-200 dark:border-zinc-800">
-              <input id="gc-thread-input" type="text" maxlength="2000" autocomplete="off"
-                placeholder="${escapeHtml(opts.placeholder || 'Reply in thread…')}"
-                class="flex-1 min-w-0 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent">
-              <button type="submit" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-sm font-medium text-white transition-colors shrink-0">Send</button>
-            </form>`}
-      </div>`;
+    const composerHtml = opts.readOnly
+      ? `<div class="px-3 py-2 text-xs text-zinc-500 border-t border-zinc-200 dark:border-zinc-800 shrink-0">${escapeHtml(opts.notice || 'This thread is read-only.')}</div>`
+      : `<div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2">
+          <div id="gc-thread-reply-preview" class="hidden"></div>
+          <form id="gc-thread-form" class="flex gap-2">
+            <input id="gc-thread-input" type="text" maxlength="2000" autocomplete="off"
+              placeholder="${escapeHtml(opts.placeholder || 'Reply in thread…')}"
+              class="flex-1 min-w-0 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 ${fill ? 'py-2' : 'py-1.5'} text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent">
+            <button type="submit" class="rounded-lg bg-violet-600 hover:bg-violet-500 ${fill ? 'px-4 py-2' : 'px-3 py-1.5'} text-sm font-medium text-white transition-colors shrink-0">Send</button>
+          </form>
+        </div>`;
+    container.innerHTML = fill
+      ? `<div class="dev-thread flex flex-col h-full min-h-0">
+          <div id="gc-thread-messages" class="overflow-y-auto py-2 space-y-0.5 flex-1 min-h-0"></div>
+          <div id="gc-thread-typing" class="px-3 text-xs text-zinc-500 h-5 shrink-0"></div>
+          ${composerHtml}
+        </div>`
+      : `<div class="dev-thread border border-zinc-200 dark:border-zinc-800 rounded-xl flex flex-col bg-zinc-50/50 dark:bg-zinc-900/40">
+          <div id="gc-thread-messages" class="overflow-y-auto px-2 py-1 space-y-0.5" style="max-height:40vh;min-height:60px"></div>
+          <div id="gc-thread-typing" class="px-3 text-xs text-zinc-500 h-4 shrink-0"></div>
+          ${composerHtml}
+        </div>`;
 
+    // Full general-chat interaction set on the thread list: tap-to-quote,
+    // long-press / hover reactions, quote-jump, reference chips.
     const msgsEl = container.querySelector('#gc-thread-messages');
-    if (msgsEl) GroupChat._attachThreadHandlers(msgsEl);
+    if (msgsEl) GroupChat._attachQuoteHandlers(msgsEl);
 
     const form = container.querySelector('#gc-thread-form');
     const input = container.querySelector('#gc-thread-input');
@@ -584,6 +605,22 @@ const GroupChat = {
         GroupChat.setDraft(slug, input.value, threadKey);
         GroupChat.sendTyping({ type, ref });
       });
+      // #87/#130 parity with the general composer: @mention and #/PR#
+      // reference autocomplete on the thread input.
+      if (typeof MentionAutocomplete !== 'undefined') {
+        MentionAutocomplete.attach(input, slug);
+      }
+      if (typeof RefAutocomplete !== 'undefined') {
+        RefAutocomplete.attach(input, slug);
+      }
+      // #15 parity: Escape clears a staged reply quote (when the input is
+      // empty so we don't fight other Escape semantics mid-typing).
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && GroupChat.replyDraft && !input.value) {
+          e.preventDefault();
+          GroupChat.clearQuote();
+        }
+      });
     }
 
     GroupChat.renderThread();
@@ -599,6 +636,9 @@ const GroupChat = {
   // `threads` for instant re-open). Called when an accordion collapses
   // or the user leaves the sub-tab.
   unmountThread() {
+    // A quote staged in the thread composer must not leak into the
+    // general composer (replyDraft is global).
+    if (GroupChat.activeThread && GroupChat.replyDraft) GroupChat.clearQuote();
     GroupChat.activeThread = null;
     clearTimeout(GroupChat._threadTypingTimer);
   },
@@ -657,39 +697,22 @@ const GroupChat = {
     }
   },
 
-  // Lightweight delegated handlers for a thread's message list: reaction
-  // pills + the hover react button. (Tap-to-quote stays a general-chat
-  // affordance — a quote staged from a thread would land in the general
-  // composer the user can't see from here.)
-  _attachThreadHandlers(container) {
-    if (container._gcThreadBound) return;
-    container._gcThreadBound = true;
-    container.addEventListener('click', (e) => {
-      const pill = e.target.closest('.gc-react-pill');
-      if (pill) {
-        const row = pill.closest('[data-msg-id]');
-        const id = row && parseInt(row.dataset.msgId || '', 10);
-        if (id) GroupChat.sendReact(id, pill.dataset.emoji);
-        return;
-      }
-      const addBtn = e.target.closest('.gc-react-add');
-      if (addBtn) {
-        const row = addBtn.closest('[data-msg-id]');
-        if (row) GroupChat._openReactionBar(row);
-      }
-    });
-  },
-
   // ── #15: reply / quote ──────────────────────────────────────────────
 
-  // Stage a quote to attach to the next message and focus the composer.
-  // Called by the tap handler (chat rows) and by AppView (PR titles).
+  // Stage a quote to attach to the next message and focus whichever
+  // composer is mounted — the thread composer when a topic is open, the
+  // general one otherwise. Called by the tap handler (chat + thread rows)
+  // and by AppView (PR titles). No-op when no composer exists (read-only
+  // merged-proposal thread): staging an invisible quote would silently
+  // attach to a later message elsewhere.
   setQuote(quote) {
     if (!quote) return;
+    const input = document.getElementById('gc-thread-input')
+      || document.getElementById('gc-input');
+    if (!input) return;
     GroupChat.replyDraft = quote;
     GroupChat._renderQuotePreview();
-    const input = document.getElementById('gc-input');
-    if (input) input.focus();
+    input.focus();
   },
 
   clearQuote() {
@@ -703,9 +726,12 @@ const GroupChat = {
     return { source: q.source, refMsgId: q.refMsgId };
   },
 
-  // Render (or clear) the composer's "Replying to …" preview chip.
+  // Render (or clear) the composer's "Replying to …" preview chip —
+  // into the thread composer's slot when a topic is open, else the
+  // general composer's (only one of the two is ever in the DOM).
   _renderQuotePreview() {
-    const el = document.getElementById('gc-reply-preview');
+    const el = document.getElementById('gc-thread-reply-preview')
+      || document.getElementById('gc-reply-preview');
     if (!el) return;
     const q = GroupChat.replyDraft;
     if (!q) {
@@ -775,7 +801,10 @@ const GroupChat = {
     }
     const ref = parseInt(quoted.dataset.quoteRef || '', 10);
     if (!ref) return;
-    const container = document.getElementById('gc-messages');
+    // Jump within whichever message list the quote block lives in
+    // (general chat or a mounted thread).
+    const container = quoted.closest('#gc-messages, #gc-thread-messages')
+      || document.getElementById('gc-messages');
     const target = container && container.querySelector(`[data-msg-id="${ref}"]`);
     if (!target) return;
     target.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1275,7 +1304,7 @@ const GroupChat = {
   // votable set yields empty controls and the row falls back to a plain
   // activity line.
   refreshVoteControls() {
-    document.querySelectorAll('#gc-messages [data-vote-controls]').forEach((el) => {
+    document.querySelectorAll('#gc-messages [data-vote-controls], #gc-thread-messages [data-vote-controls]').forEach((el) => {
       const pr = GroupChat._resolvePr(
         el.getAttribute('data-session-id') || '',
         el.getAttribute('data-pr-number') || ''
