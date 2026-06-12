@@ -151,6 +151,54 @@ function buildSpecPreview(content, max = 400) {
   return `${cut}…`;
 }
 
+// #199: render the OPEN PROPOSALS block injected into the Mayor's system
+// prompt on the FIRST turn of a fresh session, so the Mayor can spot when
+// the user's request duplicates an existing promoted/merging proposal and
+// suggest voting on that instead of starting redundant work. Pure function
+// over rows from the candidate query in the chat handler; returns '' when
+// there is nothing to show. Advisory only — every caller fails open.
+const OPEN_PROPOSALS_MAX = 10;
+
+function buildOpenProposalsBlock(proposals, currentUsername) {
+  const list = Array.isArray(proposals) ? proposals.filter(Boolean) : [];
+  if (!list.length) return '';
+
+  const entries = list.slice(0, OPEN_PROPOSALS_MAX).map((p) => {
+    const title = (p.pr_title || '').trim();
+    const prRef = p.pr_number
+      ? `PR #${p.pr_number}${title ? ` — "${title}"` : ''}`
+      : `${title ? `"${title}"` : 'Untitled proposal'} (no PR yet)`;
+    const author = p.username
+      ? `${p.username}${currentUsername && p.username === currentUsername ? " (this user's own proposal)" : ''}`
+      : 'unknown';
+    const lines = [
+      `- ${prRef}`,
+      `  Author: ${author} · Status: ${p.status || 'promoted'}${p.pr_url ? ` · ${p.pr_url}` : ''}`,
+    ];
+    const issues = Array.isArray(p.linked_issues) ? p.linked_issues.filter((n) => Number.isInteger(n)) : [];
+    if (issues.length) lines.push(`  Issues: ${issues.map((n) => `#${n}`).join(', ')}`);
+    const spec = buildSpecPreview((p.spec_md || '').trim(), 500);
+    if (spec) lines.push(`  Spec excerpt: ${spec.replace(/\s+/g, ' ')}`);
+    return lines.join('\n');
+  });
+
+  return `
+
+==== OPEN PROPOSALS IN THIS APP ====
+
+This is the user's FIRST message in a new session. The app already has the following open proposals (promoted/merging PRs the group is voting on):
+
+${entries.join('\n')}
+
+Before dispatching ANY tool, check whether the user's request SUBSTANTIALLY duplicates one of these proposals — i.e. the existing proposal would deliver the same feature or fix. Touching the same area with a different goal is NOT a duplicate; when unsure, do not raise it.
+
+- If it duplicates one: do NOT dispatch any tool. Instead ask, in 1-2 sentences, naming the PR number and title explicitly so the reference survives into later turns, e.g. "There's already an open proposal — PR #N 'title' by author — that looks like it covers this. Want to vote on that in the group chat instead?" Include the PR link when there is one. If the matching proposal is the user's own, suggest returning to that session instead of voting. This follows the same rule as the clarity gate: never ask and dispatch in the same turn.
+- If the user then confirms they want the existing one: point them to the group-chat vote panel; do not dispatch anything.
+- If the user says theirs is different or additive: proceed as normal, AND ensure the differentiation is captured — when dispatching the scout, tell it to include a short "How this differs from PR #N" section in the spec; when dispatching the coding agent directly, restate the user's differentiation in your one-sentence preamble and include it in the dispatch prompt.
+
+==== END OPEN PROPOSALS ====`;
+}
+
 // Unwrap a whole-document ```markdown fence a scout/spec-author LLM sometimes
 // emits around the entire spec (see src/services/spec-format.js for the why
 // and the conservative rules). Re-exported below so existing importers and
@@ -1200,7 +1248,35 @@ function sessionRoutes(config) {
         const prContext = session.pr_number
           ? { prNumber: session.pr_number, prTitle: session.pr_title, status: session.status }
           : null;
-        let mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext);
+        // #199: on the FIRST turn of a fresh session — exactly one user row
+        // in the just-loaded history (the message inserted above) and not a
+        // headless clone (clones arrive with copied history AND a non-null
+        // cloned_from_session_id; headless sessions themselves never reach
+        // this route) — surface the app's open promoted/merging proposals so
+        // the Mayor can flag a duplicate request before any dispatch.
+        // Advisory only: any failure skips the block and the turn proceeds.
+        let openProposalsBlock = '';
+        const isFirstFreshTurn = !session.cloned_from_session_id
+          && history.filter((m) => m.role === 'user').length === 1;
+        if (isFirstFreshTurn) {
+          try {
+            const { rows: proposalRows } = await pool.query(
+              `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status,
+                      cs.linked_issues, cs.spec_md, u.username
+               FROM chat_sessions cs
+               LEFT JOIN users u ON cs.user_id = u.id
+               WHERE cs.app_id = $1 AND cs.id <> $2
+                 AND cs.status IN ('promoted', 'merging')
+               ORDER BY cs.last_activity_at DESC
+               LIMIT 10`,
+              [session.app_id, session.id]
+            );
+            openProposalsBlock = buildOpenProposalsBlock(proposalRows, req.user.username);
+          } catch (err) {
+            log.warn('sessions', 'Open-proposals lookup failed (continuing without block)', { sessionId: session.id, err: err.message });
+          }
+        }
+        let mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext, openProposalsBlock);
         const messages = buildMayorMessages(history);
 
         if (!llm.isEnabled()) {
@@ -1597,7 +1673,10 @@ function sessionRoutes(config) {
         const prContext2 = session.pr_number
           ? { prNumber: session.pr_number, prTitle: session.pr_title, status: session.status }
           : null;
-        mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext2);
+        // Same open-proposals block as phase-1 so the wrap-up turn sees a
+        // consistent prompt (the instruction is scoped to "before
+        // dispatching", so it's inert after a tool has already run).
+        mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext2, openProposalsBlock);
         const mayor2 = await llm.streamChat({
           messages: followUpMessages,
           systemPrompt: mayorPrompt,
@@ -4141,7 +4220,7 @@ path: /relative/path?demo=1
   return { toolResultText, ccLog, stagingUrl, isError, commitSha: commitHash || null };
 }
 
-function getMayorSystemPrompt(appName, isWorkerBusy, currentSpec, selfHosted, prContext) {
+function getMayorSystemPrompt(appName, isWorkerBusy, currentSpec, selfHosted, prContext, openProposalsBlock = '') {
   const specIsEmpty = !((currentSpec || '').trim());
 
   const toolNote = isWorkerBusy
@@ -4261,7 +4340,7 @@ Some assistant turns in this conversation contain "[CODING AGENT COMPLETED]:" �
 
 You MUST NOT, under any circumstances:
 - Write the literal string "[CODING AGENT COMPLETED]" in your reply. That marker is reserved for the harness; emitting it yourself fakes a coding-agent run that never happened.
-- Paraphrase a past summary as a substitute for dispatching a new run. If the user reports a bug, regression, or "still not quite right" — even if a previous run targeted the same area — that is a NEW change request and you MUST call dispatch_claude_code (assuming the tool is available per STATUS). Past summaries are read-only history; they cannot fix new bugs.${toolNote}${conventionsBlock}${selfHosted ? getSelfHostedRefuseList() : ''}${prBlock}${specBlock}`;
+- Paraphrase a past summary as a substitute for dispatching a new run. If the user reports a bug, regression, or "still not quite right" — even if a previous run targeted the same area — that is a NEW change request and you MUST call dispatch_claude_code (assuming the tool is available per STATUS). Past summaries are read-only history; they cannot fix new bugs.${toolNote}${conventionsBlock}${selfHosted ? getSelfHostedRefuseList() : ''}${prBlock}${openProposalsBlock || ''}${specBlock}`;
 }
 
 async function getFilesFromContainer(appSlug) {
@@ -4407,4 +4486,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDoneIfArmed, notifyAutoSolveDone, buildHeadlessSeed, shouldPostHeadlessQuestionComment, specHasBlockingQuestions };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDoneIfArmed, notifyAutoSolveDone, buildHeadlessSeed, shouldPostHeadlessQuestionComment, specHasBlockingQuestions };
