@@ -1070,13 +1070,15 @@ const AppView = {
 
   // The feed's display order: fixed groups — proposals being voted on
   // (PR promotions and governance proposals alike) above open issues —
-  // and most-recent-activity-first within each group. Every item
-  // carries a lastActivity sort key = max(its own timestamp, the
-  // latest message in its thread). Ties keep the per-source order
-  // (which preserves the #177 auto-solve-first ranking among quiet
-  // issues). The general-chat card and the viewer's session rows sit
-  // above this feed in the card list, so the full order the user sees
-  // is: chat → sessions → proposals → issues.
+  // then auto-solve rank within the issues group (#227: 'generating'
+  // runs first, finished 'ready' runs awaiting review next, plain
+  // issues last — see _headlessRank), then most-recent-activity-first.
+  // Every item carries a lastActivity sort key = max(its own timestamp,
+  // the latest message in its thread); equal keys keep the per-source
+  // order (GitHub updated-desc for issues) via stable sort. The
+  // general-chat card and the viewer's session rows sit above this feed
+  // in the card list, so the full order the user sees is:
+  // chat → sessions → proposals → issues.
   _feedItems() {
     const ts = (v) => {
       const t = Date.parse(v || '');
@@ -1088,23 +1090,27 @@ const AppView = {
     for (const issue of AppView._visibleGhIssues()) {
       items.push({
         kind: 'issue', id: issue.number, item: issue,
+        r: AppView._headlessRank(issue),
         t: Math.max(ts(issue.updatedAt), ts(issue.lastMessageAt)),
       });
     }
     for (const pr of AppView._proposals || []) {
       items.push({
-        kind: 'proposal', id: pr.id, item: pr,
+        kind: 'proposal', id: pr.id, item: pr, r: 0,
         t: Math.max(ts(pr.promoted_at || pr.created_at), ts(pr.last_message_at)),
       });
     }
     for (const g of AppView._govProposals || []) {
       items.push({
-        kind: 'gov', id: g.id, item: g,
+        kind: 'gov', id: g.id, item: g, r: 0,
         t: Math.max(ts(g.created_at), ts(g.last_message_at)),
       });
     }
     // Array.prototype.sort is stable, so equal keys keep source order.
-    return items.sort((a, b) => (GROUP[a.kind] - GROUP[b.kind]) || (b.t - a.t));
+    // Rank only competes within the issues group — proposals/gov all
+    // carry r: 0 and never share a group with issues.
+    return items.sort((a, b) =>
+      (GROUP[a.kind] - GROUP[b.kind]) || (a.r - b.r) || (b.t - a.t));
   },
 
   _renderFeedInner() {
@@ -1668,26 +1674,32 @@ const AppView = {
 
   // ---- Open Issues section ------------------------------------------------
 
+  // Auto-solve rank for the feed sort (#177/#227). Lower renders first
+  // within the issues group: an in-flight run ('generating') tops the
+  // list, a finished run awaiting review ('ready') follows, everything
+  // else — no headless session, or defensively any unknown/future
+  // status — sorts as a plain issue. 'failed' never reaches the client
+  // (the /github-issues query filters to generating/ready), so it lands
+  // in the plain bucket too. Ranking happens at render time (not
+  // server-side) because the optimistic auto-solve start and the
+  // headless poller both mutate `headless` in place and re-render
+  // without refetching.
+  _headlessRank(issue) {
+    const s = issue.headless && issue.headless.status;
+    return s === 'generating' ? 0 : s === 'ready' ? 1 : 2;
+  },
+
   // The Open Issues list exactly as rendered: env-var-proposal twins
   // filtered out (#131 — those rows render in the dedicated Environment
-  // variables section), then sorted so issues with a live auto-solve
-  // session float to the top (#177): ongoing ('generating') first,
-  // finished ('ready') next, everything else after. Within each group the
-  // fetch order (GitHub updated-desc) is preserved — sort() is stable and
-  // runs on the filter copy, so _ghIssues itself keeps the canonical fetch
-  // order. Sorting happens here at render time (not server-side) because
-  // the optimistic auto-solve start and the headless poller both mutate
-  // `headless` in place and re-render without refetching. Paging
-  // The feed renderer and the open-card index lookup must both use
-  // this helper so paging counts match what's on screen.
+  // variables section). Ordering is owned by _feedItems(), whose
+  // comparator folds in the auto-solve rank (_headlessRank) ahead of
+  // recency. The filter runs on a copy, so _ghIssues itself keeps the
+  // canonical fetch order (GitHub updated-desc). The feed renderer and
+  // the open-card index lookup must both use this helper so paging
+  // counts match what's on screen.
   _visibleGhIssues() {
-    const rank = (i) => {
-      const s = i.headless && i.headless.status;
-      return s === 'generating' ? 0 : s === 'ready' ? 1 : 2;
-    };
     return (AppView._ghIssues || [])
-      .filter((i) => !(AppView._envIssueNumbers && AppView._envIssueNumbers.has(i.number)))
-      .sort((a, b) => rank(a) - rank(b));
+      .filter((i) => !(AppView._envIssueNumbers && AppView._envIssueNumbers.has(i.number)));
   },
 
   // One issue row for the forum feed, with everything the old Open
