@@ -637,7 +637,7 @@
       </button>
 
       <h2 class="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">Settings</h2>
-      <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-4">Bring your own Anthropic API key to bypass the shared daily budget. Usage bills directly to your Anthropic account.</p>
+      <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-4">Bring your own Anthropic API key to keep working past the daily limit. Your platform daily allowance is used first; once it runs out, usage bills directly to your Anthropic account.</p>
 
       <label class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1" for="settings-api-key">Anthropic API key</label>
       <div id="settings-key-display" class="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-700 dark:text-zinc-300 mb-2">
@@ -645,11 +645,12 @@
       </div>
       <!-- #119 — daily spend breakdown for BYOK users. Filled by
            Settings._refreshSpend() on modal open; hidden while loading,
-           on fetch failure, or when no key is saved. -->
+           on fetch failure, or when no key is saved. Rows are ordered
+           limit-first to match the billing order (#212). -->
       <div id="settings-spend" class="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs mb-2">
         <div class="font-medium text-zinc-700 dark:text-zinc-300 mb-1">Today's spend</div>
-        <div class="flex justify-between text-zinc-600 dark:text-zinc-400"><span>Your key</span><span id="settings-spend-byok" class="font-mono"></span></div>
         <div class="flex justify-between text-zinc-600 dark:text-zinc-400"><span>Platform daily limit</span><span id="settings-spend-platform" class="font-mono"></span></div>
+        <div class="flex justify-between text-zinc-600 dark:text-zinc-400"><span>Your key</span><span id="settings-spend-byok" class="font-mono"></span></div>
         <div class="text-zinc-500 dark:text-zinc-500 mt-1">Resets at midnight UTC.</div>
       </div>
       <div class="flex gap-2">

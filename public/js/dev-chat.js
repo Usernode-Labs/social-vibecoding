@@ -200,11 +200,12 @@ const DevChat = {
   renderBudget() {
     const el = document.getElementById('dc-budget');
     if (!el) return;
-    // BYOK (#30/#119): when the user has supplied their own Anthropic
-    // key, lead with today's spend billed to that key, plus the
-    // platform-limit portion when any exists (mixed days: key added or
-    // removed mid-day). The BYOK figure never gets the red/yellow
-    // threshold coloring — no cap applies to it.
+    // BYOK (#30/#119/#212): billing is limit-first — the daily platform
+    // allowance is consumed before any spend hits the user's own key —
+    // so key-holders see the limit progress first (same red/yellow
+    // thresholds as everyone else) and a "your key $X" figure only once
+    // spillover billing to their key has actually started today. The
+    // BYOK figure never gets threshold coloring — no cap applies to it.
     if (window.Settings?.state?.hasApiKey) {
       const last4 = window.Settings.state.keyLast4 || '••••';
       if (!DevChat.budget) {
@@ -212,17 +213,18 @@ const DevChat = {
         el.innerHTML = `<span class="text-emerald-400" title="Using your Anthropic API key">your key · ${last4}</span>`;
         return;
       }
-      const byok = ((DevChat.budget.byokSpentCents || 0) / 100).toFixed(2);
+      const byokCents = DevChat.budget.byokSpentCents || 0;
+      const byok = (byokCents / 100).toFixed(2);
       const spent = (DevChat.budget.spentCents / 100).toFixed(2);
       const limit = (DevChat.budget.limitCents / 100).toFixed(2);
-      const tip = `Today: $${byok} billed to your Anthropic key (…${last4}) + $${spent} of your $${limit} platform daily limit. Resets at midnight UTC.`;
-      let html = `<span class="text-emerald-400">your key $${byok}</span>`;
-      // Collapse the platform portion on all-BYOK days (the common
-      // case) to keep the header uncluttered.
-      if (DevChat.budget.spentCents > 0) {
-        const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
-        const color = pct > 80 ? 'text-red-400' : pct > 50 ? 'text-yellow-400' : 'text-emerald-400';
-        html += `<span class="text-zinc-600"> · limit </span><span class="${color}">$${spent}</span><span class="text-zinc-600">/$${limit}</span>`;
+      const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
+      const color = pct > 80 ? 'text-red-400' : pct > 50 ? 'text-yellow-400' : 'text-emerald-400';
+      const tip = `Today: $${spent} of your $${limit} platform daily limit`
+        + (byokCents > 0 ? ` + $${byok} billed to your Anthropic key (…${last4})` : '')
+        + `. The daily limit is used first; your key (…${last4}) takes over once it runs out. Resets at midnight UTC.`;
+      let html = `<span class="text-zinc-600">limit </span><span class="${color}">$${spent}</span><span class="text-zinc-600">/$${limit}</span>`;
+      if (byokCents > 0) {
+        html += `<span class="text-zinc-600"> · </span><span class="text-emerald-400">your key $${byok}</span>`;
       }
       el.innerHTML = `<span title="${tip}">${html}</span>`;
       return;

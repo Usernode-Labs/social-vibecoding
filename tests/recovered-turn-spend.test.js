@@ -11,8 +11,10 @@
 //   2. active_turn.byok: false → debit lands in the capped bucket, even
 //      if the user HAS a key on file at resume time (the persisted flag
 //      reflects what the turn actually billed).
-//   3. active_turn.byok absent (pre-#174 rows) → falls back to
-//      key-on-file: key present → BYOK bucket, key absent → capped.
+//   3. active_turn.byok absent (pre-#174 rows) → falls back to the
+//      resume-time payer, which since #212 is limit-first: allowance
+//      headroom → capped bucket (even with a key on file), allowance
+//      exhausted + key → BYOK bucket.
 //   4. costUsd of 0 (turn killed before any result event) → no debit.
 //
 // Like headless-clarify.test.js, services are stubbed via require.cache
@@ -37,7 +39,7 @@ function stubModule(id, exports) {
 
 // Load ../src/routes/sessions fresh against a mock pool + stubbed
 // services. Captures every limits.recordSpend call into `spendCalls`.
-function loadSessions(mockPool, { recoveredResult, userKeyEnc } = {}) {
+function loadSessions(mockPool, { recoveredResult, userKeyEnc, billing } = {}) {
   const paths = {
     pool: require.resolve('../src/db/pool'),
     ws: require.resolve('../src/services/ws'),
@@ -80,6 +82,10 @@ function loadSessions(mockPool, { recoveredResult, userKeyEnc } = {}) {
     })],
     [paths.limits, stubModule(paths.limits, {
       checkBudget: async () => ({}),
+      // Resume-time payer decision (#212). Defaults to "allowance has
+      // headroom" (platform path); tests simulating spillover override
+      // it with a BYOK result.
+      resolveBillingPath: async () => billing || { apiKey: null, byok: false },
       recordSpend: async (_pool, userId, costCents, opts) => {
         spendCalls.push({ userId, costCents, byok: !!(opts && opts.byok) });
       },
@@ -130,7 +136,8 @@ function makeMockPool(sessionRow) {
     if (/FROM chat_sessions cs/i.test(s) && /headless_status = 'generating'/i.test(s)) {
       return { rows: [sessionRow] };
     }
-    // BYOK key-on-file lookup (loadUserApiKey).
+    // BYOK key-on-file lookup (limits.loadUserApiKey — only reached when
+    // a test lets the real limits module run).
     if (/SELECT anthropic_key_enc FROM users/i.test(s)) {
       return { rows: state.userKeyEnc ? [{ anthropic_key_enc: state.userKeyEnc }] : [] };
     }
@@ -194,9 +201,9 @@ async function waitFor(predicate, timeoutMs = 5000) {
 
 // Run the resume path to completion and return the recovered-cost debit
 // calls (the wrap-up Mayor debit is 0¢ in these tests; filter it out).
-async function runResume(activeTurn, { recoveredResult = RECOVERED, userKeyEnc = null } = {}) {
+async function runResume(activeTurn, { recoveredResult = RECOVERED, userKeyEnc = null, billing = null } = {}) {
   const pool = makeMockPool(makeSessionRow(activeTurn));
-  const loaded = loadSessions(pool, { recoveredResult, userKeyEnc });
+  const loaded = loadSessions(pool, { recoveredResult, userKeyEnc, billing });
   try {
     await loaded.subject.resumeHeadlessRuns({ jwtSecret: 'test' });
     assert.ok(await waitFor(() => pool.state.terminal), 'run reached a terminal state');
@@ -220,25 +227,31 @@ test('recovered cost lands in the BYOK bucket when active_turn.byok is true', as
 test('recovered cost lands in the capped bucket when active_turn.byok is false', async () => {
   const debits = await runResume(
     { mode: 'scout', journal: '/home/node/.claude/turn-1.log', byok: false },
-    { userKeyEnc: 'v1:enc' } // key added since the turn started — flag wins
+    // Resume-time payer is the user's key (allowance exhausted since the
+    // turn started) — the persisted flag still wins.
+    { billing: { apiKey: 'sk-ant-test-key', byok: true } }
   );
   assert.equal(debits.length, 1);
   assert.deepEqual(debits[0], { userId: 7, costCents: 123, byok: false });
 });
 
-test('missing byok flag falls back to key-on-file: key present → BYOK bucket', async () => {
+test('missing byok flag falls back to the resume-time payer: spillover → BYOK bucket', async () => {
   const debits = await runResume(
     { mode: 'scout', journal: '/home/node/.claude/turn-1.log' }, // pre-#174 record
-    { userKeyEnc: 'v1:enc' }
+    // Allowance exhausted + key on file at resume → the run continues
+    // on the key, so the recovered cost is attributed to it too.
+    { billing: { apiKey: 'sk-ant-test-key', byok: true } }
   );
   assert.equal(debits.length, 1);
   assert.deepEqual(debits[0], { userId: 7, costCents: 123, byok: true });
 });
 
-test('missing byok flag falls back to key-on-file: no key → capped bucket', async () => {
+test('missing byok flag falls back to the resume-time payer: allowance headroom → capped bucket', async () => {
   const debits = await runResume(
     { mode: 'scout', journal: '/home/node/.claude/turn-1.log' },
-    { userKeyEnc: null }
+    // #212 limit-first: a key on file is irrelevant while the allowance
+    // has headroom — the platform is the payer.
+    { userKeyEnc: 'v1:enc' }
   );
   assert.equal(debits.length, 1);
   assert.deepEqual(debits[0], { userId: 7, costCents: 123, byok: false });
