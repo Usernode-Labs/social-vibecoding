@@ -314,6 +314,12 @@ function issueRoutes(config) {
   // allowance so the FE can disable the "Give kudos" button when the shared
   // budget is spent. Distinct from the platform-internal `issues` table
   // (governance proposals) listed by GET /api/apps/:slug/issues above.
+  //
+  // #192: `?refresh=1` forces a refetch past the server-side cache TTL
+  // (throttled per repo inside github.refreshPublicIssues — within the
+  // cooldown it serves the cache). Refresh responses additionally carry
+  // `refreshed` and `refreshRetryMs` so the FE can disable its button for
+  // the cooldown window; the normal payload shape is unchanged.
   // ----------------------------------------------------------------
   router.get('/api/apps/:slug/github-issues', async (req, res) => {
     try {
@@ -327,9 +333,12 @@ function issueRoutes(config) {
         return res.json({ issues: [], truncatedList: false, note: 'unavailable' });
       }
 
-      // fetchPublicIssues never throws and never returns null; on any
-      // failure mode it returns { issues:[], truncatedList:false, note }.
-      const result = await github.fetchPublicIssues(parsed.owner, parsed.repo);
+      const wantRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
+      // Neither fetcher ever throws or returns null; on any failure mode
+      // they return { issues:[], truncatedList:false, note }.
+      const result = wantRefresh
+        ? await github.refreshPublicIssues(parsed.owner, parsed.repo)
+        : await github.fetchPublicIssues(parsed.owner, parsed.repo);
 
       // Open-bounty tallies for this app, keyed by issue number, in one
       // round-trip. BOOL_OR gives the viewer's own-open-bounty flag.
@@ -437,6 +446,9 @@ function issueRoutes(config) {
         issues,
         truncatedList: !!result.truncatedList,
         ...(result.note ? { note: result.note } : {}),
+        ...(wantRefresh
+          ? { refreshed: !!result.refreshed, refreshRetryMs: result.retryInMs || 0 }
+          : {}),
         myRemaining,
         limit: WEEKLY_KUDOS_LIMIT,
       });
