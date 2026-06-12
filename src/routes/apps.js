@@ -143,6 +143,13 @@ function appRoutes(config) {
       // 10 days. Computed in one batched query (one row per app) to
       // avoid the obvious O(N apps) per-app round trip from the
       // group-chat dashboard tile path.
+      //
+      // The dev/iss joins power the home-card activity chips (#57):
+      // PRs awaiting community votes (status promoted/merging — same
+      // filter as the admin dashboard overview), in-flight dev sessions
+      // (status active; headless runs included — per-app activity
+      // legitimately covers autonomous builds, matching /api/status),
+      // and open issues. All DB-derived; no GitHub round trips.
       const userId = req.user?.id || null;
       const isAdmin = !!req.user?.isAdmin;
       // Visibility filter: admins see everything; everyone else sees
@@ -156,7 +163,10 @@ function appRoutes(config) {
           COALESCE(au.cnt, 0) AS active_users,
           (favs.app_id IS NOT NULL) AS is_favorited,
           favs.sort_order AS favorite_order,
-          (me.user_id IS NOT NULL) AS is_collaborator
+          (me.user_id IS NOT NULL) AS is_collaborator,
+          COALESCE(dev.open_prs, 0) AS open_prs,
+          COALESCE(dev.active_sessions, 0) AS active_sessions,
+          COALESCE(iss.open_issues, 0) AS open_issues
         FROM apps a
         LEFT JOIN (
           SELECT app_id, COUNT(*) AS cnt
@@ -187,6 +197,19 @@ function appRoutes(config) {
         ) favs ON favs.app_id = a.id
         LEFT JOIN app_collaborators me
           ON me.app_id = a.id AND me.user_id = $2 AND me.status = 'member'
+        LEFT JOIN (
+          SELECT app_id,
+            COUNT(*) FILTER (WHERE status IN ('promoted', 'merging')) AS open_prs,
+            COUNT(*) FILTER (WHERE status = 'active') AS active_sessions
+          FROM chat_sessions
+          GROUP BY app_id
+        ) dev ON dev.app_id = a.id
+        LEFT JOIN (
+          SELECT app_id, COUNT(*) AS open_issues
+          FROM issues
+          WHERE status = 'open'
+          GROUP BY app_id
+        ) iss ON iss.app_id = a.id
         WHERE (NOT a.self_hosted OR $1::boolean)
           AND ($3::boolean OR a.view_visibility = 'public' OR me.user_id IS NOT NULL)
         ORDER BY (COALESCE(msg_counts.cnt, 0) + COALESCE(activity.total_seconds, 0)) DESC, a.created_at DESC
@@ -278,6 +301,9 @@ function appRoutes(config) {
           missingSecrets,
           is_favorited: !!a.is_favorited,
           favorite_order: a.favorite_order ?? null,
+          open_prs: parseInt(a.open_prs, 10) || 0,
+          active_sessions: parseInt(a.active_sessions, 10) || 0,
+          open_issues: parseInt(a.open_issues, 10) || 0,
           ...accessFlags(a, req.user, a.is_collaborator),
         };
       }));

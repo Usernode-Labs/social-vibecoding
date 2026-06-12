@@ -1508,8 +1508,13 @@ const App = {
         // Optional sub-view segment (#leaderboard/history etc.) — pass
         // it through so deep links land on the right tab. Bare
         // #leaderboard keeps whatever tab was last active (Top PRs on
-        // first visit).
-        App.navigateToLeaderboard(parts[1]);
+        // first visit). A third segment on the users tab
+        // (#leaderboard/users/<username>) deep-links a user profile
+        // (#60).
+        const profileUser = parts[1] === 'users' && parts[2]
+          ? decodeURIComponent(parts[2])
+          : null;
+        App.navigateToLeaderboard(parts[1], profileUser);
         return;
       }
       if (parts[0] === 'app' && parts[1]) {
@@ -1583,7 +1588,9 @@ const App = {
   // Show the leaderboard screen. Sibling to navigateToApp/navigateHome —
   // hides home + app, reveals the dedicated #leaderboard-screen, lets
   // the Leaderboard module render itself into #leaderboard-root.
-  navigateToLeaderboard(sub) {
+  // `profileUser` (#60) opens the per-user PR profile drill-in instead
+  // of a plain tab.
+  navigateToLeaderboard(sub, profileUser) {
     if (App.currentApp) {
       AppView.close();
       App.currentApp = null;
@@ -1601,11 +1608,17 @@ const App = {
     if (_drm) _drm.classList.add('hidden');
     App.setHeaderTitle('Kudos leaderboard');
     App._inLeaderboard = true;
-    // Apply the deep-linked sub-view (prs|users|history) before open()
-    // renders — _setSub validates the value and no-ops on garbage. When
-    // the screen is already open it re-renders in place; open() below
-    // dedupes the in-flight load.
-    if (sub && window.Leaderboard?._setSub) Leaderboard._setSub(sub);
+    // Apply the deep-linked sub-view (prs|users|history) or user
+    // profile before open() renders — _setSub validates the value and
+    // no-ops on garbage. openProfile must run INSTEAD of _setSub (not
+    // after): _setSub clears profile state and would replaceState the
+    // profile hash away. When the screen is already open they
+    // re-render in place; open() below dedupes the in-flight load.
+    if (profileUser && window.Leaderboard?.openProfile) {
+      Leaderboard.openProfile(profileUser);
+    } else if (sub && window.Leaderboard?._setSub) {
+      Leaderboard._setSub(sub);
+    }
     if (window.Leaderboard?.open) Leaderboard.open();
   },
 

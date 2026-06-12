@@ -118,13 +118,29 @@ const Home = {
           if (
             e.target.closest('.retry-btn') ||
             e.target.closest('.delete-btn') ||
-            e.target.closest('.check-updates-btn')
+            e.target.closest('.check-updates-btn') ||
+            e.target.closest('.activity-chip')
           ) return;
           // Disabled while spinning up / errored — there's no iframe or
           // chat history to render and the WS `app_status` handler will
           // re-bind the card as soon as the container goes live.
           if (card.dataset.status !== 'running' && card.dataset.status !== 'awaiting_secrets') return;
           App.navigateToApp(card.dataset.slug);
+        });
+      });
+
+      // Activity-chip deep links (#57). Only clickable chips carry
+      // data-target (inert spans on non-interactive cards don't), so
+      // this selector is also the interactivity gate. stopPropagation
+      // keeps the card's own open-the-app navigation from double-firing.
+      listEl.querySelectorAll('.activity-chip[data-target]').forEach((chip) => {
+        chip.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const slug = chip.dataset.slug;
+          const target = chip.dataset.target === 'dev'
+            ? `#app/${slug}/dev`
+            : `#app/${slug}/dev/${chip.dataset.target}`;
+          window.location.hash = target;
         });
       });
 
@@ -466,6 +482,52 @@ const Home = {
         ? `<p><span class="${visChipCls}" title="Anyone can use this app; only invited collaborators can build it">${mailIcon} Invite-only build</span></p>`
         : '');
 
+    // Development-activity chips (#57): PRs awaiting votes, dev sessions
+    // in flight, open issues. Counts come straight from /api/apps (DB-
+    // derived, no GitHub calls). Zero-count chips are dropped so quiet
+    // apps keep today's clean tile; an all-zero card collapses the row
+    // entirely, same self-trimming pattern as warningHtml/visBadgeHtml.
+    // Chips deep-link into the app's dev surfaces, but only when the
+    // card itself is interactive (same running/awaiting condition as
+    // the card click handler) — otherwise they render as inert spans.
+    const openPrs = parseInt(app.open_prs || 0);
+    const activeSessions = parseInt(app.active_sessions || 0);
+    const openIssues = parseInt(app.open_issues || 0);
+    const chipDefs = [];
+    if (openPrs > 0) {
+      chipDefs.push({
+        target: 'proposals',
+        cls: 'bg-amber-500/10 text-amber-500',
+        label: `${openPrs} to vote`,
+        tip: `${openPrs} change${openPrs === 1 ? '' : 's'} awaiting community votes`,
+      });
+    }
+    if (activeSessions > 0) {
+      chipDefs.push({
+        target: 'dev',
+        cls: 'bg-sky-500/10 text-sky-500',
+        label: `${activeSessions} in dev`,
+        tip: `${activeSessions} build session${activeSessions === 1 ? '' : 's'} in progress`,
+      });
+    }
+    if (openIssues > 0) {
+      chipDefs.push({
+        target: 'issues',
+        cls: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400',
+        label: `${openIssues} issue${openIssues === 1 ? '' : 's'}`,
+        tip: `${openIssues} open issue${openIssues === 1 ? '' : 's'}`,
+      });
+    }
+    const chipsClickable = isRunning || isAwaiting;
+    const chipBaseCls = 'activity-chip inline-flex items-center px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium';
+    const chipsRowHtml = chipDefs.length
+      ? `<div class="flex flex-wrap items-center gap-1.5">${chipDefs.map((c) => (
+          chipsClickable
+            ? `<button class="${chipBaseCls} ${c.cls} hover:opacity-75 transition-opacity" data-slug="${app.slug}" data-target="${c.target}" title="${c.tip}">${c.label}</button>`
+            : `<span class="${chipBaseCls} ${c.cls}" title="${c.tip}">${c.label}</span>`
+        )).join('')}</div>`
+      : '';
+
     const statRows = [];
     if (activeUsers > 0) {
       statRows.push(`<div><span class="font-semibold text-zinc-700 dark:text-zinc-300">${activeUsers}</span> active user${activeUsers === 1 ? '' : 's'}</div>`);
@@ -539,6 +601,7 @@ const Home = {
             ${visBadgeHtml}
           </div>
         </div>
+        ${chipsRowHtml}
         ${statsAndPillHtml}
       </div>
     `;
