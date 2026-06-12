@@ -504,10 +504,10 @@ function issueRoutes(config) {
       const chatByNumber = new Map(chatRows.map((r) => [r.n, r]));
 
       // #155: latest live headless auto session per issue, so the panel can
-      // render the right button state (Auto-solve / Generating… / the
+      // render the right button state (Generate proposal / Generating… / the
       // outcome-specific "Review … & start session" clone button). 'failed'
-      // rows are excluded — the button recovers to Auto-solve so the run
-      // can be retried.
+      // rows are excluded — the button recovers to Generate proposal so the
+      // run can be retried.
       // staging_url/pr_number ride along (#183) so the panel can render the
       // changes-ready label + Preview button for auto runs that pushed code
       // and built a preview. staging_url is nulled on teardown, so a GC'd
