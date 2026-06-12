@@ -1023,10 +1023,12 @@ const App = {
         AppView.refreshDevData('lock');
       }
     } else if (data.action === 'visibility_changed') {
-      // Visibility flipped (PATCH /api/apps/:slug/visibility). Reload
-      // the home grid so badges update and newly-private apps drop out
-      // for outsiders; patch the open app's in-memory row so the
-      // Members modal and tab gating see the fresh values.
+      // Visibility flipped (a merged visibility PR's deploy-time
+      // reconcile — see services/app-manifest.js). Reload the home grid
+      // so badges update and newly-private apps drop out for outsiders;
+      // patch the open app's in-memory row so the Members modal and tab
+      // gating see the fresh values, and re-render the modal's pills if
+      // it's open right now.
       const homeScreen = document.getElementById('home-screen');
       if (typeof Home !== 'undefined' && homeScreen && !homeScreen.classList.contains('hidden')) {
         Home.load();
@@ -1035,6 +1037,12 @@ const App = {
           && typeof AppView !== 'undefined' && AppView.appData) {
         AppView.appData.collab_visibility = data.collabVisibility;
         AppView.appData.view_visibility = data.viewVisibility;
+        const membersModal = document.getElementById('members-modal');
+        if (membersModal && !membersModal.classList.contains('hidden')
+            && AppView._renderMembersVisPills) {
+          AppView._membersVis = { collab: data.collabVisibility, view: data.viewVisibility };
+          AppView._renderMembersVisPills();
+        }
       }
     }
   },

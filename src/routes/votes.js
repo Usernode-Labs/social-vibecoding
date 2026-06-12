@@ -72,6 +72,12 @@ function stagingMockProposals() {
         1, 2, 0, 2),
       resolving: true,
     },
+    // #124: a visibility-change proposal (a dapp.json PR opened by the
+    // Members & visibility modal) so its self-describing card is
+    // reviewable on staging via ?demo=1.
+    mk(9000004, 900104,
+      '[Mock] Make this app invite-only build, public to view',
+      2, 1, 0, 1),
   ];
 }
 

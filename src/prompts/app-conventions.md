@@ -300,6 +300,46 @@ rename takes effect when that PR is voted in, merged, and redeployed —
 not before. Don't add code that mutates the display name through any
 other channel; edit `dapp.json`'s `name` and let the deploy apply it.
 
+### Top-level `visibility` — who can build / see & use the app
+
+`dapp.json` may carry an optional top-level `visibility` block — the
+**source of truth for the app's two visibility statuses**:
+
+```json
+{
+  "visibility": {
+    "build": "private",
+    "view": "public"
+  }
+}
+```
+
+- `build` — who can participate in building the app (group chat, dev
+  sessions, voting). `"public"` = anyone; `"private"` = invited
+  collaborators only.
+- `view` — who can see the app exists and use it (home list, the
+  app's subdomain). `"public"` = anyone; `"private"` = collaborators
+  only.
+
+Rules, mirroring the top-level `name`:
+
+- On every production deploy the platform reads the block and
+  reconciles the app's stored statuses to it. An **absent block or
+  absent key leaves the platform value untouched** — a clean no-op
+  for apps that never declare it.
+- Values other than `"public"` / `"private"` are ignored (treated as
+  absent) with a warning.
+- The combination `build: "public"` + `view: "private"` is invalid
+  (an app anyone can build can't be hidden) — the platform skips the
+  reconcile and keeps the current statuses.
+- **Changing visibility is just a PR that edits this block.** The
+  platform's Members & visibility panel opens exactly such a PR; the
+  change takes effect when the PR is voted in, merged, and
+  redeployed — not before. Don't mutate visibility through any other
+  channel.
+- Inviting individual users to a private app is a separate, in-app
+  flow — it is NOT represented in `dapp.json`.
+
 Per-field rules:
 
 - `key` — `UPPER_SNAKE_CASE`. The literal name `process.env.<KEY>` will be.

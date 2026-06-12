@@ -158,6 +158,13 @@ async function createApp(config, appRow) {
     await appManifest.reconcileAppName(pool, { id: appId, slug, name }, manifest)
       .catch((err) => log.warn('app-creator', 'Name reconcile failed', { appId, err: err.message }));
 
+    // Likewise for the manifest's `visibility` block (issue #124): an
+    // imported repo whose dapp.json declares visibility wins over the
+    // creation-form pick on this first deploy — the manifest is the
+    // source of truth. No-op when the block is absent.
+    await appManifest.reconcileAppVisibility(pool, { id: appId, slug }, manifest)
+      .catch((err) => log.warn('app-creator', 'Visibility reconcile failed', { appId, err: err.message }));
+
     const storedValues = await appSecrets.getRawValues(pool, appId, config.jwtSecret);
     const merge = appSecrets.mergeForDeploy(
       manifest, storedValues, appSecrets.platformDefaultsFromEnv()

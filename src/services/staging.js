@@ -362,6 +362,12 @@ async function rebuildProductionInner(config, app) {
     // hiccup never fails the rebuild.
     await appManifest.reconcileAppName(prodPool, app, manifest)
       .catch((err) => log.warn('staging', 'Name reconcile failed', { app: app.slug, err: err.message }));
+    // Same deal for the manifest's `visibility` block (issue #124): a
+    // merged visibility-change PR applies here, on the rebuild its
+    // merge triggered. No-op when the manifest carries no visibility;
+    // best-effort so it never fails the rebuild.
+    await appManifest.reconcileAppVisibility(prodPool, app, manifest)
+      .catch((err) => log.warn('staging', 'Visibility reconcile failed', { app: app.slug, err: err.message }));
     const stored = await appSecrets.getRawValues(prodPool, app.id, config.jwtSecret);
     const merge = appSecrets.mergeForDeploy(
       manifest, stored, appSecrets.platformDefaultsFromEnv()
