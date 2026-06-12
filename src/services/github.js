@@ -19,10 +19,27 @@ const CACHE_TTL_MS = 30 * 60 * 1000;
 // Anonymous GitHub REST needs a User-Agent or it 403s every request.
 const GITHUB_USER_AGENT = 'usernode-platform';
 
+// Headers for the read-only public fetch paths (fetchPublicIssues,
+// fetchPublicIssue, fetchIssueComments). When the bot PAT is configured
+// these requests authenticate as the bot — 5,000 req/hr on the token —
+// instead of burning the per-IP ANONYMOUS 60 req/hr budget, which is
+// shared by every app on the host and was routinely exhausted in prod
+// (every issue panel then degraded to "Couldn't load open issues").
+// Without a PAT they stay anonymous and the cache/stale-fallback layers
+// below remain the only defense.
+function publicFetchHeaders() {
+  const headers = { 'Accept': 'application/vnd.github+json', 'User-Agent': GITHUB_USER_AGENT };
+  const pat = process.env.GITHUB_BOT_TOKEN;
+  if (pat) headers['Authorization'] = `Bearer ${pat}`;
+  return headers;
+}
+
 // Read-only open-issues fetch (fetchPublicIssues) tunables. The 5-minute
-// cache is the primary defense against GitHub's 60-req/hr/IP anonymous
-// limit — all three agent surfaces (Mayor tool, scout, build) resolve
-// through one function, so they share one cache entry per repo. The page
+// cache keeps these reads off GitHub's rate budget (the bot PAT's 5,000
+// req/hr when configured, the brutal 60-req/hr/IP anonymous limit when
+// not — see publicFetchHeaders) — all three agent surfaces (Mayor tool,
+// scout, build) resolve through one function, so they share one cache
+// entry per repo. The page
 // ceiling bounds worst-case work for a repo with thousands of issues.
 //
 // Freshness on the "Open Issues" panel doesn't rely on this TTL: when a PR
@@ -757,7 +774,8 @@ function truncateIssueBodies(result, fullTextHint) {
   };
 }
 
-// Read-only, anonymous fetch of a PUBLIC repo's OPEN issues. Powers the
+// Read-only fetch of a PUBLIC repo's OPEN issues (bot-PAT-authenticated
+// when configured, anonymous otherwise — publicFetchHeaders). Powers the
 // `list_github_issues` tool on all three agent surfaces (the Mayor's
 // Anthropic tool directly; scout + build via the worker's usernode-issues
 // CLI → GET /api/internal/sessions/:id/issues, which calls this).
@@ -765,7 +783,7 @@ function truncateIssueBodies(result, fullTextHint) {
 // NEVER throws and NEVER returns null: every failure mode resolves to a
 // well-formed `{ issues, truncatedList, note }` so callers can hand the
 // result straight back to the model without special-casing. Notes:
-//   - 'rate limited'        anonymous 60/hr exhausted (returns stale cache
+//   - 'rate limited'        rate budget exhausted (returns stale cache
 //                           contents when we have them)
 //   - 'issues unavailable'  404 (private or nonexistent — treated the same
 //                           since we assume public)
@@ -803,7 +821,7 @@ async function fetchPublicIssues(owner, repo, { force = false } = {}) {
       let resp;
       try {
         resp = await fetch(url, {
-          headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': GITHUB_USER_AGENT },
+          headers: publicFetchHeaders(),
           signal: controller.signal,
         });
       } finally {
@@ -883,8 +901,8 @@ async function refreshPublicIssues(owner, repo) {
   return { ...result, refreshed: true, retryInMs: FORCE_REFRESH_COOLDOWN_MS };
 }
 
-// Read-only, anonymous fetch of ONE issue with its FULL (untruncated)
-// body. Backs the Mayor's get_github_issue tool and the worker's
+// Read-only fetch of ONE issue with its FULL (untruncated) body, using
+// the same publicFetchHeaders auth as fetchPublicIssues. Backs the Mayor's get_github_issue tool and the worker's
 // `usernode-issues <number>` CLI form — the on-demand escape hatch for
 // bodies the list surfaces clip at ISSUE_BODY_MAX (#158).
 //
@@ -926,7 +944,7 @@ async function fetchPublicIssue(owner, repo, number) {
       resp = await fetch(
         `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${n}`,
         {
-          headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': GITHUB_USER_AGENT },
+          headers: publicFetchHeaders(),
           signal: controller.signal,
         }
       );
@@ -966,8 +984,8 @@ async function fetchPublicIssue(owner, repo, number) {
   }
 }
 
-// Fetch an issue's comments via the same unauthenticated public REST
-// pattern as fetchPublicIssue (timeout, User-Agent, rate-limit
+// Fetch an issue's comments via the same public REST pattern as
+// fetchPublicIssue (timeout, publicFetchHeaders auth, rate-limit
 // handling). Used by the headless auto-solve seed (#150) so answers the
 // reporter left as comments are visible to the run. NEVER throws: every
 // outcome resolves to `{ comments: [{ author, body, createdAt }], note? }`
@@ -988,7 +1006,7 @@ async function fetchIssueComments(owner, repo, number, { max = 20 } = {}) {
       resp = await fetch(
         `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${n}/comments?per_page=${max}`,
         {
-          headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': GITHUB_USER_AGENT },
+          headers: publicFetchHeaders(),
           signal: controller.signal,
         }
       );
