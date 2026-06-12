@@ -924,11 +924,13 @@ const AppView = {
             ? `<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 shrink-0" title="You haven't voted on this yet"><span class="relative flex h-1.5 w-1.5"><span class="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75 animate-ping"></span><span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-violet-500"></span></span>Vote</span>`
             : '';
           const mergingBadge = isMerging ? AppView.mergingBadgeHtml() : '';
-          // #195: before/after capture tiles — this is where the group
+          // #195/#211: before/after captures — this is where the group
           // decides, so voters can judge a visual change without opening
-          // the staging preview. basis-full forces the media onto its own
-          // row below the title + controls.
-          const visualsHtml = AppView.visualsTilesHtml(pr.visuals);
+          // the staging preview. Collapsed behind a "Show before/after"
+          // toggle (#211) so the panel stays scannable; the dev-chat
+          // staging card keeps its inline tiles. basis-full forces the
+          // toggle + media onto their own row below the title + controls.
+          const visualsHtml = AppView.visualsToggleHtml(pr.id, pr.visuals);
           bodyHtml += `
             <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}">
               <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-violet-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
@@ -2056,6 +2058,49 @@ const AppView = {
     const after = tile('After', visuals.after);
     if (!after && !before) return '';
     return `<div class="usn-visual-tiles" style="display:flex;gap:8px;align-items:flex-start;margin:4px 0 2px">${before}${after}</div>`;
+  },
+
+  // #211: sessions whose before/after tiles the viewer expanded in the
+  // App-information-and-activity panel. Module-level (not DOM) state so
+  // the open/closed choice survives the panel's frequent full re-renders.
+  _visualsOpen: new Set(),
+
+  // #211: collapsed-by-default wrapper around visualsTilesHtml for the
+  // App-information-and-activity panel's PR rows. Renders a small
+  // "Show before/after" toggle; the tiles themselves sit in an inert
+  // <template> until expanded, so hidden screenshots/videos cost no
+  // bandwidth and autoplay loops don't run off-screen. The dev-chat
+  // "Changes ready" card intentionally keeps calling visualsTilesHtml
+  // directly — its inline tiles stay as before (issue #211).
+  visualsToggleHtml(sessionId, visuals) {
+    const tiles = AppView.visualsTilesHtml(visuals);
+    if (!tiles) return '';
+    const open = AppView._visualsOpen.has(sessionId);
+    return `<div class="usn-visuals-toggle">
+      <button type="button" class="gc-vote-btn" aria-expanded="${open}" onclick="AppView.toggleVisuals(${sessionId}, this)">${open ? 'Hide before/after' : 'Show before/after'}</button>
+      <template class="usn-visuals-tpl">${tiles}</template>
+      <div class="usn-visuals-body">${open ? tiles : ''}</div>
+    </div>`;
+  },
+
+  // #211: expand/collapse handler for the toggle above. Injects the tile
+  // markup from the row's <template> on open and clears it on close
+  // (clearing, rather than display:none, stops any looping <video>).
+  toggleVisuals(sessionId, btn) {
+    const wrap = btn.closest('.usn-visuals-toggle');
+    if (!wrap) return;
+    const body = wrap.querySelector('.usn-visuals-body');
+    const tpl = wrap.querySelector('template.usn-visuals-tpl');
+    const open = !AppView._visualsOpen.has(sessionId);
+    if (open) {
+      AppView._visualsOpen.add(sessionId);
+      if (body && tpl) body.innerHTML = tpl.innerHTML;
+    } else {
+      AppView._visualsOpen.delete(sessionId);
+      if (body) body.innerHTML = '';
+    }
+    btn.textContent = open ? 'Hide before/after' : 'Show before/after';
+    btn.setAttribute('aria-expanded', String(open));
   },
 
   // #80: derive the GitHub issue URL for issue #N from a PR's html_url
