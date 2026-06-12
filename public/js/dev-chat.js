@@ -29,6 +29,24 @@ const DevChat = {
   // Handle to the resumable EventSource, if open.
   _eventSource: null,
 
+  // ----- Browser-title status indicator (#108, #142, #161) -----
+  // While the user is on the dev-chat tab, the document title carries a
+  // status marker for the current session's turn: "thinking" while the
+  // Mayor / Claude Code is working. The old streaming-driven "✅ Done"
+  // marker is gone (#161): every "finished while away" case now arms
+  // notify_on_done server-side, so a session_done / auto_solve_done
+  // notification always exists, and its ARRIVAL drives the completion
+  // marker instead (see Notifications.handleIncoming →
+  // setCompletionTitle). The completion marker lives in a separate slot
+  // (_titleCompletion) that outranks the streaming status, is exempt
+  // from the dev-chat-tab scoping, and STAYS until the user actually
+  // comes back (visibilitychange / window focus — listeners at the
+  // bottom of this file) or the triggering notification is read.
+  _titleStatus: null, // null | 'thinking'
+  // null | 'sessionDone' | 'autoSolveDone' | 'autoSolveFailed' (#161).
+  // Single slot, last-write-wins — the badge count carries multiplicity.
+  _titleCompletion: null,
+
   budget: null,
 
   // ----- Cross-app active sessions panel state -----
@@ -45,7 +63,7 @@ const DevChat = {
   // enough that the busy indicator feels live, slow enough that we
   // don't hammer the cross-app endpoint just because the user is
   // sitting on the dev-chat tab.
-  activeSessions: { sessions: [], totals: { active: 0, paused: 0, busy: 0, total: 0 } },
+  activeSessions: { sessions: [], totals: { active: 0, promoted: 0, paused: 0, busy: 0, total: 0 } },
   _activePollTimer: null,
 
   // ----- Spec viewer state -----
@@ -59,22 +77,26 @@ const DevChat = {
   specViewer: {
     open: false,
     sessionId: null,           // session this state belongs to (guards stale loads)
-    draftContent: '',          // current spec_md from GET /api/sessions/:id/spec
+    draftContent: '',          // latest spec_md from GET /api/sessions/:id/spec (always == latest version's content)
     versions: [],              // [{ version, built_at, commit_sha, pr_number, shared_to_group_at, ... }]
-    viewVersion: 'draft',      // 'draft' or a number
-    viewVersionContent: null,  // cached content for a non-draft selection
+    viewVersion: 'latest',     // 'latest' (follow the highest version) or a specific version number
+    viewVersionContent: null,  // cached content for a non-latest selection
     isLoading: false,
+    activeTab: 'user',         // #196: 'user' | 'tech' — selected half of a two-section spec
   },
 
   // Initial MODELS map. Populated authoritatively from GET /api/models
   // at startup so the UI dropdown can never offer something the server
   // wouldn't accept (server-side allowlist lives in src/services/models.js).
   // Kept seeded with the current set so the dropdown renders correctly
-  // before the fetch resolves on a slow connection.
+  // before the fetch resolves on a slow connection. Each value carries
+  // the display label plus output cost ($/MTok) so the selector can
+  // surface cost; loadModels() refreshes this from the server.
   MODELS: {
-    'claude-haiku-4-5': 'Haiku 4.5',
-    'claude-sonnet-4-6': 'Sonnet 4.6',
-    'claude-opus-4-8': 'Opus 4.8',
+    'claude-haiku-4-5': { label: 'Haiku 4.5', outputCostPerMTok: 5 },
+    'claude-sonnet-4-6': { label: 'Sonnet 4.6', outputCostPerMTok: 15 },
+    'claude-opus-4-8': { label: 'Opus 4.8', outputCostPerMTok: 25 },
+    'claude-fable-5': { label: 'Fable 5', outputCostPerMTok: 50 },
   },
 
   // Default model id used when sanitization rejects a stale storage
@@ -96,7 +118,11 @@ const DevChat = {
         const next = {};
         for (const m of data.models) {
           if (m && typeof m.id === 'string') {
-            next[m.id] = (typeof m.label === 'string' && m.label) ? m.label : m.id;
+            const label = (typeof m.label === 'string' && m.label) ? m.label : m.id;
+            const outputCostPerMTok = typeof m.outputCostPerMTok === 'number'
+              ? m.outputCostPerMTok
+              : undefined;
+            next[m.id] = { label, outputCostPerMTok };
           }
         }
         DevChat.MODELS = next;
@@ -125,10 +151,17 @@ const DevChat = {
   // dev chat tab shows a fresh session list instead of re-rendering the
   // previous app's session.
   reset() {
+    // #161: leaving the app (home / different app) while a turn is
+    // running counts as leaving the session — arm its completion
+    // notification before the state below is dropped.
+    if (DevChat.isStreaming && DevChat.currentSession) {
+      DevChat._setNotifyOnDone(DevChat.currentSession.id, true);
+    }
     DevChat.sessions = [];
     DevChat.currentSession = null;
     DevChat.messages = [];
     DevChat.isStreaming = false;
+    DevChat.setTitleStatus(null);
     DevChat._staleTimer = null;
     DevChat._lastSeenSeq = null;
     DevChat._resetSpecViewer();
@@ -149,10 +182,10 @@ const DevChat = {
       sessionId: null,
       draftContent: '',
       versions: [],
-      viewVersion: 'draft',
+      viewVersion: 'latest',
       viewVersionContent: null,
       isLoading: false,
-      isSaving: false,
+      activeTab: 'user',
     };
   },
 
@@ -167,13 +200,33 @@ const DevChat = {
   renderBudget() {
     const el = document.getElementById('dc-budget');
     if (!el) return;
-    // BYOK (#30): when the user has supplied their own Anthropic key,
-    // show that instead of the shared daily cap — it's irrelevant to
-    // them, and the indicator doubles as a reminder that the shared
-    // budget no longer applies to this session's cost.
+    // BYOK (#30/#119/#212): billing is limit-first — the daily platform
+    // allowance is consumed before any spend hits the user's own key —
+    // so key-holders see the limit progress first (same red/yellow
+    // thresholds as everyone else) and a "your key $X" figure only once
+    // spillover billing to their key has actually started today. The
+    // BYOK figure never gets threshold coloring — no cap applies to it.
     if (window.Settings?.state?.hasApiKey) {
       const last4 = window.Settings.state.keyLast4 || '••••';
-      el.innerHTML = `<span class="text-emerald-400" title="Using your Anthropic API key">your key · ${last4}</span>`;
+      if (!DevChat.budget) {
+        // Budget fetch hasn't landed yet — static badge until it does.
+        el.innerHTML = `<span class="text-emerald-400" title="Using your Anthropic API key">your key · ${last4}</span>`;
+        return;
+      }
+      const byokCents = DevChat.budget.byokSpentCents || 0;
+      const byok = (byokCents / 100).toFixed(2);
+      const spent = (DevChat.budget.spentCents / 100).toFixed(2);
+      const limit = (DevChat.budget.limitCents / 100).toFixed(2);
+      const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
+      const color = pct > 80 ? 'text-red-400' : pct > 50 ? 'text-yellow-400' : 'text-emerald-400';
+      const tip = `Today: $${spent} of your $${limit} platform daily limit`
+        + (byokCents > 0 ? ` + $${byok} billed to your Anthropic key (…${last4})` : '')
+        + `. The daily limit is used first; your key (…${last4}) takes over once it runs out. Resets at midnight UTC.`;
+      let html = `<span class="text-zinc-600">limit </span><span class="${color}">$${spent}</span><span class="text-zinc-600">/$${limit}</span>`;
+      if (byokCents > 0) {
+        html += `<span class="text-zinc-600"> · </span><span class="text-emerald-400">your key $${byok}</span>`;
+      }
+      el.innerHTML = `<span title="${tip}">${html}</span>`;
       return;
     }
     if (!DevChat.budget) return;
@@ -207,7 +260,7 @@ const DevChat = {
       const data = await res.json();
       DevChat.activeSessions = {
         sessions: Array.isArray(data.sessions) ? data.sessions : [],
-        totals: data.totals || { active: 0, paused: 0, busy: 0, total: 0 },
+        totals: data.totals || { active: 0, promoted: 0, paused: 0, busy: 0, total: 0 },
       };
       DevChat.renderActiveSessions();
     } catch {}
@@ -239,17 +292,20 @@ const DevChat = {
     if (!container || !counter) return;
 
     const { sessions, totals } = DevChat.activeSessions;
-    // Counter shows running-vs-cap on the left and the paused
-    // backlog on the right. The "/3" denominator is the per-user
+    // Counter shows running-vs-cap on the left and the promoted/paused
+    // backlogs on the right. The "/3" denominator is the per-user
     // active-session cap enforced by /api/apps/:slug/sessions and
-    // /api/sessions/:id/resume. Paused sessions are unlimited so
-    // they're surfaced separately rather than rolled into the
-    // denominator. The trailing " · N paused" is omitted when zero
-    // to keep the common case clean.
+    // /api/sessions/:id/resume — which counts only 'active' sessions
+    // (#193): promoted ones (PR in a merge vote) are un-pausable and
+    // exempt from the cap, so they're surfaced as their own " · N in
+    // vote" segment instead of inflating the numerator. Paused sessions
+    // are unlimited so they're surfaced separately too. Zero-count
+    // segments are omitted to keep the common case clean.
     const ACTIVE_CAP = 3;
-    counter.textContent = totals.paused > 0
-      ? `(${totals.active}/${ACTIVE_CAP}) · ${totals.paused} paused`
-      : `(${totals.active}/${ACTIVE_CAP})`;
+    const segments = [`(${totals.active}/${ACTIVE_CAP})`];
+    if (totals.promoted > 0) segments.push(`${totals.promoted} in vote`);
+    if (totals.paused > 0) segments.push(`${totals.paused} paused`);
+    counter.textContent = segments.join(' · ');
 
     if (totals.total === 0) {
       container.innerHTML = `
@@ -321,7 +377,7 @@ const DevChat = {
             if (typeof App !== 'undefined' && App.updateHash) App.updateHash();
           });
         } else {
-          location.hash = `#app/${slug}/individual-chat/${id}`;
+          location.hash = `#app/${slug}/dev/sessions/${id}`;
         }
       });
     });
@@ -336,11 +392,12 @@ const DevChat = {
         const original = btn.textContent;
         btn.textContent = action === 'pause' ? 'Pausing…' : 'Resuming…';
         btn.disabled = true;
+        let body = {};
         try {
           const resp = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
+          body = await resp.json().catch(() => ({}));
           if (!resp.ok) {
-            const data = await resp.json().catch(() => ({}));
-            alert(data.error || `Failed to ${action} session`);
+            alert(body.error || `Failed to ${action} session`);
             btn.textContent = original;
             btn.disabled = false;
             return;
@@ -349,6 +406,15 @@ const DevChat = {
           btn.textContent = original;
           btn.disabled = false;
           return;
+        }
+        // Deliberate pause of the session that's open in the chat view:
+        // sync the local copy so the heartbeat's refocus auto-resume
+        // (which only heals *sweeper* pauses the client doesn't know
+        // about) doesn't silently undo it (#193). keptPromoted means the
+        // server left the status 'promoted', so don't mislabel it.
+        if (action === 'pause' && !body.keptPromoted
+            && DevChat.currentSession && Number(DevChat.currentSession.id) === id) {
+          DevChat.currentSession.status = 'paused';
         }
         await DevChat._refreshSessionListsAfterMutation();
       });
@@ -487,9 +553,18 @@ const DevChat = {
       // already auto-paused while the tab was hidden (>5 min), the bump
       // alone can't revive it — /activity only touches active/promoted
       // rows — so also re-sync and resume so the next send doesn't 404.
+      //
+      // Skip the resume when the LOCAL status already says 'paused':
+      // that means the user deliberately paused this session (the pause
+      // click-handlers sync the local copy), and silently re-activating
+      // it would re-occupy the slot they just freed (#193). The heal is
+      // only for the stale-client case where local status still says
+      // 'active'. Sending a chat message or reopening the session still
+      // resumes explicitly via their own paths.
       DevChat._heartbeatVisHandler = () => {
         if (document.visibilityState !== 'visible') return;
         beat();
+        if (DevChat.currentSession && DevChat.currentSession.status === 'paused') return;
         DevChat._resumeCurrentSessionIfPaused({ silent: true });
       };
       document.addEventListener('visibilitychange', DevChat._heartbeatVisHandler);
@@ -499,6 +574,14 @@ const DevChat = {
   },
 
   async openSession(sessionId) {
+    // #161: opening a DIFFERENT session while the current one is
+    // mid-turn counts as leaving it — arm its completion notification.
+    // (Returning to the SAME session needs no client call: the server's
+    // GET /api/sessions/:id below disarms it.)
+    if (DevChat.isStreaming && DevChat.currentSession
+        && Number(DevChat.currentSession.id) !== Number(sessionId)) {
+      DevChat._setNotifyOnDone(DevChat.currentSession.id, true);
+    }
     try {
       const res = await fetch(`/api/sessions/${sessionId}`);
       if (!res.ok) return;
@@ -525,6 +608,24 @@ const DevChat = {
 
       DevChat.currentSession = session;
       DevChat._startHeartbeat();
+      // Drop any streaming title marker carried over from the previous
+      // session. If THIS session is mid-run, the busy check below
+      // re-applies "thinking" via _setStreamingUI. The #161 completion
+      // marker lives in its own slot (_titleCompletion) and is
+      // deliberately untouched here — it stays sticky while the user is
+      // away and clears on return / notification read.
+      DevChat.setTitleStatus(null);
+      // #233: the spec viewer is a single global state slot, not keyed
+      // per session — switching sessions must drop the previous
+      // session's content (and open flag) or it leaks into the new
+      // session's panel. Number-compare because openSession receives
+      // the id from DOM datasets (string) while openSpecViewer stores
+      // currentSession.id (number). Re-opening the SAME session keeps
+      // the cached content so returning repaints instantly.
+      if (DevChat.specViewer.sessionId != null
+          && Number(DevChat.specViewer.sessionId) !== Number(sessionId)) {
+        DevChat._resetSpecViewer();
+      }
       // Restore the spec viewer's open/closed state from localStorage
       // before the caller's renderChatView fires, so a refresh on a
       // session that had the viewer open paints with the panel
@@ -534,13 +635,17 @@ const DevChat = {
       if (DevChat._readSpecViewerOpen(sessionId)) {
         DevChat.specViewer.open = true;
         DevChat.specViewer.sessionId = sessionId;
-        DevChat.specViewer.viewVersion = 'draft';
+        DevChat.specViewer.viewVersion = 'latest';
         DevChat.specViewer.viewVersionContent = null;
+        DevChat.specViewer.activeTab = 'user';
         // Don't await — caller's renderChatView shouldn't block on
         // the fetch. _loadSpecViewer calls _renderSpecViewer when it
         // resolves, which patches the body in place.
         DevChat._loadSpecViewer({ force: true });
       }
+      // Q/A chip selection is per-question-turn — never carry one across
+      // a session switch / reload.
+      DevChat._qaSelection = {};
       DevChat.messages = messages.map((m) => {
         if (m.metadata) {
           if (m.metadata.stagingUrl) m.stagingUrl = m.metadata.stagingUrl;
@@ -548,12 +653,21 @@ const DevChat = {
           if (m.metadata.ccOutput) m.ccOutput = m.metadata.ccOutput;
           if (m.metadata.ccSummary) m.ccSummary = m.metadata.ccSummary;
           if (m.metadata.progressLog) m.progressLog = m.metadata.progressLog;
-          // Spec preview cards: write_spec / scout persist these on the
+          // Spec preview cards: scout dispatches persist these on the
           // status row so a refresh re-renders the same inline card the
-          // user saw mid-stream. See runWriteSpecTool / runScoutTool.
+          // user saw mid-stream. See runScoutTool. Older recovered scout
+          // turns persisted scoutOutput without specPreview — derive the
+          // preview so their cards still render.
           if (m.metadata.specPreview) m.specPreview = m.metadata.specPreview;
+          else if (m.metadata.scoutOutput && m.metadata.specVersion != null) {
+            const t = String(m.metadata.scoutOutput);
+            m.specPreview = t.length <= 400 ? t : `${t.slice(0, 400)}…`;
+          }
           if (m.metadata.specLines) m.specLines = m.metadata.specLines;
           if (m.metadata.specVersion != null) m.specVersion = m.metadata.specVersion;
+          // Q/A mode (#32): suggested-answer chips for the Mayor's
+          // clarifying questions survive refresh via metadata.
+          if (m.metadata.suggestions) m.suggestions = m.metadata.suggestions;
         }
         return m;
       });
@@ -612,6 +726,10 @@ const DevChat = {
     DevChat.isStreaming = true;
     DevChat._setStreamingUI(true);
     DevChat._seenSeqs = new Set();
+    // Any Q/A chip selection belonged to the question turn we're now
+    // answering — the chips vanish on re-render (the question row is no
+    // longer last), so the selection must not leak into a later turn.
+    DevChat._qaSelection = {};
 
     // A previous turn's progress message may still be flagged as the live
     // append target. Clear it so this turn's cc_progress events create a
@@ -763,6 +881,13 @@ const DevChat = {
               case 'status':
                 DevChat._removeSpinner();
                 DevChat._deactivateLastStatus();
+                // A status line always closes the current streaming bubble
+                // (#99): tokens that arrive after it must render BELOW it,
+                // never append to the bubble above. Same sealing as
+                // assistant_message_end; a no-op when nothing is streaming.
+                if (assistantMsg) assistantMsg._finalized = true;
+                assistantPushed = false;
+                assistantMsg = { role: 'assistant', content: '', created_at: new Date().toISOString() };
                 DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
                 DevChat.renderMessages();
                 DevChat.scrollToBottom();
@@ -775,6 +900,10 @@ const DevChat = {
                 DevChat.scrollToBottom();
                 if (data.url) {
                   DevChat.currentSession.staging_url = data.url;
+                  // #127: testing guidance rides along so the PR card's
+                  // "Test this change" button works without a refetch.
+                  if ('testingMd' in data) DevChat.currentSession.testing_md = data.testingMd;
+                  if ('testingPath' in data) DevChat.currentSession.testing_path = data.testingPath;
                 }
                 break;
               case 'staging_failed':
@@ -810,7 +939,16 @@ const DevChat = {
                   DevChat.renderChatView();
                 }
                 break;
-              
+              case 'visuals_ready':
+                // #195: the capture finished after staging_ready — stash
+                // the artifact ids on the session and re-render so the
+                // staging card upgrades in place with the media tiles.
+                if (DevChat.currentSession && data.visuals) {
+                  DevChat.currentSession.visuals = data.visuals;
+                  DevChat.renderMessages();
+                }
+                break;
+
               case 'mayor_reasoning': {
                 // Server sends the full raw Mayor output after the token
                 // stream completes. This is authoritative: even if individual
@@ -831,6 +969,19 @@ const DevChat = {
                 }
                 DevChat.renderMessages();
                 DevChat.scrollToBottom();
+                break;
+              }
+              case 'suggestions': {
+                // Q/A mode (#32): structured suggested answers for the
+                // clarifying questions in the current bubble. Sent right
+                // after mayor_reasoning, so the assistant message exists;
+                // renderMessages draws the tappable chips under it.
+                if (!Array.isArray(data.suggestions) || !data.suggestions.length) break;
+                if (assistantPushed) {
+                  assistantMsg.suggestions = data.suggestions;
+                  DevChat.renderMessages();
+                  DevChat.scrollToBottom();
+                }
                 break;
               }
               case 'cc_progress': {
@@ -863,8 +1014,8 @@ const DevChat = {
                 DevChat.refreshBudget();
                 break;
               case 'spec_updated':
-                // Mayor write_spec / scout drafted (or refreshed) the
-                // live spec_md. The accompanying status event already
+                // A scout dispatch drafted (or revised) the live
+                // spec_md. The accompanying status event already
                 // pushed an inline preview card into the timeline — we
                 // just keep the open viewer in sync if the user
                 // happens to have it open on the live draft.
@@ -1009,6 +1160,20 @@ const DevChat = {
         DevChat.scrollToBottom();
         break;
       }
+      case 'suggestions': {
+        // Q/A mode (#32): attach the suggested answers to the live
+        // assistant bubble (replayed right after mayor_reasoning). A
+        // sealed bubble means a dispatch turn, where suggestions were
+        // already dropped server-side — skip rather than mis-attach.
+        if (!Array.isArray(data.suggestions) || !data.suggestions.length) break;
+        const am = lastAssistantMsg();
+        if (am && !am._finalized) {
+          am.suggestions = data.suggestions;
+          DevChat.renderMessages();
+          DevChat.scrollToBottom();
+        }
+        break;
+      }
       case 'done':
         DevChat._deactivateLastStatus();
         DevChat._finishStreaming();
@@ -1036,20 +1201,31 @@ const DevChat = {
         if (am) am._finalized = true;
         break;
       }
-      case 'status':
+      case 'status': {
         DevChat._removeSpinner();
         DevChat._deactivateLastStatus();
+        // A status line always closes the current streaming bubble (#99):
+        // tokens replayed after it must start a fresh bubble below it,
+        // matching the primary POST-SSE path's seal-on-status.
+        const sealMsg = lastAssistantMsg();
+        if (sealMsg) sealMsg._finalized = true;
         DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;
+      }
       case 'staging_ready':
         DevChat._removeSpinner();
         DevChat._deactivateLastStatus();
         DevChat.messages.push({ role: 'system', content: 'Staging deployed!', stagingUrl: data.url, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8) });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
-        if (data.url && DevChat.currentSession) DevChat.currentSession.staging_url = data.url;
+        if (data.url && DevChat.currentSession) {
+          DevChat.currentSession.staging_url = data.url;
+          // #127: keep the replayed session's testing guidance in sync too.
+          if ('testingMd' in data) DevChat.currentSession.testing_md = data.testingMd;
+          if ('testingPath' in data) DevChat.currentSession.testing_path = data.testingPath;
+        }
         break;
       case 'staging_failed':
         DevChat._removeSpinner();
@@ -1073,6 +1249,13 @@ const DevChat = {
           if (data.prUrl) DevChat.currentSession.pr_url = data.prUrl;
           if (data.prTitle) DevChat.currentSession.pr_title = data.prTitle;
           DevChat.renderChatView();
+        }
+        break;
+      case 'visuals_ready':
+        // #195: same upgrade-in-place as the primary POST-SSE path.
+        if (DevChat.currentSession && data.visuals) {
+          DevChat.currentSession.visuals = data.visuals;
+          DevChat.renderMessages();
         }
         break;
       case 'cc_progress':
@@ -1108,9 +1291,10 @@ const DevChat = {
     // The status event for this same write already pushed an inline
     // preview card into the timeline (see the case 'status' arms),
     // which is the user-facing surface. The only thing left to do
-    // here is keep the side viewer in sync if the user happens to
-    // have it open on the live draft.
-    if (DevChat.specViewer.open && DevChat.specViewer.viewVersion === 'draft') {
+    // here is keep the side viewer in sync if the user is following
+    // the latest version — a write creates a new highest version, and
+    // the 'latest' sentinel should advance to it on reload.
+    if (DevChat.specViewer.open && DevChat.specViewer.viewVersion === 'latest') {
       DevChat._loadSpecViewer({ force: true });
     }
   },
@@ -1127,9 +1311,121 @@ const DevChat = {
   // it's already in phase-2 anyway.
   _streamingPhase: null,
 
+  // Title markers for the dev-chat status indicator (#108). Kept as a
+  // map so applyTitleStatus can strip whichever one is currently
+  // applied before re-prefixing.
+  // Status text leads the title so it survives browser-tab truncation —
+  // a glance at a narrow tab shows "⏳ Thinking…" even when the app
+  // name doesn't fit.
+  TITLE_STATUS_MARKERS: {
+    thinking: '⏳ Thinking… · ',
+    // #161 completion tier — set by notification arrival (see
+    // setCompletionTitle), not by stream end.
+    sessionDone: '✅ Session done · ',
+    autoSolveDone: '🤖 Proposal ready · ',
+    autoSolveFailed: '⚠️ Proposal failed · ',
+  },
+
+  // "Away" = the user can't currently see this page: the browser tab is
+  // hidden, or the window has lost focus (another window on top). Used
+  // to decide whether a finished run should leave a sticky "done"
+  // marker in the title (#142).
+  _userIsAway() {
+    return document.visibilityState === 'hidden' || !document.hasFocus();
+  },
+
+  // #161: arm/disarm the server-side "notify me when this turn
+  // finishes" flag for a session. Fire-and-forget — arming is
+  // best-effort and the endpoint is idempotent, so duplicate or lost
+  // calls are harmless (the pagehide beacon is the backstop for tab
+  // close / hard navigations, where a normal fetch may be killed).
+  _setNotifyOnDone(sessionId, armed) {
+    if (!sessionId) return;
+    try {
+      fetch(`/api/sessions/${sessionId}/notify-on-done`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ armed: !!armed }),
+      }).catch(() => {});
+    } catch { /* non-fatal */ }
+  },
+
+  // Set (or clear, with null) the dev-chat status reflected in
+  // document.title. Non-null statuses only stick while the dev-chat tab
+  // is the mounted tab — a turn finishing while the user is on the App
+  // or Group Chat tab must not decorate those views' titles.
+  setTitleStatus(status) {
+    if (status && (typeof App === 'undefined' || !(App.currentTab === 'dev' && App.currentSubTab === 'sessions'))) {
+      status = null;
+    }
+    if (DevChat._titleStatus === status) return;
+    DevChat._titleStatus = status;
+    DevChat.applyTitleStatus();
+  },
+
+  // #161: set (or clear, with null) the completion marker. Unlike
+  // setTitleStatus this is NOT scoped to the dev-chat tab — the whole
+  // point is the user is elsewhere (another tab, another view) when the
+  // completion notification arrives. Cleared by the visibility/focus
+  // return handler at the bottom of this file and by
+  // Notifications._reconcileCompletionTitle when the triggering
+  // notification is read.
+  setCompletionTitle(status) {
+    if (DevChat._titleCompletion === status) return;
+    DevChat._titleCompletion = status;
+    DevChat.applyTitleStatus();
+  },
+
+  // Re-derive document.title from the current base title + status
+  // marker. Composes with Notifications._updateTitle's "(N) " unread
+  // prefix: the count stays outermost — `(2) ⏳ MyApp` — because the
+  // notifications module treats everything after the count as the base,
+  // and we treat the count as a passthrough prefix here. Also safe to
+  // call when no marker applies (it just strips a stale one). Exposed
+  // (not underscored) because App.setHeaderTitle calls it after every
+  // navigation re-set of the title.
+  applyTitleStatus() {
+    const full = document.title;
+    const countMatch = full.match(/^\(\d+\)\s*/);
+    const count = countMatch ? countMatch[0] : '';
+    let base = full.slice(count.length);
+    for (const m of Object.values(DevChat.TITLE_STATUS_MARKERS)) {
+      if (base.startsWith(m)) { base = base.slice(m.length); break; }
+    }
+    // Precedence (#161): completion marker outranks the streaming
+    // status; clearing the completion falls back to the live status, so
+    // a still-streaming watched session reverts to "⏳ Thinking…".
+    const active = DevChat._titleCompletion || DevChat._titleStatus;
+    const marker = active ? DevChat.TITLE_STATUS_MARKERS[active] : '';
+    const next = count + marker + base;
+    if (next === full) return;
+    document.title = next;
+    // Mirror setHeaderTitle's fast-path sync to the native shell so the
+    // Flutter AppBar tracks the marker too (unknown methods are dropped
+    // by older app builds — see setHeaderTitle for the full story).
+    try {
+      if (window.Usernode && typeof window.Usernode.postMessage === 'function') {
+        window.Usernode.postMessage(JSON.stringify({
+          method: 'titleChanged',
+          value: document.title,
+        }));
+      }
+    } catch (_) {}
+  },
+
   _setStreamingUI(streaming, phase = null) {
     if (streaming) DevChat._streamingPhase = phase;
     else DevChat._streamingPhase = null;
+
+    // Every streaming state transition funnels through here (send,
+    // reconnect, phase change, finish, stop), so this is the one hook
+    // needed for the live-status indicator: streaming → "thinking";
+    // streaming→idle just clears it. The legacy stream-end "done"
+    // marker is gone (#161): finishing while away always produces a
+    // session_done notification now, and its arrival sets the
+    // completion marker via setCompletionTitle instead.
+    if (streaming) DevChat.setTitleStatus('thinking');
+    else if (DevChat._titleStatus === 'thinking') DevChat.setTitleStatus(null);
 
     const btn = document.getElementById('dc-send-btn');
     if (!btn) return;
@@ -1361,12 +1657,36 @@ const DevChat = {
 
   
 
+  // #127: open the staging preview with the session's testing guidance
+  // attached. `jump` opens the iframe directly at the deep-link path (the
+  // "Test this change" button); plain Preview starts at the app root but
+  // still carries the guidance so the overlay can offer its own "Test this
+  // change" button + "How to test" panel. The markdown is looked up here at
+  // click time so it never transits an HTML attribute.
+  previewStaging(url, jump) {
+    const s = DevChat.currentSession || {};
+    const testing = (s.testing_md || s.testing_path)
+      ? { md: s.testing_md || null, path: s.testing_path || null }
+      : null;
+    AppView.swapToStaging(url, testing, { jump: !!jump });
+  },
+
   async promotePR() {
     if (!DevChat.currentSession?.id) return;
     try {
       const res = await fetch(`/api/sessions/${DevChat.currentSession.id}/promote`, { method: 'POST' });
       if (res.ok) {
+        // #183: promote may have lazily created the PR (sessions cloned
+        // from a headless auto run arrive PR-less). Fold the returned PR
+        // info into the session so the staging card header flips from
+        // "Changes ready" to the PR link without a refetch.
+        const data = await res.json().catch(() => ({}));
         DevChat.currentSession.status = 'promoted';
+        if (data.prNumber) {
+          DevChat.currentSession.pr_number = data.prNumber;
+          if (data.prUrl) DevChat.currentSession.pr_url = data.prUrl;
+          if (data.prTitle) DevChat.currentSession.pr_title = data.prTitle;
+        }
         DevChat.renderMessages();
       } else {
         const data = await res.json();
@@ -1456,10 +1776,21 @@ const DevChat = {
       }
     }
 
-    container.innerHTML = DevChat.messages.map((msg) => {
+    // Q/A mode (#32): suggested-answer chips render only under the LAST
+    // non-system message — and only when the session is one the viewer
+    // can still act in. Once the user replies (chip or typed), the
+    // question row stops being last and the chips vanish on re-render,
+    // so no explicit teardown is needed.
+    let qaLastConvoIdx = -1;
+    for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+      if (DevChat.messages[i].role !== 'system') { qaLastConvoIdx = i; break; }
+    }
+    const qaInteractive = !!session && (session.status === 'active' || session.status === 'promoted');
+
+    container.innerHTML = DevChat.messages.map((msg, msgIdx) => {
       // System messages — each is a single immutable status line
       if (msg.role === 'system') {
-        // Inline spec preview card. The Mayor's write_spec / scout
+        // Inline spec preview card. The Mayor's scout dispatch
         // emits this metadata alongside the status line; clicking the
         // card opens the read-only spec viewer (side panel on wide
         // viewports, fullscreen modal on narrow). We clip the snippet
@@ -1469,10 +1800,16 @@ const DevChat = {
           const sTs = msg.created_at ? new Date(msg.created_at).getTime() : '';
           const sId = msg.id || msg._slug || '';
           const lineCount = msg.specLines || (msg.specPreview.split('\n').length);
-          const snippet = msg.specPreview.length > 200
-            ? msg.specPreview.slice(0, 200) + '…'
-            : msg.specPreview;
-          const versionAttr = msg.specVersion != null ? msg.specVersion : 'draft';
+          // F8: truncate on a whitespace boundary so we don't slice through
+          // the middle of a word or an inline-formatting run.
+          let snippet = msg.specPreview;
+          if (snippet.length > 200) {
+            let cut = snippet.slice(0, 200);
+            const bound = Math.max(cut.lastIndexOf(' '), cut.lastIndexOf('\n'));
+            if (bound > 160) cut = cut.slice(0, bound);
+            snippet = cut + '…';
+          }
+          const versionAttr = msg.specVersion != null ? msg.specVersion : 'latest';
           const headerLabel = msg.specVersion != null
             ? `Spec v${msg.specVersion} · ${lineCount} lines`
             : `Spec drafted · ${lineCount} lines`;
@@ -1483,7 +1820,7 @@ const DevChat = {
                 <span class="dc-spec-preview-title">${escapeHtml(headerLabel)}</span>
                 <span class="dc-spec-preview-cta">View full spec →</span>
               </div>
-              <div class="dc-spec-preview-snippet">${DevChat.renderMarkdown(snippet)}</div>
+              <div class="dc-spec-preview-snippet">${DevChat.renderMarkdown(snippet, { breaks: false })}</div>
             </div>`;
         }
         if (msg.ccLog) {
@@ -1510,18 +1847,50 @@ const DevChat = {
         if (msg.stagingUrl) {
           const stgTs = msg.created_at ? new Date(msg.created_at).getTime() : '';
           const stgId = msg.id || msg._slug || '';
+          // Once the PR merges (or is mid-merge), the merge path tears down
+          // the staging container, so this historical preview link is dead —
+          // clicking it lands on a 502/blank page. Disable it instead, with a
+          // tooltip pointing the user at the now-live app.
+          const previewGone = !!session && (session.status === 'merged' || session.status === 'merging' || !!session.merged_at);
+          // #127: bot-emitted testing guidance lives on the session row
+          // (testing_md / testing_path). When present, offer a "Test this
+          // change" button that opens the preview at the deep link with the
+          // instructions panel showing. The markdown is looked up at click
+          // time (DevChat.previewStaging) — never inlined in the attribute.
+          const hasTesting = !!(session?.testing_md || session?.testing_path);
+          const testBtn = !hasTesting ? '' : (previewGone
+            ? `<button class="dc-pr-btn dc-pr-btn-preview" disabled title="Preview removed after merge — this change is now live in the app">Test this change</button>`
+            : `<button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.previewStaging('${msg.stagingUrl}', true)">Test this change</button>`);
+          // #195: before/after capture tiles. Visuals are latest-set-per-
+          // session, so only the NEWEST staging card carries them — older
+          // cards from earlier turns would just repeat the same media.
+          // Arrives via session.visuals (history reload) or the
+          // visuals_ready event (live upgrade-in-place after capture).
+          let visualsHtml = '';
+          if (window.AppView && session?.visuals) {
+            let latestStagingMsg = null;
+            for (let vi = DevChat.messages.length - 1; vi >= 0; vi--) {
+              if (DevChat.messages[vi].stagingUrl) { latestStagingMsg = DevChat.messages[vi]; break; }
+            }
+            if (latestStagingMsg === msg) visualsHtml = AppView.visualsTilesHtml(session.visuals);
+          }
           return `
             <div class="dc-status-line"><span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span> ${msg.content} <span style="font-size:9px;opacity:0.4;margin-left:auto">${stgId} ${stgTs}</span></div>
             <div class="dc-pr-card" id="dc-pr-card">
               <div class="dc-pr-card-header">
                 ${session?.pr_url ? `<a href="${session.pr_url}" target="_blank" class="dc-pr-link">PR #${session.pr_number}</a>` : '<span style="color:var(--text-muted)">Changes ready</span>'}
                 ${session?.pr_title ? `<span class="dc-pr-title">${escapeHtml(session.pr_title)}</span>` : ''}
+                ${window.AppView ? AppView.closesPillHtml(session) : ''}
                 <span style="font-size:9px;opacity:0.4;margin-left:8px">${stgId} ${stgTs}</span>
               </div>
+              ${visualsHtml ? `<div class="dc-pr-card-visuals" style="margin:6px 0 2px">${visualsHtml}</div>` : ''}
               <div class="dc-pr-card-actions">
-                <button class="dc-pr-btn dc-pr-btn-preview" onclick="AppView.swapToStaging('${msg.stagingUrl}')">Preview staging</button>
+                ${previewGone
+                  ? `<button class="dc-pr-btn dc-pr-btn-preview" disabled title="Preview removed after merge — this change is now live in the app">Preview staging</button>`
+                  : `<button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.previewStaging('${msg.stagingUrl}', false)">Preview staging</button>`}
+                ${testBtn}
                 ${session?.pr_url ? `<a href="${session.pr_url}" target="_blank" class="dc-pr-btn dc-pr-btn-preview" style="text-decoration:none">View on GitHub</a>` : ''}
-                ${session?.pr_number && session?.status === 'active' ? `<button class="dc-pr-btn dc-pr-btn-promote" onclick="DevChat.promotePR()">Propose to group</button>` : ''}
+                ${session?.status === 'active' ? `<button class="dc-pr-btn dc-pr-btn-promote" onclick="DevChat.promotePR()">Propose to group</button>` : ''}
                 ${session?.status === 'promoted' ? '<span class="text-xs" style="color:var(--accent)">Proposed!</span>' : ''}
               </div>
             </div>`;
@@ -1611,6 +1980,18 @@ const DevChat = {
           </div>`;
       }
 
+      // Q/A chips (#32): only on the latest assistant message of an
+      // interactive session. Rendered even mid-stream (the 'done' event
+      // re-renders before isStreaming flips, so gating on it here would
+      // hide the chips forever) — taps are guarded by isStreaming in the
+      // click handlers instead.
+      const qaChips = (!isUser
+        && msgIdx === qaLastConvoIdx
+        && qaInteractive
+        && Array.isArray(msg.suggestions) && msg.suggestions.length)
+        ? DevChat._qaChipsHtml(msg)
+        : '';
+
       return `
         <div class="dc-msg ${isUser ? 'dc-msg-user' : 'dc-msg-assistant'}">
           <div class="dc-msg-header">
@@ -1620,10 +2001,102 @@ const DevChat = {
           </div>
           <div class="dc-msg-content">${isUser ? DevChat.renderMarkdown(content) : displayContent}</div>
           ${isUser ? '' : reasoningDetail}
+          ${qaChips}
         </div>`;
     }).join('');
 
     DevChat._applyDetailsPersistence();
+  },
+
+  // ── Q/A mode: suggested-answer chips (#32) ─────────────────
+  //
+  // `suggestions` is [{ question, answers }] — sanitized server-side
+  // (the Mayor's suggest_answers tool) and persisted as
+  // metadata.suggestions on the assistant row. Single question: tapping
+  // a chip sends that answer immediately. Multiple questions: taps
+  // select one answer per group (held in _qaSelection, keyed by group
+  // index) and "Send answers" / "Use the suggested defaults" compose a
+  // numbered reply. The textarea stays usable throughout — chips are a
+  // shortcut, never a constraint.
+
+  _qaSelection: {},
+
+  _qaChipsHtml(msg) {
+    const groups = msg.suggestions;
+    const multi = groups.length > 1;
+    const groupsHtml = groups.map((g, gi) => {
+      const chips = (g.answers || []).map((a, ai) => {
+        const selected = multi && DevChat._qaSelection[gi] === ai;
+        const cls = `dc-qa-chip${ai === 0 ? ' dc-qa-chip-default' : ''}${selected ? ' dc-qa-chip-selected' : ''}`;
+        const hint = ai === 0 ? '<span class="dc-qa-chip-hint">suggested</span>' : '';
+        return `<button type="button" class="${cls}" data-qa-group="${gi}" data-qa-answer="${ai}">${escapeHtml(a)}${hint}</button>`;
+      }).join('');
+      const label = multi && g.question
+        ? `<div class="dc-qa-group-label">${escapeHtml(g.question)}</div>`
+        : '';
+      return `<div class="dc-qa-group">${label}<div class="dc-qa-chip-row">${chips}</div></div>`;
+    }).join('');
+    const actions = multi
+      ? `<div class="dc-qa-actions">
+          <button type="button" class="dc-qa-send" data-qa-send="1">Send answers</button>
+          <button type="button" class="dc-qa-defaults" data-qa-defaults="1">Use the suggested defaults</button>
+        </div>`
+      : '';
+    return `<div class="dc-qa-chips">${groupsHtml}${actions}</div>`;
+  },
+
+  // The chips on screen always belong to the last non-system message
+  // (renderMessages gates rendering to exactly that row), so handlers
+  // resolve the suggestion groups from it rather than trusting the DOM.
+  _qaCurrentGroups() {
+    for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+      const m = DevChat.messages[i];
+      if (m.role === 'system') continue;
+      return (m.role === 'assistant' && Array.isArray(m.suggestions) && m.suggestions.length)
+        ? m.suggestions
+        : null;
+    }
+    return null;
+  },
+
+  _onQaChipClick(chip) {
+    if (DevChat.isStreaming) return;
+    const groups = DevChat._qaCurrentGroups();
+    if (!groups) return;
+    const gi = parseInt(chip.dataset.qaGroup, 10);
+    const ai = parseInt(chip.dataset.qaAnswer, 10);
+    const answer = groups[gi]?.answers?.[ai];
+    if (answer == null) return;
+    if (groups.length === 1) {
+      DevChat.sendMessage(answer);
+      return;
+    }
+    // Multi-question: toggle this group's selection; sending happens via
+    // the "Send answers" / defaults buttons.
+    if (DevChat._qaSelection[gi] === ai) delete DevChat._qaSelection[gi];
+    else DevChat._qaSelection[gi] = ai;
+    DevChat.renderMessages();
+  },
+
+  _qaSendSelected() {
+    if (DevChat.isStreaming) return;
+    const groups = DevChat._qaCurrentGroups();
+    if (!groups) return;
+    const parts = [];
+    for (let gi = 0; gi < groups.length; gi++) {
+      const ai = DevChat._qaSelection[gi];
+      const answer = ai != null ? groups[gi]?.answers?.[ai] : null;
+      if (answer != null) parts.push(`${gi + 1}. ${answer}`);
+    }
+    if (!parts.length) return;
+    DevChat.sendMessage(parts.join('\n'));
+  },
+
+  _qaSendDefaults() {
+    if (DevChat.isStreaming) return;
+    const groups = DevChat._qaCurrentGroups();
+    if (!groups) return;
+    DevChat.sendMessage(groups.map((g, gi) => `${gi + 1}. ${g.answers[0]}`).join('\n'));
   },
 
   // ── <details> open/closed persistence ─────────────────────
@@ -1681,12 +2154,25 @@ const DevChat = {
     });
   },
 
-  renderMarkdown(text) {
+  // Render markdown to sanitized HTML.
+  //   opts.breaks — when true (default) soft single newlines become <br>
+  //     (desirable for chat). Spec surfaces pass { breaks: false } so a
+  //     prose spec keeps standard markdown paragraph semantics instead of
+  //     getting a <br> on every wrapped line (F5).
+  renderMarkdown(text, opts = {}) {
     if (!text) return '';
 
+    const breaks = opts.breaks !== undefined ? opts.breaks : true;
+
+    // F7: if the markdown libs failed to load (CDN blocked, SRI mismatch,
+    // offline native shell), don't flatten the doc into <br>-joined text —
+    // that hides fences and headings and reads exactly like "markdown is
+    // broken". Show the raw source in a <pre> (whitespace + fences intact)
+    // behind a small notice so the degradation is obvious and diagnosable.
     if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
-      return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-        .replace(/\n/g, '<br>');
+      const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return `<div class="dc-md-fallback-notice">Rich text formatting is unavailable right now — showing raw markdown.</div>`
+        + `<pre class="dc-md-fallback">${escaped}</pre>`;
     }
 
     if (!DevChat._markdownReady) {
@@ -1716,11 +2202,15 @@ const DevChat = {
           html({ text }) {
             return esc(text);
           },
+          // F3: real heading hierarchy. # → h3 (largest), ## → h4,
+          // ### and deeper → h5, so a spec's title, sections and
+          // subsections are visually distinct instead of all collapsing
+          // into one or two levels.
           heading({ tokens, depth }) {
             const inner = this.parser.parseInline(tokens);
-            return depth <= 2
-              ? `<h3 class="dc-h3">${inner}</h3>`
-              : `<h4 class="dc-h4">${inner}</h4>`;
+            const tag = depth === 1 ? 'h3' : depth === 2 ? 'h4' : 'h5';
+            const cls = depth === 1 ? 'dc-h3' : depth === 2 ? 'dc-h4' : 'dc-h5';
+            return `<${tag} class="${cls}">${inner}</${tag}>`;
           },
           blockquote({ tokens }) {
             const body = this.parser.parse(tokens);
@@ -1736,6 +2226,37 @@ const DevChat = {
               body += this.listitem(item);
             }
             return `<${tag} class="${cls}"${startAttr}>${body}</${tag}>`;
+          },
+          // F4: GFM task items. marked's default emits an <input
+          // type=checkbox>, which DOMPurify strips (input isn't allowed),
+          // leaving a bare bullet. Render a non-interactive span marker
+          // instead so checklists in specs keep their ☐ / ✓ state.
+          listitem(item) {
+            const body = this.parser.parse(item.tokens, !!item.loose);
+            if (item.task) {
+              const mark = item.checked
+                ? '<span class="dc-task-check dc-task-checked" aria-hidden="true">&#10003;</span> '
+                : '<span class="dc-task-check" aria-hidden="true">&#9744;</span> ';
+              return `<li class="dc-task-item">${mark}${body}</li>`;
+            }
+            return `<li>${body}</li>`;
+          },
+          // F1: tag the table with dc-table so it can be styled globally
+          // (the old .dc-msg-content table rules never reached the spec
+          // viewer or preview snippet). Alignment attributes are
+          // intentionally dropped — DOMPurify strips them anyway — so cells
+          // left-align by default.
+          table(token) {
+            let header = '';
+            for (const cell of token.header) header += this.tablecell(cell);
+            let body = '';
+            for (const row of token.rows) {
+              let rowHtml = '';
+              for (const cell of row) rowHtml += this.tablecell(cell);
+              body += this.tablerow({ text: rowHtml });
+            }
+            return `<table class="dc-table"><thead>${this.tablerow({ text: header })}</thead>`
+              + `${body ? `<tbody>${body}</tbody>` : ''}</table>`;
           },
           paragraph({ tokens }) {
             return `<p class="dc-p">${this.parser.parseInline(tokens)}</p>`;
@@ -1767,13 +2288,16 @@ const DevChat = {
       DevChat._markdownReady = true;
     }
 
-    const html = marked.parse(text);
+    // breaks is overridden per-call (the global default set above is true);
+    // the registered renderers persist regardless of the per-parse options.
+    const html = marked.parse(text, { breaks });
 
     return DOMPurify.sanitize(html, {
-      ALLOWED_TAGS: ['a', 'b', 'strong', 'i', 'em', 'code', 'pre', 'h3', 'h4',
+      ALLOWED_TAGS: ['a', 'b', 'strong', 'i', 'em', 'code', 'pre', 'h3', 'h4', 'h5',
         'p', 'br', 'ol', 'ul', 'li', 'div', 'span', 'table', 'thead', 'tbody',
         'tr', 'th', 'td', 'hr', 'del'],
-      ALLOWED_ATTR: ['class', 'href', 'target', 'rel'],
+      // 'start' keeps non-1 ordered lists numbering correctly (F2).
+      ALLOWED_ATTR: ['class', 'href', 'target', 'rel', 'start'],
       ALLOW_DATA_ATTR: false,
     });
   },
@@ -1796,6 +2320,12 @@ const DevChat = {
     // listener here is enough — innerHTML rewrites inside renderMessages
     // don't break it.
     container.addEventListener('click', (e) => {
+      // Q/A chips (#32) — delegated like the spec cards, so innerHTML
+      // rewrites inside renderMessages don't drop the handlers.
+      const chip = e.target.closest('[data-qa-group]');
+      if (chip) { DevChat._onQaChipClick(chip); return; }
+      if (e.target.closest('[data-qa-send]')) { DevChat._qaSendSelected(); return; }
+      if (e.target.closest('[data-qa-defaults]')) { DevChat._qaSendDefaults(); return; }
       const card = e.target.closest('.dc-spec-preview-card');
       if (!card) return;
       const version = card.dataset.specVersion;
@@ -1890,10 +2420,16 @@ const DevChat = {
         s.status === 'promoted' ? 'text-violet-400' :
         s.status === 'paused' ? 'text-zinc-400' :
         'text-zinc-500';
-      const isPausable = s.status === 'active' || s.status === 'promoted';
+      // Promoted sessions can't be demoted to 'paused' (their PR must
+      // stay votable), but a warm worker can still be freed — same
+      // endpoint, server keeps status 'promoted' (keptPromoted). Once
+      // the worker is gone (`warm` false) there's nothing left to free,
+      // so no button.
+      const isPausable = s.status === 'active';
+      const isFreeable = s.status === 'promoted' && s.warm;
       const isPaused = s.status === 'paused';
       const isArchived = s.status === 'archived';
-      const isActionable = isPausable || isPaused;
+      const isActionable = isPausable || isFreeable || isPaused;
       const date = new Date(s.created_at).toLocaleDateString();
       return `
         <div class="dc-session-item px-3 py-2 cursor-pointer hover:bg-zinc-800/50 flex items-center gap-2" data-id="${s.id}">
@@ -1901,6 +2437,7 @@ const DevChat = {
           <span class="text-sm text-zinc-300 flex-1 truncate" title="${escapeHtml(s.branch_name || '')}">${escapeHtml(s.pr_title || s.branch_name || 'Session')}</span>
           ${s.pr_url ? `<a href="${s.pr_url}" target="_blank" class="text-xs text-violet-400 hover:text-violet-300" onclick="event.stopPropagation()">PR#${s.pr_number}</a>` : ''}
           ${isPausable ? `<button class="dc-pause-btn text-xs text-zinc-400 hover:text-emerald-400" data-id="${s.id}" data-action="pause" onclick="event.stopPropagation()">Pause</button>` : ''}
+          ${isFreeable ? `<button class="dc-pause-btn text-xs text-zinc-400 hover:text-emerald-400" data-id="${s.id}" data-action="pause" data-freeing="1" title="Frees the AI worker. The PR stays up for voting." onclick="event.stopPropagation()">Free worker</button>` : ''}
           ${isPaused ? `<button class="dc-pause-btn text-xs text-emerald-400 hover:text-emerald-300" data-id="${s.id}" data-action="resume" onclick="event.stopPropagation()">Resume</button>` : ''}
           ${isArchived ? `<button class="dc-unarchive-btn text-xs text-emerald-400 hover:text-emerald-300" data-id="${s.id}" onclick="event.stopPropagation()" title="Restore this session (reopens the PR)">Unarchive</button>` : ''}
           ${isActionable ? `<button class="dc-archive-btn text-xs text-zinc-500 hover:text-red-400" data-id="${s.id}" data-name="${escapeHtml(s.pr_title || s.branch_name || 'Session')}" title="Archive (frees the slot; restorable for a while)" onclick="event.stopPropagation()">Archive</button>` : ''}
@@ -1916,30 +2453,46 @@ const DevChat = {
       });
     });
 
-    // Pause / Resume buttons. Both share the .dc-pause-btn class
-    // and dispatch via data-action so we don't have two near-identical
-    // handlers. On 4xx (e.g. cap reached on resume), surface the
-    // server's error message rather than silently failing.
+    // Pause / Free-worker / Resume buttons. All share the .dc-pause-btn
+    // class and dispatch via data-action so we don't have near-identical
+    // handlers ("Free worker" is the pause endpoint hitting a promoted
+    // session — the server frees the worker and answers keptPromoted).
+    // On 4xx (e.g. cap reached on resume), surface the server's error
+    // message rather than silently failing.
     container.querySelectorAll('.dc-pause-btn').forEach((btn) => {
       btn.addEventListener('click', async () => {
         const id = btn.dataset.id;
         const action = btn.dataset.action;
+        const freeing = !!btn.dataset.freeing;
         const original = btn.textContent;
-        btn.textContent = action === 'pause' ? 'Pausing…' : 'Resuming…';
+        btn.textContent = action === 'pause' ? (freeing ? 'Freeing…' : 'Pausing…') : 'Resuming…';
         btn.disabled = true;
+        let body = {};
         try {
           const resp = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
+          body = await resp.json().catch(() => ({}));
           if (!resp.ok) {
-            const data = await resp.json().catch(() => ({}));
-            alert(data.error || `Failed to ${action} session`);
+            alert(body.error || `Failed to ${action} session`);
             btn.textContent = original;
             btn.disabled = false;
             return;
           }
+          const data = await resp.json().catch(() => ({}));
+          // The row will re-render without the button (warm flips false),
+          // so flash the outcome here where the user just clicked.
+          if (data.keptPromoted) btn.textContent = 'Worker freed';
         } catch {
           btn.textContent = original;
           btn.disabled = false;
           return;
+        }
+        // Same deliberate-pause sync as the cross-app panel (#193): keep
+        // the local currentSession copy honest so the refocus auto-resume
+        // doesn't silently re-activate a session the user just paused.
+        // keptPromoted = server left the status 'promoted'; don't mislabel.
+        if (action === 'pause' && !body.keptPromoted
+            && DevChat.currentSession && Number(DevChat.currentSession.id) === Number(id)) {
+          DevChat.currentSession.status = 'paused';
         }
         if (AppView.appData) {
           await DevChat.loadSessions(AppView.appData.slug);
@@ -2181,7 +2734,12 @@ const DevChat = {
     if (meta) meta.classList.add('hidden');
 
     const modelOptions = Object.entries(DevChat.MODELS)
-      .map(([id, label]) => `<option value="${id}" ${id === DevChat.selectedModel ? 'selected' : ''}>${label}</option>`)
+      .map(([id, meta]) => {
+        const label = (meta && typeof meta === 'object') ? meta.label : meta;
+        const cost = (meta && typeof meta === 'object') ? meta.outputCostPerMTok : undefined;
+        const text = typeof cost === 'number' ? `${label} — $${cost}/MTok` : label;
+        return `<option value="${id}" ${id === DevChat.selectedModel ? 'selected' : ''}>${text}</option>`;
+      })
       .join('');
 
     const viewerOpen = !!DevChat.specViewer.open;
@@ -2271,8 +2829,16 @@ const DevChat = {
     document.getElementById('dc-back').addEventListener('click', () => {
       DevChat.currentSession = null;
       DevChat.messages = [];
-      DevChat.renderChatView();
-      App.updateHash();
+      // The title marker describes the session we just left — drop it
+      // so the forum doesn't claim to be thinking / done.
+      DevChat.setTitleStatus(null);
+      // Forum revision: backing out of a session returns to the dev
+      // forum page (there is no session-list screen anymore).
+      if (typeof App !== 'undefined' && App.switchTab) {
+        App.switchTab('dev');
+      } else {
+        DevChat.renderChatView();
+      }
     });
 
     DevChat._wireSyncBanner();
@@ -2478,9 +3044,11 @@ const DevChat = {
   // ones — the layout switch is pure CSS (see app.css), the JS just
   // toggles state + re-renders.
 
-  // Open the viewer for a specific version ('draft' for the live
-  // spec_md, or a numeric version string/number for a frozen snapshot).
-  // Triggers a network fetch for the live draft + version metadata,
+  // Open the viewer for a specific version ('latest' to follow the
+  // highest version, or a numeric version string/number for an older
+  // frozen snapshot). Legacy inline cards from before per-change
+  // versioning carry 'draft' — treat that as 'latest' for back-compat.
+  // Triggers a network fetch for the latest content + version metadata,
   // and a second fetch for the selected frozen version's content if
   // needed. Safe to call when already open (just reloads).
   openSpecViewer(version) {
@@ -2488,7 +3056,7 @@ const DevChat = {
     const sid = DevChat.currentSession.id;
     DevChat.specViewer.open = true;
     DevChat.specViewer.sessionId = sid;
-    DevChat.specViewer.viewVersion = (version === 'draft' || version == null) ? 'draft' : version;
+    DevChat.specViewer.viewVersion = (version === 'draft' || version === 'latest' || version == null) ? 'latest' : version;
     DevChat.specViewer.viewVersionContent = null;
     DevChat._writeSpecViewerOpen(sid, true);
     DevChat.renderChatView();
@@ -2502,9 +3070,9 @@ const DevChat = {
     DevChat.renderChatView();
   },
 
-  // Fetch the current spec_md draft + frozen-version metadata. Called
+  // Fetch the latest spec content + frozen-version metadata. Called
   // when the viewer opens and whenever a spec_updated SSE event lands
-  // while the viewer is showing the live draft.
+  // while the viewer is following the latest version.
   async _loadSpecViewer(opts = {}) {
     const session = DevChat.currentSession;
     if (!session) return;
@@ -2535,66 +3103,107 @@ const DevChat = {
     const pane = document.getElementById('dc-spec-viewer');
     if (!pane || !DevChat.currentSession) return;
     if (!DevChat.specViewer.open) return;
+    // #233 fail-closed guard: never render another session's spec. Any
+    // path that forgets to reset the global specViewer slot on a
+    // session switch gets a blank panel, not stale content.
+    if (DevChat.specViewer.sessionId != null
+        && Number(DevChat.specViewer.sessionId) !== Number(DevChat.currentSession.id)) return;
 
-    const versions = DevChat.specViewer.versions;
-    const isDraft = DevChat.specViewer.viewVersion === 'draft';
-    const displayContent = isDraft
+    // Numbered versions are the single spec surface now (#69). The
+    // dropdown lists v1…vN; the highest is the live latest and its
+    // content is byte-identical to chat_sessions.spec_md, which we
+    // already have cached in `draftContent` (no extra fetch needed).
+    // 'latest' is a sentinel that follows the highest version as new
+    // ones are auto-created on each Mayor spec edit.
+    const versions = DevChat.specViewer.versions; // DESC sorted
+    const hasVersions = versions.length > 0;
+    const latest = hasVersions ? versions[0] : null;
+
+    let selectedVersion;
+    if (DevChat.specViewer.viewVersion === 'latest') {
+      selectedVersion = latest;
+    } else {
+      selectedVersion = versions.find((v) => String(v.version) === String(DevChat.specViewer.viewVersion)) || latest;
+    }
+    const isLatest = !!(selectedVersion && latest && selectedVersion.version === latest.version);
+
+    // Latest content lives in draftContent (== spec_md); older versions
+    // are lazily fetched into viewVersionContent.
+    const displayContent = (isLatest || !hasVersions)
       ? DevChat.specViewer.draftContent
       : (DevChat.specViewer.viewVersionContent || '');
 
-    const versionOptions = [
-      `<option value="draft" ${isDraft ? 'selected' : ''}>Draft (live)</option>`,
-      ...versions.map((v) => {
-        const built = v.built_at ? new Date(v.built_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-        const sel = !isDraft && String(DevChat.specViewer.viewVersion) === String(v.version) ? 'selected' : '';
-        return `<option value="${v.version}" ${sel}>v${v.version}${built ? ` · ${built}` : ''}${v.pr_number ? ` · PR #${v.pr_number}` : ''}</option>`;
-      }),
-    ].join('');
+    const versionOptions = versions.map((v) => {
+      const built = v.built_at ? new Date(v.built_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+      const isThisLatest = latest && v.version === latest.version;
+      // The latest option carries the 'latest' value so re-selecting it
+      // resumes following new versions; older options carry their number.
+      const optValue = isThisLatest ? 'latest' : String(v.version);
+      const sel = selectedVersion && v.version === selectedVersion.version ? 'selected' : '';
+      const label = `v${v.version}${isThisLatest ? ' (latest)' : ''}${built ? ` · ${built}` : ''}${v.pr_number ? ` · PR #${v.pr_number}` : ''}`;
+      return `<option value="${optValue}" ${sel}>${label}</option>`;
+    }).join('');
 
-    // Header actions, varying by which version is selected:
-    //   draft → [Save version] enabled + [Share to group] disabled
-    //           with "Save first to share it" tooltip. Showing the
-    //           disabled share button (rather than hiding it) is
-    //           deliberate — it makes the two-step path visible up
-    //           front instead of revealing a new button after save.
-    //   vN    → [Save version] hidden (saving means snapshotting the
-    //           draft, which isn't what's selected) + [Share to group]
-    //           enabled (or "Shared" disabled if already shared).
-    const isSaving = !!DevChat.specViewer.isSaving;
-    const draftEmpty = !displayContent || !displayContent.trim();
-    const saveBtnHtml = isDraft
-      ? `<button id="dc-spec-viewer-save" class="dc-spec-action-btn" ${draftEmpty || isSaving ? 'disabled' : ''} title="${draftEmpty ? 'Spec is empty — ask the AI to draft it first' : 'Save the live draft as a numbered version'}">${isSaving ? 'Saving…' : 'Save version'}</button>`
-      : '';
-    const selectedVersion = isDraft
-      ? null
-      : versions.find((v) => String(v.version) === String(DevChat.specViewer.viewVersion));
+    // Header action: [Share to group] for the selected version (any
+    // version is shareable now — the redundant draft/Save-version step
+    // was removed in #69). Disabled + "Shared" once already posted.
+    const isEmpty = !displayContent || !displayContent.trim();
     const alreadyShared = !!(selectedVersion && selectedVersion.shared_to_group_at);
-    const shareBtnHtml = isDraft
-      ? `<button class="dc-spec-action-btn" disabled title="Save a version first to share it">Share to group</button>`
+    const shareBtnHtml = (!selectedVersion || isEmpty)
+      ? `<button class="dc-spec-action-btn" disabled title="No spec version to share yet">Share to group</button>`
       : `<button id="dc-spec-viewer-share" class="dc-spec-action-btn" ${alreadyShared ? 'disabled' : ''} title="${alreadyShared ? 'Already shared to group chat' : 'Post a card linking to this spec in the group chat'}">${alreadyShared ? 'Shared' : 'Share to group'}</button>`;
 
+    // #196: a conforming spec (BOTH marker headings present — see
+    // public/js/spec-sections.js) renders as two tabs so non-technical
+    // readers land on the plain-language half. The preamble (title +
+    // summary before the first marker) stays visible above the tabs.
+    // A null split — legacy or non-conforming doc — renders the single
+    // untabbed body exactly as before.
+    const split = displayContent ? splitSpecSections(displayContent) : null;
+    let specBodyHtml = '';
+    if (split) {
+      const activeTab = DevChat.specViewer.activeTab === 'tech' ? 'tech' : 'user';
+      const activeHalf = activeTab === 'tech' ? split.technical : split.userFacing;
+      const tabBtn = (key, label) =>
+        `<button class="dc-spec-viewer-tab${activeTab === key ? ' dc-spec-viewer-tab-active' : ''}" role="tab" aria-selected="${activeTab === key}" data-spec-tab="${key}">${label}</button>`;
+      // An empty-but-present half still gets its tab (with a muted
+      // placeholder) so the toggle doesn't appear/disappear between
+      // versions.
+      specBodyHtml = `${split.preamble ? `<div class="dc-spec-viewer-body dc-spec-viewer-preamble">${DevChat.renderMarkdown(split.preamble, { breaks: false })}</div>` : ''}
+        <div class="dc-spec-viewer-tabs" role="tablist" aria-label="Spec sections">
+          ${tabBtn('user', 'User-facing')}
+          ${tabBtn('tech', 'Technical')}
+        </div>
+        <div class="dc-spec-viewer-body" role="tabpanel">${
+          activeHalf
+            ? DevChat.renderMarkdown(activeHalf, { breaks: false })
+            : '<p class="dc-spec-tab-empty">Nothing in this section.</p>'
+        }</div>`;
+    } else if (displayContent) {
+      specBodyHtml = `<div class="dc-spec-viewer-body">${DevChat.renderMarkdown(displayContent, { breaks: false })}</div>`;
+    }
     const bodyHtml = DevChat.specViewer.isLoading && !displayContent
       ? `<div class="p-4 text-sm text-zinc-500">Loading spec…</div>`
       : displayContent
-        ? `<div class="dc-spec-viewer-body">${DevChat.renderMarkdown(displayContent)}</div>`
+        ? specBodyHtml
         : `<div class="p-4 text-sm text-zinc-500">No spec yet. Ask the AI to draft one.</div>`;
 
     // Spec planning and building are two separate steps: drafting a spec
     // does NOT build anything. Make the handoff explicit so a finished
     // spec doesn't read as a finished change (there is no in-UI build
     // button — the user asks the Mayor in chat). Only shown while viewing
-    // a non-empty draft, where the next action is to dispatch a build.
-    const buildHintHtml = isDraft && !draftEmpty
+    // the non-empty latest version, where the next action is to dispatch
+    // a build.
+    const buildHintHtml = isLatest && !isEmpty
       ? `<div class="dc-spec-viewer-build-hint">This is a plan, not a built change. Ready? Ask the AI in chat to build it.</div>`
       : '';
 
     pane.innerHTML = `
       <div class="dc-spec-viewer-header">
-        <select id="dc-spec-viewer-version" class="text-xs rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1">
-          ${versionOptions}
+        <select id="dc-spec-viewer-version" class="text-xs rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1" ${hasVersions ? '' : 'disabled'}>
+          ${hasVersions ? versionOptions : '<option>No versions yet</option>'}
         </select>
         <span class="flex-1"></span>
-        ${saveBtnHtml}
         ${shareBtnHtml}
         <button id="dc-spec-viewer-close" class="dc-spec-viewer-close" aria-label="Close spec viewer">×</button>
       </div>
@@ -2613,21 +3222,31 @@ const DevChat = {
     const closeBtn = pane.querySelector('#dc-spec-viewer-close');
     if (closeBtn) closeBtn.addEventListener('click', () => DevChat.closeSpecViewer());
 
-    const saveBtn = pane.querySelector('#dc-spec-viewer-save');
-    if (saveBtn) saveBtn.addEventListener('click', () => DevChat._saveSpecVersion());
-
     const shareBtn = pane.querySelector('#dc-spec-viewer-share');
-    if (shareBtn) shareBtn.addEventListener('click', () => DevChat._shareSpecVersion(DevChat.specViewer.viewVersion));
+    if (shareBtn && selectedVersion) shareBtn.addEventListener('click', () => DevChat._shareSpecVersion(selectedVersion.version));
 
-    // Lazy-fetch frozen content when a non-draft version is selected
-    // and we don't have it cached.
-    if (!isDraft && !DevChat.specViewer.viewVersionContent) {
-      DevChat._loadSpecVersion(DevChat.specViewer.viewVersion).catch(() => {});
+    // #196: tab switches are pure re-renders of cached content — no
+    // refetch. The selection lives in specViewer.activeTab so it
+    // survives version switches and spec_updated refreshes within the
+    // panel's lifetime.
+    pane.querySelectorAll('.dc-spec-viewer-tab').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const tab = btn.dataset.specTab === 'tech' ? 'tech' : 'user';
+        if (DevChat.specViewer.activeTab === tab) return;
+        DevChat.specViewer.activeTab = tab;
+        DevChat._renderSpecViewer();
+      });
+    });
+
+    // Lazy-fetch frozen content when an older (non-latest) version is
+    // selected and we don't have it cached.
+    if (selectedVersion && !isLatest && !DevChat.specViewer.viewVersionContent) {
+      DevChat._loadSpecVersion(selectedVersion.version).catch(() => {});
     }
   },
 
   _switchSpecViewerVersion(value) {
-    DevChat.specViewer.viewVersion = value === 'draft' ? 'draft' : value;
+    DevChat.specViewer.viewVersion = value === 'latest' ? 'latest' : value;
     DevChat.specViewer.viewVersionContent = null;
     DevChat._renderSpecViewer();
   },
@@ -2650,7 +3269,7 @@ const DevChat = {
   },
 
   async _shareSpecVersion(version) {
-    if (!DevChat.currentSession || version === 'draft') return;
+    if (!DevChat.currentSession || version === 'draft' || version === 'latest' || version == null) return;
     const sid = DevChat.currentSession.id;
     try {
       const resp = await fetch(`/api/sessions/${sid}/specs/${version}/share`, {
@@ -2667,55 +3286,6 @@ const DevChat = {
       console.warn('shareSpecVersion failed:', err);
     }
   },
-
-  // Snapshot the live draft as a new immutable version. Triggered by
-  // [Save version] in the viewer footer when viewing the draft. The
-  // server is authoritative — it reads chat_sessions.spec_md at the
-  // moment of the request, so we don't bother sending the body. After
-  // the response we refresh the versions list and switch the
-  // dropdown to the new version (or to the deduped existing version
-  // if a rapid double-click hit a no-op insert).
-  async _saveSpecVersion() {
-    if (!DevChat.currentSession) return;
-    if (DevChat.specViewer.viewVersion !== 'draft') return;
-    if (DevChat.specViewer.isSaving) return;
-
-    const sid = DevChat.currentSession.id;
-    DevChat.specViewer.isSaving = true;
-    DevChat._renderSpecViewer();
-
-    try {
-      const resp = await fetch(`/api/sessions/${sid}/specs`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      if (!resp.ok) {
-        const data = await resp.json().catch(() => ({}));
-        console.warn('saveSpecVersion failed:', data.error || `HTTP ${resp.status}`);
-        return;
-      }
-      const data = await resp.json();
-
-      // Refresh versions list so the new row shows up in the dropdown
-      // (also resyncs draftContent in case it shifted server-side).
-      await DevChat._loadSpecViewer({ force: true });
-      if (!DevChat.currentSession || DevChat.currentSession.id !== sid) return;
-
-      // Switch to the saved version. We can pre-populate
-      // viewVersionContent from draftContent because the server just
-      // copied spec_md → chat_session_specs.content verbatim, so the
-      // bytes are identical and we save a redundant /specs/:version
-      // round-trip.
-      DevChat.specViewer.viewVersion = data.version;
-      DevChat.specViewer.viewVersionContent = DevChat.specViewer.draftContent;
-      DevChat._renderSpecViewer();
-    } catch (err) {
-      console.warn('saveSpecVersion failed:', err);
-    } finally {
-      DevChat.specViewer.isSaving = false;
-      DevChat._renderSpecViewer();
-    }
-  },
 };
 
 DevChat._sanitizeStoredModel();
@@ -2723,3 +3293,40 @@ DevChat._sanitizeStoredModel();
 // the page rendered the dropdown before this resolves, the next
 // renderChatView() pass will pick up the new entries.
 DevChat.loadModels();
+
+// Combined away/return handler (#142, #161). On leaving (tab hidden or
+// window blurred) while a turn is streaming, arm the server-side
+// completion notification for the open session. On returning, clear any
+// sticky completion title marker and — if the user is back on the
+// dev-chat tab with the same turn still streaming — disarm the flag
+// (they're watching again, so no notification needed). All three events
+// matter: visibilitychange fires on browser-tab switches, window
+// blur/focus on window-to-window switches where the tab stays
+// "visible" the whole time.
+DevChat._awayReturnHandler = () => {
+  const away = DevChat._userIsAway();
+  if (!away && DevChat._titleCompletion) DevChat.setCompletionTitle(null);
+  if (DevChat.isStreaming && DevChat.currentSession) {
+    if (away) {
+      DevChat._setNotifyOnDone(DevChat.currentSession.id, true);
+    } else if (typeof App !== 'undefined' && (App.currentTab === 'dev' && App.currentSubTab === 'sessions')) {
+      DevChat._setNotifyOnDone(DevChat.currentSession.id, false);
+    }
+  }
+};
+document.addEventListener('visibilitychange', DevChat._awayReturnHandler);
+window.addEventListener('focus', DevChat._awayReturnHandler);
+window.addEventListener('blur', DevChat._awayReturnHandler);
+
+// Tab close / hard navigation while a turn is streaming: a normal fetch
+// may be killed mid-flight, so arm via sendBeacon (cookies ride along;
+// the endpoint parses the JSON blob body like any other request).
+window.addEventListener('pagehide', () => {
+  if (!DevChat.isStreaming || !DevChat.currentSession) return;
+  try {
+    if (navigator.sendBeacon) {
+      const blob = new Blob([JSON.stringify({ armed: true })], { type: 'application/json' });
+      navigator.sendBeacon(`/api/sessions/${DevChat.currentSession.id}/notify-on-done`, blob);
+    }
+  } catch { /* best-effort */ }
+});

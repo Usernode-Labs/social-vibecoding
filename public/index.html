@@ -32,6 +32,9 @@
     }
   </script>
   <script src="https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs/qrcode.min.js"></script>
+  <!-- marked + DOMPurify power renderMarkdown() in dev-chat.js. SRI hashes
+       below verified against the pinned npm dist files (sha384). If either
+       script fails to load, renderMarkdown falls back to a raw <pre> view. -->
   <script src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js" integrity="sha384-948ahk4ZmxYVYOc+rxN1H2gM1EJ2Duhp7uHtZ4WSLkV4Vtx5MUqnV+l7u9B+jFv+" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.4/dist/purify.min.js" integrity="sha384-ljaibG+rFiOlF9Y2x5ulbWhmu7GWQMKeAPHRiLXj0iozfwSIrIs1Ud1WeQ0Z+FqY" crossorigin="anonymous"></script>
   <link rel="stylesheet" href="/css/app.css">
@@ -110,23 +113,17 @@
     <!-- App secrets used to live as a header icon here; it's been moved
          into the dev-chat tab's "Edit" section (see AppView.renderDevChatTab).
          The badge it used to show now lives on the in-tab button. -->
-    <a id="app-github-link" href="#" target="_blank" class="hidden text-zinc-400 hover:text-zinc-200 mr-2" aria-label="View on GitHub">
-      <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-    </a>
-    <!-- Share — surfaces the app's bare subdomain URL so users can pass it
-         around outside the platform (anonymous viewers, embed in iframes,
-         etc.). Visible only when an app is open and running. AppView opens
-         #share-modal which displays + copies the URL. -->
-    <button id="app-share-btn" class="hidden text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Share app">
-      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg>
-    </button>
+    <!-- The GitHub / Share / Members & visibility / Settings icons used
+         to live here as header buttons; they've been moved into the
+         slide-out drawer (#header-menu-panel below), which is now
+         available at every viewport width — see #122. -->
     <button id="feedback-btn" class="text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Send feedback">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
     </button>
-    <!-- #30: Settings (BYOK) -->
-    <button id="settings-btn" class="relative text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Settings">
-      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-      <span id="settings-byok-dot" class="hidden absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-500" aria-hidden="true"></span>
+    <!-- Hamburger: shown at every width; opens the slide-out drawer
+         holding the secondary actions (GitHub, Share, Members, Settings). -->
+    <button id="header-menu-btn" class="text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Open menu" aria-expanded="false">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
     </button>
     <button id="notifications-btn" class="relative text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Notifications">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
@@ -138,6 +135,50 @@
          apps exist). See public/js/home.js. -->
     </div>
   </header>
+
+  <!-- Slide-out navigation drawer (all viewport widths — #122).
+       Overlay dims the page; panel slides in from the right. Both are
+       controlled by HeaderMenu.open() / HeaderMenu.close() in app.js. -->
+  <div id="header-menu-overlay" class="hidden fixed inset-0 z-40 bg-black/40" aria-hidden="true"></div>
+  <div id="header-menu-panel" role="dialog" aria-label="Navigation menu"
+       class="fixed top-0 right-0 bottom-0 z-50 w-60 max-w-[85vw] flex flex-col
+              bg-white dark:bg-zinc-900 border-l border-zinc-200 dark:border-zinc-700
+              shadow-2xl header-menu-panel-transition">
+    <!-- Panel header with close button -->
+    <div class="flex items-center justify-end px-4 py-3 border-b border-zinc-100 dark:border-zinc-800">
+      <button id="header-menu-close" class="text-zinc-400 hover:text-zinc-200" aria-label="Close menu">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <!-- View on GitHub — only shown when app is open and has a repo -->
+    <a id="drawer-row-github" href="#" target="_blank"
+       class="hidden flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
+      <svg class="w-5 h-5 shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+      <span class="text-sm font-medium">View on GitHub</span>
+    </a>
+    <!-- Share App — only shown when app is open and running -->
+    <button id="drawer-row-share"
+            class="hidden flex items-center gap-3 px-4 min-h-[44px] w-full text-left border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
+      <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg>
+      <span class="text-sm font-medium">Share App</span>
+    </button>
+    <!-- Members & visibility — only shown when an app is open, for the
+         creator/admin (always) or collaborators of an invite-only app.
+         Opens #members-modal (AppView.openMembersModal). -->
+    <button id="drawer-row-members"
+            class="hidden flex items-center gap-3 px-4 min-h-[44px] w-full text-left border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
+      <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87M16 3.13a4 4 0 010 7.75M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+      <span class="text-sm font-medium">Members &amp; visibility</span>
+    </button>
+    <!-- Settings — always shown; green dot is the BYOK "key configured"
+         indicator, toggled directly by settings.js _renderIndicator(). -->
+    <button id="drawer-row-settings"
+            class="flex items-center gap-3 px-4 min-h-[44px] w-full text-left border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
+      <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+      <span class="text-sm font-medium">Settings</span>
+      <span id="drawer-byok-dot" class="hidden ml-auto w-2 h-2 rounded-full bg-emerald-500 shrink-0" aria-hidden="true"></span>
+    </button>
+  </div>
 
   <!-- Persistent banner shown only while an admin has flipped the
        "View as non-admin" toggle in Settings. Sits between the header
@@ -172,6 +213,13 @@
     <button id="platform-updating-reload" type="button"
             class="hidden ml-2 px-2 py-0.5 rounded border border-current text-xs font-semibold hover:bg-current/10"
             onclick="location.reload()">Reload</button>
+    <!-- #239: shown only in the resolving banner's red "resolution
+         failed" terminal state — that variant has no SHA flip or
+         reload coming, so the user dismisses it by hand (it also
+         auto-hides after ~20s). -->
+    <button id="platform-updating-dismiss" type="button"
+            class="hidden ml-2 px-2 py-0.5 rounded border border-current text-xs font-semibold hover:bg-current/10"
+            onclick="App.PlatformUpdating.dismissResolveFailure()">Dismiss</button>
   </div>
 
   <!-- Home screen: app list. Rendered as a responsive grid of tiles
@@ -203,11 +251,14 @@
       <!-- Tab content renders here -->
     </div>
 
-    <!-- Bottom tabs -->
+    <!-- Bottom tabs — two modes (#194): App (the running iframe) and
+         Dev (the card list — general chat card, your in-progress
+         sessions, and the intermixed issues & proposals feed — rendered
+         by AppView.renderDevView, with full-screen chat / session /
+         settings sub-views). -->
     <nav id="app-tabs" class="flex border-t border-zinc-200 dark:border-zinc-800 shrink-0">
       <button class="app-tab flex-1 py-3 text-center text-sm font-medium transition-colors" data-tab="app">App</button>
-      <button class="app-tab flex-1 py-3 text-center text-sm font-medium transition-colors" data-tab="group-chat">Group Chat</button>
-      <button class="app-tab flex-1 py-3 text-center text-sm font-medium transition-colors" data-tab="individual-chat">Dev Chat</button>
+      <button class="app-tab flex-1 py-3 text-center text-sm font-medium transition-colors" data-tab="dev">Dev</button>
     </nav>
   </div>
 
@@ -218,6 +269,10 @@
       <span class="flex-1"></span>
       <button id="notifications-mark-all" class="text-xs text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 disabled:opacity-40" disabled>Mark all read</button>
     </div>
+    <!-- Pinned collaborator-invites section: rendered above the grouped
+         notification list, driven by the authoritative pendingInvites
+         payload (see public/js/notifications.js renderInvites). -->
+    <div id="notifications-invites" class="shrink-0 overflow-y-auto max-h-48"></div>
     <div id="notifications-list" class="flex-1 overflow-y-auto"></div>
     <div id="notifications-empty" class="hidden px-4 py-6 text-sm text-zinc-500 text-center">You'll get pinged here when someone proposes a change to an app you use.</div>
   </div>
@@ -255,6 +310,9 @@
         Back to session
       </button>
       <span class="flex-1"></span>
+      <!-- #127: bot-generated testing guidance. Hidden unless the session
+           carries testing_md / testing_path; wired in AppView.swapToStaging. -->
+      <button id="staging-test-btn" class="hidden text-xs font-medium px-2.5 py-1 rounded bg-violet-500/15 text-violet-300 hover:bg-violet-500/25 shrink-0">Test this change</button>
       <span id="staging-url-label" class="text-xs text-zinc-500 font-mono truncate"></span>
       <!-- Mirror of the main dev-console button. The overlay covers the
            global header (z-40), so the original button is obscured —
@@ -270,7 +328,32 @@
     <div class="px-4 py-1.5 bg-violet-500/10 border-b border-violet-500/20 text-xs text-zinc-400 shrink-0">
       Private preview — only you can see this until the app's users vote your change in.
     </div>
-    <iframe id="staging-iframe" class="flex-1 border-0" style="background:#08080f"></iframe>
+    <div class="relative flex-1">
+      <iframe id="staging-iframe" class="absolute inset-0 w-full h-full border-0" style="background:#08080f"></iframe>
+      <!-- #127: collapsible "How to test" panel overlaying the top of the
+           preview. Hidden until requested via the "Test this change" button
+           (auto-shown only for that explicit entry path, #237). Content is
+           bot-authored markdown rendered through the escaping markdown
+           pipeline in AppView._renderTestingControls. -->
+      <div id="staging-testing-panel" class="hidden absolute top-2 left-2 right-2 sm:left-auto sm:w-96 z-10 rounded-lg border border-violet-500/30 bg-zinc-900/95 backdrop-blur shadow-xl">
+        <div class="flex items-center gap-2 px-3 py-2 border-b border-zinc-800">
+          <span class="text-xs font-semibold text-violet-300">How to test</span>
+          <span class="flex-1"></span>
+          <button id="staging-testing-close" class="text-zinc-500 hover:text-zinc-200 text-sm leading-none px-1" aria-label="Dismiss testing instructions">&times;</button>
+        </div>
+        <div id="staging-testing-content" class="px-3 py-2 text-xs text-zinc-300 leading-relaxed max-h-48 overflow-y-auto"></div>
+      </div>
+      <!-- Shown while the preview's on-demand TLS cert is still being issued
+           (first load can take a minute, occasionally a few when the ACME CA
+           is slow). Without this the iframe just shows a black void during the
+           hanging TLS handshake. swapToStaging() polls the host and only
+           reveals the iframe once it answers. -->
+      <div id="staging-loader" class="hidden absolute inset-0 flex flex-col items-center justify-center gap-4 bg-zinc-950 text-center px-6">
+        <div class="w-9 h-9 border-2 border-zinc-700 border-t-violet-400 rounded-full animate-spin"></div>
+        <div id="staging-loader-title" class="text-sm text-zinc-200 font-medium">Provisioning secure preview…</div>
+        <div id="staging-loader-sub" class="text-xs text-zinc-500 max-w-xs leading-relaxed">Issuing a TLS certificate for this preview. First load can take a minute.</div>
+      </div>
+    </div>
   </div>
 
   <!-- Create app modal.
@@ -333,6 +416,26 @@
             placeholder="my cool app"
           >
         </div>
+        <!-- Visibility: two segmented controls. Collab=Everyone forces
+             View=Everyone (a publicly-buildable app can't be privately
+             viewed) — App.setCreateVisibility enforces it. -->
+        <div id="create-visibility-block" class="space-y-3">
+          <div>
+            <label class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Who can build it</label>
+            <div class="flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
+              <button type="button" data-collab-vis="public" class="create-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors">Everyone</button>
+              <button type="button" data-collab-vis="private" class="create-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors">Invite-only</button>
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Who can see &amp; use it</label>
+            <div class="flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
+              <button type="button" data-view-vis="public" class="create-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors">Everyone</button>
+              <button type="button" data-view-vis="private" class="create-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors">Collaborators only</button>
+            </div>
+            <p id="create-vis-hint" class="text-xs text-zinc-500 dark:text-zinc-400 mt-1 hidden">Apps everyone can build are always public to view.</p>
+          </div>
+        </div>
         <div id="create-error" class="text-red-400 text-sm hidden"></div>
         <div class="flex gap-3">
           <button type="button" id="create-cancel" class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
@@ -347,7 +450,7 @@
   <div id="rename-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60">
     <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
     <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl">
-      <h2 class="text-lg font-bold mb-1">Propose rename</h2>
+      <h2 class="text-lg font-bold mb-1">Rename app</h2>
       <p class="text-xs text-zinc-500 mb-4">Current app name: <span id="rename-current" class="font-mono text-zinc-300"></span></p>
       <form id="rename-form" class="space-y-4">
         <div>
@@ -362,14 +465,65 @@
             class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
             placeholder="a better name"
           >
-          <p class="text-xs text-zinc-500 mt-1">3–64 characters. This is the app's display name — the URL won't change.</p>
+          <p class="text-xs text-zinc-500 mt-1">3–64 characters. This is the app's display name — the URL won't change. Opens a PR that edits <span class="font-mono">dapp.json</span>; the rename applies once the PR is voted in and merged.</p>
         </div>
         <div id="rename-error" class="text-red-400 text-sm hidden"></div>
         <div class="flex gap-3">
           <button type="button" id="rename-cancel" class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
-          <button type="submit" id="rename-submit" class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Propose</button>
+          <button type="submit" id="rename-submit" class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Open PR</button>
         </div>
       </form>
+    </div>
+    </div>
+  </div>
+
+  <!-- Members & visibility modal (AppView.openMembersModal). Sections
+       are shown/hidden per viewer: visibility controls for creator/admin,
+       member list + invite typeahead for collab-private apps. -->
+  <div id="members-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60">
+    <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
+    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl">
+      <h2 class="text-lg font-bold mb-4">Members &amp; visibility</h2>
+
+      <div id="members-visibility-section" class="hidden space-y-3 mb-4">
+        <div>
+          <label class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Who can build it</label>
+          <div class="flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
+            <button type="button" data-m-collab-vis="public" class="members-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors">Everyone</button>
+            <button type="button" data-m-collab-vis="private" class="members-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors">Invite-only</button>
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Who can see &amp; use it</label>
+          <div class="flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
+            <button type="button" data-m-view-vis="public" class="members-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors">Everyone</button>
+            <button type="button" data-m-view-vis="private" class="members-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors">Collaborators only</button>
+          </div>
+          <p id="members-vis-hint" class="text-xs text-zinc-500 dark:text-zinc-400 mt-1 hidden">Apps everyone can build are always public to view.</p>
+        </div>
+        <div id="members-vis-error" class="text-red-400 text-sm hidden"></div>
+      </div>
+
+      <div id="members-invite-section" class="hidden mb-4">
+        <label for="members-invite-input" class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Invite a user</label>
+        <div class="relative">
+          <input id="members-invite-input" type="text" autocomplete="off" spellcheck="false"
+            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+            placeholder="username">
+          <!-- Typeahead dropdown (GET /api/users/search) -->
+          <div id="members-invite-suggestions" class="hidden absolute left-0 right-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden"></div>
+        </div>
+        <div id="members-invite-status" class="text-sm mt-2"></div>
+      </div>
+
+      <div id="members-list-section" class="hidden mb-4">
+        <p class="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Collaborators</p>
+        <div id="members-list" class="max-h-56 overflow-y-auto divide-y divide-zinc-100 dark:divide-zinc-800 rounded-lg border border-zinc-200 dark:border-zinc-800"></div>
+      </div>
+
+      <div class="flex gap-3">
+        <button type="button" id="members-close" class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Close</button>
+      </div>
     </div>
     </div>
   </div>
@@ -379,6 +533,23 @@
     <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
     <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl">
       <h2 class="text-lg font-bold mb-4">Send Feedback</h2>
+      <!-- Target toggle: file this feedback against the app being viewed
+           or against the Social Vibecoding platform. The "This app" button
+           is always visible but rendered disabled/grayed-out when no app
+           with a repo is open (see app.js). -->
+      <div id="feedback-target" class="flex gap-2 mb-3" role="radiogroup" aria-label="Feedback target">
+        <div class="flex-1 flex flex-col items-center">
+          <button type="button" role="radio" aria-checked="false" data-feedback-target="app" id="feedback-target-app"
+            class="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs font-medium transition-colors">This app</button>
+          <!-- Caret indicating the selected option; shown/hidden in app.js. -->
+          <div id="feedback-caret-app" class="hidden mt-1 w-0 h-0 border-l-4 border-r-4 border-b-4 border-l-transparent border-r-transparent border-b-violet-600"></div>
+        </div>
+        <div class="flex-1 flex flex-col items-center">
+          <button type="button" role="radio" aria-checked="true" data-feedback-target="platform" id="feedback-target-platform"
+            class="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs font-medium transition-colors">Social Vibecoding Platform</button>
+          <div id="feedback-caret-platform" class="hidden mt-1 w-0 h-0 border-l-4 border-r-4 border-b-4 border-l-transparent border-r-transparent border-b-violet-600"></div>
+        </div>
+      </div>
       <textarea id="feedback-text" rows="4" maxlength="2000" placeholder="Describe the issue or suggestion..."
         class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 resize-none"></textarea>
       <div id="feedback-status" class="text-sm mt-2 hidden"></div>
@@ -451,11 +622,21 @@
       </button>
 
       <h2 class="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">Settings</h2>
-      <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-4">Bring your own Anthropic API key to bypass the shared daily budget. Usage bills directly to your Anthropic account.</p>
+      <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-4">Bring your own Anthropic API key to keep working past the daily limit. Your platform daily allowance is used first; once it runs out, usage bills directly to your Anthropic account.</p>
 
       <label class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1" for="settings-api-key">Anthropic API key</label>
       <div id="settings-key-display" class="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-700 dark:text-zinc-300 mb-2">
         sk-ant-…<span id="settings-key-last4"></span>
+      </div>
+      <!-- #119 — daily spend breakdown for BYOK users. Filled by
+           Settings._refreshSpend() on modal open; hidden while loading,
+           on fetch failure, or when no key is saved. Rows are ordered
+           limit-first to match the billing order (#212). -->
+      <div id="settings-spend" class="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs mb-2">
+        <div class="font-medium text-zinc-700 dark:text-zinc-300 mb-1">Today's spend</div>
+        <div class="flex justify-between text-zinc-600 dark:text-zinc-400"><span>Platform daily limit</span><span id="settings-spend-platform" class="font-mono"></span></div>
+        <div class="flex justify-between text-zinc-600 dark:text-zinc-400"><span>Your key</span><span id="settings-spend-byok" class="font-mono"></span></div>
+        <div class="text-zinc-500 dark:text-zinc-500 mt-1">Resets at midnight UTC.</div>
       </div>
       <div class="flex gap-2">
         <input id="settings-api-key" type="password" placeholder="sk-ant-..." autocomplete="off" spellcheck="false"
@@ -470,6 +651,20 @@
       </p>
 
       <div id="settings-status" class="text-sm mt-3 hidden"></div>
+
+      <!-- App AI permissions (issue #34). Lists every app the user has
+           granted access to their daily AI budget: today's spend vs the
+           per-app cap, a cap editor, the BYOK spillover toggle, and
+           Revoke. Rendered by Settings._renderLlmGrants() on modal open
+           from GET /api/me/llm-grants (?demo=1 passthrough in staging). -->
+      <div id="llm-grants-section" class="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
+        <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">App AI permissions</h3>
+        <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
+          Apps you've allowed to use AI on your behalf. Their spend counts against your normal daily budget, plus the per-app cap you set. Revoking takes effect immediately.
+        </p>
+        <div id="llm-grants-list" class="space-y-2"></div>
+        <div id="llm-grants-status" class="text-sm mt-2 hidden"></div>
+      </div>
 
       <!-- Wallet linking section -->
       <div id="wallet-section" class="hidden mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
@@ -585,6 +780,9 @@
   <script src="/js/confirm-modal.js"></script>
   <script src="/js/settings.js"></script>
   <script src="/js/group-chat.js"></script>
+  <!-- Pure two-half spec splitter (#196). Must load BEFORE dev-chat.js,
+       whose spec viewer calls window.splitSpecSections. -->
+  <script src="/js/spec-sections.js"></script>
   <script src="/js/dev-chat.js"></script>
   <!-- Kudos widget (button + budget badge) and leaderboard screen.
        Loaded BEFORE app-view.js so the panel renderer can use

@@ -26,7 +26,7 @@ const Kudos = {
 
   _ensureCache(sessionId) {
     if (!Kudos._cache.has(sessionId)) {
-      Kudos._cache.set(sessionId, { count: 0, my_kudos: false, givers: null });
+      Kudos._cache.set(sessionId, { count: 0, my_kudos: false, my_kudos_direct: false, givers: null });
     }
     return Kudos._cache.get(sessionId);
   },
@@ -41,6 +41,7 @@ const Kudos = {
     const entry = Kudos._ensureCache(pr.id);
     if (typeof pr.kudos_count === 'number') entry.count = pr.kudos_count;
     if (typeof pr.my_kudos === 'boolean') entry.my_kudos = pr.my_kudos;
+    if (typeof pr.my_kudos_direct === 'boolean') entry.my_kudos_direct = pr.my_kudos_direct;
   },
 
   // Returns a button HTML string. `pr` must carry `id`, `kudos_count`,
@@ -64,17 +65,29 @@ const Kudos = {
     // Disabled reasons:
     //   - explicit opts.disabled
     //   - viewer is the author (self-kudos forbidden — match server)
-    //   - viewer already gave kudos (server returns 409 if retried)
+    //   - viewer's credit came from an awarded issue bounty (no
+    //     pr_kudos row to retract — the server would 404 the DELETE)
+    // A direct kudos of the viewer's own (mine && direct) keeps the
+    // button ENABLED as a retract toggle — clicking again undoes it.
     // We don't gate on quota here; the budget badge surfaces it and a
     // 429 from POST shows a toast.
+    const direct = !!entry.my_kudos_direct;
     const disabledReason = opts.disabled
       ? opts.disabledReason || ''
       : isSelf
         ? 'You can\u2019t give kudos to your own PR'
-        : mine
-          ? 'You already gave kudos to this PR'
+        : mine && !direct
+          ? 'Credited via an issue bounty award \u2014 can\u2019t be retracted'
           : '';
     const disabled = !!disabledReason;
+    const tip = disabledReason || (mine && direct
+      ? 'You gave kudos to this PR \u2014 click again to retract'
+      : '');
+
+    // Locked = disabled for a reason no later state change can lift
+    // (explicit opts.disabled / self-PR). _refreshButton skips the
+    // enable/disable churn on locked buttons and only updates counts.
+    const locked = !!(opts.disabled || isSelf);
 
     const sizeCls = opts.compact
       ? 'gc-vote-btn'
@@ -82,7 +95,7 @@ const Kudos = {
     const activeCls = mine ? ' gc-vote-active' : '';
     const disabledCls = disabled ? ' opacity-60 cursor-not-allowed' : '';
 
-    const tipAttr = disabledReason ? ` title="${escapeAttr(disabledReason)}"` : '';
+    const tipAttr = tip ? ` title="${escapeAttr(tip)}"` : '';
 
     // Wrap in a relatively-positioned span so the popover can absolute-
     // position against it. Clicks and hover are bound by Kudos.attach()
@@ -90,7 +103,7 @@ const Kudos = {
     return `
       <span class="kudos-wrap relative inline-block" data-kudos-session="${pr.id}">
         <button class="${sizeCls}${activeCls}${disabledCls}" ${disabled ? 'disabled' : ''}${tipAttr}
-                data-kudos-action="give" data-kudos-session-id="${pr.id}">
+                data-kudos-action="give" data-kudos-session-id="${pr.id}"${locked ? ' data-kudos-locked="1"' : ''}>
           <span aria-hidden="true">\u{1F44F}</span>
           <span data-kudos-count>${count}</span>
         </button>
@@ -117,7 +130,12 @@ const Kudos = {
           e.preventDefault();
           e.stopPropagation();
           if (btn.disabled) return;
-          Kudos.give(sid);
+          // Route on the cache state at CLICK time (not bind time) —
+          // the same bound button must toggle both ways as the viewer
+          // gives and retracts.
+          const entry = Kudos._ensureCache(sid);
+          if (entry.my_kudos && entry.my_kudos_direct) Kudos.retract(sid);
+          else Kudos.give(sid);
         });
       }
       if (popover) {
@@ -171,6 +189,7 @@ const Kudos = {
       const entry = Kudos._ensureCache(sessionId);
       entry.count = data.count || 0;
       entry.my_kudos = !!data.my_kudos;
+      entry.my_kudos_direct = !!data.my_kudos_direct;
       entry.givers = Array.isArray(data.givers) ? data.givers : [];
       // Bump the in-DOM counter in case the cache was stale.
       Kudos._refreshButton(sessionId);
@@ -199,6 +218,7 @@ const Kudos = {
         // hasn't beaten us to it.
         const alreadyApplied = entry.my_kudos;
         entry.my_kudos = true;
+        entry.my_kudos_direct = true;
         if (!alreadyApplied) {
           entry.count = (entry.count || 0) + 1;
           // Append the viewer to the cached giver list so the popover
@@ -217,6 +237,9 @@ const Kudos = {
         // sessionId-keyed state). Refresh the budget badge so the
         // header re-renders the new remaining count.
         Kudos.Budget.refresh();
+        // The give now belongs in the viewer's "My history" tab — drop
+        // its cached panes so the next visit re-fetches.
+        if (window.Leaderboard?.invalidateHistory) Leaderboard.invalidateHistory();
       } else if (res.status === 429) {
         Kudos._toast(data.error || 'Weekly kudos quota exceeded.');
       } else if (res.status === 403) {
@@ -234,6 +257,50 @@ const Kudos = {
     }
   },
 
+  // DELETE /api/sessions/:id/kudos — retract a previously given kudos
+  // (issue #197). Mirror of give() in reverse, including the WS-race
+  // guard: the server broadcasts kudos_update *before* this HTTP
+  // response arrives, so applyLiveUpdate() may have already cleared
+  // my_kudos and set the authoritative count. Only apply the
+  // optimistic decrement when the WS hasn't beaten us to it.
+  async retract(sessionId) {
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/kudos`, {
+        method: 'DELETE',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        const entry = Kudos._ensureCache(sessionId);
+        const alreadyApplied = !entry.my_kudos;
+        entry.my_kudos = false;
+        entry.my_kudos_direct = false;
+        if (!alreadyApplied) {
+          entry.count = Math.max(0, (entry.count || 0) - 1);
+          // Drop the viewer from the cached giver list so the popover
+          // reflects the change immediately.
+          if (entry.givers) {
+            const me = window.App?.user?.username;
+            entry.givers = entry.givers.filter((g) => g.username !== me);
+          }
+        }
+        Kudos._refreshButton(sessionId);
+        // The freed slot only counts if the kudos was given this week;
+        // the budget endpoint is authoritative either way.
+        Kudos.Budget.refresh();
+      } else if (res.status === 404) {
+        Kudos._toast(data.error || 'No kudos to retract.');
+        // Cache was stale (e.g. bounty-derived credit, or already
+        // retracted in another tab) — reconcile from the server.
+        Kudos.fetchGivers(sessionId);
+      } else {
+        Kudos._toast('Failed to retract kudos. Try again?');
+      }
+    } catch (err) {
+      console.warn('[kudos] retract failed', err);
+      Kudos._toast('Network error retracting kudos.');
+    }
+  },
+
   // Called by App's WS handler. Bumps the cache for `sessionId` and
   // updates any live button(s) in place. Also nudges Budget.refresh
   // when *we* are not the giver (when we are, give() already updated
@@ -242,9 +309,21 @@ const Kudos = {
     if (!data || !data.sessionId) return;
     const entry = Kudos._ensureCache(data.sessionId);
     if (typeof data.count === 'number') entry.count = data.count;
-    if (data.giverUsername) {
+    if (data.retractedUsername) {
       const me = window.App?.user?.username;
-      if (data.giverUsername === me) entry.my_kudos = true;
+      if (data.retractedUsername === me) {
+        entry.my_kudos = false;
+        entry.my_kudos_direct = false;
+      }
+      if (entry.givers) {
+        entry.givers = entry.givers.filter((g) => g.username !== data.retractedUsername);
+      }
+    } else if (data.giverUsername) {
+      const me = window.App?.user?.username;
+      if (data.giverUsername === me) {
+        entry.my_kudos = true;
+        entry.my_kudos_direct = true;
+      }
       // Lazy-append to the giver list cache if we have it. We can't
       // be sure of createdAt — use "now" which is close enough for
       // the popover display (the next hover re-fetch will reconcile).
@@ -269,12 +348,29 @@ const Kudos = {
       const counter = wrap.querySelector('[data-kudos-count]');
       if (counter) counter.textContent = String(entry.count || 0);
       const btn = wrap.querySelector('[data-kudos-action="give"]');
-      if (btn) {
-        if (entry.my_kudos) {
-          btn.classList.add('gc-vote-active');
-          btn.disabled = true;
-          btn.setAttribute('title', 'You already gave kudos to this PR');
-        }
+      if (!btn) return;
+      // Locked buttons (self-PR / explicit opts.disabled at render
+      // time) only ever get count updates — never enable/disable.
+      if (btn.dataset.kudosLocked === '1') return;
+      if (entry.my_kudos && entry.my_kudos_direct) {
+        // Viewer's own direct kudos: active, still clickable — the
+        // second click retracts it.
+        btn.classList.add('gc-vote-active');
+        btn.classList.remove('opacity-60', 'cursor-not-allowed');
+        btn.disabled = false;
+        btn.setAttribute('title', 'You gave kudos to this PR — click again to retract');
+      } else if (entry.my_kudos) {
+        // Bounty-derived credit: shows as the viewer's but isn't a
+        // pr_kudos row, so there's nothing to retract here.
+        btn.classList.add('gc-vote-active', 'opacity-60', 'cursor-not-allowed');
+        btn.disabled = true;
+        btn.setAttribute('title', 'Credited via an issue bounty award — can’t be retracted');
+      } else {
+        // No kudos from the viewer (incl. just-retracted): back to the
+        // plain give state.
+        btn.classList.remove('gc-vote-active', 'opacity-60', 'cursor-not-allowed');
+        btn.disabled = false;
+        btn.removeAttribute('title');
       }
     });
   },

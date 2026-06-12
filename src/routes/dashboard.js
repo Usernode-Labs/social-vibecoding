@@ -40,6 +40,10 @@ const ACTIVITY_DAYS_SQL = `
 // "all time"). Used to scope the funnels to recent signups so lifetime
 // power users don't dominate the conversion picture.
 function cohortSince(raw) {
+  if (raw === '1d') return "NOW() - INTERVAL '1 day'";
+  if (raw === '3d') return "NOW() - INTERVAL '3 days'";
+  if (raw === '7d') return "NOW() - INTERVAL '7 days'";
+  if (raw === '14d') return "NOW() - INTERVAL '14 days'";
   if (raw === '30d') return "NOW() - INTERVAL '30 days'";
   if (raw === '90d') return "NOW() - INTERVAL '90 days'";
   return null;
@@ -54,7 +58,7 @@ function dashboardRoutes(config) {
   // ── Overview counters ──────────────────────────────────────
   router.get('/api/admin/analytics/overview', async (_req, res) => {
     try {
-      const [users, apps, prs, active, llm] = await Promise.all([
+      const [users, apps, prs, active, llm, kudos] = await Promise.all([
         pool.query(
           `SELECT
              COUNT(*)::int AS total,
@@ -66,9 +70,18 @@ function dashboardRoutes(config) {
           `SELECT COUNT(*)::int AS total
            FROM apps WHERE COALESCE(self_hosted, FALSE) = FALSE AND status <> 'deleted'`
         ),
+        // promoted        — sessions in the promoted/merging state RIGHT NOW
+        //                   (a live snapshot; merged sessions have left this bucket).
+        // promoted_all_time — every session that ever recorded a promoted_at,
+        //                   regardless of current status. This reconciles with
+        //                   the Growth "Promoted PRs" total and explains why
+        //                   merged (status='merged') can exceed it: sessions
+        //                   merged outside the promote flow (self-app/direct/
+        //                   admin merges, pre-promoted_at rows) never recorded one.
         pool.query(
           `SELECT
              COUNT(*) FILTER (WHERE status IN ('promoted','merging'))::int AS promoted,
+             COUNT(*) FILTER (WHERE promoted_at IS NOT NULL)::int          AS promoted_all_time,
              COUNT(*) FILTER (WHERE status = 'merged')::int                AS merged
            FROM chat_sessions`
         ),
@@ -83,6 +96,7 @@ function dashboardRoutes(config) {
           `SELECT COALESCE(SUM(total_cost_cents), 0)::float AS cents
            FROM llm_usage WHERE date = CURRENT_DATE`
         ),
+        pool.query(`SELECT COUNT(*)::int AS total FROM pr_kudos`),
       ]);
 
       res.json({
@@ -92,6 +106,7 @@ function dashboardRoutes(config) {
         wau: active.rows[0].wau,
         mau: active.rows[0].mau,
         llmSpendTodayCents: llm.rows[0].cents,
+        kudosTotal: kudos.rows[0].total,
       });
     } catch (err) {
       log.error('dashboard', 'overview failed', { message: err.message });
@@ -418,6 +433,132 @@ function dashboardRoutes(config) {
       res.json({ weeks });
     } catch (err) {
       log.error('dashboard', 'engagement failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Top users by dev sessions started ──────────────────────
+  //
+  // The 30 most prolific builders, by lifetime count of dev sessions
+  // (chat_sessions rows) they started. Session-level, so a user who
+  // started many sessions ranks high regardless of outcome. Rendered as
+  // a descending left-to-right bar chart on the dashboard.
+  router.get('/api/admin/analytics/top-users', async (_req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT u.username AS name,
+                COUNT(cs.id)::int AS sessions,
+                COUNT(*) FILTER (WHERE cs.pr_number IS NOT NULL)::int AS produced_pr,
+                COUNT(*) FILTER (WHERE cs.promoted_at IS NOT NULL
+                                   OR cs.status IN ('promoted','merging','merged'))::int AS promoted,
+                COUNT(*) FILTER (WHERE EXISTS (
+                          SELECT 1 FROM pr_votes pv WHERE pv.session_id = cs.id))::int AS received_vote,
+                COUNT(*) FILTER (WHERE cs.status = 'merged')::int AS merged
+           FROM users u
+           JOIN chat_sessions cs ON cs.user_id = u.id
+          GROUP BY u.id, u.username
+          ORDER BY sessions DESC, u.username
+          LIMIT 30`
+      );
+      res.json({ users: rows });
+    } catch (err) {
+      log.error('dashboard', 'top-users failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Kudos giving distribution (weekly) ─────────────────────
+  //
+  // Every user gets a budget of 5 kudos per ISO week (WEEKLY_KUDOS_LIMIT
+  // in routes/kudos.js). For each of the last 12 weeks we bucket users by
+  // how many kudos they actually gave that week (0..5). pr_kudos.week_start
+  // is already the Monday-00:00-UTC bucket, so we group on it directly.
+  //
+  // The g0 ("gave none") bucket is everyone registered as of that week's
+  // end who didn't give a kudos that week — i.e. cumulative user base minus
+  // that week's distinct givers. That's what makes this a participation /
+  // "survival" view rather than just a raw count of kudos given.
+  router.get('/api/admin/analytics/kudos', async (_req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `WITH weeks AS (
+           SELECT generate_series(
+             date_trunc('week', NOW()) - INTERVAL '11 weeks',
+             date_trunc('week', NOW()),
+             INTERVAL '1 week'
+           )::date AS wk
+         ),
+         per_giver AS (
+           SELECT week_start AS wk, giver_user_id, COUNT(*)::int AS k
+           FROM pr_kudos
+           GROUP BY week_start, giver_user_id
+         ),
+         buckets AS (
+           SELECT w.wk,
+                  COUNT(pg.giver_user_id) FILTER (WHERE pg.k = 1)::int AS g1,
+                  COUNT(pg.giver_user_id) FILTER (WHERE pg.k = 2)::int AS g2,
+                  COUNT(pg.giver_user_id) FILTER (WHERE pg.k = 3)::int AS g3,
+                  COUNT(pg.giver_user_id) FILTER (WHERE pg.k = 4)::int AS g4,
+                  COUNT(pg.giver_user_id) FILTER (WHERE pg.k = 5)::int AS g5
+           FROM weeks w
+           LEFT JOIN per_giver pg ON pg.wk = w.wk
+           GROUP BY w.wk
+         ),
+         pop AS (
+           SELECT w.wk,
+                  (SELECT COUNT(*) FROM users u WHERE u.created_at < w.wk + 7)::int AS users
+           FROM weeks w
+         )
+         SELECT to_char(b.wk, 'YYYY-MM-DD') AS wk,
+                p.users,
+                b.g1, b.g2, b.g3, b.g4, b.g5,
+                GREATEST(p.users - (b.g1 + b.g2 + b.g3 + b.g4 + b.g5), 0)::int AS g0
+         FROM buckets b
+         JOIN pop p ON p.wk = b.wk
+         ORDER BY b.wk`
+      );
+      res.json({ weeks: rows });
+    } catch (err) {
+      log.error('dashboard', 'kudos failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Daily spend (last 30 days) ─────────────────────────────
+  //
+  // Total LLM spend per calendar day for the last 30 days (today
+  // inclusive), summed across all users. A generate_series spine
+  // guarantees a row for every day, so quiet days render as a $0 bar
+  // rather than a gap — same continuous-axis pattern as growth /
+  // engagement. Cost lives in llm_usage.total_cost_cents (NUMERIC(10,4),
+  // sub-cent precision); summed to a float here and formatted as dollars
+  // client-side. `date` is bucketed by CURRENT_DATE at write time, so the
+  // window comparison uses CURRENT_DATE too.
+  router.get('/api/admin/analytics/spend', async (_req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `WITH spine AS (
+           SELECT generate_series(
+             CURRENT_DATE - 29,
+             CURRENT_DATE,
+             INTERVAL '1 day'
+           )::date AS day
+         ),
+         agg AS (
+           SELECT date AS day, SUM(total_cost_cents) AS cents
+           FROM llm_usage
+           WHERE date >= CURRENT_DATE - 29
+           GROUP BY date
+         )
+         SELECT to_char(s.day, 'YYYY-MM-DD') AS day,
+                COALESCE(a.cents, 0)::float AS cents
+         FROM spine s
+         LEFT JOIN agg a ON a.day = s.day
+         ORDER BY s.day`
+      );
+      res.json({ days: rows });
+    } catch (err) {
+      log.error('dashboard', 'spend failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

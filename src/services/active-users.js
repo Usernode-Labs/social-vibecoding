@@ -18,6 +18,12 @@
 //     user falls out of the active count and would have to come back
 //     to be re-counted.
 //
+//   - **Collab-private scoping**: for apps with
+//     collab_visibility='private', only collaborators (status='member'
+//     in app_collaborators) count. Without this, viewers of a
+//     view-public/collab-private app would inflate the vote-majority
+//     denominator while being unable to vote.
+//
 // Pragmatic-vs-strict note: a fully strict "lifecycle" reading of the
 // rule would say a 10-day absence un-qualifies the user, requiring
 // another 60s session on return. This implementation cheats slightly
@@ -37,16 +43,19 @@
 // mental model — "everyone using the platform is a user of the
 // platform" — and unblocks self-app voting/governance.
 
-async function isSelfHostedApp(pool, appId) {
+async function getAppMeta(pool, appId) {
   const { rows } = await pool.query(
-    'SELECT self_hosted FROM apps WHERE id = $1',
+    'SELECT self_hosted, collab_visibility FROM apps WHERE id = $1',
     [appId]
   );
-  return !!rows[0]?.self_hosted;
+  return {
+    selfHosted: !!rows[0]?.self_hosted,
+    collabPrivate: rows[0]?.collab_visibility === 'private',
+  };
 }
 
 async function getActiveUserStats(pool, appId) {
-  const selfHosted = await isSelfHostedApp(pool, appId);
+  const { selfHosted, collabPrivate } = await getAppMeta(pool, appId);
 
   const { rows } = selfHosted
     ? await pool.query(
@@ -69,8 +78,12 @@ async function getActiveUserStats(pool, appId) {
                WHERE b.app_id = $1
                  AND b.user_id = a.user_id
                  AND b.seconds_spent >= 60
-             )`,
-        [appId]
+             )
+             AND (NOT $2::boolean OR EXISTS (
+               SELECT 1 FROM app_collaborators c
+               WHERE c.app_id = $1 AND c.user_id = a.user_id AND c.status = 'member'
+             ))`,
+        [appId, collabPrivate]
       );
   // Floor at 1 so the vote machinery's majority threshold is never
   // 0/0; this is a vote-correctness floor, not a real-count guarantee.
@@ -89,7 +102,15 @@ async function getActiveUserStats(pool, appId) {
 // for unauthenticated callers.
 async function isUserActive(pool, appId, userId) {
   if (!userId) return false;
-  const selfHosted = await isSelfHostedApp(pool, appId);
+  const { selfHosted, collabPrivate } = await getAppMeta(pool, appId);
+
+  if (!selfHosted && collabPrivate) {
+    const { rows: memberRows } = await pool.query(
+      `SELECT 1 FROM app_collaborators WHERE app_id = $1 AND user_id = $2 AND status = 'member'`,
+      [appId, userId]
+    );
+    if (!memberRows.length) return false;
+  }
 
   const { rows } = selfHosted
     ? await pool.query(
@@ -126,7 +147,7 @@ async function isUserActive(pool, appId, userId) {
 // array of ids. self_hosted apps fan out across every app's activity,
 // mirroring getActiveUserStats's union semantics.
 async function listActiveUserIds(pool, appId) {
-  const selfHosted = await isSelfHostedApp(pool, appId);
+  const { selfHosted, collabPrivate } = await getAppMeta(pool, appId);
 
   const { rows } = selfHosted
     ? await pool.query(
@@ -149,8 +170,12 @@ async function listActiveUserIds(pool, appId) {
                WHERE b.app_id = $1
                  AND b.user_id = a.user_id
                  AND b.seconds_spent >= 60
-             )`,
-        [appId]
+             )
+             AND (NOT $2::boolean OR EXISTS (
+               SELECT 1 FROM app_collaborators c
+               WHERE c.app_id = $1 AND c.user_id = a.user_id AND c.status = 'member'
+             ))`,
+        [appId, collabPrivate]
       );
   return rows.map((r) => r.id);
 }

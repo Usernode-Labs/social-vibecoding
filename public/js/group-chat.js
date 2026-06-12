@@ -55,33 +55,117 @@ const GroupChat = {
   _reactBar: null,
   _reactBarDismiss: null,
   _reactBarOpenedAt: 0,
+  // Shell-injected staging iframe token, captured at script load so SPA
+  // history rewrites can't lose it before a (re)connect needs it.
+  _bootToken: new URLSearchParams(location.search).get('token'),
   QUICK_REACTIONS: ['\u{1F44D}', '\u2764\uFE0F', '\u{1F602}', '\u{1F62E}', '\u{1F622}', '\u{1F64F}'],
+  // Full picker grid, ordered by category (smileys \u2192 gestures \u2192 hearts \u2192
+  // animals \u2192 food \u2192 activities \u2192 objects \u2192 symbols) so related emoji sit
+  // together while scrolling. Rendered flat; the CSS grid handles layout.
   GRID_REACTIONS: [
-    '\u{1F44D}', '\u{1F44E}', '\u2764\uFE0F', '\u{1F525}', '\u{1F389}', '\u{1F44F}',
-    '\u{1F602}', '\u{1F923}', '\u{1F60A}', '\u{1F60D}', '\u{1F60E}', '\u{1F914}',
-    '\u{1F62E}', '\u{1F632}', '\u{1F622}', '\u{1F62D}', '\u{1F621}', '\u{1F644}',
-    '\u{1F64F}', '\u{1F4AF}', '\u{1F680}', '\u{1F44C}', '\u{1F440}', '\u{1F9E0}',
-    '\u{1F389}', '\u2705', '\u274C', '\u26A0\uFE0F', '\u{1F41B}', '\u{1F4A1}',
-    '\u{1F44B}', '\u{1F913}', '\u{1F525}', '\u{1F31F}', '\u{1F926}', '\u{1F937}',
+    // Smileys & emotion
+    '\uD83D\uDE00', '\uD83D\uDE01', '\uD83D\uDE02', '\uD83E\uDD23', '\uD83D\uDE0A', '\uD83D\uDE07', '\uD83D\uDE42', '\uD83D\uDE09',
+    '\uD83D\uDE0D', '\uD83E\uDD70', '\uD83D\uDE18', '\uD83D\uDE0B', '\uD83D\uDE1C', '\uD83E\uDD2A', '\uD83D\uDE0E', '\uD83E\uDD13',
+    '\uD83E\uDD73', '\uD83E\uDD29', '\uD83D\uDE0F', '\uD83D\uDE05', '\uD83D\uDE2C', '\uD83D\uDE43', '\uD83D\uDE0C', '\uD83D\uDE34',
+    '\uD83E\uDD24', '\uD83D\uDE2A', '\uD83D\uDE2E', '\uD83D\uDE32', '\uD83D\uDE33', '\uD83E\uDD7A', '\uD83D\uDE22', '\uD83D\uDE2D',
+    '\uD83D\uDE24', '\uD83D\uDE20', '\uD83D\uDE21', '\uD83E\uDD2C', '\uD83E\uDD2F', '\uD83E\uDD75', '\uD83E\uDD76', '\uD83D\uDE31',
+    '\uD83D\uDE28', '\uD83D\uDE30', '\uD83E\uDD17', '\uD83E\uDD14', '\uD83E\uDD2D', '\uD83E\uDD2B', '\uD83D\uDE44', '\uD83D\uDE12',
+    '\uD83D\uDE1E', '\uD83D\uDE14', '\uD83D\uDE1F', '\uD83D\uDE15', '\uD83D\uDE16', '\uD83D\uDE2B', '\uD83D\uDE29', '\uD83E\uDD22',
+    '\uD83E\uDD2E', '\uD83E\uDD27', '\uD83D\uDE37', '\uD83E\uDD12', '\uD83E\uDD20', '\uD83E\uDD11', '\uD83D\uDE08', '\uD83D\uDC80',
+    '\uD83D\uDC7B', '\uD83D\uDC7D', '\uD83E\uDD16', '\uD83D\uDCA9', '\uD83E\uDD21', '\uD83D\uDE3A', '\uD83D\uDE48', '\uD83D\uDE49',
+    '\uD83D\uDE4A', '\uD83D\uDE36', '\uD83D\uDE10', '\uD83E\uDD74',
+    // Gestures & hands
+    '\uD83D\uDC4D', '\uD83D\uDC4E', '\uD83D\uDC4C', '\uD83E\uDD0C', '\u270C\uFE0F', '\uD83E\uDD1E', '\uD83E\uDD1F', '\uD83E\uDD18',
+    '\uD83E\uDD19', '\uD83D\uDC4B', '\uD83D\uDD90\uFE0F', '\u270B', '\uD83D\uDC4A', '\u270A', '\uD83E\uDD1B', '\uD83E\uDD1C',
+    '\uD83D\uDC4F', '\uD83D\uDE4C', '\uD83E\uDD1D', '\uD83D\uDE4F', '\uD83D\uDCAA', '\uD83D\uDD95', '\u261D\uFE0F', '\uD83D\uDC46',
+    '\uD83D\uDC47', '\uD83D\uDC48', '\uD83D\uDC49', '\u270D\uFE0F', '\uD83E\uDD32', '\uD83D\uDC40', '\uD83E\uDDE0', '\uD83D\uDDE3\uFE0F',
+    '\uD83D\uDC81', '\uD83D\uDE45', '\uD83D\uDE46', '\uD83E\uDD37', '\uD83E\uDD26', '\uD83E\uDDCE', '\uD83C\uDFC3', '\uD83D\uDC83',
+    // Hearts
+    '\u2764\uFE0F', '\uD83E\uDDE1', '\uD83D\uDC9B', '\uD83D\uDC9A', '\uD83D\uDC99', '\uD83D\uDC9C', '\uD83D\uDDA4', '\uD83E\uDD0D',
+    '\uD83E\uDD0E', '\uD83D\uDC95', '\uD83D\uDC9E', '\uD83D\uDC93', '\uD83D\uDC97', '\uD83D\uDC96', '\uD83D\uDC98', '\uD83D\uDC9D',
+    '\uD83D\uDC94', '\u2763\uFE0F', '\uD83D\uDC9F', '\uD83D\uDC8C',
+    // Animals & nature
+    '\uD83D\uDC36', '\uD83D\uDC31', '\uD83D\uDC2D', '\uD83D\uDC39', '\uD83D\uDC30', '\uD83E\uDD8A', '\uD83D\uDC3B', '\uD83D\uDC3C',
+    '\uD83D\uDC28', '\uD83D\uDC2F', '\uD83E\uDD81', '\uD83D\uDC2E', '\uD83D\uDC37', '\uD83D\uDC38', '\uD83D\uDC35', '\uD83D\uDC14',
+    '\uD83D\uDC27', '\uD83D\uDC26', '\uD83E\uDD86', '\uD83E\uDD85', '\uD83E\uDD89', '\uD83D\uDC22', '\uD83D\uDC0D', '\uD83D\uDC19',
+    '\uD83E\uDD80', '\uD83D\uDC2C', '\uD83D\uDC33', '\uD83E\uDD88', '\uD83E\uDD8B', '\uD83D\uDC1D', '\uD83D\uDC1E', '\uD83D\uDC0C',
+    '\uD83C\uDF38', '\uD83C\uDF39', '\uD83C\uDF3B', '\uD83C\uDF35', '\uD83C\uDF32', '\uD83C\uDF40', '\uD83C\uDF08', '\u2B50',
+    '\uD83C\uDF1F', '\u2728', '\u26A1', '\u2600\uFE0F', '\uD83C\uDF19', '\u2601\uFE0F', '\uD83C\uDF27\uFE0F', '\u2744\uFE0F',
+    '\uD83C\uDF0A', '\uD83C\uDF0D',
+    // Food & drink
+    '\uD83C\uDF4E', '\uD83C\uDF4C', '\uD83C\uDF49', '\uD83C\uDF47', '\uD83C\uDF53', '\uD83C\uDF52', '\uD83C\uDF51', '\uD83E\uDD6D',
+    '\uD83C\uDF4D', '\uD83E\uDD51', '\uD83C\uDF45', '\uD83E\uDD55', '\uD83C\uDF3D', '\uD83C\uDF5E', '\uD83E\uDDC0', '\uD83E\uDD5A',
+    '\uD83E\uDD53', '\uD83C\uDF54', '\uD83C\uDF5F', '\uD83C\uDF55', '\uD83C\uDF2D', '\uD83C\uDF2E', '\uD83C\uDF2F', '\uD83C\uDF63',
+    '\uD83C\uDF5C', '\uD83C\uDF5D', '\uD83C\uDF7F', '\uD83C\uDF69', '\uD83C\uDF6A', '\uD83C\uDF82', '\uD83C\uDF70', '\uD83E\uDDC1',
+    '\uD83C\uDF6B', '\uD83C\uDF6C', '\uD83C\uDF6D', '\u2615', '\uD83C\uDF75', '\uD83E\uDD64', '\uD83C\uDF7A', '\uD83C\uDF7B',
+    '\uD83E\uDD42', '\uD83C\uDF77', '\uD83C\uDF78', '\uD83E\uDD43',
+    // Activities & sports
+    '\u26BD', '\uD83C\uDFC0', '\uD83C\uDFC8', '\u26BE', '\uD83C\uDFBE', '\uD83C\uDFD0', '\uD83C\uDFB1', '\uD83C\uDFD3',
+    '\uD83C\uDFF8', '\uD83E\uDD4A', '\u26F3', '\uD83C\uDFA3', '\uD83C\uDFBD', '\u26F7\uFE0F', '\uD83C\uDFC2', '\uD83C\uDFC6',
+    '\uD83E\uDD47', '\uD83E\uDD48', '\uD83E\uDD49', '\uD83C\uDFC5', '\uD83C\uDFAE', '\uD83D\uDD79\uFE0F', '\uD83C\uDFB2', '\uD83E\uDDE9',
+    '\u265F\uFE0F', '\uD83C\uDFAF', '\uD83C\uDFB3', '\uD83C\uDFA4', '\uD83C\uDFA7', '\uD83C\uDFB8', '\uD83E\uDD41', '\uD83C\uDFB9',
+    '\uD83C\uDFBA', '\uD83C\uDFBB', '\uD83C\uDFAC', '\uD83C\uDFA8', '\uD83C\uDFAD', '\uD83C\uDFAA', '\uD83C\uDF9F\uFE0F', '\uD83C\uDFB0',
+    // Travel & objects
+    '\uD83D\uDE80', '\u2708\uFE0F', '\uD83D\uDE97', '\uD83D\uDE95', '\uD83D\uDE8C', '\uD83D\uDEB2', '\uD83D\uDEF4', '\uD83C\uDFCD\uFE0F',
+    '\uD83D\uDE82', '\uD83D\uDEA2', '\u26F5', '\uD83D\uDDFA\uFE0F', '\uD83C\uDFE0', '\uD83C\uDFD6\uFE0F', '\uD83C\uDFD4\uFE0F', '\uD83D\uDDFD',
+    '\uD83D\uDCBB', '\uD83D\uDDA5\uFE0F', '\u2328\uFE0F', '\uD83D\uDDB1\uFE0F', '\uD83D\uDCF1', '\uD83D\uDCF7', '\uD83C\uDFA5', '\uD83D\uDCFA',
+    '\uD83D\uDCFB', '\u23F0', '\u231A', '\uD83D\uDD0B', '\uD83D\uDD0C', '\uD83D\uDCA1', '\uD83D\uDD26', '\uD83D\uDD6F\uFE0F',
+    '\uD83D\uDEE0\uFE0F', '\uD83D\uDD27', '\uD83D\uDD28', '\u2699\uFE0F', '\uD83E\uDDF2', '\uD83D\uDD11', '\uD83D\uDD12', '\uD83D\uDD13',
+    '\uD83D\uDCCC', '\uD83D\uDCCE', '\u2702\uFE0F', '\uD83D\uDCCF', '\uD83D\uDCDA', '\uD83D\uDCD6', '\uD83D\uDCDD', '\u270F\uFE0F',
+    '\uD83D\uDCE6', '\uD83C\uDF81', '\uD83C\uDF88', '\uD83C\uDF89', '\uD83C\uDF8A', '\uD83D\uDED2', '\uD83D\uDCB0', '\uD83D\uDCB5',
+    '\uD83D\uDCB3', '\uD83D\uDC8E',
+    // Symbols
+    '\u2705', '\u2611\uFE0F', '\u274C', '\u274E', '\u26A0\uFE0F', '\uD83D\uDEAB', '\u2757', '\u2753',
+    '\u203C\uFE0F', '\u2049\uFE0F', '\uD83D\uDCAF', '\uD83D\uDD25', '\uD83D\uDCA5', '\uD83D\uDCAB', '\uD83D\uDCA2', '\uD83D\uDCA4',
+    '\uD83D\uDCAC', '\uD83D\uDCAD', '\uD83D\uDDE8\uFE0F', '\uD83D\uDD14', '\uD83D\uDD15', '\uD83C\uDFB5', '\uD83C\uDFB6', '\u2795',
+    '\u2796', '\u2797', '\u2716\uFE0F', '\u267E\uFE0F', '\uD83D\uDCB2', '\u00A9\uFE0F', '\u00AE\uFE0F', '\u2122\uFE0F',
+    '\uD83D\uDD34', '\uD83D\uDFE0', '\uD83D\uDFE1', '\uD83D\uDFE2', '\uD83D\uDD35', '\uD83D\uDFE3', '\u26AB', '\u26AA',
+    '\uD83D\uDD3A', '\uD83D\uDD3B', '\uD83D\uDD04', '\uD83D\uDD01', '\u25B6\uFE0F', '\u23F8\uFE0F', '\u23E9', '\u23EA',
+    '\uD83C\uDD97', '\uD83C\uDD92', '\uD83C\uDD95', '\uD83C\uDD93', '\uD83D\uDD1D', '\uD83D\uDD1A', '\uD83D\uDD1C', '\uD83C\uDFC1',
+    '\uD83D\uDEA9', '\uD83C\uDFF3\uFE0F', '\uD83C\uDFF4', '\uD83D\uDC1B',
   ],
 
   // In-progress draft helpers — preserved across tab switches *and* page
-  // refreshes (via localStorage). Keyed by app slug so each app has its
-  // own draft. Cleared on send.
-  _draftKey(slug) {
-    return `usernode:gc-draft:${slug}`;
+  // refreshes (via localStorage). Keyed by app slug (plus the thread key
+  // for thread composers, #194) so each surface has its own draft.
+  // Cleared on send.
+  _draftKey(slug, threadKey) {
+    return threadKey
+      ? `usernode:gc-draft:${slug}:${threadKey}`
+      : `usernode:gc-draft:${slug}`;
   },
-  getDraft(slug) {
+  getDraft(slug, threadKey) {
     if (!slug) return '';
-    try { return localStorage.getItem(GroupChat._draftKey(slug)) || ''; }
+    try { return localStorage.getItem(GroupChat._draftKey(slug, threadKey)) || ''; }
     catch { return ''; }
   },
-  setDraft(slug, value) {
+  setDraft(slug, value, threadKey) {
     if (!slug) return;
     try {
-      if (value) localStorage.setItem(GroupChat._draftKey(slug), value);
-      else localStorage.removeItem(GroupChat._draftKey(slug));
+      if (value) localStorage.setItem(GroupChat._draftKey(slug, threadKey), value);
+      else localStorage.removeItem(GroupChat._draftKey(slug, threadKey));
     } catch {}
+  },
+
+  // ── #194: thread-scoped chat state ──────────────────────────────────
+  // One WS connection, multiple render targets: the general stream
+  // (#gc-messages) plus at most one mounted thread (#gc-thread-messages,
+  // inside an Issues/Proposals accordion). Per-thread history caches
+  // live in `threads`, keyed by `${type}:${ref}`.
+  threads: new Map(),       // key -> { messages, oldestId, hasMore, loaded }
+  activeThread: null,       // { type, ref } | null — the mounted thread
+  _threadTypingTimer: null,
+
+  threadKey(type, ref) {
+    return `${type}:${ref}`;
+  },
+
+  _threadState(type, ref) {
+    const key = GroupChat.threadKey(type, ref);
+    if (!GroupChat.threads.has(key)) {
+      GroupChat.threads.set(key, { messages: [], oldestId: null, hasMore: true, loaded: false });
+    }
+    return GroupChat.threads.get(key);
   },
 
   // Called by AppView.renderGroupChatTab on every tab (re-)entry. On first
@@ -118,6 +202,8 @@ const GroupChat = {
     GroupChat.disconnect();
     GroupChat.appSlug = appSlug;
     GroupChat.messages = [];
+    GroupChat.threads = new Map();
+    GroupChat.activeThread = null;
     GroupChat.oldestMessageId = null;
     GroupChat.hasMore = true;
     GroupChat._lockedToBottom = true;
@@ -144,7 +230,16 @@ const GroupChat = {
     const appSlug = GroupChat.appSlug;
     if (!appSlug) return;
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${location.host}/ws/chat/${appSlug}`);
+    // Staging previews run in an iframe and authenticate via the
+    // shell-injected ?token= JWT; the session cookie may be orphaned by a
+    // redeploy (sessions is staging:private). Forward the token on the WS
+    // URL so the handshake has the same fallback HTTP requests do. In
+    // prod there is no token param and this is a no-op. Prefer the live
+    // URL, fall back to the boot-time capture (SPA history rewrites may
+    // have stripped the query by now).
+    const token = new URLSearchParams(location.search).get('token') || GroupChat._bootToken;
+    const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+    const ws = new WebSocket(`${proto}//${location.host}/ws/chat/${appSlug}${qs}`);
     GroupChat.ws = ws;
 
     ws.onopen = () => {
@@ -164,7 +259,11 @@ const GroupChat = {
       } catch {}
     };
 
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
+      // Surface the close code in the dev console — a clean reconnect
+      // cycle logs 1006s, while e.g. 4004 (access denied) pinpoints a
+      // server-side rejection that retrying will never fix.
+      console.warn(`[gc] chat socket closed code=${ev.code}${ev.reason ? ` reason=${ev.reason}` : ''}`);
       // Bail if disconnect() ran (we changed apps / left the
       // surface entirely); the existing socket reference is stale.
       if (GroupChat.ws !== ws) return;
@@ -231,6 +330,8 @@ const GroupChat = {
       GroupChat.ws = null;
     }
     GroupChat.appSlug = null;
+    GroupChat.threads = new Map();
+    GroupChat.activeThread = null;
     GroupChat.typingUsers.clear();
     GroupChat._lockedToBottom = true;
     GroupChat._savedScrollTop = null;
@@ -282,6 +383,13 @@ const GroupChat = {
   handleIncoming(msg) {
     switch (msg.type) {
       case 'chat': {
+        // #194: thread messages never land in the general stream — they
+        // route to the mounted thread (if it matches) or bump the
+        // chat-count badge on their issue/proposal row.
+        if (msg.thread && msg.thread.type) {
+          GroupChat._handleThreadIncoming(msg);
+          break;
+        }
         const shouldStick = GroupChat._lockedToBottom;
         GroupChat.messages.push(msg);
         GroupChat.appendMessage(msg);
@@ -294,6 +402,15 @@ const GroupChat = {
         break;
       }
       case 'typing': {
+        // #194: thread typing renders inside the mounted thread only;
+        // general typing keeps the original #gc-typing slot.
+        if (msg.thread && msg.thread.type) {
+          const a = GroupChat.activeThread;
+          if (a && a.type === msg.thread.type && Number(a.ref) === Number(msg.thread.ref)) {
+            GroupChat._renderThreadTyping(msg.username);
+          }
+          break;
+        }
         GroupChat.typingUsers.set(msg.userId, msg.username);
         GroupChat.renderTyping();
         setTimeout(() => {
@@ -303,6 +420,40 @@ const GroupChat = {
         break;
       }
     }
+  },
+
+  // Incoming message scoped to a thread: store it, and either append it
+  // to the mounted thread's DOM or bump the row badge.
+  _handleThreadIncoming(msg) {
+    const { type, ref } = msg.thread;
+    const st = GroupChat._threadState(type, ref);
+    st.messages.push(msg);
+    const a = GroupChat.activeThread;
+    if (a && a.type === type && Number(a.ref) === Number(ref)) {
+      const el = document.getElementById('gc-thread-messages');
+      if (el) {
+        el.insertAdjacentHTML('beforeend', GroupChat.renderMessageHtml(msg));
+        el.scrollTop = el.scrollHeight;
+        return;
+      }
+    }
+    // Only human messages bump the 💬 badge — dual-posted lifecycle
+    // system rows would otherwise inflate a count that the server now
+    // computes from msg_type='message' rows only.
+    if (msg.msgType === 'message'
+        && typeof AppView !== 'undefined' && AppView.bumpThreadBadge) {
+      AppView.bumpThreadBadge(type, Number(ref));
+    }
+  },
+
+  _renderThreadTyping(username) {
+    const el = document.getElementById('gc-thread-typing');
+    if (!el || username === App.user?.username) return;
+    el.textContent = `${username} is typing...`;
+    clearTimeout(GroupChat._threadTypingTimer);
+    GroupChat._threadTypingTimer = setTimeout(() => {
+      if (el.isConnected) el.textContent = '';
+    }, 3000);
   },
 
   // Hard cap on the offline queue. Picked to be large enough that
@@ -317,14 +468,20 @@ const GroupChat = {
   // was the visible half of #7 ("messages fail to send without
   // page refresh"). The caller can clear the input as soon as we
   // return without losing user-typed content.
-  send(content) {
+  send(content, thread) {
+    // #194: thread sends carry their scope.
+    const payload = { type: 'chat', content };
+    if (thread && thread.type && thread.ref) {
+      payload.thread = { type: thread.type, ref: Number(thread.ref) };
+    }
     // #15: consume the pending reply quote (if any) for this message and
-    // clear it so it only attaches once. We send a minimal reference; the
-    // server re-derives author/snippet from the source row.
+    // clear it so it only attaches once. Both composers stage into the
+    // same replyDraft, and mount/unmount of a thread clears it, so the
+    // quote always belongs to the surface doing the send. We send a
+    // minimal reference; the server re-derives author/snippet.
     const quote = GroupChat.replyDraft;
     GroupChat.replyDraft = null;
     GroupChat._renderQuotePreview();
-    const payload = { type: 'chat', content };
     if (quote) payload.quote = GroupChat._wireQuote(quote);
 
     if (GroupChat.ws && GroupChat.ws.readyState === 1) {
@@ -348,10 +505,14 @@ const GroupChat = {
     GroupChat._renderStatusLine();
   },
 
-  sendTyping() {
+  sendTyping(thread) {
     if (!GroupChat.ws || GroupChat.ws.readyState !== 1) return;
     if (GroupChat.typingTimeout) return;
-    GroupChat.ws.send(JSON.stringify({ type: 'typing' }));
+    const payload = { type: 'typing' };
+    if (thread && thread.type && thread.ref) {
+      payload.thread = { type: thread.type, ref: Number(thread.ref) };
+    }
+    GroupChat.ws.send(JSON.stringify(payload));
     GroupChat.typingTimeout = setTimeout(() => { GroupChat.typingTimeout = null; }, 2000);
   },
 
@@ -367,16 +528,191 @@ const GroupChat = {
     container.insertAdjacentHTML('beforeend', GroupChat.renderMessageHtml(msg));
   },
 
+  // ── #194: thread chat (mounted inside Issues / Proposals accordions) ─
+
+  // Render a thread chat (scoped message list + composer) into
+  // `container` and make it the active thread render target. Reuses the
+  // same renderMessageHtml pipeline and the one per-app WS connection —
+  // which is opened on demand here, since the user can land on the
+  // Issues/Proposals tabs without ever mounting the Chat sub-tab.
+  // opts: { type, ref, container, readOnly?, notice?, placeholder? }
+  mountThread(opts) {
+    const { type, ref, container } = opts || {};
+    if (!type || !ref || !container) return;
+    const slug = (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug)
+      || GroupChat.appSlug;
+    if (!slug) return;
+
+    const liveWs = GroupChat.ws && GroupChat.ws.readyState <= 1;
+    if (!(GroupChat.appSlug === slug && liveWs)) {
+      GroupChat.connect(slug);
+    }
+    GroupChat.activeThread = { type, ref: Number(ref) };
+
+    const threadKey = GroupChat.threadKey(type, ref);
+    // A quote staged in the general composer must not ride along into a
+    // thread send (and vice versa — see unmountThread): entering a thread
+    // is a fresh composer context.
+    GroupChat.clearQuote();
+    // fullHeight (#194 card-list revision): the topic sub-view's thread
+    // fills its flex container and mirrors the general chat pane's look —
+    // full-width message list, h-5 typing slot, bordered-top composer with
+    // the same input/Send sizing — instead of the boxed inline 40vh layout
+    // kept for any legacy (non-fullHeight) caller.
+    const fill = !!opts.fullHeight;
+    const composerHtml = opts.readOnly
+      ? `<div class="px-3 py-2 text-xs text-zinc-500 border-t border-zinc-200 dark:border-zinc-800 shrink-0">${escapeHtml(opts.notice || 'This thread is read-only.')}</div>`
+      : `<div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2">
+          <div id="gc-thread-reply-preview" class="hidden"></div>
+          <form id="gc-thread-form" class="flex gap-2">
+            <input id="gc-thread-input" type="text" maxlength="2000" autocomplete="off"
+              placeholder="${escapeHtml(opts.placeholder || 'Reply in thread…')}"
+              class="flex-1 min-w-0 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 ${fill ? 'py-2' : 'py-1.5'} text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent">
+            <button type="submit" class="rounded-lg bg-violet-600 hover:bg-violet-500 ${fill ? 'px-4 py-2' : 'px-3 py-1.5'} text-sm font-medium text-white transition-colors shrink-0">Send</button>
+          </form>
+        </div>`;
+    container.innerHTML = fill
+      ? `<div class="dev-thread flex flex-col h-full min-h-0">
+          <div id="gc-thread-messages" class="overflow-y-auto py-2 space-y-0.5 flex-1 min-h-0"></div>
+          <div id="gc-thread-typing" class="px-3 text-xs text-zinc-500 h-5 shrink-0"></div>
+          ${composerHtml}
+        </div>`
+      : `<div class="dev-thread border border-zinc-200 dark:border-zinc-800 rounded-xl flex flex-col bg-zinc-50/50 dark:bg-zinc-900/40">
+          <div id="gc-thread-messages" class="overflow-y-auto px-2 py-1 space-y-0.5" style="max-height:40vh;min-height:60px"></div>
+          <div id="gc-thread-typing" class="px-3 text-xs text-zinc-500 h-4 shrink-0"></div>
+          ${composerHtml}
+        </div>`;
+
+    // Full general-chat interaction set on the thread list: tap-to-quote,
+    // long-press / hover reactions, quote-jump, reference chips.
+    const msgsEl = container.querySelector('#gc-thread-messages');
+    if (msgsEl) GroupChat._attachQuoteHandlers(msgsEl);
+
+    const form = container.querySelector('#gc-thread-form');
+    const input = container.querySelector('#gc-thread-input');
+    if (form && input) {
+      const saved = GroupChat.getDraft(slug, threadKey);
+      if (saved) input.value = saved;
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const content = input.value.trim();
+        if (!content) return;
+        GroupChat.send(content, { type, ref });
+        input.value = '';
+        GroupChat.setDraft(slug, '', threadKey);
+      });
+      input.addEventListener('input', () => {
+        GroupChat.setDraft(slug, input.value, threadKey);
+        GroupChat.sendTyping({ type, ref });
+      });
+      // #87/#130 parity with the general composer: @mention and #/PR#
+      // reference autocomplete on the thread input.
+      if (typeof MentionAutocomplete !== 'undefined') {
+        MentionAutocomplete.attach(input, slug);
+      }
+      if (typeof RefAutocomplete !== 'undefined') {
+        RefAutocomplete.attach(input, slug);
+      }
+      // #15 parity: Escape clears a staged reply quote (when the input is
+      // empty so we don't fight other Escape semantics mid-typing).
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && GroupChat.replyDraft && !input.value) {
+          e.preventDefault();
+          GroupChat.clearQuote();
+        }
+      });
+    }
+
+    GroupChat.renderThread();
+    // Only fetch on first open — the per-thread cache stays current
+    // while connected (incoming WS messages are stored even when the
+    // thread isn't mounted), and loadThreadHistory with an oldestId set
+    // pages BACKWARD (that's the "Load earlier" button's job).
+    const st = GroupChat._threadState(type, ref);
+    if (!st.loaded) GroupChat.loadThreadHistory(type, ref);
+  },
+
+  // Drop the active thread render target (its history cache survives in
+  // `threads` for instant re-open). Called when an accordion collapses
+  // or the user leaves the sub-tab.
+  unmountThread() {
+    // A quote staged in the thread composer must not leak into the
+    // general composer (replyDraft is global).
+    if (GroupChat.activeThread && GroupChat.replyDraft) GroupChat.clearQuote();
+    GroupChat.activeThread = null;
+    clearTimeout(GroupChat._threadTypingTimer);
+  },
+
+  async loadThreadHistory(type, ref) {
+    const slug = GroupChat.appSlug;
+    if (!slug) return;
+    const st = GroupChat._threadState(type, ref);
+    const beforeParam = st.oldestId ? `&before=${st.oldestId}` : '';
+    try {
+      const res = await fetch(
+        `/api/apps/${slug}/messages?thread_type=${encodeURIComponent(type)}&thread_ref=${encodeURIComponent(ref)}&limit=50${beforeParam}`
+      );
+      if (!res.ok) return;
+      const { messages } = await res.json();
+      if (messages.length < 50) st.hasMore = false;
+      if (messages.length > 0) {
+        st.messages = [...messages, ...st.messages];
+        st.oldestId = messages[0].id;
+      }
+      st.loaded = true;
+      const a = GroupChat.activeThread;
+      if (a && a.type === type && Number(a.ref) === Number(ref)) {
+        GroupChat.renderThread();
+      }
+    } catch { /* transient — re-open retries */ }
+  },
+
+  // Paint the active thread's cached messages into #gc-thread-messages.
+  renderThread() {
+    const a = GroupChat.activeThread;
+    const el = document.getElementById('gc-thread-messages');
+    if (!a || !el) return;
+    const st = GroupChat._threadState(a.type, a.ref);
+    // Preserve the reading position across "Load earlier" prepends.
+    const prevHeight = el.scrollHeight;
+    const prevTop = el.scrollTop;
+    const wasLoaded = el.dataset.loaded === '1';
+
+    const earlier = (st.loaded && st.hasMore && st.messages.length)
+      ? '<div class="text-center py-1"><button id="gc-thread-earlier" class="gc-vote-btn">Load earlier</button></div>'
+      : '';
+    const empty = (st.loaded && !st.messages.length)
+      ? '<div class="text-xs text-zinc-500 px-2 py-2">No messages yet — start the thread.</div>'
+      : (!st.loaded ? '<div class="text-xs text-zinc-500 px-2 py-2">Loading…</div>' : '');
+    el.innerHTML = earlier + empty + st.messages.map(GroupChat.renderMessageHtml).join('');
+    el.dataset.loaded = st.loaded ? '1' : '';
+
+    const btn = document.getElementById('gc-thread-earlier');
+    if (btn) btn.addEventListener('click', () => GroupChat.loadThreadHistory(a.type, a.ref));
+
+    if (wasLoaded) {
+      el.scrollTop = prevTop + (el.scrollHeight - prevHeight);
+    } else {
+      el.scrollTop = el.scrollHeight;
+    }
+  },
+
   // ── #15: reply / quote ──────────────────────────────────────────────
 
-  // Stage a quote to attach to the next message and focus the composer.
-  // Called by the tap handler (chat rows) and by AppView (PR titles).
+  // Stage a quote to attach to the next message and focus whichever
+  // composer is mounted — the thread composer when a topic is open, the
+  // general one otherwise. Called by the tap handler (chat + thread rows)
+  // and by AppView (PR titles). No-op when no composer exists (read-only
+  // merged-proposal thread): staging an invisible quote would silently
+  // attach to a later message elsewhere.
   setQuote(quote) {
     if (!quote) return;
+    const input = document.getElementById('gc-thread-input')
+      || document.getElementById('gc-input');
+    if (!input) return;
     GroupChat.replyDraft = quote;
     GroupChat._renderQuotePreview();
-    const input = document.getElementById('gc-input');
-    if (input) input.focus();
+    input.focus();
   },
 
   clearQuote() {
@@ -390,9 +726,12 @@ const GroupChat = {
     return { source: q.source, refMsgId: q.refMsgId };
   },
 
-  // Render (or clear) the composer's "Replying to …" preview chip.
+  // Render (or clear) the composer's "Replying to …" preview chip —
+  // into the thread composer's slot when a topic is open, else the
+  // general composer's (only one of the two is ever in the DOM).
   _renderQuotePreview() {
-    const el = document.getElementById('gc-reply-preview');
+    const el = document.getElementById('gc-thread-reply-preview')
+      || document.getElementById('gc-reply-preview');
     if (!el) return;
     const q = GroupChat.replyDraft;
     if (!q) {
@@ -462,7 +801,10 @@ const GroupChat = {
     }
     const ref = parseInt(quoted.dataset.quoteRef || '', 10);
     if (!ref) return;
-    const container = document.getElementById('gc-messages');
+    // Jump within whichever message list the quote block lives in
+    // (general chat or a mounted thread).
+    const container = quoted.closest('#gc-messages, #gc-thread-messages')
+      || document.getElementById('gc-messages');
     const target = container && container.querySelector(`[data-msg-id="${ref}"]`);
     if (!target) return;
     target.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -492,7 +834,7 @@ const GroupChat = {
       GroupChat._clearPressTimer();
       // Don't arm long-press on interactive children (links, buttons,
       // pills, the quote block) — those have their own click semantics.
-      if (e.target.closest('a, button, .gc-quoted')) return;
+      if (e.target.closest('a, button, .gc-quoted, .gc-ref')) return;
       const row = e.target.closest(ROW_SEL);
       if (!row || !container.contains(row)) return;
       // Suppress native text selection while the press is stationary, so a
@@ -548,6 +890,26 @@ const GroupChat = {
       // A long-press already opened the bar — swallow the trailing click
       // so it doesn't also quote the row.
       if (GroupChat._longPressed) { GroupChat._longPressed = false; return; }
+      // #130: PR / issue reference chips reveal the matching row in the
+      // activity drawer (GitHub fallback when it isn't there). Handled
+      // before tap-to-quote so a chip click doesn't also stage a reply.
+      const ref = e.target.closest('.gc-ref');
+      if (ref) {
+        if (typeof AppView !== 'undefined' && AppView.revealInDrawer) {
+          AppView.revealInDrawer(ref.dataset.refType, ref.dataset.refNumber);
+        }
+        return;
+      }
+      // #130: the spec-share card's "PR #N" anchor previously rendered
+      // dead — route it through the same drawer reveal as the chips.
+      const specPr = e.target.closest('.gc-spec-pr');
+      if (specPr) {
+        e.preventDefault();
+        if (typeof AppView !== 'undefined' && AppView.revealInDrawer) {
+          AppView.revealInDrawer('pr', specPr.dataset.pr);
+        }
+        return;
+      }
       const quoted = e.target.closest('.gc-quoted');
       if (quoted) { GroupChat._handleQuotedClick(quoted); return; }
       // Real links/buttons (PR link, "View full spec", mentions) win.
@@ -555,8 +917,24 @@ const GroupChat = {
       if (!GroupChat._isCleanTap(e)) return;
       const row = e.target.closest(ROW_SEL);
       if (!row || !container.contains(row)) return;
+      // Clicking a dotted message clears just that message's unread
+      // mention/reply/reaction notification.
+      const rowId = parseInt(row.dataset.msgId || '', 10);
+      if (rowId) GroupChat._clearMessageDot(rowId);
       const quote = GroupChat._quoteFromRow(row);
       if (quote) GroupChat.setQuote(quote);
+    });
+
+    // #130: chips are spans with role="link" tabindex="0" — give keyboard
+    // users the same drawer reveal a click gets.
+    container.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const ref = e.target.closest && e.target.closest('.gc-ref');
+      if (!ref) return;
+      e.preventDefault();
+      if (typeof AppView !== 'undefined' && AppView.revealInDrawer) {
+        AppView.revealInDrawer(ref.dataset.refType, ref.dataset.refNumber);
+      }
     });
   },
 
@@ -609,9 +987,16 @@ const GroupChat = {
   },
 
   // Apply a fresh reaction aggregate (from the WS 'reaction' broadcast or
-  // history) to a message — update state + patch just its pill row.
+  // history) to a message — update state + patch just its pill row. The
+  // message may live in the general stream or any cached thread (#194).
   _updateMessageReactions(messageId, reactions) {
-    const msg = GroupChat.messages.find((m) => String(m.id) === String(messageId));
+    let msg = GroupChat.messages.find((m) => String(m.id) === String(messageId));
+    if (!msg) {
+      for (const st of GroupChat.threads.values()) {
+        msg = st.messages.find((m) => String(m.id) === String(messageId));
+        if (msg) break;
+      }
+    }
     if (msg) msg.reactions = reactions || [];
     const el = document.getElementById(`gc-react-${messageId}`);
     if (el) el.innerHTML = GroupChat._renderReactionPills(msg || { reactions: reactions || [] });
@@ -717,6 +1102,71 @@ const GroupChat = {
     GroupChat._closeReactionBar();
   },
 
+  // ── per-message unread dot ──────────────────────────────────────────
+
+  // Dot markup for a message this user has an unread mention/reply/
+  // reaction notification for. Driven by the server's
+  // has_unread_notification flag on loaded history; live messages never
+  // carry it (a brand-new message can't yet have a notification for you).
+  _unreadDotHtml(msg) {
+    if (!msg || !msg.has_unread_notification) return '';
+    return `<span class="gc-unread-dot" data-unread-dot="${msg.id || ''}" aria-label="Unread mention"></span>`;
+  },
+
+  // Clear the dot for one message (the "click a dotted message" path):
+  // optimistically drop it locally, then confirm read on the server by
+  // chat_message_id. Other tabs reconcile via the notifications_changed
+  // broadcast the server fans out. No-op if the message has no dot.
+  _clearMessageDot(messageId) {
+    const msg = GroupChat.messages.find((m) => String(m.id) === String(messageId));
+    if (!msg || !msg.has_unread_notification) return;
+    msg.has_unread_notification = false;
+    const dot = document.querySelector(`[data-unread-dot="${messageId}"]`);
+    if (dot) dot.remove();
+    fetch('/api/notifications/read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_message_id: Number(messageId) }),
+    }).then((res) => {
+      // Only sync the bell badge once the backend confirms — never
+      // optimistically. The dot is already gone locally above.
+      if (res.ok) window.Notifications?.refresh?.();
+    }).catch(() => {});
+  },
+
+  // Reconcile dots from the current notifications list (window.Notifications
+  // .items). Called on notification_new (a mention arrived while viewing)
+  // and notifications_changed (something was cleared — e.g. this user sent
+  // a message and the reply-clears-all fired, or another tab cleared one).
+  // Operates only over messages the list actually references, so older
+  // dotted messages outside the capped list aren't wrongly touched: a
+  // referenced message's dot becomes (readAt == null).
+  reconcileDotsFromNotifications() {
+    const items = (window.Notifications && Notifications.items) || [];
+    if (!Array.isArray(items)) return;
+    const KINDS = new Set(['mention', 'reply', 'reaction']);
+    const state = new Map(); // chatMessageId -> isUnread
+    for (const n of items) {
+      if (!n || !KINDS.has(n.kind) || n.chatMessageId == null) continue;
+      // A later (newer) item wins; items are newest-first, so only set if
+      // not already seen.
+      if (!state.has(n.chatMessageId)) state.set(n.chatMessageId, !n.readAt);
+    }
+    for (const msg of GroupChat.messages) {
+      if (!state.has(msg.id)) continue;
+      const unread = state.get(msg.id);
+      if (!!msg.has_unread_notification === unread) continue;
+      msg.has_unread_notification = unread;
+      const existing = document.querySelector(`[data-unread-dot="${msg.id}"]`);
+      if (unread && !existing) {
+        const row = document.querySelector(`.gc-msg[data-msg-id="${msg.id}"] .gc-msg-header`);
+        if (row) row.insertAdjacentHTML('afterbegin', GroupChat._unreadDotHtml(msg));
+      } else if (!unread && existing) {
+        existing.remove();
+      }
+    }
+  },
+
   renderMessageHtml(msg) {
     const time = new Date(msg.createdAt || msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const username = msg.username || 'System';
@@ -765,6 +1215,7 @@ const GroupChat = {
     return `
       <div class="gc-msg ${isSelf ? 'gc-msg-self' : ''}" data-msg-id="${msg.id || ''}" data-username="${escapeHtml(username)}">
         <div class="gc-msg-header">
+          ${GroupChat._unreadDotHtml(msg)}
           <span class="gc-msg-username ${isSelf ? 'gc-msg-username-self' : ''}">${escapeHtml(username)}</span>
           <span class="gc-msg-time">${time}</span>
           ${GroupChat._renderReactAddBtn(msg)}
@@ -853,7 +1304,7 @@ const GroupChat = {
   // votable set yields empty controls and the row falls back to a plain
   // activity line.
   refreshVoteControls() {
-    document.querySelectorAll('#gc-messages [data-vote-controls]').forEach((el) => {
+    document.querySelectorAll('#gc-messages [data-vote-controls], #gc-thread-messages [data-vote-controls]').forEach((el) => {
       const pr = GroupChat._resolvePr(
         el.getAttribute('data-session-id') || '',
         el.getAttribute('data-pr-number') || ''
@@ -1364,13 +1815,645 @@ function escapeHtml(str) {
 
 // Render chat content with @mention highlighting. Mentions that match the
 // current viewer's username get the `-self` variant so their own mentions
-// stand out more than someone else's.
+// stand out more than someone else's. A second pass (#130) chips PR#N / #N
+// references so they read as navigable tokens.
 function renderWithMentions(raw) {
   const escaped = escapeHtml(raw || '');
   const me = (App.user?.username || '').toLowerCase();
-  return escaped.replace(/(^|[^\w])@([A-Za-z0-9_]{1,32})/g, (_m, pre, name) => {
+  const withMentions = escaped.replace(/(^|[^\w])@([A-Za-z0-9_]{1,32})/g, (_m, pre, name) => {
     const isMe = name.toLowerCase() === me;
     const cls = isMe ? 'gc-mention gc-mention-self' : 'gc-mention';
     return `${pre}<span class="${cls}">@${name}</span>`;
   });
+  return renderRefChips(withMentions);
 }
+
+// #130: second replacement pass over the (already escaped, mention-marked)
+// content — `PR#N` / `PR #N` render as violet PR chips and bare `#N` as
+// emerald issue chips. One combined regex so `PR#12` is never double-matched
+// by the issue pattern. The `&` exclusion in the boundary keeps escaped
+// entities from chipping; the trailing lookahead keeps `#12abc` plain.
+// Clicking / Enter / Space on a chip routes to AppView.revealInDrawer (see
+// _attachQuoteHandlers) — refs are a pure display convention, so message
+// content stays plain text on the wire and in the DB.
+function renderRefChips(html) {
+  return html.replace(/(^|[^\w&])(pr ?#|#)(\d{1,7})(?!\w)/gi, (_m, pre, prefix, num) => {
+    const isPr = prefix.length > 1; // `PR#` / `PR #` vs bare `#`
+    const cls = isPr ? 'gc-ref gc-ref-pr' : 'gc-ref gc-ref-issue';
+    const type = isPr ? 'pr' : 'issue';
+    const label = isPr ? `PR#${num}` : `#${num}`;
+    return `${pre}<span class="${cls}" data-ref-type="${type}" data-ref-number="${num}" role="link" tabindex="0">${label}</span>`;
+  });
+}
+
+// ── #87: @mention autocomplete ─────────────────────────────────────────
+//
+// Composer dropdown that opens when the user types `@` in #gc-input and
+// suggests usernames participating in this app's chat. Self-contained:
+// the only integration points are MentionAutocomplete.attach() (called
+// from AppView.renderGroupChatTab when the input is (re)created) and the
+// shared `escapeHtml` helper above.
+//
+// Matching parity is the whole game (see spec): the trigger regex and the
+// inserted text MUST use the same character class the server's MENTION_RE
+// (`src/services/notifications.js`) recognizes — `[A-Za-z0-9_]`, length
+// 1..32, only when the `@` is preceded by a non-word char or start. A
+// suggestion that inserts a string the server won't parse as a mention is
+// worse than no autocomplete, so both ends derive from MENTION_CHARS.
+const MentionAutocomplete = {
+  // Character class shared with the server-side mention parser.
+  MENTION_CHARS: 'A-Za-z0-9_',
+  MAX_LEN: 32,
+  // How many filtered names to keep (the menu scrolls; CSS caps the
+  // visible height). Plenty for prefix-filtered participant lists.
+  MAX_RESULTS: 50,
+  // Cache freshness: a stale list only means a just-joined user isn't
+  // suggested yet, which is fine. Re-fetch when older than this.
+  CACHE_TTL_MS: 2 * 60 * 1000,
+
+  _cacheBySlug: new Map(), // slug -> { users: [username...], fetchedAt }
+  _input: null,
+  _slug: null,
+  _menu: null,
+  _items: [],     // currently-shown usernames
+  _active: -1,    // highlighted index into _items
+  _open: false,
+  _tokenStart: -1, // index of the `@` in input.value for the active token
+  _composing: false,
+  _dismissBound: null,
+
+  get _triggerRe() {
+    // Anchored to the caret: boundary (start or non-word char), `@`, then
+    // up to MAX_LEN mention chars, end-of-substring.
+    return new RegExp(
+      `(^|[^${this.MENTION_CHARS}])@([${this.MENTION_CHARS}]{0,${this.MAX_LEN}})$`
+    );
+  },
+
+  // Wire (or re-wire) the controller onto a freshly-rendered composer.
+  // Idempotent per element; called on every group-chat tab mount.
+  attach(input, slug) {
+    if (!input) return;
+    MentionAutocomplete._input = input;
+    MentionAutocomplete._slug = slug;
+    MentionAutocomplete._loadCandidates(slug);
+
+    if (input._gcMentionBound) return;
+    input._gcMentionBound = true;
+
+    input.addEventListener('compositionstart', () => { MentionAutocomplete._composing = true; });
+    input.addEventListener('compositionend', () => {
+      MentionAutocomplete._composing = false;
+      MentionAutocomplete._sync();
+    });
+    input.addEventListener('input', () => MentionAutocomplete._sync());
+    input.addEventListener('click', () => MentionAutocomplete._sync());
+    input.addEventListener('keyup', (e) => {
+      // The keys we manage in the capture-phase keydown handler don't
+      // change the token; skip re-detecting on their keyup.
+      if (['ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'Escape'].includes(e.key)) return;
+      MentionAutocomplete._sync();
+    });
+    // Capture phase so we win over the composer's own keydown handler and
+    // the form's implicit Enter-submit while the menu is open.
+    input.addEventListener('keydown', (e) => MentionAutocomplete._onKeydown(e), true);
+    input.addEventListener('blur', () => {
+      // Defer so a mousedown on a menu option (which we preventDefault to
+      // keep focus) can run first.
+      setTimeout(() => { if (document.activeElement !== input) MentionAutocomplete.close(); }, 0);
+    });
+  },
+
+  async _loadCandidates(slug) {
+    if (!slug) return;
+    const cached = MentionAutocomplete._cacheBySlug.get(slug);
+    if (cached && (Date.now() - cached.fetchedAt) < MentionAutocomplete.CACHE_TTL_MS) return;
+    try {
+      const res = await fetch(`/api/apps/${slug}/mention-suggestions`);
+      if (!res.ok) return;
+      const { users } = await res.json();
+      const names = Array.isArray(users)
+        ? users.map((u) => (u && u.username) || '').filter(Boolean)
+        : [];
+      MentionAutocomplete._cacheBySlug.set(slug, { users: names, fetchedAt: Date.now() });
+      // If the user already has an open `@token` while we were fetching,
+      // refresh the menu now that we have data.
+      if (MentionAutocomplete._input === document.activeElement) MentionAutocomplete._sync();
+    } catch { /* offline / transient — next keystroke retries via TTL */ }
+  },
+
+  _candidates() {
+    const c = MentionAutocomplete._cacheBySlug.get(MentionAutocomplete._slug);
+    return (c && c.users) || [];
+  },
+
+  // Detect an active mention token immediately before the caret.
+  // Returns { start, query } or null.
+  _detectToken() {
+    const input = MentionAutocomplete._input;
+    if (!input) return null;
+    const caret = input.selectionStart;
+    if (caret == null || caret !== input.selectionEnd) return null; // ignore ranges
+    const before = input.value.slice(0, caret);
+    const m = before.match(MentionAutocomplete._triggerRe);
+    if (!m) return null;
+    const query = m[2];
+    const start = m.index + m[1].length; // index of the `@`
+    return { start, query };
+  },
+
+  _filter(query) {
+    const q = query.toLowerCase();
+    const out = [];
+    for (const name of MentionAutocomplete._candidates()) {
+      if (!q || name.toLowerCase().startsWith(q)) {
+        out.push(name);
+        if (out.length >= MentionAutocomplete.MAX_RESULTS) break;
+      }
+    }
+    return out;
+  },
+
+  // Re-evaluate the token under the caret and open/close/refresh the menu.
+  _sync() {
+    if (MentionAutocomplete._composing) return;
+    const token = MentionAutocomplete._detectToken();
+    if (!token) { MentionAutocomplete.close(); return; }
+    const items = MentionAutocomplete._filter(token.query);
+    if (!items.length) { MentionAutocomplete.close(); return; }
+    MentionAutocomplete._tokenStart = token.start;
+    MentionAutocomplete._items = items;
+    // Keep a valid highlighted row; reset to the top when the set changes.
+    MentionAutocomplete._active = 0;
+    MentionAutocomplete._render();
+  },
+
+  _ensureMenu() {
+    if (MentionAutocomplete._menu) return MentionAutocomplete._menu;
+    const menu = document.createElement('div');
+    menu.id = 'gc-mention-menu';
+    menu.className = 'gc-mention-menu hidden';
+    menu.setAttribute('role', 'listbox');
+    // mousedown (not click) so we can preventDefault and keep the input
+    // focused — a blur-then-click would close the menu before the click.
+    menu.addEventListener('mousedown', (e) => {
+      const opt = e.target.closest('.gc-mention-option');
+      if (!opt) return;
+      e.preventDefault();
+      MentionAutocomplete.accept(opt.dataset.username);
+    });
+    document.body.appendChild(menu);
+    MentionAutocomplete._menu = menu;
+    return menu;
+  },
+
+  _render() {
+    const menu = MentionAutocomplete._ensureMenu();
+    const me = (App.user?.username || '').toLowerCase();
+    menu.innerHTML = MentionAutocomplete._items.map((name, i) => {
+      const isMe = name.toLowerCase() === me;
+      const active = i === MentionAutocomplete._active ? ' gc-mention-option-active' : '';
+      return `<div class="gc-mention-option${active}" role="option" data-username="${escapeHtml(name)}" data-index="${i}">` +
+        `<span class="gc-mention-option-at">@</span>${escapeHtml(name)}` +
+        (isMe ? `<span class="gc-mention-option-you">you</span>` : '') +
+        `</div>`;
+    }).join('');
+
+    if (!MentionAutocomplete._open) {
+      menu.classList.remove('hidden');
+      MentionAutocomplete._open = true;
+      MentionAutocomplete._bindDismiss();
+    }
+    MentionAutocomplete._position();
+  },
+
+  // Anchor above the composer (input lives at the bottom of the pane),
+  // flipping below if it would clip the top. Matches the input width.
+  _position() {
+    const input = MentionAutocomplete._input;
+    const menu = MentionAutocomplete._menu;
+    if (!input || !menu) return;
+    const r = input.getBoundingClientRect();
+    menu.style.left = `${r.left}px`;
+    menu.style.width = `${r.width}px`;
+    const h = menu.offsetHeight || 0;
+    let top = r.top - h - 4;
+    if (top < 8) top = Math.min(r.bottom + 4, window.innerHeight - h - 8);
+    menu.style.top = `${top}px`;
+  },
+
+  _bindDismiss() {
+    if (MentionAutocomplete._dismissBound) return;
+    MentionAutocomplete._dismissBound = (e) => {
+      if (e.type === 'scroll') { MentionAutocomplete.close(); return; }
+      if (MentionAutocomplete._menu && MentionAutocomplete._menu.contains(e.target)) return;
+      if (e.target === MentionAutocomplete._input) return;
+      MentionAutocomplete.close();
+    };
+    document.addEventListener('mousedown', MentionAutocomplete._dismissBound, true);
+    const msgs = document.getElementById('gc-messages');
+    if (msgs) msgs.addEventListener('scroll', MentionAutocomplete._dismissBound, true);
+  },
+
+  close() {
+    if (!MentionAutocomplete._open) return;
+    MentionAutocomplete._open = false;
+    MentionAutocomplete._active = -1;
+    MentionAutocomplete._items = [];
+    MentionAutocomplete._tokenStart = -1;
+    if (MentionAutocomplete._menu) {
+      MentionAutocomplete._menu.classList.add('hidden');
+      MentionAutocomplete._menu.innerHTML = '';
+    }
+    if (MentionAutocomplete._dismissBound) {
+      document.removeEventListener('mousedown', MentionAutocomplete._dismissBound, true);
+      const msgs = document.getElementById('gc-messages');
+      if (msgs) msgs.removeEventListener('scroll', MentionAutocomplete._dismissBound, true);
+      MentionAutocomplete._dismissBound = null;
+    }
+  },
+
+  _move(delta) {
+    const n = MentionAutocomplete._items.length;
+    if (!n) return;
+    MentionAutocomplete._active = (MentionAutocomplete._active + delta + n) % n;
+    const menu = MentionAutocomplete._menu;
+    if (!menu) return;
+    menu.querySelectorAll('.gc-mention-option').forEach((el, i) => {
+      el.classList.toggle('gc-mention-option-active', i === MentionAutocomplete._active);
+      if (i === MentionAutocomplete._active) el.scrollIntoView({ block: 'nearest' });
+    });
+  },
+
+  // Capture-phase keydown. Consumes the event (preventing the composer's
+  // own handler + the form's Enter-submit) only when the menu is open and
+  // the key is one we own.
+  _onKeydown(e) {
+    if (!MentionAutocomplete._open) return;
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault(); e.stopPropagation(); MentionAutocomplete._move(1); break;
+      case 'ArrowUp':
+        e.preventDefault(); e.stopPropagation(); MentionAutocomplete._move(-1); break;
+      case 'Enter':
+      case 'Tab': {
+        const name = MentionAutocomplete._items[MentionAutocomplete._active];
+        if (name) {
+          e.preventDefault(); e.stopPropagation();
+          MentionAutocomplete.accept(name);
+        }
+        break;
+      }
+      case 'Escape':
+        e.preventDefault(); e.stopPropagation(); MentionAutocomplete.close(); break;
+      default:
+        break;
+    }
+  },
+
+  // Replace the active `@token` with `@username ` (trailing space), keep
+  // within maxlength, restore the caret, and fire a synthetic `input`
+  // event so the composer's own handlers (draft persistence + typing
+  // indicator) run exactly as if the user typed it.
+  accept(username) {
+    const input = MentionAutocomplete._input;
+    if (!input || !username || MentionAutocomplete._tokenStart < 0) { MentionAutocomplete.close(); return; }
+    const caret = input.selectionStart;
+    const value = input.value;
+    const before = value.slice(0, MentionAutocomplete._tokenStart);
+    const after = value.slice(caret);
+    const insert = `@${username} `;
+    const next = before + insert + after;
+
+    const max = parseInt(input.getAttribute('maxlength') || '0', 10);
+    if (max && next.length > max) {
+      // Wouldn't fit — leave the user's text untouched rather than
+      // silently truncating their message.
+      MentionAutocomplete.close();
+      return;
+    }
+
+    input.value = next;
+    const pos = (before + insert).length;
+    input.setSelectionRange(pos, pos);
+    MentionAutocomplete.close();
+    input.focus();
+    // Run the existing #gc-input `input` listener (draft save + sendTyping).
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  },
+};
+
+// ── #130: PR / issue reference autocomplete ─────────────────────────────
+//
+// Composer dropdown that opens when the user types `PR#` (open PRs only)
+// or a bare `#` (open issues first, then open PRs) in #gc-input. Modeled
+// directly on MentionAutocomplete above: same menu element pattern,
+// capture-phase keydown, _detectToken/_sync/accept lifecycle, blur/dismiss
+// handling, and positioning anchored above the composer. Candidates come
+// from the endpoints the activity panel already uses (/promoted +
+// /github-issues) — no new API.
+//
+// Unlike @mentions there is no server-side parser to stay in sync with:
+// refs are a pure display convention (renderRefChips above), so the only
+// contract is that accept() inserts the canonical `PR#N` / `#N` forms the
+// renderer chips. Selecting a PR from the bare-`#` combined menu inserts
+// the canonical `PR#N`, not `#N`.
+const RefAutocomplete = {
+  MAX_RESULTS: 50,
+  // Stale list only means a just-opened PR/issue isn't suggested for a
+  // couple of minutes (the issues endpoint is itself cached server-side
+  // for 5) — users can still type the number manually and it chips fine.
+  CACHE_TTL_MS: 2 * 60 * 1000,
+
+  _cacheBySlug: new Map(), // slug -> { prs: [...], issues: [...], fetchedAt }
+  _input: null,
+  _slug: null,
+  _menu: null,
+  _items: [],      // currently-shown { number, title, kind: 'pr'|'issue' }
+  _active: -1,
+  _open: false,
+  _tokenStart: -1, // index of the token start (the `P` or `#`) in input.value
+  _composing: false,
+  _dismissBound: null,
+
+  // Anchored at the caret: boundary (start or non-word, non-& char), then
+  // `PR#` / `PR #` (PR mode) or bare `#` (combined mode), then a
+  // digits-only query, end of substring. Typing a non-digit after the `#`
+  // stops matching and the menu closes. The `&` exclusion mirrors
+  // renderRefChips' boundary so the dropdown never triggers where the
+  // renderer wouldn't chip. The `@` vs `#` triggers are mutually exclusive
+  // at one caret position, so this menu and MentionAutocomplete's can't
+  // both be open at once.
+  _triggerRe: /(^|[^\w&])(pr ?#|#)(\d{0,7})$/i,
+
+  // Wire (or re-wire) the controller onto a freshly-rendered composer.
+  // Idempotent per element; called on every group-chat tab mount. Kicks
+  // off the candidate load so the list is warm by the first keystroke.
+  attach(input, slug) {
+    if (!input) return;
+    RefAutocomplete._input = input;
+    RefAutocomplete._slug = slug;
+    RefAutocomplete._loadCandidates(slug);
+
+    if (input._gcRefBound) return;
+    input._gcRefBound = true;
+
+    input.addEventListener('compositionstart', () => { RefAutocomplete._composing = true; });
+    input.addEventListener('compositionend', () => {
+      RefAutocomplete._composing = false;
+      RefAutocomplete._sync();
+    });
+    input.addEventListener('input', () => RefAutocomplete._sync());
+    input.addEventListener('click', () => RefAutocomplete._sync());
+    input.addEventListener('keyup', (e) => {
+      if (['ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'Escape'].includes(e.key)) return;
+      RefAutocomplete._sync();
+    });
+    // Capture phase so we win over the composer's own keydown handler and
+    // the form's implicit Enter-submit while the menu is open. Only
+    // consumes keys while this menu is open, so it can't fight
+    // MentionAutocomplete's identical handler.
+    input.addEventListener('keydown', (e) => RefAutocomplete._onKeydown(e), true);
+    input.addEventListener('blur', () => {
+      setTimeout(() => { if (document.activeElement !== input) RefAutocomplete.close(); }, 0);
+    });
+  },
+
+  async _loadCandidates(slug) {
+    if (!slug) return;
+    const cached = RefAutocomplete._cacheBySlug.get(slug);
+    if (cached && (Date.now() - cached.fetchedAt) < RefAutocomplete.CACHE_TTL_MS) return;
+    try {
+      const [prRes, issueRes] = await Promise.all([
+        fetch(`/api/apps/${slug}/promoted`),
+        fetch(`/api/apps/${slug}/github-issues`),
+      ]);
+      const prData = prRes.ok ? await prRes.json() : {};
+      const issueData = issueRes.ok ? await issueRes.json() : {};
+      // Open (promoted/merging) PRs — the same set the drawer's "Open PRs"
+      // section shows. Merged PRs are intentionally not suggested; they're
+      // still clickable once rendered as chips.
+      const prs = (Array.isArray(prData.promoted) ? prData.promoted : [])
+        .filter((pr) => pr.pr_number != null)
+        .map((pr) => ({ number: pr.pr_number, title: pr.pr_title || `by ${pr.username || ''}`, kind: 'pr' }));
+      const issues = (Array.isArray(issueData.issues) ? issueData.issues : [])
+        .map((i) => ({ number: i.number, title: i.title || '', kind: 'issue' }));
+      RefAutocomplete._cacheBySlug.set(slug, { prs, issues, fetchedAt: Date.now() });
+      // If the user already has an open token while we were fetching,
+      // refresh the menu now that we have data.
+      if (RefAutocomplete._input === document.activeElement) RefAutocomplete._sync();
+    } catch { /* offline / transient — next keystroke retries via TTL */ }
+  },
+
+  // Detect an active ref token immediately before the caret.
+  // Returns { start, query, mode: 'pr'|'combined' } or null.
+  _detectToken() {
+    const input = RefAutocomplete._input;
+    if (!input) return null;
+    const caret = input.selectionStart;
+    if (caret == null || caret !== input.selectionEnd) return null; // ignore ranges
+    const before = input.value.slice(0, caret);
+    const m = before.match(RefAutocomplete._triggerRe);
+    if (!m) return null;
+    return {
+      start: m.index + m[1].length,
+      query: m[3],
+      mode: m[2].length > 1 ? 'pr' : 'combined',
+    };
+  },
+
+  // Prefix-match on the stringified number ("1" matches #1, #12, #130).
+  // Combined mode lists the issues block first, then PRs.
+  _filter(query, mode) {
+    const c = RefAutocomplete._cacheBySlug.get(RefAutocomplete._slug) || {};
+    const pool = mode === 'pr'
+      ? (c.prs || [])
+      : [...(c.issues || []), ...(c.prs || [])];
+    const out = [];
+    for (const item of pool) {
+      if (!query || String(item.number).startsWith(query)) {
+        out.push(item);
+        if (out.length >= RefAutocomplete.MAX_RESULTS) break;
+      }
+    }
+    return out;
+  },
+
+  // Re-evaluate the token under the caret and open/close/refresh the menu.
+  _sync() {
+    if (RefAutocomplete._composing) return;
+    const token = RefAutocomplete._detectToken();
+    if (!token) { RefAutocomplete.close(); return; }
+    const items = RefAutocomplete._filter(token.query, token.mode);
+    if (!items.length) { RefAutocomplete.close(); return; }
+    RefAutocomplete._tokenStart = token.start;
+    RefAutocomplete._items = items;
+    RefAutocomplete._active = 0;
+    RefAutocomplete._render();
+  },
+
+  _ensureMenu() {
+    if (RefAutocomplete._menu) return RefAutocomplete._menu;
+    const menu = document.createElement('div');
+    menu.id = 'gc-ref-menu';
+    // Reuse the mention menu/option styling so positioning + theming come
+    // for free; gc-ref-option only widens the row gap for the badge.
+    menu.className = 'gc-mention-menu hidden';
+    menu.setAttribute('role', 'listbox');
+    // mousedown (not click) so we can preventDefault and keep the input
+    // focused — a blur-then-click would close the menu before the click.
+    menu.addEventListener('mousedown', (e) => {
+      const opt = e.target.closest('.gc-mention-option');
+      if (!opt) return;
+      e.preventDefault();
+      RefAutocomplete.accept(opt.dataset.kind, opt.dataset.number);
+    });
+    document.body.appendChild(menu);
+    RefAutocomplete._menu = menu;
+    return menu;
+  },
+
+  _render() {
+    const menu = RefAutocomplete._ensureMenu();
+    menu.innerHTML = RefAutocomplete._items.map((item, i) => {
+      const active = i === RefAutocomplete._active ? ' gc-mention-option-active' : '';
+      // The badge reuses the message-chip classes so the dropdown teaches
+      // the rendering: violet PR#N, emerald #N.
+      const badge = item.kind === 'pr'
+        ? `<span class="gc-ref gc-ref-pr">PR#${item.number}</span>`
+        : `<span class="gc-ref gc-ref-issue">#${item.number}</span>`;
+      return `<div class="gc-mention-option gc-ref-option${active}" role="option" data-kind="${item.kind}" data-number="${item.number}" data-index="${i}">`
+        + badge
+        + `<span class="gc-ref-option-title">${escapeHtml(item.title || '')}</span>`
+        + `</div>`;
+    }).join('');
+
+    if (!RefAutocomplete._open) {
+      menu.classList.remove('hidden');
+      RefAutocomplete._open = true;
+      RefAutocomplete._bindDismiss();
+    }
+    RefAutocomplete._position();
+  },
+
+  // Anchor above the composer, flipping below if it would clip the top.
+  // Matches the input width — same mechanics as MentionAutocomplete.
+  _position() {
+    const input = RefAutocomplete._input;
+    const menu = RefAutocomplete._menu;
+    if (!input || !menu) return;
+    const r = input.getBoundingClientRect();
+    menu.style.left = `${r.left}px`;
+    menu.style.width = `${r.width}px`;
+    const h = menu.offsetHeight || 0;
+    let top = r.top - h - 4;
+    if (top < 8) top = Math.min(r.bottom + 4, window.innerHeight - h - 8);
+    menu.style.top = `${top}px`;
+  },
+
+  _bindDismiss() {
+    if (RefAutocomplete._dismissBound) return;
+    RefAutocomplete._dismissBound = (e) => {
+      if (e.type === 'scroll') { RefAutocomplete.close(); return; }
+      if (RefAutocomplete._menu && RefAutocomplete._menu.contains(e.target)) return;
+      if (e.target === RefAutocomplete._input) return;
+      RefAutocomplete.close();
+    };
+    document.addEventListener('mousedown', RefAutocomplete._dismissBound, true);
+    const msgs = document.getElementById('gc-messages');
+    if (msgs) msgs.addEventListener('scroll', RefAutocomplete._dismissBound, true);
+  },
+
+  close() {
+    if (!RefAutocomplete._open) return;
+    RefAutocomplete._open = false;
+    RefAutocomplete._active = -1;
+    RefAutocomplete._items = [];
+    RefAutocomplete._tokenStart = -1;
+    if (RefAutocomplete._menu) {
+      RefAutocomplete._menu.classList.add('hidden');
+      RefAutocomplete._menu.innerHTML = '';
+    }
+    if (RefAutocomplete._dismissBound) {
+      document.removeEventListener('mousedown', RefAutocomplete._dismissBound, true);
+      const msgs = document.getElementById('gc-messages');
+      if (msgs) msgs.removeEventListener('scroll', RefAutocomplete._dismissBound, true);
+      RefAutocomplete._dismissBound = null;
+    }
+  },
+
+  _move(delta) {
+    const n = RefAutocomplete._items.length;
+    if (!n) return;
+    RefAutocomplete._active = (RefAutocomplete._active + delta + n) % n;
+    const menu = RefAutocomplete._menu;
+    if (!menu) return;
+    menu.querySelectorAll('.gc-mention-option').forEach((el, i) => {
+      el.classList.toggle('gc-mention-option-active', i === RefAutocomplete._active);
+      if (i === RefAutocomplete._active) el.scrollIntoView({ block: 'nearest' });
+    });
+  },
+
+  // Capture-phase keydown. Consumes the event only when the menu is open
+  // and the key is one we own.
+  _onKeydown(e) {
+    if (!RefAutocomplete._open) return;
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault(); e.stopPropagation(); RefAutocomplete._move(1); break;
+      case 'ArrowUp':
+        e.preventDefault(); e.stopPropagation(); RefAutocomplete._move(-1); break;
+      case 'Enter':
+      case 'Tab': {
+        const item = RefAutocomplete._items[RefAutocomplete._active];
+        if (item) {
+          e.preventDefault(); e.stopPropagation();
+          RefAutocomplete.accept(item.kind, item.number);
+        }
+        break;
+      }
+      case 'Escape':
+        e.preventDefault(); e.stopPropagation(); RefAutocomplete.close(); break;
+      default:
+        break;
+    }
+  },
+
+  // Replace the active token with the canonical form — `PR#N ` for a PR,
+  // `#N ` for an issue (trailing space) — keep within maxlength, restore
+  // the caret, and fire a synthetic `input` event so draft persistence and
+  // the typing indicator run exactly as if the user typed it.
+  accept(kind, number) {
+    const input = RefAutocomplete._input;
+    if (!input || !number || RefAutocomplete._tokenStart < 0) { RefAutocomplete.close(); return; }
+    const caret = input.selectionStart;
+    const value = input.value;
+    const before = value.slice(0, RefAutocomplete._tokenStart);
+    const after = value.slice(caret);
+    const insert = kind === 'pr' ? `PR#${number} ` : `#${number} `;
+    const next = before + insert + after;
+
+    const max = parseInt(input.getAttribute('maxlength') || '0', 10);
+    if (max && next.length > max) {
+      // Wouldn't fit — leave the user's text untouched rather than
+      // silently truncating their message.
+      RefAutocomplete.close();
+      return;
+    }
+
+    input.value = next;
+    const pos = (before + insert).length;
+    input.setSelectionRange(pos, pos);
+    RefAutocomplete.close();
+    input.focus();
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  },
+};
+
+// Expose on window so app.js's WS dispatcher can reconcile the in-chat
+// unread dots on notification events. (A top-level `const` is a lexical
+// global accessible by bare name within the realm, but is NOT a property
+// of `window` — mirror the `window.Notifications` pattern explicitly.)
+window.GroupChat = GroupChat;
+window.MentionAutocomplete = MentionAutocomplete;
+window.RefAutocomplete = RefAutocomplete;

@@ -18,6 +18,12 @@
       document.documentElement.classList.remove('dark');
     }
   </script>
+  <style>
+    /* Transparent per-column hover targets in the SVG charts. The faint
+       fill on hover indicates which column the tooltip is describing. */
+    .dc-hover { cursor: pointer; }
+    .dc-hover:hover { fill-opacity: 0.10 !important; }
+  </style>
 </head>
 <body class="bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 min-h-screen p-6">
   <div class="max-w-5xl mx-auto">
@@ -38,15 +44,26 @@
         <div id="counters" class="grid grid-cols-2 sm:grid-cols-4 gap-3"></div>
       </section>
 
+      <!-- Daily spend -->
+      <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <h2 class="text-lg font-semibold mb-1">Daily spend</h2>
+        <p class="text-xs text-zinc-500 mb-4">Total LLM spend per day, last 30 days. Hover a bar for the amount.</p>
+        <div id="spend"></div>
+      </section>
+
       <!-- Funnels -->
       <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
         <div class="flex items-center justify-between mb-4">
           <h2 class="text-lg font-semibold">Funnels</h2>
-          <div class="flex items-center gap-1 text-xs">
+          <div class="flex flex-wrap items-center gap-1 text-xs">
             <span class="text-zinc-500 mr-1">Cohort:</span>
-            <button data-cohort="all"  class="cohort-btn px-2 py-1 rounded bg-violet-600 text-white">All time</button>
+            <button data-cohort="all" class="cohort-btn px-2 py-1 rounded bg-violet-600 text-white">All time</button>
             <button data-cohort="90d" class="cohort-btn px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">Last 90d</button>
             <button data-cohort="30d" class="cohort-btn px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">Last 30d</button>
+            <button data-cohort="14d" class="cohort-btn px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">Last 14d</button>
+            <button data-cohort="7d" class="cohort-btn px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">Last 7d</button>
+            <button data-cohort="3d" class="cohort-btn px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">Last 3d</button>
+            <button data-cohort="1d" class="cohort-btn px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">Last 1d</button>
           </div>
         </div>
         <div class="grid md:grid-cols-2 gap-6">
@@ -103,6 +120,23 @@
             <div id="eng-wau"></div>
           </div>
         </div>
+      </section>
+
+      <!-- Top users by dev sessions -->
+      <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <h2 class="text-lg font-semibold mb-1">Top builders</h2>
+        <p class="text-xs text-zinc-500 mb-4">Top 30 users by lifetime dev sessions started, highest on the left. Hover a bar for the per-outcome breakdown.</p>
+        <div id="top-users"></div>
+      </section>
+
+      <!-- Kudos giving distribution -->
+      <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <h2 class="text-lg font-semibold mb-1">Kudos participation</h2>
+        <p class="text-xs text-zinc-500 mb-4">
+          Per week, how many users gave 0&ndash;5 kudos (everyone gets a budget of 5/week).
+          The 0 bucket is registered users who gave none that week.
+        </p>
+        <div id="kudos-weekly"></div>
       </section>
     </main>
   </div>

@@ -776,8 +776,9 @@ is real, so all session-gated routes work.
 **What's deliberately broken in self-staging:**
 
 - Spawning child apps from inside a staging clone (no Docker socket
-  mount, on purpose).
-- Caddy route registration from inside staging (no socket).
+  mount, on purpose). (Routing itself needs no per-host Caddy action any
+  more — the wildcard site maps hostnames to container names — so the
+  only gap here is that a staging clone can't start the containers.)
 - Reading `deploy-status.json` (host-mounted file the staging container
   doesn't see).
 - `/api/auth/login` against any cloned account (passwords scrubbed —
@@ -821,7 +822,7 @@ clone routinely accessible through dev-chat preview):**
   read-only chain queries — no funds at risk. Worth noting if a
   future PR adds wallet-send paths to the platform.
 - The Phase 5 session cookie is set on the staging origin
-  (`*--<sha>.<USERNODE_DOMAIN>`); browsers scope cookies per-host so
+  (`<slug>--s<id>.<USERNODE_DOMAIN>`); browsers scope cookies per-host so
   a leaked staging cookie can only be replayed against its own
   staging container, which is short-lived (deleted on PR merge or
   `/api/teardown-staging`). It cannot escape to the parent prod
@@ -895,7 +896,7 @@ self-staging from racing the prod platform on shared resources).
   dev-chat (future)" gate needs a real permission model before
   Phase 4.
 - **Self-app slug in URLs.** `usernode-2d5619` is the frozen
-  pick, and it'll appear in URLs as `usernode-2d5619--<user>--<sha>.<USERNODE_DOMAIN>`
+  pick, and it'll appear in URLs as `usernode-2d5619--s<id>.<USERNODE_DOMAIN>`
   if/when staging is enabled. Mildly ugly. Acceptable.
 - **`main_sha` updates on self-app deploy.** The seed reads
   `GIT_SHA` at boot. After a self-app PR merges and the workflow

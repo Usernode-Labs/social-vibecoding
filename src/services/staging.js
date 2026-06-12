@@ -5,6 +5,7 @@ const dbManager = require('./db-manager');
 const github = require('./github');
 const appManifest = require('./app-manifest');
 const appSecrets = require('./app-secrets');
+const appLlmEnv = require('./app-llm-env');
 const { getPool } = require('../db/pool');
 
 // Custom error thrown by both staging + prod build paths when the cloned
@@ -163,9 +164,11 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
     // 6. Wait for health
     await docker.waitForHealthy(containerName, 3000, '/health');
 
-    // 7. Register Caddy route + determine accessible URL
-    const hostname = caddy.stagingHostname(app.slug, `s${session.id}`, commitHash);
-    await caddy.registerRoute(hostname, containerName, 3000).catch(() => {});
+    // 7. Determine accessible URL. No Caddy route to register: the
+    // wildcard site in the Caddyfile maps this hostname straight to the
+    // staging container (usernode-staging-<slug>--<id>) and issues TLS
+    // on-demand, so having the container up + named is enough to serve it.
+    const hostname = caddy.stagingHostname(app.slug, `s${session.id}`);
 
     // See routes/apps.js for why we don't key off DOCKER_NETWORK anymore.
     const isLocalDev = process.env.NODE_ENV === 'development' || process.env.USERNODE_LOCAL_DEV === '1';
@@ -174,6 +177,15 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
       const hostPort = await docker.getHostPort(containerName, 3000);
       if (hostPort) stagingUrl = `http://localhost:${hostPort}`;
     }
+
+    // NOTE: TLS pre-warm intentionally does NOT happen here. Caddy's
+    // on-demand `ask` gate (routes/internal.js isKnownHost) only approves a
+    // staging host once chat_sessions.staging_url already equals it — and
+    // that row is persisted by the *caller*, after this function returns.
+    // Warming here would race ahead of the persist, get refused by `ask`,
+    // and fail the handshake in milliseconds (leaving the cold-start it was
+    // meant to prevent). The caller pre-warms via warmStagingCert() right
+    // after persisting staging_url and before revealing the preview button.
 
     log.info('staging', 'Staging deployed', { sessionId: session.id, url: stagingUrl });
 
@@ -186,6 +198,31 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
   }
 }
 
+// Pre-warm the on-demand TLS cert for a freshly-deployed staging host so a
+// real user never lands on a cold hostname (first hit otherwise hangs ~60-90s
+// on ZeroSSL validation, showing a blank/black page).
+//
+// CRITICAL ordering contract: call this only AFTER the session's staging_url
+// has been persisted to chat_sessions. Caddy's on-demand `ask` gate
+// (routes/internal.js isKnownHost) approves a staging host iff
+// chat_sessions.staging_url already equals it. If warmed before the persist,
+// `ask` refuses (404), Caddy aborts the TLS handshake, and warmCert fails in
+// milliseconds — leaving exactly the cold-start this is meant to prevent.
+//
+// Bounded by warmCert's internal timeout and always resolves, so a slow/failed
+// warm never blocks or fails a deploy (the cert still issues lazily on first
+// hit, the old behavior). No-op for local-dev http URLs.
+async function warmStagingCert(session, hostname, stagingUrl) {
+  if (!hostname || !stagingUrl || !stagingUrl.startsWith('https://')) return;
+  log.info('staging', 'Pre-warming TLS cert before exposing preview', { sessionId: session.id, hostname });
+  const warm = await caddy.warmCert(hostname);
+  if (warm.ok) {
+    log.info('staging', 'Cert pre-warmed', { sessionId: session.id, hostname, code: warm.code });
+  } else {
+    log.warn('staging', 'Cert pre-warm did not complete; preview may be slow on first hit', { sessionId: session.id, hostname, err: warm.error?.message });
+  }
+}
+
 async function teardownStaging(session, app) {
   log.info('staging', 'Tearing down staging', { sessionId: session.id });
 
@@ -193,20 +230,29 @@ async function teardownStaging(session, app) {
     await docker.stopAndRemove(session.staging_container_id).catch(() => {});
   }
 
-  // Remove Caddy route
-  if (session.staging_url) {
-    try {
-      const hostname = new URL(session.staging_url).hostname;
-      await caddy.removeRoute(hostname);
-    } catch {}
-  }
-
-  // Drop staging database
+  // Drop staging database. Derive the name from the still-in-memory
+  // staging_url *before* we null the column below.
   if (app) {
     const commitHash = session.staging_url?.match(/--(\w{6})\./)?.[1] || '000000';
     const stagingDbNameStr = dbManager.stagingDbName(app.slug, `s${session.id}`, commitHash);
     await dbManager.dropDatabase(stagingDbNameStr).catch(() => {});
   }
+
+  // Stop vouching for the now-dead hostname. Caddy's on-demand `ask` gate
+  // (routes/internal.js isKnownHost) approves a staging host iff
+  // chat_sessions.staging_url still equals it. Leaving it populated after the
+  // container is gone makes Caddy keep (re)issuing/renewing certs for a dead
+  // upstream and lets stale preview links resolve to a 502 instead of a clean
+  // refusal. Nulling it here — the single chokepoint every teardown caller
+  // (merge, archive, idle-reclaim) funnels through — frees those certs from
+  // renewal churn and makes the gate refuse the host. (No Caddy route to
+  // remove: the wildcard site maps hostnames to container names dynamically,
+  // so stopping the container is what takes the preview offline; the cached
+  // cert expires on its own.)
+  await getPool().query(
+    `UPDATE chat_sessions SET staging_url = NULL, staging_container_id = NULL WHERE id = $1`,
+    [session.id]
+  ).catch((err) => log.warn('staging', 'Failed to clear staging_url on teardown', { sessionId: session.id, err: err.message }));
 
   log.info('staging', 'Staging torn down', { sessionId: session.id });
 }
@@ -307,6 +353,15 @@ async function rebuildProductionInner(config, app) {
       `UPDATE apps SET manifest_snapshot = $1 WHERE id = $2`,
       [JSON.stringify(manifest), app.id]
     );
+
+    // dapp.json's top-level `name` takes precedence over the platform
+    // name. Reconciling here is what makes a merged rename PR (which
+    // edits dapp.json's name and triggers this rebuild) actually apply
+    // the new display name — no rename-specific apply code needed.
+    // No-op when the manifest carries no name; best-effort so a rename
+    // hiccup never fails the rebuild.
+    await appManifest.reconcileAppName(prodPool, app, manifest)
+      .catch((err) => log.warn('staging', 'Name reconcile failed', { app: app.slug, err: err.message }));
     const stored = await appSecrets.getRawValues(prodPool, app.id, config.jwtSecret);
     const merge = appSecrets.mergeForDeploy(
       manifest, stored, appSecrets.platformDefaultsFromEnv()
@@ -337,6 +392,10 @@ async function rebuildProductionInner(config, app) {
       );
     }
     const dbUrl = dbManager.connectionUrl(dbManager.appDbName(app.slug), appDbPassword);
+    // Production containers get the LLM-proxy env pair (URL + per-app
+    // token); the staging path above deliberately does not — staging
+    // containers must not be able to spend LLM grants (issue #34).
+    const llmEnv = await appLlmEnv.productionLlmEnv(prodPool, app.id);
     const containerId = await docker.runContainer(containerName, {
       image: imageName,
       env: {
@@ -344,6 +403,7 @@ async function rebuildProductionInner(config, app) {
         JWT_SECRET: config.jwtSecret,
         PORT: '3000',
         USERNODE_ENV: 'production',
+        ...llmEnv,
         ...merge.env,
       },
       port: 3000,
@@ -351,23 +411,13 @@ async function rebuildProductionInner(config, app) {
 
     await docker.waitForHealthy(containerName, 3000, '/health');
 
-    // Ensure the Caddy route exists. The from-scratch path
-    // (`app-creator.js`) registers it after waitForHealthy, but rebuilds
-    // hit a different code path: imported repos that go through
-    // `awaiting_secrets` reach production exclusively via this function,
-    // which historically never registered the route — so the container
-    // came up healthy but no public hostname pointed at it, producing a
-    // "Secure Connection Failed" SSL error on the iframe load. Calling
-    // registerRoute here is idempotent (caddy.js short-circuits if the
-    // hostname is already in /etc/caddy/runtime/usernode.conf), so reruns
-    // from the drift poller, manual redeploys, and merges are safe; the
-    // first rebuild that observes a missing block self-heals it.
-    const hostname = caddy.productionHostname(app.slug);
-    await caddy.registerRoute(hostname, containerName, 3000).catch((err) => {
-      log.warn('staging', 'Caddy route registration failed (ok in local dev)', {
-        app: app.slug, err: err.message,
-      });
-    });
+    // No Caddy route to register. The wildcard site in the Caddyfile
+    // maps `<slug>.<domain>` straight to this container
+    // (usernode-app-<slug>) and issues TLS on-demand, so a healthy,
+    // correctly-named container is automatically reachable. This closed
+    // the old "Secure Connection Failed" class of bug where a rebuild
+    // came up healthy but its per-host route block was missing or got
+    // clobbered by a concurrent conf rewrite.
 
     log.info('staging', 'Production rebuilt', { app: app.slug, sha: mainSha });
     succeeded = true;
@@ -394,6 +444,7 @@ async function rebuildProductionInner(config, app) {
 
 module.exports = {
   buildAndDeployStaging,
+  warmStagingCert,
   teardownStaging,
   rebuildProduction,
   MissingSecretsError,

@@ -1,20 +1,52 @@
+const http = require('http');
 const { WebSocketServer } = require('ws');
+const jwt = require('jsonwebtoken');
 const { getPool } = require('../db/pool');
 const log = require('./logger');
 const notifications = require('./notifications');
 const events = require('./events');
+const appAccess = require('./app-access');
 
 let wss;
+// Captured in attach() so the module-level push* helpers can run the
+// per-app visibility filter (appAccess.getWsVisibility) without every
+// caller having to thread a pool through.
+let _pool = null;
 const rooms = new Map(); // appId -> Set<{ ws, user }>
 const globalClients = new Set(); // Set<{ ws, user }> for /ws/events
 
 function attach(server, config) {
   const pool = getPool(config);
+  _pool = pool;
 
   wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', async (req, socket, head) => {
-    const user = await authenticateWs(req, pool);
+    // Caddy's forward_auth PRESERVES the Connection/Upgrade headers on its
+    // auth subrequest while rewriting the URI to /__caddy/access. Node
+    // routes any upgrade-flagged request to this 'upgrade' event instead of
+    // the normal request listener, so the gate pre-flight for every proxied
+    // WebSocket lands here — where it used to fall through to
+    // socket.destroy(). forward_auth then read EOF, answered 502, and every
+    // WS behind the wildcard (all staging previews / child apps) was
+    // unreachable: group chat sat on "Reconnecting…" forever. Re-dispatch
+    // anything that isn't one of our real WS endpoints into the regular
+    // handler chain (Express) so /__caddy/access — or any other route — can
+    // answer with a proper HTTP response over this socket.
+    if (!req.url?.startsWith('/ws/')) {
+      const handler = server.listeners('request')[0];
+      if (!handler) { socket.destroy(); return; }
+      const res = new http.ServerResponse(req);
+      res.assignSocket(socket);
+      res.shouldKeepAlive = false;
+      res.on('finish', () => {
+        try { socket.end(); } catch { /* already gone */ }
+      });
+      handler(req, res);
+      return;
+    }
+
+    const user = await authenticateWs(req, pool, config);
     if (!user) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
@@ -49,11 +81,21 @@ function attach(server, config) {
   });
 
   wss.on('connection', async (ws, req, { user, appSlug }) => {
-    const appId = await resolveAppId(pool, appSlug);
-    if (!appId) {
+    const app = await resolveAppForAccess(pool, appSlug);
+    if (!app) {
       ws.close(4004, 'App not found');
       return;
     }
+    // Group chat is a collaboration surface: collab-private apps only
+    // admit admins + members. Same 4004 as "not found" so the room's
+    // existence isn't disclosed (matches the routes' 404-on-deny rule).
+    const allowed = await appAccess.checkAppAccess(pool, app, user, 'collab')
+      .catch(() => false);
+    if (!allowed) {
+      ws.close(4004, 'App not found');
+      return;
+    }
+    const appId = app.id;
 
     const client = { ws, user, appId, appSlug };
     joinRoom(appId, client);
@@ -78,7 +120,26 @@ function attach(server, config) {
   log.info('ws', 'WebSocket server attached');
 }
 
-async function authenticateWs(req, pool) {
+// Staging-only iframe-JWT fallback, mirroring src/middleware/auth.js.
+// `sessions` is staging:private (truncated on every staging redeploy), so
+// a browser that kept a cookie from the previous deploy fails the cookie
+// path forever: HTTP recovers because the middleware re-mints a session
+// from the shell-injected ?token= JWT, but a WebSocket handshake can't
+// follow that flow — it just 401s and the client shows "Reconnecting…"
+// until the page is reloaded. Accepting the same JWT here (sent by the
+// client as ?token= on the WS URL) closes that gap. Gated on
+// USERNODE_ENV === 'staging' exactly like the middleware, so prod WS auth
+// remains cookie-only.
+const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+
+async function authenticateWs(req, pool, config) {
+  const viaCookie = await authenticateWsCookie(req, pool);
+  if (viaCookie) return viaCookie;
+  if (!IS_STAGING) return null;
+  return authenticateWsStagingJwt(req, pool, config);
+}
+
+async function authenticateWsCookie(req, pool) {
   try {
     const cookies = parseCookies(req.headers.cookie || '');
     const token = cookies.session;
@@ -101,6 +162,43 @@ async function authenticateWs(req, pool) {
   }
 }
 
+async function authenticateWsStagingJwt(req, pool, config) {
+  try {
+    let token;
+    try {
+      token = new URL(req.url || '', 'http://x').searchParams.get('token');
+    } catch {
+      return null;
+    }
+    if (!token || !config?.jwtSecret) return null;
+
+    let payload;
+    try {
+      payload = jwt.verify(token, config.jwtSecret);
+    } catch (err) {
+      log.warn('ws', 'Staging iframe-JWT verification failed', { err: err.message });
+      return null;
+    }
+    if (!payload || typeof payload !== 'object' || typeof payload.id !== 'number') return null;
+
+    // Same defense-in-depth as tryMintSessionFromIframeJwt: resolve the
+    // user from the local (cloned) users table and refuse on a username
+    // mismatch (token minted before a rename).
+    const { rows } = await pool.query(
+      'SELECT id, username, is_admin FROM users WHERE id = $1',
+      [payload.id]
+    );
+    if (rows.length === 0) return null;
+    if (typeof payload.username === 'string' && payload.username !== rows[0].username) {
+      return null;
+    }
+
+    return { id: rows[0].id, username: rows[0].username, isAdmin: rows[0].is_admin };
+  } catch {
+    return null;
+  }
+}
+
 function parseCookies(header) {
   const result = {};
   header.split(';').forEach((pair) => {
@@ -110,9 +208,12 @@ function parseCookies(header) {
   return result;
 }
 
-async function resolveAppId(pool, slug) {
-  const { rows } = await pool.query('SELECT id FROM apps WHERE slug = $1', [slug]);
-  return rows[0]?.id || null;
+async function resolveAppForAccess(pool, slug) {
+  const { rows } = await pool.query(
+    'SELECT id, collab_visibility, view_visibility FROM apps WHERE slug = $1',
+    [slug]
+  );
+  return rows[0] || null;
 }
 
 function joinRoom(appId, client) {
@@ -154,11 +255,52 @@ function broadcastGlobal(data) {
   }
 }
 
+// #194: validate an inbound thread reference { type, ref } for an app.
+// Returns { type, ref } when valid, null otherwise. 'session' and
+// 'governance' refs must exist for THIS app (DB lookup); 'issue' refs
+// accept any positive integer — the GitHub issue list is cached and
+// eventual, so a strict existence check would reject messages on
+// fresh issues for up to the cache TTL.
+async function validateThread(pool, appId, thread) {
+  if (!thread || typeof thread !== 'object') return null;
+  const type = thread.type;
+  const ref = Number(thread.ref);
+  if (!['issue', 'session', 'governance'].includes(type)) return null;
+  if (!Number.isInteger(ref) || ref <= 0) return null;
+  if (type === 'session') {
+    const { rows } = await pool.query(
+      'SELECT 1 FROM chat_sessions WHERE id = $1 AND app_id = $2', [ref, appId]
+    );
+    if (!rows.length) return null;
+  } else if (type === 'governance') {
+    const { rows } = await pool.query(
+      'SELECT 1 FROM issues WHERE id = $1 AND app_id = $2', [ref, appId]
+    );
+    if (!rows.length) return null;
+  }
+  return { type, ref };
+}
+
 async function handleMessage(pool, client, msg) {
   switch (msg.type) {
     case 'chat': {
       if (!msg.content?.trim()) return;
       const content = msg.content.trim().substring(0, 2000);
+
+      // #194: optional thread scoping. An invalid/spoofed ref drops the
+      // whole message (never silently re-route a thread post into the
+      // general stream — the sender's client is buggy or hostile either
+      // way, and general chat is the louder surface).
+      let thread = null;
+      if (msg.thread) {
+        thread = await validateThread(pool, client.appId, msg.thread);
+        if (!thread) {
+          log.warn('ws', 'chat message dropped: invalid thread ref', {
+            appId: client.appId, userId: client.user.id,
+          });
+          return;
+        }
+      }
 
       // #15: optional quote (Signal-style reply). The client only sends a
       // reference (refMsgId for a chat row, or sessionId for a PR); we
@@ -234,11 +376,12 @@ async function handleMessage(pool, client, msg) {
 
       const metadata = quote ? { quote } : null;
       const { rows } = await pool.query(
-        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata)
-         VALUES ($1, $2, $3, 'message', $4)
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
+         VALUES ($1, $2, $3, 'message', $4, $5, $6)
          RETURNING id, created_at`,
         // metadata is NOT NULL DEFAULT '{}', so always pass a JSON object.
-        [client.appId, client.user.id, content, JSON.stringify(metadata || {})]
+        [client.appId, client.user.id, content, JSON.stringify(metadata || {}),
+         thread ? thread.type : null, thread ? thread.ref : null]
       );
 
       const outMsg = {
@@ -249,6 +392,7 @@ async function handleMessage(pool, client, msg) {
         content,
         msgType: 'message',
         ...(metadata ? { metadata } : {}),
+        ...(thread ? { thread } : {}),
         createdAt: rows[0].created_at,
       };
 
@@ -274,6 +418,7 @@ async function handleMessage(pool, client, msg) {
             `SELECT n.id, n.kind, n.read_at, n.created_at,
                     n.app_id, a.slug AS app_slug, a.name AS app_name,
                     n.chat_message_id, cm.content AS message_content,
+                    cm.thread_type, cm.thread_ref,
                     n.session_id, cs.pr_title, cs.pr_number,
                     su.username AS source_username, n.user_id
              FROM notifications n
@@ -316,6 +461,7 @@ async function handleMessage(pool, client, msg) {
             `SELECT n.id, n.kind, n.read_at, n.created_at,
                     n.app_id, a.slug AS app_slug, a.name AS app_name,
                     n.chat_message_id, cm.content AS message_content,
+                    cm.thread_type, cm.thread_ref,
                     n.session_id, cs.pr_title, cs.pr_number,
                     su.username AS source_username, n.user_id
              FROM notifications n
@@ -335,6 +481,26 @@ async function handleMessage(pool, client, msg) {
         }
       } catch (err) {
         log.warn('ws', 'mention notify failed', { err: err.message });
+      }
+
+      // Posting a message in this app's group chat is the "I've engaged
+      // with this thread" action: clear every unread mention/reply/reaction
+      // notification this user has for this app (the reply-clears-all
+      // behavior). Confirmed in the DB, idempotent, and non-fatal — a
+      // notification hiccup must never affect the chat send. On >=1 row
+      // cleared, fan out notifications_changed so the sender's bell badge +
+      // other tabs (and their chat dots) re-sync.
+      try {
+        const cleared = await notifications.markReadForAction(
+          pool, client.user.id, 'message_sent', client.appId
+        );
+        if (cleared > 0) {
+          pushNotificationToUser(client.user.id, { type: 'notifications_changed' });
+        }
+      } catch (err) {
+        log.warn('ws', 'message_sent auto-dismiss failed', {
+          appId: client.appId, userId: client.user.id, err: err.message,
+        });
       }
       break;
     }
@@ -390,6 +556,7 @@ async function handleMessage(pool, client, msg) {
               `SELECT n.id, n.kind, n.read_at, n.created_at,
                       n.app_id, a.slug AS app_slug, a.name AS app_name,
                       n.chat_message_id, cm.content AS message_content,
+                      cm.thread_type, cm.thread_ref,
                       n.session_id, cs.pr_title, cs.pr_number,
                       su.username AS source_username, n.user_id, n.detail
                FROM notifications n
@@ -415,10 +582,20 @@ async function handleMessage(pool, client, msg) {
     }
 
     case 'typing': {
+      // #194: pass the (shape-checked) thread along so typing indicators
+      // don't bleed between general chat and threads. No DB lookup —
+      // typing is ephemeral and the worst a bogus ref does is show a
+      // typing line in a thread nobody has open.
+      const t = msg.thread;
+      const typingThread = (t && typeof t === 'object'
+        && ['issue', 'session', 'governance'].includes(t.type)
+        && Number.isInteger(Number(t.ref)) && Number(t.ref) > 0)
+        ? { type: t.type, ref: Number(t.ref) } : null;
       broadcast(client.appId, {
         type: 'typing',
         userId: client.user.id,
         username: client.user.username,
+        ...(typingThread ? { thread: typingThread } : {}),
       }, client.ws);
       break;
     }
@@ -468,13 +645,18 @@ async function getReactionsForMessages(pool, messageIds) {
 // (JSONB) and echoed on the live broadcast. Used e.g. by the vote-activity
 // lines (promote / vote cast) to carry { vote: { sessionId, prNumber } } so
 // the group-chat client can render live vote buttons inline on the row.
-async function sendSystemMessage(pool, appId, content, msgType = 'system', metadata = null) {
+// #194: optional `thread` ({ type: 'issue'|'session'|'governance', ref })
+// scopes the system message into that thread instead of general chat
+// (used by the per-vote activity rows, which post into the proposal's
+// thread). Callers are trusted — no ref validation here.
+async function sendSystemMessage(pool, appId, content, msgType = 'system', metadata = null, thread = null) {
   const { rows } = await pool.query(
-    `INSERT INTO chat_messages (app_id, content, msg_type, metadata)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO chat_messages (app_id, content, msg_type, metadata, thread_type, thread_ref)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING id, created_at`,
     // metadata is NOT NULL DEFAULT '{}', so always pass a JSON object.
-    [appId, content, msgType, JSON.stringify(metadata || {})]
+    [appId, content, msgType, JSON.stringify(metadata || {}),
+     thread ? thread.type : null, thread ? thread.ref : null]
   );
 
   broadcast(appId, {
@@ -485,6 +667,7 @@ async function sendSystemMessage(pool, appId, content, msgType = 'system', metad
     content,
     msgType,
     ...(metadata ? { metadata } : {}),
+    ...(thread ? { thread } : {}),
     createdAt: rows[0].created_at,
   });
 }
@@ -503,43 +686,81 @@ function getOnlineUsers(appId) {
   return users;
 }
 
-// Push an app status update to all connected clients
+// App-scoped global broadcast with visibility filtering. Public-view
+// apps keep the broadcast-to-all fast path; for a view-private app the
+// payload (name, status, PR titles...) only goes to admins + members.
+// Membership comes from appAccess.getWsVisibility's 10s TTL cache, so
+// this is at most one query per app per window. Fail-closed: if the
+// lookup errors we drop the event (a stale UI beats a privacy leak).
+function broadcastGlobalScoped(payload, { appId = null, appSlug = null } = {}) {
+  if (!_pool || (appId == null && !appSlug)) {
+    broadcastGlobal(payload);
+    return;
+  }
+  appAccess.getWsVisibility(_pool, { appId, appSlug })
+    .then((info) => {
+      if (!info) return; // app gone — nothing to broadcast
+      if (!info.viewPrivate) {
+        broadcastGlobal(payload);
+        return;
+      }
+      const json = JSON.stringify(payload);
+      for (const client of globalClients) {
+        if (client.ws.readyState !== 1) continue;
+        if (client.user.isAdmin || info.memberIds.has(client.user.id)) {
+          client.ws.send(json);
+        }
+      }
+    })
+    .catch((err) => {
+      log.warn('ws', 'scoped broadcast dropped', { type: payload.type, err: err.message });
+    });
+}
+
+// Push an app status update to all connected clients (filtered for
+// view-private apps).
 function pushAppStatusUpdate(app) {
-  broadcastGlobal({
+  broadcastGlobalScoped({
     type: 'app_status',
     appId: app.id,
     slug: app.slug,
     status: app.status,
     url: app.url || null,
-  });
+  }, { appId: app.id, appSlug: app.slug });
 }
 
 function pushSessionUpdate(data) {
-  broadcastGlobal({ type: 'session_update', ...data });
+  broadcastGlobalScoped({ type: 'session_update', ...data },
+    { appId: data.appId, appSlug: data.appSlug });
 }
 
 function pushVoteUpdate(data) {
-  broadcastGlobal({ type: 'vote_update', ...data });
+  broadcastGlobalScoped({ type: 'vote_update', ...data },
+    { appId: data.appId, appSlug: data.appSlug });
 }
 
 // PR kudos count changed. Fan out the new total + the giver's username
 // (so the receiving client can append the new giver to its popover
 // cache without a refetch). Same broadcast model as vote_update —
-// every connected client gets the message and decides whether it cares.
+// every connected (and view-authorized) client gets the message and
+// decides whether it cares.
 function pushKudosUpdate(data) {
-  broadcastGlobal({ type: 'kudos_update', ...data });
+  broadcastGlobalScoped({ type: 'kudos_update', ...data },
+    { appId: data.appId, appSlug: data.appSlug });
 }
 
 // Notify all clients that an app's metadata changed (e.g. renamed via vote).
 function pushAppUpdate(data) {
-  broadcastGlobal({ type: 'app_update', ...data });
+  broadcastGlobalScoped({ type: 'app_update', ...data },
+    { appId: data.appId, appSlug: data.appSlug });
 }
 
 // Notify all clients that an issue/rename-proposal was created, voted on,
 // or closed for a given app — so their open vote panel refreshes in real
 // time instead of only on page reload.
 function pushIssueUpdate(data) {
-  broadcastGlobal({ type: 'issue_update', ...data });
+  broadcastGlobalScoped({ type: 'issue_update', ...data },
+    { appId: data.appId, appSlug: data.appSlug });
 }
 
 // Send a payload to every /ws/events socket belonging to `userId`. Used for
@@ -556,4 +777,4 @@ function pushNotificationToUser(userId, payload) {
   return sent;
 }
 
-module.exports = { attach, broadcast, broadcastGlobal, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushSessionUpdate, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushNotificationToUser, getReactionsForMessages };
+module.exports = { attach, broadcast, broadcastGlobal, broadcastGlobalScoped, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushSessionUpdate, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushNotificationToUser, getReactionsForMessages };

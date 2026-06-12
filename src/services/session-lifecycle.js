@@ -60,9 +60,16 @@ async function pauseSession({ pool, sessionId, userId = null, reason = 'manual' 
     ownerClause = ' AND user_id = $2';
   }
 
+  // Only 'active' sessions are demoted to 'paused'. A 'promoted' session
+  // must keep its status so its PR stays up for vote — pausing the
+  // proposer's worker must not yank the PR out of the vote (the vote
+  // endpoint and cast-vote handler key off status IN ('promoted','merging')).
+  // This mirrors the auto-pause sweeper and LRU eviction, which already
+  // refuse to pause promoted sessions. The manual /pause endpoint handles
+  // the worker teardown for promoted sessions itself (see routes/sessions.js).
   const { rows } = await pool.query(
     `UPDATE chat_sessions SET status = 'paused'
-     WHERE id = $1${ownerClause} AND status IN ('active', 'promoted')
+     WHERE id = $1${ownerClause} AND status = 'active'
      RETURNING id`,
     params
   );
@@ -205,9 +212,15 @@ async function archiveSession({ pool, sessionId, userId = null, reason = 'manual
   );
   if (!rows.length) return { archived: false };
 
+  // owner_username feeds the PR-withdrawn group-chat line (#200). The
+  // manual archive endpoint is owner-scoped, so when userId is present
+  // the session owner IS the actor. LEFT JOIN: a missing user row must
+  // not block the archive — the message just falls back to actor-less.
   const { rows: sessionRows } = await pool.query(
-    `SELECT cs.*, a.slug as app_slug, a.repo_url
-     FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
+    `SELECT cs.*, a.slug as app_slug, a.repo_url, u.username AS owner_username
+     FROM chat_sessions cs
+     JOIN apps a ON cs.app_id = a.id
+     LEFT JOIN users u ON u.id = cs.user_id
      WHERE cs.id = $1`,
     [sessionId]
   );
@@ -227,6 +240,25 @@ async function archiveSession({ pool, sessionId, userId = null, reason = 'manual
     if (owner) await github.closePR(owner, repo, session.pr_number).catch((err) => {
       log.warn('session-lifecycle', 'Failed to close PR on archive', { sessionId, err: err.message });
     });
+
+    // #200: announce the withdrawal in group chat, completing the PR
+    // lifecycle feed (promote/merge already post there — a withdrawn PR
+    // otherwise vanishes silently). Posted regardless of closePR's
+    // outcome: the close is best-effort and the PR leaves the vote
+    // panel either way. Own catch so a chat failure never fails the
+    // archive itself.
+    const label = session.pr_title
+      ? `PR #${session.pr_number} — ${session.pr_title}`
+      : `PR #${session.pr_number}`;
+    const content = userId != null && session.owner_username
+      ? `${session.owner_username} withdrew ${label}`
+      : `${label} was withdrawn (no vote activity)`;
+    try {
+      const { sendSystemMessage } = require('./ws');
+      await sendSystemMessage(pool, session.app_id, content, 'system');
+    } catch (err) {
+      log.warn('session-lifecycle', 'Failed to post PR-withdrawn chat message', { sessionId, err: err.message });
+    }
   }
 
   workerProgress.clear(sessionId);

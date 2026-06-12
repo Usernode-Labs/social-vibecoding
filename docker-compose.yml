@@ -13,7 +13,13 @@ name: usernode
 
 services:
   caddy:
-    image: caddy:2-alpine
+    # Custom build: stock caddy ships no DNS plugins, and DNS-01 issuance of
+    # the *.social-vibecoding wildcard cert needs caddy-dns/acmedns. See
+    # caddy.Dockerfile + acme-dns/config.cfg.
+    build:
+      context: .
+      dockerfile: caddy.Dockerfile
+    image: usernode-caddy:acmedns
     container_name: caddy
     restart: unless-stopped
     ports:
@@ -22,20 +28,47 @@ services:
       - "443:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      # Shared with the usernode service so it can write per-app route
-      # blocks (myapp.<USERNODE_DOMAIN> { reverse_proxy ... }) and
-      # reload Caddy via `docker exec caddy caddy reload`.
-      - caddy-runtime:/etc/caddy/runtime
+      # caddy-data holds the on-demand-issued certs + ACME account state
+      # (ZeroSSL primary, Let's Encrypt fallback). Persist it so
+      # restarts/deploys reuse existing certs instead of re-issuing (which
+      # would risk ACME rate limits). There is no shared route-config volume
+      # any more: the wildcard site in the Caddyfile maps hostnames to
+      # container names dynamically, so adding/removing an app or preview
+      # needs no Caddy-side state.
       - caddy-data:/data
       - caddy-config:/config
     environment:
       # Caddyfile uses {$USERNODE_DOMAIN} substitution for the main
       # vhost. Must be set in Caddy's process env at config-load time.
       USERNODE_DOMAIN: ${USERNODE_DOMAIN}
+      # ZeroSSL ACME EAB (External Account Binding) credentials, consumed by
+      # the `cert_issuer acme https://acme.zerossl.com/...` block in the
+      # Caddyfile. Derived once from the ZeroSSL API key (see Caddyfile note)
+      # and reusable. ZeroSSL is the primary issuer; LE (no creds needed) is
+      # the fallback. Empty is fine for local/self-host — Caddy falls through
+      # to LE. (ZEROSSL_API_KEY is no longer read by Caddy; kept in .env only
+      # for regenerating EAB creds if they're ever revoked.)
+      ZEROSSL_EAB_KID: ${ZEROSSL_EAB_KID:-}
+      ZEROSSL_EAB_HMAC: ${ZEROSSL_EAB_HMAC:-}
+      # acme-dns credentials for the *.social-vibecoding wildcard DNS-01
+      # challenge, consumed by the `tls { dns acmedns ... }` block in the
+      # Caddyfile. The API base points at the internal acme-dns service (not
+      # publicly exposed). Username/password/subdomain come from a one-time
+      # `POST /register` against acme-dns and are persisted into .env by the
+      # deploy workflow. Empty until registration is done (Caddy then just
+      # keeps using its current on-demand path).
+      ACME_DNS_API_BASE_URL: http://acme-dns:8081
+      ACME_DNS_USERNAME: ${ACME_DNS_USERNAME:-}
+      ACME_DNS_PASSWORD: ${ACME_DNS_PASSWORD:-}
+      ACME_DNS_SUBDOMAIN: ${ACME_DNS_SUBDOMAIN:-}
     networks:
       - usernode-net
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:2019/config/"]
+      # Probe the admin API on the IPv4 loopback explicitly. The admin
+      # endpoint binds 127.0.0.1:2019 only, but the container also has IPv6,
+      # so `localhost` resolves to ::1 first and the probe gets "connection
+      # refused" — leaving caddy perpetually `unhealthy` despite serving fine.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -44,6 +77,37 @@ services:
         limits:
           memory: 256m
           cpus: "0.5"
+
+  # Self-hosted DNS server that answers ONLY the ACME DNS-01 challenge for our
+  # wildcard cert. We delegate `_acme-challenge.social-vibecoding...` to it via
+  # a single static CNAME so Caddy's DNS-01 writes never touch the production
+  # Namecheap zone (whose only write API replaces the whole zone per call).
+  # Only :53 is public (for CA challenge lookups); the HTTP API (:8081) is
+  # internal-only — reachable by Caddy over the docker network.
+  acme-dns:
+    image: joohoi/acme-dns:v1.0
+    container_name: acme-dns
+    restart: unless-stopped
+    ports:
+      # Bind to the public IP explicitly, NOT 0.0.0.0. The host runs
+      # systemd-resolved on 127.0.0.53:53, and a wildcard 0.0.0.0:53 publish
+      # collides with that loopback bind ("address already in use"), which is
+      # what aborted the first deploy. The CA only ever queries acme-dns over
+      # the public IPv4 (the NS glue is an A record), so this is exactly the
+      # interface we need. If the server IP changes, update here + the glue A
+      # in acme-dns/config.cfg + the Namecheap delegation.
+      - "144.76.85.53:53:53/udp"
+      - "144.76.85.53:53:53/tcp"
+    volumes:
+      - ./acme-dns/config.cfg:/etc/acme-dns/config.cfg:ro
+      - acme-dns-data:/var/lib/acme-dns
+    networks:
+      - usernode-net
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+          cpus: "0.25"
 
   usernode:
     build:
@@ -60,17 +124,16 @@ services:
     env_file:
       - ./.env
     environment:
-      # Tell the platform which Docker network to spawn child apps on
-      # so Caddy can reach them, and which file path to write Caddy
-      # route blocks into. Both are read by src/services/{docker,
-      # caddy,worker}.js. Override DATABASE_URL inline to point at
-      # the in-compose Postgres service instead of project-usernode-db.
-      # DB_CONTAINER is the name `db-manager.js` `docker exec`'s into
-      # to spawn per-app databases — must match the usernode-db
-      # service's container_name below.
+      # Tell the platform which Docker network to spawn child apps on so
+      # Caddy can reach them by container name (the Caddyfile's wildcard
+      # site maps each hostname to a container name on this network).
+      # Read by src/services/{docker,worker}.js. Override DATABASE_URL
+      # inline to point at the in-compose Postgres service instead of
+      # project-usernode-db. DB_CONTAINER is the name `db-manager.js`
+      # `docker exec`'s into to spawn per-app databases — must match the
+      # usernode-db service's container_name below.
       DOCKER_NETWORK: usernode-net
       DB_CONTAINER: usernode-db
-      USERNODE_CONF_PATH: /etc/caddy/runtime/usernode.conf
       # Where the platform reads ambient host-state from — currently
       # just deploy-status.json, written by the deploy workflow so the
       # /status page can render an in-progress banner. See
@@ -91,8 +154,6 @@ services:
       # Required: the platform spawns child-app containers via the
       # host Docker daemon. Standard Usernode pattern.
       - /var/run/docker.sock:/var/run/docker.sock
-      # Shared with Caddy — see comment on caddy service.
-      - caddy-runtime:/etc/caddy/runtime
       # Read-only host bind for deploy signals (see deploy workflow).
       # The deploy user on the host writes /opt/usernode/runtime/
       # deploy-status.json; the platform reads it from in-container.
@@ -216,9 +277,11 @@ networks:
     driver: bridge
 
 volumes:
-  caddy-runtime:
   caddy-data:
   caddy-config:
+  # acme-dns sqlite db (registered account + current challenge TXT). Persist
+  # so the registered account survives restarts/deploys.
+  acme-dns-data:
   usernode-db-data:
   # Sidecar node working directory (chain-scoped wallet cache, etc.) and
   # archive root (manifest + snapshot binprots + block tail). Both must

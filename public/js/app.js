@@ -6,7 +6,17 @@
 const App = {
   user: null,
   currentApp: null,
+  // Top-level mode: 'app' (the running iframe) or 'dev' (#194). The
+  // legacy tab names 'group-chat' / 'individual-chat' are normalized to
+  // dev sub-tabs by _normalizeTab so old links, notification hrefs, and
+  // call sites keep working.
   currentTab: 'app',
+  // Active Dev view: 'forum' (the card list, default), 'chat'
+  // (full-screen general chat), 'topic' (an issue/proposal discussion
+  // open full-screen), 'sessions' (a dev session open full-screen), or
+  // 'settings' (the app-settings page). Only meaningful while
+  // currentTab === 'dev'.
+  currentSubTab: 'forum',
   // Tracks whether the dedicated #leaderboard-screen is visible.
   // Sibling state to `currentApp`: home / app / leaderboard are the
   // three top-level screens, and they're mutually exclusive. Flipped
@@ -214,20 +224,42 @@ const App = {
   // Page-load recovery: restoreFromSessionStorage() runs early in
   // init() so a tab that loaded mid-restart (or was reloaded by the
   // user) re-renders the banner immediately and re-arms the poll.
+  //
+  // #239 second mode — "resolving merge conflicts". When a self-app
+  // merge fails on a conflict and the auto-resolver kicks in
+  // (vote_update { resolving:true } / { mergeFailed:true,
+  // resolving:true }), the banner switches to a non-blocking amber
+  // state instead of silently dismissing. Crucially isActive() stays
+  // false in this mode, so the fetch wrap never blocks writes — the
+  // platform isn't actually restarting. The state persists in
+  // sessionStorage (verified against /api/sessions/:id/status on
+  // restore), polls that endpoint every ~5s as the missed-WS-event
+  // safety net, and ends on the resolver's terminal broadcast:
+  // merged → begin() has already upgraded us to full updating mode;
+  // synced/noop → quiet dismiss; failed → red variant + Dismiss
+  // button, auto-hiding after ~20s.
   // ─────────────────────────────────────────────────────────────────
   PlatformUpdating: {
     SS_KEY: 'usernode:platform_updating',
     POLL_FAST_MS: 2000,
     STUCK_AFTER_MS: 5 * 60 * 1000,
+    RESOLVE_POLL_MS: 5000,
+    RESOLVE_FAILED_HIDE_MS: 20 * 1000,
 
     // Mutable runtime state. Persisted shape (in sessionStorage) is
-    // just { fromSha, since } — the timer ids and DOM refs are
-    // ephemeral and must be re-derived on page load.
+    // just { fromSha, since } — or { mode:'resolving', sessionId,
+    // appSlug, since } for the resolving mode — the timer ids and DOM
+    // refs are ephemeral and must be re-derived on page load.
     fromSha: null,
     since: null,
     fastPollTimer: null,
     stuckTimer: null,
     fetchWrapInstalled: false,
+    // #239 resolving-mode state: { sessionId, appSlug, since } | null.
+    resolvingSession: null,
+    resolvePollTimer: null,
+    resolveStuckTimer: null,
+    resolveFailedTimer: null,
 
     isActive() {
       return !!this.fromSha;
@@ -239,6 +271,12 @@ const App = {
       // — re-capturing on a duplicate call would defeat the SHA-flip
       // dismissal if the new container had already booted in between.
       if (this.isActive()) return;
+      // #239 upgrade path: the resolver fixed the conflicts and the
+      // retried merge is now in flight (merging:true arrives before the
+      // resolver's terminal event). Clear the resolving state quietly —
+      // no hide, the banner transitions in place to full updating mode
+      // — so the late endResolving('merged') is a guaranteed no-op.
+      if (this.resolvingSession) this._clearResolvingState();
       const fromSha = App.loadedPlatformSha || null;
       this.fromSha = fromSha;
       this.since = Date.now();
@@ -263,6 +301,37 @@ const App = {
         try { sessionStorage.removeItem(this.SS_KEY); } catch {}
         return;
       }
+      // #239: resolving-mode payload. Verify against the server before
+      // re-showing — the resolve may have finished while this tab was
+      // reloading, and a stale banner with no terminal event coming
+      // would sit until the stuck timer. Drop the state on anything
+      // but a confirmed in-flight resolve.
+      if (parsed.mode === 'resolving') {
+        const since = parsed.since || Date.now();
+        if (!parsed.sessionId || Date.now() - since >= this.STUCK_AFTER_MS) {
+          try { sessionStorage.removeItem(this.SS_KEY); } catch {}
+          return;
+        }
+        fetch(`/api/sessions/${parsed.sessionId}/status`)
+          .then((r) => (r.ok ? r.json() : null))
+          .then((data) => {
+            // A WS event may have armed either mode while we awaited.
+            if (this.isActive() || this.resolvingSession) return;
+            if (data && data.resolving) {
+              this.resolvingSession = {
+                sessionId: parsed.sessionId, appSlug: parsed.appSlug || null, since,
+              };
+              this.showResolving();
+              this.startResolvePolling();
+              this.armResolveStuckTimer();
+              console.log('[platform-updating] resolving banner restored from session');
+            } else {
+              try { sessionStorage.removeItem(this.SS_KEY); } catch {}
+            }
+          })
+          .catch(() => {});
+        return;
+      }
       this.fromSha = parsed.fromSha || null;
       this.since = parsed.since || Date.now();
       const elapsed = Date.now() - this.since;
@@ -282,6 +351,195 @@ const App = {
       // dismiss off it.
       if (!sha || sha === 'dev' || sha === this.fromSha) return;
       this.end({ newSha: sha });
+    },
+
+    // The merge behind this banner failed before any deploy started
+    // (vote_update { mergeFailed:true }). No new code is coming, so
+    // there's no SHA flip to wait for and no reason to reload — just
+    // clear the latch and lift the write block. Safe when the banner
+    // isn't armed (no-op).
+    cancel() {
+      if (!this.isActive()) return;
+      console.log('[platform-updating] cancelled (merge failed, no deploy)');
+      try { sessionStorage.removeItem(this.SS_KEY); } catch {}
+      this.fromSha = null;
+      this.since = null;
+      this.stopFastPolling();
+      this.disarmStuckTimer();
+      this.hide();
+    },
+
+    // ── #239 resolving mode ──────────────────────────────────────────
+    // Non-blocking sibling of begin(): the merge hit conflicts and the
+    // auto-resolver is fixing the branch (1–2 min worker turn). The
+    // platform is NOT restarting, so isActive() stays false and writes
+    // keep flowing — the banner is purely informational.
+    beginResolving({ sessionId, appSlug } = {}) {
+      // Idempotent + first-wins: a no-op while updating mode is active
+      // (that banner outranks this one) or while already tracking a
+      // resolve (a second concurrent resolve on a different session is
+      // covered by the vote-panel badges instead).
+      if (this.isActive() || this.resolvingSession) return;
+      if (sessionId == null) return;
+      const since = Date.now();
+      this.resolvingSession = { sessionId, appSlug: appSlug || null, since };
+      try {
+        sessionStorage.setItem(this.SS_KEY, JSON.stringify({
+          mode: 'resolving', sessionId, appSlug: appSlug || null, since,
+        }));
+      } catch {}
+      this.showResolving();
+      this.startResolvePolling();
+      this.armResolveStuckTimer();
+      console.log('[platform-updating] resolving banner armed', { sessionId, appSlug });
+    },
+
+    // Terminal handler for the resolver lifecycle. `sessionId` (when
+    // provided — the WS event carries it; the status poll doesn't)
+    // must match the tracked resolve.
+    endResolving(outcome, sessionId) {
+      // Ordering guard: on the success path the retried merge's
+      // merging:true broadcast precedes the resolver's terminal event,
+      // and begin() has already upgraded the banner to full updating
+      // mode (clearing resolvingSession on the way). A late
+      // endResolving('merged') must not touch that banner.
+      if (!this.resolvingSession) return;
+      if (sessionId != null && this.resolvingSession.sessionId !== sessionId) return;
+      console.log('[platform-updating] resolving ended', { outcome });
+      this._clearResolvingState();
+      if (outcome === 'failed') {
+        this.showResolveFailed();
+      } else {
+        // merged (when begin() somehow hasn't fired yet) / synced /
+        // noop → quiet dismiss; group chat carries the details.
+        this.hide();
+      }
+    },
+
+    // Clears the resolving runtime state without touching the banner
+    // DOM — callers decide whether to hide, swap variants, or (on the
+    // begin() upgrade path) leave it for show() to repaint in place.
+    _clearResolvingState() {
+      this.resolvingSession = null;
+      this.stopResolvePolling();
+      this.disarmResolveStuckTimer();
+      // Only drop the persisted payload when it's ours: on the upgrade
+      // path begin() overwrites SS_KEY right after this anyway, and
+      // updating mode is never active while resolving mode is.
+      if (!this.isActive()) {
+        try { sessionStorage.removeItem(this.SS_KEY); } catch {}
+      }
+    },
+
+    showResolving() {
+      const el = document.getElementById('platform-updating-banner');
+      if (!el) return;
+      this._clearResolveFailedTimer();
+      el.classList.remove('hidden');
+      this._setBannerTone('amber');
+      const text = document.getElementById('platform-updating-text');
+      const spinner = document.getElementById('platform-updating-spinner');
+      const reload = document.getElementById('platform-updating-reload');
+      const dismiss = document.getElementById('platform-updating-dismiss');
+      if (text) text.textContent = 'Merge hit conflicts with main — resolving them automatically, then retrying the merge. This usually takes a minute or two.';
+      if (spinner) spinner.classList.remove('hidden');
+      if (reload) reload.classList.add('hidden');
+      if (dismiss) dismiss.classList.add('hidden');
+    },
+
+    // Red terminal variant: Claude couldn't resolve the conflicts (or
+    // the sync errored / owner over budget). No deploy is coming, so
+    // there's nothing to wait for — Dismiss button + ~20s auto-hide.
+    showResolveFailed() {
+      const el = document.getElementById('platform-updating-banner');
+      if (!el) return;
+      this._clearResolveFailedTimer();
+      el.classList.remove('hidden');
+      this._setBannerTone('red');
+      const text = document.getElementById('platform-updating-text');
+      const spinner = document.getElementById('platform-updating-spinner');
+      const reload = document.getElementById('platform-updating-reload');
+      const dismiss = document.getElementById('platform-updating-dismiss');
+      if (text) text.textContent = "Automatic conflict resolution failed — check the app's group chat for details";
+      if (spinner) spinner.classList.add('hidden');
+      if (reload) reload.classList.add('hidden');
+      if (dismiss) dismiss.classList.remove('hidden');
+      this.resolveFailedTimer = setTimeout(() => this.dismissResolveFailure(), this.RESOLVE_FAILED_HIDE_MS);
+    },
+
+    // Wired to #platform-updating-dismiss (and the auto-hide timer).
+    // Guarded so a stale timer can't hide a banner that a later
+    // begin()/beginResolving() has since re-armed.
+    dismissResolveFailure() {
+      this._clearResolveFailedTimer();
+      if (this.isActive() || this.resolvingSession) return;
+      this.hide();
+    },
+
+    _clearResolveFailedTimer() {
+      if (this.resolveFailedTimer != null) {
+        clearTimeout(this.resolveFailedTimer);
+        this.resolveFailedTimer = null;
+      }
+    },
+
+    // ~5s safety-net poll of /api/sessions/:id/status — WS is
+    // fire-and-forget, so a dropped connection could eat the terminal
+    // event and strand the banner until the stuck timer.
+    startResolvePolling() {
+      if (this.resolvePollTimer != null) return;
+      this.resolvePollTimer = setInterval(() => {
+        const rs = this.resolvingSession;
+        if (!rs) return;
+        fetch(`/api/sessions/${rs.sessionId}/status`)
+          .then((r) => (r.ok ? r.json() : null))
+          .then((data) => {
+            if (data && data.resolving === false && this.resolvingSession === rs) {
+              this.endResolving('noop');
+            }
+          })
+          .catch(() => {});
+      }, this.RESOLVE_POLL_MS);
+    },
+
+    stopResolvePolling() {
+      if (this.resolvePollTimer != null) {
+        clearInterval(this.resolvePollTimer);
+        this.resolvePollTimer = null;
+      }
+    },
+
+    // 5-minute hard ceiling, mirroring the updating banner's stuck
+    // timer — but the failure mode here is benign (no write block), so
+    // on fire we just dismiss quietly instead of going red.
+    armResolveStuckTimer() {
+      this.disarmResolveStuckTimer();
+      const since = this.resolvingSession?.since || Date.now();
+      const remaining = Math.max(0, this.STUCK_AFTER_MS - (Date.now() - since));
+      this.resolveStuckTimer = setTimeout(() => {
+        if (this.resolvingSession) this.endResolving('noop');
+      }, remaining);
+    },
+
+    disarmResolveStuckTimer() {
+      if (this.resolveStuckTimer != null) {
+        clearTimeout(this.resolveStuckTimer);
+        this.resolveStuckTimer = null;
+      }
+    },
+
+    // Shared amber/red class swap for all banner variants. Swapping
+    // classes rather than re-rendering keeps the spinner animation
+    // uninterrupted when a variant flips mid-flight.
+    _setBannerTone(tone) {
+      const el = document.getElementById('platform-updating-banner');
+      if (!el) return;
+      const amber = ['bg-amber-100', 'text-amber-900', 'border-amber-300',
+        'dark:bg-amber-900/40', 'dark:text-amber-100', 'dark:border-amber-800/60'];
+      const red = ['bg-red-100', 'text-red-900', 'border-red-300',
+        'dark:bg-red-900/40', 'dark:text-red-100', 'dark:border-red-800/60'];
+      el.classList.remove(...(tone === 'red' ? amber : red));
+      el.classList.add(...(tone === 'red' ? red : amber));
     },
 
     end({ newSha } = {}) {
@@ -306,27 +564,23 @@ const App = {
     show(stuck) {
       const el = document.getElementById('platform-updating-banner');
       if (!el) return;
+      this._clearResolveFailedTimer();
       el.classList.remove('hidden');
       const reload = document.getElementById('platform-updating-reload');
       const text = document.getElementById('platform-updating-text');
       const spinner = document.getElementById('platform-updating-spinner');
+      const dismiss = document.getElementById('platform-updating-dismiss');
+      if (dismiss) dismiss.classList.add('hidden');
       if (stuck) {
-        // Swap to the red "stuck" variant. We swap classes rather than
-        // re-rendering so the animation is uninterrupted if we flip
-        // mid-flight (e.g. on session-storage restore for a tab that's
-        // been backgrounded for >5 min).
-        el.classList.remove('bg-amber-100', 'text-amber-900', 'border-amber-300',
-          'dark:bg-amber-900/40', 'dark:text-amber-100', 'dark:border-amber-800/60');
-        el.classList.add('bg-red-100', 'text-red-900', 'border-red-300',
-          'dark:bg-red-900/40', 'dark:text-red-100', 'dark:border-red-800/60');
+        // Swap to the red "stuck" variant (class swap keeps the
+        // animation uninterrupted if we flip mid-flight, e.g. on
+        // session-storage restore for a tab backgrounded >5 min).
+        this._setBannerTone('red');
         if (text) text.textContent = 'Platform update is taking longer than expected. You can reload manually.';
         if (spinner) spinner.classList.add('hidden');
         if (reload) reload.classList.remove('hidden');
       } else {
-        el.classList.add('bg-amber-100', 'text-amber-900', 'border-amber-300',
-          'dark:bg-amber-900/40', 'dark:text-amber-100', 'dark:border-amber-800/60');
-        el.classList.remove('bg-red-100', 'text-red-900', 'border-red-300',
-          'dark:bg-red-900/40', 'dark:text-red-100', 'dark:border-red-800/60');
+        this._setBannerTone('amber');
         if (text) text.textContent = 'Platform updating… sit tight, write actions are paused.';
         if (spinner) spinner.classList.remove('hidden');
         if (reload) reload.classList.add('hidden');
@@ -439,6 +693,9 @@ const App = {
   },
 
   eventsWs: null,
+  // Shell-injected staging iframe token, captured at script load so SPA
+  // history rewrites can't lose it before a (re)connect needs it.
+  _bootToken: new URLSearchParams(location.search).get('token'),
   // Set on the very first connect; on every subsequent (re)connect we
   // resync state because the server's broadcast model is fire-and-forget
   // — anything pushed during the disconnect window (a `vote_update
@@ -450,7 +707,14 @@ const App = {
 
   connectEvents() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    App.eventsWs = new WebSocket(`${proto}//${location.host}/ws/events`);
+    // Same staging-iframe token fallback as GroupChat._openSocket — the
+    // session cookie can be orphaned by a staging redeploy, and the WS
+    // handshake can't re-mint it the way HTTP requests do. Prefer the
+    // live URL, fall back to the boot-time capture (SPA history rewrites
+    // may have stripped the query by now).
+    const token = new URLSearchParams(location.search).get('token') || App._bootToken;
+    const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+    App.eventsWs = new WebSocket(`${proto}//${location.host}/ws/events${qs}`);
 
     App.eventsWs.onopen = () => {
       const isReconnect = App._eventsWsHasConnected;
@@ -493,6 +757,24 @@ const App = {
             break;
           case 'notification_new':
             if (window.Notifications) Notifications.handleIncoming(data.notification);
+            // A mention/reply/reaction may have arrived for a message in
+            // the currently-open chat — reconcile its unread dot.
+            window.GroupChat?.reconcileDotsFromNotifications?.();
+            break;
+          case 'notifications_changed':
+            // Server cleared/changed this user's notifications elsewhere
+            // (e.g. another tab cast a vote and the PR nudge was dismissed,
+            // or this user sent a chat message and reply-clears-all fired).
+            // Re-pull so this tab's badge + list stay in sync, then
+            // reconcile the in-chat unread dots from the fresh list.
+            if (window.Notifications) {
+              const r = Notifications.refresh?.();
+              if (r && typeof r.then === 'function') {
+                r.then(() => window.GroupChat?.reconcileDotsFromNotifications?.());
+              } else {
+                window.GroupChat?.reconcileDotsFromNotifications?.();
+              }
+            }
             break;
           case 'app_version_changed':
             // #21: a PR just merged and prod was rebuilt. If the user
@@ -546,8 +828,8 @@ const App = {
       // Re-fetch tab-specific state. We don't blow away the DOM —
       // these helpers update in place — so scroll positions, drafts,
       // etc. survive the resync.
-      if (App.currentTab === 'group-chat') {
-        AppView.loadVotePanel(AppView.appData.slug);
+      if (App.currentTab === 'dev') {
+        AppView.refreshDevData('all');
       } else if (App.currentTab === 'app') {
         AppView.refreshToken?.();
       }
@@ -572,10 +854,10 @@ const App = {
       if (data.status === 'running' && AppView.appData) {
         AppView.appData.status = 'running';
         AppView.appData.url = data.url;
-        // The Share button was hidden in openApp() because the app wasn't
-        // running yet. Now that we have a URL, surface it.
-        const shareBtn = document.getElementById('app-share-btn');
-        if (shareBtn) shareBtn.classList.remove('hidden');
+        // The Share drawer row was hidden in openApp() because the app
+        // wasn't running yet. Now that we have a URL, surface it.
+        const drawerShareRow = document.getElementById('drawer-row-share');
+        if (drawerShareRow) drawerShareRow.classList.remove('hidden');
         AppView.refreshToken().then(() => {
           // Re-check the tab — the user may have switched to group/dev
           // chat while refreshToken() was in flight. Without this guard
@@ -600,18 +882,22 @@ const App = {
       }
       return;
     }
-    // Refresh session list if we're on the dev chat tab for this app
-    if (App.currentApp === data.appSlug && App.currentTab === 'individual-chat') {
+    // Refresh session list if we're on the Sessions sub-tab for this app
+    if (App.currentApp === data.appSlug && App.currentTab === 'dev'
+        && App.currentSubTab === 'sessions') {
       if (AppView.appData) {
         DevChat.loadSessions(AppView.appData.slug).then(() => {
           if (!DevChat.currentSession) DevChat.renderSessionList();
         });
       }
     }
-    // Refresh vote panel if we're on group chat
-    if (App.currentApp === data.appSlug && App.currentTab === 'group-chat') {
-      AppView.loadVotePanel(data.appSlug);
+    // Refresh proposals / inline chat vote state on the other dev sub-tabs
+    if (App.currentApp === data.appSlug && App.currentTab === 'dev'
+        && App.currentSubTab !== 'sessions') {
+      AppView.refreshDevData('session');
     }
+    // Home screen's "Your proposals" strip tracks session status changes.
+    App.refreshHomeProposals();
   },
 
   handleSessionEvent(data) {
@@ -637,7 +923,12 @@ const App = {
         DevChat.messages.push({ role: 'system', content: 'Staging deployed!', stagingUrl: data.url, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8) });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
-        if (data.url) DevChat.currentSession.staging_url = data.url;
+        if (data.url) {
+          DevChat.currentSession.staging_url = data.url;
+          // #127: testing guidance rides along with the rebuild broadcast.
+          if ('testingMd' in data) DevChat.currentSession.testing_md = data.testingMd;
+          if ('testingPath' in data) DevChat.currentSession.testing_path = data.testingPath;
+        }
         break;
       case 'staging_failed':
         DevChat._deactivateLastStatus();
@@ -662,6 +953,16 @@ const App = {
           if (typeof DevChat.renderChatView === 'function') DevChat.renderChatView();
         }
         break;
+      case 'visuals_ready':
+        // #195: before/after capture finished (it lands after
+        // staging_ready, often after the turn's POST SSE is gone) —
+        // stash the artifact ids and re-render so the staging card
+        // upgrades in place with the media tiles.
+        if (DevChat.currentSession && data.visuals) {
+          DevChat.currentSession.visuals = data.visuals;
+          DevChat.renderMessages();
+        }
+        break;
       case 'cc_progress':
         DevChat._appendProgressLine(data.text);
         DevChat.scrollToBottom();
@@ -680,7 +981,7 @@ const App = {
         DevChat.renderMessages();
         break;
       case 'spec_updated':
-        // Mayor's write_spec / dispatch_scout updated the live draft.
+        // Mayor's dispatch_scout updated the live draft.
         // The accompanying status event already pushed an inline preview
         // card into the chat timeline; we just keep an open spec viewer
         // in sync if the user happens to be looking at the live draft.
@@ -717,18 +1018,42 @@ const App = {
         Home.updateAppCardLock(data.appSlug, data.locked);
       }
       if (App.currentApp === data.appSlug
-          && App.currentTab === 'group-chat'
-          && typeof AppView !== 'undefined' && AppView.loadVotePanel) {
-        AppView.loadVotePanel(data.appSlug);
+          && App.currentTab === 'dev'
+          && typeof AppView !== 'undefined' && AppView.refreshDevData) {
+        AppView.refreshDevData('lock');
+      }
+    } else if (data.action === 'visibility_changed') {
+      // Visibility flipped (PATCH /api/apps/:slug/visibility). Reload
+      // the home grid so badges update and newly-private apps drop out
+      // for outsiders; patch the open app's in-memory row so the
+      // Members modal and tab gating see the fresh values.
+      const homeScreen = document.getElementById('home-screen');
+      if (typeof Home !== 'undefined' && homeScreen && !homeScreen.classList.contains('hidden')) {
+        Home.load();
+      }
+      if (App.currentApp === data.appSlug
+          && typeof AppView !== 'undefined' && AppView.appData) {
+        AppView.appData.collab_visibility = data.collabVisibility;
+        AppView.appData.view_visibility = data.viewVisibility;
       }
     }
   },
 
-  // Refresh the vote panel when another user creates, votes on, or closes
-  // an issue / rename proposal so everyone sees it without reloading.
+  // Refresh the relevant dev sub-tab when another user creates, votes on,
+  // or closes an issue / governance proposal so everyone sees it live.
   handleIssueUpdate(data) {
-    if (App.currentApp === data.appSlug && App.currentTab === 'group-chat') {
-      AppView.loadVotePanel(data.appSlug);
+    if (App.currentApp === data.appSlug && App.currentTab === 'dev') {
+      AppView.refreshDevData('issue');
+    }
+  },
+
+  // Re-render the home screen's "Your proposals" strip (and the rest of
+  // the grid — Home.load is cheap and already the live-update pattern)
+  // when a vote/session event lands while the home screen is visible.
+  refreshHomeProposals() {
+    const homeScreen = document.getElementById('home-screen');
+    if (typeof Home !== 'undefined' && homeScreen && !homeScreen.classList.contains('hidden')) {
+      Home.load();
     }
   },
 
@@ -744,10 +1069,48 @@ const App = {
         sessionId: data.sessionId,
       });
     }
-    // Refresh vote panel if we're on group chat for this app
-    if (App.currentApp === data.appSlug && App.currentTab === 'group-chat') {
-      AppView.loadVotePanel(data.appSlug);
+    // Counter-event: the self-app merge failed before any deploy, so no
+    // SHA flip is coming — unlatch instead of holding the platform
+    // read-only until the stuck timer. #239: when the auto-resolver is
+    // kicking in (resolving:true rides on the mergeFailed event for
+    // conflict-class failures), immediately re-arm in the non-blocking
+    // resolving state so the banner transitions in place instead of
+    // silently vanishing while the resolver spends 1–2 min on the fix.
+    if (data.mergeFailed && data.selfHosted) {
+      App.PlatformUpdating.cancel();
+      if (data.resolving) {
+        App.PlatformUpdating.beginResolving({
+          sessionId: data.sessionId,
+          appSlug: data.appSlug,
+        });
+      }
     }
+    // #239 resolver start broadcast — covers resolutions that never
+    // armed a banner (behind-main pre-gate, drift poller, post-merge
+    // sweep) and doubles as a late confirm for the mergeFailed path
+    // above (beginResolving is idempotent). No cancel() here: a bare
+    // start event must not kill an updating banner that's legitimately
+    // active for a different, already-merged PR's deploy.
+    if (data.resolving === true && data.selfHosted && !data.mergeFailed) {
+      App.PlatformUpdating.beginResolving({
+        sessionId: data.sessionId,
+        appSlug: data.appSlug,
+      });
+    }
+    // Terminal event: the resolver finished (merged / synced / failed /
+    // noop). endResolving ignores it unless the sessionId matches the
+    // tracked resolve — and is a no-op once begin() has upgraded the
+    // banner to full updating mode on the merged path.
+    if (data.resolving === false) {
+      App.PlatformUpdating.endResolving(data.resolutionOutcome, data.sessionId);
+    }
+    // Refresh the proposals tab / inline chat vote state if we're in
+    // this app's Dev view.
+    if (App.currentApp === data.appSlug && App.currentTab === 'dev') {
+      AppView.refreshDevData('vote');
+    }
+    // Home screen's "Your proposals" strip tracks tallies live.
+    App.refreshHomeProposals();
     // If merged, refresh the app view
     if (data.merged && App.currentApp === data.appSlug) {
       if (App.currentTab === 'app') {
@@ -757,10 +1120,77 @@ const App = {
     }
   },
 
+  // Slide-out navigation drawer — available at every viewport width
+  // (#122). Holds the secondary header actions: GitHub, Share,
+  // Members & visibility, Settings.
+  HeaderMenu: {
+    open() {
+      const panel = document.getElementById('header-menu-panel');
+      const overlay = document.getElementById('header-menu-overlay');
+      const btn = document.getElementById('header-menu-btn');
+      if (!panel) return;
+      overlay.classList.remove('hidden');
+      // Force a reflow so the transition fires (element was display:none).
+      overlay.getBoundingClientRect();
+      overlay.setAttribute('data-open', '');
+      panel.setAttribute('data-open', '');
+      btn.setAttribute('aria-expanded', 'true');
+      btn.setAttribute('aria-label', 'Close menu');
+      const closeBtn = document.getElementById('header-menu-close');
+      if (closeBtn) closeBtn.focus();
+    },
+    close() {
+      const panel = document.getElementById('header-menu-panel');
+      const overlay = document.getElementById('header-menu-overlay');
+      const btn = document.getElementById('header-menu-btn');
+      if (!panel) return;
+      panel.removeAttribute('data-open');
+      overlay.removeAttribute('data-open');
+      btn.setAttribute('aria-expanded', 'false');
+      btn.setAttribute('aria-label', 'Open menu');
+      // Hide overlay after the slide-out transition finishes.
+      setTimeout(() => overlay.classList.add('hidden'), 200);
+    },
+    init() {
+      const btn = document.getElementById('header-menu-btn');
+      if (!btn) return;
+      btn.addEventListener('click', () => App.HeaderMenu.open());
+      document.getElementById('header-menu-close')
+        .addEventListener('click', () => App.HeaderMenu.close());
+      document.getElementById('header-menu-overlay')
+        .addEventListener('click', () => App.HeaderMenu.close());
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          const panel = document.getElementById('header-menu-panel');
+          if (panel && panel.hasAttribute('data-open')) App.HeaderMenu.close();
+        }
+      });
+      // Drawer row actions — each closes the menu after triggering its action.
+      document.getElementById('drawer-row-github')
+        .addEventListener('click', () => App.HeaderMenu.close());
+      document.getElementById('drawer-row-share')
+        .addEventListener('click', () => {
+          App.HeaderMenu.close();
+          if (window.AppView) AppView.openShareModal();
+        });
+      document.getElementById('drawer-row-members')
+        .addEventListener('click', () => {
+          App.HeaderMenu.close();
+          if (window.AppView) AppView.openMembersModal();
+        });
+      document.getElementById('drawer-row-settings')
+        .addEventListener('click', () => {
+          App.HeaderMenu.close();
+          if (window.Settings) Settings.open();
+        });
+    },
+  },
+
   bindEvents() {
     // Note: the "Create new app" entry point lives in the home feed
     // now (see Home.wireCreateButtons) — no static header button to
     // bind here anymore.
+    App.HeaderMenu.init();
     document.getElementById('create-cancel').addEventListener('click', App.hideCreateModal);
     document.getElementById('create-modal').addEventListener('click', (e) => {
       if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) App.hideCreateModal();
@@ -772,6 +1202,28 @@ const App = {
     // handlers also flip the submit-button label and the URL block.
     document.querySelectorAll('.create-mode-pill').forEach((pill) => {
       pill.addEventListener('click', () => App.setCreateMode(pill.dataset.modePill));
+    });
+
+    // Visibility pills (Who can build / Who can see & use). Two
+    // independent segmented controls; collab=public forces view=public
+    // (invariant: a publicly-buildable app can't be privately viewed).
+    document.querySelectorAll('#create-visibility-block [data-collab-vis]').forEach((pill) => {
+      pill.addEventListener('click', () => App.setCreateVisibility('collab', pill.dataset.collabVis));
+    });
+    document.querySelectorAll('#create-visibility-block [data-view-vis]').forEach((pill) => {
+      pill.addEventListener('click', () => App.setCreateVisibility('view', pill.dataset.viewVis));
+    });
+    App.setCreateVisibility('collab', 'public');
+
+    // Members & visibility modal (close/backdrop; the open entry point
+    // is the drawer's Members row, wired in HeaderMenu.init).
+    const membersClose = document.getElementById('members-close');
+    if (membersClose) membersClose.addEventListener('click', () => AppView.hideMembersModal());
+    const membersModal = document.getElementById('members-modal');
+    if (membersModal) membersModal.addEventListener('click', (e) => {
+      if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) {
+        AppView.hideMembersModal();
+      }
     });
 
     // Import flow: explicit "Check" button.
@@ -828,6 +1280,52 @@ const App = {
     const feedbackText = document.getElementById('feedback-text');
     const feedbackBtn = document.getElementById('feedback-submit');
     const feedbackStatus = document.getElementById('feedback-status');
+    const feedbackTargetApp = document.getElementById('feedback-target-app');
+    const feedbackTargetPlatform = document.getElementById('feedback-target-platform');
+    const feedbackCaretApp = document.getElementById('feedback-caret-app');
+    const feedbackCaretPlatform = document.getElementById('feedback-caret-platform');
+
+    // Currently selected feedback target ('app' or 'platform'). The
+    // "This app" button is only enabled when an app with a repo is open,
+    // so this stays 'platform' on home/leaderboard. Reset on each open.
+    let feedbackTarget = 'platform';
+    // The selected option uses a darker violet on hover so it keeps its
+    // active look; the unselected option uses the neutral zinc hover.
+    const activeTargetClasses = ['bg-violet-600', 'text-white', 'border-violet-600', 'hover:bg-violet-500'];
+    const inactiveHoverClasses = ['hover:bg-zinc-100', 'dark:hover:bg-zinc-800'];
+    const disabledTargetClasses = ['opacity-40', 'cursor-not-allowed'];
+    // Toggle the active styling between the two buttons. Enabled/disabled
+    // state of the "This app" button is owned by the open handler.
+    const setFeedbackTarget = (target) => {
+      feedbackTarget = target;
+      const onApp = target === 'app';
+      feedbackTargetApp.setAttribute('aria-checked', onApp ? 'true' : 'false');
+      feedbackTargetPlatform.setAttribute('aria-checked', onApp ? 'false' : 'true');
+      activeTargetClasses.forEach((c) => {
+        feedbackTargetApp.classList.toggle(c, onApp);
+        feedbackTargetPlatform.classList.toggle(c, !onApp);
+      });
+      // The neutral hover only applies to the unselected option, so the
+      // selected one doesn't get its violet overridden on hover.
+      inactiveHoverClasses.forEach((c) => {
+        feedbackTargetApp.classList.toggle(c, !onApp);
+        feedbackTargetPlatform.classList.toggle(c, onApp);
+      });
+      // Move the caret under the selected option.
+      feedbackCaretApp.classList.toggle('hidden', !onApp);
+      feedbackCaretPlatform.classList.toggle('hidden', onApp);
+    };
+    // Enable or gray-out the "This app" option. When disabled it stays
+    // visible (so users see both choices) but isn't clickable/selectable.
+    const setAppTargetEnabled = (enabled) => {
+      feedbackTargetApp.disabled = !enabled;
+      feedbackTargetApp.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+      disabledTargetClasses.forEach((c) => feedbackTargetApp.classList.toggle(c, !enabled));
+    };
+    feedbackTargetApp.addEventListener('click', () => {
+      if (!feedbackTargetApp.disabled) setFeedbackTarget('app');
+    });
+    feedbackTargetPlatform.addEventListener('click', () => setFeedbackTarget('platform'));
 
     const submitFeedback = async () => {
       const text = feedbackText.value.trim();
@@ -839,14 +1337,21 @@ const App = {
       if (feedbackBtn.disabled) return;
       feedbackBtn.disabled = true; feedbackBtn.textContent = 'Submitting...';
       try {
+        // Capture the target + slug at submit time so navigating away
+        // while the modal is open can't retarget an in-flight request.
+        const target = feedbackTarget;
+        const body = { description: text, target };
+        if (target === 'app') body.appSlug = App.currentApp;
         const res = await fetch('/api/feedback', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ description: text }),
+          body: JSON.stringify(body),
         });
         const data = await res.json();
         if (res.ok) {
-          feedbackStatus.textContent = 'Thanks! Issue filed.';
+          feedbackStatus.textContent = target === 'app'
+            ? `Thanks! Filed against ${AppView?.appData?.name || 'this app'}.`
+            : 'Thanks! Filed against Social Vibecoding.';
           feedbackStatus.className = 'text-sm mt-2 text-emerald-400';
           feedbackStatus.classList.remove('hidden');
           feedbackText.value = '';
@@ -857,6 +1362,18 @@ const App = {
           // re-enabled when the modal is reopened below.
           feedbackText.disabled = true;
           feedbackBtn.textContent = 'Submitted';
+          // #125: make the new issue show up in this app's "Open Issues"
+          // panel without a reload. The server seeds its issues cache and
+          // broadcasts an issue_update (handled in connectEvents) for
+          // other clients; this direct refresh covers the submitting tab
+          // even if its events socket is momentarily down. Platform-
+          // targeted feedback lands in the self-hosted platform app's
+          // issue list, so refresh that panel too when it's the one open.
+          if (typeof AppView !== 'undefined' && App.currentTab === 'dev'
+              && ((target === 'app' && body.appSlug && App.currentApp === body.appSlug)
+                || (target === 'platform' && AppView?.appData?.self_hosted))) {
+            AppView.refreshDevData('issue');
+          }
           setTimeout(() => document.getElementById('feedback-cancel').click(), 1500);
           return;
         }
@@ -871,15 +1388,50 @@ const App = {
       feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
     };
 
-    document.getElementById('feedback-btn').addEventListener('click', () => {
+    // Open the Send Feedback modal. Shared by the header feedback button
+    // (no opts) and the dev view's plus-menu "New issue" item, which
+    // passes { fromDev: true } — see issue #226.
+    App.openFeedbackModal = (opts = {}) => {
       document.getElementById('feedback-modal').classList.remove('hidden');
       // Reset any "Submitted" lock from a prior session so a returning
       // user can file another piece of feedback without reloading.
       feedbackText.disabled = false;
       feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
       feedbackStatus.classList.add('hidden');
+
+      // "This app" is only selectable when an app with a real repo is
+      // open. Otherwise the button stays visible but grayed-out/disabled
+      // so users can still see both choices, and we default to platform.
+      const appData = (typeof AppView !== 'undefined' && AppView.appData) || null;
+      const repoUrl = appData?.repo_url || '';
+      const hasRepo = /github\.com\/[^/]+\/[^/]+/.test(repoUrl);
+      // fromDev callers are by construction inside an open app's dev
+      // view, so the header button's currentTab === 'app' gate doesn't
+      // apply. The self-hosted platform app is excluded: targeting "this
+      // app" would file into the same platform repo via a different
+      // credential path and skip the usernode label, so we force the
+      // Platform target instead.
+      const canTargetApp = opts.fromDev
+        ? !!appData && hasRepo && !appData.self_hosted
+        : !!App.currentApp && App.currentTab === 'app' && hasRepo;
+      if (canTargetApp) {
+        feedbackTargetApp.textContent = appData?.name ? `This app (${appData.name})` : 'This app';
+        setAppTargetEnabled(true);
+        // Default to the app the user is looking at — most likely intent.
+        setFeedbackTarget('app');
+      } else {
+        // With an app actually open (dev-view caller) keep its name on
+        // the grayed label — "No app open" would be wrong there.
+        feedbackTargetApp.textContent = (opts.fromDev && appData)
+          ? (appData.name ? `This app (${appData.name})` : 'This app')
+          : 'No app open';
+        setAppTargetEnabled(false);
+        setFeedbackTarget('platform');
+      }
+
       feedbackText.focus();
-    });
+    };
+    document.getElementById('feedback-btn').addEventListener('click', () => App.openFeedbackModal());
     document.getElementById('feedback-cancel').addEventListener('click', () => {
       document.getElementById('feedback-modal').classList.add('hidden');
       feedbackText.value = '';
@@ -901,12 +1453,10 @@ const App = {
       }
     });
 
-    // Share modal — opens AppView's share dialog with the bare subdomain
-    // URL. The button's hidden state is managed in openApp / navigateHome
-    // (and in handleAppStatus for the creating→running flip), so we only
-    // wire the click-to-open + dismiss handlers here.
-    const shareBtn = document.getElementById('app-share-btn');
-    if (shareBtn) shareBtn.addEventListener('click', () => AppView.openShareModal());
+    // Share modal — opened from the drawer's Share row (wired in
+    // HeaderMenu.init). The row's hidden state is managed in openApp /
+    // navigateHome (and in handleAppStatus for the creating→running
+    // flip), so we only wire the dismiss handlers here.
     const shareClose = document.getElementById('share-close');
     if (shareClose) shareClose.addEventListener('click', () => AppView.closeShareModal());
     const shareModal = document.getElementById('share-modal');
@@ -955,18 +1505,75 @@ const App = {
 
       const parts = hash.split('/');
       if (parts[0] === 'leaderboard') {
-        App.navigateToLeaderboard();
+        // Optional sub-view segment (#leaderboard/history etc.) — pass
+        // it through so deep links land on the right tab. Bare
+        // #leaderboard keeps whatever tab was last active (Top PRs on
+        // first visit). A third segment on the users tab
+        // (#leaderboard/users/<username>) deep-links a user profile
+        // (#60).
+        const profileUser = parts[1] === 'users' && parts[2]
+          ? decodeURIComponent(parts[2])
+          : null;
+        App.navigateToLeaderboard(parts[1], profileUser);
         return;
       }
       if (parts[0] === 'app' && parts[1]) {
         const slug = parts[1];
-        const tab = parts[2] || 'app';
-        const sessionId = parts[3] ? parseInt(parts[3]) : null;
+        // Card-list hashes (#194 revision): app/{slug}/app,
+        // app/{slug}/dev (the card list), app/{slug}/dev/chat (general
+        // chat), app/{slug}/dev/issues/{n} / dev/proposals/{id} /
+        // dev/governance/{id} (full-screen topic views),
+        // app/{slug}/dev/sessions/{id} (session view), dev/settings.
+        // Legacy hashes — group-chat, individual-chat[/{sessionId}], and
+        // the old dev/chat|issues|proposals sub-tab forms — all map onto
+        // the forum so old links and notification hrefs keep working.
+        let tab = parts[2] || 'app';
+        let subTab = null;
+        let ref = null;
+        if (tab === 'dev') {
+          const sec = parts[3] || null;
+          if (sec === 'sessions' && parts[4]) {
+            subTab = 'sessions';
+            ref = parseInt(parts[4]) || null;
+          } else if (sec === 'chat') {
+            // Full-screen general chat (also where legacy group-chat
+            // links land — the old Chat sub-tab's original meaning).
+            subTab = 'chat';
+          } else if (sec === 'settings') {
+            subTab = 'settings';
+          } else if (sec === 'issues' && parts[4]) {
+            subTab = 'topic';
+            ref = { kind: 'issue', id: parseInt(parts[4]) || null };
+          } else if (sec === 'proposals' && parts[4]) {
+            subTab = 'topic';
+            ref = { kind: 'proposal', id: parseInt(parts[4]) || null };
+          } else if (sec === 'governance' && parts[4]) {
+            subTab = 'topic';
+            ref = { kind: 'gov', id: parseInt(parts[4]) || null };
+          } else {
+            // dev, dev/issues, dev/proposals, dev/sessions (no id) —
+            // all land on the plain card list.
+            subTab = 'forum';
+          }
+        } else if (tab === 'group-chat') {
+          tab = 'dev'; subTab = 'chat';
+        } else if (tab === 'individual-chat') {
+          tab = 'dev';
+          subTab = parts[3] ? 'sessions' : 'forum';
+          ref = parts[3] ? parseInt(parts[3]) : null;
+        } else {
+          tab = 'app';
+        }
         if (App._inLeaderboard) App._exitLeaderboard();
         if (App.currentApp !== slug) {
-          App.navigateToApp(slug, tab, sessionId);
-        } else if (App.currentTab !== tab) {
-          App.switchTab(tab, sessionId);
+          App.navigateToApp(slug, tab, ref, subTab);
+        } else if (App.currentTab !== tab
+            || (tab === 'dev' && App.currentSubTab !== subTab)
+            // Same tab + sub-tab but a (possibly different) deep-link
+            // target — re-dispatch so the accordion / session moves.
+            // switchTab is idempotent, so a same-target re-render is fine.
+            || (tab === 'dev' && ref != null)) {
+          App.switchTab(tab, ref, subTab);
         }
       } else {
         if (App._inLeaderboard) App._exitLeaderboard();
@@ -981,7 +1588,9 @@ const App = {
   // Show the leaderboard screen. Sibling to navigateToApp/navigateHome —
   // hides home + app, reveals the dedicated #leaderboard-screen, lets
   // the Leaderboard module render itself into #leaderboard-root.
-  navigateToLeaderboard() {
+  // `profileUser` (#60) opens the per-user PR profile drill-in instead
+  // of a plain tab.
+  navigateToLeaderboard(sub, profileUser) {
     if (App.currentApp) {
       AppView.close();
       App.currentApp = null;
@@ -991,10 +1600,25 @@ const App = {
     const screen = document.getElementById('leaderboard-screen');
     if (screen) screen.classList.remove('hidden');
     document.getElementById('back-btn').classList.remove('hidden');
-    document.getElementById('app-github-link').classList.add('hidden');
-    document.getElementById('app-share-btn').classList.add('hidden');
+    const _drg = document.getElementById('drawer-row-github');
+    const _drs = document.getElementById('drawer-row-share');
+    const _drm = document.getElementById('drawer-row-members');
+    if (_drg) _drg.classList.add('hidden');
+    if (_drs) _drs.classList.add('hidden');
+    if (_drm) _drm.classList.add('hidden');
     App.setHeaderTitle('Kudos leaderboard');
     App._inLeaderboard = true;
+    // Apply the deep-linked sub-view (prs|users|history) or user
+    // profile before open() renders — _setSub validates the value and
+    // no-ops on garbage. openProfile must run INSTEAD of _setSub (not
+    // after): _setSub clears profile state and would replaceState the
+    // profile hash away. When the screen is already open they
+    // re-render in place; open() below dedupes the in-flight load.
+    if (profileUser && window.Leaderboard?.openProfile) {
+      Leaderboard.openProfile(profileUser);
+    } else if (sub && window.Leaderboard?._setSub) {
+      Leaderboard._setSub(sub);
+    }
     if (window.Leaderboard?.open) Leaderboard.open();
   },
 
@@ -1019,20 +1643,52 @@ const App = {
 
     let newHash;
     if (App.currentApp) {
-      newHash = `#app/${App.currentApp}/${App.currentTab}`;
-      if (App.currentTab === 'individual-chat' && DevChat.currentSession) {
-        newHash += `/${DevChat.currentSession.id}`;
+      if (App.currentTab === 'dev') {
+        if (App.currentSubTab === 'sessions' && DevChat.currentSession) {
+          newHash = `#app/${App.currentApp}/dev/sessions/${DevChat.currentSession.id}`;
+        } else if (App.currentSubTab === 'chat') {
+          newHash = `#app/${App.currentApp}/dev/chat`;
+        } else if (App.currentSubTab === 'settings') {
+          newHash = `#app/${App.currentApp}/dev/settings`;
+        } else if (App.currentSubTab === 'topic'
+            && typeof AppView !== 'undefined' && AppView._devTopic) {
+          const t = AppView._devTopic;
+          const seg = t.kind === 'issue' ? 'issues'
+            : t.kind === 'proposal' ? 'proposals' : 'governance';
+          newHash = `#app/${App.currentApp}/dev/${seg}/${t.id}`;
+        } else {
+          newHash = `#app/${App.currentApp}/dev`;
+        }
+      } else {
+        newHash = `#app/${App.currentApp}/app`;
       }
     } else {
-      newHash = location.pathname; // home: drop the fragment entirely
+      // Home: drop the fragment entirely — but keep the query string. In
+      // staging previews the shell-injected ?token= lives there, and the
+      // WS connects re-read it as an auth fallback (see connectEvents /
+      // GroupChat._openSocket).
+      newHash = location.pathname + location.search;
     }
 
     const currentFull = location.hash || '';
     const targetFull = newHash.startsWith('#') ? newHash : '';
     if (currentFull === targetFull) return;
 
-    const screenIdOf = (h) =>
-      String(h || '').replace(/^#/, '').split('/').slice(0, 3).join('/');
+    // Screen ids: every full-screen sub-view (chat, settings, topics,
+    // sessions) is its own screen — list ↔ sub-view pushes a history
+    // entry, so device/browser back mirrors the in-page back buttons —
+    // but which session/topic isn't part of the id (moving between two
+    // topics of the same kind replaces in place).
+    const SUB_SCREENS = new Set(['sessions', 'chat', 'settings', 'issues', 'proposals', 'governance']);
+    const screenIdOf = (h) => {
+      const segs = String(h || '').replace(/^#/, '').split('/');
+      if (segs[0] === 'app' && segs[2] === 'dev') {
+        return SUB_SCREENS.has(segs[3])
+          ? segs.slice(0, 4).join('/')
+          : segs.slice(0, 3).join('/');
+      }
+      return segs.slice(0, 3).join('/');
+    };
     const sameScreen = screenIdOf(currentFull) === screenIdOf(targetFull);
 
     if (sameScreen) {
@@ -1054,6 +1710,36 @@ const App = {
     document.getElementById('create-error').classList.add('hidden');
     App.setCreateMode('new');
     App._setImportState('idle');
+    App.setCreateVisibility('collab', 'public');
+  },
+
+  // Visibility state for the create modal. setCreateVisibility('collab',
+  // 'public') also forces view='public' and disables the view pills —
+  // the one invalid combination (collab public + view private) can never
+  // be selected. Defaults match today's behavior (everything public).
+  _createVis: { collab: 'public', view: 'public' },
+
+  setCreateVisibility(kind, value) {
+    const v = value === 'private' ? 'private' : 'public';
+    if (kind === 'collab') {
+      App._createVis.collab = v;
+      if (v === 'public') App._createVis.view = 'public';
+    } else {
+      // View can only go private when collab is private.
+      App._createVis.view = (App._createVis.collab === 'private') ? v : 'public';
+    }
+    const block = document.getElementById('create-visibility-block');
+    if (!block) return;
+    block.querySelectorAll('[data-collab-vis]').forEach((p) => {
+      p.classList.toggle('active', p.dataset.collabVis === App._createVis.collab);
+    });
+    const collabPublic = App._createVis.collab === 'public';
+    block.querySelectorAll('[data-view-vis]').forEach((p) => {
+      p.classList.toggle('active', p.dataset.viewVis === App._createVis.view);
+      p.disabled = collabPublic;
+    });
+    const hint = document.getElementById('create-vis-hint');
+    if (hint) hint.classList.toggle('hidden', !collabPublic);
   },
 
   // Single source of truth for "which mode is the create modal in". CSS
@@ -1188,6 +1874,8 @@ const App = {
     }
 
     const body = mode === 'import' ? { name, repoUrl } : { name };
+    body.collabVisibility = App._createVis.collab;
+    body.viewVisibility = App._createVis.view;
 
     try {
       const res = await fetch('/api/apps', {
@@ -1212,7 +1900,7 @@ const App = {
     }
   },
 
-  async navigateToApp(slug, tab, sessionId) {
+  async navigateToApp(slug, tab, ref, subTab) {
     // Clean up whatever app we had mounted. This is a no-op on the first
     // navigation into any app, but without it a direct app-A → app-B
     // jump (e.g. via hash) would carry the previous app's dev-chat
@@ -1255,25 +1943,37 @@ const App = {
       App.setHeaderTitle(AppView.appData.name);
     }
 
-    // Show GitHub link if app has a repo
-    const ghLink = document.getElementById('app-github-link');
-    if (ghLink && AppView.appData?.repo_url) {
-      ghLink.href = AppView.appData.repo_url;
-      ghLink.classList.remove('hidden');
+    // Show the GitHub drawer row if app has a repo
+    const drg = document.getElementById('drawer-row-github');
+    if (drg && AppView.appData?.repo_url) {
+      drg.href = AppView.appData.repo_url;
+      drg.classList.remove('hidden');
     }
-    // Show Share button only for apps that have a real running URL.
-    // Apps in `creating`/`error`/`awaiting_secrets` have no URL to share;
-    // the SSE handler below re-shows the button when they flip to `running`.
-    const shareBtn = document.getElementById('app-share-btn');
-    if (shareBtn && AppView.appData?.status === 'running' && AppView.appData?.url) {
-      shareBtn.classList.remove('hidden');
+    // Show the Share drawer row only for apps that have a real running
+    // URL. Apps in `creating`/`error`/`awaiting_secrets` have no URL to
+    // share; the SSE handler re-shows the row when they flip to `running`.
+    const drs = document.getElementById('drawer-row-share');
+    if (drs && AppView.appData?.status === 'running' && AppView.appData?.url) {
+      drs.classList.remove('hidden');
+    }
+    // Members & visibility drawer row: creator/admin always (visibility
+    // control), collaborators of an invite-only app too (member list +
+    // invites). Hidden for the self-app (no invites there) and for
+    // everyone else.
+    const drm = document.getElementById('drawer-row-members');
+    if (drm) {
+      const a = AppView.appData;
+      const showMembers = !!a && !a.self_hosted && (
+        a.can_manage || (a.collab_visibility === 'private' && a.can_collaborate)
+      );
+      drm.classList.toggle('hidden', !showMembers);
     }
     // The App tab iframes appData.url, which doesn't resolve for the self-
-    // hosted platform row (no per-slug subdomain). Land on Group Chat
+    // hosted platform row (no per-slug subdomain). Land on the Dev forum
     // instead — that's where votes/discussion happen and what users
     // actually want when they open the self-app.
-    const defaultTab = AppView.appData?.self_hosted ? 'group-chat' : 'app';
-    App.switchTab(tab || defaultTab, sessionId);
+    const defaultTab = AppView.appData?.self_hosted ? 'dev' : 'app';
+    App.switchTab(tab || defaultTab, ref, subTab);
   },
 
   navigateHome() {
@@ -1283,8 +1983,12 @@ const App = {
     if (App._inLeaderboard) App._exitLeaderboard();
     document.getElementById('home-screen').classList.remove('hidden');
     document.getElementById('back-btn').classList.add('hidden');
-    document.getElementById('app-github-link').classList.add('hidden');
-    document.getElementById('app-share-btn').classList.add('hidden');
+    const _drgH = document.getElementById('drawer-row-github');
+    const _drsH = document.getElementById('drawer-row-share');
+    const _drmH = document.getElementById('drawer-row-members');
+    if (_drgH) _drgH.classList.add('hidden');
+    if (_drsH) _drsH.classList.add('hidden');
+    if (_drmH) _drmH.classList.add('hidden');
     App.setHeaderTitle('dApps');
     document.getElementById('app-content').innerHTML = '';
     App.updateHash();
@@ -1319,6 +2023,12 @@ const App = {
     const headerEl = document.getElementById('header-title');
     if (headerEl) headerEl.textContent = text;
     document.title = text;
+    // Re-apply the dev-chat status marker ("⏳ thinking / ✅ done",
+    // #108) that the plain title assignment above just wiped, then let
+    // Notifications re-apply its "(N) " unread prefix outermost.
+    if (window.DevChat && typeof DevChat.applyTitleStatus === 'function') {
+      DevChat.applyTitleStatus();
+    }
     if (window.Notifications && typeof Notifications._updateTitle === 'function') {
       Notifications._updateTitle();
     }
@@ -1339,37 +2049,101 @@ const App = {
     }
   },
 
-  async switchTab(tab, sessionId) {
+  // Normalize every tab vocabulary onto the forum-era model (#194
+  // revision). Returns { tab, subTab, ref } where tab ∈ 'app'|'dev' and
+  // subTab ∈ 'forum'|'sessions'. Legacy names (group-chat,
+  // individual-chat, and the old dev sub-tabs chat/issues/proposals)
+  // keep working at every entry point — old sub-tab refs are converted
+  // into typed forum deep links ({ kind: 'issue'|'proposal', id }).
+  _normalizeTab(tab, ref, subTab) {
+    if (tab === 'group-chat') { tab = 'dev'; subTab = 'chat'; }
+    else if (tab === 'individual-chat') { tab = 'dev'; subTab = subTab || 'sessions'; }
+    if (tab !== 'dev') return { tab: 'app', subTab: null, ref: null };
+
+    if (subTab === 'sessions') {
+      const id = (ref && typeof ref === 'object') ? ref.id : parseInt(ref, 10);
+      // No session id → the card list (there is no session-list screen).
+      return Number.isInteger(id) && id > 0
+        ? { tab: 'dev', subTab: 'sessions', ref: id }
+        : { tab: 'dev', subTab: 'forum', ref: null };
+    }
+
+    // Full-screen sub-views with no deep-link payload.
+    if (subTab === 'chat') return { tab: 'dev', subTab: 'chat', ref: null };
+    if (subTab === 'settings') return { tab: 'dev', subTab: 'settings', ref: null };
+
+    // A typed topic ref — from the 'topic' sub-view itself or the
+    // legacy issues/proposals sub-tab vocabulary — opens that topic
+    // full-screen; everything else lands on the card list.
+    let fref = null;
+    if (ref && typeof ref === 'object' && ref.kind && ref.id) {
+      fref = { kind: ref.kind, id: ref.id };
+    } else if (ref != null && subTab === 'issues') {
+      const id = parseInt(ref, 10);
+      if (Number.isInteger(id) && id > 0) fref = { kind: 'issue', id };
+    } else if (ref != null && subTab === 'proposals') {
+      const id = parseInt(ref, 10);
+      if (Number.isInteger(id) && id > 0) fref = { kind: 'proposal', id };
+    }
+    return fref
+      ? { tab: 'dev', subTab: 'topic', ref: fref }
+      : { tab: 'dev', subTab: 'forum', ref: null };
+  },
+
+  // `ref` is the view's deep-link target: a dev-session id for the
+  // session view, or { kind: 'issue'|'proposal', id } for a forum card
+  // to expand. Ignored on the App tab.
+  async switchTab(tab, ref, subTab) {
+    const norm = App._normalizeTab(tab, ref, subTab);
+    tab = norm.tab;
+    subTab = norm.subTab;
+    ref = norm.ref;
     // The App tab is hidden for self-hosted apps (its iframe target doesn't
     // resolve — see app-view.js renderAppTab). Coerce any incoming request
-    // for it (URL hash, browser back/forward, programmatic) to Group Chat
-    // so we never render an unreachable iframe.
+    // for it (URL hash, browser back/forward, programmatic) to the Dev
+    // forum so we never render an unreachable iframe.
     if (tab === 'app' && AppView.appData?.self_hosted) {
-      tab = 'group-chat';
+      tab = 'dev';
+      subTab = 'forum';
+      ref = null;
+    }
+    // The Dev mode is gated for non-collaborators of an invite-only app
+    // (the button is hidden by AppView.open; this catches hash/back-
+    // forward/programmatic requests). The server enforces the same gate
+    // on every API behind it.
+    if (tab === 'dev' && AppView.appData && AppView.appData.can_collaborate === false) {
+      tab = 'app';
+      subTab = null;
+      ref = null;
     }
     App.currentTab = tab;
+    App.currentSubTab = tab === 'dev' ? (subTab || 'forum') : null;
     document.querySelectorAll('.app-tab').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.tab === tab);
     });
 
     // Tear down the cross-app active-sessions poll when leaving the
-    // dev-chat tab. renderDevChatTab will spin it back up on re-entry.
-    // Without this the poll keeps firing on the group-chat / app tabs
-    // even though there's no UI to update.
-    if (tab !== 'individual-chat' && typeof DevChat !== 'undefined' && DevChat.stopActiveSessionsPoll) {
+    // Sessions sub-tab. renderDevChatTab will spin it back up on
+    // re-entry. Without this the poll keeps firing on the other
+    // surfaces even though there's no UI to update.
+    const onSessions = tab === 'dev' && App.currentSubTab === 'sessions';
+    if (!onSessions && typeof DevChat !== 'undefined' && DevChat.stopActiveSessionsPoll) {
       DevChat.stopActiveSessionsPoll();
+      // The title status indicator (#108) is scoped to "user is on the
+      // dev-chat tab" — leaving the tab clears it. Re-entering while a
+      // run is live re-applies it via openSession's busy check.
+      if (DevChat.setTitleStatus) DevChat.setTitleStatus(null);
+      // #161: switching away from a still-streaming dev session counts
+      // as leaving it — arm its completion notification.
+      if (DevChat.isStreaming && DevChat.currentSession && DevChat._setNotifyOnDone) {
+        DevChat._setNotifyOnDone(DevChat.currentSession.id, true);
+      }
     }
 
-    switch (tab) {
-      case 'app':
-        AppView.renderAppTab();
-        break;
-      case 'group-chat':
-        AppView.renderGroupChatTab();
-        break;
-      case 'individual-chat':
-        await AppView.renderDevChatTab(sessionId);
-        break;
+    if (tab === 'app') {
+      AppView.renderAppTab();
+    } else {
+      await AppView.renderDevView(App.currentSubTab, ref);
     }
 
     // Dev console icon: only meaningful when an iframe is on screen. The
@@ -1381,6 +2155,28 @@ const App = {
     }
 
     App.updateHash();
+  },
+
+  // Explicit navigation entry point for in-app deep links (e.g. clicking
+  // a notification) that must render even when the target route equals
+  // the current one. Unlike assigning `location.hash`, this never relies
+  // on a `hashchange` event firing — a same-value hash assignment fires
+  // nothing, which is why notification clicks to the app/tab you're
+  // already viewing used to do nothing. Mirrors restoreFromHash's
+  // app/tab dispatch, plus a force-rerender branch for same app+tab.
+  openAppTab(slug, tab, opts) {
+    if (!slug) return;
+    const ref = opts && opts.sessionId != null ? opts.sessionId
+      : (opts && opts.ref != null ? opts.ref : null);
+    const subTab = (opts && opts.subTab) || null;
+    if (App.currentApp !== slug) {
+      App.navigateToApp(slug, tab, ref, subTab);
+    } else {
+      // Same app: switchTab normalizes legacy names, re-renders, and
+      // syncs the hash — idempotent when nothing changed, a forced
+      // refresh when the target equals the current view.
+      App.switchTab(tab, ref, subTab);
+    }
   },
 };
 

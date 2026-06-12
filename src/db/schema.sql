@@ -21,6 +21,14 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS anthropic_key_last4  VARCHAR(8);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS can_create_apps BOOLEAN NOT NULL DEFAULT FALSE;
 UPDATE users SET can_create_apps = TRUE WHERE is_admin = TRUE AND can_create_apps = FALSE;
 
+-- is_admin is now mutable from the admin panel (grant/revoke toggle in
+-- public/admin.html → POST /api/admin/users/:id/is-admin). The column is
+-- nullable (DEFAULT FALSE, declared at the top of the table) so legacy
+-- rows could hold NULL; normalize to FALSE so the last-admin guard's
+-- `COUNT(*) WHERE is_admin = TRUE` and every `is_admin = TRUE` read treat
+-- NULL and FALSE identically. Idempotent — safe to run every boot.
+UPDATE users SET is_admin = FALSE WHERE is_admin IS NULL;
+
 -- Usernode wallet linking: pubkey is the on-chain identity once linked;
 -- token + expiry gate the QR-based linking flow.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS usernode_pubkey          VARCHAR(255);
@@ -219,16 +227,21 @@ CREATE TABLE IF NOT EXISTS pr_undo_votes (
 );
 CREATE INDEX IF NOT EXISTS pr_undo_votes_session_idx ON pr_undo_votes(session_id);
 
--- Spec-stage: per-session live markdown spec doc + version history.
--- spec_md is the live draft (written by the Mayor's write_spec tool or
--- by a scout dispatch — user hand-edits via PUT /spec were dropped).
--- chat_session_specs holds frozen snapshots: rows are inserted by the
--- user clicking "Save version" in the spec viewer (POST /api/sessions/:id/specs),
--- which copies the current spec_md verbatim. Old sessions also have
--- rows from the now-removed /build-spec route — those carry commit_sha
--- and pr_number; manually-saved rows leave both NULL and the UI
--- degrades gracefully (no PR link rendered). shared_to_group_at is
--- set when the user posts a snapshot into the app's group chat.
+-- Spec-stage: per-session markdown spec doc + version history.
+-- spec_md is the working buffer (written by the Mayor's scout dispatch
+-- — user hand-edits via PUT /spec were dropped, and the Mayor's
+-- in-process write_spec/edit_spec tools were removed in #111).
+-- chat_session_specs holds the immutable numbered versions (v1…vN) that
+-- are the single spec surface the dev-chat viewer presents (#69). Rows
+-- are inserted automatically by snapshotSessionSpec() on every spec
+-- mutation (#27), so spec_md is always byte-identical to the latest
+-- version. The manual "Save version" route (POST /api/sessions/:id/specs)
+-- was retired in #69 — it only ever re-snapped that same content.
+-- Old sessions also have rows from the now-removed /build-spec route —
+-- those carry commit_sha and pr_number; auto-snapshotted rows leave both
+-- NULL and the UI degrades gracefully (no PR link rendered).
+-- shared_to_group_at is set when the user posts a version into the
+-- app's group chat.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS spec_md TEXT NOT NULL DEFAULT '';
 
 -- Session auto-pause: persisted "last interacted with" timestamp. Bumped
@@ -242,6 +255,92 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS spec_md TEXT NOT NULL DEFAULT
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 -- Supports the sweeper's "active + idle past threshold" scan.
 CREATE INDEX IF NOT EXISTS chat_sessions_activity_idx ON chat_sessions(status, last_activity_at);
+
+-- #155: headless "auto sessions" started from an issue's Auto-solve button.
+-- A headless session is NOT connected to any user's dev chat: it runs one
+-- unattended Mayor turn (scout / build / question) against the issue, may
+-- push a branch, but never opens a PR or builds staging. It is billed to
+-- the user who clicked the button (user_id), and any collaborator can later
+-- clone its state (messages + spec + branch + CC memory) into their own
+-- dev-chat session via POST /api/sessions/:id/clone-headless.
+--   is_headless            = marks the row as an auto session; excluded from
+--                            per-user session lists, the 3-slot cap, and chat.
+--   headless_status        = 'generating' (run in flight) | 'ready' | 'failed'.
+--                            NULL on ordinary sessions.
+--   headless_issue_number  = the GitHub issue the auto session was started for.
+--   headless_outcome       = what the run arrived at: 'spec' | 'code' |
+--                            'spec_code' (#170 — scout drafted a spec AND the
+--                            decision turn implemented it) | 'question'. Drives
+--                            the cloned session's follow-up message. NULL until
+--                            the run finishes.
+--   cloned_from_session_id = on ORDINARY sessions: the headless session this
+--                            dev chat was cloned from (many clones per source).
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS is_headless BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS headless_status VARCHAR(20);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS headless_issue_number INTEGER;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS headless_outcome VARCHAR(20);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS cloned_from_session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
+-- Supports the per-issue "latest auto session" lookup on the issues panel.
+CREATE INDEX IF NOT EXISTS chat_sessions_headless_idx
+  ON chat_sessions(app_id, headless_issue_number, created_at DESC)
+  WHERE is_headless;
+
+-- Restart-proof turns + resumable headless runs.
+--   active_turn   = durable record of an in-flight detached CC turn:
+--                   { mode, journal, model, startedAt }. Set by
+--                   worker.execInWorker before the detached `docker exec`
+--                   dispatch and cleared after post-turn processing. On boot,
+--                   server.js's adoption path uses it to replay the turn's
+--                   journal file (in the CC volume) instead of killing the
+--                   still-running in-container claude. NULL = no turn in
+--                   flight.
+--   headless_step = where the headless auto-session loop last checkpointed:
+--                   'planning' (Mayor phase-1) | 'cc_running' (CC turn
+--                   dispatched) | 'wrapping' (Mayor phase-2). Lets
+--                   resumeHeadlessRuns continue a 'generating' row after a
+--                   restart instead of blanket-failing it. NULL on ordinary
+--                   sessions and on headless rows finished before this column
+--                   existed.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS active_turn   JSONB;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS headless_step VARCHAR(20);
+
+-- #161: "owner left while a turn was in flight; notify on completion".
+-- Armed/disarmed by the client via POST /api/sessions/:id/notify-on-done
+-- the moment the owner stops watching a running turn; checked + cleared
+-- at every turn-completion point (the chat handler's done hook and
+-- server.js resumeDetachedTurn). Persisted rather than in-memory so
+-- restart-recovered turns honor it.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS notify_on_done BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- GitHub issue linkage (#75): the open issues this session's work addresses,
+-- declared by the Mayor via dispatch_claude_code / dispatch_scout's
+-- `addresses_issues` arg. Accumulates (union) across turns. pr-metadata.js
+-- appends a `Closes #N` line per number to the PR body so merging the PR
+-- auto-closes the issue. `pr_linked_issues_applied` snapshots what was last
+-- written to the live PR body so the existing-PR update path can detect a
+-- changed linkage even when the title is unchanged.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS linked_issues             INTEGER[] NOT NULL DEFAULT '{}';
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_linked_issues_applied  INTEGER[] NOT NULL DEFAULT '{}';
+-- One-shot marker for the migrate-time backfill that recovers linked_issues
+-- from historical PR bodies (closing keywords) predating the #75 plumbing.
+-- Set true once a session's PR has been fetched + parsed so PRs without
+-- closing keywords aren't re-fetched from GitHub on every boot.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS linked_issues_backfilled  BOOLEAN NOT NULL DEFAULT false;
+
+-- Bot-generated testing guidance for PR previews (#127). The coding agent
+-- may end a build turn with a "==== TESTING ====" block (parsed by
+-- src/services/testing-notes.js):
+--   testing_md         : latest "how to test" markdown (NULL = none).
+--   testing_path       : validated relative deep-link path into the app that
+--                        lands the tester on the changed feature.
+--   pr_testing_applied : snapshot of the rendered "How to test" section last
+--                        written into the live PR body (the
+--                        pr_linked_issues_applied analog) so the existing-PR
+--                        update path detects changed guidance even when the
+--                        title is unchanged.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS testing_md         TEXT;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS testing_path       VARCHAR(512);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_testing_applied TEXT;
 
 -- Stale-promoted-PR policy + reversible archive.
 --   promoted_at       : when the session was proposed to the group. With
@@ -275,6 +374,28 @@ CREATE INDEX IF NOT EXISTS chat_sessions_archived_idx ON chat_sessions(status, a
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS merged_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS chat_sessions_merged_at_idx ON chat_sessions(merged_at);
 
+-- #58: snapshot the vote threshold that was in effect at the moment a PR
+-- merged. The "majority" needed to merge is computed live from the active-
+-- user set (services/active-users.js getActiveUserStats) and is never
+-- otherwise persisted, so the merged-PR vote pill used to be rendered
+-- against the *current* majority — its denominator drifted as the app's
+-- active-user count changed ("3 / 3" at merge could later read "3 / 5").
+-- These two columns freeze the at-merge numbers so the pill (and a
+-- tooltip) can show the true historical threshold:
+--   votes_required        = the majority threshold needed to merge
+--   active_users_at_merge = the active-user count the threshold was
+--                           derived from (the "/ M" denominator context)
+-- Both set in routes/votes.js checkAndMerge() at the moment the PR lands
+-- (vote-driven, admin force-merge, and revert-PR paths all flow through
+-- there). NULL for rows merged before these columns existed; the boot-time
+-- backfill in db/migrate.js reconstructs them from the merge announcement
+-- message's "(yes/active votes)" figure where possible, and the frontend
+-- falls back to the live majority for any that remain NULL. Covered by the
+-- table-level staging:private comment, so they are scrubbed from staging
+-- clones with the rest of the row.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS votes_required        INTEGER;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS active_users_at_merge INTEGER;
+
 CREATE TABLE IF NOT EXISTS chat_session_specs (
   id                  SERIAL PRIMARY KEY,
   session_id          INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
@@ -294,6 +415,20 @@ CREATE INDEX IF NOT EXISTS idx_chat_session_specs_session
 -- card metadata today; future: PR previews, system-link metadata, etc.)
 -- without overloading the free-form `content` field.
 ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+-- #194: thread scoping for chat_messages. NULL thread_type = general
+-- chat (all pre-existing rows; no backfill needed). thread_type is one
+-- of 'issue' | 'session' | 'governance'; thread_ref is, respectively,
+-- the GitHub issue number (consistent with
+-- issue_bounties.github_issue_number keying), chat_sessions.id (PR
+-- proposals), or the internal issues.id (governance proposals). No FK
+-- on thread_ref — GitHub issue numbers aren't a local table; session /
+-- governance refs are validated server-side at post time (ws.js).
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS thread_type VARCHAR(16);
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS thread_ref INTEGER;
+CREATE INDEX IF NOT EXISTS idx_chat_messages_thread
+  ON chat_messages (app_id, thread_type, thread_ref, id)
+  WHERE thread_type IS NOT NULL;
 
 -- #25: emoji reactions on group-chat messages (WhatsApp-style, but
 -- Slack-model: a user may add multiple distinct emoji to one message,
@@ -335,6 +470,8 @@ CREATE TABLE IF NOT EXISTS issue_votes (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(issue_id, user_id)
 );
+-- User-first scan for the "My history" view (GET /api/me/history).
+CREATE INDEX IF NOT EXISTS idx_issue_votes_user ON issue_votes (user_id, created_at DESC);
 
 -- PR votes
 CREATE TABLE IF NOT EXISTS pr_votes (
@@ -345,6 +482,8 @@ CREATE TABLE IF NOT EXISTS pr_votes (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(session_id, user_id)
 );
+-- User-first scan for the "My history" view (GET /api/me/history).
+CREATE INDEX IF NOT EXISTS idx_pr_votes_user ON pr_votes (user_id, created_at DESC);
 
 -- LLM usage tracking
 CREATE TABLE IF NOT EXISTS llm_usage (
@@ -354,6 +493,12 @@ CREATE TABLE IF NOT EXISTS llm_usage (
   total_cost_cents NUMERIC(10,4) NOT NULL DEFAULT 0,
   UNIQUE(user_id, date)
 );
+
+-- #119: split daily spend by who paid Anthropic.
+--   total_cost_cents = platform-key spend (drives the daily caps)
+--   byok_cost_cents  = spend billed to the user's own Anthropic key
+--                      (display only — never considered by any cap)
+ALTER TABLE llm_usage ADD COLUMN IF NOT EXISTS byok_cost_cents NUMERIC(10,4) NOT NULL DEFAULT 0;
 
 -- Platform-level admin-tunable settings. Currently only used for the
 -- daily LLM spend caps; designed as a generic key/value store so future
@@ -383,9 +528,13 @@ ON CONFLICT (key) DO NOTHING;
 -- chat_message_id points to the reply, set in src/services/ws.js),
 -- 'reaction' (#25 — someone reacted to your message; chat_message_id is
 -- the reacted message, `detail` holds the emoji), 'stale_pr' (a promoted
--- PR is going quiet, addressed to its author), and 'pr_proposed' (a PR
+-- PR is going quiet, addressed to its author), 'pr_proposed' (a PR
 -- was promoted for voting — session_id points to it; fanned out to the
--- app's active users + creator + favoriters in src/routes/votes.js).
+-- app's active users + creator + favoriters in src/routes/votes.js),
+-- 'session_done' (#161 — a dev-session turn finished after its owner
+-- left; session_id points to the session) and 'auto_solve_done' (#161 —
+-- a headless auto-solve run finished; `detail` holds the outcome:
+-- spec | code | spec_code | question | failed).
 CREATE TABLE IF NOT EXISTS notifications (
   id              SERIAL PRIMARY KEY,
   user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -517,6 +666,44 @@ CREATE INDEX IF NOT EXISTS idx_pr_kudos_giver_week  ON pr_kudos (giver_user_id, 
 CREATE INDEX IF NOT EXISTS idx_pr_kudos_created     ON pr_kudos (created_at DESC);
 COMMENT ON TABLE pr_kudos IS 'staging:private';
 
+-- Issue bounties — a "Give kudos" pledge placed on a GitHub issue from the
+-- Open Issues activity-panel section. A bounty is a SYMBOLIC off-chain
+-- ledger entry (no tokens, no on-chain transfer): pledging it debits the
+-- giver's shared weekly kudos allowance (the same 5/week cap pr_kudos
+-- enforces, counted across BOTH tables — see src/routes/kudos.js). When a
+-- merged PR closes the issue (via its chat_sessions.linked_issues link),
+-- the open bounty flips to 'awarded' and is credited to that PR's author —
+-- see the payout block in routes/votes.js checkAndMerge.
+--
+-- Keyed by (app_id, github_issue_number) — NOT the internal `issues` table —
+-- because the Open Issues section lists the repo's GitHub issues, which may
+-- have no internal proposal row. staging:private for the same reason as
+-- pr_kudos: row-level (giver, issue) attribution is privacy-flavored social
+-- data. (A private table may FK public tables; only the reverse is barred.)
+CREATE TABLE IF NOT EXISTS issue_bounties (
+  id                   SERIAL PRIMARY KEY,
+  app_id               INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  github_issue_number  INTEGER NOT NULL,
+  giver_user_id        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  week_start           DATE NOT NULL,
+  status               VARCHAR(16) NOT NULL DEFAULT 'open',
+  awarded_session_id   INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL,
+  awarded_user_id      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  awarded_at           TIMESTAMPTZ,
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- One OPEN bounty per (app, issue, giver). A partial unique index keeps the
+-- constraint scoped to status='open' so a giver can re-pledge after a prior
+-- bounty of theirs has already been awarded/voided.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_issue_bounties_open_uniq
+  ON issue_bounties (app_id, github_issue_number, giver_user_id)
+  WHERE status = 'open';
+CREATE INDEX IF NOT EXISTS idx_issue_bounties_issue
+  ON issue_bounties (app_id, github_issue_number, status);
+CREATE INDEX IF NOT EXISTS idx_issue_bounties_giver_week
+  ON issue_bounties (giver_user_id, week_start);
+COMMENT ON TABLE issue_bounties IS 'staging:private';
+
 -- Per-user app favorites. Personal shortcut — starred apps appear in a
 -- dedicated section above the main grid on the home screen. No effect
 -- on visibility or permissions for other users. Not staging:private
@@ -528,6 +715,13 @@ CREATE TABLE IF NOT EXISTS app_favorites (
   PRIMARY KEY (app_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_app_favorites_user ON app_favorites(user_id);
+-- Per-user manual ordering of starred apps (issue #128). NULL = no
+-- explicit position: such rows sort after all explicitly ordered ones,
+-- falling back to the activity-based list order. Lower = earlier.
+-- Uniqueness is deliberately not enforced — gaps/ties are tolerated and
+-- resolved by the fallback, and PUT /api/favorites/order rewrites the
+-- caller's full set contiguously on every save anyway.
+ALTER TABLE app_favorites ADD COLUMN IF NOT EXISTS sort_order INTEGER;
 
 -- Append-only product-analytics event log. The long-term source of truth
 -- behind the admin /dashboard (growth, retention, and the dapp-usage /
@@ -560,3 +754,140 @@ CREATE INDEX IF NOT EXISTS idx_events_user_created ON events(user_id, created_at
 -- chat_sessions / pr_kudos, both already private) is TRUNCATEd in staging
 -- clones rather than leaking social history into previews.
 COMMENT ON TABLE events IS 'staging:private';
+
+-- Per-app visibility (collaborator & viewer privacy).
+--   collab_visibility: who may participate in building the app (group
+--     chat, dev sessions, voting, issues, kudos). 'public' = everyone.
+--   view_visibility:   who may see the app exists and use it (home list,
+--     App tab). 'public' = everyone.
+-- Invariants (enforced by the CHECK below + API validation in
+-- routes/apps.js): collab-public implies view-public, and view-private
+-- means the viewer list IS the collaborator list (viewers are never
+-- separately enumerated). Admins always see everything — enforced in
+-- src/services/app-access.js, the shared gate every route goes through.
+-- Defaults make every pre-migration app public/public (no behavior change).
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS collab_visibility VARCHAR(10) NOT NULL DEFAULT 'public';
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS view_visibility   VARCHAR(10) NOT NULL DEFAULT 'public';
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'apps_visibility_combo_check' AND conrelid = 'apps'::regclass
+  ) THEN
+    ALTER TABLE apps ADD CONSTRAINT apps_visibility_combo_check
+      CHECK (NOT (collab_visibility = 'public' AND view_visibility = 'private'));
+  END IF;
+END $$;
+
+-- App membership + invites in one table. A row with status='invited' is
+-- a pending invite (grants NO access — every check requires 'member');
+-- declining deletes the row so re-invites work. The creator gets a
+-- member row at creation time (and via the backfill below for existing
+-- apps), so "creator is always a collaborator" holds uniformly.
+-- Deliberately NOT staging:private (like app_favorites): membership must
+-- survive into staging clones so a cloned platform's own access checks
+-- keep working, and rows carry no secrets.
+CREATE TABLE IF NOT EXISTS app_collaborators (
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status      VARCHAR(16) NOT NULL DEFAULT 'member',
+  invited_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  accepted_at TIMESTAMPTZ,
+  PRIMARY KEY (app_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_app_collaborators_user ON app_collaborators(user_id, status);
+
+-- Backfill: every existing app's creator becomes a member. Idempotent.
+INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+  SELECT id, created_by, 'member', NOW() FROM apps WHERE created_by IS NOT NULL
+ON CONFLICT (app_id, user_id) DO NOTHING;
+
+-- Before/after visuals on UI-affecting proposals (issue #195). Each row is
+-- one capture artifact produced by the one-shot usernode-capture container
+-- after a staging preview comes up healthy: kind = before (production) /
+-- after (staging), media = png (still) / webm (in-app <video> clip) /
+-- gif (PR-body inline embed). Retention is latest-set-per-session only —
+-- src/services/visuals.js deletes the session's prior rows before
+-- inserting a fresh capture, so growth is bounded at <= 6 rows/session.
+-- The id is a random 32-hex token generated in Node: GET /visuals/:id is
+-- a public (pre-auth) route so GitHub's camo proxy can fetch embeds
+-- anonymously, and unguessable ids are the only privacy layer.
+-- Artifacts are bytea-in-Postgres because the platform container has no
+-- persistent file volume; the serving route isolates that storage choice.
+CREATE TABLE IF NOT EXISTS session_visuals (
+  id            VARCHAR(32) PRIMARY KEY,
+  session_id    INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  commit_hash   VARCHAR(64),
+  kind          VARCHAR(8)  NOT NULL,
+  media         VARCHAR(8)  NOT NULL,
+  content_type  VARCHAR(32) NOT NULL,
+  data          BYTEA       NOT NULL,
+  captured_path VARCHAR(512),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_session_visuals_session ON session_visuals(session_id);
+
+-- Private like its parent chat_sessions (public-FK-to-private is the
+-- combination the migration linter forbids); the artifacts also embed
+-- screenshots of other users' staging previews.
+COMMENT ON TABLE session_visuals IS 'staging:private';
+
+-- Snapshot of the rendered "Before / after" PR-body block last written to
+-- GitHub, mirroring pr_testing_applied: applyPrMetadata compares the fresh
+-- block against this to decide whether a title-unchanged turn still needs
+-- a PR body update, and src/services/visuals.js stamps it after its
+-- targeted post-capture body patch so the next turn doesn't rewrite an
+-- unchanged body.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_visuals_applied TEXT;
+
+-- App access to user LLM budgets (issue #34). One row per (app, user)
+-- consent: the user explicitly allowed this app to spend from their
+-- daily AI budget through the platform proxy (/api/app-llm), up to
+-- daily_cap_cents per day. Revocation keeps the row (usage history,
+-- easy re-grant) and just flips status; the proxy requires
+-- status='active'. allow_byok extends the grant onto the user's own
+-- stored Anthropic key once the platform allowance is exhausted —
+-- strictly opt-in per app, still bounded by the cap.
+CREATE TABLE IF NOT EXISTS app_llm_grants (
+  app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status          VARCHAR(16) NOT NULL DEFAULT 'active',
+  daily_cap_cents INTEGER NOT NULL DEFAULT 100,
+  allow_byok      BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  revoked_at      TIMESTAMPTZ,
+  PRIMARY KEY (app_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_app_llm_grants_user ON app_llm_grants(user_id);
+-- Consent/financial-adjacent rows must not leak into staging clones.
+-- (A private table may FK public tables; only the reverse is barred.)
+COMMENT ON TABLE app_llm_grants IS 'staging:private';
+
+-- Per-app daily spend ledger, mirroring llm_usage's split: total goes
+-- against the platform daily caps, byok is the display-only bucket for
+-- spend billed to the user's own key. The proxy writes BOTH this table
+-- and llm_usage (via limits.recordSpend) so platform-wide caps and the
+-- existing /api/budget display stay correct.
+CREATE TABLE IF NOT EXISTS app_llm_usage (
+  app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  date            DATE NOT NULL DEFAULT CURRENT_DATE,
+  total_cost_cents NUMERIC(10,4) NOT NULL DEFAULT 0,
+  byok_cost_cents  NUMERIC(10,4) NOT NULL DEFAULT 0,
+  UNIQUE(app_id, user_id, date)
+);
+-- Sibling of llm_usage, which is already staging:private.
+COMMENT ON TABLE app_llm_usage IS 'staging:private';
+
+-- Per-app credential identifying the calling app to the LLM proxy.
+-- Random 64-hex, generated lazily at production deploy when NULL (same
+-- adoption shape as db_password). Deliberately NOT a JWT: every dapp
+-- container holds the shared JWT_SECRET, so a JWT-based app identity
+-- would be forgeable by any other app; a random opaque token is not.
+-- staging:private so the column-scrub in cloneDatabase blanks it —
+-- staging containers never receive the token and therefore can't
+-- spend grants (unreviewed PR code).
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS llm_proxy_token TEXT;
+COMMENT ON COLUMN apps.llm_proxy_token IS 'staging:private';

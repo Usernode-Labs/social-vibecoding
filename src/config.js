@@ -60,9 +60,18 @@ function load() {
     // src/routes/sessions.js; lifted here so prod can tune them via env
     // without a code deploy. See the scaling notes in README / SPEC.
     //   - maxGlobalSessions: platform-wide active+promoted session ceiling.
-    //   - maxUserSessions:   per-user active+promoted session ceiling.
+    //   - maxUserSessions:   per-user ceiling on 'active'-status sessions
+    //     only (#193). Promoted sessions are exempt: they're un-pausable
+    //     while their PR is up for a merge vote, so counting them would
+    //     leave the user no way to free a slot by pausing.
+    //   - maxUserPromotedSessions: per-user ceiling on concurrently
+    //     promoted PRs, checked at promote time. Promoted sessions don't
+    //     count toward maxUserSessions, so this is the bound that keeps
+    //     one user from papering the vote panel (and holding N staging
+    //     previews) with open PRs.
     maxGlobalSessions: parseInt(process.env.MAX_GLOBAL_SESSIONS || '25', 10),
     maxUserSessions: parseInt(process.env.MAX_USER_SESSIONS || '3', 10),
+    maxUserPromotedSessions: parseInt(process.env.MAX_USER_PROMOTED_SESSIONS || '5', 10),
     // Per-session worker container resource limits, passed to `docker run`
     // by src/services/worker.js. Defaults preserve historical behavior;
     // shrink them in prod to fit more concurrent warm workers on one box.
@@ -138,6 +147,13 @@ function load() {
     platformRepoUrl: (process.env.USERNODE_PLATFORM_REPO || 'https://github.com/Usernode-Labs/social-vibecoding').replace(/\/$/, ''),
     selfAppSlug: SELF_APP_SLUG,
     selfAppDbName: SELF_APP_DB_NAME,
+    // The platform's own container name on the shared docker network.
+    // Child apps run as `usernode-app-<slug>`, but the platform itself is
+    // the compose service `container_name: usernode` (docker-compose.yml)
+    // — the before/after capture pipeline (services/visuals.js) needs this
+    // to shoot a real "before" of the production platform for self-app
+    // sessions. Overridable for forks whose compose names differ.
+    selfAppContainer: process.env.SELF_APP_CONTAINER || 'usernode',
     // SELF-HOSTING.md Phase 4: in-app vote-to-merge for the self-
     // app. ON by default — all authenticated users can see the self-
     // app row, list its promoted PRs, and cast votes via the existing
@@ -158,6 +174,7 @@ function load() {
   console.log(`  MAX_APPS=${config.maxApps}`);
   console.log(`  MAX_GLOBAL_SESSIONS=${config.maxGlobalSessions}`);
   console.log(`  MAX_USER_SESSIONS=${config.maxUserSessions}`);
+  console.log(`  MAX_USER_PROMOTED_SESSIONS=${config.maxUserPromotedSessions}`);
   console.log(`  WORKER_MEMORY=${config.workerMemory} WORKER_CPUS=${config.workerCpus}`);
   console.log(`  DB_POOL_MAX=${config.dbPoolMax}`);
   console.log(`  SESSION_AUTOPAUSE_IDLE_MS=${config.sessionAutopauseIdleMs}${config.sessionAutopauseIdleMs === 0 ? ' (disabled)' : ''}`);
@@ -171,6 +188,7 @@ function load() {
   console.log(`  NODE_RPC_URL=${config.nodeRpcUrl}`);
   console.log(`  USERNODE_PLATFORM_REPO=${config.platformRepoUrl}`);
   console.log(`  SELF_APP_SLUG=${config.selfAppSlug} (db=${config.selfAppDbName})`);
+  console.log(`  SELF_APP_CONTAINER=${config.selfAppContainer}`);
   console.log(`  SELF_APP_PUBLIC_VOTING=${config.selfAppPublicVoting} (Phase 4: ${config.selfAppPublicVoting ? 'enabled — all users can see + vote on self-app PRs' : 'disabled — self-app is admin-only'})`);
 
   return config;

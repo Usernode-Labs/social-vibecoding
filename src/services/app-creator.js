@@ -5,6 +5,7 @@ const caddy = require('./caddy');
 const dbManager = require('./db-manager');
 const appManifest = require('./app-manifest');
 const appSecrets = require('./app-secrets');
+const appLlmEnv = require('./app-llm-env');
 const { getTemplateFiles } = require('./template');
 const { getPool } = require('../db/pool');
 const { pushAppStatusUpdate } = require('./ws');
@@ -150,6 +151,13 @@ async function createApp(config, appRow) {
       [JSON.stringify(manifest), appId]
     );
 
+    // dapp.json's top-level `name` takes precedence over the platform
+    // name: reconcile apps.name to it now (no-op when the manifest
+    // carries no name). Best-effort — a rename hiccup must not fail
+    // app creation.
+    await appManifest.reconcileAppName(pool, { id: appId, slug, name }, manifest)
+      .catch((err) => log.warn('app-creator', 'Name reconcile failed', { appId, err: err.message }));
+
     const storedValues = await appSecrets.getRawValues(pool, appId, config.jwtSecret);
     const merge = appSecrets.mergeForDeploy(
       manifest, storedValues, appSecrets.platformDefaultsFromEnv()
@@ -176,7 +184,11 @@ async function createApp(config, appRow) {
     // 4. Remove any existing container with the same name
     await docker.stopAndRemove(containerName).catch(() => {});
 
-    // 5. Run the container
+    // 5. Run the container. Production containers additionally get the
+    // LLM-proxy env pair (URL + per-app token, generated lazily here on
+    // first deploy) so the app can call the platform's app-LLM proxy.
+    // Staging deploys deliberately don't (see services/app-llm-env.js).
+    const llmEnv = await appLlmEnv.productionLlmEnv(pool, appId);
     const containerId = await docker.runContainer(containerName, {
       image: imageName,
       env: {
@@ -184,6 +196,7 @@ async function createApp(config, appRow) {
         JWT_SECRET: config.jwtSecret,
         PORT: '3000',
         USERNODE_ENV: 'production',
+        ...llmEnv,
         ...merge.env,
       },
       port: 3000,
@@ -192,11 +205,10 @@ async function createApp(config, appRow) {
     // 6. Wait for health
     await docker.waitForHealthy(containerName, 3000, '/health');
 
-    // 7. Register Caddy route (may fail in local dev — that's ok)
+    // 7. No Caddy route to register — the wildcard site maps
+    // `<slug>.<domain>` to `containerName` (usernode-app-<slug>) and
+    // issues TLS on-demand. See Caddyfile + services/caddy.js.
     const hostname = caddy.productionHostname(slug);
-    await caddy.registerRoute(hostname, containerName, 3000).catch((err) => {
-      log.warn('app-creator', 'Caddy route registration failed (ok in local dev)', { err: err.message });
-    });
 
     // 8. Determine the app's accessible URL
     // See routes/apps.js for why we don't key off DOCKER_NETWORK anymore.

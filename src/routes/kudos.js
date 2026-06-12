@@ -3,6 +3,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const ws = require('../services/ws');
 const events = require('../services/events');
+const appAccess = require('../services/app-access');
 
 // Weekly quota per giver. The plan locks this at 5; if it ever moves,
 // tweak here and the FE budget badge will pick it up via /api/me/kudos-budget.
@@ -49,34 +50,90 @@ async function countKudosGivenThisWeek(pool, userId, weekStart) {
   return rows[0]?.c || 0;
 }
 
+// The SHARED weekly "give" allowance: PR kudos + issue bounties draw from the
+// same WEEKLY_KUDOS_LIMIT pool, so a user can't exceed 5 total combined gives
+// per week. Both the PR-kudos give endpoint and the issue-bounty endpoint
+// (src/routes/issues.js) gate on this combined figure. One round-trip across
+// both ledgers; uses idx_pr_kudos_giver_week + idx_issue_bounties_giver_week.
+//
+// A pledged bounty normally keeps consuming its slot whatever its outcome
+// (open → awarded), but a VOIDED bounty is refunded: it no longer counts
+// against the limit. The only thing that voids a bounty is the self-kudos
+// guard at merge time (routes/votes.js resolveIssueBounty) — when a user
+// pledged on an issue their own PR then closed. That void is a system-imposed
+// outcome the pledger can't avoid, so the slot is returned for them to spend
+// on someone else's PR. Hence the `status <> 'voided'` filter below.
+async function countWeeklyAllowanceUsed(pool, userId, weekStart) {
+  const { rows } = await pool.query(
+    `SELECT
+       (SELECT COUNT(*) FROM pr_kudos
+          WHERE giver_user_id = $1 AND week_start = $2)
+       +
+       (SELECT COUNT(*) FROM issue_bounties
+          WHERE giver_user_id = $1 AND week_start = $2
+            AND status <> 'voided') AS c`,
+    [userId, weekStart]
+  );
+  return parseInt(rows[0]?.c, 10) || 0;
+}
+
 // Fetch the kudos count + giver usernames + my_kudos flag for a
 // session. Used both by `GET /api/sessions/:id/kudos` and by the
 // in-line subqueries on /promoted and /merged (though those use
 // COUNT(*) directly for performance — the full giver list only
 // loads when the hover popover requests it).
 async function loadKudosForSession(pool, sessionId, viewerUserId) {
+  // Direct PR kudos UNION ALL the issue bounties that were AWARDED to this PR
+  // on merge — a bounty resolves into kudos credit for the closing PR's
+  // author, so both surface as kudos here (matching the leaderboards and the
+  // card counts). LEFT JOIN on the bounty side so an awarded bounty whose
+  // giver was since deleted (giver_user_id → NULL) still counts; it just
+  // can't be attributed to a username in the popover.
+  // Each branch tags its rows with a `source` so my_kudos_direct (below)
+  // can tell a retractable direct kudos apart from bounty-derived credit.
   const { rows } = await pool.query(
-    `SELECT pk.created_at, u.username, u.id AS user_id
-       FROM pr_kudos pk
-       JOIN users u ON u.id = pk.giver_user_id
-       WHERE pk.session_id = $1
-       ORDER BY pk.created_at ASC`,
+    `SELECT created_at, username, user_id, source FROM (
+       SELECT pk.created_at, u.username, u.id AS user_id, 'pr' AS source
+         FROM pr_kudos pk
+         JOIN users u ON u.id = pk.giver_user_id
+        WHERE pk.session_id = $1
+       UNION ALL
+       SELECT ib.awarded_at AS created_at, bu.username, ib.giver_user_id AS user_id, 'bounty' AS source
+         FROM issue_bounties ib
+         LEFT JOIN users bu ON bu.id = ib.giver_user_id
+        WHERE ib.awarded_session_id = $1 AND ib.status = 'awarded'
+     ) k
+     ORDER BY created_at ASC NULLS LAST`,
     [sessionId]
   );
   const count = rows.length;
   const myKudos = viewerUserId
     ? rows.some((r) => r.user_id === viewerUserId)
     : false;
-  const givers = rows.map((r) => ({
-    username: r.username,
-    createdAt: r.created_at,
-  }));
-  return { count, givers, my_kudos: myKudos };
+  // my_kudos_direct: the viewer has an actual pr_kudos row (retractable
+  // via DELETE), as opposed to credit that arrived through an awarded
+  // issue bounty (not retractable here).
+  const myKudosDirect = viewerUserId
+    ? rows.some((r) => r.source === 'pr' && r.user_id === viewerUserId)
+    : false;
+  // Only rows with a resolvable username make the giver list; a deleted-user
+  // bounty still counts above but has no name to show.
+  const givers = rows
+    .filter((r) => r.username)
+    .map((r) => ({
+      username: r.username,
+      createdAt: r.created_at,
+    }));
+  return { count, givers, my_kudos: myKudos, my_kudos_direct: myKudosDirect };
 }
 
 function kudosRoutes(config) {
   const router = Router();
   const pool = getPool(config);
+
+  // Per-app visibility gate for the session-id-addressed kudos routes:
+  // collab-level access, 404 on deny (kudos is a build-surface signal).
+  router.use('/api/sessions/:id', appAccess.sessionCollabGuard(pool));
 
   // --------------------------------------------------------------
   // POST /api/sessions/:id/kudos — give a kudos.
@@ -139,7 +196,7 @@ function kudosRoutes(config) {
       // parallel requests. Bounded, rare, not security-critical; the
       // alternative is a per-user advisory lock which adds complexity
       // for a near-zero-impact race. Documented in the plan.
-      const given = await countKudosGivenThisWeek(pool, req.user.id, weekStart);
+      const given = await countWeeklyAllowanceUsed(pool, req.user.id, weekStart);
       if (given >= WEEKLY_KUDOS_LIMIT) {
         return res.status(429).json({
           error: `Weekly kudos quota exceeded (${WEEKLY_KUDOS_LIMIT}/week). Resets every Monday 00:00 UTC.`,
@@ -250,6 +307,118 @@ function kudosRoutes(config) {
   });
 
   // --------------------------------------------------------------
+  // DELETE /api/sessions/:id/kudos — retract a previously given kudos
+  // (issue #197: undo for mis-clicks).
+  //
+  // Status codes:
+  //   200 ok        — kudos removed; remaining/limit reflect the
+  //                    refunded current-week slot
+  //   401 unauth    — handled by authMiddleware upstream
+  //   404 not_found — session doesn't exist, OR the viewer has no
+  //                    direct kudos row on it (bounty-derived credit
+  //                    is not retractable here)
+  //
+  // No session-status gate: if the row exists it was eligible at give
+  // time, and retraction is harmless in any state (the merged list is
+  // the primary mis-click surface). The quota refund is emergent —
+  // countWeeklyAllowanceUsed counts rows by week_start, so deleting a
+  // current-week row frees a slot while deleting an old-week row
+  // changes nothing for this week.
+  // --------------------------------------------------------------
+  router.delete('/api/sessions/:id/kudos', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    const sessionId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(sessionId)) {
+      return res.status(400).json({ error: 'Invalid session id' });
+    }
+
+    try {
+      // Session + app context up front (same query shape as the give
+      // path) so the broadcast and analytics below have appSlug/appId
+      // without extra round-trips.
+      const { rows: sessionRows } = await pool.query(
+        `SELECT cs.id, cs.user_id, cs.status, cs.pr_number, cs.pr_title,
+                cs.app_id, a.slug AS app_slug, a.name AS app_name
+           FROM chat_sessions cs
+           JOIN apps a ON a.id = cs.app_id
+           WHERE cs.id = $1`,
+        [sessionId]
+      );
+      if (!sessionRows.length) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+      const session = sessionRows[0];
+
+      // Single atomic DELETE is the source of truth — no prior
+      // existence check needed, and a parallel retract race just
+      // 404s on the loser.
+      const { rows: deleted } = await pool.query(
+        `DELETE FROM pr_kudos
+           WHERE session_id = $1 AND giver_user_id = $2
+           RETURNING id, week_start`,
+        [sessionId, req.user.id]
+      );
+      if (!deleted.length) {
+        return res.status(404).json({ error: 'No kudos to retract on this PR' });
+      }
+
+      // Best-effort cleanup of the author's "gave kudos" notification —
+      // the underlying event no longer stands, read or unread. Never
+      // fail the retract itself over it. (No WS "notification removed"
+      // push exists; an open dropdown stays stale until next load.)
+      try {
+        await pool.query(
+          `DELETE FROM notifications
+             WHERE kind = 'kudos' AND session_id = $1 AND source_user_id = $2`,
+          [sessionId, req.user.id]
+        );
+      } catch (err) {
+        log.warn('kudos', 'notification cleanup failed', {
+          sessionId, giver: req.user.id, err: err.message,
+        });
+      }
+
+      events.record(pool, {
+        type: events.EVENT_TYPES.KUDOS_RETRACTED,
+        userId: req.user.id,
+        appId: session.app_id,
+        sessionId,
+        metadata: { recipientId: session.user_id || null },
+      });
+
+      // Broadcast the new count so open PR cards / leaderboards
+      // re-render in place. `retractedUsername` (instead of
+      // giverUsername) tells Kudos.applyLiveUpdate which direction
+      // this update went.
+      try {
+        const { rows: countRows } = await pool.query(
+          `SELECT COUNT(*)::int AS c FROM pr_kudos WHERE session_id = $1`,
+          [sessionId]
+        );
+        ws.pushKudosUpdate({
+          sessionId,
+          appSlug: session.app_slug,
+          count: countRows[0]?.c || 0,
+          retractedUsername: req.user.username,
+        });
+      } catch (err) {
+        log.warn('kudos', 'broadcast failed', { sessionId, err: err.message });
+      }
+
+      const weekStart = weekStartUtc();
+      const given = await countWeeklyAllowanceUsed(pool, req.user.id, weekStart);
+      const remaining = Math.max(0, WEEKLY_KUDOS_LIMIT - given);
+      log.info('kudos', 'kudos retracted', {
+        sessionId, giverId: req.user.id, weekStart: deleted[0].week_start, remaining,
+      });
+      res.json({ ok: true, remaining, limit: WEEKLY_KUDOS_LIMIT });
+    } catch (err) {
+      log.error('kudos', 'retract failed', { sessionId, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // --------------------------------------------------------------
   // GET /api/sessions/:id/kudos — count + giver list for hover popover.
   // --------------------------------------------------------------
   router.get('/api/sessions/:id/kudos', async (req, res) => {
@@ -281,7 +450,7 @@ function kudosRoutes(config) {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     try {
       const weekStart = weekStartUtc();
-      const given = await countKudosGivenThisWeek(pool, req.user.id, weekStart);
+      const given = await countWeeklyAllowanceUsed(pool, req.user.id, weekStart);
       const remaining = Math.max(0, WEEKLY_KUDOS_LIMIT - given);
       res.json({
         given_this_week: given,
@@ -291,6 +460,147 @@ function kudosRoutes(config) {
       });
     } catch (err) {
       log.error('kudos', 'budget failed', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // --------------------------------------------------------------
+  // GET /api/me/history?type=all|kudos|votes&limit=50&before=<ISO ts>
+  //
+  // Everything the caller has GIVEN — PR kudos, issue-bounty pledges,
+  // PR votes, proposal votes — merged reverse-chronologically. Strictly
+  // me-scoped (every arm filters on req.user.id); must stay OUT of
+  // PUBLIC_PATHS in middleware/auth.js. Keyset pagination on
+  // created_at: `nextBefore` is the last row's timestamp, null when
+  // the page came back short.
+  //
+  // Semantics worth remembering: pr_votes/issue_votes are current-state
+  // ledgers (the vote route upserts with created_at = NOW() on flip,
+  // and re-voting an issue the same way deletes the row), so the vote
+  // arms surface "current standing vote, last changed at", not a full
+  // cast history. pr_kudos is append-only and complete.
+  // --------------------------------------------------------------
+  router.get('/api/me/history', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    const typeArg = ['all', 'kudos', 'votes'].includes(req.query.type)
+      ? req.query.type
+      : 'all';
+    const limit = clampLimit(req.query.limit === undefined ? '50' : req.query.limit);
+    let before = null;
+    if (req.query.before !== undefined && req.query.before !== '') {
+      const t = Date.parse(req.query.before);
+      if (!Number.isFinite(t)) {
+        return res.status(400).json({ error: 'Invalid before timestamp' });
+      }
+      before = new Date(t).toISOString();
+    }
+
+    try {
+      const params = [req.user.id];
+      let beforeIdx = null;
+      if (before) {
+        params.push(before);
+        beforeIdx = params.length;
+      }
+      // Each arm projects the same column list so the UNION ALL lines
+      // up; rows are tagged with a literal `type`. NULL placeholders
+      // stay untyped — Postgres resolves them against the sibling arms.
+      const cut = (col) => (beforeIdx ? `AND ${col} < $${beforeIdx}` : '');
+      const arms = [];
+      if (typeArg === 'all' || typeArg === 'kudos') {
+        arms.push(`
+          SELECT 'kudos' AS type, pk.created_at, NULL AS vote,
+                 cs.status AS status,
+                 cs.id AS session_id, cs.pr_number, cs.pr_title,
+                 au.username AS author_username,
+                 a.slug AS app_slug, a.name AS app_name,
+                 NULL::int AS issue_number, NULL AS issue_title, NULL AS issue_kind,
+                 NULL AS awarded_username, NULL::timestamptz AS awarded_at
+            FROM pr_kudos pk
+            JOIN chat_sessions cs ON cs.id = pk.session_id
+            JOIN apps a ON a.id = cs.app_id
+            LEFT JOIN users au ON au.id = cs.user_id
+           WHERE pk.giver_user_id = $1 ${cut('pk.created_at')}`);
+        arms.push(`
+          SELECT 'bounty' AS type, ib.created_at, NULL AS vote,
+                 ib.status AS status,
+                 NULL::int AS session_id, NULL::int AS pr_number, NULL AS pr_title,
+                 NULL AS author_username,
+                 a.slug AS app_slug, a.name AS app_name,
+                 ib.github_issue_number AS issue_number, NULL AS issue_title, NULL AS issue_kind,
+                 wu.username AS awarded_username, ib.awarded_at
+            FROM issue_bounties ib
+            JOIN apps a ON a.id = ib.app_id
+            LEFT JOIN users wu ON wu.id = ib.awarded_user_id
+           WHERE ib.giver_user_id = $1 ${cut('ib.created_at')}`);
+      }
+      if (typeArg === 'all' || typeArg === 'votes') {
+        arms.push(`
+          SELECT 'pr_vote' AS type, pv.created_at, pv.vote,
+                 cs.status AS status,
+                 cs.id AS session_id, cs.pr_number, cs.pr_title,
+                 au.username AS author_username,
+                 a.slug AS app_slug, a.name AS app_name,
+                 NULL::int AS issue_number, NULL AS issue_title, NULL AS issue_kind,
+                 NULL AS awarded_username, NULL::timestamptz AS awarded_at
+            FROM pr_votes pv
+            JOIN chat_sessions cs ON cs.id = pv.session_id
+            JOIN apps a ON a.id = cs.app_id
+            LEFT JOIN users au ON au.id = cs.user_id
+           WHERE pv.user_id = $1 ${cut('pv.created_at')}`);
+        arms.push(`
+          SELECT 'proposal_vote' AS type, iv.created_at, iv.vote,
+                 i.status AS status,
+                 NULL::int AS session_id, NULL::int AS pr_number, NULL AS pr_title,
+                 NULL AS author_username,
+                 a.slug AS app_slug, a.name AS app_name,
+                 i.github_issue_number AS issue_number, i.title AS issue_title, i.kind AS issue_kind,
+                 NULL AS awarded_username, NULL::timestamptz AS awarded_at
+            FROM issue_votes iv
+            JOIN issues i ON i.id = iv.issue_id
+            JOIN apps a ON a.id = i.app_id
+           WHERE iv.user_id = $1 ${cut('iv.created_at')}`);
+      }
+      params.push(limit);
+      const { rows } = await pool.query(
+        `SELECT * FROM (${arms.join('\nUNION ALL\n')}) h
+          ORDER BY created_at DESC
+          LIMIT $${params.length}`,
+        params
+      );
+
+      const items = rows.map((r) => {
+        const item = {
+          type: r.type,
+          created_at: r.created_at,
+          app: { slug: r.app_slug, name: r.app_name },
+        };
+        if (r.vote != null) item.vote = r.vote;
+        if (r.status != null) item.status = r.status;
+        if (r.type === 'kudos' || r.type === 'pr_vote') {
+          item.pr = {
+            sessionId: r.session_id,
+            number: r.pr_number,
+            title: r.pr_title,
+            // NULL when the PR's author account was deleted (LEFT JOIN).
+            author: r.author_username || null,
+          };
+        } else if (r.type === 'bounty') {
+          item.issue = { number: r.issue_number };
+          if (r.status === 'awarded') {
+            item.awarded = { username: r.awarded_username || null, at: r.awarded_at };
+          }
+        } else if (r.type === 'proposal_vote') {
+          item.issue = { number: r.issue_number, title: r.issue_title, kind: r.issue_kind };
+        }
+        return item;
+      });
+      const nextBefore = rows.length === limit
+        ? rows[rows.length - 1].created_at
+        : null;
+      res.json({ items, nextBefore });
+    } catch (err) {
+      log.error('kudos', 'me/history failed', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -309,19 +619,40 @@ function kudosRoutes(config) {
       // Window filter is a single WHERE clause; rest of the query is
       // identical. Using parameterized window arg rather than
       // string-interpolating column names — safe.
-      const where = windowArg === 'week' ? `WHERE pk.week_start = $1` : '';
+      // View-private apps are excluded outright: this endpoint is
+      // unauthenticated (PUBLIC_PATHS), so their PR titles / app names
+      // must never appear here.
+      const where = windowArg === 'week'
+        ? `WHERE a.view_visibility = 'public' AND c.week_start = $1`
+        : `WHERE a.view_visibility = 'public'`;
       const params = windowArg === 'week' ? [weekStart, limit] : [limit];
       const limitParamIdx = windowArg === 'week' ? '$2' : '$1';
+      // `credit` unifies the two kudos sources per PR: direct PR kudos and
+      // issue bounties AWARDED to the PR on merge. Bounties get a week_start
+      // derived from awarded_at with the same Monday-00:00-UTC bucketing as
+      // weekStartUtc(), so the ?window=week filter lines up. Rooting the
+      // aggregate at this union (not pr_kudos) means a PR credited only by an
+      // awarded bounty still appears on the board.
       const { rows } = await pool.query(
-        `SELECT cs.id AS session_id,
+        `WITH credit AS (
+           SELECT pk.session_id, pk.created_at, pk.week_start
+             FROM pr_kudos pk
+           UNION ALL
+           SELECT ib.awarded_session_id AS session_id,
+                  ib.awarded_at AS created_at,
+                  date_trunc('week', ib.awarded_at AT TIME ZONE 'UTC')::date AS week_start
+             FROM issue_bounties ib
+            WHERE ib.status = 'awarded' AND ib.awarded_session_id IS NOT NULL
+         )
+         SELECT cs.id AS session_id,
                 cs.pr_number, cs.pr_url, cs.pr_title, cs.status,
                 cs.created_at AS session_created_at,
                 u.id AS author_id, u.username AS author_username,
                 a.slug AS app_slug, a.name AS app_name,
                 COUNT(*)::int AS kudos_count,
-                MAX(pk.created_at) AS last_kudos_at
-           FROM pr_kudos pk
-           JOIN chat_sessions cs ON cs.id = pk.session_id
+                MAX(c.created_at) AS last_kudos_at
+           FROM credit c
+           JOIN chat_sessions cs ON cs.id = c.session_id
            JOIN apps a ON a.id = cs.app_id
            LEFT JOIN users u ON u.id = cs.user_id
            ${where}
@@ -344,20 +675,24 @@ function kudosRoutes(config) {
   // --------------------------------------------------------------
   // GET /api/leaderboard/users?window=all|week&limit=N
   // Lists ALL users (not just those who've received kudos), ranked by
-  // PRs merged, then kudos received on merged PRs, then total kudos.
-  // Rooted at `users` with LEFT JOINs so a user with zero kudos still
-  // shows up. `limit` is optional — omit it to return every user.
+  // total kudos received on their MERGED PRs (highest first), then by
+  // PRs merged, then by most-recent kudos as a final tiebreaker.
+  // (Issue #59: kudos earned, not raw merge count, is the headline
+  // metric.) Rooted at `users` with LEFT JOINs so a user with zero
+  // kudos still shows up. `limit` is optional — omit it to return
+  // every user.
   //
   // Per-row stats:
   //   kudos_received              — total kudos on the user's PRs (window-filtered)
   //   prs_kudosed                 — distinct PRs of theirs that got any kudos
-  //   kudos_received_prs_merged   — kudos on PRs now 'merged' (window-filtered)
+  //   kudos_received_prs_merged   — kudos on PRs now 'merged' (window-filtered).
+  //                                 The PRIMARY sort key and the headline score.
   //   kudos_received_prs_unmerged — kudos on PRs not 'merged' (window-filtered)
-  //   prs_merged                  — count of the user's PRs that landed, and the
-  //                                 primary sort key. ALL-TIME regardless of
-  //                                 window: chat_sessions has no merge timestamp,
-  //                                 only a 'merged' status, so there's nothing to
-  //                                 window it by.
+  //   prs_merged                  — count of the user's PRs that landed; now a
+  //                                 secondary sort key / detail. ALL-TIME
+  //                                 regardless of window: chat_sessions has no
+  //                                 merge timestamp, only a 'merged' status, so
+  //                                 there's nothing to window it by.
   // --------------------------------------------------------------
   router.get('/api/leaderboard/users', async (req, res) => {
     // Public endpoint (see PUBLIC_PATHS in middleware/auth.js) — no
@@ -372,30 +707,79 @@ function kudosRoutes(config) {
       // WHERE) so users/sessions are preserved even when they have no
       // kudos in the window — only the kudos aggregates get scoped.
       let kudosWindow = '';
+      // The `kudos_given` LATERAL (below) reuses the same week_start
+      // param when scoping to the current week, so capture its index.
+      let givenWindow = '';
+      // The awarded-bounty LATERAL (below) scopes by awarded_at, bucketed to
+      // the same Monday-00:00-UTC week as weekStartUtc(), reusing the param.
+      let bountyWindow = '';
       if (windowArg === 'week') {
         params.push(weekStart);
         kudosWindow = `AND pk.week_start = $${params.length}`;
+        givenWindow = `AND gk.week_start = $${params.length}`;
+        bountyWindow = `AND date_trunc('week', ib.awarded_at AT TIME ZONE 'UTC')::date = $${params.length}`;
       }
       let limitClause = '';
       if (hasLimit) {
         params.push(clampLimit(req.query.limit));
         limitClause = `LIMIT $${params.length}`;
       }
+      // `kudos_given` is a GIVEN-side metric (rows where the user is the
+      // giver), orthogonal to every other column here (all RECEIVED-side,
+      // keyed off the user's authored sessions). Folding it into the main
+      // GROUP BY would cross-multiply the two fan-outs and corrupt the
+      // received counts, so it's computed in an independent LEFT JOIN
+      // LATERAL that builds a {week_start: count} JSON map per user.
+      // Counts are clamped to the weekly quota with LEAST(..., ${WEEKLY_KUDOS_LIMIT})
+      // so the documented give-time race (overshoot by ≤1) never surfaces
+      // a value above the cap. Uses idx_pr_kudos_giver_week. COALESCE
+      // turns the no-rows case (jsonb_object_agg → NULL) into '{}'.
       const { rows } = await pool.query(
+        // `ab` (awarded bounties) is RECEIVED-side credit that resolves on
+        // merge: a bounty awarded to a user IS kudos on a merged PR. It's
+        // computed in its own LATERAL (one scalar per user) so it can't
+        // cross-multiply the pk fan-out, then ADDED into kudos_received and
+        // kudos_received_prs_merged (every awarded bounty is merged credit).
+        // prs_kudosed / kudos_received_prs_unmerged stay pr_kudos-only by
+        // design (a bounty is never unmerged credit). last_kudos_at folds in
+        // the most recent award so recency tiebreaks stay correct.
         `SELECT u.id AS user_id,
                 u.username,
-                COUNT(pk.id)::int AS kudos_received,
+                (COUNT(pk.id) + COALESCE(ab.received, 0))::int AS kudos_received,
                 COUNT(DISTINCT pk.session_id)::int AS prs_kudosed,
-                COUNT(pk.id) FILTER (WHERE cs.status = 'merged')::int AS kudos_received_prs_merged,
+                (COUNT(pk.id) FILTER (WHERE cs.status = 'merged') + COALESCE(ab.received, 0))::int AS kudos_received_prs_merged,
                 COUNT(pk.id) FILTER (WHERE cs.status <> 'merged')::int AS kudos_received_prs_unmerged,
                 COUNT(DISTINCT cs.id) FILTER (WHERE cs.status = 'merged')::int AS prs_merged,
-                MAX(pk.created_at) AS last_kudos_at
+                GREATEST(MAX(pk.created_at), ab.last_at) AS last_kudos_at,
+                kg.kudos_given
            FROM users u
            LEFT JOIN chat_sessions cs ON cs.user_id = u.id
+             AND EXISTS (SELECT 1 FROM apps ap
+                         WHERE ap.id = cs.app_id AND ap.view_visibility = 'public')
            LEFT JOIN pr_kudos pk ON pk.session_id = cs.id ${kudosWindow}
-           GROUP BY u.id, u.username
-           ORDER BY prs_merged DESC,
-                    kudos_received_prs_merged DESC,
+           LEFT JOIN LATERAL (
+             SELECT COALESCE(
+                      jsonb_object_agg(g.week_start::text, g.c),
+                      '{}'::jsonb
+                    ) AS kudos_given
+               FROM (
+                 SELECT gk.week_start,
+                        LEAST(COUNT(*), ${WEEKLY_KUDOS_LIMIT})::int AS c
+                   FROM pr_kudos gk
+                   WHERE gk.giver_user_id = u.id ${givenWindow}
+                   GROUP BY gk.week_start
+               ) g
+           ) kg ON true
+           LEFT JOIN LATERAL (
+             SELECT COUNT(*)::int AS received, MAX(ib.awarded_at) AS last_at
+               FROM issue_bounties ib
+              WHERE ib.awarded_user_id = u.id AND ib.status = 'awarded' ${bountyWindow}
+                AND EXISTS (SELECT 1 FROM apps ap
+                            WHERE ap.id = ib.app_id AND ap.view_visibility = 'public')
+           ) ab ON true
+           GROUP BY u.id, u.username, kg.kudos_given, ab.received, ab.last_at
+           ORDER BY kudos_received_prs_merged DESC,
+                    prs_merged DESC,
                     kudos_received DESC,
                     last_kudos_at DESC NULLS LAST,
                     u.username ASC
@@ -409,6 +793,114 @@ function kudosRoutes(config) {
       });
     } catch (err) {
       log.error('kudos', 'leaderboard/users failed', { err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // --------------------------------------------------------------
+  // GET /api/leaderboard/users/:username/prs?limit=50&before=<ISO ts>
+  //
+  // (#60) Profile drill-in from the Top-users tab: every PR the user
+  // has PROPOSED, newest first, with per-PR kudos credit and headline
+  // stats. Public via the '/api/leaderboard/' PUBLIC_PATHS prefix
+  // (src/middleware/auth.js), so the filters are privacy-critical:
+  //   - public apps only (view_visibility = 'public')
+  //   - no headless auto sessions
+  //   - proposed PRs only: promoted / merging / merged, plus archived
+  //     rows that were once promoted (closed PRs). Archived-but-never-
+  //     promoted drafts stay private — promoted_at is the tell.
+  //
+  // Per-PR kudos credit = direct pr_kudos + issue bounties AWARDED to
+  // the PR, the same two-arm union /api/leaderboard/prs uses, so the
+  // counts on a profile match the Top PRs tab. Keyset pagination on
+  // created_at mirrors GET /api/me/history (`nextBefore` cursor, null
+  // when the page came back short).
+  // --------------------------------------------------------------
+  router.get('/api/leaderboard/users/:username/prs', async (req, res) => {
+    const username = req.params.username;
+    const limit = clampLimit(req.query.limit === undefined ? '50' : req.query.limit);
+    let before = null;
+    if (req.query.before !== undefined && req.query.before !== '') {
+      const t = Date.parse(req.query.before);
+      if (!Number.isFinite(t)) {
+        return res.status(400).json({ error: 'Invalid before timestamp' });
+      }
+      before = new Date(t).toISOString();
+    }
+
+    // Shared by the stats aggregate and the page query so the two can
+    // never drift. cs/a aliases are bound in both FROM clauses below.
+    const proposedFilter = `
+          cs.user_id = $1
+          AND cs.is_headless = FALSE
+          AND a.view_visibility = 'public'
+          AND (cs.status IN ('promoted', 'merging', 'merged')
+               OR (cs.status = 'archived' AND cs.promoted_at IS NOT NULL))`;
+    // The two-arm credit count for one session (direct kudos + awarded
+    // bounties) — scalar subqueries keyed on cs.id, no fan-out risk.
+    const creditCount = `
+          (SELECT COUNT(*) FROM pr_kudos pk WHERE pk.session_id = cs.id)
+          + (SELECT COUNT(*) FROM issue_bounties ib
+               WHERE ib.status = 'awarded' AND ib.awarded_session_id = cs.id)`;
+
+    try {
+      const { rows: userRows } = await pool.query(
+        `SELECT id, username FROM users WHERE username = $1`,
+        [username]
+      );
+      if (!userRows.length) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      const user = userRows[0];
+
+      // Headline stats over the FULL filtered set (pagination-agnostic).
+      // kudos_merged matches the leaderboard's headline score
+      // (kudos_received_prs_merged above): all awarded bounties are
+      // merged credit by construction, direct kudos count only when the
+      // PR's status is currently 'merged'.
+      const { rows: statRows } = await pool.query(
+        `SELECT COUNT(*)::int AS prs_total,
+                COUNT(*) FILTER (WHERE cs.status = 'merged')::int AS prs_merged,
+                COALESCE(SUM(${creditCount}) FILTER (WHERE cs.status = 'merged'), 0)::int AS kudos_merged
+           FROM chat_sessions cs
+           JOIN apps a ON a.id = cs.app_id
+          WHERE ${proposedFilter}`,
+        [user.id]
+      );
+
+      const params = [user.id];
+      let beforeClause = '';
+      if (before) {
+        params.push(before);
+        beforeClause = `AND cs.created_at < $${params.length}`;
+      }
+      params.push(limit);
+      const { rows } = await pool.query(
+        `SELECT cs.id AS session_id,
+                cs.pr_number, cs.pr_url, cs.pr_title, cs.status,
+                cs.created_at, cs.promoted_at, cs.merged_at,
+                a.slug AS app_slug, a.name AS app_name,
+                (${creditCount})::int AS kudos_count
+           FROM chat_sessions cs
+           JOIN apps a ON a.id = cs.app_id
+          WHERE ${proposedFilter}
+            ${beforeClause}
+          ORDER BY cs.created_at DESC
+          LIMIT $${params.length}`,
+        params
+      );
+
+      const nextBefore = rows.length === limit
+        ? rows[rows.length - 1].created_at
+        : null;
+      res.json({
+        user: { user_id: user.id, username: user.username },
+        stats: statRows[0],
+        items: rows,
+        nextBefore,
+      });
+    } catch (err) {
+      log.error('kudos', 'leaderboard/users/prs failed', { username, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -433,6 +925,7 @@ module.exports = {
   // kudos button at all.
   weekStartUtc,
   countKudosGivenThisWeek,
+  countWeeklyAllowanceUsed,
   loadKudosForSession,
   WEEKLY_KUDOS_LIMIT,
   ELIGIBLE_STATES,

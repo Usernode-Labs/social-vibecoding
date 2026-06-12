@@ -1,11 +1,12 @@
 // #30 — Settings modal (BYOK: bring your own Anthropic API key).
 //
-// The gear button in the header opens this modal. Users can paste an
-// `sk-ant-...` key; the server verifies it with a cheap 1-token call
-// and only then encrypts + stores it. Once saved, a small emerald dot
-// appears on the gear icon so the user can tell at a glance that their
-// key is active — and so can any other user viewing over their
-// shoulder (no secrets leak, just the indicator).
+// The Settings row in the header drawer opens this modal (wired in
+// app.js HeaderMenu.init). Users can paste an `sk-ant-...` key; the
+// server verifies it with a cheap 1-token call and only then encrypts
+// + stores it. Once saved, a small emerald dot appears on the drawer's
+// Settings row so the user can tell at a glance that their key is
+// active — and so can any other user viewing over their shoulder
+// (no secrets leak, just the indicator).
 (function () {
   'use strict';
 
@@ -18,7 +19,8 @@
 
     init() {
       this.modal = document.getElementById('settings-modal');
-      document.getElementById('settings-btn').addEventListener('click', () => this.open());
+      // The open entry point is the drawer's Settings row, wired in
+      // app.js HeaderMenu.init → Settings.open().
       document.getElementById('settings-close').addEventListener('click', () => this.close());
       document.getElementById('settings-save').addEventListener('click', () => this.save());
       document.getElementById('settings-remove').addEventListener('click', () => this.remove());
@@ -105,7 +107,7 @@
     },
 
     _renderIndicator() {
-      const dot = document.getElementById('settings-byok-dot');
+      const dot = document.getElementById('drawer-byok-dot');
       if (dot) dot.classList.toggle('hidden', !this.state.hasApiKey);
       // Let dev-chat swap its budget indicator for the BYOK badge
       // without having to observe us directly.
@@ -116,6 +118,8 @@
 
     open() {
       this._renderBody();
+      this._refreshSpend();
+      this._renderLlmGrants();
       this._renderWalletSection();
       this._renderDevConsoleSection();
       this._renderAdminSection();
@@ -198,6 +202,27 @@
       }
     },
 
+    // #119 — "Today's spend" breakdown in the API-key section. Fetched
+    // fresh on every modal open; the block stays hidden while loading,
+    // on fetch failure, or when no key is saved, so it never shows
+    // stale or irrelevant figures.
+    async _refreshSpend() {
+      const block = document.getElementById('settings-spend');
+      if (!block) return;
+      block.classList.add('hidden');
+      if (!this.state.hasApiKey) return;
+      try {
+        const r = await fetch('/api/budget', { credentials: 'same-origin' });
+        if (!r.ok) return;
+        const b = await r.json();
+        document.getElementById('settings-spend-byok').textContent =
+          '$' + ((b.byokSpentCents || 0) / 100).toFixed(2);
+        document.getElementById('settings-spend-platform').textContent =
+          '$' + ((b.spentCents || 0) / 100).toFixed(2) + ' of $' + ((b.limitCents || 0) / 100).toFixed(2);
+        block.classList.remove('hidden');
+      } catch {}
+    },
+
     _setStatus(text, kind) {
       const el = document.getElementById('settings-status');
       el.textContent = text;
@@ -249,6 +274,7 @@
         this._setStatus('Saved. Your chats now bill to your Anthropic account.', 'ok');
         input.value = '';
         this._renderBody();
+        this._refreshSpend();
         setTimeout(() => this.close(), 900);
       } catch (err) {
         this._setStatus(`Network error: ${err.message}`, 'error');
@@ -286,6 +312,7 @@
         this.state.keyLast4 = null;
         this._renderIndicator();
         this._renderBody();
+        this._refreshSpend();
         this._setStatus('Removed.', 'ok');
         setTimeout(() => this.close(), 700);
       } catch (err) {
@@ -293,6 +320,168 @@
       } finally {
         removeBtn.disabled = false;
       }
+    },
+
+    // ── App AI permissions (issue #34) ───────────────────────────
+    //
+    // Fetched fresh on every modal open. Each active grant renders as
+    // a row: app name, $spent / $cap today, a cap editor, the BYOK
+    // spillover toggle (only when a key is on file), and Revoke.
+    // Revoked grants show a muted badge — re-approving happens via the
+    // app's own consent dialog, not from here. In staging previews the
+    // page's ?demo=1 is passed through so the (always-empty,
+    // staging:private) grant tables still produce a reviewable list.
+
+    async _renderLlmGrants() {
+      const list = document.getElementById('llm-grants-list');
+      if (!list) return;
+      list.innerHTML = '<p class="text-xs text-zinc-500">Loading…</p>';
+      const demo = new URLSearchParams(window.location.search).get('demo') === '1';
+      let grants = [];
+      try {
+        const r = await fetch('/api/me/llm-grants' + (demo ? '?demo=1' : ''), { credentials: 'same-origin' });
+        if (!r.ok) throw new Error('fetch failed');
+        const j = await r.json();
+        grants = j.grants || [];
+      } catch {
+        list.innerHTML = '<p class="text-xs text-red-500">Failed to load app permissions.</p>';
+        return;
+      }
+      if (!grants.length) {
+        list.innerHTML = '<p class="text-xs text-zinc-500 dark:text-zinc-500">No apps have asked to use AI yet.</p>';
+        return;
+      }
+      list.innerHTML = '';
+      for (const g of grants) list.appendChild(this._llmGrantRow(g));
+    },
+
+    _llmGrantRow(g) {
+      const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+      }[c]));
+      const row = document.createElement('div');
+      row.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs';
+      const revoked = g.status !== 'active';
+      const spent = ((g.spentTodayCents || 0) + (g.byokSpentTodayCents || 0)) / 100;
+      const cap = (g.dailyCapCents || 0) / 100;
+
+      if (revoked) {
+        row.innerHTML = `
+          <div class="flex items-center justify-between gap-2">
+            <span class="font-medium text-zinc-500 dark:text-zinc-500 truncate">${esc(g.appName)}</span>
+            <span class="shrink-0 rounded px-1.5 py-0.5 bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-400">Revoked</span>
+          </div>`;
+        return row;
+      }
+
+      row.innerHTML = `
+        <div class="flex items-center justify-between gap-2">
+          <span class="font-medium text-zinc-700 dark:text-zinc-300 truncate">${esc(g.appName)}</span>
+          <span class="font-mono text-zinc-600 dark:text-zinc-400 shrink-0">$${spent.toFixed(2)} / $${cap.toFixed(2)} today</span>
+        </div>
+        <div class="flex items-center justify-between gap-2 mt-2 flex-wrap">
+          <label class="flex items-center gap-1 text-zinc-600 dark:text-zinc-400">
+            Cap $<input data-role="cap" type="number" min="0.01" step="0.01" value="${cap.toFixed(2)}"
+              class="w-20 rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-1.5 py-0.5 font-mono text-zinc-900 dark:text-zinc-100" />
+          </label>
+          ${this.state.hasApiKey || g.allowByok ? `
+          <label class="flex items-center gap-1 cursor-pointer select-none text-zinc-600 dark:text-zinc-400">
+            <input data-role="byok" type="checkbox" class="accent-violet-500 w-3.5 h-3.5" ${g.allowByok ? 'checked' : ''} />
+            Use my own key past the daily budget
+          </label>` : ''}
+          <button data-role="revoke"
+            class="rounded border border-red-400 dark:border-red-700 px-2 py-0.5 font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors">Revoke</button>
+        </div>`;
+
+      const status = (text, kind) => this._setLlmGrantsStatus(text, kind);
+      const isDemo = g.appId < 0;
+
+      const capInput = row.querySelector('[data-role="cap"]');
+      capInput.addEventListener('change', async () => {
+        if (isDemo) { status('Demo data — changes are not saved.', 'info'); return; }
+        const cents = Math.round(parseFloat(capInput.value) * 100);
+        if (!Number.isFinite(cents) || cents <= 0) {
+          status('Enter a valid cap (at least $0.01).', 'error');
+          return;
+        }
+        try {
+          const r = await fetch(`/api/me/llm-grants/${g.appId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ dailyCapCents: cents }),
+          });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) { status(j.error || 'Failed to update cap.', 'error'); return; }
+          status('Cap updated.', 'ok');
+          this._renderLlmGrants();
+        } catch (err) {
+          status('Network error: ' + err.message, 'error');
+        }
+      });
+
+      const byokInput = row.querySelector('[data-role="byok"]');
+      if (byokInput) {
+        byokInput.addEventListener('change', async () => {
+          if (isDemo) { status('Demo data — changes are not saved.', 'info'); return; }
+          try {
+            const r = await fetch(`/api/me/llm-grants/${g.appId}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'same-origin',
+              body: JSON.stringify({ allowByok: byokInput.checked }),
+            });
+            const j = await r.json().catch(() => ({}));
+            if (!r.ok) {
+              byokInput.checked = !byokInput.checked;
+              status(j.error || 'Failed to update.', 'error');
+              return;
+            }
+            status(byokInput.checked
+              ? 'This app may spill over onto your own key (still capped).'
+              : 'Spillover disabled.', 'ok');
+          } catch (err) {
+            byokInput.checked = !byokInput.checked;
+            status('Network error: ' + err.message, 'error');
+          }
+        });
+      }
+
+      row.querySelector('[data-role="revoke"]').addEventListener('click', async () => {
+        const ok = window.ConfirmModal
+          ? await ConfirmModal.show({
+              title: `Revoke AI access for "${g.appName}"?`,
+              message: 'Its next AI call will fail immediately. The app can ask for access again later.',
+              confirmLabel: 'Revoke',
+              danger: true,
+            })
+          : confirm(`Revoke AI access for "${g.appName}"?`);
+        if (!ok) return;
+        if (isDemo) { status('Demo data — changes are not saved.', 'info'); return; }
+        try {
+          const r = await fetch(`/api/me/llm-grants/${g.appId}`, {
+            method: 'DELETE', credentials: 'same-origin',
+          });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) { status(j.error || 'Failed to revoke.', 'error'); return; }
+          status('Revoked.', 'ok');
+          this._renderLlmGrants();
+        } catch (err) {
+          status('Network error: ' + err.message, 'error');
+        }
+      });
+
+      return row;
+    },
+
+    _setLlmGrantsStatus(text, kind) {
+      const el = document.getElementById('llm-grants-status');
+      if (!el) return;
+      el.textContent = text;
+      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
+      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
+      el.classList.add(cls);
+      if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
     },
 
     // ── Wallet linking ───────────────────────────────────────────

@@ -66,6 +66,49 @@ async function runContainer(name, { image, env = {}, port, memory = APP_MEMORY, 
   }
 }
 
+// Run a one-shot container in the foreground and return its stdout/stderr.
+// Used by the visuals capture step (src/services/visuals.js): unlike
+// runContainer above this is NOT detached, NOT restarted, and removes
+// itself on exit (--rm). `maxBuffer` defaults high because the capture
+// container streams base64-encoded media on stdout. On any error
+// (including the exec timeout, which kills the docker CLIENT but can
+// leave the container running) we force-remove the named container so a
+// hung capture never leaks.
+async function runOneShot(name, {
+  image, env = {}, memory = '1g', cpus = '1',
+  timeoutMs = 240000, maxBuffer = 128 * 1024 * 1024,
+}) {
+  const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
+  const args = [
+    'run', '--rm',
+    '--name', name,
+    '--network', SHARED_NETWORK,
+    '--memory', memory,
+    '--cpus', cpus,
+    '--security-opt', 'no-new-privileges:true',
+    ...envArgs,
+    image,
+  ];
+  const opts = { timeout: timeoutMs, maxBuffer };
+  try {
+    return await execFileAsync('docker', args, opts);
+  } catch (err) {
+    const msg = String((err && (err.stderr || err.message)) || '');
+    if (/is already in use/i.test(msg)) {
+      // Stale leftover from a killed prior run — clear it and retry once.
+      await execFileAsync('docker', ['rm', '-f', name], { timeout: 10000 }).catch(() => {});
+      try {
+        return await execFileAsync('docker', args, opts);
+      } catch (err2) {
+        await execFileAsync('docker', ['rm', '-f', name], { timeout: 10000 }).catch(() => {});
+        throw err2;
+      }
+    }
+    await execFileAsync('docker', ['rm', '-f', name], { timeout: 10000 }).catch(() => {});
+    throw err;
+  }
+}
+
 async function getHostPort(nameOrId, containerPort) {
   try {
     const { stdout } = await execFileAsync('docker', [
@@ -199,6 +242,7 @@ module.exports = {
   execFileAsync,
   buildImage,
   runContainer,
+  runOneShot,
   stopAndRemove,
   getContainerStatus,
   getContainerLabels,

@@ -6,44 +6,64 @@ const AppView = {
   activeSeconds: 0,
   iframeFocused: false,
 
-  _INFO_PANEL_OPEN_KEY_PREFIX: 'gc-info-panel-open-v1:',
-  // Persisted height of the "App information and activity" panel,
-  // stored as a percentage (10–90) of the group-chat container so it
-  // survives viewport/zoom changes. Per-app slug, mirroring the
-  // open-state key above.
-  _INFO_PANEL_HEIGHT_KEY_PREFIX: 'gc-info-panel-height-v1:',
-  // Clamp the panel between 10% and 90% of the container so neither the
-  // panel nor the chat below it can be dragged away entirely.
-  _INFO_PANEL_MIN_PCT: 10,
-  _INFO_PANEL_MAX_PCT: 90,
+  // Open-issues state. `_ghIssues` caches the last-fetched GitHub issue
+  // list (with bounty_count/my_bounty) so feed paging and the
+  // give-bounty optimistic update can re-render without a refetch.
+  _ghIssues: [],
+  _ghIssuesMeta: { truncatedList: false, note: null, repoUrl: null, myRemaining: null },
+  _bountyInFlight: new Set(),
 
-  _readInfoPanelOpen(appSlug) {
-    if (!appSlug) return false;
-    try { return localStorage.getItem(AppView._INFO_PANEL_OPEN_KEY_PREFIX + appSlug) === '1'; }
-    catch { return false; }
+  // Shared list-item shell for every card on the Dev page — the General
+  // chat card, issue/proposal/governance cards, Your-sessions rows, and
+  // Recently-merged rows — so the whole page reads as one uniform list
+  // (same row structure, padding, border, radius). Tappable cards add
+  // DEV_CARD_HOVER_CLS on top.
+  DEV_CARD_CLS: 'w-full flex items-center gap-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 px-3.5 py-3 text-left transition-colors',
+  // Trailing chevron marking a card as tappable (same affordance as the
+  // General chat card).
+  DEV_CARD_CHEVRON: '<svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>',
+  DEV_CARD_HOVER_CLS: 'hover:border-violet-300 dark:hover:border-violet-700 cursor-pointer',
+
+  // Per-type tinted icon chips — the Dev list's identity system, a mini
+  // version of the home tiles' avatar square. [tint classes, SVG path].
+  DEV_CARD_ICONS: {
+    chat: ['bg-violet-600/15 text-violet-500', 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z'],
+    // Pencil (Heroicons outline) — sessions are edits-in-progress, not
+    // terminals (#219). Distinct from the issue icon's pencil-in-bubble.
+    session: ['bg-emerald-500/15 text-emerald-500', 'M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z'],
+    // Comment-bubble-with-pencil: the chat bubble outline (dots removed)
+    // plus the Heroicons pencil-alt tip scaled to sit inside it — issues
+    // are written feedback, not warnings (hence no more exclamation).
+    issue: ['bg-amber-500/15 text-amber-500', 'M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5zM15.35 6.95a1.2 1.2 0 111.7 1.7l-5.15 5.15H10.2v-1.7l5.15-5.15z'],
+    proposal: ['bg-sky-500/15 text-sky-500', 'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-11h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5'],
+    gov: ['bg-slate-500/15 text-slate-400', 'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z'],
+    done: ['bg-emerald-500/10 text-emerald-500', 'M5 13l4 4L19 7'],
   },
 
-  _writeInfoPanelOpen(appSlug, isOpen) {
-    if (!appSlug) return;
-    try { localStorage.setItem(AppView._INFO_PANEL_OPEN_KEY_PREFIX + appSlug, isOpen ? '1' : '0'); }
-    catch {}
+  _devCardIcon(type, opts) {
+    const [tint, d] = AppView.DEV_CARD_ICONS[type] || AppView.DEV_CARD_ICONS.issue;
+    const small = !!(opts && opts.small);
+    return `<span class="${small ? 'w-7 h-7' : 'w-9 h-9'} rounded-lg ${tint} flex items-center justify-center shrink-0">`
+      + `<svg class="${small ? 'w-4 h-4' : 'w-5 h-5'}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="${d}"/></svg></span>`;
   },
 
-  _readInfoPanelHeight(appSlug) {
-    if (!appSlug) return null;
-    try {
-      const v = parseFloat(localStorage.getItem(AppView._INFO_PANEL_HEIGHT_KEY_PREFIX + appSlug) || '');
-      if (!Number.isFinite(v)) return null;
-      return Math.min(AppView._INFO_PANEL_MAX_PCT, Math.max(AppView._INFO_PANEL_MIN_PCT, v));
-    } catch { return null; }
-  },
-
-  _writeInfoPanelHeight(appSlug, pct) {
-    if (!appSlug) return;
-    const clamped = Math.min(AppView._INFO_PANEL_MAX_PCT, Math.max(AppView._INFO_PANEL_MIN_PCT, pct));
-    try { localStorage.setItem(AppView._INFO_PANEL_HEIGHT_KEY_PREFIX + appSlug, String(Math.round(clamped * 10) / 10)); }
-    catch {}
-  },
+  // ── Dev view state (#194, card-list revision) ─────────────────────
+  // The Dev mode is one card list plus full-screen sub-views (general
+  // chat, topics, sessions, settings). _devTopic (declared with the
+  // topic sub-view below) tracks the open topic for hash deep links.
+  // How many feed items are visible (the rest sit behind "Show more").
+  _feedShown: 20,
+  // Refresh timer for the Your-sessions strip's busy indicators;
+  // self-clears when the strip leaves the DOM.
+  _stripTimer: null,
+  // Cached Proposals-tab data for in-place re-renders.
+  _proposals: [],
+  _govProposals: [],
+  _proposalsCtx: { majority: 1, activeUsers: 1, locked: false, lockedHint: '' },
+  // One-shot flag set by the "Create proposal" button so the freshly
+  // opened dev session renders a "promoting this PR creates the
+  // proposal" hint.
+  _proposalHint: false,
 
   // Iframe tokens are signed for 1h. Refresh at 45min so the child app never
   // sees an expired JWT during a long reading/editing session.
@@ -59,13 +79,22 @@ const AppView = {
     // The self-app row maps to a slug-derived hostname that doesn't exist —
     // the platform itself lives at the root domain, not a subdomain — so
     // the tab would render a TLS error. Hide it for self-hosted apps; the
-    // default-tab logic in App.navigateToApp/switchTab routes to Group Chat
+    // default-tab logic in App.navigateToApp/switchTab routes to Dev → Chat
     // instead. Show it again for non-self-hosted (mounting AppView is per-
     // app, so a previous self-app open could have left the button hidden).
     const appTabBtn = document.querySelector('.app-tab[data-tab="app"]');
     if (appTabBtn) {
       appTabBtn.classList.toggle('hidden', !!appData.self_hosted);
     }
+
+    // The Dev mode (Chat / Issues / Proposals / Sessions) is hidden for
+    // non-collaborators of an invite-only app — they can use the app
+    // (when view-public) but not build it. App.switchTab coerces any
+    // direct request for the gated mode back to the App tab, and every
+    // API behind it enforces the same gate server-side.
+    const canCollab = appData.can_collaborate !== false;
+    const devTabBtn = document.querySelector('.app-tab[data-tab="dev"]');
+    if (devTabBtn) devTabBtn.classList.toggle('hidden', !canCollab);
 
     await AppView.refreshToken();
     AppView.startActivityTracking(slug);
@@ -337,8 +366,457 @@ const AppView = {
       </a>`;
   },
 
-  renderGroupChatTab() {
+  // Returns the mount point for dev-view section renderers: the
+  // #dev-section slot inside the Dev mode's sub-tab layout when present,
+  // falling back to #app-content (defensive — every call site should be
+  // inside renderDevView these days).
+  _devContainer() {
+    return document.getElementById('dev-section') || document.getElementById('app-content');
+  },
+
+  // ── Dev mode (#194, forum revision): one page ──────────────────────
+  // subTab ∈ 'forum' | 'sessions'. For 'sessions', `ref` is the dev
+  // session id (no id → forum). For 'forum', `ref` is an optional
+  // { kind: 'issue'|'proposal', id } deep link naming the card to
+  // expand.
+  async renderDevView(subTab, ref) {
     const content = document.getElementById('app-content');
+    if (!content) return;
+
+    // Leaving whatever thread surface was open: drop the live render
+    // target so incoming thread messages turn into badge bumps.
+    if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
+    if (subTab !== 'topic') AppView._devTopic = null;
+
+    // Session view — a single DevChat session, full-screen, reached
+    // from the Your-sessions strip, proposal cards, or the "+" flow.
+    if (subTab === 'sessions' && ref) {
+      content.innerHTML = `
+        <div class="flex flex-col h-full min-h-0">
+          <div id="dev-section" class="flex-1 min-h-0 flex flex-col" style="overflow:hidden"></div>
+        </div>`;
+      await AppView.renderDevChatTab(ref);
+      return;
+    }
+
+    // Full-screen general chat (card-list revision: chat is a card you
+    // tap into, not a pinned pane).
+    if (subTab === 'chat') {
+      AppView._renderChatSubView(content);
+      return;
+    }
+
+    // App settings sub-page (reached from the "+" menu).
+    if (subTab === 'settings') {
+      AppView._renderSettingsView(content);
+      return;
+    }
+
+    // Full-screen topic (issue / proposal / governance) discussion.
+    if (subTab === 'topic' && ref && ref.kind && ref.id) {
+      await AppView._renderTopicSubView(content, ref);
+      return;
+    }
+
+    // The card list.
+    AppView._feedShown = 20;
+
+    content.innerHTML = `
+      <div class="flex flex-col h-full min-h-0">
+        <!-- Header bar: title + the "+" menu (top right). -->
+        <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+          <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider flex-1">Dev</span>
+          <div class="relative">
+            <button id="dev-plus-btn" aria-haspopup="true" aria-expanded="false"
+              class="rounded-lg bg-violet-600 hover:bg-violet-500 w-7 h-7 flex items-center justify-center text-base font-bold leading-none text-white transition-colors"
+              title="Propose a change, file an issue, or open app settings">+</button>
+            <div id="dev-plus-menu" class="hidden absolute right-0 top-9 z-30 w-64 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden">
+              <button data-plus="proposal" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
+                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Propose a change</span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Start an AI dev session — promoting its PR creates the proposal</span>
+              </button>
+              <button data-plus="issue" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
+                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">New issue</span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Report a problem or idea without building it yourself</span>
+              </button>
+              <button data-plus="settings" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
+                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">App settings</span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400">App secrets and display name</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- The card list: locked notice, general-chat card, session
+             rows, the intermixed feed, and the Completed section. -->
+        <div id="dev-forum-scroll" class="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+          <div id="dev-locked-notice" class="px-3 pt-2 hidden"></div>
+          <div class="px-3 pt-2">
+            <button id="dev-chat-card" class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}"
+              title="Open the general chat">
+              ${AppView._devCardIcon('chat')}
+              <span class="flex-1 min-w-0">
+                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">General chat</span>
+                <span id="dev-chat-card-preview" class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">Talk with everyone building this app</span>
+              </span>
+              <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+            </button>
+          </div>
+          <div id="dev-sessions-strip" class="px-3 pt-2"></div>
+          <div class="px-3 py-2">
+            <div id="dev-feed"><div class="text-xs text-zinc-500 dark:text-zinc-400">Loading…</div></div>
+            <div id="gc-merged" class="mt-4"></div>
+          </div>
+        </div>
+      </div>`;
+
+    AppView._wirePlusMenu(content);
+    document.getElementById('dev-chat-card').addEventListener('click', () => {
+      App.switchTab('dev', null, 'chat');
+    });
+    AppView._loadChatCardPreview();
+
+    // Delegated card-open handler: tapping a topic card anywhere except
+    // its links/pills opens that topic full-screen. Bound on the stable
+    // #dev-feed container (its innerHTML re-renders, the node itself
+    // survives until the next renderDevView).
+    const feedEl = document.getElementById('dev-feed');
+    feedEl.addEventListener('click', (e) => {
+      if (e.target.closest('a, button, input, form')) return;
+      const issueRow = e.target.closest('[data-issue-row]');
+      if (issueRow) {
+        AppView.openTopic('issue', parseInt(issueRow.dataset.issueRow, 10));
+        return;
+      }
+      const prRow = e.target.closest('[data-proposal-row]');
+      if (prRow) {
+        AppView.openTopic('proposal', parseInt(prRow.dataset.proposalRow, 10));
+        return;
+      }
+      const govRow = e.target.closest('[data-gov-row]');
+      if (govRow) AppView.openTopic('gov', parseInt(govRow.dataset.govRow, 10));
+    });
+
+    AppView._renderSessionsStrip();
+    AppView._syncStripPolling();
+    await AppView._loadDevFeed();
+  },
+
+  // ── Full-screen topic sub-view ──────────────────────────────────────
+  // One issue / PR proposal / governance proposal opened from its card
+  // (or a deep link): back header, the card itself (vote/preview/kudos
+  // pills still live, minus the open-discussion affordance), the body
+  // (issue text / vote details), and the discussion thread filling the
+  // remaining height with the composer pinned to the bottom.
+  _devTopic: null, // { kind: 'issue'|'proposal'|'gov', id } while open
+
+  async _renderTopicSubView(content, ref) {
+    AppView._devTopic = { kind: ref.kind, id: ref.id };
+    // The header row is just the back control — the topic's icon, title and
+    // number already live on the header card painted into #dev-topic-head,
+    // so repeating them up here was pure duplication.
+    content.innerHTML = `
+      <div class="flex flex-col h-full min-h-0">
+        <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+          <button id="dev-topic-back" class="inline-flex items-center gap-1 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm shrink-0" title="Back to the dev page">&larr; Back</button>
+        </div>
+        <div class="flex-1 min-h-0 flex flex-col px-3 py-2">
+          <div id="dev-topic-head" class="shrink-0 overflow-y-auto overscroll-contain" style="max-height:45%"><span class="text-xs text-zinc-500 dark:text-zinc-400">Loading…</span></div>
+          <div id="dev-topic-thread" class="flex-1 min-h-0 mt-2"></div>
+        </div>
+      </div>`;
+
+    document.getElementById('dev-topic-back').addEventListener('click', () => {
+      App.switchTab('dev');
+    });
+
+    const ok = await AppView._loadDevData();
+    // The view may have been replaced (or retargeted) while the fetch
+    // was in flight.
+    const t = AppView._devTopic;
+    if (!document.getElementById('dev-topic-head') || !t
+        || t.kind !== ref.kind || t.id !== ref.id) return;
+    if (!ok || !AppView._findTopicItem()) {
+      // Missing ref (closed issue, archived session, bad link) — fall
+      // back to the card list.
+      App.switchTab('dev');
+      return;
+    }
+    AppView._renderTopicHead();
+    AppView._mountTopicThread();
+  },
+
+  _findTopicItem() {
+    const t = AppView._devTopic;
+    if (!t) return null;
+    if (t.kind === 'issue') {
+      return (AppView._ghIssues || []).find((i) => i.number === t.id) || null;
+    }
+    if (t.kind === 'proposal') {
+      // Open proposals first; merged ones stay viewable (read-only thread).
+      return (AppView._proposals || []).find((p) => p.id === t.id)
+        || (AppView._merged || []).find((p) => p.id === t.id) || null;
+    }
+    return (AppView._govProposals || []).find((i) => i.id === t.id) || null;
+  },
+
+  // Paint (or live-refresh) the topic title + header card + body.
+  // Leaves #dev-topic-thread untouched so the mounted thread survives
+  // WS-driven refreshes.
+  _renderTopicHead() {
+    const t = AppView._devTopic;
+    const head = document.getElementById('dev-topic-head');
+    if (!t || !head) return;
+    const item = AppView._findTopicItem();
+    // Closed / merged away mid-view: keep the last render readable.
+    if (!item) return;
+
+    let cardHtml;
+    let bodyHtml;
+    if (t.kind === 'issue') {
+      cardHtml = AppView._renderIssueRow(item, { noNav: true });
+      bodyHtml = AppView._issueBodyHtml(item);
+    } else if (t.kind === 'proposal') {
+      cardHtml = AppView._renderProposalCard(item, { noNav: true });
+      bodyHtml = AppView._proposalDetailsHtml(item);
+    } else {
+      cardHtml = AppView._renderGovCard(item, { noNav: true });
+      bodyHtml = item.description
+        ? `<div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">${escapeHtml(item.description)}</div>`
+        : '';
+    }
+
+    head.innerHTML = cardHtml + bodyHtml;
+    if (window.Kudos) Kudos.attach(head);
+    if (t.kind === 'proposal' && item.status !== 'merged') AppView._loadVoteRoster(item.id);
+  },
+
+  _mountTopicThread() {
+    const t = AppView._devTopic;
+    const slot = document.getElementById('dev-topic-thread');
+    if (!t || !slot || typeof GroupChat === 'undefined' || !GroupChat.mountThread) return;
+    const typeMap = { issue: 'issue', proposal: 'session', gov: 'governance' };
+    // A proposal that has left voting gets a read-only thread.
+    let readOnly = false;
+    let notice = '';
+    if (t.kind === 'proposal') {
+      const item = AppView._findTopicItem();
+      if (item && item.status === 'merged') {
+        readOnly = true;
+        notice = 'Voting closed — this proposal was merged. The discussion is read-only.';
+      }
+    }
+    GroupChat.mountThread({
+      type: typeMap[t.kind],
+      ref: t.id,
+      container: slot,
+      fullHeight: true,
+      readOnly,
+      notice,
+    });
+  },
+
+  // Open a topic full-screen. Called by the cards' tap handler, the
+  // Discussion buttons, and chat reference chips (revealInDrawer).
+  openTopic(kind, id) {
+    if (!kind || !id) return;
+    if (typeof App !== 'undefined' && App.switchTab) {
+      App.switchTab('dev', { kind, id }, 'topic');
+    }
+  },
+
+  // ── Full-screen general chat sub-view ───────────────────────────────
+  // A slim back-button header above the existing chat pane.
+  // renderGroupChatTab mounts into #dev-chat-body exactly as it used to
+  // mount into the pinned pane — spec side-panel, autocomplete, drafts,
+  // and scroll restore all unchanged.
+  _renderChatSubView(content) {
+    content.innerHTML = `
+      <div class="flex flex-col h-full min-h-0">
+        <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+          <button id="dev-chat-back" class="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm" title="Back to the dev page">&larr;</button>
+          <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider">General chat</span>
+        </div>
+        <div id="dev-chat-body" class="flex-1 min-h-0"></div>
+      </div>`;
+
+    document.getElementById('dev-chat-back').addEventListener('click', () => {
+      App.switchTab('dev');
+    });
+
+    AppView.renderGroupChatTab();
+    // Vote snapshot for the inline buttons on activity rows — needed
+    // here explicitly since the card list's feed load (which also
+    // builds it) doesn't run for a cold dev/chat deep link.
+    if (AppView.appData) AppView.loadVoteState(AppView.appData.slug);
+  },
+
+  // ── App settings sub-page ───────────────────────────────────────────
+  // The App secrets / display-name flows as a dedicated page (reached
+  // from the "+" menu). Element ids are kept (#dc-edit-secrets /
+  // #dc-secrets-state / #dc-edit-rename) so refreshDevChatSecretsState
+  // and Secrets' post-save sync keep working unmodified. Secret-change
+  // proposals start from the App secrets row — the Secrets modal
+  // already routes non-admins into the vote-based proposal flow.
+  _renderSettingsView(content) {
+    const currentName = escapeHtml(AppView.appData?.name || '');
+    content.innerHTML = `
+      <div class="flex flex-col h-full min-h-0">
+        <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+          <button id="dev-settings-back" class="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm" title="Back to the dev page">&larr;</button>
+          <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider">App settings</span>
+        </div>
+        <div class="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+          <div class="px-3 py-3 space-y-2">
+            <button id="dc-edit-secrets"
+              class="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 transition-colors text-left">
+              <svg class="w-4 h-4 text-zinc-500 dark:text-zinc-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 7a4 4 0 014 4m-4-4a4 4 0 00-4 4 4 4 0 004 4 4 4 0 004-4 4 4 0 00-4-4zm-9.5 12.5L11 13"/></svg>
+              <span class="flex-1 text-zinc-800 dark:text-zinc-200">App secrets</span>
+              <span id="dc-secrets-state" class="text-xs text-zinc-400 dark:text-zinc-500">Loading…</span>
+              <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+            </button>
+            <button id="dc-edit-rename"
+              class="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 transition-colors text-left">
+              <svg class="w-4 h-4 text-zinc-500 dark:text-zinc-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+              <span class="flex-1 text-zinc-800 dark:text-zinc-200">App display name</span>
+              <span class="text-xs text-zinc-400 dark:text-zinc-500 truncate max-w-[40%]" title="${currentName}">${currentName}</span>
+              <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+            </button>
+            <p class="text-xs text-zinc-500 dark:text-zinc-400 pt-1">
+              Secret changes and renames are proposals — they apply once the app's
+              users vote them in (admins can apply secrets directly).
+            </p>
+          </div>
+        </div>
+      </div>`;
+
+    document.getElementById('dev-settings-back').addEventListener('click', () => {
+      App.switchTab('dev');
+    });
+    document.getElementById('dc-edit-secrets').addEventListener('click', () => {
+      if (window.Secrets) Secrets.openForCurrentApp();
+    });
+    document.getElementById('dc-edit-rename').addEventListener('click', () => {
+      AppView.promptRename();
+    });
+    AppView.refreshDevChatSecretsState();
+  },
+
+  // ── "+" menu ────────────────────────────────────────────────────────
+  _wirePlusMenu(content) {
+    const btn = document.getElementById('dev-plus-btn');
+    const menu = document.getElementById('dev-plus-menu');
+    if (!btn || !menu) return;
+    const close = () => {
+      menu.classList.add('hidden');
+      btn.setAttribute('aria-expanded', 'false');
+    };
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const open = menu.classList.toggle('hidden') === false;
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    // Outside-click dismiss, scoped to the dev view's lifetime (the
+    // listener dies with the content innerHTML on the next render).
+    content.addEventListener('click', (e) => {
+      if (!e.target.closest('#dev-plus-menu, #dev-plus-btn')) close();
+    });
+    menu.querySelector('[data-plus="proposal"]').addEventListener('click', () => {
+      close();
+      AppView.createProposal();
+    });
+    menu.querySelector('[data-plus="issue"]').addEventListener('click', () => {
+      close();
+      // Open the shared Send Feedback modal with the dev-context mode:
+      // the open app is preselected as the target (Platform for the
+      // self-hosted app or while the repo doesn't exist yet) — #226.
+      App.openFeedbackModal({ fromDev: true });
+    });
+    menu.querySelector('[data-plus="settings"]').addEventListener('click', () => {
+      close();
+      App.switchTab('dev', null, 'settings');
+    });
+  },
+
+  // Best-effort one-line preview of the latest general-chat message for
+  // the chat card. A failed fetch leaves the static fallback line.
+  async _loadChatCardPreview() {
+    const el = document.getElementById('dev-chat-card-preview');
+    if (!el || !AppView.appData) return;
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/messages?limit=1`);
+      if (!res.ok) return;
+      const { messages } = await res.json();
+      const m = messages && messages[messages.length - 1];
+      if (!m || !m.content) return;
+      const live = document.getElementById('dev-chat-card-preview');
+      if (!live) return;
+      const who = m.username || 'System';
+      live.textContent = `${who}: ${String(m.content).slice(0, 140)}`;
+    } catch { /* keep the fallback line */ }
+  },
+
+  // Re-pull live data for the dev card list. Called from the WS event
+  // handlers in app.js (vote_update / issue_update / session_update /
+  // lock_changed). The feed re-render preserves the open accordion
+  // card. The chat view only needs the vote snapshot refreshed; the
+  // session and settings views have their own refresh paths.
+  refreshDevData(kind) {
+    if (!AppView.appData || typeof App === 'undefined' || App.currentTab !== 'dev') return;
+    if (App.currentSubTab === 'chat') {
+      AppView.loadVoteState(AppView.appData.slug);
+      return;
+    }
+    if (App.currentSubTab === 'topic') {
+      // Refresh the header card / roster in place; the mounted thread
+      // is left alone (it receives live messages directly).
+      AppView._loadDevData().then(() => AppView._renderTopicHead());
+      return;
+    }
+    if (App.currentSubTab !== 'forum') return;
+    AppView._loadDevFeed();
+    if (kind === 'session' || kind === 'all') AppView._renderSessionsStrip();
+  },
+
+  // Fetch the vote snapshot (promoted + merged) that powers the inline
+  // vote buttons on group-chat activity rows (AppView.voteState — see
+  // group-chat.js refreshVoteControls). The chat sub-tab calls this in
+  // place of the old full vote-panel load.
+  async loadVoteState(slug) {
+    try {
+      const [promotedRes, mergedRes] = await Promise.all([
+        fetch(`/api/apps/${slug}/promoted`),
+        fetch(`/api/apps/${slug}/merged`),
+      ]);
+      const promotedData = promotedRes.ok ? await promotedRes.json() : { promoted: [] };
+      const merged = mergedRes.ok ? (await mergedRes.json()).merged : [];
+      const promoted = promotedData.promoted || [];
+      // Promoted/merging fill in last so an open PR's live row always
+      // wins over its merged snapshot.
+      const voteRows = [...(merged || []), ...promoted];
+      AppView.voteState = {
+        bySession: Object.fromEntries(voteRows.map((pr) => [String(pr.id), pr])),
+        byPrNumber: Object.fromEntries(
+          voteRows.filter((pr) => pr.pr_number != null).map((pr) => [String(pr.pr_number), pr])
+        ),
+        majority: promotedData.majority || 1,
+        activeUsers: promotedData.activeUsers || 1,
+      };
+      if (typeof GroupChat !== 'undefined' && GroupChat.refreshVoteControls) {
+        GroupChat.refreshVoteControls();
+      }
+      return { promoted, merged, promotedData };
+    } catch {
+      return null;
+    }
+  },
+
+  renderGroupChatTab() {
+    // Card-list revision: general chat mounts into the full-screen chat
+    // sub-view's body (falling back to the generic container for any
+    // legacy caller).
+    const content = document.getElementById('dev-chat-body') || AppView._devContainer();
+    if (!content) return;
 
     // (#3) First-arrival framing: name what Group Chat is for. Group chat
     // is rarely empty (system messages), so a permanent banner would be
@@ -351,37 +829,16 @@ const AppView = {
         localStorage.setItem('usernode_seen_gc_intro', '1');
       }
     } catch { /* private-mode / disabled storage: just skip the intro */ }
-    // Layout mirrors dev-chat's session view: a vertical column for
-    // the cross-cutting strips (vote panel here / session header
-    // there), then a flex-row body that holds the chat pane on the
-    // left and a slot for the spec side-panel on the right. The slot
-    // is empty + display:none until "View full spec" is clicked, so
-    // the chat occupies 100% width by default. CSS toggles the
-    // side-panel layout vs. fullscreen-modal layout based on
-    // viewport width.
+    // Layout mirrors dev-chat's session view: a flex-row body that
+    // holds the chat pane on the left and a slot for the spec
+    // side-panel on the right. The slot is empty + display:none until
+    // "View full spec" is clicked, so the chat occupies 100% width by
+    // default. CSS toggles the side-panel layout vs. fullscreen-modal
+    // layout based on viewport width. (#194: the old vote/issue panel
+    // that sat above the chat is decomposed into the Issues and
+    // Proposals sub-tabs — this tab is the message stream only.)
     content.innerHTML = `
       <div class="flex flex-col h-full">
-        <!-- Vote/issue panel (spans full width above the body row).
-             Capped at 50% of the chat container's height so a long
-             expanded dashboard (lots of PRs / kudos / etc) can never
-             push the messages list off-screen. The percentage resolves
-             against the parent's definite height (.flex-col.h-full
-             inside #app-content's flex track). overflow-y-auto turns
-             the whole panel into a scroll region — toggle button is at
-             the top, so it scrolls into view at content-start. -->
-        <div id="gc-panel" class="shrink-0 max-h-[50%] overflow-y-auto overscroll-contain">
-          <div id="gc-panel-content" class="px-3 py-2"></div>
-        </div>
-
-        <!-- Draggable divider between the info/activity panel and the
-             chat below it. Acts as a plain 1px border when the panel is
-             collapsed; once the panel is open the .gc-panel-resizer-draggable
-             class turns it into a grabbable handle. AppView._initPanelResizer
-             wires a pointer-event drag that sets the panel's inline height
-             (clamped to 10–90% of the container) and persists the final
-             percentage to localStorage. -->
-        <div id="gc-panel-resizer" class="gc-panel-resizer" role="separator" aria-orientation="horizontal" aria-label="Resize app information panel"></div>
-
         <div class="gc-tab-body flex-1 flex min-h-0">
           <div class="gc-chat-pane flex-1 flex flex-col min-h-0">
             ${gcIntroHtml}
@@ -453,6 +910,23 @@ const AppView = {
       GroupChat.sendTyping();
     });
 
+    // #87: @mention autocomplete. Re-attaches on every tab mount (the
+    // input is a fresh DOM node each time). Its capture-phase keydown
+    // handler intercepts Enter/Tab/Arrows/Escape while the dropdown is
+    // open, so the form submit + the Escape-clears-reply handler below
+    // only see those keys once the dropdown is closed.
+    if (typeof MentionAutocomplete !== 'undefined') {
+      MentionAutocomplete.attach(gcInput, slugForDraft);
+    }
+
+    // #130: PR# / # reference autocomplete (open PRs + open issues). Same
+    // attach lifecycle as mentions; its capture-phase keydown only consumes
+    // keys while its own menu is open, and the `@` vs `#` triggers are
+    // mutually exclusive so the two menus never fight.
+    if (typeof RefAutocomplete !== 'undefined') {
+      RefAutocomplete.attach(gcInput, slugForDraft);
+    }
+
     // #15: Escape clears a staged reply quote (when the input is empty so
     // we don't fight other Escape semantics mid-typing).
     gcInput.addEventListener('keydown', (e) => {
@@ -462,611 +936,599 @@ const AppView = {
       }
     });
 
-    // #15: clicking a PR title in the activity panel stages it as a reply
-    // quote. Bound once on the stable #gc-panel (content is re-rendered by
-    // loadVotePanel, so delegate). Tap-not-drag, same as the chat rows.
-    AppView._bindPanelQuoteHandler();
-
     if (AppView.appData) {
       // `mount` re-uses the existing WS + message cache when the user
       // comes back to this tab, preserving their scroll position; it only
       // opens a fresh connection on the first visit to an app.
       GroupChat.mount(AppView.appData.slug);
-      AppView.loadVotePanel(AppView.appData.slug);
-      // Wire the draggable info-panel divider and restore its saved
-      // height. Bind + sync immediately (the #gc-panel / resizer nodes
-      // exist now even though loadVotePanel fills the content async).
-      AppView._initPanelResizer(AppView.appData.slug);
-      AppView._syncPanelResizer(AppView.appData.slug);
+      // The inline vote buttons on activity rows read AppView.voteState,
+      // which the forum's feed load (running right after this mount)
+      // populates from the same /promoted + /merged data — no separate
+      // fetch needed here.
     }
     // Re-render any staged reply preview (the composer DOM was just
     // recreated on this tab (re-)entry, but replyDraft persists).
     GroupChat._renderQuotePreview();
   },
 
-  // #15: delegated tap-to-quote for PR titles in the activity panel.
-  _bindPanelQuoteHandler() {
-    const panel = document.getElementById('gc-panel');
-    if (!panel || panel._gcQuoteBound) return;
-    panel._gcQuoteBound = true;
-    panel.addEventListener('pointerdown', (e) => {
-      AppView._panelTap = { x: e.clientX, y: e.clientY };
-    }, true);
-    panel.addEventListener('click', (e) => {
-      if (e.target.closest('a, button')) return;
-      const t = e.target.closest('.gc-quote-pr');
-      if (!t || typeof GroupChat === 'undefined') return;
-      const tap = AppView._panelTap || { x: e.clientX, y: e.clientY };
-      if (Math.abs(e.clientX - tap.x) + Math.abs(e.clientY - tap.y) > 8) return;
-      const sel = window.getSelection && window.getSelection();
-      if (sel && String(sel).trim() !== '') return;
-      const sessionId = parseInt(t.dataset.sessionId || '', 10);
-      if (!sessionId) return;
-      GroupChat.setQuote({
-        source: 'pr',
-        sessionId,
-        prNumber: parseInt(t.dataset.prNumber || '', 10) || null,
-        author: t.dataset.prAuthor || null,
-        snippet: t.dataset.prTitle || `PR #${t.dataset.prNumber || ''}`,
-        href: t.dataset.prUrl || null,
-      });
-    });
+  // ── Forum feed (#194 revision) ──────────────────────────────────────
+  // One intermixed list — GitHub issues + PR proposals + governance
+  // proposals — sorted by most recent activity (the item's own
+  // timestamp vs. the latest message in its thread). Data comes from
+  // the same four endpoints the old Issues/Proposals tabs used.
+
+  // Staging-only demo mode: when the page itself was opened with
+  // ?demo=1 (hash navigation preserves the search string), forward it
+  // to the dev-data fetches so the server appends "[Mock]" long-title
+  // issues/proposals for layout verification. The server only honors
+  // the flag when USERNODE_ENV === 'staging', so this is inert in
+  // production no matter what's in the URL.
+  _demoQS() {
+    return new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
   },
 
-  // Apply (or clear) the persisted panel height. Only takes effect when
-  // the panel is open: a collapsed panel stays content-sized (just the
-  // pill) so we don't strand a tall empty box above the chat. The saved
-  // value is a percentage of the container, re-applied as an inline
-  // height so it tracks viewport resizes. maxHeight is forced to none so
-  // it can override the default Tailwind max-h-[50%] cap.
-  _applySavedPanelHeight(slug) {
-    const panel = document.getElementById('gc-panel');
-    if (!panel) return;
-    const open = AppView._readInfoPanelOpen(slug);
-    const pct = open ? AppView._readInfoPanelHeight(slug) : null;
-    if (pct != null) {
-      panel.style.height = `${pct}%`;
-      panel.style.maxHeight = 'none';
-    } else {
-      // Revert to the default content-driven height (capped by the
-      // Tailwind max-h-[50%] class on the element).
-      panel.style.height = '';
-      panel.style.maxHeight = '';
-    }
-  },
-
-  // Toggle the resizer between "plain divider" and "grabbable handle"
-  // based on whether the panel is open, and (re)apply the saved height.
-  // Call this on mount and whenever the open state flips.
-  _syncPanelResizer(slug) {
-    const resizer = document.getElementById('gc-panel-resizer');
-    if (resizer) {
-      resizer.classList.toggle('gc-panel-resizer-draggable', AppView._readInfoPanelOpen(slug));
-    }
-    AppView._applySavedPanelHeight(slug);
-  },
-
-  // Wire the pointer-event drag handler on the panel resizer. Idempotent
-  // per handle element (the node is recreated on every tab re-render, so
-  // we tag it to avoid double-binding within a single render).
-  _initPanelResizer(slug) {
-    const handle = document.getElementById('gc-panel-resizer');
-    const panel = document.getElementById('gc-panel');
-    if (!handle || !panel) return;
-    if (handle._gcPanelResizerBound) return;
-    handle._gcPanelResizerBound = true;
-
-    handle.addEventListener('pointerdown', (e) => {
-      // Only resize when the panel is open — a collapsed panel has no
-      // meaningful height to drag.
-      if (!AppView._readInfoPanelOpen(slug)) return;
-      const container = panel.parentElement;
-      if (!container) return;
-      e.preventDefault();
-
-      const containerRect = container.getBoundingClientRect();
-      const containerH = containerRect.height;
-      if (containerH <= 0) return;
-      const minPx = (AppView._INFO_PANEL_MIN_PCT / 100) * containerH;
-      const maxPx = (AppView._INFO_PANEL_MAX_PCT / 100) * containerH;
-
-      handle.setPointerCapture(e.pointerId);
-      handle.classList.add('gc-panel-resizer-active');
-      document.body.style.userSelect = 'none';
-      document.body.style.cursor = 'row-resize';
-      panel.style.maxHeight = 'none';
-
-      // Anchor the chat by its distance from the bottom while dragging.
-      // Resizing the chat pane changes its height, and the messages list
-      // is top-anchored, so without this the visible messages shift (and
-      // the async ResizeObserver in group-chat.js only re-pins when the
-      // user happens to be at the very bottom, a frame late). Capturing
-      // the bottom-gap and restoring it synchronously on every step keeps
-      // the same messages steady relative to the input box — whether the
-      // user is pinned to the bottom or scrolled up reading history.
-      const msgs = document.getElementById('gc-messages');
-      const bottomGap = msgs
-        ? Math.max(0, msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight)
-        : 0;
-      const pinChat = () => {
-        if (!msgs) return;
-        msgs.scrollTop = Math.max(0, msgs.scrollHeight - msgs.clientHeight - bottomGap);
-      };
-
-      let finalPct = null;
-      const onMove = (ev) => {
-        // The panel's top edge is the container top; its bottom edge
-        // follows the pointer.
-        const nextPx = Math.max(minPx, Math.min(maxPx, ev.clientY - containerRect.top));
-        finalPct = (nextPx / containerH) * 100;
-        panel.style.height = `${finalPct}%`;
-        pinChat();
-      };
-
-      const onUp = () => {
-        handle.removeEventListener('pointermove', onMove);
-        handle.removeEventListener('pointerup', onUp);
-        handle.removeEventListener('pointercancel', onUp);
-        try { handle.releasePointerCapture(e.pointerId); } catch {}
-        handle.classList.remove('gc-panel-resizer-active');
-        document.body.style.userSelect = '';
-        document.body.style.cursor = '';
-        pinChat();
-        if (finalPct != null) AppView._writeInfoPanelHeight(slug, finalPct);
-      };
-
-      handle.addEventListener('pointermove', onMove);
-      handle.addEventListener('pointerup', onUp);
-      handle.addEventListener('pointercancel', onUp);
-    });
-  },
-
-  // The dropdown started life as an "activity feed" (open PRs, merged
-  // work, etc.) and is gradually growing into an app-info dashboard
-  // (engaged-user count first, more tiles to follow). It's collapsed
-  // by default now so the chat itself is what users land on; the pill
-  // header summarises any current activity inline so opening it is
-  // optional, not required.
-  panelOpen: false,
-
-  async loadVotePanel(slug) {
-    const panel = document.getElementById('gc-panel-content');
-    if (!panel) return;
-    AppView.panelOpen = AppView._readInfoPanelOpen(slug);
-
+  // Fetch + cache everything the dev surfaces render from (the same
+  // four endpoints the old tabs used): GitHub issues, governance
+  // proposals, open PR proposals, merged PRs, plus voteState for the
+  // chat's inline vote rows. Shared by the card list and the topic
+  // sub-view. Returns false on a failed load.
+  async _loadDevData() {
+    if (!AppView.appData) return false;
+    const slug = AppView.appData.slug;
     try {
-      const [promotedRes, issuesRes, mergedRes] = await Promise.all([
-        fetch(`/api/apps/${slug}/promoted`),
+      const [ghRes, issuesRes, promotedRes, mergedRes] = await Promise.all([
+        fetch(`/api/apps/${slug}/github-issues${AppView._demoQS()}`),
         fetch(`/api/apps/${slug}/issues`),
+        fetch(`/api/apps/${slug}/promoted${AppView._demoQS()}`),
         fetch(`/api/apps/${slug}/merged`),
       ]);
-
+      const ghData = ghRes.ok ? await ghRes.json() : { issues: [] };
+      const issuesData = issuesRes.ok ? await issuesRes.json() : { issues: [] };
       const promotedData = promotedRes.ok ? await promotedRes.json() : { promoted: [] };
-      const promoted = promotedData.promoted;
-      const activeUsers = promotedData.activeUsers || 1;
-      const majority = promotedData.majority || 1;
-      // Merged sessions are read up-front (not just for the "Merged" panel
-      // section below) so they can be folded into voteState — this keeps the
-      // group-chat activity row's "x / y" pill + "You voted X" box alive
-      // after a PR merges, with a "Merged" badge instead of the controls
-      // disappearing. /merged now carries status + yes/no/my_vote for this.
       const merged = mergedRes.ok ? (await mergedRes.json()).merged : [];
-      // Shared snapshot for the inline vote buttons rendered on group-chat
-      // "promoted / voted" activity rows (see group-chat.js). Keyed by
-      // session id; rebuilt on every panel reload so the inline buttons
-      // track the panel exactly (live counts, my_vote, votable status).
-      // Promoted/merging come first; merged rows fill in any sessions not
-      // already present so an open PR's live row always wins over its
-      // merged snapshot.
-      const voteRows = [...(merged || []), ...(promoted || [])];
+
+      AppView._ghIssues = Array.isArray(ghData.issues) ? ghData.issues : [];
+      AppView._ghIssuesMeta = {
+        truncatedList: !!ghData.truncatedList,
+        note: ghData.note || null,
+        repoUrl: (AppView.appData && AppView.appData.repo_url) || null,
+        myRemaining: typeof ghData.myRemaining === 'number' ? ghData.myRemaining : null,
+      };
+      // GitHub twins of open env-var proposals render as governance
+      // cards only — keep their issue rows out of the feed (#131).
+      AppView._envIssueNumbers = new Set(
+        (issuesData.issues || [])
+          .filter((i) => i.kind === 'secret_change')
+          .map((i) => i.github_issue_number)
+          .filter(Boolean)
+      );
+
+      const promoted = promotedData.promoted || [];
+      const majority = promotedData.majority || 1;
+      const activeUsers = promotedData.activeUsers || 1;
+      const locked = !!promotedData.locked;
+
+      // Shared inline-vote snapshot (same shape loadVoteState builds) so
+      // the chat view's activity rows stay in sync without a refetch.
+      const voteRows = [...(merged || []), ...promoted];
       AppView.voteState = {
         bySession: Object.fromEntries(voteRows.map((pr) => [String(pr.id), pr])),
-        // Also index by GitHub PR number so group-chat activity rows that
-        // predate the metadata.vote tag (or any row, as a fallback) can be
-        // matched from the "PR #N" in their text. pr_number is unique per
-        // app, and the endpoints are app-scoped, so this is unambiguous.
         byPrNumber: Object.fromEntries(
           voteRows.filter((pr) => pr.pr_number != null).map((pr) => [String(pr.pr_number), pr])
         ),
         majority,
         activeUsers,
       };
-      // Whether the current viewer is in the active set for this app
-      // (per src/services/active-users.js). Surfaced as a one-line
-      // status on the Users dashboard tile.
-      const viewerActive = !!promotedData.viewerActive;
-      // Admin-gated change lock (apps.locked). When true, every merge
-      // path (PR merge, rename proposal, secret-change proposal) also
-      // requires an admin yes/up vote on top of the active-user
-      // majority — see routes/votes.js + routes/issues.js. Surface as
-      // a one-line hint on the relevant sections so voters aren't
-      // confused by a stuck-at-majority PR.
-      const appLocked = !!promotedData.locked;
-      const lockedHint = appLocked
-        ? ' <span class="text-amber-500 font-normal">· locked: also needs an admin yes</span>'
-        : '';
-      // Always-visible top-level notice for locked apps. The panel
-      // body is collapsed by default, so the per-section `lockedHint`
-      // above is invisible until a user expands the panel — which
-      // means a non-admin who promotes a PR has no on-screen signal
-      // about why their majority-reached PR isn't merging. This line
-      // sits *outside* `gc-panel-body` so it's visible whether the
-      // panel is open or closed. Refresh on lock toggle is already
-      // wired: `App.handleAppUpdate` calls `loadVotePanel()` on the
-      // `lock_changed` WS event.
-      const lockNotice = appLocked
-        ? `<div class="mt-2 text-xs text-amber-500">App is locked — an admin must approve any PR before it merges.</div>`
-        : '';
-      const issuesData = issuesRes.ok ? await issuesRes.json() : { issues: [] };
-      const allIssues = issuesData.issues || [];
-      const renameProposals = allIssues.filter((i) => i.kind === 'rename');
-      const issues = allIssues.filter((i) => i.kind !== 'rename');
-
-      // Activity-only summary (excludes the Users tile, which is
-      // always present and isn't really "activity"). Empty when
-      // nothing's happening so the pill stays clean.
-      const counts = [
-        promoted.length && `${promoted.length} open PR${promoted.length > 1 ? 's' : ''}`,
-        renameProposals.length && `${renameProposals.length} rename proposal${renameProposals.length > 1 ? 's' : ''}`,
-        issues.length && `${issues.length} issue${issues.length > 1 ? 's' : ''}`,
-        merged.length && `${merged.length} merged`,
-      ].filter(Boolean).join(' · ');
-
-      // How many open PRs the viewer still hasn't voted on. We count only
-      // PRs that are actually votable for them right now: status
-      // 'promoted' (not 'merging', which is past the vote) with no
-      // recorded vote. The viewer's own PRs are included — authors still
-      // need to cast an explicit yes/no on their own proposal. Drives the
-      // "Vote on N →" CTA in the panel header so the call to action is
-      // visible even while the panel body is collapsed.
-      const unvotedCount = promoted.filter(
-        (pr) => pr.status === 'promoted' && !pr.my_vote
-      ).length;
-      const unvotedCtaHtml = unvotedCount
-        ? `<span id="gc-vote-cta" role="button" tabindex="0" class="cursor-pointer text-xs font-medium text-violet-600 dark:text-violet-400 hover:underline whitespace-nowrap" title="Jump to the PRs you haven't voted on yet">Vote on ${unvotedCount} PR${unvotedCount === 1 ? '' : 's'} &rarr;</span>`
-        : '';
-
-      // (3) Just-in-time teaching: the first time a viewer sees open PRs
-      // in the vote panel, explain what a vote actually does. Gated on a
-      // localStorage flag so it teaches once, then gets out of the way —
-      // "onboarding that's indistinguishable from using the app".
-      let voteHintHtml = '';
-      try {
-        if (promoted.length && !localStorage.getItem('usernode_seen_vote_hint')) {
-          voteHintHtml = `<div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 italic">These are proposed changes. When a majority of the app's active users vote yes, the change merges and goes live for everyone.</div>`;
-          localStorage.setItem('usernode_seen_vote_hint', '1');
-        }
-      } catch { /* private-mode / disabled storage: just skip the hint */ }
-
-      let bodyHtml = '';
-
-      // Users tile — first piece of the new dashboard. activeUsers is
-      // the same metric the platform uses for vote-majority thresholds
-      // (sticky qualification: >=60s on a single day ever + visit in
-      // the last 10 days, see src/services/active-users.js). Always
-      // rendered, even when there's no other activity, so the panel
-      // always has something worth opening for. The viewer-status
-      // sub-line tells the current user whether they're counted and,
-      // if not, how to qualify.
-      const viewerStatusHtml = viewerActive
-        ? `<div class="text-xs mt-1 text-emerald-600 dark:text-emerald-400">&check; You're a voting user of this app — your vote helps decide which changes ship.</div>`
-        : `<div class="text-xs mt-1 text-zinc-500 dark:text-zinc-400">Spend a minute on the App tab to become a voting user — then you help decide which changes ship.</div>`;
-      bodyHtml += `
-        <div class="mb-3">
-          <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 font-medium">Users</div>
-          <div class="text-sm text-zinc-700 dark:text-zinc-300">
-            <span class="font-semibold text-zinc-900 dark:text-zinc-100">${activeUsers}</span>
-            active in the last 10 days
-          </div>
-          ${viewerStatusHtml}
-        </div>`;
-
-      if (promoted.length) {
-        // The inner divide-y wrapper draws a 1px line between consecutive
-        // gc-vote-items on phones where each item now spans 2 rows
-        // (title row + controls row). On sm+ we drop the dividers via
-        // `sm:divide-y-0` so the original single-row list stays visually
-        // unchanged. Same pattern on every list section below.
-        bodyHtml += `<div class="mb-2"><div class="text-xs text-zinc-500 mb-1 font-medium">Open PRs <span class="text-zinc-600 font-normal">(need ${majority}/${activeUsers} votes to merge)</span>${lockedHint}</div>${voteHintHtml}<div class="divide-y divide-zinc-200 dark:divide-zinc-800 sm:divide-y-0 border-y border-zinc-200 dark:border-zinc-800 sm:border-y-0">`;
-        for (const pr of promoted) {
-          const isMerging = pr.status === 'merging';
-          // Prefer the LLM-generated PR title when present; fall back
-          // to the original "by <user>" label so old rows (pre-pr_title)
-          // still render reasonably.
-          // #11: revert PRs get a distinctive label so voters in the
-          // panel know this is a rollback (not a forward feature).
-          // original_pr_number/_title come from the LEFT JOIN against
-          // chat_sessions in /promoted (see routes/votes.js).
-          let labelText;
-          if (pr.revert_of_session_id) {
-            const origLabel = pr.original_pr_title
-              ? `${escapeHtml(pr.original_pr_title)}`
-              : `PR #${pr.original_pr_number || pr.revert_of_session_id}`;
-            labelText = `<span class="text-amber-500">↩ Revert of</span> ${origLabel} <span class="text-zinc-500">· ${escapeHtml(pr.username)}</span>`;
-          } else {
-            labelText = pr.pr_title
-              ? `${escapeHtml(pr.pr_title)} <span class="text-zinc-500">· ${escapeHtml(pr.username)}</span>`
-              : `by ${escapeHtml(pr.username)}`;
-          }
-          // While merging is in flight we keep the full row (tally pill +
-          // vote controls) so none of the voting info vanishes; a "Merging…"
-          // badge is appended alongside instead of replacing everything.
-          // Kudos button piggybacks on the same PR row. The vote
-          // panel/PR card already carries kudos_count + my_kudos from
-          // the /promoted query (extended in routes/votes.js); we
-          // pass the full row so Kudos.renderButton's self-kudos
-          // check (viewer === pr.user_id) works.
-          const kudosBtn = window.Kudos
-            ? Kudos.renderButton(pr, { compact: true })
-            : '';
-          // Admin force-merge button: lets an admin land a PR right
-          // now without waiting for the active-user majority. Sits to
-          // the right of the regular Yes/No buttons so the normal
-          // voting affordances stay primary; the danger styling +
-          // ConfirmModal in castAdminMerge keep it from being a
-          // misclick risk. Mirrors the visibility gate used on the
-          // home-card admin actions: App.user?.isAdmin only — the
-          // "View as non-admin" tool already masks this client-side
-          // (see app.js).
-          // Preview / Yes / No / Admin-merge buttons come from the shared
-          // AppView.voteButtonsHtml so the panel and the inline group-chat
-          // activity-row buttons stay byte-identical.
-          // #15: make the PR title tap-to-quote into group chat. A clean
-          // text snapshot rides along in data-* so the composer/preview
-          // doesn't have to re-parse the labelText HTML.
-          const prQuoteTitle = pr.pr_title || `PR #${pr.pr_number || pr.id}`;
-          const prQuoteAttrs = `class="text-xs text-zinc-300 flex-1 min-w-0 truncate gc-quote-pr" `
-            + `data-session-id="${pr.id}" data-pr-number="${pr.pr_number || pr.id}" `
-            + `data-pr-title="${escapeHtml(prQuoteTitle)}" data-pr-author="${escapeHtml(pr.username)}" `
-            + `data-pr-url="${pr.pr_url || ''}" title="Tap to reply in chat"`;
-          // Mobile layout: PR# + title share row 1; counts + vote/admin/
-          // kudos buttons live in a wrapper that's `basis-full` (its own
-          // row) below sm and `sm:contents` (transparent passthrough) at
-          // sm+. The outer flex-wrap + the wrapper's basis-full force a
-          // line break before the controls on narrow screens, so the
-          // title with `flex-1 min-w-0 truncate` actually has horizontal
-          // room to render the LLM-generated PR title (otherwise the
-          // ~400px sum of trailing buttons starves it on 360-390px
-          // phones). On sm+ display:contents removes the wrapper from
-          // the box tree and the layout collapses back to the original
-          // single-row form, preserving desktop UX exactly.
-          // Tag rows the viewer hasn't voted on (same rule as the header
-          // CTA count) so the CTA can smooth-scroll to the first one, and
-          // show an at-a-glance "Vote" marker (pulsing dot, mirroring the
-          // status.html ping pattern) so it's obvious which rows still
-          // want your input.
-          const isUnvoted = pr.status === 'promoted' && !pr.my_vote;
-          const unvotedBadge = isUnvoted
-            ? `<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 shrink-0" title="You haven't voted on this yet"><span class="relative flex h-1.5 w-1.5"><span class="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75 animate-ping"></span><span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-violet-500"></span></span>Vote</span>`
-            : '';
-          const mergingBadge = isMerging ? AppView.mergingBadgeHtml() : '';
-          bodyHtml += `
-            <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''}>
-              <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-violet-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
-              <span ${prQuoteAttrs}>${labelText}</span>
-              <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
-                ${unvotedBadge}
-                ${AppView.voteCountPill(pr, majority)}
-                ${AppView.voteButtonsHtml(pr)}
-                ${mergingBadge}
-                ${kudosBtn}
-              </div>
-            </div>`;
-        }
-        bodyHtml += '</div></div>';
-      }
-
-      if (renameProposals.length) {
-        bodyHtml += `<div class="mb-2"><div class="text-xs text-zinc-500 mb-1 font-medium">Rename proposals <span class="text-zinc-600 font-normal">(need ${majority}/${activeUsers} up-votes to apply)</span>${lockedHint}</div><div class="divide-y divide-zinc-200 dark:divide-zinc-800 sm:divide-y-0 border-y border-zinc-200 dark:border-zinc-800 sm:border-y-0">`;
-        for (const issue of renameProposals) {
-          const myVote = issue.my_vote;
-          const upCount = parseInt(issue.up_count) || 0;
-          const progress = majority > 0 ? Math.min(100, (upCount / majority) * 100) : 0;
-          const newName = (issue.payload && issue.payload.newName) || issue.title;
-          bodyHtml += `
-            <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
-              <span class="text-xs text-zinc-300 flex-1 min-w-0 truncate" title="Proposed by ${issue.created_by_username || ''}">&#8594; ${escapeHtml(newName)}</span>
-              <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
-                <span class="text-xs text-zinc-500">${upCount}/${majority}</span>
-                <button class="gc-vote-btn ${myVote === 'up' ? 'gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'up')">&#9650; ${issue.up_count}</button>
-                <button class="gc-vote-btn ${myVote === 'down' ? 'gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'down')">&#9660; ${issue.down_count}</button>
-              </div>
-            </div>`;
-        }
-        bodyHtml += '</div></div>';
-      }
-
-      if (issues.length) {
-        bodyHtml += '<div class="mb-2"><div class="text-xs text-zinc-500 mb-1 font-medium">Issues</div><div class="divide-y divide-zinc-200 dark:divide-zinc-800 sm:divide-y-0 border-y border-zinc-200 dark:border-zinc-800 sm:border-y-0">';
-        for (const issue of issues.slice(0, 5)) {
-          const myVote = issue.my_vote;
-          bodyHtml += `
-            <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
-              <span class="text-xs text-zinc-300 flex-1 min-w-0 truncate">${escapeHtml(issue.title)}</span>
-              <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
-                <button class="gc-vote-btn ${myVote === 'up' ? 'gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'up')">&#9650; ${issue.up_count}</button>
-                <button class="gc-vote-btn ${myVote === 'down' ? 'gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'down')">&#9660; ${issue.down_count}</button>
-              </div>
-            </div>`;
-        }
-        bodyHtml += '</div></div>';
-      }
-
-      // Note: the "Propose rename" trigger lives in the dev-chat tab's
-      // Edit section now (see renderDevChatTab) — keeping the group
-      // chat panel focused on visible PRs / issues / merged work.
-
-      if (merged.length) {
-        bodyHtml += `<div><div class="text-xs text-zinc-500 mb-1 font-medium">Merged <span class="text-zinc-600 font-normal">(undo opens a revert PR — needs ${majority}/${activeUsers} votes to land)</span></div><div class="divide-y divide-zinc-200 dark:divide-zinc-800 sm:divide-y-0 border-y border-zinc-200 dark:border-zinc-800 sm:border-y-0">`;
-        for (const pr of merged) {
-          const date = new Date(pr.created_at).toLocaleDateString();
-          const mergedLabel = pr.pr_title
-            ? `${escapeHtml(pr.pr_title)} <span class="text-zinc-500">· ${escapeHtml(pr.username)}</span>`
-            : `by ${escapeHtml(pr.username)}`;
-          // #15: merged PR title is also tap-to-quote into group chat.
-          const mergedQuoteTitle = pr.pr_title || `PR #${pr.pr_number || pr.id}`;
-          const mergedQuoteAttrs = `class="text-xs text-zinc-400 flex-1 min-w-0 truncate gc-quote-pr" `
-            + `data-session-id="${pr.id}" data-pr-number="${pr.pr_number || pr.id}" `
-            + `data-pr-title="${escapeHtml(mergedQuoteTitle)}" data-pr-author="${escapeHtml(pr.username)}" `
-            + `data-pr-url="${pr.pr_url || ''}" title="Tap to reply in chat"`;
-          // Merged PRs are still eligible for kudos (promoted + merging
-          // + merged) — that's intentional. People often come back to
-          // a recently-merged PR and want to thank the author.
-          const kudosBtn = window.Kudos
-            ? Kudos.renderButton(pr, { compact: true })
-            : '';
-
-          // #16: undo is a single direct action — clicking Undo opens a
-          // revert PR (like proposing a change) which then needs the
-          // normal merge vote to land. The button only renders on
-          // ordinary merged PRs that don't already have a revert in
-          // flight or merged:
-          //   - revert_of_session_id != null on this row means this
-          //     row IS itself a revert PR; undoing a revert would
-          //     create an infinite undo-undo loop.
-          //   - revert_session_id (from the LEFT JOIN) means a revert
-          //     PR already exists pointing at this row — show its
-          //     status as a label instead.
-          let undoUI = '';
-          if (pr.revert_of_session_id) {
-            // This row is a revert PR. (Shouldn't appear in the
-            // merged list often — revert PRs are short-lived in
-            // 'promoted' before they themselves merge — but show a
-            // breadcrumb if they do.)
-            undoUI = `<span class="text-xs text-zinc-500" title="This PR is itself a revert">↩ revert</span>`;
-          } else if (pr.revert_session_id) {
-            const rs = pr.revert_status;
-            const rpr = pr.revert_pr_number || pr.revert_session_id;
-            const label = rs === 'merged'
-              ? `Undone by PR#${rpr}`
-              : rs === 'merging'
-                ? `Revert merging (PR#${rpr})`
-                : `Revert in vote · PR#${rpr}`;
-            const linkHref = pr.revert_pr_url || '#';
-            undoUI = `<a href="${linkHref}" target="_blank" class="text-xs text-amber-500 hover:text-amber-400 font-medium">${label}</a>`;
-          } else {
-            undoUI = `
-              <button class="gc-vote-btn gc-vote-btn-undo"
-                title="Open a revert PR for this merge. It still needs a merge vote to land."
-                onclick="AppView.undoPr(${pr.id})">Undo</button>`;
-          }
-
-          bodyHtml += `
-            <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
-              <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-emerald-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
-              <span ${mergedQuoteAttrs}>${mergedLabel}</span>
-              <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
-                ${AppView.voteCountPill(pr, majority)}
-                ${AppView.voteButtonsHtml(pr, { collapseVoted: true })}
-                <span class="text-xs text-zinc-600">${date}</span>
-                ${undoUI}
-                ${kudosBtn}
-              </div>
-            </div>`;
-        }
-        bodyHtml += '</div></div>';
-      } else {
-        // (#2) Empty vote panel → teach the Dev-Chat ↔ voting connection,
-        // the single most important link in the loop. Shown whenever no
-        // PR is currently up for a vote.
-        bodyHtml += `<div class="mb-2"><div class="text-xs text-zinc-500 dark:text-zinc-400">No changes are up for a vote right now. Got an idea? Open <span class="font-medium text-emerald-600 dark:text-emerald-400">Dev Chat</span> and describe it.</div></div>`;
-      }
-
-      // Pill: fixed title on the left ("App information and activity")
-      // + an optional activity summary on the right. The summary keeps
-      // the at-a-glance utility the old pill had ("2 open PRs · ..."),
-      // but only when there's actually something — when nothing's
-      // open, the right side stays empty and the pill is just a clean
-      // affordance for opening the dashboard.
-      // Sticky header so the toggle + activity summary stay reachable
-      // while the panel body scrolls. -mx-3/-mt-2 cancels the parent's
-      // px-3/py-2 padding so the header bg spans the full panel width
-      // and sits flush against the top of the scroll container; px-3
-      // py-2 inside puts the same padding back on the toggle itself,
-      // so the visual position of the button doesn't shift. The
-      // border-b only appears once content has scrolled underneath the
-      // sticky bar (CSS sibling selector + JS scroll listener below).
-      panel.innerHTML = `
-        <div id="gc-panel-sticky" class="sticky top-0 z-10 -mx-3 -mt-2 px-3 py-2 bg-white dark:bg-zinc-950 border-b border-transparent">
-          <button id="gc-panel-toggle" class="flex items-center gap-2 w-full text-left">
-            <span class="text-xs text-zinc-500 dark:text-zinc-400">${AppView.panelOpen ? '&#9660;' : '&#9654;'}</span>
-            <span class="text-xs font-medium text-zinc-700 dark:text-zinc-300">App information and activity</span>
-            <span class="flex-1"></span>
-            ${counts ? `<span class="text-xs text-zinc-500 dark:text-zinc-400 truncate">${counts}</span>` : ''}
-            ${unvotedCtaHtml}
-          </button>
-        </div>
-        ${lockNotice}
-        <div id="gc-panel-body" class="${AppView.panelOpen ? '' : 'hidden'} mt-2">${bodyHtml}</div>`;
-
-      // Keep the inline vote buttons on group-chat activity rows in sync
-      // with the panel we just rebuilt (covers the "chat rendered before
-      // the panel finished fetching" race on first open, and every live
-      // vote/session update that reloads the panel).
       if (typeof GroupChat !== 'undefined' && GroupChat.refreshVoteControls) {
         GroupChat.refreshVoteControls();
       }
 
-      // Add a faint border to the sticky header once the panel scrolls,
-      // so it visually separates from content sliding underneath it.
-      const stickyEl = document.getElementById('gc-panel-sticky');
-      const scrollEl = document.getElementById('gc-panel');
-      if (stickyEl && scrollEl) {
-        const updateStickyBorder = () => {
-          stickyEl.classList.toggle('border-zinc-200', scrollEl.scrollTop > 0);
-          stickyEl.classList.toggle('dark:border-zinc-800', scrollEl.scrollTop > 0);
-          stickyEl.classList.toggle('border-transparent', scrollEl.scrollTop === 0);
-        };
-        scrollEl.addEventListener('scroll', updateStickyBorder, { passive: true });
-        updateStickyBorder();
-      }
-
-      document.getElementById('gc-panel-toggle').addEventListener('click', () => {
-        AppView.panelOpen = !AppView.panelOpen;
-        AppView._writeInfoPanelOpen(slug, AppView.panelOpen);
-        const body = document.getElementById('gc-panel-body');
-        const arrow = document.querySelector('#gc-panel-toggle span:first-child');
-        if (body) body.classList.toggle('hidden');
-        if (arrow) arrow.innerHTML = AppView.panelOpen ? '&#9660;' : '&#9654;';
-        // Flip the divider between plain border / grabbable handle and
-        // (re)apply the saved height now that the open state changed.
-        AppView._syncPanelResizer(slug);
-      });
-
-      // "Vote on N →" CTA: lives inside the toggle button, so we stop
-      // propagation (we always want to *open* the panel and jump to the
-      // first unvoted PR, never toggle it closed) and then scroll the
-      // first unvoted row into view.
-      const voteCta = document.getElementById('gc-vote-cta');
-      if (voteCta) {
-        const openAndScroll = (e) => {
-          e.stopPropagation();
-          e.preventDefault();
-          if (!AppView.panelOpen) {
-            AppView.panelOpen = true;
-            AppView._writeInfoPanelOpen(slug, true);
-            const body = document.getElementById('gc-panel-body');
-            const arrow = document.querySelector('#gc-panel-toggle span:first-child');
-            if (body) body.classList.remove('hidden');
-            if (arrow) arrow.innerHTML = '&#9660;';
-            AppView._syncPanelResizer(slug);
-          }
-          const target = panel.querySelector('[data-unvoted="1"]');
-          if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        };
-        voteCta.addEventListener('click', openAndScroll);
-        voteCta.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter' || e.key === ' ') openAndScroll(e);
-        });
-      }
-
-      // Bind hover + click handlers for any kudos buttons we just
-      // rendered. Idempotent — Kudos.attach skips wrappers it has
-      // already bound (data-kudos-bound flag).
-      if (window.Kudos) Kudos.attach(panel);
+      AppView._proposals = promoted;
+      AppView._govProposals = (issuesData.issues || [])
+        .filter((i) => i.kind === 'secret_change' || i.kind === 'rename');
+      AppView._proposalsCtx = {
+        majority,
+        activeUsers,
+        locked,
+        lockedHint: locked
+          ? ' <span class="text-amber-500 font-normal">· locked: also needs an admin yes</span>'
+          : '',
+      };
+      AppView._merged = merged;
+      AppView._mergedCtx = { majority, activeUsers };
+      return true;
     } catch {
-      panel.innerHTML = '';
+      return false;
     }
+  },
+
+  async _loadDevFeed() {
+    const ok = await AppView._loadDevData();
+    const feedEl = document.getElementById('dev-feed');
+    if (!feedEl) return;
+    if (!ok) {
+      feedEl.innerHTML = '<div class="text-xs text-zinc-500 dark:text-zinc-400">Couldn&#39;t load the feed right now.</div>';
+      return;
+    }
+    AppView._renderLockedNotice();
+    AppView._rerenderFeed();
+    const mergedEl = document.getElementById('gc-merged');
+    if (mergedEl) {
+      mergedEl.innerHTML = (AppView._merged || []).length ? AppView._renderMergedInner() : '';
+      if (window.Kudos) Kudos.attach(mergedEl);
+    }
+  },
+
+  // Locked-app banner at the very top of the card list (above the
+  // General chat card), per the card-list polish revision.
+  _renderLockedNotice() {
+    const el = document.getElementById('dev-locked-notice');
+    if (!el) return;
+    const locked = !!(AppView._proposalsCtx && AppView._proposalsCtx.locked);
+    el.classList.toggle('hidden', !locked);
+    el.innerHTML = locked
+      ? '<div class="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-600 dark:text-amber-400">App is locked — an admin must approve any proposal before it applies.</div>'
+      : '';
+  },
+
+  // The feed's display order: fixed groups — proposals being voted on
+  // (PR promotions and governance proposals alike) above open issues —
+  // then auto-solve rank within the issues group (#227: 'generating'
+  // runs first, finished 'ready' runs awaiting review next, plain
+  // issues last — see _headlessRank), then most-recent-activity-first.
+  // Every item carries a lastActivity sort key = max(its own timestamp,
+  // the latest message in its thread); equal keys keep the per-source
+  // order (GitHub updated-desc for issues) via stable sort. The
+  // general-chat card and the viewer's session rows sit above this feed
+  // in the card list, so the full order the user sees is:
+  // chat → sessions → proposals → issues.
+  _feedItems() {
+    const ts = (v) => {
+      const t = Date.parse(v || '');
+      return Number.isFinite(t) ? t : 0;
+    };
+    // Lower group renders first. Proposals (both kinds) share a group.
+    const GROUP = { proposal: 0, gov: 0, issue: 1 };
+    const items = [];
+    for (const issue of AppView._visibleGhIssues()) {
+      items.push({
+        kind: 'issue', id: issue.number, item: issue,
+        r: AppView._headlessRank(issue),
+        t: Math.max(ts(issue.updatedAt), ts(issue.lastMessageAt)),
+      });
+    }
+    for (const pr of AppView._proposals || []) {
+      items.push({
+        kind: 'proposal', id: pr.id, item: pr, r: 0,
+        t: Math.max(ts(pr.promoted_at || pr.created_at), ts(pr.last_message_at)),
+      });
+    }
+    for (const g of AppView._govProposals || []) {
+      items.push({
+        kind: 'gov', id: g.id, item: g, r: 0,
+        t: Math.max(ts(g.created_at), ts(g.last_message_at)),
+      });
+    }
+    // Array.prototype.sort is stable, so equal keys keep source order.
+    // Rank only competes within the issues group — proposals/gov all
+    // carry r: 0 and never share a group with issues.
+    return items.sort((a, b) =>
+      (GROUP[a.kind] - GROUP[b.kind]) || (a.r - b.r) || (b.t - a.t));
+  },
+
+  _renderFeedInner() {
+    const ctx = AppView._proposalsCtx || {};
+    const meta = AppView._ghIssuesMeta || {};
+    const items = AppView._feedItems();
+
+    let html = '';
+    if (!items.length) {
+      const note = meta.note
+        ? 'Couldn&#39;t load open issues right now. '
+        : '';
+      html += `<div class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">${note}Nothing is open right now. Press <span class="font-medium text-violet-500">+</span> to propose a change or file an issue.</div>`;
+      return html;
+    }
+
+    const shown = Math.min(AppView._feedShown || 20, items.length);
+    html += '<div class="space-y-2">';
+    for (let i = 0; i < shown; i++) {
+      const it = items[i];
+      if (it.kind === 'issue') html += AppView._renderIssueRow(it.item);
+      else if (it.kind === 'proposal') html += AppView._renderProposalCard(it.item);
+      else html += AppView._renderGovCard(it.item);
+    }
+    html += '</div>';
+
+    // Keep the generating-state poller in sync with what we just
+    // rendered (idempotent set/clear of one timer).
+    AppView._syncHeadlessPolling();
+
+    // Paging footer: more local items, or a GitHub link when the repo
+    // has more open issues than the fetch ceiling.
+    if (shown < items.length) {
+      html += `<div class="mt-1"><button class="gc-vote-btn" onclick="AppView.showMoreFeed()">Show ${Math.min(10, items.length - shown)} more</button></div>`;
+    } else if (meta.truncatedList && meta.repoUrl) {
+      const issuesUrl = `${meta.repoUrl.replace(/\.git$/, '').replace(/\/$/, '')}/issues`;
+      html += `<div class="mt-1"><a href="${issuesUrl}" target="_blank" rel="noopener" class="text-xs text-violet-400 hover:underline">More open issues on GitHub &rarr;</a></div>`;
+    }
+    return html;
+  },
+
+  // Re-render the feed in place from the cached data, then re-mount the
+  // expanded card's thread + roster (innerHTML replacement wipes any
+  // previous mount).
+  _rerenderFeed() {
+    const el = document.getElementById('dev-feed');
+    if (!el) return;
+    el.innerHTML = AppView._renderFeedInner();
+    if (window.Kudos) Kudos.attach(el);
+  },
+
+  showMoreFeed() {
+    AppView._feedShown = (AppView._feedShown || 20) + 10;
+    AppView._rerenderFeed();
+  },
+
+  // ── Your-sessions strip ─────────────────────────────────────────────
+  // The viewer's in-progress (active/paused, not-yet-promoted) sessions
+  // on this app, as a compact chip row between the pinned chat and the
+  // feed. Promoted sessions are absent here — they render as proposal
+  // cards. Hidden when empty.
+  async _renderSessionsStrip() {
+    const el = document.getElementById('dev-sessions-strip');
+    if (!el || !AppView.appData) return;
+    const slug = AppView.appData.slug;
+    try {
+      const res = await fetch('/api/me/active-sessions');
+      if (!res.ok) { el.innerHTML = ''; return; }
+      const data = await res.json();
+      // Most-recent-activity-first, matching the feed's within-group
+      // order. last_activity_at folds in the latest session message;
+      // older servers without it fall back to created_at.
+      const actTs = (s) => {
+        const t = Date.parse(s.last_activity_at || s.created_at || '');
+        return Number.isFinite(t) ? t : 0;
+      };
+      const mine = (data.sessions || [])
+        .filter((s) => s.app_slug === slug && (s.status === 'active' || s.status === 'paused'))
+        .sort((a, b) => actTs(b) - actTs(a));
+      // The container may have been replaced while the fetch was in
+      // flight (tab switch) — re-resolve before painting.
+      const live = document.getElementById('dev-sessions-strip');
+      if (!live) return;
+      if (!mine.length) { live.innerHTML = ''; return; }
+      live.innerHTML = `
+        <div class="space-y-2">
+          ${mine.map((s) => {
+            const label = escapeHtml(s.pr_title || s.branch_name || `Session #${s.id}`);
+            const statusTag = s.busy
+              ? '<span class="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
+              : (s.status === 'paused' ? '<span class="text-xs text-zinc-500 shrink-0">paused</span>' : '');
+            return `<button data-session-chip="${s.id}"
+              class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}"
+              title="${s.busy ? 'AI is working — ' : ''}${label}">
+              ${AppView._devCardIcon('session')}
+              <span class="flex-1 min-w-0">
+                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200 break-words">${label}</span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">Your dev session</span>
+              </span>
+              ${statusTag}
+              <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+            </button>`;
+          }).join('')}
+        </div>`;
+      live.querySelectorAll('[data-session-chip]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          App.switchTab('dev', parseInt(btn.dataset.sessionChip, 10), 'sessions');
+        });
+      });
+    } catch {
+      el.innerHTML = '';
+    }
+  },
+
+  // Refresh the strip's busy indicators on a slow tick while the forum
+  // is mounted; self-clears when the strip leaves the DOM.
+  _syncStripPolling() {
+    if (AppView._stripTimer) return;
+    AppView._stripTimer = setInterval(() => {
+      if (!document.getElementById('dev-sessions-strip')) {
+        clearInterval(AppView._stripTimer);
+        AppView._stripTimer = null;
+        return;
+      }
+      AppView._renderSessionsStrip();
+    }, 15000);
+  },
+
+  // The issue's body (GitHub markdown), rendered in the topic
+  // sub-view between the header card and the thread.
+  _issueBodyHtml(issue) {
+    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
+      ? (s) => DevChat.renderMarkdown(s)
+      : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
+    return issue && issue.body && issue.body.trim()
+      ? `<div class="dev-issue-body text-xs text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 mt-2">${renderMd(issue.body)}</div>`
+      : '';
+  },
+
+  // One PR-proposal card: line 1 is identity + info (icon chip, title,
+  // PR meta, tally pill, badges), line 2 is the action pills (vote /
+  // preview / kudos / Discussion / Open session). With { noNav: true }
+  // (the topic sub-view's header card) the tap-to-open affordance and
+  // Discussion button are dropped — you're already in the discussion.
+  // On narrow screens line 1 wraps progressively instead of truncating
+  // the title: the 💬 badge drops to the next line first, then the
+  // tally pill, and only then does the title itself wrap (see
+  // .dev-card-headline in app.css).
+  _renderProposalCard(pr, opts) {
+    const noNav = !!(opts && opts.noNav);
+    const ctx = AppView._proposalsCtx || {};
+    const majority = ctx.majority || 1;
+    const isMerging = pr.status === 'merging';
+    const isMerged = pr.status === 'merged';
+    let titleHtml;
+    if (pr.revert_of_session_id) {
+      const origLabel = pr.original_pr_title
+        ? `${escapeHtml(pr.original_pr_title)}`
+        : `PR #${pr.original_pr_number || pr.revert_of_session_id}`;
+      titleHtml = `<span class="text-amber-500">↩ Revert of</span> ${origLabel}`;
+    } else {
+      titleHtml = pr.pr_title ? escapeHtml(pr.pr_title) : `Change by ${escapeHtml(pr.username || '')}`;
+    }
+    const metaParts = [
+      `<a href="${pr.pr_url || '#'}" target="_blank" rel="noopener" class="font-mono text-violet-400 hover:underline">PR#${pr.pr_number || pr.id}</a>`,
+      escapeHtml(pr.username || ''),
+    ];
+    if (pr.created_at) metaParts.push(escapeHtml(relTime(pr.created_at)));
+    const closesPills = AppView.closesPillHtml(pr);
+
+    const kudosBtn = window.Kudos ? Kudos.renderButton(pr, { compact: true }) : '';
+    const isUnvoted = pr.status === 'promoted' && !pr.my_vote;
+    const unvotedBadge = isUnvoted
+      ? '<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 shrink-0" title="You haven\'t voted on this yet"><span class="relative flex h-1.5 w-1.5"><span class="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75 animate-ping"></span><span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-violet-500"></span></span>Vote</span>'
+      : '';
+    // #239: resolving badge only when not already merging/merged — the
+    // merge pipeline states outrank the resolver's. No opacity-70 fade
+    // and no disabled vote controls: voting during resolution is valid.
+    const stateBadge = isMerging ? AppView.mergingBadgeHtml()
+      : isMerged ? AppView.mergedBadgeHtml()
+      : pr.resolving ? AppView.resolvingBadgeHtml() : '';
+    // Sessions are owner-scoped (GET /api/sessions/:id), so the session
+    // button only renders for the proposer.
+    const chatN = parseInt(pr.chat_count) || 0;
+    const sessionBtn = (App.user && pr.user_id === App.user.id)
+      ? `<button class="gc-vote-btn" title="Open the dev session behind this proposal" onclick="AppView.openProposalSession(${pr.id})">Open session</button>`
+      : '';
+    // #195/#211: before/after capture tiles, collapsed by default behind a
+    // "Show before/after" pill that sits with the other action buttons. The
+    // tiles wait in an inert <template> (no bandwidth, no autoplay loops)
+    // until expanded; open/closed state lives in _visualsOpen so it survives
+    // the feed's frequent innerHTML re-renders.
+    const visualTiles = AppView.visualsTilesHtml(pr.visuals);
+    const visualsOpen = visualTiles && AppView._visualsOpen.has(pr.id);
+    const visualsBtn = visualTiles
+      ? `<button type="button" class="gc-vote-btn" aria-expanded="${visualsOpen ? 'true' : 'false'}" onclick="AppView.toggleVisuals(${pr.id}, this)">${visualsOpen ? 'Hide before/after' : 'Show before/after'}</button>`
+      : '';
+    const visualsBlock = visualTiles
+      ? `<template class="usn-visuals-tpl">${visualTiles}</template><div class="usn-visuals-body">${visualsOpen ? visualTiles : ''}</div>`
+      : '';
+
+    // Merged proposals (topic-view fallback) drop the live vote buttons —
+    // the vote is settled; kudos stays open.
+    const actions = (isMerged
+      ? [kudosBtn, sessionBtn, visualsBtn]
+      : [AppView.voteButtonsHtml(pr), kudosBtn, sessionBtn, visualsBtn]
+    ).filter(Boolean).join('');
+
+    return `
+      <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}"${visualTiles ? ' data-visuals-scope="1"' : ''}${noNav ? '' : ` data-proposal-row="${pr.id}" title="Open this proposal's discussion"`}>
+        ${AppView._devCardIcon(isMerged ? 'done' : 'proposal')}
+        <div class="flex-1 min-w-0">
+          <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <div class="dev-card-headline">
+              <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words">${titleHtml}</div>
+              <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta">${metaParts.join(' · ')}${closesPills ? ` ${closesPills}` : ''}</div>
+            </div>
+            ${unvotedBadge}
+            ${AppView.voteCountPill(pr, majority)}
+            ${stateBadge}
+            ${AppView._devChatBadge(chatN)}
+          </div>
+          ${actions ? `<div class="flex flex-wrap items-center gap-1.5 mt-1.5">${actions}</div>` : ''}
+          ${visualsBlock}
+        </div>
+        ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
+      </div>`;
+  },
+
+  // The proposal's details block (PR link, proposer, linked issues,
+  // vote roster, locked note), rendered in the topic sub-view between
+  // the header card and the thread.
+  _proposalDetailsHtml(pr) {
+    const ctx = AppView._proposalsCtx || {};
+    const slug = AppView.appData ? AppView.appData.slug : '';
+    const linked = (Array.isArray(pr.linked_issues) ? pr.linked_issues : [])
+      .map((v) => (typeof v === 'number' ? v : Number(v)))
+      .filter((n) => Number.isInteger(n) && n > 0);
+    const chips = linked.map((n) =>
+      `<a href="#app/${slug}/dev/issues/${n}" class="inline-flex items-center text-[0.65rem] font-medium font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20" title="Open issue #${n}">#${n}</a>`
+    ).join(' ');
+    const details = [];
+    if (pr.pr_url) details.push(`<a href="${pr.pr_url}" target="_blank" rel="noopener" class="text-violet-400 hover:underline">View PR on GitHub</a>`);
+    details.push(`proposed by <span class="font-medium">${escapeHtml(pr.username || '')}</span>`);
+    if (pr.created_at) details.push(escapeHtml(relTime(pr.created_at)));
+    const lockedNote = (ctx.locked && pr.status !== 'merged')
+      ? '<div class="text-xs text-amber-500 mt-1">App is locked — this also needs at least one admin yes before it merges.</div>'
+      : '';
+    const roster = pr.status !== 'merged'
+      ? `<div id="dev-vote-roster-${pr.id}" class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Loading votes…</div>`
+      : '';
+    return `
+      <div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">
+        <div>${details.join(' · ')}</div>
+        ${chips ? `<div class="mt-1 flex flex-wrap gap-1 items-center"><span>Linked issues:</span> ${chips}</div>` : ''}
+        ${roster}
+        ${lockedNote}
+      </div>`;
+  },
+
+  // One governance card (env-var change, or a legacy rename row still
+  // open from before renames moved to dapp.json PRs). Up/down controls
+  // post to the existing /api/issues/:id/vote.
+  _renderGovCard(issue, opts) {
+    const noNav = !!(opts && opts.noNav);
+    const ctx = AppView._proposalsCtx || {};
+    const majority = ctx.majority || 1;
+    const myVote = issue.my_vote;
+    const upCount = parseInt(issue.up_count) || 0;
+    const downCount = parseInt(issue.down_count) || 0;
+    const isRename = issue.kind === 'rename';
+    const titleText = isRename
+      ? `Rename to "${(issue.payload && issue.payload.newName) || issue.title}"`
+      : issue.title;
+    const metaParts = ['Governance proposal'];
+    if (issue.created_by_username) metaParts.push(escapeHtml(issue.created_by_username));
+    if (issue.created_at) metaParts.push(escapeHtml(relTime(issue.created_at)));
+    const tallyPill = AppView.voteCountPill({ yes_count: upCount, no_count: downCount }, majority);
+    const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${myVote === 'up' ? ' gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'up')">Yes (${upCount})</button>`;
+    const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${myVote === 'down' ? ' gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'down')">No (${downCount})</button>`;
+    const adminBtn = (!isRename && App.user?.isAdmin)
+      ? `<button class="gc-vote-btn gc-vote-btn-admin" title="Admin: apply this change right now, bypassing the vote majority" onclick="AppView.castIssueAdminApply(${issue.id})">Admin merge</button>`
+      : '';
+    const govChatN = parseInt(issue.chat_count) || 0;
+
+    return `
+      <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" data-gov-row="${issue.id}"${issue.github_issue_number ? ` data-ref-issue="${issue.github_issue_number}"` : ''}${noNav ? '' : ' title="Open this proposal\'s discussion"'}>
+        ${AppView._devCardIcon('gov')}
+        <div class="flex-1 min-w-0">
+          <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <div class="dev-card-headline">
+              <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words">${escapeHtml(titleText)}</div>
+              <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta">${metaParts.join(' · ')}</div>
+            </div>
+            ${tallyPill}
+            ${AppView._devChatBadge(govChatN)}
+          </div>
+          <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
+            ${yesBtn}
+            ${noBtn}
+            ${adminBtn}
+          </div>
+        </div>
+        ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
+      </div>`;
+  },
+
+  // Who voted yes/no on a PR proposal (GET /api/sessions/:id/votes),
+  // painted into the expanded card.
+  async _loadVoteRoster(sessionId) {
+    const el = document.getElementById(`dev-vote-roster-${sessionId}`);
+    if (!el) return;
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/votes`);
+      if (!res.ok) { el.textContent = ''; return; }
+      const data = await res.json();
+      const ctx = AppView._proposalsCtx || {};
+      const fmt = (arr) => (arr && arr.length ? arr.map((u) => '@' + u).join(', ') : '—');
+      el.innerHTML =
+        `<span class="text-emerald-500 font-medium">Yes (${(data.yes || []).length}):</span> ${escapeHtml(fmt(data.yes))}`
+        + ` &nbsp;<span class="text-red-400 font-medium">No (${(data.no || []).length}):</span> ${escapeHtml(fmt(data.no))}`
+        + `<span class="text-zinc-500"> · needs ${ctx.majority || 1} of ${ctx.activeUsers || 1} active users</span>`;
+    } catch {
+      el.textContent = '';
+    }
+  },
+
+  // "Create proposal" — proposals are PRs, and PRs come from dev
+  // sessions, so this opens a fresh session on the Sessions sub-tab
+  // with a one-line hint that promoting the session's PR creates the
+  // proposal.
+  // "Open session" on a proposal card — jump into the dev session
+  // behind the proposal (proposer only; sessions are owner-scoped).
+  openProposalSession(sessionId) {
+    if (!sessionId) return;
+    if (typeof App !== 'undefined' && App.switchTab) {
+      App.switchTab('dev', sessionId, 'sessions');
+    }
+  },
+
+  async createProposal() {
+    if (!AppView.appData || typeof DevChat === 'undefined') return;
+    const session = await DevChat.createSession(AppView.appData.slug);
+    if (!session) return; // createSession already alerts (cap reached / error)
+    AppView._proposalHint = true;
+    if (typeof App !== 'undefined' && App.switchTab) {
+      await App.switchTab('dev', session.id, 'sessions');
+    }
+  },
+
+  // Small "💬 N" thread-message badge shared by issue rows and proposal
+  // cards. Always rendered (even at 0) so live bumps have a target, but
+  // visually hidden until the thread has at least one human message —
+  // a sea of gray "💬 0" pills was pure noise.
+  _devChatBadge(count) {
+    const n = parseInt(count) || 0;
+    return `<span class="dev-chat-badge inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded ${n ? 'bg-violet-500/10 text-violet-400' : 'hidden bg-zinc-500/10 text-zinc-500'}" data-count="${n}" title="Messages in this thread">&#128172; ${n}</span>`;
+  },
+
+  // Live badge bump for a thread the viewer doesn't have open (called
+  // from GroupChat when a threaded message arrives).
+  bumpThreadBadge(type, ref) {
+    let sel = null;
+    if (type === 'issue') {
+      const issue = (AppView._ghIssues || []).find((i) => i.number === ref);
+      if (issue) issue.chatCount = (parseInt(issue.chatCount) || 0) + 1;
+      sel = `[data-issue-row="${ref}"] .dev-chat-badge`;
+    } else if (type === 'session') {
+      const pr = (AppView._proposals || []).find((p) => p.id === ref);
+      if (pr) pr.chat_count = (parseInt(pr.chat_count) || 0) + 1;
+      sel = `[data-proposal-row="${ref}"] .dev-chat-badge`;
+    } else if (type === 'governance') {
+      const g = (AppView._govProposals || []).find((i) => i.id === ref);
+      if (g) g.chat_count = (parseInt(g.chat_count) || 0) + 1;
+      sel = `[data-gov-row="${ref}"] .dev-chat-badge`;
+    }
+    const el = sel && document.querySelector(sel);
+    if (el) {
+      const n = (parseInt(el.dataset.count) || 0) + 1;
+      el.dataset.count = String(n);
+      el.innerHTML = `&#128172; ${n}`;
+      el.classList.remove('hidden', 'bg-zinc-500/10', 'text-zinc-500');
+      el.classList.add('bg-violet-500/10', 'text-violet-400');
+    }
+  },
+
+  // #130/#194: reveal a PR / issue reference (from a chat chip or a
+  // notification) — opens the matching full-screen topic view. Falls
+  // back to GitHub for PR numbers that aren't resolvable locally.
+  revealInDrawer(type, number) {
+    const n = parseInt(number, 10);
+    if (!n || typeof App === 'undefined') return;
+
+    if (type !== 'pr') {
+      // Bare-# chips are issues first. A closed issue won't resolve in
+      // the topic view, which falls back to the card list.
+      AppView.openTopic('issue', n);
+      return;
+    }
+
+    const st = AppView.voteState || {};
+    const pr = (st.byPrNumber && st.byPrNumber[String(n)])
+      || (st.bySession && st.bySession[String(n)]);
+    if (pr) {
+      // Open, merging, or merged — the topic view handles all three
+      // (merged renders with a read-only thread).
+      AppView.openTopic('proposal', pr.id);
+      return;
+    }
+
+    // GitHub fallback — same repo_url normalization as before.
+    const repo = AppView.appData && AppView.appData.repo_url;
+    if (!repo) return;
+    const base = repo.replace(/\.git$/, '').replace(/\/$/, '');
+    window.open(`${base}/pull/${n}`, '_blank', 'noopener');
   },
 
   // #16: undo a merged PR. A single click opens a revert PR (like
@@ -1102,12 +1564,553 @@ const AppView = {
         // so the UI reflects reality.
         alert(data.error || `Undo failed (HTTP ${resp.status}).`);
       }
-      if (AppView.appData) AppView.loadVotePanel(AppView.appData.slug);
+      AppView.refreshDevData('vote');
     } catch (err) {
       alert(`Undo failed: ${err.message}`);
     } finally {
       AppView._voteInFlight.delete(key);
     }
+  },
+
+  // Admin force-apply for an env-var (secret_change) proposal: bypass the
+  // active-user vote majority and apply the change right now. Gated
+  // server-side by /api/issues/:id/admin-apply (admin-only). Mirrors
+  // castAdminMerge's ConfirmModal misclick guard — the button sits inline
+  // with the regular Yes/No buttons.
+  async castIssueAdminApply(issueId) {
+    if (!App.user?.isAdmin) return;
+    const key = `issue-admin-apply:${issueId}`;
+    if (AppView._voteInFlight.has(key)) return;
+    const ok = await ConfirmModal.show({
+      title: 'Apply this env-var change now?',
+      message:
+        'This bypasses the active-user vote majority and applies the proposed secret change right now (the app redeploys with the new value).\n\n'
+        + 'Use only when you\'re confident the change should ship — the override is announced in group chat with your username.',
+      confirmLabel: 'Apply now',
+      cancelLabel: 'Cancel',
+      danger: true,
+    });
+    if (!ok) return;
+    AppView._voteInFlight.add(key);
+    try {
+      const resp = await fetch(`/api/issues/${issueId}/admin-apply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        alert(data.error || `Admin apply failed (HTTP ${resp.status}).`);
+      }
+      AppView.refreshDevData('vote');
+    } catch (err) {
+      alert(`Admin apply failed: ${err.message}`);
+    } finally {
+      AppView._voteInFlight.delete(key);
+    }
+  },
+
+  // ---- Open Issues section ------------------------------------------------
+
+  // Auto-solve rank for the feed sort (#177/#227). Lower renders first
+  // within the issues group: an in-flight run ('generating') tops the
+  // list, a finished run awaiting review ('ready') follows, everything
+  // else — no headless session, or defensively any unknown/future
+  // status — sorts as a plain issue. 'failed' never reaches the client
+  // (the /github-issues query filters to generating/ready), so it lands
+  // in the plain bucket too. Ranking happens at render time (not
+  // server-side) because the optimistic auto-solve start and the
+  // headless poller both mutate `headless` in place and re-render
+  // without refetching.
+  _headlessRank(issue) {
+    const s = issue.headless && issue.headless.status;
+    return s === 'generating' ? 0 : s === 'ready' ? 1 : 2;
+  },
+
+  // The Open Issues list exactly as rendered: env-var-proposal twins
+  // filtered out (#131 — those rows render in the dedicated Environment
+  // variables section). Ordering is owned by _feedItems(), whose
+  // comparator folds in the auto-solve rank (_headlessRank) ahead of
+  // recency. The filter runs on a copy, so _ghIssues itself keeps the
+  // canonical fetch order (GitHub updated-desc). The feed renderer and
+  // the open-card index lookup must both use this helper so paging
+  // counts match what's on screen.
+  _visibleGhIssues() {
+    return (AppView._ghIssues || [])
+      .filter((i) => !(AppView._envIssueNumbers && AppView._envIssueNumbers.has(i.number)));
+  },
+
+  // One issue row for the forum feed, with everything the old Open
+  // Issues section rendered per row (bounty/kudos, Create PR, the
+  // Generate-proposal state machine, Preview, creator attribution) plus the
+  // accordion expansion into the issue body + thread chat.
+  _renderIssueRow(issue, opts) {
+    const noNav = !!(opts && opts.noNav);
+    const meta = AppView._ghIssuesMeta || {};
+    const budgetSpent = meta.myRemaining === 0;
+    let html = '';
+
+    const n = issue.number;
+    const href = issue.htmlUrl || '#';
+    // The GitHub label pill is intentionally not rendered for now — every
+    // open issue currently carries the same `usernode` label, so the badge
+    // added noise without distinguishing rows. See _renderOpenIssuesInner
+    // history if label display is reintroduced.
+    const bountyPill = issue.bounty_count
+      ? `<span class="inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500" title="Kudos bounties pledged on this issue">&#9733; ${issue.bounty_count}</span>`
+      : '';
+    // "Give kudos" disables once the viewer has an open bounty here or has
+    // spent their shared weekly allowance.
+    const kudosDisabled = issue.my_bounty || budgetSpent;
+    const kudosTitle = issue.my_bounty
+      ? 'You already placed a bounty on this issue'
+      : (budgetSpent ? 'Weekly kudos allowance spent' : 'Pledge a kudos bounty — paid to whoever\'s merged PR closes this issue');
+    const kudosBtn = `<button class="gc-vote-btn"${kudosDisabled ? ' disabled' : ''} title="${kudosTitle}" onclick="AppView.giveIssueBounty(${n})">${issue.my_bounty ? '&#9733; Bountied' : 'Pledge kudos'}</button>`;
+    const createBtn = `<button class="gc-vote-btn" title="Start a dev chat to solve this issue" onclick="AppView.createPrForIssue(${n})">Create PR</button>`;
+    // #155: headless auto-session button. Four states driven by the
+    // issue's `headless` field from /github-issues:
+    //   none/failed → "Generate proposal" (opens the confirm + model popup)
+    //   generating  → disabled progress label
+    //   ready       → contextual clone-for-me label by outcome (#168):
+    //                 "Review spec / Review solution / Answer question
+    //                 & start session", generic fallback otherwise
+    //   ready + viewer already cloned (mySessionId, #172) → "Go to
+    //                 session", navigating to their derived session
+    //                 instead of offering a second clone
+    const h = issue.headless;
+    let autoBtn;
+    if (h && h.status === 'generating') {
+      autoBtn = `<button class="gc-vote-btn" disabled title="A headless AI session is working on this issue${h.username ? ` (started by ${escapeAttr(h.username)})` : ''}">Generating proposal&hellip;</button>`;
+    } else if (h && h.status === 'ready') {
+      // #183: a code/spec_code run with a live preview gets the
+      // changes-ready treatment — label + a Preview button that opens
+      // the auto run's staging (plain open, same overlay as PR rows).
+      // stagingUrl is nulled when the preview is GC'd, so the row
+      // degrades back to the plain outcome wording.
+      const hasPreview = !!h.stagingUrl && (h.outcome === 'code' || h.outcome === 'spec_code');
+      const previewBtn = hasPreview
+        ? `<button class="gc-vote-btn gc-vote-btn-preview" title="Open the proposal's staging preview" onclick="AppView.swapToStagingForSession(${h.sessionId}, '${h.stagingUrl}')">Preview</button>`
+        : '';
+      if (h.mySessionId) {
+        autoBtn = `${previewBtn}<button class="gc-vote-btn" title="You already started a session from this proposal — open it" onclick="AppView.goToAutoSessionClone(${h.mySessionId})">Go to session</button>`;
+      } else {
+        const outcomeNote = h.outcome === 'spec' ? 'it drafted a spec'
+          : h.outcome === 'code' ? 'it pushed a code change'
+          : h.outcome === 'spec_code' ? 'it drafted a spec and pushed a code change'
+          : 'it has a question for you';
+        const autoLabel = hasPreview ? 'Changes ready &mdash; review &amp; start session'
+          : h.outcome === 'spec' ? 'Review spec &amp; start session'
+          : h.outcome === 'code' ? 'Review solution &amp; start session'
+          : h.outcome === 'question' ? 'Answer question &amp; start session'
+          : 'Start session from proposal';
+        autoBtn = `${previewBtn}<button class="gc-vote-btn" title="Clone the finished proposal (${outcomeNote}) into your own dev chat — others can clone it too" onclick="AppView.startFromAutoSession(${h.sessionId})">${autoLabel}</button>`;
+      }
+      // #150: a question outcome doesn't block re-running — answer the
+      // questions on the issue, then press Generate proposal again and
+      // the new run reads the answers. Both paths stay available (whether
+      // or not the viewer already cloned this run).
+      if (h.outcome === 'question') {
+        autoBtn += `<button class="gc-vote-btn" title="Questions were posted on the issue — answer them, then generate a proposal again" onclick="AppView.confirmAutoSession(${n})">Generate proposal</button>`;
+      }
+    } else {
+      autoBtn = `<button class="gc-vote-btn" title="Spin up a headless AI session that starts solving this issue on its own — uses your credits" onclick="AppView.confirmAutoSession(${n})">Generate proposal</button>`;
+    }
+    // #133: the creating user renders in the meta line below the title.
+    // created_by_username comes from the /github-issues route (local
+    // issues table → body Source line → GitHub login); omitted when the
+    // creator couldn't be resolved.
+    const rowTitle = issue.created_by_username
+      ? `${issue.title} · ${issue.created_by_username}`
+      : issue.title;
+
+    html += `
+      <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" data-ref-issue="${n}"${noNav ? '' : ` data-issue-row="${n}" title="Open this issue's discussion"`}>
+        ${AppView._devCardIcon('issue')}
+        <div class="flex-1 min-w-0">
+          <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <div class="dev-card-headline">
+              <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words" title="${escapeHtml(rowTitle)}">${escapeHtml(issue.title)}</div>
+              <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta"><a href="${href}" target="_blank" rel="noopener" class="font-mono text-violet-400 hover:underline">#${n}</a>${issue.created_by_username ? ` · ${escapeHtml(issue.created_by_username)}` : ''}</div>
+            </div>
+            ${bountyPill}
+            ${AppView._devChatBadge(issue.chatCount)}
+          </div>
+          <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
+            ${kudosBtn}
+            ${createBtn}
+            ${autoBtn}
+          </div>
+        </div>
+        ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
+      </div>`;
+    return html;
+  },
+
+  // ---- Merged (closed) PRs section ----------------------------------------
+
+  // #149: only the first 3 closed PRs render by default; the rest sit behind
+  // a show-more toggle, mirroring the Open Issues pattern above.
+  _mergedShownDefault: 3,
+
+  // Build the inner HTML for the Merged section from the cached
+  // AppView._merged list. Rendered once inside loadVotePanel's bodyHtml and
+  // re-rendered in place (into #gc-merged) by toggleMergedPrs so the
+  // show-more/show-less toggle needs no refetch.
+  _renderMergedInner() {
+    const merged = AppView._merged || [];
+    const { majority, activeUsers } = AppView._mergedCtx || { majority: 1, activeUsers: 1 };
+    const shown = AppView._mergedExpanded
+      ? merged.length
+      : Math.min(AppView._mergedShownDefault, merged.length);
+
+    let html = `<div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-1">Completed</div><div class="space-y-2">`;
+    for (let i = 0; i < shown; i++) {
+      const pr = merged[i];
+      const date = new Date(pr.created_at).toLocaleDateString();
+      const mergedLabel = pr.pr_title
+        ? `${escapeHtml(pr.pr_title)} <span class="text-zinc-500">· ${escapeHtml(pr.username)}</span>`
+        : `by ${escapeHtml(pr.username)}`;
+      const mergedQuoteTitle = pr.pr_title || `PR #${pr.pr_number || pr.id}`;
+      // Merged PRs are still eligible for kudos (promoted + merging
+      // + merged) — that's intentional. People often come back to
+      // a recently-merged PR and want to thank the author.
+      const kudosBtn = window.Kudos
+        ? Kudos.renderButton(pr, { compact: true })
+        : '';
+
+      // #16: undo is a single direct action — clicking Undo opens a
+      // revert PR (like proposing a change) which then needs the
+      // normal merge vote to land. The button only renders on
+      // ordinary merged PRs that don't already have a revert in
+      // flight or merged:
+      //   - revert_of_session_id != null on this row means this
+      //     row IS itself a revert PR; undoing a revert would
+      //     create an infinite undo-undo loop.
+      //   - revert_session_id (from the LEFT JOIN) means a revert
+      //     PR already exists pointing at this row — show its
+      //     status as a label instead.
+      let undoUI = '';
+      if (pr.revert_of_session_id) {
+        // This row is a revert PR. (Shouldn't appear in the
+        // merged list often — revert PRs are short-lived in
+        // 'promoted' before they themselves merge — but show a
+        // breadcrumb if they do.)
+        undoUI = `<span class="text-xs text-zinc-500" title="This PR is itself a revert">↩ revert</span>`;
+      } else if (pr.revert_session_id) {
+        const rs = pr.revert_status;
+        const rpr = pr.revert_pr_number || pr.revert_session_id;
+        const label = rs === 'merged'
+          ? `Undone by PR#${rpr}`
+          : rs === 'merging'
+            ? `Revert merging (PR#${rpr})`
+            : `Revert in vote · PR#${rpr}`;
+        const linkHref = pr.revert_pr_url || '#';
+        undoUI = `<a href="${linkHref}" target="_blank" class="text-xs text-amber-500 hover:text-amber-400 font-medium">${label}</a>`;
+      } else {
+        undoUI = `
+          <button class="gc-vote-btn gc-vote-btn-undo"
+            title="Open a revert PR for this merge. It still needs a merge vote to land."
+            onclick="AppView.undoPr(${pr.id})">Undo</button>`;
+      }
+
+      html += `
+        <div class="gc-vote-item ${AppView.DEV_CARD_CLS}" data-ref-pr="${pr.pr_number || pr.id}">
+          ${AppView._devCardIcon('done')}
+          <div class="flex-1 min-w-0">
+            <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <div class="dev-card-headline">
+                <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words" title="${escapeHtml(mergedQuoteTitle)}">${mergedLabel}</div>
+                <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta"><a href="${pr.pr_url || '#'}" target="_blank" rel="noopener" class="font-mono text-emerald-400 hover:underline">PR#${pr.pr_number || pr.id}</a> · ${date}${AppView.closesPillHtml(pr) ? ` ${AppView.closesPillHtml(pr)}` : ''}</div>
+              </div>
+              ${AppView.voteCountPill(pr, majority)}
+            </div>
+            <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
+              ${AppView.voteButtonsHtml(pr, { collapseVoted: true })}
+              ${undoUI}
+              ${kudosBtn}
+            </div>
+          </div>
+        </div>`;
+    }
+    html += '</div>';
+
+    // Show-more / show-less footer, same styling as the Open Issues pager.
+    if (merged.length > AppView._mergedShownDefault) {
+      const label = AppView._mergedExpanded
+        ? 'Show less'
+        : `Show ${merged.length - shown} more`;
+      html += `<div class="mt-1"><button class="gc-vote-btn" onclick="AppView.toggleMergedPrs()">${label}</button></div>`;
+    }
+    return html;
+  },
+
+  // Expand / collapse the Merged section in place (no panel reload).
+  toggleMergedPrs() {
+    AppView._mergedExpanded = !AppView._mergedExpanded;
+    const el = document.getElementById('gc-merged');
+    if (el) el.innerHTML = AppView._renderMergedInner();
+  },
+
+  // "Give kudos" — pledge a bounty on a GitHub issue. Debits the shared
+  // weekly kudos allowance server-side; optimistically bumps the local count
+  // and disables the button on success.
+  async giveIssueBounty(issueNumber) {
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug) return;
+    const key = `bounty:${issueNumber}`;
+    if (AppView._bountyInFlight.has(key)) return;
+    AppView._bountyInFlight.add(key);
+    try {
+      const resp = await fetch(`/api/apps/${slug}/issues/${issueNumber}/bounty`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        alert(data.error || `Couldn't place bounty (HTTP ${resp.status}).`);
+        return;
+      }
+      // Reflect the new state locally: mark this issue bountied, set its
+      // count from the server, and update the remaining-allowance gate.
+      const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
+      if (issue) {
+        issue.my_bounty = true;
+        issue.bounty_count = typeof data.bountyCount === 'number' ? data.bountyCount : (issue.bounty_count || 0) + 1;
+      }
+      if (typeof data.remaining === 'number') AppView._ghIssuesMeta.myRemaining = data.remaining;
+      AppView._rerenderFeed();
+    } catch (err) {
+      alert(`Couldn't place bounty: ${err.message}`);
+    } finally {
+      AppView._bountyInFlight.delete(key);
+    }
+  },
+
+  // "Create PR" — spin up a fresh dev chat for this issue and seed the first
+  // turn with the issue's number/title/body so the Mayor links it
+  // (addresses_issues → linked_issues → `Closes #N`) and solves it. Mirrors
+  // DevChat.startNewChange's create→open→render flow, then sends the seed.
+  async createPrForIssue(issueNumber) {
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug || typeof DevChat === 'undefined') return;
+    const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
+
+    const session = await DevChat.createSession(slug);
+    if (!session) return; // createSession already alerts (cap reached / error)
+
+    // Land on the Dev Chat tab focused on the new session. switchTab
+    // ('individual-chat') → renderDevChatTab(sessionId) opens the session,
+    // renders the chat view, and syncs the hash for us.
+    if (typeof App !== 'undefined' && App.switchTab) {
+      await App.switchTab('dev', session.id, 'sessions');
+    }
+
+    // Seed the first turn so the Mayor links the issue (addresses_issues →
+    // linked_issues → `Closes #N`) and solves it. Naming the number is what
+    // drives the merge-time bounty payout.
+    const title = issue ? issue.title : '';
+    const body = issue && issue.body ? `\n\n${issue.body}` : '';
+    const seed =
+      `Please implement GitHub issue #${issueNumber}: "${title}".${body}\n\n`
+      + `Open a PR that closes this issue (include "Closes #${issueNumber}" so it links and closes the issue on merge).`;
+    if (typeof DevChat.sendMessage === 'function') DevChat.sendMessage(seed);
+  },
+
+  // ---- Headless auto sessions (#155) --------------------------------------
+
+  _headlessPollTimer: null,
+
+  // "Generate proposal" — confirmation popup (token warning + model selector)
+  // before spinning up a headless AI session on this issue. The session is
+  // billed to the clicking user but isn't attached to their dev chat.
+  async confirmAutoSession(issueNumber) {
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug) return;
+
+    // Model list comes from the same GET /api/models the dev-chat dropdown
+    // uses, so the popup can never offer a model the server would reject.
+    let models = [];
+    let defaultModel = '';
+    try {
+      const res = await fetch('/api/models');
+      const data = await res.json();
+      models = Array.isArray(data.models) ? data.models : [];
+      defaultModel = data.default || (models[0] && models[0].id) || '';
+    } catch {
+      alert("Couldn't load the model list — try again.");
+      return;
+    }
+    const stored = localStorage.getItem('usernode:dc:model');
+    const preselect = models.some((m) => m.id === stored) ? stored : defaultModel;
+
+    const choice = await AppView._showAutoSessionModal(issueNumber, models, preselect);
+    if (!choice) return;
+
+    try {
+      const resp = await fetch(`/api/apps/${slug}/issues/${issueNumber}/headless-session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: choice }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        alert(data.error || `Couldn't start generating the proposal (HTTP ${resp.status}).`);
+        return;
+      }
+      const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
+      if (issue) issue.headless = { sessionId: data.session.id, status: 'generating' };
+      AppView._rerenderFeed();
+    } catch (err) {
+      alert(`Couldn't start generating the proposal: ${err.message}`);
+    }
+  },
+
+  // Singleton confirm popup for Generate proposal. Same scrim/card styling as
+  // ConfirmModal (confirm-modal.js) plus a model <select>; resolves to the
+  // chosen model id, or null on cancel/backdrop/Esc.
+  _showAutoSessionModal(issueNumber, models, preselect) {
+    let root = document.getElementById('auto-session-modal');
+    if (root) root.remove();
+    root = document.createElement('div');
+    root.id = 'auto-session-modal';
+    root.className = 'fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
+    const options = models.map((m) =>
+      `<option value="${escapeAttr(m.id)}"${m.id === preselect ? ' selected' : ''}>${escapeHtml(m.label || m.id)}</option>`
+    ).join('');
+    root.innerHTML = `
+      <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
+        <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl relative">
+          <h2 class="text-lg font-bold mb-2 text-zinc-900 dark:text-zinc-100">Generate proposal for issue #${issueNumber}?</h2>
+          <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
+            This spins up a <b>headless AI session</b> that immediately starts working on the
+            issue on its own — investigating the repo and drafting a spec, pushing a code
+            change, or coming back with a question. When the drafted spec looks
+            straightforward, the session <b>may also implement it</b> in the same run
+            (committing and pushing to its own branch — never a PR or deploy). It is not
+            connected to your dev chat, but it <b>will automatically use your
+            tokens/credits</b> the moment you confirm.
+          </p>
+          <p class="text-xs text-amber-500 mb-4">
+            Experimental — not recommended for normal users at the moment. Costs are billed
+            to you even if the result isn't useful.
+          </p>
+          <label class="block text-xs font-medium text-zinc-500 mb-1" for="auto-session-model">Model</label>
+          <select id="auto-session-model"
+            class="w-full mb-5 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100">
+            ${options}
+          </select>
+          <div class="flex justify-end gap-2">
+            <button data-role="cancel" type="button"
+              class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
+            <button data-role="confirm" type="button"
+              class="rounded-lg px-4 py-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-500 transition-colors">Generate proposal</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(root);
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const cleanup = (result) => {
+        if (settled) return;
+        settled = true;
+        document.removeEventListener('keydown', onKey, true);
+        root.remove();
+        resolve(result);
+      };
+      const onKey = (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); cleanup(null); }
+      };
+      root.querySelector('[data-role="cancel"]').addEventListener('click', () => cleanup(null));
+      root.querySelector('[data-role="confirm"]').addEventListener('click', () => {
+        const sel = root.querySelector('#auto-session-model');
+        cleanup((sel && sel.value) || null);
+      });
+      root.addEventListener('click', (e) => {
+        if (e.target === root || e.target.dataset.modalBackdrop !== undefined) cleanup(null);
+      });
+      document.addEventListener('keydown', onKey, true);
+    });
+  },
+
+  // "Start session from proposal" — clone the finished headless session
+  // (chat history + spec + branch + CC memory) into a dev chat owned by the
+  // clicking user, then land them in it. Any number of users can do this
+  // independently; each clone gets its own branch and PR path.
+  async startFromAutoSession(headlessSessionId) {
+    if (typeof DevChat === 'undefined') return;
+    try {
+      const resp = await fetch(`/api/sessions/${headlessSessionId}/clone-headless`, { method: 'POST' });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        alert(data.error || `Couldn't start a session from the proposal (HTTP ${resp.status}).`);
+        return;
+      }
+      // #172: remember the clone locally so a back-navigation to the
+      // issues panel shows "Go to session" before the next refetch. The
+      // server's headless.mySessionId is the source of truth on every
+      // re-render/poll.
+      for (const issue of AppView._ghIssues || []) {
+        if (issue.headless && issue.headless.sessionId === headlessSessionId) {
+          issue.headless.mySessionId = data.session.id;
+        }
+      }
+      DevChat.sessions.unshift(data.session);
+      if (typeof App !== 'undefined' && App.switchTab) {
+        await App.switchTab('dev', data.session.id, 'sessions');
+      }
+    } catch (err) {
+      alert(`Couldn't start a session from the proposal: ${err.message}`);
+    }
+  },
+
+  // #172: "Go to session" — the viewer already cloned this auto session,
+  // so navigate to their existing derived session instead of cloning
+  // again. No DevChat.sessions.unshift needed: the switchTab path reloads
+  // the session list itself before opening the session.
+  async goToAutoSessionClone(sessionId) {
+    if (typeof DevChat === 'undefined') return;
+    if (typeof App !== 'undefined' && App.switchTab) {
+      await App.switchTab('dev', sessionId, 'sessions');
+    }
+  },
+
+  // While any rendered issue shows a generating auto session, poll the
+  // issues endpoint so the button flips to its outcome-specific "Review
+  // … & start session" label (or back to Generate proposal on failure) without
+  // a manual refresh.
+  _syncHeadlessPolling() {
+    const generating = (AppView._ghIssues || []).some(
+      (i) => i.headless && i.headless.status === 'generating'
+    );
+    if (!generating) {
+      if (AppView._headlessPollTimer) {
+        clearInterval(AppView._headlessPollTimer);
+        AppView._headlessPollTimer = null;
+      }
+      return;
+    }
+    if (AppView._headlessPollTimer) return;
+    AppView._headlessPollTimer = setInterval(async () => {
+      const slug = AppView.appData && AppView.appData.slug;
+      if (!slug || !document.getElementById('dev-feed')) {
+        clearInterval(AppView._headlessPollTimer);
+        AppView._headlessPollTimer = null;
+        return;
+      }
+      try {
+        const res = await fetch(`/api/apps/${slug}/github-issues`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!Array.isArray(data.issues)) return;
+        // Merge just the headless field — bounty state may have optimistic
+        // local updates we don't want a poll to clobber.
+        const byNumber = new Map(data.issues.map((i) => [i.number, i.headless || null]));
+        for (const issue of AppView._ghIssues || []) {
+          if (byNumber.has(issue.number)) issue.headless = byNumber.get(issue.number);
+        }
+        AppView._rerenderFeed();
+      } catch {}
+    }, 8000);
   },
 
   // Core PR voting controls (Preview / Yes / No / Admin-merge) as an HTML
@@ -1121,10 +2124,22 @@ const AppView = {
   // inline group-chat activity rows so the two never diverge.
   voteCountPill(pr, majority) {
     if (!pr) return '';
-    const maj = majority || 1;
+    // #58: for merged PRs prefer the threshold snapshotted at merge time
+    // (votes_required) so the denominator reflects history rather than the
+    // live majority. Open PRs (and legacy merged rows with no snapshot) fall
+    // back to the live majority passed in.
+    const snap = parseInt(pr.votes_required);
+    const hasSnap = Number.isFinite(snap) && snap > 0;
+    const maj = hasSnap ? snap : (majority || 1);
     const yes = parseInt(pr.yes_count) || 0;
     const no = parseInt(pr.no_count) || 0;
     const state = yes >= maj ? 'yes' : no >= maj ? 'no' : 'pending';
+    // #58: when both at-merge figures are present, surface the historical
+    // context as a hover tooltip on the pill. Only merged rows carry these.
+    const activeAtMerge = parseInt(pr.active_users_at_merge);
+    const titleAttr = (hasSnap && Number.isFinite(activeAtMerge) && activeAtMerge > 0)
+      ? ` title="needed ${snap} of ${activeAtMerge} active users at merge time"`
+      : '';
     let fills;
     if (state === 'yes' || state === 'no') {
       // Finalized: a side reached majority — the whole pill fills solid with
@@ -1138,7 +2153,7 @@ const AppView = {
       fills = `<span class="gc-vote-fill gc-vote-fill-yes" style="width:${yesPct}%"></span>`
         + `<span class="gc-vote-fill gc-vote-fill-no" style="width:${noPct}%"></span>`;
     }
-    return `<span class="gc-vote-count gc-vote-count-${state}">`
+    return `<span class="gc-vote-count gc-vote-count-${state}"${titleAttr}>`
       + fills
       + `<span class="gc-vote-count-label">${yes} / ${maj}</span>`
       + `</span>`;
@@ -1151,11 +2166,150 @@ const AppView = {
     return `<span class="gc-merging-badge"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Merging…</span>`;
   },
 
+  // #239: "Resolving conflicts…" badge — same slot and treatment as the
+  // merging badge, shown while the auto-conflict-resolver has a sync in
+  // flight for the PR (row.resolving from GET /api/apps/:slug/promoted).
+  // Voting stays enabled while it's up: votes cast during resolution
+  // count toward the retried merge.
+  resolvingBadgeHtml() {
+    return `<span class="gc-merging-badge gc-resolving-badge"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Resolving conflicts…</span>`;
+  },
+
   // "Merged" badge — the settled counterpart of the merging badge, shown
   // next to the (now read-only) tally pill / "You voted X" box on group-chat
   // rows after a PR lands so the voting info doesn't disappear.
   mergedBadgeHtml() {
     return `<span class="gc-merged-badge">✓ Merged</span>`;
+  },
+
+  // #195: before/after visual tiles for a session's stored capture
+  // artifacts. `visuals` is the server shape { before: {png,webm,gif},
+  // after: {...} } of /visuals/:id tokens. Shared by the vote-panel PR
+  // rows here and the dev-chat staging card (which calls through
+  // window.AppView). Webm plays as a silent loop with the PNG as poster;
+  // PNG-only sets render a plain image. Click opens full size in a new
+  // tab. Deliberately dedicated DOM — the markdown sanitizer's whitelist
+  // stays untouched (<img>/<video> remain stripped from chat markdown).
+  visualsTilesHtml(visuals) {
+    if (!visuals) return '';
+    const idOk = (id) => typeof id === 'string' && /^[a-f0-9]{32}$/.test(id);
+    const tile = (label, v) => {
+      if (!v) return '';
+      const png = idOk(v.png) ? v.png : null;
+      const webm = idOk(v.webm) ? v.webm : null;
+      const gif = idOk(v.gif) ? v.gif : null;
+      if (!png && !webm && !gif) return '';
+      const mediaStyle = 'display:block;width:100%;max-height:160px;object-fit:contain;object-position:top;background:rgba(0,0,0,0.25);border:1px solid rgba(127,127,127,0.25);border-radius:6px';
+      const media = webm
+        ? `<video src="/visuals/${webm}"${png ? ` poster="/visuals/${png}"` : ''} muted loop autoplay playsinline style="${mediaStyle}"></video>`
+        : `<img src="/visuals/${png || gif}" alt="${label}" loading="lazy" style="${mediaStyle}">`;
+      const href = `/visuals/${webm || gif || png}`;
+      return `<a href="${href}" target="_blank" rel="noopener" title="${label} — open full size" style="flex:1 1 0;min-width:0;display:block;text-decoration:none">
+        <div class="text-[0.65rem] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}</div>
+        ${media}
+      </a>`;
+    };
+    const before = tile('Before', visuals.before);
+    const after = tile('After', visuals.after);
+    if (!after && !before) return '';
+    return `<div class="usn-visual-tiles" style="display:flex;gap:8px;align-items:flex-start;margin:4px 0 2px">${before}${after}</div>`;
+  },
+
+  // #211: sessions whose before/after tiles the viewer expanded in the
+  // App-information-and-activity panel. Module-level (not DOM) state so
+  // the open/closed choice survives the panel's frequent full re-renders.
+  _visualsOpen: new Set(),
+
+  // #211: collapsed-by-default wrapper around visualsTilesHtml for the
+  // App-information-and-activity panel's PR rows. Renders a small
+  // "Show before/after" toggle; the tiles themselves sit in an inert
+  // <template> until expanded, so hidden screenshots/videos cost no
+  // bandwidth and autoplay loops don't run off-screen. The dev-chat
+  // "Changes ready" card intentionally keeps calling visualsTilesHtml
+  // directly — its inline tiles stay as before (issue #211).
+  visualsToggleHtml(sessionId, visuals) {
+    const tiles = AppView.visualsTilesHtml(visuals);
+    if (!tiles) return '';
+    const open = AppView._visualsOpen.has(sessionId);
+    return `<div class="usn-visuals-toggle">
+      <button type="button" class="gc-vote-btn" aria-expanded="${open}" onclick="AppView.toggleVisuals(${sessionId}, this)">${open ? 'Hide before/after' : 'Show before/after'}</button>
+      <template class="usn-visuals-tpl">${tiles}</template>
+      <div class="usn-visuals-body">${open ? tiles : ''}</div>
+    </div>`;
+  },
+
+  // #211: expand/collapse handler for the toggle above. Injects the tile
+  // markup from the row's <template> on open and clears it on close
+  // (clearing, rather than display:none, stops any looping <video>).
+  toggleVisuals(sessionId, btn) {
+    // Two layouts share this handler: the home panel's self-contained
+    // .usn-visuals-toggle wrapper, and the proposal card (the toggle pill
+    // lives in the actions row, the template/body below it — the card root
+    // carries data-visuals-scope so we can find them).
+    const wrap = btn.closest('.usn-visuals-toggle, [data-visuals-scope]');
+    if (!wrap) return;
+    const body = wrap.querySelector('.usn-visuals-body');
+    const tpl = wrap.querySelector('template.usn-visuals-tpl');
+    const open = !AppView._visualsOpen.has(sessionId);
+    if (open) {
+      AppView._visualsOpen.add(sessionId);
+      if (body && tpl) body.innerHTML = tpl.innerHTML;
+    } else {
+      AppView._visualsOpen.delete(sessionId);
+      if (body) body.innerHTML = '';
+    }
+    btn.textContent = open ? 'Hide before/after' : 'Show before/after';
+    btn.setAttribute('aria-expanded', String(open));
+  },
+
+  // #80: derive the GitHub issue URL for issue #N from a PR's html_url
+  // (https://github.com/<owner>/<repo>/pull/<prNumber>) by swapping the
+  // `/pull/<n>` segment for `/issues/<issueNumber>`. Returns '' when the
+  // PR url is missing or doesn't look like a GitHub PR url so callers can
+  // skip rendering a dead link.
+  issueUrlFromPrUrl(prUrl, issueNumber) {
+    if (!prUrl || !Number.isInteger(issueNumber) || issueNumber <= 0) return '';
+    const out = prUrl.replace(/\/pull\/\d+(?=$|[/?#])/, `/issues/${issueNumber}`);
+    // No substitution happened → not a recognizable PR url; bail rather
+    // than linking to a /pull/ page for an issue.
+    return out === prUrl ? '' : out;
+  },
+
+  // #80: "Closes #N" / "Closed #N" pills for the GitHub issues a PR closes.
+  // Reads `linked_issues` (Postgres INTEGER[], populated in #75 and written
+  // into the PR body as `Closes #N` by src/services/pr-metadata.js). Wording
+  // follows the canonical merge check used elsewhere: status === 'merged'
+  // is the only merged state, everything else ('promoted'/'merging'/'active'/
+  // 'paused') reads as still-open. One independently-clickable pill per
+  // issue, each opening the issue on GitHub in a new tab (#61). Renders
+  // nothing when there are no linked issues or no usable PR url.
+  closesPillHtml(pr) {
+    if (!pr || !pr.pr_url) return '';
+    // Sanitize defensively (mirror prMetadata.sanitizeIssueNumbers): drop
+    // anything that isn't a positive integer, dedupe, sort ascending.
+    const raw = Array.isArray(pr.linked_issues) ? pr.linked_issues : [];
+    const seen = new Set();
+    const nums = [];
+    for (const v of raw) {
+      const n = typeof v === 'number' ? v : Number(v);
+      if (Number.isInteger(n) && n > 0 && !seen.has(n)) { seen.add(n); nums.push(n); }
+    }
+    if (!nums.length) return '';
+    nums.sort((a, b) => a - b);
+
+    const merged = pr.status === 'merged';
+    const verb = merged ? 'Closed' : 'Closes';
+    // Match the PR-number link tint at each site: emerald for merged,
+    // violet for open.
+    const cls = merged
+      ? 'inline-flex items-center text-[0.65rem] font-medium font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20'
+      : 'inline-flex items-center text-[0.65rem] font-medium font-mono px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 hover:bg-violet-500/20';
+
+    return nums.map((n) => {
+      const href = AppView.issueUrlFromPrUrl(pr.pr_url, n);
+      if (!href) return '';
+      return `<a href="${href}" target="_blank" rel="noopener" class="${cls}" title="${verb} issue #${n} on GitHub">${verb} #${n}</a>`;
+    }).join(' ');
   },
 
   voteButtonsHtml(pr, opts) {
@@ -1173,8 +2327,18 @@ const AppView = {
     // (now no-op) Yes/No buttons for someone who never voted; the pill +
     // status badge already convey the outcome.
     if (opts && opts.collapseVoted && pr.status !== 'promoted') return '';
+    // #127: stash the PR's testing guidance in the by-session registry so
+    // the Preview onclick passes it to the overlay (which renders its own
+    // "Test this change" button + instructions panel) without the markdown
+    // ever transiting an HTML attribute. No new button here — the row is
+    // already dense.
+    if (pr.testing_md || pr.testing_path) {
+      AppView._sessionTesting[pr.id] = { md: pr.testing_md || null, path: pr.testing_path || null };
+    } else {
+      delete AppView._sessionTesting[pr.id];
+    }
     const preview = pr.staging_url
-      ? `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStaging('${pr.staging_url}')">Preview</button>`
+      ? `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStagingForSession(${pr.id}, '${pr.staging_url}')">Preview</button>`
       : '';
     const adminMerge = App.user?.isAdmin
       ? `<button class="gc-vote-btn gc-vote-btn-admin" title="Admin: merge this PR right now, bypassing the vote majority" onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
@@ -1214,7 +2378,7 @@ const AppView = {
         const data = await resp.json().catch(() => ({}));
         alert(data.error || `Force-merge failed (HTTP ${resp.status}).`);
       }
-      if (AppView.appData) AppView.loadVotePanel(AppView.appData.slug);
+      AppView.refreshDevData('vote');
     } catch (err) {
       alert(`Force-merge failed: ${err.message}`);
     } finally {
@@ -1233,12 +2397,16 @@ const AppView = {
     if (AppView._voteInFlight.has(key)) return;
     AppView._voteInFlight.add(key);
     try {
-      await fetch(`/api/sessions/${sessionId}/vote`, {
+      const res = await fetch(`/api/sessions/${sessionId}/vote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ vote }),
       });
-      if (AppView.appData) AppView.loadVotePanel(AppView.appData.slug);
+      AppView.refreshDevData('vote');
+      // Only refresh notifications once the backend confirms the vote — the
+      // server clears this PR's nudge as a side effect, so re-pull to drop it
+      // from the unread badge. Never optimistic: skip on a non-ok response.
+      if (res.ok) window.Notifications?.refresh?.();
     } catch {}
     finally {
       AppView._voteInFlight.delete(key);
@@ -1259,7 +2427,7 @@ const AppView = {
         // Optimistic local update; the WS handler will re-sync.
         if (AppView.appData) AppView.appData.name = data.renamed.newName;
       }
-      if (AppView.appData) AppView.loadVotePanel(AppView.appData.slug);
+      AppView.refreshDevData('vote');
     } catch {}
   },
 
@@ -1362,25 +2530,29 @@ const AppView = {
     if (next === current) return showError('New app name must differ from the current one');
 
     submitBtn.disabled = true;
-    submitBtn.textContent = 'Proposing...';
+    submitBtn.textContent = 'Opening PR...';
     try {
-      const res = await fetch(`/api/apps/${AppView.appData.slug}/issues`, {
+      // Renames now open a PR that edits dapp.json's `name` field; it
+      // lands through the normal merge-vote pipeline (the new name applies
+      // when the PR merges and the app redeploys). See
+      // POST /api/apps/:slug/rename in src/routes/apps.js.
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/rename`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind: 'rename', payload: { newName: next } }),
+        body: JSON.stringify({ newName: next }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        showError(data.error || 'Failed to propose rename');
+        showError(data.error || 'Failed to open rename PR');
         return;
       }
       AppView.closeRenameModal();
-      AppView.loadVotePanel(AppView.appData.slug);
+      AppView.refreshDevData('vote');
     } catch {
-      showError('Network error while proposing rename');
+      showError('Network error while opening rename PR');
     } finally {
       submitBtn.disabled = false;
-      submitBtn.textContent = 'Propose';
+      submitBtn.textContent = 'Open PR';
     }
   },
 
@@ -1388,135 +2560,67 @@ const AppView = {
   applyRename(newName) {
     if (!AppView.appData) return;
     AppView.appData.name = newName;
-    if (App.currentTab === 'group-chat') {
-      AppView.loadVotePanel(AppView.appData.slug);
+    if (App.currentTab === 'dev') {
+      AppView.refreshDevData('vote');
     }
   },
 
+  // Forum revision: the dedicated session view. There is no session
+  // list / meta panel anymore — sessions are reached from the forum's
+  // Your-sessions strip, proposal cards, and the "+" flow, and a
+  // missing/unopenable id bounces back to the card list. The App
+  // secrets / display-name shortcuts that used to live here moved to
+  // the App settings sub-page (_renderSettingsView).
   async renderDevChatTab(restoreSessionId) {
-    const content = document.getElementById('app-content');
-    // Layout: a meta block (#dc-meta) holds two stacked sections — the
-    // app-edit shortcuts and the sessions header — sitting above the
-    // session list / chat surface (#dc-view). DevChat.renderChatView
-    // toggles `hidden` on #dc-meta when a session opens so the chat
-    // gets the full tab; backing out via #dc-back unhides it.
-    // Layout note: each row is styled like an iOS settings cell — icon,
-    // label, current value preview, chevron — so a glance at the panel
-    // tells you the app's secret-fill status and current display name
-    // without opening either modal. The right-side preview text is
-    // populated below: display name comes straight from appData; the
-    // secrets summary is fetched async via refreshDevChatSecretsState
-    // so this render path stays synchronous.
-    const currentName = escapeHtml(AppView.appData?.name || '');
+    const content = AppView._devContainer();
+    if (!content) return;
+    if (!restoreSessionId) {
+      if (typeof App !== 'undefined' && App.switchTab) App.switchTab('dev');
+      return;
+    }
+
     content.innerHTML = `
       <div style="display:flex;flex-direction:column;height:100%;min-height:0">
-        <div id="dc-meta" class="shrink-0">
-          <!-- Active Sessions panel: cross-app view of every
-               non-archived session the user owns, with the busy ones
-               (CC actively running) listed and an (x/y) indicator in
-               the header. Lives in the meta block so it's visible
-               whenever the user is in the session list (and hides
-               with the rest of #dc-meta on session open, where the
-               focused chat takes over). DevChat.startActiveSessionsPoll
-               fills #dc-active-list and updates #dc-active-counter on
-               a 5s tick. -->
-          <div class="px-3 pt-3 pb-3 border-b border-zinc-200 dark:border-zinc-800">
-            <div class="flex items-center justify-between mb-2">
-              <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider">Sessions</span>
-              <span id="dc-active-counter" class="text-xs text-zinc-400 dark:text-zinc-500 font-mono">(0/3)</span>
-            </div>
-            <div id="dc-active-list" class="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50 divide-y divide-zinc-200 dark:divide-zinc-700" style="max-height:200px;overflow-y:auto"></div>
-          </div>
-
-          <!-- Edit section: app-level controls that previously lived in
-               the global header (App secrets) or the group-chat vote
-               panel (Propose rename). Both still pop the same modals;
-               only the entry point moved. -->
-          <div class="px-3 pt-3 pb-3 border-b border-zinc-200 dark:border-zinc-800 space-y-2">
-            <div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-1">Edit</div>
-            <button id="dc-edit-secrets"
-              class="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 transition-colors text-left">
-              <svg class="w-4 h-4 text-zinc-500 dark:text-zinc-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 7a4 4 0 014 4m-4-4a4 4 0 00-4 4 4 4 0 004 4 4 4 0 004-4 4 4 0 00-4-4zm-9.5 12.5L11 13"/></svg>
-              <span class="flex-1 text-zinc-800 dark:text-zinc-200">App secrets</span>
-              <span id="dc-secrets-state" class="text-xs text-zinc-400 dark:text-zinc-500">Loading…</span>
-              <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-            </button>
-            <button id="dc-edit-rename"
-              class="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 transition-colors text-left">
-              <svg class="w-4 h-4 text-zinc-500 dark:text-zinc-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-              <span class="flex-1 text-zinc-800 dark:text-zinc-200">App display name</span>
-              <span class="text-xs text-zinc-400 dark:text-zinc-500 truncate max-w-[40%]" title="${currentName}">${currentName}</span>
-              <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-            </button>
-          </div>
-
-          <!-- Sessions section header: matches the Edit label's small
-               uppercase treatment so the two sections feel like a
-               single panel rather than two unrelated rows. -->
-          <div class="flex items-center justify-between px-3 pt-3 pb-2 border-b border-zinc-200 dark:border-zinc-800">
-            <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider">Dev Sessions</span>
-            <button id="dc-new-session" class="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-3 py-1 text-xs font-medium text-white transition-colors">+ New Session</button>
-          </div>
-        </div>
-
         <div id="dc-view" style="flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden"></div>
       </div>`;
 
-    // Populate the secrets-state preview. Fire-and-forget — the row
-    // shows "Loading…" until the fetch lands. AppView.refreshDevChatSecretsState
-    // is also called by Secrets after a successful direct edit so the
-    // row stays in sync without a manual reload.
-    AppView.refreshDevChatSecretsState();
+    if (!AppView.appData) return;
 
-    // Kick off the cross-app active-sessions poll. startActiveSessionsPoll
-    // tears down any previous timer first, so re-rendering the tab
-    // (e.g. on hash restore or app switch) doesn't stack pollers.
-    DevChat.startActiveSessionsPoll();
-
-    if (AppView.appData) {
-      // Ground-truth guard: if the in-memory session belongs to a
-      // different app than the one we're rendering (e.g. user was on
-      // app A's dev chat, navigated away, then opened app B), drop it
-      // before loading sessions. Otherwise `renderChatView` would
-      // re-render the stale session for the wrong app (fixes #20).
-      if (
-        DevChat.currentSession &&
-        DevChat.currentSession.app_slug &&
-        DevChat.currentSession.app_slug !== AppView.appData.slug
-      ) {
-        DevChat.reset();
-      }
-
-      await DevChat.loadSessions(AppView.appData.slug);
-
-      if (restoreSessionId) {
-        await DevChat.openSession(restoreSessionId);
-      } else if (!DevChat.currentSession) {
-        DevChat.messages = [];
-      }
-      DevChat.renderChatView();
+    // Ground-truth guard: if the in-memory session belongs to a
+    // different app than the one we're rendering, drop it before
+    // loading (fixes #20).
+    if (
+      DevChat.currentSession &&
+      DevChat.currentSession.app_slug &&
+      DevChat.currentSession.app_slug !== AppView.appData.slug
+    ) {
+      DevChat.reset();
     }
 
-    document.getElementById('dc-new-session').addEventListener('click', async () => {
-      if (!AppView.appData) return;
-      const session = await DevChat.createSession(AppView.appData.slug);
-      if (session) {
-        await DevChat.openSession(session.id);
-        DevChat.renderChatView();
-        // Sync the hash so a page refresh stays on this session instead
-        // of dropping back to the session list.
-        App.updateHash();
-      }
-    });
+    await DevChat.loadSessions(AppView.appData.slug);
+    await DevChat.openSession(restoreSessionId);
 
-    // Edit section wiring. Both buttons just open the existing modals
-    // — no behavior change vs the old header / group-chat triggers.
-    document.getElementById('dc-edit-secrets').addEventListener('click', () => {
-      if (window.Secrets) Secrets.openForCurrentApp();
-    });
-    document.getElementById('dc-edit-rename').addEventListener('click', () => {
-      AppView.promptRename();
-    });
+    // Archived / inaccessible session: fall back to the forum rather
+    // than stranding an empty view.
+    if (!DevChat.currentSession || String(DevChat.currentSession.id) !== String(restoreSessionId)) {
+      if (typeof App !== 'undefined' && App.switchTab) App.switchTab('dev');
+      return;
+    }
+
+    DevChat.renderChatView();
+
+    // #194: one-shot hint set by the "+" menu's "Propose a change" —
+    // proposals are PRs, so the path runs through a session.
+    if (AppView._proposalHint) {
+      AppView._proposalHint = false;
+      const view = document.getElementById('dc-view');
+      if (view) {
+        view.insertAdjacentHTML('afterbegin',
+          '<div class="mx-3 mt-2 px-3 py-2 rounded-lg bg-violet-500/10 border border-violet-500/20 text-xs text-zinc-600 dark:text-zinc-300 shrink-0">'
+          + 'Describe the change you want — when it\'s ready, promoting this session\'s PR is what creates the proposal everyone votes on.'
+          + '</div>');
+      }
+    }
   },
 
   // Fetch the current secrets summary and paint the preview slot in
@@ -1634,33 +2738,225 @@ const AppView = {
     } catch {}
   },
 
-  // Open staging in fullscreen overlay
-  swapToStaging(stagingUrl) {
+  // Open staging in fullscreen overlay.
+  //
+  // #127: `testing` is the session's bot-generated testing guidance
+  // ({ md, path } | null) and `opts.jump` opens the iframe directly at the
+  // deep-link path (the dev-chat "Test this change" button does this).
+  // Callers must never thread the markdown through an HTML attribute —
+  // use a wrapper that looks the object up at click time
+  // (swapToStagingForSession / DevChat.previewStaging).
+  swapToStaging(stagingUrl, testing, opts) {
     const overlay = document.getElementById('staging-overlay');
     const iframe = document.getElementById('staging-iframe');
     const label = document.getElementById('staging-url-label');
     if (!overlay || !iframe) return;
 
     const resolved = resolveDevHost(stagingUrl);
-    const src = AppView.iframeToken
-      ? `${resolved}?token=${AppView.iframeToken}`
-      : resolved;
 
-    iframe.src = src;
+    // Re-validate the deep link client-side (the server already did via
+    // testing-notes.validatePath, but defense-in-depth is cheap): must be
+    // relative and not protocol-relative, so new URL() below can never
+    // leave the staging origin.
+    const rawPath = testing && typeof testing.path === 'string' ? testing.path : null;
+    const safePath = rawPath && rawPath.startsWith('/') && !rawPath.startsWith('//') ? rawPath : null;
+    const testingMd = testing && typeof testing.md === 'string' && testing.md.trim() ? testing.md : null;
+    AppView._stagingTesting = (safePath || testingMd) ? { md: testingMd, path: safePath } : null;
+
+    // Build iframe URLs with the URL API so a deep link carrying its own
+    // query string composes with the token param (no '?token=' concat).
+    const buildSrc = (path) => {
+      let url;
+      try { url = new URL(path || '/', resolved); } catch { return resolved; }
+      if (AppView.iframeToken) url.searchParams.set('token', AppView.iframeToken);
+      return url.toString();
+    };
+    const jump = !!(opts && opts.jump) && !!safePath;
+    // Mutable so a "Test this change" click during the readiness poll
+    // retargets the pending load instead of being clobbered by it.
+    const pending = { src: buildSrc(jump ? safePath : null) };
+
     if (label) label.textContent = resolved;
     overlay.classList.remove('hidden');
     if (window.DevConsole) DevConsole.setButtonVisible(true);
 
+    AppView._renderTestingControls(buildSrc, pending, jump);
+
     document.getElementById('staging-back').onclick = () => {
       AppView.closeStagingOverlay();
     };
+
+    // Don't point the iframe at the host until it actually answers. A fresh
+    // preview's on-demand TLS cert can take a minute (occasionally a few) to
+    // issue; loading the iframe during that window shows a black void with no
+    // feedback. Probe the host first and only swap in the real src once the
+    // TLS handshake succeeds. Each probe also nudges Caddy's on-demand
+    // issuance along, so polling actively warms the cert too. (The probe
+    // always targets the origin root, not the deep link — readiness is a
+    // host/TLS property, and the deep path may be app-routed or auth-gated.)
+    iframe.src = '';
+    const loadId = ++AppView._stagingLoadId;
+    AppView._waitForStagingReady(resolved, loadId).then((ready) => {
+      // A newer swap (or a close) superseded this one — drop the result.
+      if (loadId !== AppView._stagingLoadId) return;
+      AppView._setStagingLoader(false);
+      if (ready) iframe.src = pending.src;
+    });
+  },
+
+  // #127: Preview entry point for vote-panel / group-chat rows — looks up
+  // the testing guidance stashed by voteButtonsHtml at render time, so the
+  // existing Preview button passes it through without any new UI there.
+  swapToStagingForSession(sessionId, stagingUrl) {
+    AppView.swapToStaging(stagingUrl, (AppView._sessionTesting || {})[sessionId] || null);
+  },
+
+  // #127: per-render registry of { md, path } testing guidance keyed by
+  // session id, populated by voteButtonsHtml. Exists so bot-authored
+  // markdown never transits an inline onclick attribute.
+  _sessionTesting: {},
+
+  // The current preview's testing guidance ({ md, path } | null), set by
+  // swapToStaging and cleared on close.
+  _stagingTesting: null,
+
+  // #127: show/hide + wire the overlay's "Test this change" button and the
+  // collapsible "How to test" panel for the current preview. `jump` is true
+  // only when the preview was entered via an explicit "Test this change"
+  // button — the one path where the panel auto-opens (#237).
+  _renderTestingControls(buildSrc, pending, jump) {
+    const btn = document.getElementById('staging-test-btn');
+    const panel = document.getElementById('staging-testing-panel');
+    const content = document.getElementById('staging-testing-content');
+    const closeBtn = document.getElementById('staging-testing-close');
+    const iframe = document.getElementById('staging-iframe');
+    if (!btn || !panel || !content) return;
+
+    panel.classList.add('hidden');
+    const t = AppView._stagingTesting;
+    if (!t) {
+      btn.classList.add('hidden');
+      content.innerHTML = '';
+      return;
+    }
+
+    // Bot-authored markdown: render through DevChat's escaping markdown
+    // pipeline (marked + DOMPurify), falling back to escaped plain text if
+    // dev-chat.js failed to load. Reach DevChat via a bare reference and
+    // `typeof` guard rather than `window.DevChat` — DevChat is a top-level
+    // `const`, which never becomes a `window` property (#237; same pitfall
+    // documented in group-chat.js).
+    if (t.md) {
+      content.innerHTML = (typeof DevChat !== 'undefined' && typeof DevChat.renderMarkdown === 'function')
+        ? DevChat.renderMarkdown(t.md)
+        : `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(t.md)}</pre>`;
+    } else {
+      content.innerHTML = '<span class="text-zinc-500">Use the button above to jump to the changed feature.</span>';
+    }
+
+    btn.classList.remove('hidden');
+    btn.title = t.path ? 'Open the preview at the changed feature' : 'Show the testing instructions';
+    btn.onclick = () => {
+      // Toggle: a second click (panel already open) just closes it.
+      if (t.md && !panel.classList.contains('hidden')) {
+        panel.classList.add('hidden');
+        return;
+      }
+      if (t.path) {
+        // Retarget the (possibly still pending) load at the deep link —
+        // only if it isn't already pointing there, so re-opening the
+        // panel doesn't reload the iframe.
+        const target = buildSrc(t.path);
+        if (pending.src !== target) {
+          pending.src = target;
+          if (iframe && iframe.src) iframe.src = target;
+        }
+      }
+      if (t.md) panel.classList.remove('hidden');
+    };
+    if (closeBtn) closeBtn.onclick = () => panel.classList.add('hidden');
+
+    // #237: the panel no longer auto-opens on every preview. It auto-shows
+    // only when the user entered through an explicit "Test this change"
+    // button (jump) — plain Preview keeps it hidden until asked for.
+    if (jump && t.md) panel.classList.remove('hidden');
+  },
+
+  // Incremented on every swap/close so an in-flight readiness poll for a
+  // superseded preview can detect it's stale and bail without touching the
+  // iframe.
+  _stagingLoadId: 0,
+
+  _setStagingLoader(visible, { title, sub } = {}) {
+    const loader = document.getElementById('staging-loader');
+    if (!loader) return;
+    loader.classList.toggle('hidden', !visible);
+    if (title) {
+      const t = document.getElementById('staging-loader-title');
+      if (t) t.textContent = title;
+    }
+    if (sub) {
+      const s = document.getElementById('staging-loader-sub');
+      if (s) s.textContent = sub;
+    }
+  },
+
+  // Poll the staging host until its TLS handshake + HTTP response succeed.
+  // Uses a no-cors GET: it resolves for any reply (even opaque/redirect/4xx),
+  // and rejects on the network/TLS failure we get while the cert is still
+  // issuing — exactly the readiness signal we want. Resolves true when ready,
+  // false only if the user backed out (stale loadId).
+  async _waitForStagingReady(resolved, loadId) {
+    AppView._setStagingLoader(true, {
+      title: 'Provisioning secure preview…',
+      sub: 'Issuing a TLS certificate for this preview. First load can take a minute.',
+    });
+    const startedAt = Date.now();
+    let attempt = 0;
+    while (loadId === AppView._stagingLoadId) {
+      attempt += 1;
+      const controller = new AbortController();
+      const to = setTimeout(() => controller.abort(), 8000);
+      try {
+        await fetch(resolved, { mode: 'no-cors', cache: 'no-store', signal: controller.signal });
+        clearTimeout(to);
+        return true; // handshake + response succeeded → cert is live
+      } catch {
+        clearTimeout(to);
+        if (loadId !== AppView._stagingLoadId) return false;
+        const elapsed = Math.round((Date.now() - startedAt) / 1000);
+        // Escalate the copy so a longer-than-usual wait doesn't look hung.
+        if (elapsed >= 90) {
+          AppView._setStagingLoader(true, {
+            title: 'Still provisioning…',
+            sub: `The certificate authority is taking longer than usual (${elapsed}s). Hang tight — this keeps retrying automatically.`,
+          });
+        } else if (elapsed >= 30) {
+          AppView._setStagingLoader(true, {
+            title: 'Provisioning secure preview…',
+            sub: `Almost there — waiting on the TLS certificate (${elapsed}s).`,
+          });
+        }
+        await new Promise((r) => setTimeout(r, 2500));
+      }
+    }
+    return false; // superseded/closed
   },
 
   closeStagingOverlay() {
     const overlay = document.getElementById('staging-overlay');
     const iframe = document.getElementById('staging-iframe');
+    // Invalidate any in-flight readiness poll and hide the loader.
+    AppView._stagingLoadId += 1;
+    AppView._setStagingLoader(false);
     if (overlay) overlay.classList.add('hidden');
     if (iframe) iframe.src = '';
+    // #127: reset the testing affordances so the next preview starts clean.
+    AppView._stagingTesting = null;
+    const testBtn = document.getElementById('staging-test-btn');
+    if (testBtn) testBtn.classList.add('hidden');
+    const testPanel = document.getElementById('staging-testing-panel');
+    if (testPanel) testPanel.classList.add('hidden');
     // Restore dev-console button visibility based on whatever tab the
     // user lands back on.
     if (window.DevConsole) {
@@ -1676,7 +2972,460 @@ const AppView = {
       AppView.renderAppTab();
     }
   },
+
+  // ── Members & visibility modal ─────────────────────────────────────
+  //
+  // One modal, two concerns:
+  //   - visibility controls (creator/admin only) → PATCH /visibility
+  //   - member list + invite typeahead (collab-private apps) →
+  //     /collaborators, /invites, /api/users/search
+  // State is re-fetched on every open so a stale modal can't show a
+  // removed member or an already-accepted invite.
+
+  _membersVis: { collab: 'public', view: 'public' },
+  _inviteDebounce: null,
+
+  async openMembersModal() {
+    const appData = AppView.appData;
+    if (!appData) return;
+    const modal = document.getElementById('members-modal');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+
+    AppView._membersVis = {
+      collab: appData.collab_visibility || 'public',
+      view: appData.view_visibility || 'public',
+    };
+
+    // Visibility section: creator/admin only.
+    const visSection = document.getElementById('members-visibility-section');
+    if (visSection) {
+      visSection.classList.toggle('hidden', !appData.can_manage);
+      if (appData.can_manage) AppView._renderMembersVisPills();
+    }
+    AppView._wireMembersModal();
+
+    // Member list + invite input: collab-private apps only.
+    const isPrivate = appData.collab_visibility === 'private';
+    const inviteSection = document.getElementById('members-invite-section');
+    const listSection = document.getElementById('members-list-section');
+    if (inviteSection) inviteSection.classList.toggle('hidden', !isPrivate || !appData.can_collaborate);
+    if (listSection) listSection.classList.toggle('hidden', !isPrivate || !appData.can_collaborate);
+    const status = document.getElementById('members-invite-status');
+    if (status) { status.textContent = ''; status.className = 'text-sm mt-2'; }
+    const input = document.getElementById('members-invite-input');
+    if (input) input.value = '';
+    AppView._hideInviteSuggestions();
+    if (isPrivate && appData.can_collaborate) await AppView.loadCollaborators();
+  },
+
+  hideMembersModal() {
+    const modal = document.getElementById('members-modal');
+    if (modal) modal.classList.add('hidden');
+    AppView._hideInviteSuggestions();
+  },
+
+  // Idempotent wiring (cloneNode swap clears stale listeners, mirroring
+  // Home.wireCreateButtons) for the pills + invite input.
+  _wireMembersModal() {
+    document.querySelectorAll('#members-visibility-section [data-m-collab-vis], #members-visibility-section [data-m-view-vis]')
+      .forEach((pill) => {
+        const fresh = pill.cloneNode(true);
+        pill.parentNode.replaceChild(fresh, pill);
+        fresh.addEventListener('click', () => {
+          if (fresh.dataset.mCollabVis) AppView._setMembersVisibility('collab', fresh.dataset.mCollabVis);
+          else AppView._setMembersVisibility('view', fresh.dataset.mViewVis);
+        });
+      });
+    const input = document.getElementById('members-invite-input');
+    if (input) {
+      const fresh = input.cloneNode(true);
+      input.parentNode.replaceChild(fresh, input);
+      fresh.addEventListener('input', () => {
+        clearTimeout(AppView._inviteDebounce);
+        AppView._inviteDebounce = setTimeout(() => AppView._searchInviteUsers(fresh.value.trim()), 200);
+      });
+      fresh.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const name = fresh.value.trim();
+          if (name) AppView.sendInvite(name);
+        }
+        if (e.key === 'Escape') AppView._hideInviteSuggestions();
+      });
+    }
+  },
+
+  _renderMembersVisPills() {
+    const { collab, view } = AppView._membersVis;
+    const collabPublic = collab === 'public';
+    document.querySelectorAll('#members-visibility-section [data-m-collab-vis]').forEach((p) => {
+      p.classList.toggle('active', p.dataset.mCollabVis === collab);
+    });
+    document.querySelectorAll('#members-visibility-section [data-m-view-vis]').forEach((p) => {
+      p.classList.toggle('active', p.dataset.mViewVis === view);
+      p.disabled = collabPublic;
+    });
+    const hint = document.getElementById('members-vis-hint');
+    if (hint) hint.classList.toggle('hidden', !collabPublic);
+  },
+
+  // Pill click → optimistic local state + PATCH. On failure, revert to
+  // the server's last-known values from appData.
+  async _setMembersVisibility(kind, value) {
+    const prev = { ...AppView._membersVis };
+    const v = value === 'private' ? 'private' : 'public';
+    if (kind === 'collab') {
+      AppView._membersVis.collab = v;
+      if (v === 'public') AppView._membersVis.view = 'public';
+    } else {
+      AppView._membersVis.view = (AppView._membersVis.collab === 'private') ? v : 'public';
+    }
+    AppView._renderMembersVisPills();
+    if (prev.collab === AppView._membersVis.collab && prev.view === AppView._membersVis.view) return;
+
+    const errEl = document.getElementById('members-vis-error');
+    if (errEl) errEl.classList.add('hidden');
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/visibility`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          collabVisibility: AppView._membersVis.collab,
+          viewVisibility: AppView._membersVis.view,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      // Keep the in-memory app row honest so re-opens render correctly
+      // and tab gating recomputes on the next open.
+      AppView.appData.collab_visibility = AppView._membersVis.collab;
+      AppView.appData.view_visibility = AppView._membersVis.view;
+      // Going collab-public dissolves the invite/member sections.
+      const isPrivate = AppView._membersVis.collab === 'private';
+      const inviteSection = document.getElementById('members-invite-section');
+      const listSection = document.getElementById('members-list-section');
+      if (inviteSection) inviteSection.classList.toggle('hidden', !isPrivate);
+      if (listSection) listSection.classList.toggle('hidden', !isPrivate);
+      if (isPrivate) AppView.loadCollaborators();
+    } catch (err) {
+      AppView._membersVis = prev;
+      AppView._renderMembersVisPills();
+      if (errEl) {
+        errEl.textContent = `Visibility change failed: ${err.message}`;
+        errEl.classList.remove('hidden');
+      }
+    }
+  },
+
+  async loadCollaborators() {
+    const list = document.getElementById('members-list');
+    if (!list || !AppView.appData) return;
+    list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500">Loading…</div>';
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/collaborators`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      AppView._renderCollaborators(data.collaborators || []);
+    } catch (err) {
+      list.innerHTML = `<div class="px-3 py-2 text-sm text-red-400">Failed to load members: ${escapeHtml(err.message)}</div>`;
+    }
+  },
+
+  _renderCollaborators(rows) {
+    const list = document.getElementById('members-list');
+    if (!list) return;
+    const me = (typeof App !== 'undefined' && App.user) ? App.user : {};
+    const canManage = !!AppView.appData?.can_manage;
+    if (!rows.length) {
+      list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500">No collaborators yet.</div>';
+      return;
+    }
+    list.innerHTML = rows.map((r) => {
+      const pending = r.status === 'invited';
+      const tag = r.isCreator
+        ? '<span class="text-[0.65rem] text-violet-500 font-medium ml-1">creator</span>'
+        : (pending ? '<span class="text-[0.65rem] text-amber-500 font-medium ml-1">invited</span>' : '');
+      // Remove/revoke: creator/admin for anyone but the creator; users
+      // may remove themselves (leave). Mirrors the server rules.
+      const canRemove = !r.isCreator && (canManage || r.userId === me.id);
+      const removeBtn = canRemove
+        ? `<button data-remove-user="${r.userId}" class="text-xs text-zinc-400 hover:text-red-500 px-2 py-1" title="${pending ? 'Revoke invite' : (r.userId === me.id ? 'Leave app' : 'Remove')}">${pending ? 'Revoke' : (r.userId === me.id ? 'Leave' : 'Remove')}</button>`
+        : '';
+      return `<div class="flex items-center justify-between px-3 py-2 ${pending ? 'opacity-70' : ''}">
+        <span class="text-sm text-zinc-700 dark:text-zinc-300 truncate">@${escapeHtml(r.username)}${tag}</span>
+        ${removeBtn}
+      </div>`;
+    }).join('');
+    list.querySelectorAll('[data-remove-user]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          const res = await fetch(
+            `/api/apps/${AppView.appData.slug}/collaborators/${btn.dataset.removeUser}`,
+            { method: 'DELETE' }
+          );
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+          // Leaving an app yourself: you may have just lost access —
+          // bounce home rather than leave a dead view up.
+          if (Number(btn.dataset.removeUser) === me.id && !me.isAdmin) {
+            AppView.hideMembersModal();
+            App.navigateHome();
+            return;
+          }
+          AppView.loadCollaborators();
+        } catch (err) {
+          alert(`Remove failed: ${err.message}`);
+          btn.disabled = false;
+        }
+      });
+    });
+  },
+
+  async _searchInviteUsers(q) {
+    const box = document.getElementById('members-invite-suggestions');
+    if (!box || !AppView.appData) return;
+    if (!q) { AppView._hideInviteSuggestions(); return; }
+    try {
+      const params = new URLSearchParams({ q, excludeApp: AppView.appData.slug });
+      const res = await fetch(`/api/users/search?${params.toString()}`);
+      if (!res.ok) return;
+      const { users } = await res.json();
+      if (!users || !users.length) { AppView._hideInviteSuggestions(); return; }
+      box.innerHTML = users.map((u) =>
+        `<button data-invite-user="${escapeAttr(u.username)}" class="w-full text-left px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">@${escapeHtml(u.username)}</button>`
+      ).join('');
+      box.classList.remove('hidden');
+      box.querySelectorAll('[data-invite-user]').forEach((btn) => {
+        btn.addEventListener('click', () => AppView.sendInvite(btn.dataset.inviteUser));
+      });
+    } catch { /* typeahead is best-effort */ }
+  },
+
+  _hideInviteSuggestions() {
+    const box = document.getElementById('members-invite-suggestions');
+    if (box) { box.classList.add('hidden'); box.innerHTML = ''; }
+  },
+
+  async sendInvite(username) {
+    const status = document.getElementById('members-invite-status');
+    const input = document.getElementById('members-invite-input');
+    AppView._hideInviteSuggestions();
+    if (status) { status.textContent = 'Inviting…'; status.className = 'text-sm mt-2'; }
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/invites`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      if (status) {
+        status.textContent = `✓ Invited @${data.username || username}`;
+        status.className = 'text-sm mt-2 import-status--ok';
+      }
+      if (input) input.value = '';
+      AppView.loadCollaborators();
+    } catch (err) {
+      if (status) {
+        status.textContent = err.message;
+        status.className = 'text-sm mt-2 import-status--err';
+      }
+    }
+  },
+
+  // ── App LLM access consent flow (issue #34) ────────────────────────
+  //
+  // The bridge's usernode.requestLlmAccess()/getLlmAccess() post a
+  // `__usernode_llm` message to window.parent; the shell (this file —
+  // it owns the app iframe) answers. The consent dialog is
+  // platform-owned: it renders over the app, from our origin, so an
+  // app cannot approve itself. Wired via the top-level message
+  // listener at the bottom of this file.
+
+  async handleLlmBridgeMessage(e) {
+    const data = e.data;
+    if (!data || !data.id) return;
+    const type = data.__usernode_llm;
+    if (type !== 'request-access' && type !== 'get-access') return;
+
+    // Only the app iframes this shell owns may ask. The staging
+    // preview iframe is accepted too so AI-consent flows are
+    // exercisable in PR previews (the staging proxy path itself is
+    // disabled server-side — staging containers hold no proxy token).
+    const appIframe = document.getElementById('app-iframe');
+    const stagingIframe = document.getElementById('staging-iframe');
+    const fromApp = appIframe && e.source === appIframe.contentWindow;
+    const fromStaging = stagingIframe && e.source === stagingIframe.contentWindow;
+    if (!fromApp && !fromStaging) return;
+    const slug = AppView.appData?.slug;
+    if (!slug) return;
+
+    const reply = (value, error) => {
+      try {
+        e.source.postMessage(
+          { __usernode_llm: 'response', id: data.id, value: value ?? null, error: error ?? null },
+          '*'
+        );
+      } catch {}
+    };
+    // Ack immediately so the bridge stops its "no shell here" timer —
+    // the user may take minutes on the dialog below.
+    try { e.source.postMessage({ __usernode_llm: 'ack', id: data.id }, '*'); } catch {}
+
+    let info;
+    try {
+      const r = await fetch(`/api/apps/${slug}/llm-grant`, { credentials: 'same-origin' });
+      if (!r.ok) throw new Error(`status ${r.status}`);
+      info = await r.json();
+    } catch (err) {
+      reply(null, 'Failed to load AI permission state.');
+      return;
+    }
+
+    const active = info.grant && info.grant.status === 'active';
+    const current = active
+      ? { granted: true, dailyCapCents: info.grant.dailyCapCents, allowByok: info.grant.allowByok }
+      : { granted: false };
+    if (type === 'get-access' || active) {
+      reply(current);
+      return;
+    }
+
+    const decision = await AppView.showLlmConsentModal(info);
+    if (!decision) {
+      reply({ granted: false, declined: true });
+      return;
+    }
+    try {
+      const r = await fetch('/api/me/llm-grants', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          appSlug: slug,
+          dailyCapCents: decision.dailyCapCents,
+          allowByok: decision.allowByok,
+        }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        reply(null, j.error || 'Failed to save permission.');
+        return;
+      }
+      reply({
+        granted: true,
+        dailyCapCents: j.grant.dailyCapCents,
+        allowByok: j.grant.allowByok,
+      });
+    } catch (err) {
+      reply(null, 'Network error saving permission.');
+    }
+  },
+
+  // Singleton consent dialog, same scrim/card pattern as
+  // confirm-modal.js. Resolves { dailyCapCents, allowByok } on Allow,
+  // null on "Not now" / backdrop / Esc.
+  _llmModalEl: null,
+  showLlmConsentModal(info) {
+    return new Promise((resolve) => {
+      // Recreate the element on every open so listeners from a prior
+      // dialog don't accumulate on the reused node.
+      if (AppView._llmModalEl) {
+        AppView._llmModalEl.remove();
+        AppView._llmModalEl = null;
+      }
+      const root = document.createElement('div');
+      root.id = 'llm-consent-modal';
+      root.className = 'hidden fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
+      document.body.appendChild(root);
+      AppView._llmModalEl = root;
+
+      const appName = info.app?.name || info.app?.slug || 'This app';
+      const suggested = info.llm?.suggestedCapCents ?? null;
+      const prefillCents = suggested ?? info.defaultCapCents ?? 100;
+      const maxCents = info.maxCapCents || 2500;
+      const purposeLine = info.llm?.purpose
+        ? `<p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3 italic">&ldquo;${escapeHtml(info.llm.purpose)}&rdquo;</p>`
+        : '';
+      const suggestedNote = suggested != null
+        ? `<p class="text-xs text-zinc-500 dark:text-zinc-500 mt-1">Suggested by this app &mdash; you can change it.</p>`
+        : `<p class="text-xs text-zinc-500 dark:text-zinc-500 mt-1">You can change this anytime in Settings.</p>`;
+      const byokBlock = info.hasApiKey
+        ? `<label class="flex items-start gap-2 cursor-pointer select-none mt-4">
+             <input id="llm-consent-byok" type="checkbox" class="accent-violet-500 w-4 h-4 mt-0.5" />
+             <span class="text-xs text-zinc-700 dark:text-zinc-300">If my daily platform budget runs out, let this app keep going on my own API key (still limited by the cap above).</span>
+           </label>`
+        : '';
+
+      root.innerHTML = `
+        <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
+          <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl relative">
+            <h2 class="text-lg font-bold mb-2 text-zinc-900 dark:text-zinc-100">Allow ${escapeHtml(appName)} to use AI?</h2>
+            ${purposeLine}
+            <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
+              This lets <strong>${escapeHtml(appName)}</strong> spend from your daily AI budget &mdash; the same one your dev chats use &mdash; up to the daily cap below.
+            </p>
+            <label class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1" for="llm-consent-cap">Daily cap for this app ($ per day)</label>
+            <input id="llm-consent-cap" type="number" min="0.01" step="0.01"
+              value="${(prefillCents / 100).toFixed(2)}"
+              class="w-32 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono" />
+            ${suggestedNote}
+            ${byokBlock}
+            <div id="llm-consent-error" class="hidden text-sm text-red-500 mt-3"></div>
+            <div class="flex justify-end gap-2 mt-5">
+              <button id="llm-consent-decline" type="button"
+                class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Not now</button>
+              <button id="llm-consent-allow" type="button"
+                class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Allow</button>
+            </div>
+          </div>
+        </div>`;
+
+      const done = (result) => {
+        root.classList.add('hidden');
+        document.removeEventListener('keydown', onKey);
+        resolve(result);
+      };
+      const onKey = (ev) => {
+        if (ev.key === 'Escape') done(null);
+      };
+      document.addEventListener('keydown', onKey);
+
+      root.addEventListener('click', (ev) => {
+        if (ev.target === root || ev.target.dataset.modalBackdrop !== undefined) done(null);
+      }, { once: false });
+      root.querySelector('#llm-consent-decline').addEventListener('click', () => done(null));
+      root.querySelector('#llm-consent-allow').addEventListener('click', () => {
+        const errEl = root.querySelector('#llm-consent-error');
+        const dollars = parseFloat(root.querySelector('#llm-consent-cap').value);
+        const cents = Math.round(dollars * 100);
+        if (!Number.isFinite(dollars) || !Number.isInteger(cents) || cents <= 0) {
+          errEl.textContent = 'Enter a valid daily cap (at least $0.01).';
+          errEl.classList.remove('hidden');
+          return;
+        }
+        if (cents > maxCents) {
+          errEl.textContent = `The cap can't exceed your own daily limit ($${(maxCents / 100).toFixed(2)}).`;
+          errEl.classList.remove('hidden');
+          return;
+        }
+        const byokInput = root.querySelector('#llm-consent-byok');
+        done({ dailyCapCents: cents, allowByok: !!(byokInput && byokInput.checked) });
+      });
+
+      root.classList.remove('hidden');
+    });
+  },
 };
+
+// Bridge → shell consent relay for app LLM access (issue #34). One
+// top-level listener; handleLlmBridgeMessage verifies the source is an
+// iframe this shell owns and ignores everything else.
+window.addEventListener('message', (e) => {
+  try { AppView.handleLlmBridgeMessage(e); } catch {}
+});
 
 // Small helpers used by the #21 version pill. Kept local so app-view
 // stays self-contained — the dev-console has its own copy of these.

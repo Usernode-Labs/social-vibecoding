@@ -1,0 +1,75 @@
+#!/bin/sh
+# Read-only: list the app repo's OPEN GitHub issues by asking the platform,
+# or fetch ONE issue with its FULL (untruncated) body.
+#
+# The worker container carries no GitHub credentials. This script POSTs
+# nothing and changes nothing — it GETs the platform's internal issues
+# endpoint, which fetches the (public) repo's issues anonymously,
+# caches/paginates/filters PRs, and returns normalized JSON. It is the
+# scout + build counterpart to the Mayor's in-process list_github_issues /
+# get_github_issue tools.
+#
+# Unlike usernode-push, this is allowed in BOTH build and scout modes:
+# reading public issues is harmless and never escapes the container. It
+# authenticates with ISSUES_JWT (a session-scoped, read-only token passed
+# to both modes) — deliberately NOT WORKER_JWT, so scout still has no way
+# to push.
+#
+# Usage:
+#   usernode-issues            list open issues (long bodies clipped with a
+#                              "[truncated — use usernode-issues N for full
+#                              text]" marker)
+#   usernode-issues <number>   that one issue, FULL body (#158); also
+#                              resolves recently-closed issues
+#
+# Endpoints: GET /api/internal/sessions/$SESSION_ID/issues
+#            GET /api/internal/sessions/$SESSION_ID/issues/<number>
+#   Authorization: Bearer $ISSUES_JWT
+# Prints the JSON body to stdout. Exit 0 on HTTP 200, non-zero otherwise.
+# On any failure it still prints a well-formed empty-with-note object so
+# the caller (Claude Code) always gets parseable JSON.
+
+set -u
+
+: "${ISSUES_JWT:?ISSUES_JWT required}"
+: "${SESSION_ID:?SESSION_ID required}"
+: "${PLATFORM_URL:=http://usernode:3000}"
+
+ISSUE_NO="${1:-}"
+
+if [ -n "$ISSUE_NO" ]; then
+  case "$ISSUE_NO" in
+    *[!0-9]*)
+      echo '{"issue":null,"note":"bad issue number"}'
+      exit 1
+      ;;
+  esac
+  URL="${PLATFORM_URL%/}/api/internal/sessions/${SESSION_ID}/issues/${ISSUE_NO}"
+  FAIL_BODY='{"issue":null,"note":"fetch failed"}'
+  UNAVAIL_BODY='{"issue":null,"note":"unavailable"}'
+else
+  URL="${PLATFORM_URL%/}/api/internal/sessions/${SESSION_ID}/issues"
+  FAIL_BODY='{"issues":[],"truncatedList":false,"note":"fetch failed"}'
+  UNAVAIL_BODY='{"issues":[],"truncatedList":false,"note":"unavailable"}'
+fi
+
+RESP=$(curl -sS -X GET \
+  -H "Authorization: Bearer $ISSUES_JWT" \
+  -H "Accept: application/json" \
+  -w "\n%{http_code}" \
+  --max-time 30 \
+  "$URL" 2>&1) || {
+  echo "$FAIL_BODY"
+  exit 1
+}
+
+CODE=$(printf '%s' "$RESP" | tail -n1)
+BODY=$(printf '%s' "$RESP" | sed '$d')
+
+if [ "$CODE" = "200" ]; then
+  printf '%s\n' "$BODY"
+  exit 0
+fi
+
+echo "$UNAVAIL_BODY"
+exit 1

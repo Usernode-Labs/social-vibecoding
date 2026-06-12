@@ -58,13 +58,23 @@ function loadWithStubs({ onGenerate, githubCalls }) {
 // A mock pool that returns canned rows per table: chat_session_messages
 // (turn history), chat_session_specs (saved spec snapshots), and
 // chat_sessions (the live spec_md). UPDATEs are no-ops.
-function mockPool(rows, { specRows = [], liveSpec = '' } = {}) {
+function mockPool(rows, {
+  specRows = [], liveSpec = '', linkedIssues = [], appliedIssues = [],
+  testingMd = null, testingPath = null, appliedTesting = null,
+} = {}) {
   return {
     queries: [],
     async query(sql, params) {
       this.queries.push({ sql, params });
       if (/FROM chat_session_specs/i.test(sql)) return { rows: specRows };
-      if (/FROM chat_sessions\b/i.test(sql)) return { rows: [{ spec_md: liveSpec }] };
+      if (/FROM chat_sessions\b/i.test(sql)) {
+        return {
+          rows: [{
+            spec_md: liveSpec, linked_issues: linkedIssues, pr_linked_issues_applied: appliedIssues,
+            testing_md: testingMd, testing_path: testingPath, pr_testing_applied: appliedTesting,
+          }],
+        };
+      }
       if (/FROM chat_session_messages/i.test(sql)) return { rows };
       return { rows: [] };
     },
@@ -142,6 +152,251 @@ test('applyPrMetadata falls back to the single current turn when there is no his
     assert.deepEqual(summaries, ['Scaffolded the todo app']);
     // New PR path -> createPR.
     assert.equal(githubCalls[0].type, 'create');
+  } finally {
+    restore();
+  }
+});
+
+// ---- #75: closing keywords ----
+
+test('no linked issues -> body has no Closes line and is unchanged', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'Build it', metadata: {} }]);
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'Build it', ccSummary: 'Did it', username: 'evan',
+    });
+    assert.equal(githubCalls[0].type, 'create');
+    assert.ok(!/Closes #/.test(githubCalls[0].opts.body), 'no closing keyword without linked issues');
+    // Body shape is the legacy "<llm body>\n\n---\n_footer_".
+    assert.match(githubCalls[0].opts.body, /^Cumulative body\n\n---\n_Dev session by evan via Usernode_$/);
+  } finally {
+    restore();
+  }
+});
+
+test('a single linked issue adds one Closes line between body and footer', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'Fix it', metadata: {} }], { linkedIssues: [75] });
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'Fix it', ccSummary: 'Fixed it', username: 'evan',
+    });
+    assert.equal(githubCalls[0].type, 'create');
+    assert.equal(
+      githubCalls[0].opts.body,
+      'Cumulative body\n\nCloses #75\n\n---\n_Dev session by evan via Usernode_'
+    );
+    // The applied snapshot is persisted on the new-PR write.
+    const upd = pool.queries.find((q) => /UPDATE chat_sessions SET pr_number/.test(q.sql));
+    assert.deepEqual(upd.params[3], [75]);
+  } finally {
+    restore();
+  }
+});
+
+test('multiple + malformed linked issues are sanitized, deduped and sorted', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls });
+  try {
+    // Mix of valid, dup, zero, negative, float, and non-numeric inputs.
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }], {
+      linkedIssues: [80, 75, 75, 0, -3, 12.5, 'abc', null],
+    });
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.equal(
+      githubCalls[0].opts.body,
+      'Cumulative body\n\nCloses #75\nCloses #80\n\n---\n_Dev session by evan via Usernode_'
+    );
+  } finally {
+    restore();
+  }
+});
+
+test('regenerating the body is idempotent (no doubled Closes lines)', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls });
+  try {
+    // PR already exists; title will change so an update fires.
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }], {
+      linkedIssues: [75], appliedIssues: [75],
+    });
+    const session = { id: 1, branch_name: 'feat/x', pr_number: 42, pr_url: 'u', pr_title: 'old' };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.equal(githubCalls[0].type, 'update');
+    const matches = githubCalls[0].opts.body.match(/Closes #75/g) || [];
+    assert.equal(matches.length, 1, 'exactly one Closes #75 line');
+  } finally {
+    restore();
+  }
+});
+
+test('existing PR updates when the linked-issue set changed even if the title did not', async () => {
+  const githubCalls = [];
+  // LLM returns 'Cumulative title'; make that the current pr_title so the
+  // title-only gate would otherwise skip the GitHub call.
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }], {
+      linkedIssues: [75], appliedIssues: [],
+    });
+    const session = { id: 1, branch_name: 'feat/x', pr_number: 42, pr_url: 'u', pr_title: 'Cumulative title' };
+    const res = await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.equal(githubCalls.length, 1, 'GitHub update fired despite unchanged title');
+    assert.equal(githubCalls[0].type, 'update');
+    assert.match(githubCalls[0].opts.body, /Closes #75/);
+    // The applied snapshot is advanced so the next unchanged turn is a no-op.
+    const upd = pool.queries.find((q) => /UPDATE chat_sessions SET pr_title/.test(q.sql));
+    assert.deepEqual(upd.params[1], [75]);
+    assert.equal(res.prNumber, 42);
+  } finally {
+    restore();
+  }
+});
+
+test('existing PR makes no GitHub call when title and issue set are both unchanged', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }], {
+      linkedIssues: [75], appliedIssues: [75],
+    });
+    const session = { id: 1, branch_name: 'feat/x', pr_number: 42, pr_url: 'u', pr_title: 'Cumulative title' };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.equal(githubCalls.length, 0, 'no GitHub call when nothing changed');
+  } finally {
+    restore();
+  }
+});
+
+test('closing keywords survive safeMention (the GitHub-boundary sanitizer)', async () => {
+  const github = require('../src/services/github');
+  assert.equal(github.safeMention('Closes #75\nCloses #80'), 'Closes #75\nCloses #80');
+});
+
+test('sanitizeIssueNumbers / buildClosingBlock helpers behave', async () => {
+  const { sanitizeIssueNumbers, buildClosingBlock } = require('../src/services/pr-metadata');
+  assert.deepEqual(sanitizeIssueNumbers([3, 1, 1, 0, -2, 2.5, 'x', null, undefined]), [1, 3]);
+  assert.deepEqual(sanitizeIssueNumbers(null), []);
+  assert.equal(buildClosingBlock([]), '');
+  assert.equal(buildClosingBlock([2, 1]), 'Closes #1\nCloses #2');
+});
+
+// ---- #127: How to test ----
+
+test('buildTestingBlock helper behaves', async () => {
+  const { buildTestingBlock } = require('../src/services/pr-metadata');
+  assert.equal(buildTestingBlock(null, null), '');
+  assert.equal(buildTestingBlock('', '  '), '');
+  assert.equal(buildTestingBlock('1. Click it.', null), '## How to test\n\n1. Click it.');
+  assert.equal(buildTestingBlock(null, '/board'), '## How to test\n\nDeep link: `/board`');
+  assert.equal(
+    buildTestingBlock('1. Click it.', '/board?d=1'),
+    '## How to test\n\n1. Click it.\n\nDeep link: `/board?d=1`'
+  );
+});
+
+test('testing guidance lands in the body between LLM body and Closes block', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }], {
+      linkedIssues: [75], testingMd: '1. Open the board.', testingPath: '/board',
+    });
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.equal(githubCalls[0].type, 'create');
+    assert.equal(
+      githubCalls[0].opts.body,
+      'Cumulative body\n\n## How to test\n\n1. Open the board.\n\nDeep link: `/board`\n\nCloses #75\n\n---\n_Dev session by evan via Usernode_'
+    );
+    // The applied snapshot is persisted on the new-PR write (param after
+    // the linked-issues snapshot).
+    const upd = pool.queries.find((q) => /UPDATE chat_sessions SET pr_number/.test(q.sql));
+    assert.equal(upd.params[4], '## How to test\n\n1. Open the board.\n\nDeep link: `/board`');
+  } finally {
+    restore();
+  }
+});
+
+test('existing PR updates when testing guidance changed even if title and issues did not', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }], {
+      linkedIssues: [75], appliedIssues: [75],
+      testingMd: 'New steps.', appliedTesting: '## How to test\n\nOld steps.',
+    });
+    const session = { id: 1, branch_name: 'feat/x', pr_number: 42, pr_url: 'u', pr_title: 'Cumulative title' };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.equal(githubCalls.length, 1, 'GitHub update fired despite unchanged title + issues');
+    assert.equal(githubCalls[0].type, 'update');
+    assert.match(githubCalls[0].opts.body, /## How to test\n\nNew steps\./);
+    // The applied snapshot is advanced so the next unchanged turn is a no-op.
+    const upd = pool.queries.find((q) => /UPDATE chat_sessions SET pr_title/.test(q.sql));
+    assert.equal(upd.params[2], '## How to test\n\nNew steps.');
+  } finally {
+    restore();
+  }
+});
+
+test('existing PR makes no GitHub call when title, issues and testing are all unchanged', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls });
+  try {
+    const applied = '## How to test\n\nSteps.';
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }], {
+      linkedIssues: [75], appliedIssues: [75],
+      testingMd: 'Steps.', appliedTesting: applied,
+    });
+    const session = { id: 1, branch_name: 'feat/x', pr_number: 42, pr_url: 'u', pr_title: 'Cumulative title' };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.equal(githubCalls.length, 0, 'no GitHub call when nothing changed');
+  } finally {
+    restore();
+  }
+});
+
+test('no testing guidance -> body has no How to test section (legacy bytes)', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }]);
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.ok(!/How to test/.test(githubCalls[0].opts.body));
+    assert.match(githubCalls[0].opts.body, /^Cumulative body\n\n---\n_Dev session by evan via Usernode_$/);
   } finally {
     restore();
   }

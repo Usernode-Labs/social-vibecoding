@@ -19,6 +19,14 @@ const SAFE_QUALIFIED_IDENT = /^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/i;
 // about it. Every DB `app_xyz` has role `app_xyz_owner`.
 const ROLE_SUFFIX = '_owner';
 
+// pg_dump | pg_restore (cloneDatabase's copy step) can take a while for
+// larger app DBs, so it gets a far more generous ceiling than
+// execInTarget's fixed 30s. The copy is streamed through a pipe inside
+// the container, so stdout stays tiny; this budget is purely for the
+// copy itself. Override via DB_CLONE_TIMEOUT_MS if an app DB grows large
+// enough to outrun the default.
+const DUMP_RESTORE_TIMEOUT_MS = Number(process.env.DB_CLONE_TIMEOUT_MS) || 10 * 60 * 1000;
+
 // Sentinel for NOT NULL columns scrubbed by `staging:private`. Chosen
 // to be obviously non-functional in any auth or token-comparison path:
 // bcrypt-style hashes start with `$2{a,b,y}$`, so bcrypt.compare
@@ -188,15 +196,10 @@ async function cloneDatabase(sourceDb, targetDb) {
   // dropDatabase below also takes care of the role.
   await dropDatabase(targetDb);
 
-  // Terminate active connections to source so CREATE DATABASE TEMPLATE
-  // doesn't error with "source database … is being accessed".
-  await execInDb(
-    `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${sourceDb}' AND pid <> pg_backend_pid()`
-  ).catch(() => {});
-
-  // Create the per-clone role first so we can pass it as OWNER to
-  // CREATE DATABASE. This means the cloned DB starts owned by the
-  // new role, no separate ALTER step.
+  // Create the per-clone role first so we can hand it the fresh clone
+  // as OWNER. No need to terminate the source's connections any more —
+  // the dump/restore below copies the source while it stays actively in
+  // use (see the note on the copy step).
   const targetRole = ownerRoleName(targetDb);
   if (!SAFE_IDENT.test(targetRole)) {
     throw new Error(`cloneDatabase: unsafe target role ${targetRole}`);
@@ -204,7 +207,25 @@ async function cloneDatabase(sourceDb, targetDb) {
   const password = generatePassword();
   await execInDb(`CREATE ROLE ${targetRole} LOGIN PASSWORD '${password}'`);
 
-  await execInDb(`CREATE DATABASE ${targetDb} TEMPLATE ${sourceDb} OWNER ${targetRole}`);
+  // Copy the source into the clone with a logical pg_dump | pg_restore
+  // rather than CREATE DATABASE … TEMPLATE. TEMPLATE requires ZERO other
+  // sessions connected to the source at copy time, but the source here
+  // is the LIVE prod DB whose app container holds a persistent
+  // connection pool. The old terminate-then-TEMPLATE step therefore
+  // raced the pool's near-instant reconnect: it failed intermittently
+  // under light traffic and effectively always under sustained load
+  // (GitHub #73 — "source database … is being accessed by other users").
+  // pg_dump instead reads a consistent MVCC snapshot inside a
+  // transaction (ACCESS SHARE locks only), so the prod app keeps serving
+  // uninterrupted and there is no exclusive-access race.
+  //
+  // The clone starts from template0 (pristine, never-connected, so it's
+  // always clonable) owned by the new role; pg_restore --no-owner then
+  // lands every object owned by the psql superuser, and the
+  // reassignUserObjectsTo(DB_USER → targetRole) pass below hands them to
+  // the clone role — exactly the end-state the TEMPLATE path produced.
+  await execInDb(`CREATE DATABASE ${targetDb} TEMPLATE template0 OWNER ${targetRole}`);
+  await dumpRestore(sourceDb, targetDb);
 
   // Lock down PUBLIC connect on the clone — the clone is single-tenant
   // (one staging container) and nothing else should be able to reach it.
@@ -554,6 +575,64 @@ async function execInTarget(dbName, sql, opts = {}) {
     throw new Error(stderr);
   }
   return stdout;
+}
+
+// Logical copy of one database into another via pg_dump | pg_restore,
+// run inside the postgres container. cloneDatabase uses this instead of
+// CREATE DATABASE … TEMPLATE so the source can be copied while it is
+// actively serving traffic (see the note in cloneDatabase). Both names
+// are SAFE_IDENT-validated by the caller; we re-check defensively before
+// splicing them into the shell command.
+async function dumpRestore(sourceDb, targetDb) {
+  if (!SAFE_IDENT.test(sourceDb) || !SAFE_IDENT.test(targetDb)) {
+    throw new Error(`dumpRestore: unsafe identifiers ${sourceDb}/${targetDb}`);
+  }
+
+  // -Fc custom format piped straight into pg_restore (no temp file on
+  // disk). --no-owner / --no-privileges: ownership and ACLs are
+  // re-established by cloneDatabase's reassign + GRANT/REVOKE passes, so
+  // we deliberately don't carry the source's role grants across (they
+  // reference the prod-side role). Comments are KEPT — the scrub passes
+  // (truncatePrivateTables / scrubPrivateColumns) discover their targets
+  // via the 'staging:private' COMMENTs, so --no-comments would silently
+  // disable redaction. `set -o pipefail` makes a pg_dump failure (e.g.
+  // an unreachable source) fail the whole pipeline instead of being
+  // masked by pg_restore's exit code.
+  const pipeline =
+    'set -o pipefail; ' +
+    `pg_dump -U ${DB_USER} -Fc ${sourceDb} | ` +
+    `pg_restore -U ${DB_USER} --no-owner --no-privileges -d ${targetDb}`;
+
+  let stderr = '';
+  try {
+    ({ stderr = '' } = await execFileAsync(
+      'docker',
+      ['exec', DB_CONTAINER, 'sh', '-c', pipeline],
+      { timeout: DUMP_RESTORE_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024 }
+    ));
+  } catch (err) {
+    // Non-zero exit: a pg_dump failure (via pipefail) or a fatal
+    // pg_restore error. Surface the captured stderr for diagnosis.
+    const detail = (err.stderr || err.message || '').toString().slice(0, 2000);
+    throw new Error(`dumpRestore ${sourceDb} → ${targetDb} failed: ${detail}`);
+  }
+
+  // pg_restore continues past per-object errors by default and prints a
+  // tally at the end ("errors ignored on restore: N"). Treat any such
+  // tally as fatal: a partially-populated clone would boot staging with
+  // missing schema/rows, which is worse than failing the build loudly.
+  const ignored = /errors ignored on restore:\s*(\d+)/i.exec(stderr || '');
+  if (ignored && Number(ignored[1]) > 0) {
+    throw new Error(
+      `dumpRestore ${sourceDb} → ${targetDb}: pg_restore reported ${ignored[1]} ` +
+      `error(s). stderr: ${stderr.slice(0, 2000)}`
+    );
+  }
+  if (stderr && stderr.trim()) {
+    log.debug('db-manager', 'pg_dump|pg_restore stderr (non-fatal)', {
+      sourceDb, targetDb, stderr: stderr.slice(0, 2000),
+    });
+  }
 }
 
 async function truncatePrivateTables(targetDb) {
