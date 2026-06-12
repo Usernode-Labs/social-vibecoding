@@ -97,6 +97,21 @@ function stagingMockIssues(repoUrl) {
       + 'On a 360px-wide viewport the action buttons on issue cards can '
       + 'push past the card edge. They should wrap onto their own row '
       + 'instead.', 30),
+    // Long-title variants (~90 and ~120 chars) for verifying the dev
+    // card list's progressive title wrapping on narrow screens: the 💬
+    // badge should drop to the next line first, then the bounty pill,
+    // and only then should the title wrap — never an ellipsis.
+    mk(900004, '[Mock] Long-title test: the settings panel re-expands '
+      + 'every advanced section after navigating back to it',
+      'Staging-only mock issue with a deliberately long title for '
+      + 'checking that dev-card titles wrap instead of truncating on '
+      + 'narrow phone screens.', 5),
+    mk(900005, '[Mock] Long-title test: scrolling the leaderboard on a '
+      + 'narrow phone while the keyboard is open jumps back to the top '
+      + 'whenever a new kudos event arrives',
+      'Staging-only mock issue with a deliberately long title (~120 '
+      + 'chars) for checking that dev-card titles wrap instead of '
+      + 'truncating on narrow phone screens.', 14),
   ];
 }
 
@@ -408,6 +423,24 @@ function issueRoutes(config) {
             note: undefined,
           };
         }
+      }
+
+      // Staging-only demo mode: with ?demo=1 the mocks are appended even
+      // when the live list has rows, so layout work (e.g. long-title
+      // wrapping) is verifiable against a prod-cloned DB. The FE forwards
+      // the page's own ?demo=1 here (see _demoQS in app-view.js). The
+      // number check keeps this idempotent against the empty-list
+      // fallback above having already served the same mocks. Strictly a
+      // no-op in production.
+      if (IS_STAGING && req.query.demo === '1') {
+        const have = new Set((result.issues || []).map((i) => i.number));
+        result = {
+          ...result,
+          issues: [
+            ...(result.issues || []),
+            ...stagingMockIssues(app.repo_url).filter((m) => !have.has(m.number)),
+          ],
+        };
       }
 
       // Open-bounty tallies for this app, keyed by issue number, in one

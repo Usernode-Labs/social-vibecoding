@@ -12,6 +12,59 @@ const { isAppLocked, hasAdminYesVote } = require('../services/admin-approval');
 const events = require('../services/events');
 const appAccess = require('../services/app-access');
 
+// Staging-only mock PR proposals for GET /api/apps/:slug/promoted,
+// appended only when the request carries ?demo=1 (forwarded from the
+// page URL by _demoQS in app-view.js). Sibling of stagingMockIssues in
+// routes/issues.js: deliberately long titles (~90-120 chars) so the dev
+// card list's progressive title wrapping can be verified on narrow
+// screens against a prod-cloned DB. Rows are "[Mock]"-prefixed and use
+// ids/PR numbers far above anything real so they can't collide with
+// (or be mistaken for) live sessions; user_id 0 matches no viewer, so
+// owner-only affordances ("Open session") never render on them. Casting
+// a vote on one 404s harmlessly. Strictly a no-op in production.
+const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+
+function stagingMockProposals() {
+  const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
+  const mk = (id, prNumber, title, hours, yes, no, chat) => ({
+    id,
+    pr_number: prNumber,
+    pr_url: null,
+    pr_title: title,
+    staging_url: null,
+    testing_md: null,
+    testing_path: null,
+    user_id: 0,
+    status: 'promoted',
+    linked_issues: null,
+    username: 'staging-tester',
+    created_at: hoursAgo(hours),
+    promoted_at: hoursAgo(hours),
+    yes_count: yes,
+    no_count: no,
+    my_vote: null,
+    kudos_count: 0,
+    my_kudos: false,
+    my_kudos_direct: false,
+    revert_of_session_id: null,
+    original_pr_number: null,
+    original_pr_title: null,
+    chat_count: chat,
+    last_message_at: chat ? hoursAgo(Math.max(0, hours - 1)) : null,
+    visuals: null,
+  });
+  return [
+    mk(9000001, 900101,
+      '[Mock] Long-title test: rework the proposal card header so the '
+      + 'discussion badge and vote tally wrap gracefully on narrow phones',
+      3, 1, 0, 4),
+    mk(9000002, 900102,
+      '[Mock] Long-title test: walk brand-new collaborators through '
+      + 'voting, kudos and dev sessions step by step',
+      11, 0, 1, 0),
+  ];
+}
+
 function voteRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -534,6 +587,15 @@ function voteRoutes(config) {
       for (const row of rows) {
         row.visuals = visualsService.shapeAgg(row.visuals_agg);
         delete row.visuals_agg;
+      }
+
+      // Staging-only demo mode (?demo=1): append long-title mock
+      // proposals for layout verification. The id check keeps the
+      // append idempotent should a mock id ever materialize in the
+      // result. See stagingMockProposals above.
+      if (IS_STAGING && req.query.demo === '1') {
+        const have = new Set(rows.map((r) => r.id));
+        rows.push(...stagingMockProposals().filter((m) => !have.has(m.id)));
       }
 
       const { active: activeUsers, majority } = await getActiveUserStats(pool, appRows[0].id);
