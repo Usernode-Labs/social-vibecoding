@@ -3694,7 +3694,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
 
     let result;
     try {
-      result = await worker.execInWorker(session.id, {
+      const dispatchScout = () => worker.execInWorker(session.id, {
         mode: 'scout',
         prompt: scoutPrompt,
         model: selectedModel,
@@ -3714,6 +3714,15 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
           ).catch(() => {});
         },
       });
+      result = await dispatchScout();
+      // Headless auto-retry: a markerless turn that produced no spec text
+      // gets exactly one re-dispatch (the retry wraps the call site, not
+      // execInWorker, so active_turn bookkeeping stays per-attempt).
+      if (headless && shouldRetryHeadlessTurn(result, stopHandle, !!(result.lastResultText || '').trim())) {
+        await sendStatus('The coding step failed unexpectedly — retrying once…');
+        await waitForTurnStopped(session.id, containerName);
+        result = await dispatchScout();
+      }
     } finally {
       clearInterval(heartbeat);
     }
@@ -3753,7 +3762,11 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       summaryParts.push(msg);
     } else if (!ccText) {
       isError = true;
-      const msg = 'Scout finished but produced no spec text.';
+      // Markerless exits (exitCode -1, or null — never normalized) mean
+      // the run died, not that the scout chose to write nothing.
+      const msg = (result.exitCode === -1 || result.exitCode == null)
+        ? `${describeMarkerlessExit(result.markerlessCause)} No spec text was produced.`
+        : 'Scout finished but produced no spec text.';
       await sendStatus(msg);
       summaryParts.push(msg);
     } else {
@@ -3802,6 +3815,54 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       || (isError ? 'Scout did not complete successfully.' : 'Scout finished with no summary.'),
     isError,
   };
+}
+
+// Plain-terms explanation of a markerless turn (worker exitCode -1 / null
+// — the detached wrapper never wrote its __USERNODE_EXIT__ line). The
+// cause tag is set by worker.js's journal consumer; the bare
+// "exited with code -1" wording is deliberately gone (it read like a
+// Claude Code failure when the agent was usually healthy).
+function describeMarkerlessExit(cause) {
+  switch (cause) {
+    case 'oom_killed':
+      return 'The coding agent was killed — most likely it ran out of memory.';
+    case 'container_gone':
+      return "The coding agent's worker container disappeared mid-run.";
+    case 'probe_unobservable':
+      return "The platform lost contact with the coding agent's run.";
+    case 'turn_process_gone':
+      return "The coding agent's process ended without reporting a result.";
+    default:
+      return "The coding agent's run ended without reporting a result.";
+  }
+}
+
+// One automatic retry for headless scout/build turns that died without
+// producing anything: markerless exit, no __USERNODE_RESULT__ line, and
+// no per-mode output (commit for build, spec text for scout — the caller
+// passes that as `producedOutput`). Interactive turns stay single-shot —
+// a human is present to re-dispatch — and a user-stopped turn is a
+// deliberate end, not a failure to retry.
+function shouldRetryHeadlessTurn(result, stopHandle, producedOutput) {
+  if (!result || producedOutput) return false;
+  if (stopHandle && stopHandle.stopped) return false;
+  return result.exitCode === -1 && !result.resultSeen;
+}
+
+// Pre-retry safety: kill any zombie turn process and wait (bounded) for
+// the container to probe idle, so the re-dispatch can't race two claudes
+// in one container (the new wrapper's `rm -f turn-*.log` only runs once
+// the old turn is confirmed dead). Returns whether idle was confirmed;
+// the caller retries either way — worst case the dispatch itself fails.
+async function waitForTurnStopped(sessionId, containerName, { timeoutMs = 30000 } = {}) {
+  try { await worker.stopTurn(sessionId); } catch {}
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const busy = await worker.isWorkerExecuting(containerName);
+    if (busy === false) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
 }
 
 // Runs the full Claude Code pipeline for one tool invocation and returns
@@ -4047,7 +4108,7 @@ path: /relative/path?demo=1
 
     let result;
     try {
-      result = await worker.execInWorker(session.id, {
+      const dispatchBuild = () => worker.execInWorker(session.id, {
         mode: 'build',
         prompt: claudePrompt,
         model: selectedModel,
@@ -4067,6 +4128,15 @@ path: /relative/path?demo=1
           ).catch(() => {});
         },
       });
+      result = await dispatchBuild();
+      // Headless auto-retry: a markerless turn that committed nothing
+      // gets exactly one re-dispatch (the retry wraps the call site, not
+      // execInWorker, so active_turn bookkeeping stays per-attempt).
+      if (headless && shouldRetryHeadlessTurn(result, stopHandle, result.ahead > 0)) {
+        await sendStatus('The coding step failed unexpectedly — retrying once…');
+        await waitForTurnStopped(session.id, containerName);
+        result = await dispatchBuild();
+      }
     } finally {
       clearInterval(heartbeat);
     }
@@ -4138,9 +4208,16 @@ path: /relative/path?demo=1
       summaryParts.push(msg);
     } else if (!hasChanges) {
       isError = true;
-      const msg = result.exitCode !== 0
-        ? `Claude Code exited with code ${result.exitCode} — no changes were made.`
-        : 'No changes were made by Claude Code.';
+      let msg;
+      if (result.exitCode === 0) {
+        msg = 'No changes were made by Claude Code.';
+      } else if (result.exitCode === -1 || result.exitCode == null) {
+        // Markerless turn — say WHY in plain terms instead of a bare
+        // "-1" (which also normalizes the old "code null" rendering).
+        msg = `${describeMarkerlessExit(result.markerlessCause)} No changes were made.`;
+      } else {
+        msg = `Claude Code exited with code ${result.exitCode} — no changes were made.`;
+      }
       await sendStatus(msg);
       summaryParts.push(msg);
     } else if (headless) {
@@ -4713,4 +4790,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDoneIfArmed, notifyAutoSolveDone, buildHeadlessSeed, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDoneIfArmed, notifyAutoSolveDone, buildHeadlessSeed, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, describeMarkerlessExit, shouldRetryHeadlessTurn };
