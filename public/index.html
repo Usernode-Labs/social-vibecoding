@@ -760,6 +760,10 @@
   <!-- Pure two-half spec splitter (#196). Must load BEFORE dev-chat.js,
        whose spec viewer calls window.splitSpecSections. -->
   <script src="/js/spec-sections.js"></script>
+  <!-- Pure progress-indicator helpers (#50). Must load BEFORE dev-chat.js,
+       whose elapsed ticker / live-activity summary call formatElapsed and
+       summarizeCcProgress. -->
+  <script src="/js/cc-progress-summary.js"></script>
   <script src="/js/dev-chat.js"></script>
   <!-- Kudos widget (button + budget badge) and leaderboard screen.
        Loaded BEFORE app-view.js so the panel renderer can use

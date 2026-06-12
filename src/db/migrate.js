@@ -25,6 +25,7 @@ async function migrate(config) {
   await seedStagingEnvProposal(pool, config);
   await seedStagingMergedPrs(pool, config);
   await seedStagingActiveSessions(pool, config);
+  await seedStagingCcProgressRun(pool, config);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
   // Must run BEFORE backfillOrphanedSpecDrafts: unwrapping spec_md after that
@@ -1068,6 +1069,130 @@ async function seedStagingActiveSessions(pool, config) {
     owner: owner.username,
     total: fixtures.length,
     inserted,
+  });
+}
+
+// #50: progress-indicator fixture. The live elapsed ticker only renders
+// during a real Claude Code run, but everything persisted — the merged
+// "Claude Code is running…" + progress-log rendering, the step counter,
+// the activity snippet derived from the log, and the reload-safe
+// "(took 4m 12s)" suffix from durationMs metadata — is reviewable from a
+// seeded session. Seed one dev-chat session for the staging admin whose
+// timeline replays a finished CC run. Idempotent on restart: keyed off
+// the fixture branch name; if the session exists, nothing is re-inserted.
+async function seedStagingCcProgressRun(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging CC-progress fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username, is_admin
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging CC-progress fixture skipped: no users');
+    return;
+  }
+  const owner = userRows[0];
+
+  const fixtureBranch = 'staging-fixture/cc-progress-run';
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, fixtureBranch]
+  );
+  if (existing.length) return;
+
+  const { rows: sessionRows } = await pool.query(
+    `INSERT INTO chat_sessions
+       (app_id, user_id, branch_name, pr_title, status, created_at)
+     VALUES
+       ($1, $2, $3, '[staging fixture] Progress indicator demo run', 'active',
+        NOW() - INTERVAL '40 minutes')
+     RETURNING id`,
+    [appId, owner.id, fixtureBranch]
+  );
+  const sessionId = sessionRows[0].id;
+
+  // Representative progress log mirroring the vocabulary worker.js emits
+  // (phase markers, tool_use labels, ⎿ results, a thinking line) so the
+  // summary helpers have realistic input: 12 action lines → "12 steps".
+  const progressLog = [
+    '[refresh]',
+    '[claude (mode build)]',
+    '… Planning the change before touching any files',
+    'Reading public/js/dev-chat.js',
+    '  ⎿ Read: 3152 lines',
+    'Reading public/css/app.css',
+    '  ⎿ Read: 1287 lines',
+    '$ grep -n "cc_progress" public/js/dev-chat.js',
+    '  ⎿ 6 lines',
+    'Reading src/routes/sessions.js',
+    '  ⎿ Read: 4522 lines',
+    '… The status line needs an elapsed span plus a live activity snippet',
+    'Editing public/js/dev-chat.js',
+    '  ⎿ Edit: ok',
+    'Editing public/js/dev-chat.js',
+    '  ⎿ Edit: ok',
+    'Writing public/js/cc-progress-summary.js',
+    '  ⎿ Write: ok',
+    'Editing public/css/app.css',
+    '  ⎿ Edit: ok',
+    'Editing public/index.html',
+    '  ⎿ Edit: ok',
+    '$ node --test tests/cc-progress-summary.test.js',
+    '  ⎿ 14 lines',
+    'Reading public/js/dev-chat.js',
+    '  ⎿ Read: 240 lines',
+    '$ git add -A && git commit -m "Add progress indicator for Claude Code runs"',
+    '  ⎿ 3 lines',
+    '[commit]',
+    '[push]',
+  ];
+
+  const ccOutput = [
+    '[staging fixture] Added a progress indicator for Claude Code runs:',
+    '',
+    '- Live elapsed timer on every in-progress status line.',
+    '- Activity snippet + step counter in the running summary.',
+    '- Persisted run durations on finished statuses.',
+  ].join('\n');
+
+  // Timeline order matters: the dev-chat pairing pre-pass attaches the
+  // 'Claude Code progress' row to the nearest PRECEDING "Claude Code is
+  // running" status, so insert status → progress → finished with
+  // ascending timestamps.
+  const messages = [
+    { role: 'user', content: '[staging fixture] Please add a progress indicator for Claude Code runs.', metadata: {}, minutesAgo: 39 },
+    { role: 'system', content: 'Spinning up coding agent (Claude Sonnet 4.6)...', metadata: {}, minutesAgo: 38 },
+    { role: 'system', content: 'Claude Code is running...', metadata: {}, minutesAgo: 38 },
+    { role: 'system', content: 'Claude Code progress', metadata: { progressLog }, minutesAgo: 38 },
+    { role: 'system', content: 'Claude Code finished', metadata: { ccOutput, durationMs: 252000 }, minutesAgo: 34 },
+  ];
+
+  for (const m of messages) {
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+       VALUES ($1, $2, $3, $4, NOW() - ($5::int * INTERVAL '1 minute'))`,
+      [sessionId, m.role, m.content, JSON.stringify(m.metadata), m.minutesAgo]
+    );
+  }
+
+  log.info('db', 'Staging CC-progress fixture seeded', {
+    appId,
+    owner: owner.username,
+    sessionId,
   });
 }
 

@@ -3395,6 +3395,9 @@ async function runScoutTool({
   headless = false,
 }) {
   activeWorkers.add(session.id);
+  // #50: wall-clock start for the durationMs persisted on terminal
+  // statuses, so the dev-chat "(took Xm Ys)" suffix survives reloads.
+  const turnStartedMs = Date.now();
   const modelLabel = prettyModelLabel(selectedModel);
   await sendStatus(`Scouting the repo for context (${modelLabel})...`);
 
@@ -3541,7 +3544,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
     if (stopHandle && stopHandle.stopped) {
       isError = true;
       const byStr = stopHandle.stoppedBy ? ` by @${stopHandle.stoppedBy}` : '';
-      await sendStatus(`Scout stopped${byStr}.`);
+      await sendStatus(`Scout stopped${byStr}.`, { durationMs: Date.now() - turnStartedMs });
       summaryParts.push(`The scout was stopped${byStr} before it finished. The spec doc was not updated.`);
       return { toolResultText: summaryParts.join('\n\n') || 'Stopped.', isError: true };
     }
@@ -3577,7 +3580,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
         existingSpec
           ? `Scout revised the spec (now ${lineCount} lines).`
           : `Scout drafted a ${lineCount}-line spec from the codebase.`,
-        { specPreview: preview, specLines: lineCount, scoutOutput: ccText, specVersion }
+        { specPreview: preview, specLines: lineCount, scoutOutput: ccText, specVersion, durationMs: Date.now() - turnStartedMs }
       );
       send('spec_updated', { length: ccText.length, lines: lineCount, version: specVersion });
       summaryParts.push(
@@ -3691,6 +3694,9 @@ async function runClaudeCodeTool({
   headless = false,
 }) {
   activeWorkers.add(session.id);
+  // #50: wall-clock start for the durationMs persisted on terminal
+  // statuses, so the dev-chat "(took Xm Ys)" suffix survives reloads.
+  const turnStartedMs = Date.now();
   // Name the model in the spin-up status so users can see at a glance
   // that Claude Code is using the model they selected in the dropdown.
   // Without this, the only place the model is surfaced is the cost
@@ -3896,7 +3902,7 @@ path: /relative/path?demo=1
     if (stopHandle && stopHandle.stopped) {
       isError = true;
       const byStr = stopHandle.stoppedBy ? ` by @${stopHandle.stoppedBy}` : '';
-      await sendStatus(`Claude Code stopped${byStr}.`);
+      await sendStatus(`Claude Code stopped${byStr}.`, { durationMs: Date.now() - turnStartedMs });
       summaryParts.push(`Claude Code was stopped${byStr} before it finished. No commit was pushed.`);
       return {
         toolResultText: summaryParts.join('\n\n') || 'Stopped.',
@@ -4232,7 +4238,7 @@ path: /relative/path?demo=1
     }
 
     if (ccText) {
-      await sendStatus('Claude Code finished', { ccOutput: ccText });
+      await sendStatus('Claude Code finished', { ccOutput: ccText, durationMs: Date.now() - turnStartedMs });
       // Prepend CC's own description so the Mayor leads with what was
       // actually built, with our outcome bullets as supplementary context.
       summaryParts.unshift(`What the agent did:\n${ccText}`);

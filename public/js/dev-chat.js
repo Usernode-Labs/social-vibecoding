@@ -639,6 +639,9 @@ const DevChat = {
           if (m.metadata.ccOutput) m.ccOutput = m.metadata.ccOutput;
           if (m.metadata.ccSummary) m.ccSummary = m.metadata.ccSummary;
           if (m.metadata.progressLog) m.progressLog = m.metadata.progressLog;
+          // #50: terminal statuses persist how long the run took so the
+          // "(took 4m 12s)" suffix survives a reload.
+          if (m.metadata.durationMs != null) m.durationMs = m.metadata.durationMs;
           // Spec preview cards: scout dispatches persist these on the
           // status row so a refresh re-renders the same inline card the
           // user saw mid-stream. See runScoutTool.
@@ -861,7 +864,7 @@ const DevChat = {
                 if (assistantMsg) assistantMsg._finalized = true;
                 assistantPushed = false;
                 assistantMsg = { role: 'assistant', content: '', created_at: new Date().toISOString() };
-                DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
+                DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
                 DevChat.renderMessages();
                 DevChat.scrollToBottom();
                 break;
@@ -1155,7 +1158,7 @@ const DevChat = {
         // matching the primary POST-SSE path's seal-on-status.
         const sealMsg = lastAssistantMsg();
         if (sealMsg) sealMsg._finalized = true;
-        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
+        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;
@@ -1579,6 +1582,7 @@ const DevChat = {
     if (target.tagName === 'PRE') {
       target.textContent = text;
       target.scrollTop = target.scrollHeight;
+      DevChat._patchProgressSummary(target, msg);
       return;
     }
     // Legacy details-wrapping element: keep updating the inner pre
@@ -1592,10 +1596,99 @@ const DevChat = {
     }
   },
 
+  // #50: keep the running summary's live-activity snippet + step counter in
+  // sync as progress lines stream in, without a full re-render. `target` is
+  // the inner <pre> _patchProgressDom just updated; the spans live in the
+  // enclosing <details>' summary. Covers both the live-append path
+  // (_appendProgressLine) and the polling fallback (_replaceProgressLog),
+  // since both funnel through _patchProgressDom.
+  _patchProgressSummary(target, msg) {
+    if (typeof summarizeCcProgress !== 'function') return;
+    const details = target.closest ? target.closest('details.dc-cc-attached') : null;
+    if (!details) return;
+    const summ = summarizeCcProgress(msg.progressLog || []);
+    const cur = details.querySelector('.dc-cc-current');
+    if (cur) cur.textContent = summ.currentLabel ? `— ${summ.currentLabel}` : '';
+    const steps = details.querySelector('.dc-cc-steps');
+    if (steps) steps.textContent = summ.steps ? `· ${summ.steps} steps` : '';
+  },
+
+  // ── #50: elapsed-time ticker ────────────────────────────────
+  //
+  // Active status lines render a `[data-elapsed-since]` span; one shared
+  // 1s interval recomputes each from its start timestamp (drift-proof
+  // under background-tab throttling — browsers may fire the interval
+  // late, but the displayed value is always now - startedAt) and patches
+  // textContent only, never re-rendering the message list.
+  _elapsedTimer: null,
+
+  _syncElapsedTicker() {
+    const any = document.querySelector('#dc-messages [data-elapsed-since]');
+    if (any && !DevChat._elapsedTimer) {
+      DevChat._elapsedTimer = setInterval(() => DevChat._tickElapsed(), 1000);
+    } else if (!any && DevChat._elapsedTimer) {
+      clearInterval(DevChat._elapsedTimer);
+      DevChat._elapsedTimer = null;
+    }
+    // Fill immediately so the span isn't blank until the first tick.
+    if (any) DevChat._tickElapsed();
+  },
+
+  _tickElapsed() {
+    const els = document.querySelectorAll('#dc-messages [data-elapsed-since]');
+    if (!els.length) {
+      if (DevChat._elapsedTimer) {
+        clearInterval(DevChat._elapsedTimer);
+        DevChat._elapsedTimer = null;
+      }
+      return;
+    }
+    if (typeof formatElapsed !== 'function') return;
+    els.forEach((el) => {
+      const since = parseInt(el.dataset.elapsedSince, 10);
+      if (!Number.isFinite(since)) return;
+      el.textContent = formatElapsed(Math.max(0, Date.now() - since));
+    });
+  },
+
+  // The elapsed/duration suffix for a system status row:
+  //   - `_active` rows get the live ticker span (filled by _tickElapsed);
+  //   - finished rows show a static "(took Xm Ys)" from the server's
+  //     persisted durationMs (reload-safe) or the client-side freeze
+  //     stamped by _deactivateLastStatus (live-session only).
+  _statusElapsedHtml(msg) {
+    // A server-persisted duration wins even while the row is still
+    // `_active` (e.g. "Claude Code finished" arriving mid-turn): the row
+    // describes a completed step, so a fresh ticker would be misleading.
+    if (msg.durationMs != null && typeof formatElapsed === 'function') {
+      return `<span class="dc-status-elapsed">(took ${formatElapsed(Math.max(0, msg.durationMs))})</span>`;
+    }
+    if (msg._active && msg.created_at) {
+      const since = new Date(msg.created_at).getTime();
+      if (!Number.isFinite(since)) return '';
+      return `<span class="dc-status-elapsed" data-elapsed-since="${Math.min(since, Date.now())}"></span>`;
+    }
+    if (msg._elapsedFinalMs != null && typeof formatElapsed === 'function') {
+      return `<span class="dc-status-elapsed">(took ${formatElapsed(Math.max(0, msg._elapsedFinalMs))})</span>`;
+    }
+    return '';
+  },
+
   _deactivateLastStatus() {
     for (let i = DevChat.messages.length - 1; i >= 0; i--) {
       if (DevChat.messages[i]._active) {
-        DevChat.messages[i]._active = false;
+        const m = DevChat.messages[i];
+        m._active = false;
+        // #50: freeze the elapsed display at the step's total so later
+        // renders in this live session show "(took Xm Ys)" instead of a
+        // ticker. Client-only; reload persistence for terminal lines
+        // comes from the server's durationMs metadata.
+        if (m._elapsedFinalMs == null && m.created_at) {
+          const started = new Date(m.created_at).getTime();
+          if (Number.isFinite(started)) {
+            m._elapsedFinalMs = Math.max(0, Date.now() - started);
+          }
+        }
         break;
       }
     }
@@ -1749,7 +1842,7 @@ const DevChat = {
             ? `Spec v${msg.specVersion} · ${lineCount} lines`
             : `Spec drafted · ${lineCount} lines`;
           return `
-            <div class="dc-status-line"><span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span> ${msg.content} <span style="font-size:9px;opacity:0.4;margin-left:auto">${sId} ${sTs}</span></div>
+            <div class="dc-status-line"><span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span> ${msg.content} ${DevChat._statusElapsedHtml(msg)}<span style="font-size:9px;opacity:0.4;margin-left:auto">${sId} ${sTs}</span></div>
             <div class="dc-spec-preview-card" data-spec-version="${versionAttr}" role="button" tabindex="0" aria-label="Open spec viewer">
               <div class="dc-spec-preview-header">
                 <span class="dc-spec-preview-title">${escapeHtml(headerLabel)}</span>
@@ -1842,6 +1935,9 @@ const DevChat = {
         const sumClass = 'dc-status-line dc-cc-attached-summary';
         const chevron = '<span class="dc-cc-attached-chevron" aria-hidden="true"></span>';
         const tsSpan = `<span style="font-size:9px;opacity:0.4;margin-left:auto">${sId} ${sTs}</span>`;
+        // #50: live elapsed ticker while `_active`, static "(took …)" once
+        // the step finishes (server durationMs or client-side freeze).
+        const elapsedHtml = DevChat._statusElapsedHtml(msg);
 
         // Attached live progress log? Render the status line as the
         // <summary> of an open-by-default <details>, with the
@@ -1857,7 +1953,16 @@ const DevChat = {
           // _patchProgressDom() can target it directly when streaming
           // appends new lines mid-run.
           const innerPid = DevChat._detailsId(attachedProgress, 'progress');
-          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" data-default-open="1" open><summary class="${sumClass}">${iconHtml} ${msg.content}${chevron}${tsSpan}</summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
+          // #50: live activity snippet + step counter, visible even when
+          // the log is collapsed. The spans render unconditionally (even
+          // empty) so _patchProgressSummary can patch them in place as
+          // lines stream in.
+          const summ = typeof summarizeCcProgress === 'function'
+            ? summarizeCcProgress(attachedProgress.progressLog || [])
+            : { currentLabel: '', steps: 0 };
+          const currentSpan = `<span class="dc-cc-current">${summ.currentLabel ? `— ${escapeHtml(summ.currentLabel)}` : ''}</span>`;
+          const stepsSpan = `<span class="dc-cc-steps">${summ.steps ? `· ${summ.steps} steps` : ''}</span>`;
+          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" data-default-open="1" open><summary class="${sumClass}">${iconHtml} ${msg.content}${currentSpan}${stepsSpan}${elapsedHtml}${chevron}${tsSpan}</summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
         }
 
         // Post-turn ccOutput (the markdown summary that the worker
@@ -1870,10 +1975,10 @@ const DevChat = {
         // and indentation than .dc-cc-attached-log.
         if (msg.ccOutput) {
           const outerPid = DevChat._detailsId(msg, 'ccout');
-          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" data-default-open="1" open><summary class="${sumClass}">${iconHtml} ${msg.content}${chevron}${tsSpan}</summary><div class="dc-cc-attached-md">${DevChat.renderMarkdown(msg.ccOutput)}</div></details>`;
+          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" data-default-open="1" open><summary class="${sumClass}">${iconHtml} ${msg.content}${elapsedHtml}${chevron}${tsSpan}</summary><div class="dc-cc-attached-md">${DevChat.renderMarkdown(msg.ccOutput)}</div></details>`;
         }
 
-        return `<div class="dc-status-line">${iconHtml} ${msg.content} ${tsSpan}</div>`;
+        return `<div class="dc-status-line">${iconHtml} ${msg.content} ${elapsedHtml}${tsSpan}</div>`;
       }
 
       // Skip truly empty assistant placeholders that exist only as the
@@ -1928,6 +2033,9 @@ const DevChat = {
     }).join('');
 
     DevChat._applyDetailsPersistence();
+    // #50: start/stop the shared elapsed ticker based on whether this
+    // render left any active status line in the DOM.
+    DevChat._syncElapsedTicker();
   },
 
   // ── <details> open/closed persistence ─────────────────────
