@@ -727,7 +727,10 @@ const AppView = {
     });
     menu.querySelector('[data-plus="issue"]').addEventListener('click', () => {
       close();
-      AppView.openNewIssueModal();
+      // Open the shared Send Feedback modal with the dev-context mode:
+      // the open app is preselected as the target (Platform for the
+      // self-hosted app or while the repo doesn't exist yet) — #226.
+      App.openFeedbackModal({ fromDev: true });
     });
     menu.querySelector('[data-plus="settings"]').addEventListener('click', () => {
       close();
@@ -1242,76 +1245,6 @@ const AppView = {
     return issue && issue.body && issue.body.trim()
       ? `<div class="dev-issue-body text-xs text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 mt-2">${renderMd(issue.body)}</div>`
       : '';
-  },
-
-  // "New issue" modal — title + description, posted to the existing
-  // POST /api/apps/:slug/issues with kind='general' (which creates the
-  // GitHub twin and announces to general chat).
-  openNewIssueModal() {
-    const slug = AppView.appData && AppView.appData.slug;
-    if (!slug) return;
-    let root = document.getElementById('new-issue-modal');
-    if (root) root.remove();
-    root = document.createElement('div');
-    root.id = 'new-issue-modal';
-    root.className = 'fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
-    root.innerHTML = `
-      <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
-        <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl relative">
-          <h2 class="text-lg font-bold mb-3 text-zinc-900 dark:text-zinc-100">New issue</h2>
-          <label class="block text-xs font-medium text-zinc-500 mb-1" for="new-issue-title">Title</label>
-          <input id="new-issue-title" maxlength="200" autocomplete="off"
-            class="w-full mb-3 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100"
-            placeholder="Short summary of the problem or idea">
-          <label class="block text-xs font-medium text-zinc-500 mb-1" for="new-issue-desc">Description <span class="text-zinc-400 font-normal">(optional)</span></label>
-          <textarea id="new-issue-desc" rows="4" maxlength="5000"
-            class="w-full mb-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100"
-            placeholder="What's wrong, or what should the app do?"></textarea>
-          <p id="new-issue-error" class="hidden text-xs text-red-400 mb-2"></p>
-          <div class="flex justify-end gap-2">
-            <button data-role="cancel" type="button"
-              class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
-            <button data-role="create" type="button"
-              class="rounded-lg px-4 py-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-500 transition-colors">Create issue</button>
-          </div>
-        </div>
-      </div>`;
-    document.body.appendChild(root);
-    const close = () => root.remove();
-    root.querySelector('[data-role="cancel"]').addEventListener('click', close);
-    root.addEventListener('click', (e) => {
-      if (e.target === root || e.target.dataset.modalBackdrop !== undefined) close();
-    });
-    const createBtn = root.querySelector('[data-role="create"]');
-    createBtn.addEventListener('click', async () => {
-      const title = root.querySelector('#new-issue-title').value.trim();
-      const description = root.querySelector('#new-issue-desc').value.trim();
-      const err = root.querySelector('#new-issue-error');
-      if (!title) {
-        err.textContent = 'Title required';
-        err.classList.remove('hidden');
-        return;
-      }
-      createBtn.disabled = true;
-      createBtn.textContent = 'Creating…';
-      try {
-        const res = await fetch(`/api/apps/${slug}/issues`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title, description, kind: 'general' }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-        close();
-        AppView.refreshDevData('issue');
-      } catch (e2) {
-        err.textContent = e2.message;
-        err.classList.remove('hidden');
-        createBtn.disabled = false;
-        createBtn.textContent = 'Create issue';
-      }
-    });
-    setTimeout(() => root.querySelector('#new-issue-title').focus(), 0);
   },
 
   // One PR-proposal card: line 1 is identity + info (icon chip, title,
