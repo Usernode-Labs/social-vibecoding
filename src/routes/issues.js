@@ -383,6 +383,7 @@ function issueRoutes(config) {
       if (!app) return res.status(404).json({ error: 'App not found' });
 
       const parsed = parseOwnerRepo(app.repo_url);
+      const wantRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
       let result;
       if (!github.isEnabled() || !parsed) {
         if (!IS_STAGING) {
@@ -392,7 +393,6 @@ function issueRoutes(config) {
         // when GitHub isn't reachable from the preview container.
         result = { issues: stagingMockIssues(app.repo_url), truncatedList: false };
       } else {
-        const wantRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
         // Neither fetcher ever throws or returns null; on any failure mode
         // they return { issues:[], truncatedList:false, note }.
         result = wantRefresh
