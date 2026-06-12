@@ -229,6 +229,12 @@ function parseLine(line, onProgress, state) {
   if (line.startsWith('__USERNODE_WARN__')) {
     const msg = line.replace('__USERNODE_WARN__', '').trim();
     log.warn('worker', msg);
+    // Surface runner warnings ("resume failed (exit N); retrying fresh",
+    // "push failed", …) in the session's progress log too — both the
+    // interactive and headless paths persist onProgress lines, so a
+    // reviewer reading a failed auto session can see what happened
+    // without server-log access.
+    onProgress(`⚠ ${msg}`);
     return;
   }
   try {
@@ -265,6 +271,12 @@ function newWatchState() {
     // True once the detached-exec wrapper's __USERNODE_EXIT__ line has
     // been parsed from the turn journal (detached transport only).
     execExitSeen: false,
+    // Why a markerless turn (exitCode -1, no __USERNODE_EXIT__ line) was
+    // declared dead: 'container_gone' | 'oom_killed' |
+    // 'probe_unobservable' | 'turn_process_gone'. Null for turns that
+    // ended with a marker. Routes use this for cause-specific failure
+    // messages instead of a bare "-1".
+    markerlessCause: null,
     rawStdout: '',
     rawStderr: '',
     exitCode: null,
@@ -887,7 +899,7 @@ async function execInWorker(sessionId, {
 
     const state = newWatchState();
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
-    await _consumeJournal(containerName, journal, progress, state);
+    await _consumeJournal(containerName, journal, progress, state, { sessionId });
 
     // Successful, complete turns don't need their journal anymore; failed
     // or markerless ones keep it on disk for debugging (the next turn's
@@ -904,6 +916,76 @@ async function execInWorker(sessionId, {
   }
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// Liveness-watchdog strike accounting
+// ──────────────────────────────────────────────────────────────────────
+//
+// isWorkerExecuting is tri-state: true (turn process present), false
+// (definite idle — the probe ran and found no turn process), null (the
+// probe ITSELF failed: docker exec timed out, daemon contended, spawn
+// error). A null says nothing about the turn — auto-solve workloads
+// routinely contend the docker daemon for tens of seconds — so probe
+// failures must NOT count toward the cheap 2-strike idle abandonment.
+// They get their own, much larger consecutive budget before the turn is
+// declared unobservable. Extracted as pure helpers so the policy is
+// unit-testable without docker.
+const WATCHDOG_INTERVAL_MS = 10000;
+const WATCHDOG_PROBE_TIMEOUT_MS = 15000;
+const WATCHDOG_IDLE_STRIKE_LIMIT = 2;
+const WATCHDOG_PROBE_FAILURE_LIMIT = 12;
+// After the watchdog abandons a tail, a `docker inspect` showing the
+// container still running buys the turn another tail cycle (a
+// late-arriving __USERNODE_EXIT__ marker is then consumed normally).
+// Bounded so a permanently unobservable turn still resolves.
+const WATCHDOG_MAX_RETAILS = 3;
+
+function newWatchdogCounters() {
+  return { idleStrikes: 0, probeFailures: 0 };
+}
+
+// Fold one probe result into the counters. Returns { abandon, cause }:
+// abandon=true with 'turn_process_gone' after two consecutive definite
+// idles (the wrapper's final `echo >> journal` gets one interval to
+// flush), or with 'probe_unobservable' once the consecutive
+// probe-failure budget is exhausted.
+function recordWatchdogProbe(counters, busy) {
+  if (busy === true) {
+    counters.idleStrikes = 0;
+    counters.probeFailures = 0;
+    return { abandon: false, cause: null };
+  }
+  if (busy === false) {
+    counters.idleStrikes += 1;
+    // The probe itself succeeded, so the consecutive-failure run ends.
+    counters.probeFailures = 0;
+    return counters.idleStrikes >= WATCHDOG_IDLE_STRIKE_LIMIT
+      ? { abandon: true, cause: 'turn_process_gone' }
+      : { abandon: false, cause: null };
+  }
+  counters.probeFailures += 1;
+  return counters.probeFailures >= WATCHDOG_PROBE_FAILURE_LIMIT
+    ? { abandon: true, cause: 'probe_unobservable' }
+    : { abandon: false, cause: null };
+}
+
+// Positive evidence of container death for the markerless-turn path.
+// Returns { status, oomKilled } — status 'gone' when docker says the
+// container doesn't exist — or null when inspect itself failed (daemon
+// contended), i.e. we still don't know.
+async function inspectContainerState(containerName) {
+  try {
+    const { stdout } = await docker.execFileAsync('docker', [
+      'inspect', '--format', '{{.State.Status}} {{.State.OOMKilled}}', containerName,
+    ], { timeout: WATCHDOG_PROBE_TIMEOUT_MS });
+    const [status, oom] = stdout.trim().split(/\s+/);
+    return { status: status || 'unknown', oomKilled: oom === 'true' };
+  } catch (err) {
+    const msg = String((err && (err.stderr || err.message)) || '');
+    if (/no such (object|container)/i.test(msg)) return { status: 'gone', oomKilled: false };
+    return null;
+  }
+}
+
 // Follow a turn journal until the __USERNODE_EXIT__ marker lands (turn
 // finished) or the turn process is verifiably gone (killed / OOM — no
 // marker will ever come). Feeds every line through the shared parseLine
@@ -913,9 +995,12 @@ async function execInWorker(sessionId, {
 // The tail itself is a disposable `docker exec`; if it drops while the
 // turn is still running (docker hiccup, etc.) we restart it and skip
 // the lines we already consumed.
-async function _consumeJournal(containerName, journal, progress, state) {
+async function _consumeJournal(containerName, journal, progress, state, { sessionId = null } = {}) {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let linesConsumed = 0;
+  let retails = 0;
+  // Why the watchdog killed the most recent tail, when it did.
+  let watchdogCause = null;
 
   const consume = (line) => {
     state.rawStdout += `${line}\n`;
@@ -923,6 +1008,8 @@ async function _consumeJournal(containerName, journal, progress, state) {
   };
 
   for (;;) {
+    watchdogCause = null;
+    const counters = newWatchdogCounters();
     await new Promise((resolve) => {
       // Wait for the wrapper to create the journal, then follow it from
       // the top. `exec tail` so the pid the shell reports is tail itself.
@@ -959,29 +1046,60 @@ async function _consumeJournal(containerName, journal, progress, state) {
 
       // Watchdog: `tail -f` never exits on its own, so detect the case
       // where the turn died without writing the exit marker (stopTurn
-      // pkill, OOM kill). Two consecutive idle reads give the wrapper's
-      // final `echo >> journal` time to flush through the tail.
-      let idleStrikes = 0;
+      // pkill, OOM kill). The probe is purely a safety net — the journal
+      // tail is the real-time channel — so the long timeout/interval is
+      // harmless, and only DEFINITE idles use the cheap 2-strike
+      // abandonment; probe failures get the larger budget above.
       const liveness = setInterval(async () => {
         if (done) return;
-        const busy = await isWorkerExecuting(containerName);
-        if (busy === true) { idleStrikes = 0; return; }
-        idleStrikes += 1;
-        if (idleStrikes >= 2) finish();
-      }, 5000);
+        const busy = await isWorkerExecuting(containerName, { timeoutMs: WATCHDOG_PROBE_TIMEOUT_MS });
+        if (done) return;
+        const verdict = recordWatchdogProbe(counters, busy);
+        if (busy === null) {
+          log.warn('worker', 'Turn liveness probe failed', {
+            containerName, sessionId, journal,
+            consecutiveFailures: counters.probeFailures,
+          });
+        }
+        if (verdict.abandon) {
+          watchdogCause = verdict.cause;
+          finish();
+        }
+      }, WATCHDOG_INTERVAL_MS);
     });
 
     if (state.execExitSeen) return state;
 
     // Tail ended without an exit marker. If the turn is still running
-    // (transient tail/docker failure), restart the tail; otherwise do a
-    // final non-follow read to catch anything the tail missed, then
-    // give up with whatever state we accumulated.
-    const busy = await isWorkerExecuting(containerName);
+    // (transient tail/docker failure), restart the tail; otherwise we
+    // need positive evidence of death before giving up.
+    const busy = await isWorkerExecuting(containerName, { timeoutMs: WATCHDOG_PROBE_TIMEOUT_MS });
     if (busy === true) {
       await sleep(1000);
       continue;
     }
+
+    // Verify against docker itself: if the container is still running
+    // and no probe definitively saw the turn process gone, re-tail
+    // (bounded) instead of abandoning a possibly-healthy turn. This also
+    // lets a marker that lands seconds late be consumed normally instead
+    // of racing the one-shot `cat` below.
+    const inspected = await inspectContainerState(containerName);
+    if (
+      inspected && inspected.status === 'running' && !inspected.oomKilled
+      && busy !== false && watchdogCause !== 'turn_process_gone'
+      && retails < WATCHDOG_MAX_RETAILS
+    ) {
+      retails += 1;
+      log.warn('worker', 'Turn unobservable but container still running — re-tailing journal', {
+        containerName, sessionId, journal, retails, maxRetails: WATCHDOG_MAX_RETAILS,
+      });
+      await sleep(1000);
+      continue;
+    }
+
+    // Final non-follow read to catch anything the tail missed, then
+    // give up with whatever state we accumulated.
     try {
       const { stdout } = await docker.execFileAsync('docker', [
         'exec', containerName, 'cat', journal,
@@ -998,8 +1116,26 @@ async function _consumeJournal(containerName, journal, progress, state) {
       // Container (or journal) gone — nothing more to read.
     }
     if (!state.execExitSeen && state.exitCode == null) {
-      // Turn process vanished without a marker: stopped or killed.
+      // Turn vanished without a marker: stopped, killed, or unobservable.
       state.exitCode = -1;
+      if (inspected && inspected.oomKilled) {
+        state.markerlessCause = 'oom_killed';
+      } else if (inspected && inspected.status !== 'running') {
+        // Covers 'gone' (no such container) and exited/dead containers.
+        state.markerlessCause = 'container_gone';
+      } else if (busy === false || watchdogCause === 'turn_process_gone') {
+        // Definite idle — stopTurn kills and in-container OOM of the
+        // wrapper both land here.
+        state.markerlessCause = 'turn_process_gone';
+      } else {
+        state.markerlessCause = 'probe_unobservable';
+      }
+      log.warn('worker', 'Turn ended without an exit marker', {
+        sessionId, containerName, journal, linesConsumed,
+        cause: state.markerlessCause,
+        inspect: inspected ? `${inspected.status} oom=${inspected.oomKilled}` : 'unavailable',
+        retails,
+      });
     }
     return state;
   }
@@ -1032,7 +1168,7 @@ async function resumeTurnFromJournal(sessionId, { journal, onProgress } = {}) {
   try {
     const state = newWatchState();
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
-    await _consumeJournal(containerName, journal, progress, state);
+    await _consumeJournal(containerName, journal, progress, state, { sessionId });
     if (state.execExitSeen && !state.fatalError) {
       docker.execFileAsync('docker', [
         'exec', containerName, 'rm', '-f', journal,
@@ -1182,11 +1318,15 @@ const TURN_PROC_KILL_SCRIPT =
 //   true   — claude (or its parent run-cc.sh) is currently executing
 //   false  — only the sleep wrapper is alive
 //   null   — couldn't determine (container not running, exec failed, etc.)
-async function isWorkerExecuting(containerName) {
+//
+// `timeoutMs` is overridable because the journal watchdog deliberately
+// runs the probe with a generous timeout (the probe is a safety net, not
+// the real-time channel); other callers keep the snappy default.
+async function isWorkerExecuting(containerName, { timeoutMs = 5000 } = {}) {
   try {
     const { stdout } = await docker.execFileAsync('docker', [
       'exec', containerName, 'sh', '-c', TURN_PROC_PROBE_SCRIPT,
-    ], { timeout: 5000 });
+    ], { timeout: timeoutMs });
     const out = stdout.trim();
     if (out === 'busy') return true;
     if (out === 'idle') return false;
@@ -1347,6 +1487,11 @@ module.exports = {
   destroyCcVolume,
   cloneCcVolume,
   parseClaudeResponse,
+  // exposed for unit tests (watchdog strike policy + line parsing)
+  newWatchState,
+  parseLine,
+  newWatchdogCounters,
+  recordWatchdogProbe,
   // exposed for the routes' container-name lookups
   workerContainerName,
   // platform-side git push proxy (called from src/routes/internal.js)
