@@ -24,6 +24,7 @@ async function migrate(config) {
   await seedStagingNotifications(pool, config);
   await seedStagingEnvProposal(pool, config);
   await seedStagingMergedPrs(pool, config);
+  await seedStagingActiveSessions(pool, config);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
   // Must run BEFORE backfillOrphanedSpecDrafts: unwrapping spec_md after that
@@ -989,6 +990,82 @@ async function seedStagingMergedPrs(pool, config) {
 
   log.info('db', 'Staging merged-PR fixtures seeded', {
     appId,
+    total: fixtures.length,
+    inserted,
+  });
+}
+
+// Fixtures for the home screen's "Your active sessions" section.
+// chat_sessions is staging:private (schema-only in staging), so without
+// these the section would be invisible to testers. The section is
+// viewer-own-only, so every fixture row belongs to the user the tester
+// logs in as — the first admin, same target-user selection as the
+// notifications fixture above. Branches sit in the staging-fixture/
+// namespace and titles carry the [staging fixture] prefix so the rows
+// can't be mistaken for real work. Note the rows are 'active'-status and
+// therefore count against the per-user slot cap (#193) on staging — the
+// auto-pause sweeper reclaims them after its idle threshold, and a
+// tester can pause them manually from the dev tab if they need a slot.
+async function seedStagingActiveSessions(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging active-session fixtures skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username, is_admin
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging active-session fixtures skipped: no users');
+    return;
+  }
+  const owner = userRows[0];
+
+  // Staggered ages make the recency ordering visible; the last row has
+  // no PR yet so the section's branch-name fallback renders too. PR
+  // numbers sit in the synthetic 9xxx range shared with the other
+  // fixtures so they can't shadow real PRs.
+  const fixtures = [
+    { title: 'Staging demo: refine onboarding copy', prNumber: 9201, minutesAgo: 10 },
+    { title: 'Staging demo: polish empty states', prNumber: 9202, minutesAgo: 120 },
+    { title: null, prNumber: null, minutesAgo: 1440 },
+  ];
+
+  let inserted = 0;
+  for (let i = 0; i < fixtures.length; i++) {
+    const f = fixtures[i];
+    const branch = `staging-fixture/active-session-${i + 1}`;
+    const { rows: existing } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, branch]
+    );
+    if (existing.length) continue;
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_number, pr_title, status, created_at)
+       VALUES
+         ($1, $2, $3, $4, $5, 'active', NOW() - ($6::int * INTERVAL '1 minute'))`,
+      [appId, owner.id, branch, f.prNumber,
+       f.title ? `[staging fixture] ${f.title}` : null, f.minutesAgo]
+    );
+    inserted++;
+  }
+
+  log.info('db', 'Staging active-session fixtures seeded', {
+    appId,
+    owner: owner.username,
     total: fixtures.length,
     inserted,
   });
