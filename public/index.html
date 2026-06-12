@@ -213,6 +213,13 @@
     <button id="platform-updating-reload" type="button"
             class="hidden ml-2 px-2 py-0.5 rounded border border-current text-xs font-semibold hover:bg-current/10"
             onclick="location.reload()">Reload</button>
+    <!-- #239: shown only in the resolving banner's red "resolution
+         failed" terminal state — that variant has no SHA flip or
+         reload coming, so the user dismisses it by hand (it also
+         auto-hides after ~20s). -->
+    <button id="platform-updating-dismiss" type="button"
+            class="hidden ml-2 px-2 py-0.5 rounded border border-current text-xs font-semibold hover:bg-current/10"
+            onclick="App.PlatformUpdating.dismissResolveFailure()">Dismiss</button>
   </div>
 
   <!-- Home screen: app list. Rendered as a responsive grid of tiles
