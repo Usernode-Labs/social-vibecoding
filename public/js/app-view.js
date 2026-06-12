@@ -1068,15 +1068,22 @@ const AppView = {
       : '';
   },
 
-  // The feed's display order: every item carries a lastActivity sort
-  // key = max(its own timestamp, the latest message in its thread).
-  // Ties keep the per-source order (which preserves the #177
-  // auto-solve-first ranking among quiet issues).
+  // The feed's display order: fixed groups — proposals being voted on
+  // (PR promotions and governance proposals alike) above open issues —
+  // and most-recent-activity-first within each group. Every item
+  // carries a lastActivity sort key = max(its own timestamp, the
+  // latest message in its thread). Ties keep the per-source order
+  // (which preserves the #177 auto-solve-first ranking among quiet
+  // issues). The general-chat card and the viewer's session rows sit
+  // above this feed in the card list, so the full order the user sees
+  // is: chat → sessions → proposals → issues.
   _feedItems() {
     const ts = (v) => {
       const t = Date.parse(v || '');
       return Number.isFinite(t) ? t : 0;
     };
+    // Lower group renders first. Proposals (both kinds) share a group.
+    const GROUP = { proposal: 0, gov: 0, issue: 1 };
     const items = [];
     for (const issue of AppView._visibleGhIssues()) {
       items.push({
@@ -1097,7 +1104,7 @@ const AppView = {
       });
     }
     // Array.prototype.sort is stable, so equal keys keep source order.
-    return items.sort((a, b) => b.t - a.t);
+    return items.sort((a, b) => (GROUP[a.kind] - GROUP[b.kind]) || (b.t - a.t));
   },
 
   _renderFeedInner() {
@@ -1167,8 +1174,16 @@ const AppView = {
       const res = await fetch('/api/me/active-sessions');
       if (!res.ok) { el.innerHTML = ''; return; }
       const data = await res.json();
-      const mine = (data.sessions || []).filter((s) =>
-        s.app_slug === slug && (s.status === 'active' || s.status === 'paused'));
+      // Most-recent-activity-first, matching the feed's within-group
+      // order. last_activity_at folds in the latest session message;
+      // older servers without it fall back to created_at.
+      const actTs = (s) => {
+        const t = Date.parse(s.last_activity_at || s.created_at || '');
+        return Number.isFinite(t) ? t : 0;
+      };
+      const mine = (data.sessions || [])
+        .filter((s) => s.app_slug === slug && (s.status === 'active' || s.status === 'paused'))
+        .sort((a, b) => actTs(b) - actTs(a));
       // The container may have been replaced while the fetch was in
       // flight (tab switch) — re-resolve before painting.
       const live = document.getElementById('dev-sessions-strip');
