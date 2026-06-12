@@ -672,12 +672,38 @@ const DevChat = {
         return m;
       });
 
+      // #252: sync state is keyed per session — drop a stale indicator
+      // (in-flight or terminal feedback) when switching to a different
+      // session. Re-opening the SAME session keeps it; the status
+      // check below refreshes the in-flight phase from the server.
+      if (DevChat._syncState
+          && Number(DevChat._syncState.sessionId) !== Number(sessionId)) {
+        DevChat._syncState = null;
+        DevChat._stopSyncPolling();
+      }
+
       // Check if Claude Code is running for this session
       try {
         const statusRes = await fetch(`/api/sessions/${sessionId}/status`);
         if (statusRes.ok) {
-          const { busy, progress, phase } = await statusRes.json();
-          if (busy) {
+          const { busy, progress, phase, sync } = await statusRes.json();
+          // #252: reload recovery for the sync banner. A MODE=sync turn
+          // also flips `busy` (it holds the worker), so check it first
+          // and don't arm the chat-turn streaming UI for a sync.
+          if (sync && sync.phase) {
+            DevChat._syncState = {
+              sessionId: Number(sessionId), phase: sync.phase, since: Date.now(),
+            };
+            DevChat._startSyncPolling(Number(sessionId));
+          } else if (DevChat._syncState && !DevChat._syncState.terminal) {
+            // Stale in-flight state with nothing running server-side
+            // (e.g. the platform restarted mid-sync) — clear it.
+            // Terminal feedback is left alone so refresh-triggered
+            // openSession calls don't wipe the success/failure notice.
+            DevChat._syncState = null;
+            DevChat._stopSyncPolling();
+          }
+          if (busy && !(sync && sync.phase)) {
             DevChat.isStreaming = true;
             DevChat._setStreamingUI(true, phase || null);
             // Reuse the most recent persisted progress message as the live
@@ -1482,6 +1508,11 @@ const DevChat = {
 
     const input = document.getElementById('dc-input');
     if (input) input.disabled = streaming;
+
+    // #252: the sync banner's button disables (with a hint) while a
+    // chat turn holds the worker — keep it in step with every
+    // streaming transition. Cheap no-op when no banner is mounted.
+    if (document.getElementById('dc-sync-banner')) DevChat._applySyncBanner();
   },
 
   async _stopCurrentTurn() {
@@ -2589,35 +2620,106 @@ const DevChat = {
     });
   },
 
-  // ── Sync-with-main banner (#8) ────────────────────────────
+  // ── Sync-with-main banner (#8, progress #252) ─────────────
   //
   // Shows up below the session header whenever the branch is behind
-  // origin/main. Click triggers POST /api/sessions/:id/sync-main,
-  // which dispatches a worker turn in MODE=sync. The worker
-  // short-circuits when the merge is clean (no LLM spend); only
-  // dispatches CC when there are real conflicts to resolve.
+  // origin/main OR a sync is in flight. Click triggers
+  // POST /api/sessions/:id/sync-main, which dispatches a worker turn
+  // in MODE=sync. The worker short-circuits when the merge is clean
+  // (no LLM spend); only dispatches CC when there are real conflicts
+  // to resolve.
   //
   // The behind count is refreshed live via the WS session_update
-  // event (action='behind_main'); see App.handleSessionUpdate.
+  // event (action='behind_main'), and the in-flight phase / terminal
+  // outcome via action='sync_status'; see App.handleSessionUpdate.
+  //
+  // _syncState is the server-derived sync indicator (NOT a per-tab
+  // flag): null when idle, { sessionId, phase, since } while a sync
+  // runs anywhere (this tab, another tab, the resume auto-trigger or
+  // the conflict-resolver), and { sessionId, terminal, ok, message }
+  // once it finishes. Fed by WS sync_status events, openSession's
+  // status check, the poll fallback, and optimistically by the click.
+  _syncState: null,
+  _syncPollTimer: null,
+
+  _syncPhaseLabel(phase) {
+    switch (phase) {
+      case 'resolving': return 'Resolving merge conflicts with Claude…';
+      case 'pushing': return 'Pushing the merged branch…';
+      default: return 'Syncing with main…'; // starting / merging
+    }
+  },
+
+  // The current _syncState if (and only if) it belongs to the given
+  // session — a terminal notice from session A must not render on
+  // session B's banner.
+  _syncStateFor(session) {
+    const st = DevChat._syncState;
+    if (!st || !session) return null;
+    return Number(st.sessionId) === Number(session.id) ? st : null;
+  },
 
   _renderSyncBannerHtml(session) {
     const behind = session && Number(session.behind_main) || 0;
-    if (behind <= 0) return '';
-    const syncing = !!DevChat._syncInFlight;
+    const sync = DevChat._syncStateFor(session);
+    if (behind <= 0 && !sync) return '';
+
+    const warnIcon = `<svg class="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.732 0 2.814-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
+        </svg>`;
+    const btnCls = 'rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-60 disabled:cursor-not-allowed px-3 py-1 text-xs font-medium text-white transition-colors shrink-0';
+    const chatBusy = !!DevChat.isStreaming;
+    const busyAttr = chatBusy
+      ? 'disabled title="Claude is busy with a turn — sync will be available when it finishes"'
+      : '';
+
+    // In flight — spinner + phase text, disabled button.
+    if (sync && !sync.terminal) {
+      return `
+      <div id="dc-sync-banner" class="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs">
+        <svg class="w-4 h-4 animate-spin text-amber-600 dark:text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+        </svg>
+        <span class="text-amber-800 dark:text-amber-200 flex-1">${escapeHtml(DevChat._syncPhaseLabel(sync.phase))}</span>
+        <button id="dc-sync-btn" type="button" disabled class="${btnCls}">Syncing…</button>
+      </div>`;
+    }
+
+    // Terminal success — green confirmation; auto-dismissed by the
+    // timer in _setSyncTerminal (the behind_main → 0 broadcast removes
+    // the banner anyway).
+    if (sync && sync.terminal && sync.ok) {
+      return `
+      <div id="dc-sync-banner" class="flex items-center gap-2 px-3 py-2 bg-emerald-50 dark:bg-emerald-950/30 border-b border-emerald-200 dark:border-emerald-900/50 text-xs">
+        <svg class="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/>
+        </svg>
+        <span class="text-emerald-800 dark:text-emerald-200 flex-1">${escapeHtml(sync.message || 'Synced with main.')}</span>
+      </div>`;
+    }
+
+    // Terminal failure (unresolved conflict, budget/infra error, or the
+    // 409 chat-turn-busy notice) — the message stays put with a
+    // re-enabled Try again button. No alert() popups.
+    if (sync && sync.terminal && !sync.ok) {
+      return `
+      <div id="dc-sync-banner" class="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs">
+        ${warnIcon}
+        <span class="text-amber-800 dark:text-amber-200 flex-1">${escapeHtml(sync.message || 'Sync with main failed.')}</span>
+        <button id="dc-sync-btn" type="button" ${busyAttr} class="${btnCls}">Try again</button>
+      </div>`;
+    }
+
+    // Idle — behind main, nothing in flight.
     const noun = behind === 1 ? 'commit' : 'commits';
     return `
       <div id="dc-sync-banner" class="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs">
-        <svg class="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.732 0 2.814-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
-        </svg>
+        ${warnIcon}
         <span class="text-amber-800 dark:text-amber-200 flex-1">
           main has moved <span class="font-semibold">${behind}</span> ${noun} ahead of this branch.
         </span>
-        <button id="dc-sync-btn" type="button"
-          ${syncing ? 'disabled' : ''}
-          class="rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-60 disabled:cursor-not-allowed px-3 py-1 text-xs font-medium text-white transition-colors">
-          ${syncing ? 'Syncing…' : 'Sync with main'}
-        </button>
+        <button id="dc-sync-btn" type="button" ${busyAttr} class="${btnCls}">Sync with main</button>
       </div>`;
   },
 
@@ -2673,35 +2775,160 @@ const DevChat = {
     if (typeof DevChat.loadActiveSessions === 'function') DevChat.loadActiveSessions();
   },
 
+  // Replace just the banner element if the rest of the chat view is
+  // mounted; otherwise full re-render so the new element lands in the
+  // right slot. Shared by every path that mutates banner-relevant
+  // state (behind_main updates, sync_status events, the click handler).
+  _applySyncBanner() {
+    const existing = document.getElementById('dc-sync-banner');
+    const html = DevChat.currentSession
+      ? DevChat._renderSyncBannerHtml(DevChat.currentSession) : '';
+    if (existing) {
+      if (html) {
+        existing.outerHTML = html;
+        DevChat._wireSyncBanner();
+      } else {
+        existing.remove();
+      }
+    } else if (html) {
+      DevChat.renderChatView();
+    }
+  },
+
+  _setSyncInFlight(sessionId, phase) {
+    DevChat._syncState = { sessionId: Number(sessionId), phase, since: Date.now() };
+    DevChat._applySyncBanner();
+    DevChat._startSyncPolling(Number(sessionId));
+  },
+
+  _setSyncTerminal(sessionId, { ok, message }) {
+    DevChat._stopSyncPolling();
+    const t = {
+      sessionId: Number(sessionId),
+      terminal: true,
+      ok: !!ok,
+      message: message || (ok ? 'Synced with main.' : 'Sync with main failed.'),
+      since: Date.now(),
+    };
+    DevChat._syncState = t;
+    DevChat._applySyncBanner();
+    if (ok) {
+      // Success feedback is transient — dismiss after ~5s. Failure
+      // sticks around with its Try again button. Identity check so a
+      // newer state (e.g. a retry already in flight) is never clobbered.
+      setTimeout(() => {
+        if (DevChat._syncState === t) {
+          DevChat._syncState = null;
+          DevChat._applySyncBanner();
+        }
+      }, 5000);
+    }
+  },
+
+  // Called by App.handleSessionUpdate when an action='sync_status'
+  // event arrives (from this tab's click, another tab, the resume
+  // auto-trigger or the conflict-resolver). No-op when the event is
+  // for a session that isn't open — list rows are out of scope (#252).
+  applySyncStatusUpdate(data) {
+    const sessionId = Number(data.sessionId);
+    if (!DevChat.currentSession || Number(DevChat.currentSession.id) !== sessionId) return;
+    if (data.state === 'done' || data.state === 'failed') {
+      DevChat._setSyncTerminal(sessionId, {
+        ok: data.state === 'done',
+        message: data.message,
+      });
+      // Refresh so the persisted system note + new behind_main land.
+      // Idempotent with the click handler's own refresh.
+      DevChat.openSession(sessionId)
+        .then(() => DevChat.renderChatView())
+        .catch(() => {});
+    } else {
+      DevChat._setSyncInFlight(sessionId, data.state);
+    }
+  },
+
+  // Poll fallback while a sync is in flight: catches a missed terminal
+  // WS event (tab offline, server restart mid-sync) and keeps the
+  // phase text honest if a phase broadcast was dropped. Cleared on any
+  // terminal transition and when the open session changes.
+  _startSyncPolling(sessionId) {
+    if (DevChat._syncPollTimer) return;
+    DevChat._syncPollTimer = setInterval(async () => {
+      const st = DevChat._syncState;
+      if (!st || st.terminal || Number(st.sessionId) !== Number(sessionId)
+          || !DevChat.currentSession
+          || Number(DevChat.currentSession.id) !== Number(sessionId)) {
+        DevChat._stopSyncPolling();
+        return;
+      }
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}/status`);
+        if (!res.ok) return;
+        const { sync } = await res.json();
+        if (sync && sync.phase) {
+          if (DevChat._syncState && !DevChat._syncState.terminal
+              && DevChat._syncState.phase !== sync.phase) {
+            DevChat._syncState = { ...DevChat._syncState, phase: sync.phase };
+            DevChat._applySyncBanner();
+          }
+        } else if (Date.now() - st.since > 5000) {
+          // No sync in flight server-side — we missed the terminal
+          // event. The grace window keeps the optimistic click-state
+          // from being cleared before the server registers the run.
+          DevChat._stopSyncPolling();
+          DevChat._syncState = null;
+          await DevChat.openSession(sessionId);
+          DevChat.renderChatView();
+        }
+      } catch {}
+    }, 4000);
+  },
+
+  _stopSyncPolling() {
+    if (DevChat._syncPollTimer) {
+      clearInterval(DevChat._syncPollTimer);
+      DevChat._syncPollTimer = null;
+    }
+  },
+
   _wireSyncBanner() {
     const btn = document.getElementById('dc-sync-btn');
     if (!btn) return;
     btn.addEventListener('click', async () => {
-      if (DevChat._syncInFlight) return;
+      const st = DevChat._syncState;
+      if (st && !st.terminal) return; // already in flight
       const sessionId = DevChat.currentSession?.id;
       if (!sessionId) return;
-      DevChat._syncInFlight = true;
-      btn.disabled = true;
-      btn.textContent = 'Syncing…';
+      // Optimistic in-flight state; the WS sync_status events and the
+      // poll fallback take over from here. If a sync is already
+      // running server-side this POST coalesces onto it and returns
+      // the same final result.
+      DevChat._setSyncInFlight(sessionId, 'starting');
       try {
         const resp = await fetch(`/api/sessions/${sessionId}/sync-main`, { method: 'POST' });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
-          alert(data.error || `Sync failed (HTTP ${resp.status}).`);
-        } else if (data.message) {
-          // Refresh the session record so behind_main + chat history
-          // pick up the new state, then re-render. The
-          // session_update WS broadcast from persistBehindMain also
-          // triggers this path, but doing it explicitly here covers
-          // the case where the user has the tab inactive when the
-          // WS event fires.
+          // 409 = a chat turn holds the worker (friendly message from
+          // the route); anything else is a real failure. Either way:
+          // inline banner text, never alert().
+          DevChat._setSyncTerminal(sessionId, {
+            ok: false,
+            message: data.error || `Sync failed (HTTP ${resp.status}).`,
+          });
+        } else {
+          // The POST response is the authoritative final result —
+          // applied idempotently with the WS terminal event. Refresh
+          // the session record so behind_main + the system note pick
+          // up the new state even if the tab missed the WS events.
+          DevChat._setSyncTerminal(sessionId, {
+            ok: data.ok !== false,
+            message: data.message,
+          });
           await DevChat.openSession(sessionId);
           DevChat.renderChatView();
         }
       } catch (err) {
-        alert(`Sync failed: ${err.message}`);
-      } finally {
-        DevChat._syncInFlight = false;
+        DevChat._setSyncTerminal(sessionId, { ok: false, message: `Sync failed: ${err.message}` });
       }
     });
   },
@@ -2721,22 +2948,7 @@ const DevChat = {
       return;
     }
     DevChat.currentSession.behind_main = behindMain;
-    // Replace just the banner element if the rest of the chat view
-    // is mounted; otherwise full re-render.
-    const existing = document.getElementById('dc-sync-banner');
-    const html = DevChat._renderSyncBannerHtml(DevChat.currentSession);
-    if (existing) {
-      if (html) {
-        existing.outerHTML = html;
-        DevChat._wireSyncBanner();
-      } else {
-        existing.remove();
-      }
-    } else if (html) {
-      // No prior banner — easiest is a full re-render so the new
-      // element ends up in the right slot.
-      DevChat.renderChatView();
-    }
+    DevChat._applySyncBanner();
   },
 
   // ── Chat view ─────────────────────────────────────────────
