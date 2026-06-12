@@ -784,3 +784,41 @@ CREATE INDEX IF NOT EXISTS idx_app_collaborators_user ON app_collaborators(user_
 INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
   SELECT id, created_by, 'member', NOW() FROM apps WHERE created_by IS NOT NULL
 ON CONFLICT (app_id, user_id) DO NOTHING;
+
+-- Before/after visuals on UI-affecting proposals (issue #195). Each row is
+-- one capture artifact produced by the one-shot usernode-capture container
+-- after a staging preview comes up healthy: kind = before (production) /
+-- after (staging), media = png (still) / webm (in-app <video> clip) /
+-- gif (PR-body inline embed). Retention is latest-set-per-session only —
+-- src/services/visuals.js deletes the session's prior rows before
+-- inserting a fresh capture, so growth is bounded at <= 6 rows/session.
+-- The id is a random 32-hex token generated in Node: GET /visuals/:id is
+-- a public (pre-auth) route so GitHub's camo proxy can fetch embeds
+-- anonymously, and unguessable ids are the only privacy layer.
+-- Artifacts are bytea-in-Postgres because the platform container has no
+-- persistent file volume; the serving route isolates that storage choice.
+CREATE TABLE IF NOT EXISTS session_visuals (
+  id            VARCHAR(32) PRIMARY KEY,
+  session_id    INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  commit_hash   VARCHAR(64),
+  kind          VARCHAR(8)  NOT NULL,
+  media         VARCHAR(8)  NOT NULL,
+  content_type  VARCHAR(32) NOT NULL,
+  data          BYTEA       NOT NULL,
+  captured_path VARCHAR(512),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_session_visuals_session ON session_visuals(session_id);
+
+-- Private like its parent chat_sessions (public-FK-to-private is the
+-- combination the migration linter forbids); the artifacts also embed
+-- screenshots of other users' staging previews.
+COMMENT ON TABLE session_visuals IS 'staging:private';
+
+-- Snapshot of the rendered "Before / after" PR-body block last written to
+-- GitHub, mirroring pr_testing_applied: applyPrMetadata compares the fresh
+-- block against this to decide whether a title-unchanged turn still needs
+-- a PR body update, and src/services/visuals.js stamps it after its
+-- targeted post-capture body patch so the next turn doesn't rewrite an
+-- unchanged body.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_visuals_applied TEXT;

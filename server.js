@@ -20,6 +20,7 @@ const { notificationsRoutes } = require('./src/routes/notifications');
 const { collaboratorRoutes } = require('./src/routes/collaborators');
 const { statusRoutes } = require('./src/routes/status');
 const { internalRoutes } = require('./src/routes/internal');
+const { visualsRoutes } = require('./src/routes/visuals');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
 const github = require('./src/services/github');
 const llm = require('./src/services/llm');
@@ -261,6 +262,11 @@ app.use(internalRoutes(config));
 // short-lived JWT useless against Anthropic directly. Same private-IP
 // gate as internalRoutes; not reachable through Caddy externally.
 app.use(anthropicProxyRoutes(config));
+
+// Before/after visuals artifacts (#195). Public by design: GitHub's camo
+// proxy fetches the PR-body embeds anonymously, so this must not redirect
+// to login. Access control is the unguessable 32-hex artifact id.
+app.use(visualsRoutes(config));
 
 app.use(authMiddleware(config));
 app.use(authRoutes(config));

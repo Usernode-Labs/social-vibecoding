@@ -916,6 +916,11 @@ const AppView = {
             ? `<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 shrink-0" title="You haven't voted on this yet"><span class="relative flex h-1.5 w-1.5"><span class="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75 animate-ping"></span><span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-violet-500"></span></span>Vote</span>`
             : '';
           const mergingBadge = isMerging ? AppView.mergingBadgeHtml() : '';
+          // #195: before/after capture tiles — this is where the group
+          // decides, so voters can judge a visual change without opening
+          // the staging preview. basis-full forces the media onto its own
+          // row below the title + controls.
+          const visualsHtml = AppView.visualsTilesHtml(pr.visuals);
           bodyHtml += `
             <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}">
               <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-violet-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
@@ -928,6 +933,7 @@ const AppView = {
                 ${mergingBadge}
                 ${kudosBtn}
               </div>
+              ${visualsHtml ? `<div class="basis-full">${visualsHtml}</div>` : ''}
             </div>`;
         }
         bodyHtml += '</div></div>';
@@ -1957,6 +1963,39 @@ const AppView = {
   // rows after a PR lands so the voting info doesn't disappear.
   mergedBadgeHtml() {
     return `<span class="gc-merged-badge">✓ Merged</span>`;
+  },
+
+  // #195: before/after visual tiles for a session's stored capture
+  // artifacts. `visuals` is the server shape { before: {png,webm,gif},
+  // after: {...} } of /visuals/:id tokens. Shared by the vote-panel PR
+  // rows here and the dev-chat staging card (which calls through
+  // window.AppView). Webm plays as a silent loop with the PNG as poster;
+  // PNG-only sets render a plain image. Click opens full size in a new
+  // tab. Deliberately dedicated DOM — the markdown sanitizer's whitelist
+  // stays untouched (<img>/<video> remain stripped from chat markdown).
+  visualsTilesHtml(visuals) {
+    if (!visuals) return '';
+    const idOk = (id) => typeof id === 'string' && /^[a-f0-9]{32}$/.test(id);
+    const tile = (label, v) => {
+      if (!v) return '';
+      const png = idOk(v.png) ? v.png : null;
+      const webm = idOk(v.webm) ? v.webm : null;
+      const gif = idOk(v.gif) ? v.gif : null;
+      if (!png && !webm && !gif) return '';
+      const mediaStyle = 'display:block;width:100%;max-height:160px;object-fit:contain;object-position:top;background:rgba(0,0,0,0.25);border:1px solid rgba(127,127,127,0.25);border-radius:6px';
+      const media = webm
+        ? `<video src="/visuals/${webm}"${png ? ` poster="/visuals/${png}"` : ''} muted loop autoplay playsinline style="${mediaStyle}"></video>`
+        : `<img src="/visuals/${png || gif}" alt="${label}" loading="lazy" style="${mediaStyle}">`;
+      const href = `/visuals/${webm || gif || png}`;
+      return `<a href="${href}" target="_blank" rel="noopener" title="${label} — open full size" style="flex:1 1 0;min-width:0;display:block;text-decoration:none">
+        <div class="text-[0.65rem] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}</div>
+        ${media}
+      </a>`;
+    };
+    const before = tile('Before', visuals.before);
+    const after = tile('After', visuals.after);
+    if (!after && !before) return '';
+    return `<div class="usn-visual-tiles" style="display:flex;gap:8px;align-items:flex-start;margin:4px 0 2px">${before}${after}</div>`;
   },
 
   // #80: derive the GitHub issue URL for issue #N from a PR's html_url

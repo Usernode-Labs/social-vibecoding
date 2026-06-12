@@ -373,6 +373,20 @@ async function getPR(owner, repo, prNumber) {
   return data;
 }
 
+// List the file paths changed between two refs ("main...branch-name").
+// Used by the visuals capture heuristic (src/services/visuals.js) to decide
+// whether a commit range plausibly touches the UI. Uses the compare API
+// (not pulls.listFiles) so it works on the headless path, where no PR
+// exists yet. The compare endpoint returns at most 300 files per page —
+// plenty for a "does anything frontend-ish appear?" check.
+async function listChangedFiles(owner, repo, basehead) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
+    owner, repo, basehead, per_page: 100,
+  });
+  return (data.files || []).map((f) => f.filename);
+}
+
 // Close an issue. Goes through getOctokit (PAT-preferred) so we get a
 // real @octokit/rest instance with `.rest.issues.update`. Used by the
 // rename-issue → rename-PR migration to retire the legacy issue once its
@@ -963,6 +977,7 @@ module.exports = {
   reopenPR,
   mergePR,
   getPR,
+  listChangedFiles,
   getIssue,
   createIssue,
   createIssueComment,

@@ -8,6 +8,7 @@ const github = require('../services/github');
 const prMetadata = require('../services/pr-metadata');
 const testingNotes = require('../services/testing-notes');
 const staging = require('../services/staging');
+const visuals = require('../services/visuals');
 const docker = require('../services/docker');
 const caddy = require('../services/caddy');
 const worker = require('../services/worker');
@@ -662,7 +663,16 @@ function sessionRoutes(config) {
         [req.params.id]
       );
 
-      res.json({ session: rows[0], messages });
+      // #195: attach the session's stored before/after capture ids so the
+      // staging card can render its visual tiles on history reload (the
+      // live path delivers the same shape via the visuals_ready event).
+      // Best-effort — a visuals hiccup must not break opening the session.
+      const session = rows[0];
+      try {
+        session.visuals = await visuals.getForSession(pool, session.id);
+      } catch { session.visuals = null; }
+
+      res.json({ session, messages });
     } catch (err) {
       log.error('sessions', 'Failed to get session', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -3886,6 +3896,16 @@ path: /relative/path?demo=1
           testingPath: session.testing_path || null,
         });
         summaryParts.push(`Staging preview deployed: ${stagingUrl}`);
+
+        // #195: before/after visuals. Fire-and-forget AFTER staging_ready
+        // so the preview button is never delayed; captureForSession owns
+        // the UI-affecting heuristic and swallows every failure. No PR
+        // exists on the headless path — the stored artifacts surface in
+        // the PR body later via applyPrMetadata at promote time.
+        visuals.captureForSession(config, session, app, commitHash, stagingResult, { send })
+          .catch((err) => log.warn('visuals', 'Headless capture failed (non-fatal)', {
+            sessionId: session.id, err: err.message,
+          }));
       } else {
         // Non-fatal (#183): the pushed commit is this run's deliverable; a
         // missing preview only degrades the review experience. Same
@@ -4004,6 +4024,16 @@ path: /relative/path?demo=1
           testingPath: session.testing_path || null,
         });
         summaryParts.push(`Staging redeployed: ${stagingUrl}`);
+
+        // #195: before/after visuals. Fire-and-forget AFTER staging_ready
+        // so the preview button is never delayed. When the capture lands
+        // it patches the PR body's "Before / after" block directly and
+        // emits visuals_ready (via this turn's send → SSE/WS/bus) so the
+        // staging card upgrades in place.
+        visuals.captureForSession(config, session, app, commitHash, stagingResult, { send })
+          .catch((err) => log.warn('visuals', 'Capture failed (non-fatal)', {
+            sessionId: session.id, err: err.message,
+          }));
 
         if (session.status === 'promoted') {
           const { rowCount } = await pool.query(

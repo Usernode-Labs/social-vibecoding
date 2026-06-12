@@ -43,6 +43,71 @@ function buildTestingBlock(testingMd, testingPath) {
   return parts.join('\n\n');
 }
 
+// HTML-comment markers wrapping the deterministic "Before / after" visuals
+// section (#195) so it can be idempotently replaced — both by the suffix
+// assembly below (full-body regeneration on a dev turn) and by the targeted
+// post-capture body patch in src/services/visuals.js.
+const VISUALS_MARKER_START = '<!-- usernode:visuals -->';
+const VISUALS_MARKER_END = '<!-- /usernode:visuals -->';
+
+// Build the deterministic "Before / after" section for a PR body (#195)
+// from the session's stored capture artifacts. `visuals` is the shape
+// returned by visuals.getForSession: { before: {png,webm,gif}, after:
+// {...} } of /visuals/:id tokens. Per side we embed the GIF when one was
+// stored (GitHub camo proxies + autoplays GIFs inline), falling back to
+// the PNG when the GIF was skipped or over-cap. webm is never referenced
+// here — GitHub PR bodies can only inline-embed images; the webm exists
+// for the in-app <video> surfaces. Empty string when there is nothing
+// usable to show (no "after" artifact), keeping legacy bodies identical.
+function buildVisualsBlock(visuals, domain) {
+  if (!visuals || !domain) return '';
+  const embed = (side) => {
+    const v = visuals[side];
+    if (!v) return null;
+    const id = v.gif || v.png;
+    return id ? `https://${domain}/visuals/${id}` : null;
+  };
+  const before = embed('before');
+  const after = embed('after');
+  if (!after) return '';
+  const lines = [VISUALS_MARKER_START, '## Before / after', ''];
+  if (before) {
+    lines.push(
+      '| Before | After |',
+      '| --- | --- |',
+      `| ![Before](${before}) | ![After](${after}) |`
+    );
+  } else {
+    lines.push(
+      '| After |',
+      '| --- |',
+      `| ![After](${after}) |`,
+      '',
+      '_No production version to compare — showing the staging preview only._'
+    );
+  }
+  lines.push(VISUALS_MARKER_END);
+  return lines.join('\n');
+}
+
+// Replace the marker-delimited visuals block inside an existing PR body,
+// or append it when no markers are present yet. Used by the post-capture
+// targeted patch (visuals.js) — the dev-turn path regenerates the whole
+// body instead and includes the block via the suffix assembly.
+function upsertVisualsBlock(body, block) {
+  const base = typeof body === 'string' ? body : '';
+  const start = base.indexOf(VISUALS_MARKER_START);
+  const end = base.indexOf(VISUALS_MARKER_END);
+  if (start !== -1 && end !== -1 && end > start) {
+    const head = base.slice(0, start).replace(/\n+$/, '');
+    const tail = base.slice(end + VISUALS_MARKER_END.length).replace(/^\n+/, '');
+    const parts = [head, block, tail].filter((p) => p && p.trim());
+    return parts.join('\n\n');
+  }
+  if (!block) return base;
+  return base ? `${base}\n\n${block}` : block;
+}
+
 // Extract the issue numbers a PR body declares it closes via GitHub's
 // closing keywords (close/closes/closed, fix/fixes/fixed, resolve/resolves/
 // resolved), optionally followed by a colon, e.g. "Closes #75", "fixed: #80".
@@ -77,13 +142,15 @@ function sameIssueSet(a, b) {
 // to the legacy template so PR creation is never blocked on LLM
 // availability. `usage` is undefined when the fallback fires (no API
 // call was made) so callers can skip debiting in that case.
-async function generatePrMetadata({ userMessage, ccSummary, requests, summaries, specs, username, apiKey, closingBlock, testingBlock }) {
-  // `closingBlock` (#75) is the deterministic `Closes #N` text and
-  // `testingBlock` (#127) the deterministic "How to test" section. Both are
+async function generatePrMetadata({ userMessage, ccSummary, requests, summaries, specs, username, apiKey, closingBlock, testingBlock, visualsBlock }) {
+  // `closingBlock` (#75) is the deterministic `Closes #N` text,
+  // `testingBlock` (#127) the deterministic "How to test" section, and
+  // `visualsBlock` (#195) the "Before / after" media table. All are
   // inserted between the body and the footer (testing first, closing last)
   // and are deliberately NOT fed into the LLM prompt below, so the model
   // can never drop, duplicate, or paraphrase them.
   const suffix = (testingBlock ? `\n\n${testingBlock}` : '')
+    + (visualsBlock ? `\n\n${visualsBlock}` : '')
     + (closingBlock ? `\n\n${closingBlock}` : '');
   const fallbackTitle = `${username}'s changes`;
   const fallbackBody = `Dev session by ${username} via Usernode${suffix}`;
@@ -138,6 +205,7 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
   const ctx = {
     requests: [], summaries: [], specs: [], linkedIssues: [], appliedIssues: [],
     testingMd: null, testingPath: null, appliedTesting: null,
+    visuals: null, appliedVisuals: null,
   };
   if (pool && sessionId != null) {
     try {
@@ -175,7 +243,8 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
       }
       const { rows: liveRows } = await pool.query(
         `SELECT spec_md, linked_issues, pr_linked_issues_applied,
-                testing_md, testing_path, pr_testing_applied
+                testing_md, testing_path, pr_testing_applied,
+                pr_visuals_applied
            FROM chat_sessions WHERE id = $1`,
         [sessionId]
       );
@@ -194,6 +263,27 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
       ctx.testingMd = (liveRows[0] && liveRows[0].testing_md) || null;
       ctx.testingPath = (liveRows[0] && liveRows[0].testing_path) || null;
       ctx.appliedTesting = (liveRows[0] && liveRows[0].pr_testing_applied) || null;
+
+      // Stored capture artifacts (#195) — read directly here (not via
+      // services/visuals.js) so this module stays free of a circular
+      // require; visuals.js depends on pr-metadata for the block builder.
+      ctx.appliedVisuals = (liveRows[0] && liveRows[0].pr_visuals_applied) || null;
+      try {
+        const { rows: visRows } = await pool.query(
+          `SELECT id, kind, media FROM session_visuals WHERE session_id = $1`,
+          [sessionId]
+        );
+        if (visRows.length) {
+          const shaped = {};
+          for (const v of visRows) {
+            if (!shaped[v.kind]) shaped[v.kind] = {};
+            shaped[v.kind][v.media] = v.id;
+          }
+          ctx.visuals = shaped;
+        }
+      } catch (err) {
+        log.warn('pr-metadata', 'Failed to gather session visuals', { err: err.message, sessionId });
+      }
 
       const seen = new Set();
       for (const s of specTexts) {
@@ -234,6 +324,7 @@ async function applyPrMetadata({
   const {
     requests, summaries, specs, linkedIssues, appliedIssues,
     testingMd, testingPath, appliedTesting,
+    visuals, appliedVisuals,
   } = await gatherSessionContext(pool, session && session.id, ccSummary);
 
   // Deterministic `Closes #N` block (#75), regenerated from the linked set
@@ -244,8 +335,15 @@ async function applyPrMetadata({
   // session's latest testing guidance on every turn.
   const testingBlock = buildTestingBlock(testingMd, testingPath);
 
+  // Deterministic "Before / after" media section (#195), regenerated from
+  // the session's stored capture artifacts. Mostly relevant on the lazy-PR
+  // path (headless → promote), where the capture ran long before the PR
+  // exists; on the interactive path visuals.js patches the live body
+  // directly after each capture instead.
+  const visualsBlock = buildVisualsBlock(visuals, require('./caddy').USERNODE_DOMAIN);
+
   const meta = await generatePrMetadata({
-    userMessage, ccSummary, requests, summaries, specs, username, apiKey, closingBlock, testingBlock,
+    userMessage, ccSummary, requests, summaries, specs, username, apiKey, closingBlock, testingBlock, visualsBlock,
   });
   const { title: prTitle, body: prBody } = meta;
 
@@ -258,6 +356,10 @@ async function applyPrMetadata({
   // rendered block against the snapshot last written to the PR body, so new
   // or revised guidance reaches GitHub on a title-unchanged turn.
   const testingChanged = testingBlock !== (appliedTesting || '');
+
+  // And for the visuals section (#195): a capture that landed since the
+  // last body write must reach GitHub even on a title-unchanged turn.
+  const visualsChanged = visualsBlock !== (appliedVisuals || '');
 
   // Debit the Haiku call to the session owner — into the BYOK bucket
   // when the user's own key paid for it (#119). The fallback-template
@@ -279,8 +381,8 @@ async function applyPrMetadata({
       session.pr_url = pr.html_url;
       session.pr_title = prTitle;
       await pool.query(
-        `UPDATE chat_sessions SET pr_number = $1, pr_url = $2, pr_title = $3, pr_linked_issues_applied = $4, pr_testing_applied = $5 WHERE id = $6`,
-        [pr.number, pr.html_url, prTitle, linkedIssues, testingBlock || null, session.id]
+        `UPDATE chat_sessions SET pr_number = $1, pr_url = $2, pr_title = $3, pr_linked_issues_applied = $4, pr_testing_applied = $5, pr_visuals_applied = $6 WHERE id = $7`,
+        [pr.number, pr.html_url, prTitle, linkedIssues, testingBlock || null, visualsBlock || null, session.id]
       );
       if (broadcast) broadcast('pr_created', { prNumber: pr.number, prUrl: pr.html_url, prTitle });
       return { prNumber: pr.number, prUrl: pr.html_url, prTitle };
@@ -291,10 +393,11 @@ async function applyPrMetadata({
   }
 
   // Existing PR: hit GitHub if the title changed OR the linked-issue set
-  // changed (#75) OR the testing guidance changed (#127) — the latter two
-  // would otherwise be skipped on a title-unchanged turn, leaving the new
-  // `Closes #N` line / "How to test" section off the PR body.
-  if (prTitle === session.pr_title && !issuesChanged && !testingChanged) {
+  // changed (#75) OR the testing guidance changed (#127) OR the visuals
+  // set changed (#195) — these would otherwise be skipped on a
+  // title-unchanged turn, leaving the new `Closes #N` line / "How to
+  // test" / "Before / after" section off the PR body.
+  if (prTitle === session.pr_title && !issuesChanged && !testingChanged && !visualsChanged) {
     return { prNumber: session.pr_number, prUrl: session.pr_url, prTitle: session.pr_title };
   }
 
@@ -305,8 +408,8 @@ async function applyPrMetadata({
     });
     session.pr_title = prTitle;
     await pool.query(
-      `UPDATE chat_sessions SET pr_title = $1, pr_linked_issues_applied = $2, pr_testing_applied = $3 WHERE id = $4`,
-      [prTitle, linkedIssues, testingBlock || null, session.id]
+      `UPDATE chat_sessions SET pr_title = $1, pr_linked_issues_applied = $2, pr_testing_applied = $3, pr_visuals_applied = $4 WHERE id = $5`,
+      [prTitle, linkedIssues, testingBlock || null, visualsBlock || null, session.id]
     );
     if (broadcast) broadcast('pr_updated', { prNumber: session.pr_number, prUrl: session.pr_url, prTitle });
     return { prNumber: session.pr_number, prUrl: session.pr_url, prTitle };
@@ -316,4 +419,8 @@ async function applyPrMetadata({
   }
 }
 
-module.exports = { generatePrMetadata, applyPrMetadata, sanitizeIssueNumbers, buildClosingBlock, buildTestingBlock, parseClosingKeywords };
+module.exports = {
+  generatePrMetadata, applyPrMetadata, sanitizeIssueNumbers,
+  buildClosingBlock, buildTestingBlock, parseClosingKeywords,
+  buildVisualsBlock, upsertVisualsBlock,
+};
