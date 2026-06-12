@@ -797,6 +797,114 @@ function kudosRoutes(config) {
     }
   });
 
+  // --------------------------------------------------------------
+  // GET /api/leaderboard/users/:username/prs?limit=50&before=<ISO ts>
+  //
+  // (#60) Profile drill-in from the Top-users tab: every PR the user
+  // has PROPOSED, newest first, with per-PR kudos credit and headline
+  // stats. Public via the '/api/leaderboard/' PUBLIC_PATHS prefix
+  // (src/middleware/auth.js), so the filters are privacy-critical:
+  //   - public apps only (view_visibility = 'public')
+  //   - no headless auto sessions
+  //   - proposed PRs only: promoted / merging / merged, plus archived
+  //     rows that were once promoted (closed PRs). Archived-but-never-
+  //     promoted drafts stay private — promoted_at is the tell.
+  //
+  // Per-PR kudos credit = direct pr_kudos + issue bounties AWARDED to
+  // the PR, the same two-arm union /api/leaderboard/prs uses, so the
+  // counts on a profile match the Top PRs tab. Keyset pagination on
+  // created_at mirrors GET /api/me/history (`nextBefore` cursor, null
+  // when the page came back short).
+  // --------------------------------------------------------------
+  router.get('/api/leaderboard/users/:username/prs', async (req, res) => {
+    const username = req.params.username;
+    const limit = clampLimit(req.query.limit === undefined ? '50' : req.query.limit);
+    let before = null;
+    if (req.query.before !== undefined && req.query.before !== '') {
+      const t = Date.parse(req.query.before);
+      if (!Number.isFinite(t)) {
+        return res.status(400).json({ error: 'Invalid before timestamp' });
+      }
+      before = new Date(t).toISOString();
+    }
+
+    // Shared by the stats aggregate and the page query so the two can
+    // never drift. cs/a aliases are bound in both FROM clauses below.
+    const proposedFilter = `
+          cs.user_id = $1
+          AND cs.is_headless = FALSE
+          AND a.view_visibility = 'public'
+          AND (cs.status IN ('promoted', 'merging', 'merged')
+               OR (cs.status = 'archived' AND cs.promoted_at IS NOT NULL))`;
+    // The two-arm credit count for one session (direct kudos + awarded
+    // bounties) — scalar subqueries keyed on cs.id, no fan-out risk.
+    const creditCount = `
+          (SELECT COUNT(*) FROM pr_kudos pk WHERE pk.session_id = cs.id)
+          + (SELECT COUNT(*) FROM issue_bounties ib
+               WHERE ib.status = 'awarded' AND ib.awarded_session_id = cs.id)`;
+
+    try {
+      const { rows: userRows } = await pool.query(
+        `SELECT id, username FROM users WHERE username = $1`,
+        [username]
+      );
+      if (!userRows.length) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      const user = userRows[0];
+
+      // Headline stats over the FULL filtered set (pagination-agnostic).
+      // kudos_merged matches the leaderboard's headline score
+      // (kudos_received_prs_merged above): all awarded bounties are
+      // merged credit by construction, direct kudos count only when the
+      // PR's status is currently 'merged'.
+      const { rows: statRows } = await pool.query(
+        `SELECT COUNT(*)::int AS prs_total,
+                COUNT(*) FILTER (WHERE cs.status = 'merged')::int AS prs_merged,
+                COALESCE(SUM(${creditCount}) FILTER (WHERE cs.status = 'merged'), 0)::int AS kudos_merged
+           FROM chat_sessions cs
+           JOIN apps a ON a.id = cs.app_id
+          WHERE ${proposedFilter}`,
+        [user.id]
+      );
+
+      const params = [user.id];
+      let beforeClause = '';
+      if (before) {
+        params.push(before);
+        beforeClause = `AND cs.created_at < $${params.length}`;
+      }
+      params.push(limit);
+      const { rows } = await pool.query(
+        `SELECT cs.id AS session_id,
+                cs.pr_number, cs.pr_url, cs.pr_title, cs.status,
+                cs.created_at, cs.promoted_at, cs.merged_at,
+                a.slug AS app_slug, a.name AS app_name,
+                (${creditCount})::int AS kudos_count
+           FROM chat_sessions cs
+           JOIN apps a ON a.id = cs.app_id
+          WHERE ${proposedFilter}
+            ${beforeClause}
+          ORDER BY cs.created_at DESC
+          LIMIT $${params.length}`,
+        params
+      );
+
+      const nextBefore = rows.length === limit
+        ? rows[rows.length - 1].created_at
+        : null;
+      res.json({
+        user: { user_id: user.id, username: user.username },
+        stats: statRows[0],
+        items: rows,
+        nextBefore,
+      });
+    } catch (err) {
+      log.error('kudos', 'leaderboard/users/prs failed', { username, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   return router;
 }
 
