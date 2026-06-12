@@ -964,6 +964,16 @@ const AppView = {
   // timestamp vs. the latest message in its thread). Data comes from
   // the same four endpoints the old Issues/Proposals tabs used.
 
+  // Staging-only demo mode: when the page itself was opened with
+  // ?demo=1 (hash navigation preserves the search string), forward it
+  // to the dev-data fetches so the server appends "[Mock]" long-title
+  // issues/proposals for layout verification. The server only honors
+  // the flag when USERNODE_ENV === 'staging', so this is inert in
+  // production no matter what's in the URL.
+  _demoQS() {
+    return new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
+  },
+
   // Fetch + cache everything the dev surfaces render from (the same
   // four endpoints the old tabs used): GitHub issues, governance
   // proposals, open PR proposals, merged PRs, plus voteState for the
@@ -974,9 +984,9 @@ const AppView = {
     const slug = AppView.appData.slug;
     try {
       const [ghRes, issuesRes, promotedRes, mergedRes] = await Promise.all([
-        fetch(`/api/apps/${slug}/github-issues`),
+        fetch(`/api/apps/${slug}/github-issues${AppView._demoQS()}`),
         fetch(`/api/apps/${slug}/issues`),
-        fetch(`/api/apps/${slug}/promoted`),
+        fetch(`/api/apps/${slug}/promoted${AppView._demoQS()}`),
         fetch(`/api/apps/${slug}/merged`),
       ]);
       const ghData = ghRes.ok ? await ghRes.json() : { issues: [] };
