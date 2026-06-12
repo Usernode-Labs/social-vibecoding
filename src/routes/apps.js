@@ -907,16 +907,16 @@ function appRoutes(config) {
     }
   });
 
-  // Post-creation visibility change (creator or admin only). Same enum +
-  // invalid-combination validation as create. Transition semantics:
-  //   - more public: safe and immediate; member rows are kept (inert on
-  //     collab-public apps, revived if re-privatized). Pending invites on
-  //     a now-collab-public app are auto-resolved (deleted + their
-  //     collab_invite notifications marked read) since membership is
-  //     meaningless there.
-  //   - more private: outsiders lose access immediately; favorites and
-  //     old notifications stay (inert) per the spec's trade-offs.
-  router.patch('/api/apps/:slug/visibility', drainGuard, async (req, res) => {
+  // Propose a visibility change (issue #124). The two statuses live in
+  // dapp.json's top-level `visibility` block, so changing them is a
+  // manifest-editing PR — same lifecycle as a rename: the PR drops into
+  // the vote panel, and when it merges, the production rebuild's
+  // reconcileAppVisibility applies the change (with the transition
+  // semantics — pending-invite cleanup etc. — in
+  // services/app-manifest.js applyVisibilityChange). The old instant
+  // PATCH /api/apps/:slug/visibility is gone; admins fast-track by
+  // force-merging the PR (POST /api/sessions/:id/admin-merge).
+  router.post('/api/apps/:slug/visibility-pr', drainGuard, issueCreateLimiter, async (req, res) => {
     const collabVisibility = req.body?.collabVisibility;
     const viewVisibility = req.body?.viewVisibility;
     const visibilityError = validateVisibilityCombo(collabVisibility, viewVisibility);
@@ -928,79 +928,61 @@ function appRoutes(config) {
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
       const app = rows[0];
       // Non-viewers get the existence-hiding 404; viewers without manage
-      // rights get an honest 403.
+      // rights get an honest 403. Proposer scope stays creator/admin —
+      // same authority the old instant switch had (any collaborator can
+      // still reach the same outcome via a dev session editing the file).
       if (!(await appAccess.checkAppAccess(pool, app, req.user, 'view'))) {
         return res.status(404).json({ error: 'App not found' });
       }
       if (!req.user?.isAdmin && app.created_by !== req.user?.id) {
-        return res.status(403).json({ error: 'Only the app creator or an admin can change visibility' });
+        return res.status(403).json({ error: 'Only the app creator or an admin can propose a visibility change' });
       }
       if (refuseIfSelfHosted(app, res, 'visibility')) return;
 
-      const unchanged = app.collab_visibility === collabVisibility
-        && app.view_visibility === viewVisibility;
-      if (unchanged) {
-        return res.json({ ok: true, collabVisibility, viewVisibility });
+      if (app.collab_visibility === collabVisibility
+          && app.view_visibility === viewVisibility) {
+        return res.status(400).json({ error: 'The app already has that visibility' });
       }
 
-      await pool.query(
-        `UPDATE apps SET collab_visibility = $1, view_visibility = $2 WHERE id = $3`,
-        [collabVisibility, viewVisibility, app.id]
+      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+        return res.status(503).json({
+          error: 'Visibility changes need GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+        });
+      }
+      if (!app.repo_url) {
+        return res.status(400).json({ error: 'App has no GitHub repository to open a PR against' });
+      }
+      if (!(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/)) {
+        return res.status(400).json({ error: 'Could not parse the app repository URL' });
+      }
+
+      // One visibility proposal in flight per app — point the caller at
+      // the open one instead of stacking PRs.
+      const existing = await renamePr.findVisibilityPr(pool, app.id);
+      if (existing) {
+        return res.status(409).json({
+          error: 'A visibility change is already up for vote',
+          sessionId: existing.id,
+          prNumber: existing.pr_number,
+          prUrl: existing.pr_url,
+        });
+      }
+
+      const result = await renamePr.createVisibilityPR(
+        config, pool, app,
+        { collab: collabVisibility, view: viewVisibility },
+        { id: req.user.id, username: req.user.username }
       );
 
-      // collab private → public: pending invites become meaningless.
-      // Delete them and resolve their drawer notifications.
-      if (app.collab_visibility === 'private' && collabVisibility === 'public') {
-        const { rows: pending } = await pool.query(
-          `DELETE FROM app_collaborators WHERE app_id = $1 AND status = 'invited'
-           RETURNING user_id`,
-          [app.id]
-        );
-        const notifications = require('../services/notifications');
-        const { pushNotificationToUser } = require('../services/ws');
-        for (const p of pending) {
-          await notifications.markInviteNotificationsRead(pool, p.user_id, app.id)
-            .catch(() => {});
-          try { pushNotificationToUser(p.user_id, { type: 'notifications_changed' }); } catch {}
-        }
-      }
-
-      appAccess.invalidateVisibility(app.id, app.slug);
-
-      const { sendSystemMessage, pushAppUpdate } = require('../services/ws');
-      const describe = (cv, vv) => cv === 'public'
-        ? 'public'
-        : (vv === 'private' ? 'private (collaborators only)' : 'invite-only build, public to view');
-      await sendSystemMessage(pool, app.id,
-        `${req.user.username} changed this app's visibility to ${describe(collabVisibility, viewVisibility)}`,
-        'system'
-      ).catch((err) => log.warn('apps', 'Visibility chat msg failed', { err: err.message }));
-
-      pushAppUpdate({
-        action: 'visibility_changed',
-        appSlug: app.slug,
-        appId: app.id,
-        collabVisibility,
-        viewVisibility,
+      res.status(201).json({
+        ok: true,
+        sessionId: result.sessionId,
+        prNumber: result.prNumber,
+        prUrl: result.prUrl,
       });
-
-      events.record(pool, {
-        type: events.EVENT_TYPES.VISIBILITY_CHANGED,
-        userId: req.user.id,
-        appId: app.id,
-        metadata: {
-          from: { collab: app.collab_visibility, view: app.view_visibility },
-          to: { collab: collabVisibility, view: viewVisibility },
-        },
-      });
-
-      log.info('apps', 'Visibility changed', {
-        slug: app.slug, collabVisibility, viewVisibility, by: req.user.username,
-      });
-      res.json({ ok: true, collabVisibility, viewVisibility });
     } catch (err) {
-      log.error('apps', 'Visibility change failed', { slug: req.params.slug, message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
+      log.error('apps', 'Visibility PR failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: err.message || 'Internal server error' });
     }
   });
 

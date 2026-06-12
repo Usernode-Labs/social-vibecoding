@@ -3016,11 +3016,28 @@ const AppView = {
       view: appData.view_visibility || 'public',
     };
 
-    // Visibility section: creator/admin only.
+    // Visibility section: creator/admin only. Changing visibility opens
+    // a dapp.json PR (issue #124), so it needs a repo — without one the
+    // pills are disabled with a hint.
     const visSection = document.getElementById('members-visibility-section');
+    const visStatus = document.getElementById('members-vis-error');
+    if (visStatus) {
+      visStatus.textContent = '';
+      visStatus.className = 'text-red-400 text-sm hidden';
+    }
     if (visSection) {
       visSection.classList.toggle('hidden', !appData.can_manage);
-      if (appData.can_manage) AppView._renderMembersVisPills();
+      if (appData.can_manage) {
+        AppView._renderMembersVisPills();
+        if (!appData.repo_url) {
+          visSection.querySelectorAll('[data-m-collab-vis], [data-m-view-vis]')
+            .forEach((p) => { p.disabled = true; });
+          if (visStatus) {
+            visStatus.textContent = 'Visibility changes are proposed as a dapp.json pull request — this app has no GitHub repository, so they\'re unavailable.';
+            visStatus.className = 'text-sm text-zinc-500 dark:text-zinc-400';
+          }
+        }
+      }
     }
     AppView._wireMembersModal();
 
@@ -3089,51 +3106,62 @@ const AppView = {
     if (hint) hint.classList.toggle('hidden', !collabPublic);
   },
 
-  // Pill click → optimistic local state + PATCH. On failure, revert to
-  // the server's last-known values from appData.
+  // Pill click → confirm → open a visibility-change proposal (a PR that
+  // edits dapp.json's `visibility` block — issue #124). NOT optimistic:
+  // the pills keep showing the current values until the proposal passes
+  // its vote, merges, and the redeploy's reconcile fires the
+  // `visibility_changed` WS event (handled in app.js, which re-renders
+  // the pills if this modal is open).
   async _setMembersVisibility(kind, value) {
-    const prev = { ...AppView._membersVis };
+    const cur = {
+      collab: AppView.appData.collab_visibility || 'public',
+      view: AppView.appData.view_visibility || 'public',
+    };
     const v = value === 'private' ? 'private' : 'public';
+    const target = { ...cur };
     if (kind === 'collab') {
-      AppView._membersVis.collab = v;
-      if (v === 'public') AppView._membersVis.view = 'public';
+      target.collab = v;
+      if (v === 'public') target.view = 'public';
     } else {
-      AppView._membersVis.view = (AppView._membersVis.collab === 'private') ? v : 'public';
+      target.view = (cur.collab === 'private') ? v : 'public';
     }
-    AppView._renderMembersVisPills();
-    if (prev.collab === AppView._membersVis.collab && prev.view === AppView._membersVis.view) return;
+    if (target.collab === cur.collab && target.view === cur.view) return;
 
-    const errEl = document.getElementById('members-vis-error');
-    if (errEl) errEl.classList.add('hidden');
+    const statusEl = document.getElementById('members-vis-error');
+    const setStatus = (msg, isError) => {
+      if (!statusEl) return;
+      statusEl.textContent = msg;
+      statusEl.className = `text-sm ${isError ? 'text-red-400' : 'text-zinc-500 dark:text-zinc-400'}`;
+      statusEl.classList.toggle('hidden', !msg);
+    };
+    setStatus('', false);
+
+    if (!window.confirm(
+      'Changing visibility opens a proposal that needs the group\'s vote. '
+      + 'The change applies after the vote passes and the app redeploys. Open the proposal?'
+    )) return;
+
     try {
-      const res = await fetch(`/api/apps/${AppView.appData.slug}/visibility`, {
-        method: 'PATCH',
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/visibility-pr`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          collabVisibility: AppView._membersVis.collab,
-          viewVisibility: AppView._membersVis.view,
+          collabVisibility: target.collab,
+          viewVisibility: target.view,
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      // Keep the in-memory app row honest so re-opens render correctly
-      // and tab gating recomputes on the next open.
-      AppView.appData.collab_visibility = AppView._membersVis.collab;
-      AppView.appData.view_visibility = AppView._membersVis.view;
-      // Going collab-public dissolves the invite/member sections.
-      const isPrivate = AppView._membersVis.collab === 'private';
-      const inviteSection = document.getElementById('members-invite-section');
-      const listSection = document.getElementById('members-list-section');
-      if (inviteSection) inviteSection.classList.toggle('hidden', !isPrivate);
-      if (listSection) listSection.classList.toggle('hidden', !isPrivate);
-      if (isPrivate) AppView.loadCollaborators();
-    } catch (err) {
-      AppView._membersVis = prev;
-      AppView._renderMembersVisPills();
-      if (errEl) {
-        errEl.textContent = `Visibility change failed: ${err.message}`;
-        errEl.classList.remove('hidden');
+      if (res.status === 409) {
+        setStatus('A visibility change is already up for vote — see the proposal in the Dev tab\'s vote panel.', false);
+        return;
       }
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setStatus(
+        `Proposal opened (PR #${data.prNumber}) — it needs the group's vote in the Dev tab's vote panel before the new visibility applies.`,
+        false
+      );
+    } catch (err) {
+      setStatus(`Could not open the visibility proposal: ${err.message}`, true);
     }
   },
 

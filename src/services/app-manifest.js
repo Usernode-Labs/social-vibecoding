@@ -84,6 +84,50 @@ function readName(parsed) {
   return raw;
 }
 
+// Allowed values for the optional top-level `visibility` block (issue
+// #124). `build` maps to apps.collab_visibility, `view` to
+// apps.view_visibility — same value set as the DB columns.
+const VISIBILITY_VALUES = new Set(['public', 'private']);
+
+// Normalize the optional top-level `visibility` block:
+//   "visibility": { "build": "public"|"private", "view": "public"|"private" }
+// Each axis resolves independently to 'public', 'private', or null
+// (= leave the platform value untouched — the same absent-field
+// semantics as the top-level `name`). Lenient like the rest of the
+// reader: a non-object block, an absent key, or any other value drops
+// to null with a warn. Returns null when the block is absent or
+// carries nothing usable. Never throws.
+function readVisibility(parsed) {
+  const raw = parsed?.visibility;
+  if (raw == null) return null;
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    log.warn('app-manifest', 'Ignoring non-object visibility block');
+    return null;
+  }
+  const norm = (axis) => {
+    const v = raw[axis];
+    if (v == null) return null;
+    if (typeof v === 'string' && VISIBILITY_VALUES.has(v)) return v;
+    log.warn('app-manifest', 'Ignoring invalid visibility value', { axis, value: v });
+    return null;
+  };
+  const build = norm('build');
+  const view = norm('view');
+  if (build == null && view == null) return null;
+  return { build, view };
+}
+
+// Human description of a (collab, view) visibility pair — shared by the
+// reconcile chat message and the visibility-PR title so every surface
+// describes the same state with the same words. Matches the wording the
+// old direct-PATCH route used.
+function describeVisibility(collab, view) {
+  if (collab === 'public') return 'public';
+  return view === 'private'
+    ? 'private (collaborators only)'
+    : 'invite-only build, public to view';
+}
+
 // Bound on the consent dialog's purpose line — one short sentence, not
 // a marketing paragraph.
 const MAX_LLM_PURPOSE_LENGTH = 140;
@@ -123,9 +167,9 @@ function read(cloneDir) {
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
-    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null };
+    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null, visibility: null };
     log.warn('app-manifest', 'Read failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null };
+    return { name: null, secrets: [], llm: null, visibility: null };
   }
 
   let parsed;
@@ -133,7 +177,7 @@ function read(cloneDir) {
     parsed = JSON.parse(raw);
   } catch (err) {
     log.warn('app-manifest', 'Parse failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null };
+    return { name: null, secrets: [], llm: null, visibility: null };
   }
 
   const secretsIn = Array.isArray(parsed?.secrets) ? parsed.secrets : [];
@@ -169,7 +213,12 @@ function read(cloneDir) {
     });
   }
 
-  return { name: readName(parsed), secrets, llm: readLlm(parsed) };
+  return {
+    name: readName(parsed),
+    secrets,
+    llm: readLlm(parsed),
+    visibility: readVisibility(parsed),
+  };
 }
 
 /**
@@ -215,11 +264,150 @@ async function reconcileAppName(pool, app, manifest) {
   return true;
 }
 
+/**
+ * Apply a visibility change to an app row with the full transition
+ * semantics the old direct-PATCH route had (issue #124 moved the
+ * authority into dapp.json, so this now lives here, shared by the
+ * deploy-time reconcile below and any future caller):
+ *   - UPDATE both columns;
+ *   - collab private→public: pending invites become meaningless —
+ *     delete them, mark their drawer notifications read, ping clients;
+ *   - flush the WS-broadcast / edge-gate visibility caches;
+ *   - group-chat system message + `visibility_changed` app update;
+ *   - VISIBILITY_CHANGED analytics event.
+ * `app` must carry id, slug, collab_visibility, view_visibility (the
+ * CURRENT values — used for the transition checks and the event's
+ * `from`). All side effects beyond the column UPDATE are best-effort.
+ */
+async function applyVisibilityChange(pool, app, { collab, view }, { actorLabel = 'dapp.json', userId = null } = {}) {
+  await pool.query(
+    `UPDATE apps SET collab_visibility = $1, view_visibility = $2 WHERE id = $3`,
+    [collab, view, app.id]
+  );
+
+  // collab private → public: pending invites become meaningless.
+  // Delete them and resolve their drawer notifications.
+  if (app.collab_visibility === 'private' && collab === 'public') {
+    try {
+      const { rows: pending } = await pool.query(
+        `DELETE FROM app_collaborators WHERE app_id = $1 AND status = 'invited'
+         RETURNING user_id`,
+        [app.id]
+      );
+      const notifications = require('./notifications');
+      const { pushNotificationToUser } = require('./ws');
+      for (const p of pending) {
+        await notifications.markInviteNotificationsRead(pool, p.user_id, app.id)
+          .catch(() => {});
+        try { pushNotificationToUser(p.user_id, { type: 'notifications_changed' }); } catch {}
+      }
+    } catch (err) {
+      log.warn('app-manifest', 'Pending-invite cleanup failed', { appId: app.id, err: err.message });
+    }
+  }
+
+  try {
+    require('./app-access').invalidateVisibility(app.id, app.slug);
+  } catch (err) {
+    log.warn('app-manifest', 'Visibility cache invalidation failed', { appId: app.id, err: err.message });
+  }
+
+  try {
+    const { sendSystemMessage, pushAppUpdate } = require('./ws');
+    await sendSystemMessage(pool, app.id,
+      `This app's visibility changed to ${describeVisibility(collab, view)} (set by ${actorLabel})`,
+      'system'
+    ).catch((err) => log.warn('app-manifest', 'Visibility chat msg failed', { err: err.message }));
+    pushAppUpdate({
+      action: 'visibility_changed',
+      appSlug: app.slug,
+      appId: app.id,
+      collabVisibility: collab,
+      viewVisibility: view,
+    });
+  } catch (err) {
+    log.warn('app-manifest', 'Visibility broadcast failed', { appId: app.id, err: err.message });
+  }
+
+  try {
+    const events = require('./events');
+    events.record(pool, {
+      type: events.EVENT_TYPES.VISIBILITY_CHANGED,
+      userId,
+      appId: app.id,
+      metadata: {
+        from: { collab: app.collab_visibility, view: app.view_visibility },
+        to: { collab, view },
+        source: 'manifest',
+      },
+    });
+  } catch (err) {
+    log.warn('app-manifest', 'Visibility event record failed', { appId: app.id, err: err.message });
+  }
+
+  log.info('app-manifest', 'Applied visibility change', {
+    appId: app.id, slug: app.slug, collab, view, actorLabel,
+  });
+}
+
+/**
+ * Deploy-time visibility reconcile — sibling of reconcileAppName. The
+ * manifest's optional top-level `visibility` block is the source of
+ * truth for apps.collab_visibility ("build") / apps.view_visibility
+ * ("view"); an absent block / axis leaves the platform value untouched.
+ *
+ * Re-reads the app row fresh (callers pass rows of varying width and
+ * the columns here must be current), resolves the target pair, and:
+ *   - no-ops when nothing changes, when the manifest carries no
+ *     visibility, or for self_hosted apps (the platform's own row stays
+ *     out of repo control, matching the old PATCH route's refusal);
+ *   - skips with a warn when the resolved pair violates the invariant
+ *     (build=public AND view=private — the DB CHECK would reject it);
+ *   - otherwise applies via applyVisibilityChange above.
+ *
+ * Best-effort like reconcileAppName: callers fire-and-log; a failure
+ * here must never fail the deploy.
+ */
+async function reconcileAppVisibility(pool, app, manifest) {
+  const vis = manifest?.visibility;
+  if (!vis || (vis.build == null && vis.view == null)) return false;
+
+  const { rows } = await pool.query(
+    `SELECT id, slug, self_hosted, collab_visibility, view_visibility FROM apps WHERE id = $1`,
+    [app.id]
+  );
+  if (!rows.length) return false;
+  const cur = rows[0];
+
+  if (cur.self_hosted) {
+    log.warn('app-manifest', 'Skipping visibility reconcile for self-hosted app', { appId: cur.id });
+    return false;
+  }
+
+  const collab = vis.build || cur.collab_visibility;
+  const view = vis.view || cur.view_visibility;
+  if (collab === cur.collab_visibility && view === cur.view_visibility) return false;
+
+  if (collab === 'public' && view === 'private') {
+    log.warn('app-manifest', 'Skipping invalid visibility combo from dapp.json', {
+      appId: cur.id, slug: cur.slug, collab, view,
+    });
+    return false;
+  }
+
+  await applyVisibilityChange(pool, cur, { collab, view }, { actorLabel: 'dapp.json', userId: null });
+  return true;
+}
+
 module.exports = {
   read,
   readName,
   readLlm,
+  readVisibility,
+  describeVisibility,
   reconcileAppName,
+  reconcileAppVisibility,
+  applyVisibilityChange,
   RESERVED_KEYS,
   RESERVED_KEY_PREFIXES,
   KEY_RE,

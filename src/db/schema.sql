@@ -789,6 +789,10 @@ COMMENT ON TABLE events IS 'staging:private';
 -- means the viewer list IS the collaborator list (viewers are never
 -- separately enumerated). Admins always see everything — enforced in
 -- src/services/app-access.js, the shared gate every route goes through.
+-- Post-creation changes go through dapp.json's top-level `visibility`
+-- block (issue #124): a vote-gated PR edits the block and the merge's
+-- production rebuild reconciles these columns to it
+-- (services/app-manifest.js reconcileAppVisibility).
 -- Defaults make every pre-migration app public/public (no behavior change).
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS collab_visibility VARCHAR(10) NOT NULL DEFAULT 'public';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS view_visibility   VARCHAR(10) NOT NULL DEFAULT 'public';
