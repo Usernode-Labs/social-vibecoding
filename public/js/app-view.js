@@ -1201,7 +1201,7 @@ const AppView = {
               title="${s.busy ? 'AI is working — ' : ''}${label}">
               ${AppView._devCardIcon('session')}
               <span class="flex-1 min-w-0">
-                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">${label}</span>
+                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200 break-words">${label}</span>
                 <span class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">Your dev session</span>
               </span>
               ${statusTag}
@@ -1319,6 +1319,10 @@ const AppView = {
   // preview / kudos / Discussion / Open session). With { noNav: true }
   // (the topic sub-view's header card) the tap-to-open affordance and
   // Discussion button are dropped — you're already in the discussion.
+  // On narrow screens line 1 wraps progressively instead of truncating
+  // the title: the 💬 badge drops to the next line first, then the
+  // tally pill, and only then does the title itself wrap (see
+  // .dev-card-headline in app.css).
   _renderProposalCard(pr, opts) {
     const noNav = !!(opts && opts.noNav);
     const ctx = AppView._proposalsCtx || {};
@@ -1370,9 +1374,9 @@ const AppView = {
         ${AppView._devCardIcon(isMerged ? 'done' : 'proposal')}
         <div class="flex-1 min-w-0">
           <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <div class="flex-1 min-w-0">
-              <div class="text-sm text-zinc-800 dark:text-zinc-200 truncate">${titleHtml}</div>
-              <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate">${metaParts.join(' · ')}${closesPills ? ` ${closesPills}` : ''}</div>
+            <div class="dev-card-headline">
+              <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words">${titleHtml}</div>
+              <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta">${metaParts.join(' · ')}${closesPills ? ` ${closesPills}` : ''}</div>
             </div>
             ${unvotedBadge}
             ${AppView.voteCountPill(pr, majority)}
@@ -1447,9 +1451,9 @@ const AppView = {
         ${AppView._devCardIcon('gov')}
         <div class="flex-1 min-w-0">
           <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <div class="flex-1 min-w-0">
-              <div class="text-sm text-zinc-800 dark:text-zinc-200 truncate" title="${escapeHtml(titleText)}">${escapeHtml(titleText)}</div>
-              <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate">${metaParts.join(' · ')}</div>
+            <div class="dev-card-headline">
+              <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words">${escapeHtml(titleText)}</div>
+              <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta">${metaParts.join(' · ')}</div>
             </div>
             ${tallyPill}
             ${AppView._devChatBadge(govChatN)}
@@ -1762,9 +1766,9 @@ const AppView = {
         ${AppView._devCardIcon('issue')}
         <div class="flex-1 min-w-0">
           <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <div class="flex-1 min-w-0">
-              <div class="text-sm text-zinc-800 dark:text-zinc-200 truncate" title="${escapeHtml(rowTitle)}">${escapeHtml(issue.title)}</div>
-              <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate"><a href="${href}" target="_blank" rel="noopener" class="font-mono text-violet-400 hover:underline">#${n}</a>${issue.created_by_username ? ` · ${escapeHtml(issue.created_by_username)}` : ''}</div>
+            <div class="dev-card-headline">
+              <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words" title="${escapeHtml(rowTitle)}">${escapeHtml(issue.title)}</div>
+              <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta"><a href="${href}" target="_blank" rel="noopener" class="font-mono text-violet-400 hover:underline">#${n}</a>${issue.created_by_username ? ` · ${escapeHtml(issue.created_by_username)}` : ''}</div>
             </div>
             ${bountyPill}
             ${AppView._devChatBadge(issue.chatCount)}
@@ -1852,9 +1856,9 @@ const AppView = {
           ${AppView._devCardIcon('done')}
           <div class="flex-1 min-w-0">
             <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <div class="flex-1 min-w-0">
-                <div class="text-sm text-zinc-800 dark:text-zinc-200 truncate" title="${escapeHtml(mergedQuoteTitle)}">${mergedLabel}</div>
-                <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate"><a href="${pr.pr_url || '#'}" target="_blank" rel="noopener" class="font-mono text-emerald-400 hover:underline">PR#${pr.pr_number || pr.id}</a> · ${date}${AppView.closesPillHtml(pr) ? ` ${AppView.closesPillHtml(pr)}` : ''}</div>
+              <div class="dev-card-headline">
+                <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words" title="${escapeHtml(mergedQuoteTitle)}">${mergedLabel}</div>
+                <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta"><a href="${pr.pr_url || '#'}" target="_blank" rel="noopener" class="font-mono text-emerald-400 hover:underline">PR#${pr.pr_number || pr.id}</a> · ${date}${AppView.closesPillHtml(pr) ? ` ${AppView.closesPillHtml(pr)}` : ''}</div>
               </div>
               ${AppView.voteCountPill(pr, majority)}
             </div>
