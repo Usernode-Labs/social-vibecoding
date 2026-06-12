@@ -574,6 +574,35 @@ function issueRoutes(config) {
         };
       });
 
+      // #227: the staging mocks have no chat_sessions rows, so the feed's
+      // auto-solve-first ordering would be unreviewable in a preview.
+      // Attach synthetic headless state to two [Mock] rows — 900003
+      // 'generating' (30h old, naturally last by recency, so the re-rank
+      // is unmistakable) and 900005 'ready'/spec — only where no real
+      // headless row already claimed the number, so prod-cloned data is
+      // never overridden. Request-time and read-only; strictly a no-op
+      // in production.
+      if (IS_STAGING) {
+        const mockHeadless = new Map([
+          [900003, { status: 'generating', outcome: null }],
+          [900005, { status: 'ready', outcome: 'spec' }],
+        ]);
+        for (const issue of issues) {
+          const m = mockHeadless.get(issue.number);
+          if (m && !issue.headless) {
+            issue.headless = {
+              sessionId: issue.number,
+              status: m.status,
+              outcome: m.outcome,
+              username: 'staging-tester',
+              mySessionId: null,
+              stagingUrl: null,
+              prNumber: null,
+            };
+          }
+        }
+      }
+
       const used = await countWeeklyAllowanceUsed(pool, req.user.id, weekStartUtc());
       const myRemaining = Math.max(0, WEEKLY_KUDOS_LIMIT - used);
 
