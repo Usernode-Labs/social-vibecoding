@@ -29,7 +29,10 @@ const AppView = {
   DEV_CARD_ICONS: {
     chat: ['bg-violet-600/15 text-violet-500', 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z'],
     session: ['bg-emerald-500/15 text-emerald-500', 'M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z'],
-    issue: ['bg-amber-500/15 text-amber-500', 'M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z'],
+    // Comment-bubble-with-pencil: the chat bubble outline (dots removed)
+    // plus the Heroicons pencil-alt tip scaled to sit inside it — issues
+    // are written feedback, not warnings (hence no more exclamation).
+    issue: ['bg-amber-500/15 text-amber-500', 'M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5zM15.35 6.95a1.2 1.2 0 111.7 1.7l-5.15 5.15H10.2v-1.7l5.15-5.15z'],
     proposal: ['bg-sky-500/15 text-sky-500', 'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-11h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5'],
     gov: ['bg-slate-500/15 text-slate-400', 'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z'],
     done: ['bg-emerald-500/10 text-emerald-500', 'M5 13l4 4L19 7'],
@@ -507,16 +510,16 @@ const AppView = {
 
   async _renderTopicSubView(content, ref) {
     AppView._devTopic = { kind: ref.kind, id: ref.id };
+    // The header row is just the back control — the topic's icon, title and
+    // number already live on the header card painted into #dev-topic-head,
+    // so repeating them up here was pure duplication.
     content.innerHTML = `
       <div class="flex flex-col h-full min-h-0">
         <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-          <button id="dev-topic-back" class="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm shrink-0" title="Back to the dev page">&larr;</button>
-          <div id="dev-topic-title" class="flex items-center gap-2 flex-1 min-w-0">
-            <span class="text-xs text-zinc-500 dark:text-zinc-400">Loading…</span>
-          </div>
+          <button id="dev-topic-back" class="inline-flex items-center gap-1 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm shrink-0" title="Back to the dev page">&larr; Back</button>
         </div>
         <div class="flex-1 min-h-0 flex flex-col px-3 py-2">
-          <div id="dev-topic-head" class="shrink-0 overflow-y-auto overscroll-contain" style="max-height:45%"></div>
+          <div id="dev-topic-head" class="shrink-0 overflow-y-auto overscroll-contain" style="max-height:45%"><span class="text-xs text-zinc-500 dark:text-zinc-400">Loading…</span></div>
           <div id="dev-topic-thread" class="flex-1 min-h-0 mt-2"></div>
         </div>
       </div>`;
@@ -561,41 +564,26 @@ const AppView = {
   _renderTopicHead() {
     const t = AppView._devTopic;
     const head = document.getElementById('dev-topic-head');
-    const titleEl = document.getElementById('dev-topic-title');
     if (!t || !head) return;
     const item = AppView._findTopicItem();
     // Closed / merged away mid-view: keep the last render readable.
     if (!item) return;
 
-    let icon;
-    let label;
     let cardHtml;
     let bodyHtml;
     if (t.kind === 'issue') {
-      icon = 'issue';
-      label = `#${item.number} · ${item.title}`;
       cardHtml = AppView._renderIssueRow(item, { noNav: true });
       bodyHtml = AppView._issueBodyHtml(item);
     } else if (t.kind === 'proposal') {
-      icon = item.status === 'merged' ? 'done' : 'proposal';
-      label = `PR#${item.pr_number || item.id} · ${item.pr_title || `by ${item.username || ''}`}`;
       cardHtml = AppView._renderProposalCard(item, { noNav: true });
       bodyHtml = AppView._proposalDetailsHtml(item);
     } else {
-      icon = 'gov';
-      label = item.kind === 'rename'
-        ? `Rename to "${(item.payload && item.payload.newName) || item.title}"`
-        : item.title;
       cardHtml = AppView._renderGovCard(item, { noNav: true });
       bodyHtml = item.description
         ? `<div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">${escapeHtml(item.description)}</div>`
         : '';
     }
 
-    if (titleEl) {
-      titleEl.innerHTML = `${AppView._devCardIcon(icon, { small: true })}`
-        + `<span class="text-xs font-semibold text-zinc-700 dark:text-zinc-300 truncate">${escapeHtml(label)}</span>`;
-    }
     head.innerHTML = cardHtml + bodyHtml;
     if (window.Kudos) Kudos.attach(head);
     if (t.kind === 'proposal' && item.status !== 'merged') AppView._loadVoteRoster(item.id);
@@ -1368,19 +1356,29 @@ const AppView = {
     const sessionBtn = (App.user && pr.user_id === App.user.id)
       ? `<button class="gc-vote-btn" title="Open the dev session behind this proposal" onclick="AppView.openProposalSession(${pr.id})">Open session</button>`
       : '';
-    // #195: before/after capture tiles so voters can judge a visual change
-    // without opening the staging preview.
-    const visualsHtml = AppView.visualsTilesHtml(pr.visuals);
+    // #195/#211: before/after capture tiles, collapsed by default behind a
+    // "Show before/after" pill that sits with the other action buttons. The
+    // tiles wait in an inert <template> (no bandwidth, no autoplay loops)
+    // until expanded; open/closed state lives in _visualsOpen so it survives
+    // the feed's frequent innerHTML re-renders.
+    const visualTiles = AppView.visualsTilesHtml(pr.visuals);
+    const visualsOpen = visualTiles && AppView._visualsOpen.has(pr.id);
+    const visualsBtn = visualTiles
+      ? `<button type="button" class="gc-vote-btn" aria-expanded="${visualsOpen ? 'true' : 'false'}" onclick="AppView.toggleVisuals(${pr.id}, this)">${visualsOpen ? 'Hide before/after' : 'Show before/after'}</button>`
+      : '';
+    const visualsBlock = visualTiles
+      ? `<template class="usn-visuals-tpl">${visualTiles}</template><div class="usn-visuals-body">${visualsOpen ? visualTiles : ''}</div>`
+      : '';
 
     // Merged proposals (topic-view fallback) drop the live vote buttons —
     // the vote is settled; kudos stays open.
     const actions = (isMerged
-      ? [kudosBtn, sessionBtn]
-      : [AppView.voteButtonsHtml(pr), kudosBtn, sessionBtn]
+      ? [kudosBtn, sessionBtn, visualsBtn]
+      : [AppView.voteButtonsHtml(pr), kudosBtn, sessionBtn, visualsBtn]
     ).filter(Boolean).join('');
 
     return `
-      <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}"${noNav ? '' : ` data-proposal-row="${pr.id}" title="Open this proposal's discussion"`}>
+      <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}"${visualTiles ? ' data-visuals-scope="1"' : ''}${noNav ? '' : ` data-proposal-row="${pr.id}" title="Open this proposal's discussion"`}>
         ${AppView._devCardIcon(isMerged ? 'done' : 'proposal')}
         <div class="flex-1 min-w-0">
           <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -1393,8 +1391,8 @@ const AppView = {
             ${stateBadge}
             ${AppView._devChatBadge(chatN)}
           </div>
-          ${visualsHtml ? `<div class="mt-1.5">${visualsHtml}</div>` : ''}
           ${actions ? `<div class="flex flex-wrap items-center gap-1.5 mt-1.5">${actions}</div>` : ''}
+          ${visualsBlock}
         </div>
         ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
       </div>`;
@@ -1522,10 +1520,12 @@ const AppView = {
   },
 
   // Small "💬 N" thread-message badge shared by issue rows and proposal
-  // cards. Always rendered (even at 0) so live bumps have a target.
+  // cards. Always rendered (even at 0) so live bumps have a target, but
+  // visually hidden until the thread has at least one human message —
+  // a sea of gray "💬 0" pills was pure noise.
   _devChatBadge(count) {
     const n = parseInt(count) || 0;
-    return `<span class="dev-chat-badge inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded ${n ? 'bg-violet-500/10 text-violet-400' : 'bg-zinc-500/10 text-zinc-500'}" data-count="${n}" title="Messages in this thread">&#128172; ${n}</span>`;
+    return `<span class="dev-chat-badge inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded ${n ? 'bg-violet-500/10 text-violet-400' : 'hidden bg-zinc-500/10 text-zinc-500'}" data-count="${n}" title="Messages in this thread">&#128172; ${n}</span>`;
   },
 
   // Live badge bump for a thread the viewer doesn't have open (called
@@ -1550,7 +1550,7 @@ const AppView = {
       const n = (parseInt(el.dataset.count) || 0) + 1;
       el.dataset.count = String(n);
       el.innerHTML = `&#128172; ${n}`;
-      el.classList.remove('bg-zinc-500/10', 'text-zinc-500');
+      el.classList.remove('hidden', 'bg-zinc-500/10', 'text-zinc-500');
       el.classList.add('bg-violet-500/10', 'text-violet-400');
     }
   },
@@ -2282,7 +2282,11 @@ const AppView = {
   // markup from the row's <template> on open and clears it on close
   // (clearing, rather than display:none, stops any looping <video>).
   toggleVisuals(sessionId, btn) {
-    const wrap = btn.closest('.usn-visuals-toggle');
+    // Two layouts share this handler: the home panel's self-contained
+    // .usn-visuals-toggle wrapper, and the proposal card (the toggle pill
+    // lives in the actions row, the template/body below it — the card root
+    // carries data-visuals-scope so we can find them).
+    const wrap = btn.closest('.usn-visuals-toggle, [data-visuals-scope]');
     if (!wrap) return;
     const body = wrap.querySelector('.usn-visuals-body');
     const tpl = wrap.querySelector('template.usn-visuals-tpl');

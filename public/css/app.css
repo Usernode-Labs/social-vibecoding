@@ -16,6 +16,7 @@
   --text-code: #3f3f46;
   --accent: #7c3aed;
   --accent-light: #8b5cf6;
+  --accent-tint: rgba(124, 58, 237, 0.08);
 }
 
 .dark {
@@ -36,6 +37,7 @@
   --text-code: #e4e4e7;
   --accent: #a78bfa;
   --accent-light: #c4b5fd;
+  --accent-tint: rgba(167, 139, 250, 0.12);
 }
 
 html, body {
@@ -515,6 +517,10 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 
 /* ── Vote panel ─────────────────────────────────────────── */
 
+/* Action pills: transparent "ghost" base (no gray fill) that picks up a
+ * violet accent tint on hover; semantic variants (yes/no/preview/admin)
+ * carry a faint resting tint of their own hue — the same tinted-chip
+ * language as the Closes-#N chips, bounty pill, and icon chips. */
 .gc-vote-btn {
   padding: 3px 10px;
   border-radius: 9999px;
@@ -522,18 +528,41 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   font-weight: 500;
   cursor: pointer;
   border: 1px solid var(--border);
-  background: var(--bg-secondary);
-  color: var(--text-faint);
+  background: transparent;
+  color: var(--text-muted);
   transition: all 150ms;
 }
-.gc-vote-btn:hover { background: var(--bg-tertiary); }
+.gc-vote-btn:hover {
+  background: var(--accent-tint);
+  border-color: var(--accent-light);
+  color: var(--accent);
+}
+.gc-vote-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text-muted);
+}
 
-.gc-vote-btn-yes { color: #22c55e; }
-.gc-vote-btn-yes:hover { background: rgba(34, 197, 94, 0.15); }
-.gc-vote-btn-no { color: #ef4444; }
-.gc-vote-btn-no:hover { background: rgba(239, 68, 68, 0.15); }
-.gc-vote-btn-preview { color: var(--accent); }
-.gc-vote-btn-preview:hover { background: rgba(167, 139, 250, 0.15); }
+.gc-vote-btn-yes {
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.10);
+  border-color: rgba(34, 197, 94, 0.35);
+}
+.gc-vote-btn-yes:hover { background: rgba(34, 197, 94, 0.18); border-color: rgba(34, 197, 94, 0.5); color: #22c55e; }
+.gc-vote-btn-no {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.10);
+  border-color: rgba(239, 68, 68, 0.35);
+}
+.gc-vote-btn-no:hover { background: rgba(239, 68, 68, 0.18); border-color: rgba(239, 68, 68, 0.5); color: #ef4444; }
+.gc-vote-btn-preview {
+  color: var(--accent);
+  background: rgba(167, 139, 250, 0.10);
+  border-color: rgba(167, 139, 250, 0.35);
+}
+.gc-vote-btn-preview:hover { background: rgba(167, 139, 250, 0.18); border-color: rgba(167, 139, 250, 0.5); color: var(--accent); }
 /* Admin force-merge / force-undo buttons. Amber instead of red so
  * they don't visually dominate the Yes/No pair, but distinct enough
  * from the regular vote buttons that an admin clicking through the
@@ -542,10 +571,15 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
  * misclick guard; the colour is just the affordance hint. */
 .gc-vote-btn-admin {
   color: #f59e0b;
+  background: rgba(245, 158, 11, 0.10);
   border-color: rgba(245, 158, 11, 0.4);
 }
-.gc-vote-btn-admin:hover { background: rgba(245, 158, 11, 0.15); }
-.gc-vote-active { background: var(--bg-tertiary); font-weight: 600; }
+.gc-vote-btn-admin:hover { background: rgba(245, 158, 11, 0.18); border-color: rgba(245, 158, 11, 0.55); color: #f59e0b; }
+/* The viewer's cast vote: stronger tint + bolder text (color comes from
+ * the -yes/-no variant it sits on). */
+.gc-vote-active { background: rgba(127, 127, 127, 0.18); font-weight: 600; }
+.gc-vote-btn-yes.gc-vote-active { background: rgba(34, 197, 94, 0.22); }
+.gc-vote-btn-no.gc-vote-active { background: rgba(239, 68, 68, 0.22); }
 /* Read-only "You voted X" box shown in place of the buttons once the viewer
    has cast a vote. Tinted by their choice (green = yes, red = no). */
 .gc-vote-voted-box {

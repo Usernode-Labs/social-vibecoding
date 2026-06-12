@@ -202,6 +202,7 @@ async function hydrateAndPush(pool, row) {
               n.app_id, a.slug AS app_slug, a.name AS app_name,
               n.chat_message_id,
               cm.content AS message_content,
+              cm.thread_type, cm.thread_ref,
               n.session_id,
               cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
               su.username AS source_username,
@@ -394,6 +395,7 @@ async function listForUser(pool, userId, { limit = 100, before = null } = {}) {
             n.app_id, a.slug AS app_slug, a.name AS app_name,
             n.chat_message_id,
             cm.content AS message_content,
+            cm.thread_type, cm.thread_ref,
             n.session_id,
             cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
             su.username AS source_username,
@@ -577,6 +579,10 @@ function serialize(row) {
     appName: row.app_name,
     chatMessageId: row.chat_message_id,
     messageContent: row.message_content,
+    // #194 parity: when the referenced chat message lives in a topic
+    // thread, these route the click to that topic instead of general chat.
+    threadType: row.thread_type || null,
+    threadRef: row.thread_ref != null ? row.thread_ref : null,
     sessionId: row.session_id,
     prTitle: row.pr_title,
     prNumber: row.pr_number,

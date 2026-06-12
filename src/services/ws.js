@@ -418,6 +418,7 @@ async function handleMessage(pool, client, msg) {
             `SELECT n.id, n.kind, n.read_at, n.created_at,
                     n.app_id, a.slug AS app_slug, a.name AS app_name,
                     n.chat_message_id, cm.content AS message_content,
+                    cm.thread_type, cm.thread_ref,
                     n.session_id, cs.pr_title, cs.pr_number,
                     su.username AS source_username, n.user_id
              FROM notifications n
@@ -460,6 +461,7 @@ async function handleMessage(pool, client, msg) {
             `SELECT n.id, n.kind, n.read_at, n.created_at,
                     n.app_id, a.slug AS app_slug, a.name AS app_name,
                     n.chat_message_id, cm.content AS message_content,
+                    cm.thread_type, cm.thread_ref,
                     n.session_id, cs.pr_title, cs.pr_number,
                     su.username AS source_username, n.user_id
              FROM notifications n
@@ -554,6 +556,7 @@ async function handleMessage(pool, client, msg) {
               `SELECT n.id, n.kind, n.read_at, n.created_at,
                       n.app_id, a.slug AS app_slug, a.name AS app_name,
                       n.chat_message_id, cm.content AS message_content,
+                      cm.thread_type, cm.thread_ref,
                       n.session_id, cs.pr_title, cs.pr_number,
                       su.username AS source_username, n.user_id, n.detail
                FROM notifications n

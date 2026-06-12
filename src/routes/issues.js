@@ -140,9 +140,12 @@ function issueRoutes(config) {
            (SELECT vote FROM issue_votes WHERE issue_id = i.id AND user_id = $2) as my_vote,
            -- #194: governance-thread message count for the chat badge,
            -- plus the latest thread-message timestamp for the forum
-           -- feed's activity sort.
+           -- feed's activity sort. chat_count counts human messages only
+           -- (msg_type='message') so vote/lifecycle system rows don't
+           -- inflate the 💬 badge.
            (SELECT COUNT(*)::int FROM chat_messages cm
-             WHERE cm.app_id = i.app_id AND cm.thread_type = 'governance' AND cm.thread_ref = i.id) as chat_count,
+             WHERE cm.app_id = i.app_id AND cm.thread_type = 'governance' AND cm.thread_ref = i.id
+               AND cm.msg_type = 'message') as chat_count,
            (SELECT MAX(cm.created_at) FROM chat_messages cm
              WHERE cm.app_id = i.app_id AND cm.thread_type = 'governance' AND cm.thread_ref = i.id) as last_message_at
          FROM issues i
@@ -275,10 +278,19 @@ function issueRoutes(config) {
       } else {
         chatPrefix = `${req.user.username} created issue: "${title}"`;
       }
-      await sendSystemMessage(pool, app.id,
-        `${chatPrefix}${githubIssueNumber ? ` (#${githubIssueNumber})` : ''}`,
-        'system'
-      );
+      const createdMsg = `${chatPrefix}${githubIssueNumber ? ` (#${githubIssueNumber})` : ''}`;
+      await sendSystemMessage(pool, app.id, createdMsg, 'system');
+      // Dual-post the creation into the topic's own thread so the
+      // discussion opens with its origin in context: governance proposals
+      // (secret_change / rename) thread on the local issue id; general
+      // issues thread on the GitHub twin number (no twin → no thread yet).
+      if (kind === 'secret_change' || kind === 'rename') {
+        await sendSystemMessage(pool, app.id, createdMsg, 'system',
+          null, { type: 'governance', ref: rows[0].id }).catch(() => {});
+      } else if (githubIssueNumber) {
+        await sendSystemMessage(pool, app.id, createdMsg, 'system',
+          null, { type: 'issue', ref: githubIssueNumber }).catch(() => {});
+      }
 
       pushIssueUpdate({ action: 'created', appSlug: app.slug, appId: app.id, issueId: rows[0].id, kind });
 
@@ -476,9 +488,14 @@ function issueRoutes(config) {
       // #194: per-issue thread message counts (and the latest message
       // timestamp, for the forum feed's activity sort) in one grouped
       // query. Keyed by GitHub issue number (thread_ref for
-      // thread_type='issue').
+      // thread_type='issue'). The badge count covers human messages only
+      // (msg_type='message') so dual-posted lifecycle system rows don't
+      // inflate it; last_at stays over all rows so system activity still
+      // freshens the feed sort.
       const { rows: chatRows } = await pool.query(
-        `SELECT thread_ref AS n, COUNT(*)::int AS cnt, MAX(created_at) AS last_at
+        `SELECT thread_ref AS n,
+                (COUNT(*) FILTER (WHERE msg_type = 'message'))::int AS cnt,
+                MAX(created_at) AS last_at
            FROM chat_messages
           WHERE app_id = $1 AND thread_type = 'issue'
           GROUP BY thread_ref`,
@@ -678,10 +695,12 @@ function issueRoutes(config) {
       );
       const bountyCount = countRows[0]?.c || 0;
 
-      await sendSystemMessage(pool, app.id,
-        `${req.user.username} placed a bounty (kudos) on issue #${issueNumber}`,
-        'system'
-      ).catch((err) => log.warn('issues', 'Bounty chat message failed', { err: err.message }));
+      const bountyMsg = `${req.user.username} placed a bounty (kudos) on issue #${issueNumber}`;
+      await sendSystemMessage(pool, app.id, bountyMsg, 'system')
+        .catch((err) => log.warn('issues', 'Bounty chat message failed', { err: err.message }));
+      // Dual-post into the issue's thread (lifecycle in context).
+      await sendSystemMessage(pool, app.id, bountyMsg, 'system',
+        null, { type: 'issue', ref: issueNumber }).catch(() => {});
 
       pushIssueUpdate({
         action: 'bounty', appSlug: app.slug, appId: app.id,
@@ -836,10 +855,12 @@ async function maybeApplyRenameProposal(pool, issue) {
     await client.query('COMMIT');
 
     // Side effects (chat + GitHub + WS) are best-effort and live outside the txn.
-    await sendSystemMessage(pool, app.id,
-      `App renamed from "${oldName}" to "${newName}" by group vote (${upCount}/${active})`,
-      'system'
-    ).catch((err) => log.warn('issues', 'Rename chat message failed', { err: err.message }));
+    const renamedMsg = `App renamed from "${oldName}" to "${newName}" by group vote (${upCount}/${active})`;
+    await sendSystemMessage(pool, app.id, renamedMsg, 'system')
+      .catch((err) => log.warn('issues', 'Rename chat message failed', { err: err.message }));
+    // Dual-post the outcome into the governance proposal's thread.
+    await sendSystemMessage(pool, app.id, renamedMsg, 'system',
+      null, { type: 'governance', ref: locked.id }).catch(() => {});
 
     if (locked.github_issue_number) {
       // Prefer the PAT (bot token) here — its scopes are known-good for
@@ -1013,10 +1034,12 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
     const appliedHow = force
       ? `by admin override (${options.forceBy?.username || 'admin'})`
       : `by group vote (${upCount}/${active})`;
-    await sendSystemMessage(pool, issue.app_id,
-      `Secret "${key}" ${verb} ${appliedHow}; redeploying…`,
-      'system'
-    ).catch((err) => log.warn('issues', 'Secret-change chat msg failed', { err: err.message }));
+    const secretMsg = `Secret "${key}" ${verb} ${appliedHow}; redeploying…`;
+    await sendSystemMessage(pool, issue.app_id, secretMsg, 'system')
+      .catch((err) => log.warn('issues', 'Secret-change chat msg failed', { err: err.message }));
+    // Dual-post the outcome into the governance proposal's thread.
+    await sendSystemMessage(pool, issue.app_id, secretMsg, 'system',
+      null, { type: 'governance', ref: locked.id }).catch(() => {});
 
     // Auto-redeploy: same fan-out the drift poller and dev-chat merge use.
     // Failures (including MissingSecretsError if the dapp still requires
