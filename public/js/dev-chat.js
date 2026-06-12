@@ -910,7 +910,16 @@ const DevChat = {
                   DevChat.renderChatView();
                 }
                 break;
-              
+              case 'visuals_ready':
+                // #195: the capture finished after staging_ready — stash
+                // the artifact ids on the session and re-render so the
+                // staging card upgrades in place with the media tiles.
+                if (DevChat.currentSession && data.visuals) {
+                  DevChat.currentSession.visuals = data.visuals;
+                  DevChat.renderMessages();
+                }
+                break;
+
               case 'mayor_reasoning': {
                 // Server sends the full raw Mayor output after the token
                 // stream completes. This is authoritative: even if individual
@@ -1184,6 +1193,13 @@ const DevChat = {
           if (data.prUrl) DevChat.currentSession.pr_url = data.prUrl;
           if (data.prTitle) DevChat.currentSession.pr_title = data.prTitle;
           DevChat.renderChatView();
+        }
+        break;
+      case 'visuals_ready':
+        // #195: same upgrade-in-place as the primary POST-SSE path.
+        if (DevChat.currentSession && data.visuals) {
+          DevChat.currentSession.visuals = data.visuals;
+          DevChat.renderMessages();
         }
         break;
       case 'cc_progress':
@@ -1778,6 +1794,19 @@ const DevChat = {
           const testBtn = !hasTesting ? '' : (previewGone
             ? `<button class="dc-pr-btn dc-pr-btn-preview" disabled title="Preview removed after merge — this change is now live in the app">Test this change</button>`
             : `<button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.previewStaging('${msg.stagingUrl}', true)">Test this change</button>`);
+          // #195: before/after capture tiles. Visuals are latest-set-per-
+          // session, so only the NEWEST staging card carries them — older
+          // cards from earlier turns would just repeat the same media.
+          // Arrives via session.visuals (history reload) or the
+          // visuals_ready event (live upgrade-in-place after capture).
+          let visualsHtml = '';
+          if (window.AppView && session?.visuals) {
+            let latestStagingMsg = null;
+            for (let vi = DevChat.messages.length - 1; vi >= 0; vi--) {
+              if (DevChat.messages[vi].stagingUrl) { latestStagingMsg = DevChat.messages[vi]; break; }
+            }
+            if (latestStagingMsg === msg) visualsHtml = AppView.visualsTilesHtml(session.visuals);
+          }
           return `
             <div class="dc-status-line"><span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span> ${msg.content} <span style="font-size:9px;opacity:0.4;margin-left:auto">${stgId} ${stgTs}</span></div>
             <div class="dc-pr-card" id="dc-pr-card">
@@ -1787,6 +1816,7 @@ const DevChat = {
                 ${window.AppView ? AppView.closesPillHtml(session) : ''}
                 <span style="font-size:9px;opacity:0.4;margin-left:8px">${stgId} ${stgTs}</span>
               </div>
+              ${visualsHtml ? `<div class="dc-pr-card-visuals" style="margin:6px 0 2px">${visualsHtml}</div>` : ''}
               <div class="dc-pr-card-actions">
                 ${previewGone
                   ? `<button class="dc-pr-btn dc-pr-btn-preview" disabled title="Preview removed after merge — this change is now live in the app">Preview staging</button>`

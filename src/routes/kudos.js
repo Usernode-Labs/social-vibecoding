@@ -89,14 +89,16 @@ async function loadKudosForSession(pool, sessionId, viewerUserId) {
   // card counts). LEFT JOIN on the bounty side so an awarded bounty whose
   // giver was since deleted (giver_user_id → NULL) still counts; it just
   // can't be attributed to a username in the popover.
+  // Each branch tags its rows with a `source` so my_kudos_direct (below)
+  // can tell a retractable direct kudos apart from bounty-derived credit.
   const { rows } = await pool.query(
-    `SELECT created_at, username, user_id FROM (
-       SELECT pk.created_at, u.username, u.id AS user_id
+    `SELECT created_at, username, user_id, source FROM (
+       SELECT pk.created_at, u.username, u.id AS user_id, 'pr' AS source
          FROM pr_kudos pk
          JOIN users u ON u.id = pk.giver_user_id
         WHERE pk.session_id = $1
        UNION ALL
-       SELECT ib.awarded_at AS created_at, bu.username, ib.giver_user_id AS user_id
+       SELECT ib.awarded_at AS created_at, bu.username, ib.giver_user_id AS user_id, 'bounty' AS source
          FROM issue_bounties ib
          LEFT JOIN users bu ON bu.id = ib.giver_user_id
         WHERE ib.awarded_session_id = $1 AND ib.status = 'awarded'
@@ -108,6 +110,12 @@ async function loadKudosForSession(pool, sessionId, viewerUserId) {
   const myKudos = viewerUserId
     ? rows.some((r) => r.user_id === viewerUserId)
     : false;
+  // my_kudos_direct: the viewer has an actual pr_kudos row (retractable
+  // via DELETE), as opposed to credit that arrived through an awarded
+  // issue bounty (not retractable here).
+  const myKudosDirect = viewerUserId
+    ? rows.some((r) => r.source === 'pr' && r.user_id === viewerUserId)
+    : false;
   // Only rows with a resolvable username make the giver list; a deleted-user
   // bounty still counts above but has no name to show.
   const givers = rows
@@ -116,7 +124,7 @@ async function loadKudosForSession(pool, sessionId, viewerUserId) {
       username: r.username,
       createdAt: r.created_at,
     }));
-  return { count, givers, my_kudos: myKudos };
+  return { count, givers, my_kudos: myKudos, my_kudos_direct: myKudosDirect };
 }
 
 function kudosRoutes(config) {
@@ -294,6 +302,118 @@ function kudosRoutes(config) {
       res.json({ ok: true, kudosId: inserted.id, remaining, limit: WEEKLY_KUDOS_LIMIT });
     } catch (err) {
       log.error('kudos', 'give failed', { sessionId, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // --------------------------------------------------------------
+  // DELETE /api/sessions/:id/kudos — retract a previously given kudos
+  // (issue #197: undo for mis-clicks).
+  //
+  // Status codes:
+  //   200 ok        — kudos removed; remaining/limit reflect the
+  //                    refunded current-week slot
+  //   401 unauth    — handled by authMiddleware upstream
+  //   404 not_found — session doesn't exist, OR the viewer has no
+  //                    direct kudos row on it (bounty-derived credit
+  //                    is not retractable here)
+  //
+  // No session-status gate: if the row exists it was eligible at give
+  // time, and retraction is harmless in any state (the merged list is
+  // the primary mis-click surface). The quota refund is emergent —
+  // countWeeklyAllowanceUsed counts rows by week_start, so deleting a
+  // current-week row frees a slot while deleting an old-week row
+  // changes nothing for this week.
+  // --------------------------------------------------------------
+  router.delete('/api/sessions/:id/kudos', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    const sessionId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(sessionId)) {
+      return res.status(400).json({ error: 'Invalid session id' });
+    }
+
+    try {
+      // Session + app context up front (same query shape as the give
+      // path) so the broadcast and analytics below have appSlug/appId
+      // without extra round-trips.
+      const { rows: sessionRows } = await pool.query(
+        `SELECT cs.id, cs.user_id, cs.status, cs.pr_number, cs.pr_title,
+                cs.app_id, a.slug AS app_slug, a.name AS app_name
+           FROM chat_sessions cs
+           JOIN apps a ON a.id = cs.app_id
+           WHERE cs.id = $1`,
+        [sessionId]
+      );
+      if (!sessionRows.length) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+      const session = sessionRows[0];
+
+      // Single atomic DELETE is the source of truth — no prior
+      // existence check needed, and a parallel retract race just
+      // 404s on the loser.
+      const { rows: deleted } = await pool.query(
+        `DELETE FROM pr_kudos
+           WHERE session_id = $1 AND giver_user_id = $2
+           RETURNING id, week_start`,
+        [sessionId, req.user.id]
+      );
+      if (!deleted.length) {
+        return res.status(404).json({ error: 'No kudos to retract on this PR' });
+      }
+
+      // Best-effort cleanup of the author's "gave kudos" notification —
+      // the underlying event no longer stands, read or unread. Never
+      // fail the retract itself over it. (No WS "notification removed"
+      // push exists; an open dropdown stays stale until next load.)
+      try {
+        await pool.query(
+          `DELETE FROM notifications
+             WHERE kind = 'kudos' AND session_id = $1 AND source_user_id = $2`,
+          [sessionId, req.user.id]
+        );
+      } catch (err) {
+        log.warn('kudos', 'notification cleanup failed', {
+          sessionId, giver: req.user.id, err: err.message,
+        });
+      }
+
+      events.record(pool, {
+        type: events.EVENT_TYPES.KUDOS_RETRACTED,
+        userId: req.user.id,
+        appId: session.app_id,
+        sessionId,
+        metadata: { recipientId: session.user_id || null },
+      });
+
+      // Broadcast the new count so open PR cards / leaderboards
+      // re-render in place. `retractedUsername` (instead of
+      // giverUsername) tells Kudos.applyLiveUpdate which direction
+      // this update went.
+      try {
+        const { rows: countRows } = await pool.query(
+          `SELECT COUNT(*)::int AS c FROM pr_kudos WHERE session_id = $1`,
+          [sessionId]
+        );
+        ws.pushKudosUpdate({
+          sessionId,
+          appSlug: session.app_slug,
+          count: countRows[0]?.c || 0,
+          retractedUsername: req.user.username,
+        });
+      } catch (err) {
+        log.warn('kudos', 'broadcast failed', { sessionId, err: err.message });
+      }
+
+      const weekStart = weekStartUtc();
+      const given = await countWeeklyAllowanceUsed(pool, req.user.id, weekStart);
+      const remaining = Math.max(0, WEEKLY_KUDOS_LIMIT - given);
+      log.info('kudos', 'kudos retracted', {
+        sessionId, giverId: req.user.id, weekStart: deleted[0].week_start, remaining,
+      });
+      res.json({ ok: true, remaining, limit: WEEKLY_KUDOS_LIMIT });
+    } catch (err) {
+      log.error('kudos', 'retract failed', { sessionId, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

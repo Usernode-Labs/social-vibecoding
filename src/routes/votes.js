@@ -180,6 +180,17 @@ function voteRoutes(config) {
             [result.containerId, result.stagingUrl, session.id]
           );
           await staging.warmStagingCert(session, result.hostname, result.stagingUrl);
+          // #195: capture before/after visuals off the fresh preview so
+          // headless proposals promoted from clones get media on the vote
+          // card + PR body even though the auto session's own staging (and
+          // its capture window) may be long gone. Fire-and-forget; the
+          // heuristic + all failure handling live inside the service.
+          const visualsService = require('../services/visuals');
+          visualsService.captureForSession(
+            config, session, app, commitHash === 'latest' ? null : commitHash, result
+          ).catch((err) => {
+            log.warn('votes', 'Post-promote visuals capture failed', { sessionId: session.id, err: err.message });
+          });
         })().catch((err) => {
           log.warn('votes', 'Post-promote staging build failed', { sessionId: session.id, err: err.message });
         });
@@ -415,11 +426,15 @@ function voteRoutes(config) {
            -- merge (a bounty resolves into kudos credit for the closing PR's
            -- author), so the count matches the leaderboards. my_kudos is
            -- likewise true if the viewer either gave a PR kudos OR pledged a
-           -- bounty that was awarded to this PR.
+           -- bounty that was awarded to this PR. my_kudos_direct isolates
+           -- the first source — only a direct pr_kudos row is retractable
+           -- (DELETE /api/sessions/:id/kudos), so the FE needs to know
+           -- which kind of credit it's rendering.
            ((SELECT COUNT(*)::int FROM pr_kudos WHERE session_id = cs.id)
              + (SELECT COUNT(*)::int FROM issue_bounties WHERE awarded_session_id = cs.id AND status = 'awarded')) as kudos_count,
            (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)
                  OR EXISTS(SELECT 1 FROM issue_bounties WHERE awarded_session_id = cs.id AND status = 'awarded' AND giver_user_id = $2)) as my_kudos,
+           (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)) as my_kudos_direct,
            -- #11: revert_of_session_id is non-null on PRs that are
            -- themselves a git-revert of an earlier merged PR. The
            -- vote panel uses this to render a Revert label
@@ -427,7 +442,13 @@ function voteRoutes(config) {
            -- are voting on.
            cs.revert_of_session_id,
            orig.pr_number as original_pr_number,
-           orig.pr_title  as original_pr_title
+           orig.pr_title  as original_pr_title,
+           -- #195: before/after capture artifact ids, aggregated to one
+           -- jsonb per row ('before_png' -> id, 'after_webm' -> id, ...)
+           -- so the vote card can render media tiles without N extra
+           -- round-trips. Shaped client-friendly below via visuals.shapeAgg.
+           (SELECT jsonb_object_agg(sv.kind || '_' || sv.media, sv.id)
+              FROM session_visuals sv WHERE sv.session_id = cs.id) as visuals_agg
          FROM chat_sessions cs
          JOIN users u ON cs.user_id = u.id
          LEFT JOIN chat_sessions orig ON orig.id = cs.revert_of_session_id
@@ -435,6 +456,12 @@ function voteRoutes(config) {
          ORDER BY cs.created_at DESC`,
         [appRows[0].id, userId]
       );
+
+      const visualsService = require('../services/visuals');
+      for (const row of rows) {
+        row.visuals = visualsService.shapeAgg(row.visuals_agg);
+        delete row.visuals_agg;
+      }
 
       const { active: activeUsers, majority } = await getActiveUserStats(pool, appRows[0].id);
       // Whether the viewer themself counts as active for this app —
@@ -503,11 +530,15 @@ function voteRoutes(config) {
            -- merge (a bounty resolves into kudos credit for the closing PR's
            -- author), so the count matches the leaderboards. my_kudos is
            -- likewise true if the viewer either gave a PR kudos OR pledged a
-           -- bounty that was awarded to this PR.
+           -- bounty that was awarded to this PR. my_kudos_direct isolates
+           -- the first source — only a direct pr_kudos row is retractable
+           -- (DELETE /api/sessions/:id/kudos), so the FE needs to know
+           -- which kind of credit it's rendering.
            ((SELECT COUNT(*)::int FROM pr_kudos WHERE session_id = cs.id)
              + (SELECT COUNT(*)::int FROM issue_bounties WHERE awarded_session_id = cs.id AND status = 'awarded')) as kudos_count,
            (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)
                  OR EXISTS(SELECT 1 FROM issue_bounties WHERE awarded_session_id = cs.id AND status = 'awarded' AND giver_user_id = $2)) as my_kudos,
+           (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)) as my_kudos_direct,
            rv.id        as revert_session_id,
            rv.pr_number as revert_pr_number,
            rv.pr_url    as revert_pr_url,
