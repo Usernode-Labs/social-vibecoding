@@ -13,6 +13,14 @@ const AppView = {
   _ghIssuesMeta: { truncatedList: false, note: null, repoUrl: null, myRemaining: null },
   _bountyInFlight: new Set(),
 
+  // Shared list-item shell for every card on the Dev page — the General
+  // chat card, issue/proposal/governance cards, Your-sessions rows, and
+  // Recently-merged rows — so the whole page reads as one uniform list
+  // (same row structure, padding, border, radius). Tappable cards add
+  // DEV_CARD_HOVER_CLS on top.
+  DEV_CARD_CLS: 'w-full flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/60 px-3 py-2.5 text-left transition-colors',
+  DEV_CARD_HOVER_CLS: 'hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:border-violet-500/60 cursor-pointer',
+
   // ── Dev view state (#194, forum revision) ─────────────────────────
   // The Dev mode is one forum page (pinned chat + sessions strip + a
   // unified feed of issues & proposals) plus a full-screen session
@@ -423,7 +431,7 @@ const AppView = {
              intermixed feed, and the merged section. -->
         <div id="dev-forum-scroll" class="flex-1 min-h-0 overflow-y-auto overscroll-contain">
           <div class="px-3 pt-2">
-            <button id="dev-chat-card" class="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-left bg-zinc-50 dark:bg-zinc-800/60 hover:bg-zinc-100 dark:hover:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 hover:border-violet-500/60 transition-colors"
+            <button id="dev-chat-card" class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}"
               title="Open the general chat">
               <span class="text-base shrink-0">&#128172;</span>
               <span class="flex-1 min-w-0">
@@ -943,7 +951,7 @@ const AppView = {
     }
 
     const shown = Math.min(AppView._feedShown || 20, items.length);
-    html += '<div class="divide-y divide-zinc-200 dark:divide-zinc-800 border-y border-zinc-200 dark:border-zinc-800">';
+    html += '<div class="space-y-2">';
     for (let i = 0; i < shown; i++) {
       const it = items[i];
       if (it.kind === 'issue') html += AppView._renderIssueRow(it.item);
@@ -1007,18 +1015,22 @@ const AppView = {
       if (!mine.length) { live.innerHTML = ''; return; }
       live.innerHTML = `
         <div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-1">Your sessions</div>
-        <div class="flex gap-2 overflow-x-auto overscroll-contain pb-1">
+        <div class="space-y-2">
           ${mine.map((s) => {
             const label = escapeHtml(s.pr_title || s.branch_name || `Session #${s.id}`);
             const dot = s.busy
               ? '<span class="dc-status-icon dc-status-spinner-arc shrink-0" aria-hidden="true"></span>'
               : `<span class="inline-block w-1.5 h-1.5 rounded-full shrink-0 ${s.status === 'paused' ? 'bg-zinc-400' : 'bg-emerald-500'}"></span>`;
-            const pausedTag = s.status === 'paused'
-              ? '<span class="text-zinc-500 shrink-0">· paused</span>' : '';
+            const statusTag = s.busy
+              ? '<span class="text-xs text-zinc-500 shrink-0">working…</span>'
+              : (s.status === 'paused' ? '<span class="text-xs text-zinc-500 shrink-0">paused</span>' : '');
             return `<button data-session-chip="${s.id}"
-              class="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/60 hover:border-violet-500/60 px-3 py-1 text-xs text-zinc-700 dark:text-zinc-300 max-w-[16rem] transition-colors"
+              class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}"
               title="${s.busy ? 'AI is working — ' : ''}${label}">
-              ${dot}<span class="truncate">${label}</span>${pausedTag}
+              ${dot}
+              <span class="text-sm text-zinc-800 dark:text-zinc-200 flex-1 min-w-0 truncate">${label}</span>
+              ${statusTag}
+              <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
             </button>`;
           }).join('')}
         </div>`;
@@ -1078,7 +1090,7 @@ const AppView = {
       ? `<div class="dev-issue-body text-xs text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 rounded-lg p-2 mb-2 max-h-64 overflow-y-auto">${renderMd(issue.body)}</div>`
       : '';
     return `
-      <div class="dev-issue-expand pl-2 pb-2 ml-1 border-l-2 border-violet-500/30">
+      <div class="dev-issue-expand w-full mt-1 pt-2 border-t border-zinc-200 dark:border-zinc-700">
         ${bodyHtml}
         <div id="dev-thread-slot-issue"></div>
       </div>`;
@@ -1197,7 +1209,7 @@ const AppView = {
     const visualsHtml = AppView.visualsTilesHtml(pr.visuals);
 
     let html = `
-      <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1 cursor-pointer${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}" data-proposal-row="${pr.id}" title="Tap to see voting details and the discussion thread">
+      <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}" data-proposal-row="${pr.id}" title="Tap to see voting details and the discussion thread">
         ${caret}
         <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-violet-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
         <span class="text-xs text-zinc-700 dark:text-zinc-300 flex-1 min-w-0 truncate">${labelText}</span>
@@ -1212,8 +1224,8 @@ const AppView = {
           ${sessionBtn}
         </div>
         ${visualsHtml ? `<div class="basis-full">${visualsHtml}</div>` : ''}
+        ${expanded ? `<div class="basis-full">${AppView._proposalExpansionHtml(pr)}</div>` : ''}
       </div>`;
-    if (expanded) html += AppView._proposalExpansionHtml(pr);
     return html;
   },
 
@@ -1234,7 +1246,7 @@ const AppView = {
       ? '<div class="text-xs text-amber-500 mt-1">App is locked — this also needs at least one admin yes before it merges.</div>'
       : '';
     return `
-      <div class="dev-proposal-expand pl-2 pb-2 ml-1 border-l-2 border-violet-500/30">
+      <div class="dev-proposal-expand w-full mt-1 pt-2 border-t border-zinc-200 dark:border-zinc-700">
         <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1">${details.join(' · ')}</div>
         ${chips ? `<div class="mb-1 flex flex-wrap gap-1 items-center"><span class="text-xs text-zinc-500">Linked issues:</span> ${chips}</div>` : ''}
         <div id="dev-vote-roster-${pr.id}" class="text-xs text-zinc-500 dark:text-zinc-400 mb-1">Loading votes…</div>
@@ -1271,7 +1283,7 @@ const AppView = {
     const govDiscussBtn = `<button class="gc-vote-btn dev-discuss-btn" data-count="${govChatN}" title="Open this proposal's discussion thread" onclick="AppView.toggleGovThread(${issue.id})">&#128172; Discussion${govChatN ? ` (${govChatN})` : ''}</button>`;
 
     let html = `
-      <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1 cursor-pointer" data-gov-row="${issue.id}"${issue.github_issue_number ? ` data-ref-issue="${issue.github_issue_number}"` : ''} title="Tap to open the discussion thread">
+      <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-gov-row="${issue.id}"${issue.github_issue_number ? ` data-ref-issue="${issue.github_issue_number}"` : ''} title="Tap to open the discussion thread">
         ${caret}
         <span class="text-xs text-zinc-700 dark:text-zinc-300 flex-1 min-w-0 truncate">${escapeHtml(titleText)}${creatorSuffix}</span>
         <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2 flex-wrap">
@@ -1281,14 +1293,11 @@ const AppView = {
           ${adminBtn}
           ${govDiscussBtn}
         </div>
-      </div>`;
-    if (expanded) {
-      html += `
-        <div class="dev-proposal-expand pl-2 pb-2 ml-1 border-l-2 border-violet-500/30">
+        ${expanded ? `<div class="basis-full"><div class="dev-proposal-expand w-full mt-1 pt-2 border-t border-zinc-200 dark:border-zinc-700">
           ${issue.description ? `<div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1">${escapeHtml(issue.description)}</div>` : ''}
           <div id="dev-thread-slot-proposal"></div>
-        </div>`;
-    }
+        </div></div>` : ''}
+      </div>`;
     return html;
   },
 
@@ -1677,10 +1686,10 @@ const AppView = {
     const caret = `<span class="text-[0.6rem] text-zinc-500 shrink-0">${expanded ? '&#9660;' : '&#9654;'}</span>`;
 
     html += `
-      <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1 cursor-pointer" data-ref-issue="${n}" data-issue-row="${n}" title="Tap to read the issue and its discussion thread">
+      <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-ref-issue="${n}" data-issue-row="${n}" title="Tap to read the issue and its discussion thread">
         ${caret}
         <a href="${href}" target="_blank" rel="noopener" class="text-xs text-violet-400 font-mono hover:underline">#${n}</a>
-        <span class="text-xs text-zinc-300 flex-1 min-w-0 truncate" title="${escapeHtml(rowTitle)}">${escapeHtml(issue.title)}${creatorSuffix}</span>
+        <span class="text-xs text-zinc-700 dark:text-zinc-300 flex-1 min-w-0 truncate" title="${escapeHtml(rowTitle)}">${escapeHtml(issue.title)}${creatorSuffix}</span>
         ${bountyPill}
         ${AppView._devChatBadge(issue.chatCount)}
         <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
@@ -1688,8 +1697,8 @@ const AppView = {
           ${createBtn}
           ${autoBtn}
         </div>
+        ${expanded ? `<div class="basis-full">${AppView._issueExpansionHtml(issue)}</div>` : ''}
       </div>`;
-    if (expanded) html += AppView._issueExpansionHtml(issue);
     return html;
   },
 
@@ -1710,7 +1719,7 @@ const AppView = {
       ? merged.length
       : Math.min(AppView._mergedShownDefault, merged.length);
 
-    let html = `<div class="text-xs text-zinc-500 mb-1 font-medium">Merged <span class="text-zinc-600 font-normal">(undo opens a revert PR — needs ${majority}/${activeUsers} votes to land)</span></div><div class="divide-y divide-zinc-200 dark:divide-zinc-800 sm:divide-y-0 border-y border-zinc-200 dark:border-zinc-800 sm:border-y-0">`;
+    let html = `<div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-1">Recently merged <span class="normal-case font-normal text-zinc-600 dark:text-zinc-500 tracking-normal">(undo opens a revert PR — needs ${majority}/${activeUsers} votes to land)</span></div><div class="space-y-2">`;
     for (let i = 0; i < shown; i++) {
       const pr = merged[i];
       const date = new Date(pr.created_at).toLocaleDateString();
@@ -1764,7 +1773,7 @@ const AppView = {
       }
 
       html += `
-        <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1" data-ref-pr="${pr.pr_number || pr.id}">
+        <div class="gc-vote-item ${AppView.DEV_CARD_CLS}" data-ref-pr="${pr.pr_number || pr.id}">
           <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-emerald-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
           <span ${mergedQuoteAttrs}>${mergedLabel}</span>
           ${AppView.closesPillHtml(pr)}

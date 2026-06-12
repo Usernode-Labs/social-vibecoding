@@ -57,6 +57,49 @@ function shouldCreateGithubTwin(kind) {
   return kind !== 'secret_change';
 }
 
+// Staging-only mock issues for GET /api/apps/:slug/github-issues. A
+// staging preview whose repo has no open issues (or can't reach GitHub
+// from the preview container) would render an empty Topics feed in the
+// Dev card list, making the UI impossible to review. When the live
+// fetch comes back empty in staging, these are served instead — clearly
+// "[Mock]"-prefixed so testers know they're synthetic. High numbers
+// keep them clear of any real bounty / thread rows in the cloned DB;
+// updatedAt is computed per request so the feed's activity sort places
+// them naturally. Strictly a no-op in production.
+const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+
+function stagingMockIssues(repoUrl) {
+  const base = (repoUrl || 'https://github.com/example/app')
+    .replace(/\.git$/, '').replace(/\/$/, '');
+  const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
+  const mk = (number, title, body, hours) => ({
+    number,
+    title,
+    body,
+    labels: ['usernode'],
+    updatedAt: hoursAgo(hours),
+    htmlUrl: `${base}/issues/${number}`,
+    user: 'staging-tester',
+  });
+  return [
+    mk(900001, '[Mock] Dark mode toggle resets after refresh',
+      'Staging-only mock issue for previewing the Dev card list.\n\n'
+      + 'Steps to reproduce:\n1. Enable dark mode in the header\n'
+      + '2. Refresh the page\n3. The app is back in light mode\n\n'
+      + 'Expected: the preference persists across reloads.', 2),
+    mk(900002, '[Mock] Add a keyboard shortcut for voting',
+      'Staging-only mock issue for previewing the Dev card list.\n\n'
+      + 'Power users vote on a lot of proposals — pressing Y/N while a '
+      + 'proposal card is focused should cast the vote without reaching '
+      + 'for the mouse.', 9),
+    mk(900003, '[Mock] Topic cards overflow on narrow phones',
+      'Staging-only mock issue for previewing the Dev card list.\n\n'
+      + 'On a 360px-wide viewport the action buttons on issue cards can '
+      + 'push past the card edge. They should wrap onto their own row '
+      + 'instead.', 30),
+  ];
+}
+
 function issueRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -340,16 +383,32 @@ function issueRoutes(config) {
       if (!app) return res.status(404).json({ error: 'App not found' });
 
       const parsed = parseOwnerRepo(app.repo_url);
+      let result;
       if (!github.isEnabled() || !parsed) {
-        return res.json({ issues: [], truncatedList: false, note: 'unavailable' });
+        if (!IS_STAGING) {
+          return res.json({ issues: [], truncatedList: false, note: 'unavailable' });
+        }
+        // Staging: serve mocks so the Dev card list is reviewable even
+        // when GitHub isn't reachable from the preview container.
+        result = { issues: stagingMockIssues(app.repo_url), truncatedList: false };
+      } else {
+        const wantRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
+        // Neither fetcher ever throws or returns null; on any failure mode
+        // they return { issues:[], truncatedList:false, note }.
+        result = wantRefresh
+          ? await github.refreshPublicIssues(parsed.owner, parsed.repo)
+          : await github.fetchPublicIssues(parsed.owner, parsed.repo);
+        // Staging-only fallback: an empty (or degraded) live list would
+        // render an empty Topics feed in the preview — substitute mocks.
+        if (IS_STAGING && (!Array.isArray(result.issues) || result.issues.length === 0)) {
+          result = {
+            ...result,
+            issues: stagingMockIssues(app.repo_url),
+            truncatedList: false,
+            note: undefined,
+          };
+        }
       }
-
-      const wantRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
-      // Neither fetcher ever throws or returns null; on any failure mode
-      // they return { issues:[], truncatedList:false, note }.
-      const result = wantRefresh
-        ? await github.refreshPublicIssues(parsed.owner, parsed.repo)
-        : await github.fetchPublicIssues(parsed.owner, parsed.repo);
 
       // Open-bounty tallies for this app, keyed by issue number, in one
       // round-trip. BOOL_OR gives the viewer's own-open-bounty flag.
