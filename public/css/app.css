@@ -519,10 +519,25 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   flex-shrink: 0;
 }
 
+/* Experimental AI progress estimate (opt-in): italic and extra-muted so
+   the guess reads as tentative next to the honest timer/step count. */
+.dc-cc-estimate {
+  color: var(--text-muted);
+  opacity: 0.75;
+  font-style: italic;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40%;
+  min-width: 0;
+}
+
 /* Narrow viewports: drop the activity snippet (the log itself is one
    tap away) but keep the elapsed timer at all widths. */
 @media (max-width: 640px) {
   .dc-cc-current { display: none; }
+  .dc-cc-estimate { display: none; }
 }
 
 /* Sibling of .dc-cc-attached-log for the post-turn ccOutput

@@ -1998,7 +1998,12 @@ function sessionRoutes(config) {
     // without guessing from container status alone.
     const phase = stopRegistry.get(sessionId)?.phase || null;
 
-    res.json({ busy, progress, phase });
+    // Experimental AI progress estimate: latest in-memory Haiku guess for
+    // the run, so the 3s polling fallback carries it when SSE/WS drop.
+    // Null whenever the per-user toggle is off or no estimate exists yet.
+    const estimate = workerProgress.get(sessionId)?.estimate || null;
+
+    res.json({ busy, progress, phase, estimate });
   });
 
   // Stop an in-flight turn (#28). Aborts the Mayor's Anthropic stream
@@ -3858,6 +3863,65 @@ path: /relative/path?demo=1
     );
     const progressMsgId = progRows[0].id;
 
+    // Experimental AI progress estimate: while the per-user toggle is ON,
+    // a 60s ticker asks Haiku to skim the progress-log tail and emits a
+    // vague "AI guess" via send('cc_estimate'). Gated hard: never for
+    // headless turns (no live watcher), never without an LLM client, and
+    // the whole block is skipped when the toggle is off — degradation to
+    // today's behavior is structural, not a runtime branch. Estimates are
+    // ephemeral (in-memory + SSE only, never persisted).
+    const estimatorEnabled = !headless && !!req?.user?.aiProgressEstimate
+      && (llm.isEnabled() || !!userApiKey);
+    const liveProgressLines = [];
+    let estimator = null;
+    if (estimatorEnabled) {
+      let estimateInFlight = false;
+      let linesAtLastEstimate = 0;
+      let estimateFailures = 0;
+      let estimateSuccesses = 0;
+      const CC_ACTION_RE = /^(Reading |Writing |Editing |\$ |Using )/;
+      estimator = setInterval(() => {
+        // Cost containment: one call in flight at a time; skip while the
+        // run is idle (no new lines — re-guessing identical input wastes
+        // money); stop for good after 3 consecutive failures or 20
+        // estimates (bounds a pathological multi-hour run).
+        if (estimateInFlight) return;
+        if (estimateFailures >= 3 || estimateSuccesses >= 20) {
+          clearInterval(estimator);
+          return;
+        }
+        if (liveProgressLines.length === linesAtLastEstimate) return;
+        estimateInFlight = true;
+        const linesAtStart = liveProgressLines.length;
+        llm.estimateRunProgress({
+          userRequest: userMessage,
+          progressTail: liveProgressLines,
+          elapsedMs: Date.now() - turnStartedMs,
+          steps: liveProgressLines.filter((l) => CC_ACTION_RE.test(l)).length,
+          apiKey: userApiKey || undefined,
+        }).then(async ({ text, usage, model: estModel }) => {
+          estimateFailures = 0;
+          estimateSuccesses++;
+          linesAtLastEstimate = linesAtStart;
+          // A call resolving after the user hit stop is dropped — the
+          // running line is already deactivated client-side.
+          if (!(stopHandle && stopHandle.stopped)) {
+            send('cc_estimate', { text, elapsedMs: Date.now() - turnStartedMs });
+            workerProgress.setEstimate(session.id, text);
+          }
+          if (usage) {
+            const cents = llm.estimateCostCents(usage, estModel);
+            await limits.recordSpend(pool, req.user.id, cents, { byok: !!userApiKey });
+          }
+        }).catch((err) => {
+          estimateFailures++;
+          log.warn('chat', 'AI progress estimate failed', { sessionId: session.id, err: err.message });
+        }).finally(() => {
+          estimateInFlight = false;
+        });
+      }, 60_000);
+    }
+
     let result;
     try {
       result = await worker.execInWorker(session.id, {
@@ -3871,6 +3935,7 @@ path: /relative/path?demo=1
         onProgress: (text) => {
           send('cc_progress', { text });
           workerProgress.set(session.id, text, { model: selectedModel });
+          if (estimatorEnabled) liveProgressLines.push(text);
           pool.query(
             `UPDATE chat_session_messages SET metadata = jsonb_set(
               metadata, '{progressLog}',
@@ -3882,6 +3947,7 @@ path: /relative/path?demo=1
       });
     } finally {
       clearInterval(heartbeat);
+      if (estimator) clearInterval(estimator);
     }
 
     const newCcId = result.sessionId || result.initSessionId || null;

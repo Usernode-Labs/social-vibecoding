@@ -42,6 +42,14 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_link_expires_at   TIMESTAMPTZ;
 -- src/routes/sessions.js via src/services/limits.js.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_limit_cents INTEGER;
 
+-- Experimental: opt-in AI progress estimate for coding runs. When TRUE,
+-- the platform periodically asks Haiku to skim the in-flight Claude Code
+-- progress log and emits a vague "AI guess" line in dev-chat (see
+-- runClaudeCodeTool in src/routes/sessions.js). Default OFF for everyone
+-- while the experiment runs; toggled from Settings → Experimental via
+-- POST /api/me/ai-progress-estimate.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_progress_estimate BOOLEAN NOT NULL DEFAULT FALSE;
+
 CREATE TABLE IF NOT EXISTS sessions (
   token      VARCHAR(64) PRIMARY KEY,
   user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE,
