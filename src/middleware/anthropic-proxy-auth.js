@@ -66,4 +66,4 @@ function anthropicProxyAuth(req, res, next) {
   next();
 }
 
-module.exports = { anthropicProxyAuth };
+module.exports = { anthropicProxyAuth, isPrivateIp };

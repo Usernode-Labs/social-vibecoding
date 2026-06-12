@@ -840,3 +840,54 @@ COMMENT ON TABLE session_visuals IS 'staging:private';
 -- targeted post-capture body patch so the next turn doesn't rewrite an
 -- unchanged body.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_visuals_applied TEXT;
+
+-- App access to user LLM budgets (issue #34). One row per (app, user)
+-- consent: the user explicitly allowed this app to spend from their
+-- daily AI budget through the platform proxy (/api/app-llm), up to
+-- daily_cap_cents per day. Revocation keeps the row (usage history,
+-- easy re-grant) and just flips status; the proxy requires
+-- status='active'. allow_byok extends the grant onto the user's own
+-- stored Anthropic key once the platform allowance is exhausted —
+-- strictly opt-in per app, still bounded by the cap.
+CREATE TABLE IF NOT EXISTS app_llm_grants (
+  app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status          VARCHAR(16) NOT NULL DEFAULT 'active',
+  daily_cap_cents INTEGER NOT NULL DEFAULT 100,
+  allow_byok      BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  revoked_at      TIMESTAMPTZ,
+  PRIMARY KEY (app_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_app_llm_grants_user ON app_llm_grants(user_id);
+-- Consent/financial-adjacent rows must not leak into staging clones.
+-- (A private table may FK public tables; only the reverse is barred.)
+COMMENT ON TABLE app_llm_grants IS 'staging:private';
+
+-- Per-app daily spend ledger, mirroring llm_usage's split: total goes
+-- against the platform daily caps, byok is the display-only bucket for
+-- spend billed to the user's own key. The proxy writes BOTH this table
+-- and llm_usage (via limits.recordSpend) so platform-wide caps and the
+-- existing /api/budget display stay correct.
+CREATE TABLE IF NOT EXISTS app_llm_usage (
+  app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  date            DATE NOT NULL DEFAULT CURRENT_DATE,
+  total_cost_cents NUMERIC(10,4) NOT NULL DEFAULT 0,
+  byok_cost_cents  NUMERIC(10,4) NOT NULL DEFAULT 0,
+  UNIQUE(app_id, user_id, date)
+);
+-- Sibling of llm_usage, which is already staging:private.
+COMMENT ON TABLE app_llm_usage IS 'staging:private';
+
+-- Per-app credential identifying the calling app to the LLM proxy.
+-- Random 64-hex, generated lazily at production deploy when NULL (same
+-- adoption shape as db_password). Deliberately NOT a JWT: every dapp
+-- container holds the shared JWT_SECRET, so a JWT-based app identity
+-- would be forgeable by any other app; a random opaque token is not.
+-- staging:private so the column-scrub in cloneDatabase blanks it —
+-- staging containers never receive the token and therefore can't
+-- spend grants (unreviewed PR code).
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS llm_proxy_token TEXT;
+COMMENT ON COLUMN apps.llm_proxy_token IS 'staging:private';

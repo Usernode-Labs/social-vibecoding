@@ -643,6 +643,20 @@
 
       <div id="settings-status" class="text-sm mt-3 hidden"></div>
 
+      <!-- App AI permissions (issue #34). Lists every app the user has
+           granted access to their daily AI budget: today's spend vs the
+           per-app cap, a cap editor, the BYOK spillover toggle, and
+           Revoke. Rendered by Settings._renderLlmGrants() on modal open
+           from GET /api/me/llm-grants (?demo=1 passthrough in staging). -->
+      <div id="llm-grants-section" class="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
+        <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">App AI permissions</h3>
+        <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
+          Apps you've allowed to use AI on your behalf. Their spend counts against your normal daily budget, plus the per-app cap you set. Revoking takes effect immediately.
+        </p>
+        <div id="llm-grants-list" class="space-y-2"></div>
+        <div id="llm-grants-status" class="text-sm mt-2 hidden"></div>
+      </div>
+
       <!-- Wallet linking section -->
       <div id="wallet-section" class="hidden mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
         <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Usernode Wallet</h3>

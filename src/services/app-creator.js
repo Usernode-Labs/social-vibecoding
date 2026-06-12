@@ -5,6 +5,7 @@ const caddy = require('./caddy');
 const dbManager = require('./db-manager');
 const appManifest = require('./app-manifest');
 const appSecrets = require('./app-secrets');
+const appLlmEnv = require('./app-llm-env');
 const { getTemplateFiles } = require('./template');
 const { getPool } = require('../db/pool');
 const { pushAppStatusUpdate } = require('./ws');
@@ -183,7 +184,11 @@ async function createApp(config, appRow) {
     // 4. Remove any existing container with the same name
     await docker.stopAndRemove(containerName).catch(() => {});
 
-    // 5. Run the container
+    // 5. Run the container. Production containers additionally get the
+    // LLM-proxy env pair (URL + per-app token, generated lazily here on
+    // first deploy) so the app can call the platform's app-LLM proxy.
+    // Staging deploys deliberately don't (see services/app-llm-env.js).
+    const llmEnv = await appLlmEnv.productionLlmEnv(pool, appId);
     const containerId = await docker.runContainer(containerName, {
       image: imageName,
       env: {
@@ -191,6 +196,7 @@ async function createApp(config, appRow) {
         JWT_SECRET: config.jwtSecret,
         PORT: '3000',
         USERNODE_ENV: 'production',
+        ...llmEnv,
         ...merge.env,
       },
       port: 3000,
