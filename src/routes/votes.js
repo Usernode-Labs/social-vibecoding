@@ -506,11 +506,16 @@ function voteRoutes(config) {
            cs.revert_of_session_id,
            orig.pr_number as original_pr_number,
            orig.pr_title  as original_pr_title,
-           -- #194: per-proposal thread message count for the Proposals
-           -- tab's chat badge. The partial thread index makes this an
-           -- index-only probe per row.
+           -- #194: per-proposal thread message count for the chat badge,
+           -- plus the latest thread-message timestamp for the forum
+           -- feed's activity sort. The partial thread index makes these
+           -- index-only probes per row. promoted_at is the proposal's own
+           -- activity anchor (falls back to created_at client-side).
+           cs.promoted_at,
            (SELECT COUNT(*)::int FROM chat_messages cm
              WHERE cm.app_id = cs.app_id AND cm.thread_type = 'session' AND cm.thread_ref = cs.id) as chat_count,
+           (SELECT MAX(cm.created_at) FROM chat_messages cm
+             WHERE cm.app_id = cs.app_id AND cm.thread_type = 'session' AND cm.thread_ref = cs.id) as last_message_at,
            -- #195: before/after capture artifact ids, aggregated to one
            -- jsonb per row ('before_png' -> id, 'after_webm' -> id, ...)
            -- so the vote card can render media tiles without N extra

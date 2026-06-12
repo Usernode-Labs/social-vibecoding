@@ -2653,10 +2653,15 @@ const DevChat = {
       DevChat.currentSession = null;
       DevChat.messages = [];
       // The title marker describes the session we just left — drop it
-      // so the session list doesn't claim to be thinking / done.
+      // so the forum doesn't claim to be thinking / done.
       DevChat.setTitleStatus(null);
-      DevChat.renderChatView();
-      App.updateHash();
+      // Forum revision: backing out of a session returns to the dev
+      // forum page (there is no session-list screen anymore).
+      if (typeof App !== 'undefined' && App.switchTab) {
+        App.switchTab('dev');
+      } else {
+        DevChat.renderChatView();
+      }
     });
 
     DevChat._wireSyncBanner();

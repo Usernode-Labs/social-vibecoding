@@ -6,13 +6,11 @@ const AppView = {
   activeSeconds: 0,
   iframeFocused: false,
 
-  // Open Issues section state. `_ghIssues` caches the last-fetched GitHub
-  // issue list (with bounty_count/my_bounty) so "Show 5 more" and the
-  // give-bounty optimistic update can re-render the section without a
-  // refetch. `_ghIssuesShown` is how many of them are currently visible.
+  // Open-issues state. `_ghIssues` caches the last-fetched GitHub issue
+  // list (with bounty_count/my_bounty) so feed paging and the
+  // give-bounty optimistic update can re-render without a refetch.
   _ghIssues: [],
   _ghIssuesMeta: { truncatedList: false, note: null, repoUrl: null, myRemaining: null },
-  _ghIssuesShown: 5,
   _bountyInFlight: new Set(),
   // #192: manual-refresh state for the Open Issues section. `_ghRefreshing`
   // guards re-entrancy while a ?refresh=1 fetch is in flight;
@@ -23,19 +21,22 @@ const AppView = {
   _ghRefreshNextAt: 0,
   _ghRefreshTimer: null,
 
-  // ── Dev view state (#194) ─────────────────────────────────────────
-  // The Dev mode's four sub-tabs are rendered by renderDevView; these
-  // track the per-tab accordion expansion so live re-renders and the
-  // hash deep-link segments stay in sync.
-  DEV_SUBTABS: [
-    { key: 'chat', label: 'Chat' },
-    { key: 'issues', label: 'Issues' },
-    { key: 'proposals', label: 'Proposals' },
-    { key: 'sessions', label: 'Sessions' },
-  ],
-  _devIssueOpen: null,     // expanded GitHub issue number on the Issues tab
-  _devProposalOpen: null,  // expanded PR-proposal session id on Proposals
+  // ── Dev view state (#194, forum revision) ─────────────────────────
+  // The Dev mode is one forum page (pinned chat + sessions strip + a
+  // unified feed of issues & proposals) plus a full-screen session
+  // view. These track the feed's accordion expansion (one card open at
+  // a time, across all kinds) so live re-renders and the hash
+  // deep-link segments stay in sync.
+  _devIssueOpen: null,     // expanded GitHub issue number in the feed
+  _devProposalOpen: null,  // expanded PR-proposal session id in the feed
   _devGovOpen: null,       // expanded governance proposal (issues.id)
+  // How many feed items are visible (the rest sit behind "Show more").
+  _feedShown: 20,
+  // Refresh timer for the Your-sessions strip's busy indicators;
+  // self-clears when the strip leaves the DOM.
+  _stripTimer: null,
+  // Collapsed/expanded state key for the pinned general-chat pane.
+  _CHAT_PIN_KEY_PREFIX: 'dev-chat-pin-open-v1:',
   // Cached Proposals-tab data for in-place re-renders.
   _proposals: [],
   _govProposals: [],
@@ -354,74 +355,207 @@ const AppView = {
     return document.getElementById('dev-section') || document.getElementById('app-content');
   },
 
-  // ── Dev mode (#194): sub-tab strip + section dispatch ──────────────
-  // `ref` is the sub-tab's optional deep-link target: a dev-session id
-  // for 'sessions', a GitHub issue number for 'issues', a PR-proposal
-  // session id for 'proposals'.
+  // ── Dev mode (#194, forum revision): one page ──────────────────────
+  // subTab ∈ 'forum' | 'sessions'. For 'sessions', `ref` is the dev
+  // session id (no id → forum). For 'forum', `ref` is an optional
+  // { kind: 'issue'|'proposal', id } deep link naming the card to
+  // expand.
   async renderDevView(subTab, ref) {
     const content = document.getElementById('app-content');
     if (!content) return;
-    if (!AppView.DEV_SUBTABS.some((t) => t.key === subTab)) subTab = 'chat';
 
     // Leaving whatever thread surface was open: drop the live render
-    // target so incoming thread messages turn into badge bumps, and
-    // reset the accordion state (the renderer re-applies `ref`).
+    // target so incoming thread messages turn into badge bumps.
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
-    AppView._devIssueOpen = null;
-    AppView._devProposalOpen = null;
-    AppView._devGovOpen = null;
 
-    // Compact, horizontally-scrollable strip — two-level nav with the
-    // bottom mode switcher, so it stays text-only and slim on mobile.
+    // Session view — a single DevChat session, full-screen, reached
+    // from the Your-sessions strip, proposal cards, or the "+" flow.
+    if (subTab === 'sessions' && ref) {
+      AppView._devIssueOpen = null;
+      AppView._devProposalOpen = null;
+      AppView._devGovOpen = null;
+      content.innerHTML = `
+        <div class="flex flex-col h-full min-h-0">
+          <div id="dev-section" class="flex-1 min-h-0 flex flex-col" style="overflow:hidden"></div>
+        </div>`;
+      await AppView.renderDevChatTab(ref);
+      return;
+    }
+
+    // Forum page. Apply the deep-linked card expansion (if any).
+    AppView._devIssueOpen = (ref && ref.kind === 'issue') ? ref.id : null;
+    AppView._devProposalOpen = (ref && ref.kind === 'proposal') ? ref.id : null;
+    AppView._devGovOpen = null;
+    AppView._feedShown = 20;
+
     content.innerHTML = `
       <div class="flex flex-col h-full min-h-0">
-        <div id="dev-subtabs" class="flex shrink-0 border-b border-zinc-200 dark:border-zinc-800 overflow-x-auto overscroll-contain">
-          ${AppView.DEV_SUBTABS.map((t) => `
-            <button data-subtab="${t.key}" class="dev-subtab px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${t.key === subTab
-              ? 'text-violet-600 dark:text-violet-400 border-violet-500'
-              : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 border-transparent'}">${t.label}</button>`).join('')}
+        <!-- Header bar: title + the "+" create menu (top right). -->
+        <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+          <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider flex-1">Dev</span>
+          <div class="relative">
+            <button id="dev-plus-btn" aria-haspopup="true" aria-expanded="false"
+              class="rounded-lg bg-violet-600 hover:bg-violet-500 w-7 h-7 flex items-center justify-center text-base font-bold leading-none text-white transition-colors"
+              title="Propose a change, file an issue, or propose a secret change">+</button>
+            <div id="dev-plus-menu" class="hidden absolute right-0 top-9 z-30 w-64 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden">
+              <button data-plus="proposal" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
+                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Propose a change</span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Start an AI dev session — promoting its PR creates the proposal</span>
+              </button>
+              <button data-plus="issue" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
+                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">New issue</span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Report a problem or idea without building it yourself</span>
+              </button>
+              <button data-plus="secret" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
+                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Propose a secret change</span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Set or remove an app secret via a vote</span>
+              </button>
+            </div>
+          </div>
         </div>
-        <div id="dev-section" class="flex-1 min-h-0 flex flex-col" style="overflow:hidden"></div>
+
+        <!-- Pinned general chat: its own scroll region, capped at 40%
+             of the page, collapsible to the one-line header. -->
+        <div id="dev-chat-pin" class="shrink-0 flex flex-col border-b border-zinc-200 dark:border-zinc-800">
+          <button id="dev-chat-toggle" class="flex items-center gap-2 px-3 py-1.5 text-left shrink-0 w-full">
+            <span id="dev-chat-caret" class="text-xs text-zinc-500">&#9660;</span>
+            <span class="text-xs font-medium text-zinc-700 dark:text-zinc-300">General chat</span>
+            <span class="flex-1"></span>
+            <span id="dev-chat-collapsed-hint" class="hidden text-xs text-zinc-500 dark:text-zinc-400">tap to expand</span>
+          </button>
+          <div id="dev-chat-pin-body" class="flex-1 min-h-0"></div>
+        </div>
+
+        <!-- The forum scroll: sessions strip, intermixed feed, merged
+             section, app-settings footer. -->
+        <div id="dev-forum-scroll" class="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+          <div id="dev-sessions-strip" class="px-3 pt-2"></div>
+          <div class="px-3 py-2">
+            <div id="dev-feed"><div class="text-xs text-zinc-500 dark:text-zinc-400">Loading…</div></div>
+            <div id="gc-merged" class="mt-4"></div>
+            <div id="dev-app-settings" class="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800"></div>
+          </div>
+        </div>
       </div>`;
 
-    content.querySelectorAll('.dev-subtab').forEach((btn) => {
-      btn.addEventListener('click', () => App.switchTab('dev', null, btn.dataset.subtab));
+    AppView._wirePlusMenu(content);
+    AppView._wireChatPin();
+    AppView.renderGroupChatTab();
+
+    // Delegated accordion toggles for every feed card kind. Bound on
+    // the stable #dev-feed container (its innerHTML re-renders, the
+    // node itself survives until the next renderDevView).
+    const feedEl = document.getElementById('dev-feed');
+    feedEl.addEventListener('click', (e) => {
+      if (e.target.closest('a, button, input, form, .dev-thread, .dev-issue-expand, .dev-proposal-expand')) return;
+      const issueRow = e.target.closest('[data-issue-row]');
+      if (issueRow) {
+        AppView.toggleIssueThread(parseInt(issueRow.dataset.issueRow, 10));
+        return;
+      }
+      const prRow = e.target.closest('[data-proposal-row]');
+      if (prRow) {
+        AppView.toggleProposalThread(parseInt(prRow.dataset.proposalRow, 10));
+        return;
+      }
+      const govRow = e.target.closest('[data-gov-row]');
+      if (govRow) AppView.toggleGovThread(parseInt(govRow.dataset.govRow, 10));
     });
 
-    switch (subTab) {
-      case 'chat':
-        AppView.renderGroupChatTab();
-        break;
-      case 'issues':
-        await AppView.renderIssuesTab(ref || null);
-        break;
-      case 'proposals':
-        await AppView.renderProposalsTab(ref || null);
-        break;
-      case 'sessions':
-        await AppView.renderDevChatTab(ref || null);
-        break;
-    }
+    AppView._renderSessionsStrip();
+    AppView._syncStripPolling();
+    AppView._renderAppSettings();
+    await AppView._loadDevFeed({ scrollToOpen: true });
   },
 
-  // Re-pull live data for the current dev sub-tab. Called from the WS
-  // event handlers in app.js (vote_update / issue_update / session_update
-  // / lock_changed) — the per-event fan-out the old loadVotePanel reload
-  // used to absorb. Sub-tab renderers preserve the open accordion item.
-  refreshDevData(_kind) {
+  // ── "+" create menu ─────────────────────────────────────────────────
+  _wirePlusMenu(content) {
+    const btn = document.getElementById('dev-plus-btn');
+    const menu = document.getElementById('dev-plus-menu');
+    if (!btn || !menu) return;
+    const close = () => {
+      menu.classList.add('hidden');
+      btn.setAttribute('aria-expanded', 'false');
+    };
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const open = menu.classList.toggle('hidden') === false;
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    // Outside-click dismiss, scoped to the dev view's lifetime (the
+    // listener dies with the content innerHTML on the next render).
+    content.addEventListener('click', (e) => {
+      if (!e.target.closest('#dev-plus-menu, #dev-plus-btn')) close();
+    });
+    menu.querySelector('[data-plus="proposal"]').addEventListener('click', () => {
+      close();
+      AppView.createProposal();
+    });
+    menu.querySelector('[data-plus="issue"]').addEventListener('click', () => {
+      close();
+      AppView.openNewIssueModal();
+    });
+    menu.querySelector('[data-plus="secret"]').addEventListener('click', () => {
+      close();
+      if (window.Secrets) Secrets.openForCurrentApp();
+    });
+  },
+
+  // ── Pinned chat collapse/expand ─────────────────────────────────────
+  _readChatPinOpen(slug) {
+    if (!slug) return true;
+    try { return localStorage.getItem(AppView._CHAT_PIN_KEY_PREFIX + slug) !== '0'; }
+    catch { return true; }
+  },
+
+  _writeChatPinOpen(slug, isOpen) {
+    if (!slug) return;
+    try { localStorage.setItem(AppView._CHAT_PIN_KEY_PREFIX + slug, isOpen ? '1' : '0'); }
+    catch {}
+  },
+
+  _applyChatPinState() {
+    const slug = AppView.appData && AppView.appData.slug;
+    const pin = document.getElementById('dev-chat-pin');
+    const body = document.getElementById('dev-chat-pin-body');
+    const caret = document.getElementById('dev-chat-caret');
+    const hint = document.getElementById('dev-chat-collapsed-hint');
+    if (!pin || !body) return;
+    const open = AppView._readChatPinOpen(slug);
+    // Open: the pane owns 40% of the dev page with its own scroll.
+    // Collapsed: just the one-line header bar.
+    pin.style.height = open ? '40%' : '';
+    body.classList.toggle('hidden', !open);
+    if (caret) caret.innerHTML = open ? '&#9660;' : '&#9654;';
+    if (hint) hint.classList.toggle('hidden', open);
+  },
+
+  _wireChatPin() {
+    const toggle = document.getElementById('dev-chat-toggle');
+    if (!toggle) return;
+    toggle.addEventListener('click', () => {
+      const slug = AppView.appData && AppView.appData.slug;
+      AppView._writeChatPinOpen(slug, !AppView._readChatPinOpen(slug));
+      AppView._applyChatPinState();
+      // Re-pin the chat to its bottom when re-expanding (the hidden
+      // container couldn't track scroll while collapsed).
+      if (AppView._readChatPinOpen(slug) && typeof GroupChat !== 'undefined' && GroupChat._lockedToBottom) {
+        GroupChat.scrollToBottom();
+      }
+    });
+    AppView._applyChatPinState();
+  },
+
+  // Re-pull live data for the dev forum. Called from the WS event
+  // handlers in app.js (vote_update / issue_update / session_update /
+  // lock_changed). The feed re-render preserves the open accordion
+  // card; the pinned chat lives outside the feed container and is
+  // untouched. The session view has its own refresh paths.
+  refreshDevData(kind) {
     if (!AppView.appData || typeof App === 'undefined' || App.currentTab !== 'dev') return;
-    switch (App.currentSubTab) {
-      case 'chat':
-        AppView.loadVoteState(AppView.appData.slug);
-        break;
-      case 'issues':
-        AppView.renderIssuesTab(AppView._devIssueOpen);
-        break;
-      case 'proposals':
-        AppView.renderProposalsTab(AppView._devProposalOpen);
-        break;
-      // 'sessions' has its own session_update refresh path in app.js.
-    }
+    if (App.currentSubTab === 'sessions') return;
+    AppView._loadDevFeed();
+    if (kind === 'session' || kind === 'all') AppView._renderSessionsStrip();
   },
 
   // Fetch the vote snapshot (promoted + merged) that powers the inline
@@ -458,7 +592,10 @@ const AppView = {
   },
 
   renderGroupChatTab() {
-    const content = AppView._devContainer();
+    // Forum revision: general chat mounts into the pinned pane at the
+    // top of the dev page (falling back to the generic container for
+    // any legacy caller).
+    const content = document.getElementById('dev-chat-pin-body') || AppView._devContainer();
     if (!content) return;
 
     // (#3) First-arrival framing: name what Group Chat is for. Group chat
@@ -584,58 +721,38 @@ const AppView = {
       // comes back to this tab, preserving their scroll position; it only
       // opens a fresh connection on the first visit to an app.
       GroupChat.mount(AppView.appData.slug);
-      // Vote snapshot for the inline buttons on vote-activity rows —
-      // the chat keeps these even though the panel moved to Proposals.
-      AppView.loadVoteState(AppView.appData.slug);
+      // The inline vote buttons on activity rows read AppView.voteState,
+      // which the forum's feed load (running right after this mount)
+      // populates from the same /promoted + /merged data — no separate
+      // fetch needed here.
     }
     // Re-render any staged reply preview (the composer DOM was just
     // recreated on this tab (re-)entry, but replyDraft persists).
     GroupChat._renderQuotePreview();
   },
 
-  // ── Issues tab (#194) ───────────────────────────────────────────────
-  // The repo's open GitHub issues, promoted from the old activity-panel
-  // section to a full sub-tab. Rows reuse _renderOpenIssuesInner
-  // (bounty / Auto-solve / Preview / Create PR buttons unchanged) and
-  // gain an accordion expansion with the issue body + a thread chat.
+  // ── Forum feed (#194 revision) ──────────────────────────────────────
+  // One intermixed list — GitHub issues + PR proposals + governance
+  // proposals — sorted by most recent activity (the item's own
+  // timestamp vs. the latest message in its thread). Data comes from
+  // the same four endpoints the old Issues/Proposals tabs used.
 
-  async renderIssuesTab(openRef) {
-    const c = AppView._devContainer();
-    if (!c || !AppView.appData) return;
+  async _loadDevFeed(opts) {
+    const feedEl = document.getElementById('dev-feed');
+    if (!feedEl || !AppView.appData) return;
     const slug = AppView.appData.slug;
-    AppView._devIssueOpen = openRef ? (parseInt(openRef, 10) || null) : null;
-
-    c.innerHTML = `
-      <div class="flex-1 min-h-0 overflow-y-auto overscroll-contain">
-        <div class="px-3 py-3 w-full">
-          <div class="flex items-center gap-2 mb-2">
-            <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider flex-1">Open Issues</span>
-            <button id="dev-new-issue" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs font-medium text-white transition-colors">+ New issue</button>
-          </div>
-          <div id="gc-open-issues"><div class="text-xs text-zinc-500 dark:text-zinc-400">Loading…</div></div>
-        </div>
-      </div>`;
-
-    const newBtn = document.getElementById('dev-new-issue');
-    if (newBtn) newBtn.addEventListener('click', () => AppView.openNewIssueModal());
-
-    // Delegated accordion toggle. Links/buttons keep their own
-    // semantics; clicks inside the expansion (thread chat, body) don't
-    // collapse the row out from under the user.
-    const list = document.getElementById('gc-open-issues');
-    list.addEventListener('click', (e) => {
-      if (e.target.closest('a, button, input, form, .dev-thread, .dev-issue-expand')) return;
-      const row = e.target.closest('[data-issue-row]');
-      if (!row) return;
-      AppView.toggleIssueThread(parseInt(row.dataset.issueRow, 10));
-    });
-
     try {
-      const [ghRes, issuesRes] = await Promise.all([
+      const [ghRes, issuesRes, promotedRes, mergedRes] = await Promise.all([
         fetch(`/api/apps/${slug}/github-issues`),
         fetch(`/api/apps/${slug}/issues`),
+        fetch(`/api/apps/${slug}/promoted`),
+        fetch(`/api/apps/${slug}/merged`),
       ]);
       const ghData = ghRes.ok ? await ghRes.json() : { issues: [] };
+      const issuesData = issuesRes.ok ? await issuesRes.json() : { issues: [] };
+      const promotedData = promotedRes.ok ? await promotedRes.json() : { promoted: [] };
+      const merged = mergedRes.ok ? (await mergedRes.json()).merged : [];
+
       AppView._ghIssues = Array.isArray(ghData.issues) ? ghData.issues : [];
       AppView._ghIssuesMeta = {
         truncatedList: !!ghData.truncatedList,
@@ -643,26 +760,278 @@ const AppView = {
         repoUrl: (AppView.appData && AppView.appData.repo_url) || null,
         myRemaining: typeof ghData.myRemaining === 'number' ? ghData.myRemaining : null,
       };
-      // GitHub twins of open env-var proposals render on the Proposals
-      // tab only — keep their rows out of this list (#131).
-      const issuesData = issuesRes.ok ? await issuesRes.json() : { issues: [] };
+      // GitHub twins of open env-var proposals render as governance
+      // cards only — keep their issue rows out of the feed (#131).
       AppView._envIssueNumbers = new Set(
         (issuesData.issues || [])
           .filter((i) => i.kind === 'secret_change')
           .map((i) => i.github_issue_number)
           .filter(Boolean)
       );
-      // First page, expanded far enough to include a deep-linked issue.
-      AppView._ghIssuesShown = 5;
-      if (AppView._devIssueOpen) {
-        const idx = AppView._visibleGhIssues().findIndex((i) => i.number === AppView._devIssueOpen);
-        if (idx >= AppView._ghIssuesShown) AppView._ghIssuesShown = idx + 1;
+
+      const promoted = promotedData.promoted || [];
+      const majority = promotedData.majority || 1;
+      const activeUsers = promotedData.activeUsers || 1;
+      const locked = !!promotedData.locked;
+
+      // Shared inline-vote snapshot (same shape loadVoteState builds) so
+      // the pinned chat's activity rows stay in sync without a refetch.
+      const voteRows = [...(merged || []), ...promoted];
+      AppView.voteState = {
+        bySession: Object.fromEntries(voteRows.map((pr) => [String(pr.id), pr])),
+        byPrNumber: Object.fromEntries(
+          voteRows.filter((pr) => pr.pr_number != null).map((pr) => [String(pr.pr_number), pr])
+        ),
+        majority,
+        activeUsers,
+      };
+      if (typeof GroupChat !== 'undefined' && GroupChat.refreshVoteControls) {
+        GroupChat.refreshVoteControls();
       }
-      AppView._rerenderOpenIssues();
+
+      AppView._proposals = promoted;
+      AppView._govProposals = (issuesData.issues || [])
+        .filter((i) => i.kind === 'secret_change' || i.kind === 'rename');
+      AppView._proposalsCtx = {
+        majority,
+        activeUsers,
+        locked,
+        lockedHint: locked
+          ? ' <span class="text-amber-500 font-normal">· locked: also needs an admin yes</span>'
+          : '',
+      };
+      AppView._merged = merged;
+      AppView._mergedCtx = { majority, activeUsers };
+
+      // Extend the visible cap to include a deep-linked open card.
+      const openIdx = AppView._openFeedIndex();
+      if (openIdx >= (AppView._feedShown || 20)) AppView._feedShown = openIdx + 1;
+
+      AppView._rerenderFeed();
+
+      const mergedEl = document.getElementById('gc-merged');
+      if (mergedEl) {
+        mergedEl.innerHTML = merged.length ? AppView._renderMergedInner() : '';
+        if (window.Kudos) Kudos.attach(mergedEl);
+      }
+
+      if (opts && opts.scrollToOpen) AppView._scrollOpenCardIntoView();
     } catch {
-      const el = document.getElementById('gc-open-issues');
-      if (el) el.innerHTML = '<div class="text-xs text-zinc-500 dark:text-zinc-400">Couldn&#39;t load open issues right now.</div>';
+      feedEl.innerHTML = '<div class="text-xs text-zinc-500 dark:text-zinc-400">Couldn&#39;t load the feed right now.</div>';
     }
+  },
+
+  // The feed's display order: every item carries a lastActivity sort
+  // key = max(its own timestamp, the latest message in its thread).
+  // Ties keep the per-source order (which preserves the #177
+  // auto-solve-first ranking among quiet issues).
+  _feedItems() {
+    const ts = (v) => {
+      const t = Date.parse(v || '');
+      return Number.isFinite(t) ? t : 0;
+    };
+    const items = [];
+    for (const issue of AppView._visibleGhIssues()) {
+      items.push({
+        kind: 'issue', id: issue.number, item: issue,
+        t: Math.max(ts(issue.updatedAt), ts(issue.lastMessageAt)),
+      });
+    }
+    for (const pr of AppView._proposals || []) {
+      items.push({
+        kind: 'proposal', id: pr.id, item: pr,
+        t: Math.max(ts(pr.promoted_at || pr.created_at), ts(pr.last_message_at)),
+      });
+    }
+    for (const g of AppView._govProposals || []) {
+      items.push({
+        kind: 'gov', id: g.id, item: g,
+        t: Math.max(ts(g.created_at), ts(g.last_message_at)),
+      });
+    }
+    // Array.prototype.sort is stable, so equal keys keep source order.
+    return items.sort((a, b) => b.t - a.t);
+  },
+
+  // Index of the currently-expanded card in the sorted feed (-1 when
+  // nothing is open). Used to extend the visible cap for deep links.
+  _openFeedIndex() {
+    if (!AppView._devIssueOpen && !AppView._devProposalOpen && !AppView._devGovOpen) return -1;
+    return AppView._feedItems().findIndex((it) =>
+      (it.kind === 'issue' && it.id === AppView._devIssueOpen)
+      || (it.kind === 'proposal' && it.id === AppView._devProposalOpen)
+      || (it.kind === 'gov' && it.id === AppView._devGovOpen));
+  },
+
+  _scrollOpenCardIntoView() {
+    const sel = AppView._devIssueOpen ? `#dev-feed [data-issue-row="${AppView._devIssueOpen}"]`
+      : AppView._devProposalOpen ? `#dev-feed [data-proposal-row="${AppView._devProposalOpen}"]`
+        : AppView._devGovOpen ? `#dev-feed [data-gov-row="${AppView._devGovOpen}"]` : null;
+    const row = sel && document.querySelector(sel);
+    if (row) row.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  },
+
+  _renderFeedInner() {
+    const ctx = AppView._proposalsCtx || {};
+    const meta = AppView._ghIssuesMeta || {};
+    const items = AppView._feedItems();
+
+    // #192: throttled manual refresh — covers issues created directly
+    // on GitHub that the server's 5-minute cache would otherwise hide.
+    const refreshDisabled = AppView._ghRefreshing || Date.now() < (AppView._ghRefreshNextAt || 0);
+    const refreshTitle = AppView._ghRefreshing
+      ? 'Refreshing…'
+      : (refreshDisabled ? 'Just refreshed — try again in a moment' : 'Check GitHub for new issues');
+    let html = `<div class="flex items-center justify-between mb-1"><span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider">Topics</span><button class="gc-vote-btn"${refreshDisabled ? ' disabled' : ''} title="${refreshTitle}" onclick="AppView.refreshOpenIssues()">&#8635; Refresh</button></div>`;
+    if (ctx.locked) {
+      html += '<div class="mb-2 text-xs text-amber-500">App is locked — an admin must approve any proposal before it applies.</div>';
+    }
+    if (!items.length) {
+      const note = meta.note
+        ? 'Couldn&#39;t load open issues right now. '
+        : '';
+      html += `<div class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">${note}Nothing is open right now. Press <span class="font-medium text-violet-500">+</span> to propose a change or file an issue.</div>`;
+      return html;
+    }
+
+    const shown = Math.min(AppView._feedShown || 20, items.length);
+    html += '<div class="divide-y divide-zinc-200 dark:divide-zinc-800 border-y border-zinc-200 dark:border-zinc-800">';
+    for (let i = 0; i < shown; i++) {
+      const it = items[i];
+      if (it.kind === 'issue') html += AppView._renderIssueRow(it.item);
+      else if (it.kind === 'proposal') html += AppView._renderProposalCard(it.item);
+      else html += AppView._renderGovCard(it.item);
+    }
+    html += '</div>';
+
+    // Keep the generating-state poller in sync with what we just
+    // rendered (idempotent set/clear of one timer).
+    AppView._syncHeadlessPolling();
+
+    // Paging footer: more local items, or a GitHub link when the repo
+    // has more open issues than the fetch ceiling.
+    if (shown < items.length) {
+      html += `<div class="mt-1"><button class="gc-vote-btn" onclick="AppView.showMoreFeed()">Show ${Math.min(10, items.length - shown)} more</button></div>`;
+    } else if (meta.truncatedList && meta.repoUrl) {
+      const issuesUrl = `${meta.repoUrl.replace(/\.git$/, '').replace(/\/$/, '')}/issues`;
+      html += `<div class="mt-1"><a href="${issuesUrl}" target="_blank" rel="noopener" class="text-xs text-violet-400 hover:underline">More open issues on GitHub &rarr;</a></div>`;
+    }
+    return html;
+  },
+
+  // Re-render the feed in place from the cached data, then re-mount the
+  // expanded card's thread + roster (innerHTML replacement wipes any
+  // previous mount).
+  _rerenderFeed() {
+    const el = document.getElementById('dev-feed');
+    if (!el) return;
+    el.innerHTML = AppView._renderFeedInner();
+    if (window.Kudos) Kudos.attach(el);
+    AppView._mountOpenIssueThread();
+    AppView._mountProposalThread();
+    if (AppView._devProposalOpen) AppView._loadVoteRoster(AppView._devProposalOpen);
+  },
+
+  showMoreFeed() {
+    AppView._feedShown = (AppView._feedShown || 20) + 10;
+    AppView._rerenderFeed();
+  },
+
+  // ── Your-sessions strip ─────────────────────────────────────────────
+  // The viewer's in-progress (active/paused, not-yet-promoted) sessions
+  // on this app, as a compact chip row between the pinned chat and the
+  // feed. Promoted sessions are absent here — they render as proposal
+  // cards. Hidden when empty.
+  async _renderSessionsStrip() {
+    const el = document.getElementById('dev-sessions-strip');
+    if (!el || !AppView.appData) return;
+    const slug = AppView.appData.slug;
+    try {
+      const res = await fetch('/api/me/active-sessions');
+      if (!res.ok) { el.innerHTML = ''; return; }
+      const data = await res.json();
+      const mine = (data.sessions || []).filter((s) =>
+        s.app_slug === slug && (s.status === 'active' || s.status === 'paused'));
+      // The container may have been replaced while the fetch was in
+      // flight (tab switch) — re-resolve before painting.
+      const live = document.getElementById('dev-sessions-strip');
+      if (!live) return;
+      if (!mine.length) { live.innerHTML = ''; return; }
+      live.innerHTML = `
+        <div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-1">Your sessions</div>
+        <div class="flex gap-2 overflow-x-auto overscroll-contain pb-1">
+          ${mine.map((s) => {
+            const label = escapeHtml(s.pr_title || s.branch_name || `Session #${s.id}`);
+            const dot = s.busy
+              ? '<span class="dc-status-icon dc-status-spinner-arc shrink-0" aria-hidden="true"></span>'
+              : `<span class="inline-block w-1.5 h-1.5 rounded-full shrink-0 ${s.status === 'paused' ? 'bg-zinc-400' : 'bg-emerald-500'}"></span>`;
+            const pausedTag = s.status === 'paused'
+              ? '<span class="text-zinc-500 shrink-0">· paused</span>' : '';
+            return `<button data-session-chip="${s.id}"
+              class="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/60 hover:border-violet-500/60 px-3 py-1 text-xs text-zinc-700 dark:text-zinc-300 max-w-[16rem] transition-colors"
+              title="${s.busy ? 'AI is working — ' : ''}${label}">
+              ${dot}<span class="truncate">${label}</span>${pausedTag}
+            </button>`;
+          }).join('')}
+        </div>`;
+      live.querySelectorAll('[data-session-chip]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          App.switchTab('dev', parseInt(btn.dataset.sessionChip, 10), 'sessions');
+        });
+      });
+    } catch {
+      el.innerHTML = '';
+    }
+  },
+
+  // Refresh the strip's busy indicators on a slow tick while the forum
+  // is mounted; self-clears when the strip leaves the DOM.
+  _syncStripPolling() {
+    if (AppView._stripTimer) return;
+    AppView._stripTimer = setInterval(() => {
+      if (!document.getElementById('dev-sessions-strip')) {
+        clearInterval(AppView._stripTimer);
+        AppView._stripTimer = null;
+        return;
+      }
+      AppView._renderSessionsStrip();
+    }, 15000);
+  },
+
+  // ── App settings footer ─────────────────────────────────────────────
+  // The App secrets / display-name shortcuts that used to live in the
+  // Sessions tab's meta block, relocated below the feed. Same ids
+  // (#dc-edit-secrets / #dc-secrets-state / #dc-edit-rename) so
+  // refreshDevChatSecretsState and Secrets' post-save sync keep working.
+  _renderAppSettings() {
+    const el = document.getElementById('dev-app-settings');
+    if (!el) return;
+    const currentName = escapeHtml(AppView.appData?.name || '');
+    el.innerHTML = `
+      <div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-2">App settings</div>
+      <div class="space-y-2">
+        <button id="dc-edit-secrets"
+          class="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 transition-colors text-left">
+          <svg class="w-4 h-4 text-zinc-500 dark:text-zinc-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 7a4 4 0 014 4m-4-4a4 4 0 00-4 4 4 4 0 004 4 4 4 0 004-4 4 4 0 00-4-4zm-9.5 12.5L11 13"/></svg>
+          <span class="flex-1 text-zinc-800 dark:text-zinc-200">App secrets</span>
+          <span id="dc-secrets-state" class="text-xs text-zinc-400 dark:text-zinc-500">Loading…</span>
+          <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+        </button>
+        <button id="dc-edit-rename"
+          class="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 transition-colors text-left">
+          <svg class="w-4 h-4 text-zinc-500 dark:text-zinc-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+          <span class="flex-1 text-zinc-800 dark:text-zinc-200">App display name</span>
+          <span class="text-xs text-zinc-400 dark:text-zinc-500 truncate max-w-[40%]" title="${currentName}">${currentName}</span>
+          <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+        </button>
+      </div>`;
+    el.querySelector('#dc-edit-secrets').addEventListener('click', () => {
+      if (window.Secrets) Secrets.openForCurrentApp();
+    });
+    el.querySelector('#dc-edit-rename').addEventListener('click', () => {
+      AppView.promptRename();
+    });
+    AppView.refreshDevChatSecretsState();
   },
 
   // Expand/collapse one issue's accordion (one open at a time;
@@ -670,8 +1039,10 @@ const AppView = {
   toggleIssueThread(n) {
     if (!n) return;
     AppView._devIssueOpen = AppView._devIssueOpen === n ? null : n;
+    AppView._devProposalOpen = null;
+    AppView._devGovOpen = null;
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
-    AppView._rerenderOpenIssues();
+    AppView._rerenderFeed();
     if (typeof App !== 'undefined' && App.updateHash) App.updateHash();
   },
 
@@ -760,7 +1131,7 @@ const AppView = {
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
         close();
-        AppView.renderIssuesTab(AppView._devIssueOpen);
+        AppView.refreshDevData('issue');
       } catch (e2) {
         err.textContent = e2.message;
         err.classList.remove('hidden');
@@ -769,137 +1140,6 @@ const AppView = {
       }
     });
     setTimeout(() => root.querySelector('#new-issue-title').focus(), 0);
-  },
-
-  // ── Proposals tab (#194) ────────────────────────────────────────────
-  // Everything open for voting: PR proposals (promoted/merging
-  // sessions) and governance proposals (env-var changes + legacy rename
-  // rows), each expandable into voting details + a thread chat, with a
-  // collapsed "Recently merged" section below.
-
-  async renderProposalsTab(openRef) {
-    const c = AppView._devContainer();
-    if (!c || !AppView.appData) return;
-    const slug = AppView.appData.slug;
-    AppView._devProposalOpen = openRef ? (parseInt(openRef, 10) || null) : null;
-
-    c.innerHTML = `
-      <div class="flex-1 min-h-0 overflow-y-auto overscroll-contain">
-        <div class="px-3 py-3 w-full">
-          <div class="flex items-center gap-2 mb-2 flex-wrap">
-            <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider flex-1">Proposals</span>
-            <button id="dev-propose-secret" class="gc-vote-btn" title="Propose setting or removing an app secret (opens the secrets panel)">Propose a secret change</button>
-            <button id="dev-create-proposal" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs font-medium text-white transition-colors">+ Create proposal</button>
-          </div>
-          <div id="dev-proposals-list"><div class="text-xs text-zinc-500 dark:text-zinc-400">Loading…</div></div>
-          <div id="gc-merged" class="mt-4"></div>
-        </div>
-      </div>`;
-
-    document.getElementById('dev-create-proposal').addEventListener('click', () => AppView.createProposal());
-    document.getElementById('dev-propose-secret').addEventListener('click', () => {
-      if (window.Secrets) Secrets.openForCurrentApp();
-    });
-
-    // Delegated accordion toggles for PR / governance cards.
-    const listEl = document.getElementById('dev-proposals-list');
-    listEl.addEventListener('click', (e) => {
-      if (e.target.closest('a, button, input, form, .dev-thread, .dev-proposal-expand')) return;
-      const prRow = e.target.closest('[data-proposal-row]');
-      if (prRow) {
-        AppView.toggleProposalThread(parseInt(prRow.dataset.proposalRow, 10));
-        return;
-      }
-      const govRow = e.target.closest('[data-gov-row]');
-      if (govRow) AppView.toggleGovThread(parseInt(govRow.dataset.govRow, 10));
-    });
-
-    try {
-      const [promotedRes, issuesRes, mergedRes] = await Promise.all([
-        fetch(`/api/apps/${slug}/promoted`),
-        fetch(`/api/apps/${slug}/issues`),
-        fetch(`/api/apps/${slug}/merged`),
-      ]);
-      const promotedData = promotedRes.ok ? await promotedRes.json() : { promoted: [] };
-      const issuesData = issuesRes.ok ? await issuesRes.json() : { issues: [] };
-      const merged = mergedRes.ok ? (await mergedRes.json()).merged : [];
-
-      const promoted = promotedData.promoted || [];
-      const majority = promotedData.majority || 1;
-      const activeUsers = promotedData.activeUsers || 1;
-      const locked = !!promotedData.locked;
-
-      // Shared inline-vote snapshot (same shape loadVoteState builds) so
-      // the chat tab's activity rows stay in sync without a refetch.
-      const voteRows = [...(merged || []), ...promoted];
-      AppView.voteState = {
-        bySession: Object.fromEntries(voteRows.map((pr) => [String(pr.id), pr])),
-        byPrNumber: Object.fromEntries(
-          voteRows.filter((pr) => pr.pr_number != null).map((pr) => [String(pr.pr_number), pr])
-        ),
-        majority,
-        activeUsers,
-      };
-
-      AppView._proposals = promoted;
-      AppView._govProposals = (issuesData.issues || [])
-        .filter((i) => i.kind === 'secret_change' || i.kind === 'rename');
-      AppView._proposalsCtx = {
-        majority,
-        activeUsers,
-        locked,
-        lockedHint: locked
-          ? ' <span class="text-amber-500 font-normal">· locked: also needs an admin yes</span>'
-          : '',
-      };
-      AppView._merged = merged;
-      AppView._mergedCtx = { majority, activeUsers };
-
-      AppView._rerenderProposals();
-      const mergedEl = document.getElementById('gc-merged');
-      if (mergedEl) mergedEl.innerHTML = merged.length ? AppView._renderMergedInner() : '';
-      if (window.Kudos && mergedEl) Kudos.attach(mergedEl);
-    } catch {
-      const el = document.getElementById('dev-proposals-list');
-      if (el) el.innerHTML = '<div class="text-xs text-zinc-500 dark:text-zinc-400">Couldn&#39;t load proposals right now.</div>';
-    }
-  },
-
-  // Re-render the open-proposals list in place from the cached data,
-  // then re-mount the expanded card's thread + roster.
-  _rerenderProposals() {
-    const el = document.getElementById('dev-proposals-list');
-    if (!el) return;
-    el.innerHTML = AppView._renderProposalsListInner();
-    if (window.Kudos) Kudos.attach(el);
-    AppView._mountProposalThread();
-    if (AppView._devProposalOpen) AppView._loadVoteRoster(AppView._devProposalOpen);
-  },
-
-  _renderProposalsListInner() {
-    const ctx = AppView._proposalsCtx || {};
-    const prs = AppView._proposals || [];
-    const govs = AppView._govProposals || [];
-    let html = '';
-    if (ctx.locked) {
-      html += '<div class="mb-2 text-xs text-amber-500">App is locked — an admin must approve any proposal before it applies.</div>';
-    }
-    if (!prs.length && !govs.length) {
-      html += '<div class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">Nothing is up for a vote right now. Got an idea? Press <span class="font-medium text-violet-500">Create proposal</span> and describe it.</div>';
-    }
-    if (prs.length) {
-      html += `<div class="mb-2"><div class="text-xs text-zinc-500 mb-1 font-medium">Open PRs <span class="text-zinc-600 font-normal">(need ${ctx.majority}/${ctx.activeUsers} votes to merge)</span>${ctx.lockedHint}</div>`
-        + '<div class="divide-y divide-zinc-200 dark:divide-zinc-800 border-y border-zinc-200 dark:border-zinc-800">';
-      for (const pr of prs) html += AppView._renderProposalCard(pr);
-      html += '</div></div>';
-    }
-    if (govs.length) {
-      html += `<div class="mb-2"><div class="text-xs text-zinc-500 mb-1 font-medium">Governance <span class="text-zinc-600 font-normal">(need ${ctx.majority}/${ctx.activeUsers} up-votes to apply)</span>${ctx.lockedHint}</div>`
-        + '<div class="divide-y divide-zinc-200 dark:divide-zinc-800 border-y border-zinc-200 dark:border-zinc-800">';
-      for (const g of govs) html += AppView._renderGovCard(g);
-      html += '</div></div>';
-    }
-    return html;
   },
 
   // One PR-proposal card. Header row reuses the exact control set the
@@ -929,6 +1169,16 @@ const AppView = {
     const mergingBadge = isMerging ? AppView.mergingBadgeHtml() : '';
     const expanded = AppView._devProposalOpen === pr.id;
     const caret = `<span class="text-[0.6rem] text-zinc-500 shrink-0">${expanded ? '&#9660;' : '&#9654;'}</span>`;
+    // Forum revision: a promoted session IS a proposal card — Discussion
+    // opens its thread (same toggle the row tap performs), Open session
+    // jumps into the dev session behind it. Sessions are owner-scoped
+    // (GET /api/sessions/:id), so the session button only renders for
+    // the proposer.
+    const chatN = parseInt(pr.chat_count) || 0;
+    const discussBtn = `<button class="gc-vote-btn dev-discuss-btn" data-count="${chatN}" title="Open this proposal's discussion thread" onclick="AppView.toggleProposalThread(${pr.id})">&#128172; Discussion${chatN ? ` (${chatN})` : ''}</button>`;
+    const sessionBtn = (App.user && pr.user_id === App.user.id)
+      ? `<button class="gc-vote-btn" title="Open the dev session behind this proposal" onclick="AppView.openProposalSession(${pr.id})">Open session</button>`
+      : '';
     // #195: before/after capture tiles so voters can judge a visual change
     // without opening the staging preview. basis-full forces it onto its own
     // row below the title + controls.
@@ -940,13 +1190,14 @@ const AppView = {
         <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-violet-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
         <span class="text-xs text-zinc-700 dark:text-zinc-300 flex-1 min-w-0 truncate">${labelText}</span>
         ${AppView.closesPillHtml(pr)}
-        ${AppView._devChatBadge(pr.chat_count)}
-        <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
+        <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2 flex-wrap">
           ${unvotedBadge}
           ${AppView.voteCountPill(pr, majority)}
           ${AppView.voteButtonsHtml(pr)}
           ${mergingBadge}
           ${kudosBtn}
+          ${discussBtn}
+          ${sessionBtn}
         </div>
         ${visualsHtml ? `<div class="basis-full">${visualsHtml}</div>` : ''}
       </div>`;
@@ -1004,17 +1255,19 @@ const AppView = {
       : '';
     const expanded = AppView._devGovOpen === issue.id;
     const caret = `<span class="text-[0.6rem] text-zinc-500 shrink-0">${expanded ? '&#9660;' : '&#9654;'}</span>`;
+    const govChatN = parseInt(issue.chat_count) || 0;
+    const govDiscussBtn = `<button class="gc-vote-btn dev-discuss-btn" data-count="${govChatN}" title="Open this proposal's discussion thread" onclick="AppView.toggleGovThread(${issue.id})">&#128172; Discussion${govChatN ? ` (${govChatN})` : ''}</button>`;
 
     let html = `
       <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1 cursor-pointer" data-gov-row="${issue.id}"${issue.github_issue_number ? ` data-ref-issue="${issue.github_issue_number}"` : ''} title="Tap to open the discussion thread">
         ${caret}
         <span class="text-xs text-zinc-700 dark:text-zinc-300 flex-1 min-w-0 truncate">${escapeHtml(titleText)}${creatorSuffix}</span>
-        ${AppView._devChatBadge(issue.chat_count)}
-        <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
+        <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2 flex-wrap">
           ${tallyPill}
           ${yesBtn}
           ${noBtn}
           ${adminBtn}
+          ${govDiscussBtn}
         </div>
       </div>`;
     if (expanded) {
@@ -1031,8 +1284,9 @@ const AppView = {
     if (!id) return;
     AppView._devProposalOpen = AppView._devProposalOpen === id ? null : id;
     AppView._devGovOpen = null;
+    AppView._devIssueOpen = null;
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
-    AppView._rerenderProposals();
+    AppView._rerenderFeed();
     if (typeof App !== 'undefined' && App.updateHash) App.updateHash();
   },
 
@@ -1040,8 +1294,9 @@ const AppView = {
     if (!id) return;
     AppView._devGovOpen = AppView._devGovOpen === id ? null : id;
     AppView._devProposalOpen = null;
+    AppView._devIssueOpen = null;
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
-    AppView._rerenderProposals();
+    AppView._rerenderFeed();
     if (typeof App !== 'undefined' && App.updateHash) App.updateHash();
   },
 
@@ -1081,6 +1336,15 @@ const AppView = {
   // sessions, so this opens a fresh session on the Sessions sub-tab
   // with a one-line hint that promoting the session's PR creates the
   // proposal.
+  // "Open session" on a proposal card — jump into the dev session
+  // behind the proposal (proposer only; sessions are owner-scoped).
+  openProposalSession(sessionId) {
+    if (!sessionId) return;
+    if (typeof App !== 'undefined' && App.switchTab) {
+      App.switchTab('dev', sessionId, 'sessions');
+    }
+  },
+
   async createProposal() {
     if (!AppView.appData || typeof DevChat === 'undefined') return;
     const session = await DevChat.createSession(AppView.appData.slug);
@@ -1101,27 +1365,37 @@ const AppView = {
   // Live badge bump for a thread the viewer doesn't have open (called
   // from GroupChat when a threaded message arrives).
   bumpThreadBadge(type, ref) {
-    let sel = null;
+    let el = null;
     if (type === 'issue') {
       const issue = (AppView._ghIssues || []).find((i) => i.number === ref);
       if (issue) issue.chatCount = (parseInt(issue.chatCount) || 0) + 1;
-      sel = `[data-issue-row="${ref}"] .dev-chat-badge`;
-    } else if (type === 'session') {
+      el = document.querySelector(`[data-issue-row="${ref}"] .dev-chat-badge`);
+      if (el) {
+        const n = (parseInt(el.dataset.count) || 0) + 1;
+        el.dataset.count = String(n);
+        el.innerHTML = `&#128172; ${n}`;
+        el.classList.remove('bg-zinc-500/10', 'text-zinc-500');
+        el.classList.add('bg-violet-500/10', 'text-violet-400');
+      }
+      return;
+    }
+    // Proposal / governance cards carry the count on their Discussion
+    // button (forum revision) — bump the cache + the button label.
+    let sel = null;
+    if (type === 'session') {
       const pr = (AppView._proposals || []).find((p) => p.id === ref);
       if (pr) pr.chat_count = (parseInt(pr.chat_count) || 0) + 1;
-      sel = `[data-proposal-row="${ref}"] .dev-chat-badge`;
+      sel = `[data-proposal-row="${ref}"] .dev-discuss-btn`;
     } else if (type === 'governance') {
       const g = (AppView._govProposals || []).find((i) => i.id === ref);
       if (g) g.chat_count = (parseInt(g.chat_count) || 0) + 1;
-      sel = `[data-gov-row="${ref}"] .dev-chat-badge`;
+      sel = `[data-gov-row="${ref}"] .dev-discuss-btn`;
     }
-    const el = sel && document.querySelector(sel);
+    el = sel && document.querySelector(sel);
     if (el) {
       const n = (parseInt(el.dataset.count) || 0) + 1;
       el.dataset.count = String(n);
-      el.innerHTML = `&#128172; ${n}`;
-      el.classList.remove('bg-zinc-500/10', 'text-zinc-500');
-      el.classList.add('bg-violet-500/10', 'text-violet-400');
+      el.innerHTML = `&#128172; Discussion (${n})`;
     }
   },
 
@@ -1134,11 +1408,27 @@ const AppView = {
     const n = parseInt(number, 10);
     if (!n || typeof App === 'undefined') return;
 
+    // Already on the forum: expand the card in place (no full dev-view
+    // re-render, which would remount the pinned chat).
+    const onForum = App.currentTab === 'dev' && App.currentSubTab === 'forum'
+      && document.getElementById('dev-feed');
+
     if (type !== 'pr') {
-      // Bare-# chips are issues first. The Issues tab lists open issues;
-      // a closed one simply won't be expandable there, which mirrors the
-      // old "row disappeared from the drawer" behavior.
-      App.switchTab('dev', n, 'issues');
+      // Bare-# chips are issues first. A closed issue simply won't be
+      // in the feed, which mirrors the old "row disappeared from the
+      // drawer" behavior (GitHub fallback below still applies for PRs).
+      if (onForum) {
+        AppView._devIssueOpen = n;
+        AppView._devProposalOpen = null;
+        AppView._devGovOpen = null;
+        const idx = AppView._openFeedIndex();
+        if (idx >= (AppView._feedShown || 20)) AppView._feedShown = idx + 1;
+        AppView._rerenderFeed();
+        AppView._scrollOpenCardIntoView();
+        if (App.updateHash) App.updateHash();
+      } else {
+        App.switchTab('dev', n, 'issues');
+      }
       return;
     }
 
@@ -1146,12 +1436,32 @@ const AppView = {
     const pr = (st.byPrNumber && st.byPrNumber[String(n)])
       || (st.bySession && st.bySession[String(n)]);
     if (pr && (pr.status === 'promoted' || pr.status === 'merging')) {
-      App.switchTab('dev', pr.id, 'proposals');
+      if (onForum) {
+        AppView._devProposalOpen = pr.id;
+        AppView._devIssueOpen = null;
+        AppView._devGovOpen = null;
+        const idx = AppView._openFeedIndex();
+        if (idx >= (AppView._feedShown || 20)) AppView._feedShown = idx + 1;
+        AppView._rerenderFeed();
+        AppView._scrollOpenCardIntoView();
+        if (App.updateHash) App.updateHash();
+      } else {
+        App.switchTab('dev', pr.id, 'proposals');
+      }
       return;
     }
     if (pr && pr.status === 'merged') {
       AppView._mergedExpanded = true;
-      App.switchTab('dev', null, 'proposals');
+      if (onForum) {
+        const el = document.getElementById('gc-merged');
+        if (el) {
+          el.innerHTML = AppView._renderMergedInner();
+          if (window.Kudos) Kudos.attach(el);
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      } else {
+        App.switchTab('dev');
+      }
       return;
     }
 
@@ -1252,8 +1562,8 @@ const AppView = {
   // order. Sorting happens here at render time (not server-side) because
   // the optimistic auto-solve start and the headless poller both mutate
   // `headless` in place and re-render without refetching. Paging
-  // (_renderOpenIssuesInner) and the ref-scroll index lookup must both use
-  // this helper so "Show 5 more" counts match what's on screen.
+  // The feed renderer and the open-card index lookup must both use
+  // this helper so paging counts match what's on screen.
   _visibleGhIssues() {
     const rank = (i) => {
       const s = i.headless && i.headless.status;
@@ -1264,173 +1574,111 @@ const AppView = {
       .sort((a, b) => rank(a) - rank(b));
   },
 
-  // Build the inner HTML for the Open Issues section from the cached
-  // AppView._ghIssues list. Rendered once inside loadVotePanel's bodyHtml and
-  // re-rendered in place (into #gc-open-issues) by showMoreIssues /
-  // giveIssueBounty so paging + optimistic bounty updates need no refetch.
-  _renderOpenIssuesInner() {
-    const issues = AppView._visibleGhIssues();
+  // One issue row for the forum feed, with everything the old Open
+  // Issues section rendered per row (bounty/kudos, Create PR, the
+  // Auto-solve state machine, Preview, creator attribution) plus the
+  // accordion expansion into the issue body + thread chat.
+  _renderIssueRow(issue) {
     const meta = AppView._ghIssuesMeta || {};
-    // #192: throttled manual refresh — covers issues created directly on
-    // GitHub, which the server's 5-minute cache would otherwise hide.
-    // Disabled while a refresh is in flight and for the server-reported
-    // cooldown after one. Rendered in the empty/degraded state too: "No
-    // open issues." while a stale cache hides a new issue is exactly when
-    // the button is needed.
-    const refreshDisabled = AppView._ghRefreshing || Date.now() < (AppView._ghRefreshNextAt || 0);
-    const refreshTitle = AppView._ghRefreshing
-      ? 'Refreshing…'
-      : (refreshDisabled ? 'Just refreshed — try again in a moment' : 'Check GitHub for new issues');
-    const refreshBtn = `<button class="gc-vote-btn"${refreshDisabled ? ' disabled' : ''} title="${refreshTitle}" onclick="AppView.refreshOpenIssues()">&#8635; Refresh</button>`;
-    const heading = `<div class="flex items-center justify-between mb-1"><span class="text-xs text-zinc-500 font-medium">Open Issues</span>${refreshBtn}</div>`;
-
-    // Degraded / empty states. A `note` means fetchPublicIssues couldn't
-    // return a live list (rate limited / unavailable / fetch failed); show a
-    // muted line rather than an error toast.
-    if (!issues.length) {
-      const msg = meta.note
-        ? "Couldn't load open issues right now."
-        : 'No open issues.';
-      return `${heading}<div class="text-xs text-zinc-500 dark:text-zinc-400">${msg}</div>`;
-    }
-
-    const shown = Math.min(AppView._ghIssuesShown || 5, issues.length);
     const budgetSpent = meta.myRemaining === 0;
+    let html = '';
 
-    let html = `${heading}<div class="divide-y divide-zinc-200 dark:divide-zinc-800 sm:divide-y-0 border-y border-zinc-200 dark:border-zinc-800 sm:border-y-0">`;
-    for (let i = 0; i < shown; i++) {
-      const issue = issues[i];
-      const n = issue.number;
-      const href = issue.htmlUrl || '#';
-      // The GitHub label pill is intentionally not rendered for now — every
-      // open issue currently carries the same `usernode` label, so the badge
-      // added noise without distinguishing rows. See _renderOpenIssuesInner
-      // history if label display is reintroduced.
-      const bountyPill = issue.bounty_count
-        ? `<span class="inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500" title="Kudos bounties pledged on this issue">&#9733; ${issue.bounty_count}</span>`
+    const n = issue.number;
+    const href = issue.htmlUrl || '#';
+    // The GitHub label pill is intentionally not rendered for now — every
+    // open issue currently carries the same `usernode` label, so the badge
+    // added noise without distinguishing rows. See _renderOpenIssuesInner
+    // history if label display is reintroduced.
+    const bountyPill = issue.bounty_count
+      ? `<span class="inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500" title="Kudos bounties pledged on this issue">&#9733; ${issue.bounty_count}</span>`
+      : '';
+    // "Give kudos" disables once the viewer has an open bounty here or has
+    // spent their shared weekly allowance.
+    const kudosDisabled = issue.my_bounty || budgetSpent;
+    const kudosTitle = issue.my_bounty
+      ? 'You already placed a bounty on this issue'
+      : (budgetSpent ? 'Weekly kudos allowance spent' : 'Pledge a kudos bounty — paid to whoever\'s merged PR closes this issue');
+    const kudosBtn = `<button class="gc-vote-btn"${kudosDisabled ? ' disabled' : ''} title="${kudosTitle}" onclick="AppView.giveIssueBounty(${n})">${issue.my_bounty ? '&#9733; Bountied' : 'Pledge kudos'}</button>`;
+    const createBtn = `<button class="gc-vote-btn" title="Start a dev chat to solve this issue" onclick="AppView.createPrForIssue(${n})">Create PR</button>`;
+    // #155: headless auto-session button. Four states driven by the
+    // issue's `headless` field from /github-issues:
+    //   none/failed → "Auto-solve" (opens the confirm + model popup)
+    //   generating  → disabled progress label
+    //   ready       → contextual clone-for-me label by outcome (#168):
+    //                 "Review spec / Review solution / Answer question
+    //                 & start session", generic fallback otherwise
+    //   ready + viewer already cloned (mySessionId, #172) → "Go to
+    //                 session", navigating to their derived session
+    //                 instead of offering a second clone
+    const h = issue.headless;
+    let autoBtn;
+    if (h && h.status === 'generating') {
+      autoBtn = `<button class="gc-vote-btn" disabled title="A headless AI session is working on this issue${h.username ? ` (started by ${escapeAttr(h.username)})` : ''}">Generating auto-solve&hellip;</button>`;
+    } else if (h && h.status === 'ready') {
+      // #183: a code/spec_code run with a live preview gets the
+      // changes-ready treatment — label + a Preview button that opens
+      // the auto run's staging (plain open, same overlay as PR rows).
+      // stagingUrl is nulled when the preview is GC'd, so the row
+      // degrades back to the plain outcome wording.
+      const hasPreview = !!h.stagingUrl && (h.outcome === 'code' || h.outcome === 'spec_code');
+      const previewBtn = hasPreview
+        ? `<button class="gc-vote-btn gc-vote-btn-preview" title="Open the auto-solve staging preview" onclick="AppView.swapToStagingForSession(${h.sessionId}, '${h.stagingUrl}')">Preview</button>`
         : '';
-      // "Give kudos" disables once the viewer has an open bounty here or has
-      // spent their shared weekly allowance.
-      const kudosDisabled = issue.my_bounty || budgetSpent;
-      const kudosTitle = issue.my_bounty
-        ? 'You already placed a bounty on this issue'
-        : (budgetSpent ? 'Weekly kudos allowance spent' : 'Pledge a kudos bounty — paid to whoever\'s merged PR closes this issue');
-      const kudosBtn = `<button class="gc-vote-btn"${kudosDisabled ? ' disabled' : ''} title="${kudosTitle}" onclick="AppView.giveIssueBounty(${n})">${issue.my_bounty ? '&#9733; Bountied' : 'Pledge kudos'}</button>`;
-      const createBtn = `<button class="gc-vote-btn" title="Start a dev chat to solve this issue" onclick="AppView.createPrForIssue(${n})">Create PR</button>`;
-      // #155: headless auto-session button. Four states driven by the
-      // issue's `headless` field from /github-issues:
-      //   none/failed → "Auto-solve" (opens the confirm + model popup)
-      //   generating  → disabled progress label
-      //   ready       → contextual clone-for-me label by outcome (#168):
-      //                 "Review spec / Review solution / Answer question
-      //                 & start session", generic fallback otherwise
-      //   ready + viewer already cloned (mySessionId, #172) → "Go to
-      //                 session", navigating to their derived session
-      //                 instead of offering a second clone
-      const h = issue.headless;
-      let autoBtn;
-      if (h && h.status === 'generating') {
-        autoBtn = `<button class="gc-vote-btn" disabled title="A headless AI session is working on this issue${h.username ? ` (started by ${escapeAttr(h.username)})` : ''}">Generating auto-solve&hellip;</button>`;
-      } else if (h && h.status === 'ready') {
-        // #183: a code/spec_code run with a live preview gets the
-        // changes-ready treatment — label + a Preview button that opens
-        // the auto run's staging (plain open, same overlay as PR rows).
-        // stagingUrl is nulled when the preview is GC'd, so the row
-        // degrades back to the plain outcome wording.
-        const hasPreview = !!h.stagingUrl && (h.outcome === 'code' || h.outcome === 'spec_code');
-        const previewBtn = hasPreview
-          ? `<button class="gc-vote-btn gc-vote-btn-preview" title="Open the auto-solve staging preview" onclick="AppView.swapToStagingForSession(${h.sessionId}, '${h.stagingUrl}')">Preview</button>`
-          : '';
-        if (h.mySessionId) {
-          autoBtn = `${previewBtn}<button class="gc-vote-btn" title="You already started a session from this auto session — open it" onclick="AppView.goToAutoSessionClone(${h.mySessionId})">Go to session</button>`;
-        } else {
-          const outcomeNote = h.outcome === 'spec' ? 'it drafted a spec'
-            : h.outcome === 'code' ? 'it pushed a code change'
-            : h.outcome === 'spec_code' ? 'it drafted a spec and pushed a code change'
-            : 'it has a question for you';
-          const autoLabel = hasPreview ? 'Changes ready &mdash; review &amp; start session'
-            : h.outcome === 'spec' ? 'Review spec &amp; start session'
-            : h.outcome === 'code' ? 'Review solution &amp; start session'
-            : h.outcome === 'question' ? 'Answer question &amp; start session'
-            : 'Start session from auto session';
-          autoBtn = `${previewBtn}<button class="gc-vote-btn" title="Clone the finished auto session (${outcomeNote}) into your own dev chat — others can clone it too" onclick="AppView.startFromAutoSession(${h.sessionId})">${autoLabel}</button>`;
-        }
-        // #150: a question outcome doesn't block re-running — answer the
-        // questions on the issue, then press Auto-solve again and the new
-        // run reads the answers. Both paths stay available (whether or not
-        // the viewer already cloned this run).
-        if (h.outcome === 'question') {
-          autoBtn += `<button class="gc-vote-btn" title="Questions were posted on the issue — answer them, then run auto-solve again" onclick="AppView.confirmAutoSession(${n})">Auto-solve</button>`;
-        }
+      if (h.mySessionId) {
+        autoBtn = `${previewBtn}<button class="gc-vote-btn" title="You already started a session from this auto session — open it" onclick="AppView.goToAutoSessionClone(${h.mySessionId})">Go to session</button>`;
       } else {
-        autoBtn = `<button class="gc-vote-btn" title="Spin up a headless AI session that starts solving this issue on its own — uses your credits" onclick="AppView.confirmAutoSession(${n})">Auto-solve</button>`;
+        const outcomeNote = h.outcome === 'spec' ? 'it drafted a spec'
+          : h.outcome === 'code' ? 'it pushed a code change'
+          : h.outcome === 'spec_code' ? 'it drafted a spec and pushed a code change'
+          : 'it has a question for you';
+        const autoLabel = hasPreview ? 'Changes ready &mdash; review &amp; start session'
+          : h.outcome === 'spec' ? 'Review spec &amp; start session'
+          : h.outcome === 'code' ? 'Review solution &amp; start session'
+          : h.outcome === 'question' ? 'Answer question &amp; start session'
+          : 'Start session from auto session';
+        autoBtn = `${previewBtn}<button class="gc-vote-btn" title="Clone the finished auto session (${outcomeNote}) into your own dev chat — others can clone it too" onclick="AppView.startFromAutoSession(${h.sessionId})">${autoLabel}</button>`;
       }
-      // #133: show the creating user next to the title, same "· user"
-      // treatment as PR rows above. created_by_username comes from the
-      // /github-issues route (local issues table → body Source line →
-      // GitHub login); omitted when the creator couldn't be resolved.
-      const creatorSuffix = issue.created_by_username
-        ? ` <span class="text-zinc-500">· ${escapeHtml(issue.created_by_username)}</span>`
-        : '';
-      const rowTitle = issue.created_by_username
-        ? `${issue.title} · ${issue.created_by_username}`
-        : issue.title;
-
-      // #194: rows are accordion-expandable (one at a time) into the
-      // issue body + its thread chat; the badge shows the thread size.
-      const expanded = AppView._devIssueOpen === n;
-      const caret = `<span class="text-[0.6rem] text-zinc-500 shrink-0">${expanded ? '&#9660;' : '&#9654;'}</span>`;
-
-      html += `
-        <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1 cursor-pointer" data-ref-issue="${n}" data-issue-row="${n}" title="Tap to read the issue and its discussion thread">
-          ${caret}
-          <a href="${href}" target="_blank" rel="noopener" class="text-xs text-violet-400 font-mono hover:underline">#${n}</a>
-          <span class="text-xs text-zinc-300 flex-1 min-w-0 truncate" title="${escapeHtml(rowTitle)}">${escapeHtml(issue.title)}${creatorSuffix}</span>
-          ${bountyPill}
-          ${AppView._devChatBadge(issue.chatCount)}
-          <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
-            ${kudosBtn}
-            ${createBtn}
-            ${autoBtn}
-          </div>
-        </div>`;
-      if (expanded) html += AppView._issueExpansionHtml(issue);
+      // #150: a question outcome doesn't block re-running — answer the
+      // questions on the issue, then press Auto-solve again and the new
+      // run reads the answers. Both paths stay available (whether or not
+      // the viewer already cloned this run).
+      if (h.outcome === 'question') {
+        autoBtn += `<button class="gc-vote-btn" title="Questions were posted on the issue — answer them, then run auto-solve again" onclick="AppView.confirmAutoSession(${n})">Auto-solve</button>`;
+      }
+    } else {
+      autoBtn = `<button class="gc-vote-btn" title="Spin up a headless AI session that starts solving this issue on its own — uses your credits" onclick="AppView.confirmAutoSession(${n})">Auto-solve</button>`;
     }
-    html += '</div>';
+    // #133: show the creating user next to the title, same "· user"
+    // treatment as PR rows above. created_by_username comes from the
+    // /github-issues route (local issues table → body Source line →
+    // GitHub login); omitted when the creator couldn't be resolved.
+    const creatorSuffix = issue.created_by_username
+      ? ` <span class="text-zinc-500">· ${escapeHtml(issue.created_by_username)}</span>`
+      : '';
+    const rowTitle = issue.created_by_username
+      ? `${issue.title} · ${issue.created_by_username}`
+      : issue.title;
 
-    // Keep the generating-state poller in sync with what we just rendered.
-    // Idempotent (set/clear of one timer), so calling from the renderer is
-    // safe and guarantees it runs on both the initial panel build and every
-    // in-place re-render.
-    AppView._syncHeadlessPolling();
+    // #194: rows are accordion-expandable (one at a time) into the
+    // issue body + its thread chat; the badge shows the thread size.
+    const expanded = AppView._devIssueOpen === n;
+    const caret = `<span class="text-[0.6rem] text-zinc-500 shrink-0">${expanded ? '&#9660;' : '&#9654;'}</span>`;
 
-    // Paging footer: "Show 5 more" while local items remain; once all
-    // fetched issues are shown but the repo has more than the fetch ceiling
-    // (truncatedList), link out to GitHub rather than implying completeness.
-    if (shown < issues.length) {
-      html += `<div class="mt-1"><button class="gc-vote-btn" onclick="AppView.showMoreIssues()">Show 5 more</button></div>`;
-    } else if (meta.truncatedList && meta.repoUrl) {
-      const issuesUrl = `${meta.repoUrl.replace(/\.git$/, '').replace(/\/$/, '')}/issues`;
-      html += `<div class="mt-1"><a href="${issuesUrl}" target="_blank" rel="noopener" class="text-xs text-violet-400 hover:underline">More open issues on GitHub &rarr;</a></div>`;
-    }
+    html += `
+      <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1 cursor-pointer" data-ref-issue="${n}" data-issue-row="${n}" title="Tap to read the issue and its discussion thread">
+        ${caret}
+        <a href="${href}" target="_blank" rel="noopener" class="text-xs text-violet-400 font-mono hover:underline">#${n}</a>
+        <span class="text-xs text-zinc-300 flex-1 min-w-0 truncate" title="${escapeHtml(rowTitle)}">${escapeHtml(issue.title)}${creatorSuffix}</span>
+        ${bountyPill}
+        ${AppView._devChatBadge(issue.chatCount)}
+        <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
+          ${kudosBtn}
+          ${createBtn}
+          ${autoBtn}
+        </div>
+      </div>`;
+    if (expanded) html += AppView._issueExpansionHtml(issue);
     return html;
-  },
-
-  // Re-render just the Open Issues section in place (no full tab
-  // reload), then re-mount the expanded issue's thread chat — the
-  // innerHTML replacement wipes any previous mount.
-  _rerenderOpenIssues() {
-    const el = document.getElementById('gc-open-issues');
-    if (!el) return;
-    el.innerHTML = AppView._renderOpenIssuesInner();
-    AppView._mountOpenIssueThread();
-  },
-
-  // "Show 5 more" — bump the visible count and re-render. Pure client-side
-  // paging over the already-fetched list; repeatable.
-  showMoreIssues() {
-    AppView._ghIssuesShown = (AppView._ghIssuesShown || 5) + 5;
-    AppView._rerenderOpenIssues();
   },
 
   // #192: manual refresh — re-pull the Open Issues list with ?refresh=1,
@@ -1446,7 +1694,7 @@ const AppView = {
     const slug = AppView.appData && AppView.appData.slug;
     if (!slug) return;
     AppView._ghRefreshing = true;
-    AppView._rerenderOpenIssues();
+    AppView._rerenderFeed();
     try {
       const res = await fetch(`/api/apps/${slug}/github-issues?refresh=1`);
       if (res.ok) {
@@ -1466,12 +1714,12 @@ const AppView = {
         if (AppView._ghRefreshTimer) clearTimeout(AppView._ghRefreshTimer);
         AppView._ghRefreshTimer = setTimeout(() => {
           AppView._ghRefreshTimer = null;
-          if (document.getElementById('gc-open-issues')) AppView._rerenderOpenIssues();
+          if (document.getElementById('dev-feed')) AppView._rerenderFeed();
         }, Math.max(0, AppView._ghRefreshNextAt - Date.now()) + 50);
       }
     } catch {}
     AppView._ghRefreshing = false;
-    AppView._rerenderOpenIssues();
+    AppView._rerenderFeed();
   },
 
   // ---- Merged (closed) PRs section ----------------------------------------
@@ -1604,7 +1852,7 @@ const AppView = {
         issue.bounty_count = typeof data.bountyCount === 'number' ? data.bountyCount : (issue.bounty_count || 0) + 1;
       }
       if (typeof data.remaining === 'number') AppView._ghIssuesMeta.myRemaining = data.remaining;
-      AppView._rerenderOpenIssues();
+      AppView._rerenderFeed();
     } catch (err) {
       alert(`Couldn't place bounty: ${err.message}`);
     } finally {
@@ -1685,7 +1933,7 @@ const AppView = {
       }
       const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
       if (issue) issue.headless = { sessionId: data.session.id, status: 'generating' };
-      AppView._rerenderOpenIssues();
+      AppView._rerenderFeed();
     } catch (err) {
       alert(`Couldn't start the auto session: ${err.message}`);
     }
@@ -1819,7 +2067,7 @@ const AppView = {
     if (AppView._headlessPollTimer) return;
     AppView._headlessPollTimer = setInterval(async () => {
       const slug = AppView.appData && AppView.appData.slug;
-      if (!slug || !document.getElementById('gc-open-issues')) {
+      if (!slug || !document.getElementById('dev-feed')) {
         clearInterval(AppView._headlessPollTimer);
         AppView._headlessPollTimer = null;
         return;
@@ -1835,7 +2083,7 @@ const AppView = {
         for (const issue of AppView._ghIssues || []) {
           if (byNumber.has(issue.number)) issue.headless = byNumber.get(issue.number);
         }
-        AppView._rerenderOpenIssues();
+        AppView._rerenderFeed();
       } catch {}
     }, 8000);
   },
@@ -2236,144 +2484,62 @@ const AppView = {
     }
   },
 
+  // Forum revision: the dedicated session view. There is no session
+  // list / meta panel anymore — sessions are reached from the forum's
+  // Your-sessions strip, proposal cards, and the "+" flow, and a
+  // missing/unopenable id bounces back to the forum. The App
+  // secrets / display-name shortcuts that used to live here moved to
+  // the forum's App settings footer (_renderAppSettings).
   async renderDevChatTab(restoreSessionId) {
     const content = AppView._devContainer();
     if (!content) return;
-    // Layout: a meta block (#dc-meta) holds two stacked sections — the
-    // app-edit shortcuts and the sessions header — sitting above the
-    // session list / chat surface (#dc-view). DevChat.renderChatView
-    // toggles `hidden` on #dc-meta when a session opens so the chat
-    // gets the full tab; backing out via #dc-back unhides it.
-    // Layout note: each row is styled like an iOS settings cell — icon,
-    // label, current value preview, chevron — so a glance at the panel
-    // tells you the app's secret-fill status and current display name
-    // without opening either modal. The right-side preview text is
-    // populated below: display name comes straight from appData; the
-    // secrets summary is fetched async via refreshDevChatSecretsState
-    // so this render path stays synchronous.
-    const currentName = escapeHtml(AppView.appData?.name || '');
+    if (!restoreSessionId) {
+      if (typeof App !== 'undefined' && App.switchTab) App.switchTab('dev');
+      return;
+    }
+
     content.innerHTML = `
       <div style="display:flex;flex-direction:column;height:100%;min-height:0">
-        <div id="dc-meta" class="shrink-0">
-          <!-- Active Sessions panel: cross-app view of every
-               non-archived session the user owns, with the busy ones
-               (CC actively running) listed and an (x/y) indicator in
-               the header. Lives in the meta block so it's visible
-               whenever the user is in the session list (and hides
-               with the rest of #dc-meta on session open, where the
-               focused chat takes over). DevChat.startActiveSessionsPoll
-               fills #dc-active-list and updates #dc-active-counter on
-               a 5s tick. -->
-          <div class="px-3 pt-3 pb-3 border-b border-zinc-200 dark:border-zinc-800">
-            <div class="flex items-center justify-between mb-2">
-              <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider">Sessions</span>
-              <span id="dc-active-counter" class="text-xs text-zinc-400 dark:text-zinc-500 font-mono">(0/3)</span>
-            </div>
-            <div id="dc-active-list" class="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50 divide-y divide-zinc-200 dark:divide-zinc-700" style="max-height:200px;overflow-y:auto"></div>
-          </div>
-
-          <!-- Edit section: app-level controls that previously lived in
-               the global header (App secrets) or the group-chat vote
-               panel (Propose rename). Both still pop the same modals;
-               only the entry point moved. -->
-          <div class="px-3 pt-3 pb-3 border-b border-zinc-200 dark:border-zinc-800 space-y-2">
-            <div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-1">Edit</div>
-            <button id="dc-edit-secrets"
-              class="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 transition-colors text-left">
-              <svg class="w-4 h-4 text-zinc-500 dark:text-zinc-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 7a4 4 0 014 4m-4-4a4 4 0 00-4 4 4 4 0 004 4 4 4 0 004-4 4 4 0 00-4-4zm-9.5 12.5L11 13"/></svg>
-              <span class="flex-1 text-zinc-800 dark:text-zinc-200">App secrets</span>
-              <span id="dc-secrets-state" class="text-xs text-zinc-400 dark:text-zinc-500">Loading…</span>
-              <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-            </button>
-            <button id="dc-edit-rename"
-              class="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 transition-colors text-left">
-              <svg class="w-4 h-4 text-zinc-500 dark:text-zinc-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-              <span class="flex-1 text-zinc-800 dark:text-zinc-200">App display name</span>
-              <span class="text-xs text-zinc-400 dark:text-zinc-500 truncate max-w-[40%]" title="${currentName}">${currentName}</span>
-              <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-            </button>
-          </div>
-
-          <!-- Sessions section header: matches the Edit label's small
-               uppercase treatment so the two sections feel like a
-               single panel rather than two unrelated rows. -->
-          <div class="flex items-center justify-between px-3 pt-3 pb-2 border-b border-zinc-200 dark:border-zinc-800">
-            <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider">Dev Sessions</span>
-            <button id="dc-new-session" class="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-3 py-1 text-xs font-medium text-white transition-colors">+ New Session</button>
-          </div>
-        </div>
-
         <div id="dc-view" style="flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden"></div>
       </div>`;
 
-    // Populate the secrets-state preview. Fire-and-forget — the row
-    // shows "Loading…" until the fetch lands. AppView.refreshDevChatSecretsState
-    // is also called by Secrets after a successful direct edit so the
-    // row stays in sync without a manual reload.
-    AppView.refreshDevChatSecretsState();
+    if (!AppView.appData) return;
 
-    // Kick off the cross-app active-sessions poll. startActiveSessionsPoll
-    // tears down any previous timer first, so re-rendering the tab
-    // (e.g. on hash restore or app switch) doesn't stack pollers.
-    DevChat.startActiveSessionsPoll();
-
-    if (AppView.appData) {
-      // Ground-truth guard: if the in-memory session belongs to a
-      // different app than the one we're rendering (e.g. user was on
-      // app A's dev chat, navigated away, then opened app B), drop it
-      // before loading sessions. Otherwise `renderChatView` would
-      // re-render the stale session for the wrong app (fixes #20).
-      if (
-        DevChat.currentSession &&
-        DevChat.currentSession.app_slug &&
-        DevChat.currentSession.app_slug !== AppView.appData.slug
-      ) {
-        DevChat.reset();
-      }
-
-      await DevChat.loadSessions(AppView.appData.slug);
-
-      if (restoreSessionId) {
-        await DevChat.openSession(restoreSessionId);
-      } else if (!DevChat.currentSession) {
-        DevChat.messages = [];
-      }
-      DevChat.renderChatView();
-
-      // #194: one-shot hint set by the Proposals tab's "Create proposal"
-      // button — proposals are PRs, so the path runs through a session.
-      if (AppView._proposalHint) {
-        AppView._proposalHint = false;
-        const view = document.getElementById('dc-view');
-        if (view) {
-          view.insertAdjacentHTML('afterbegin',
-            '<div class="mx-3 mt-2 px-3 py-2 rounded-lg bg-violet-500/10 border border-violet-500/20 text-xs text-zinc-600 dark:text-zinc-300 shrink-0">'
-            + 'Describe the change you want — when it\'s ready, promoting this session\'s PR is what creates the proposal everyone votes on.'
-            + '</div>');
-        }
-      }
+    // Ground-truth guard: if the in-memory session belongs to a
+    // different app than the one we're rendering, drop it before
+    // loading (fixes #20).
+    if (
+      DevChat.currentSession &&
+      DevChat.currentSession.app_slug &&
+      DevChat.currentSession.app_slug !== AppView.appData.slug
+    ) {
+      DevChat.reset();
     }
 
-    document.getElementById('dc-new-session').addEventListener('click', async () => {
-      if (!AppView.appData) return;
-      const session = await DevChat.createSession(AppView.appData.slug);
-      if (session) {
-        await DevChat.openSession(session.id);
-        DevChat.renderChatView();
-        // Sync the hash so a page refresh stays on this session instead
-        // of dropping back to the session list.
-        App.updateHash();
-      }
-    });
+    await DevChat.loadSessions(AppView.appData.slug);
+    await DevChat.openSession(restoreSessionId);
 
-    // Edit section wiring. Both buttons just open the existing modals
-    // — no behavior change vs the old header / group-chat triggers.
-    document.getElementById('dc-edit-secrets').addEventListener('click', () => {
-      if (window.Secrets) Secrets.openForCurrentApp();
-    });
-    document.getElementById('dc-edit-rename').addEventListener('click', () => {
-      AppView.promptRename();
-    });
+    // Archived / inaccessible session: fall back to the forum rather
+    // than stranding an empty view.
+    if (!DevChat.currentSession || String(DevChat.currentSession.id) !== String(restoreSessionId)) {
+      if (typeof App !== 'undefined' && App.switchTab) App.switchTab('dev');
+      return;
+    }
+
+    DevChat.renderChatView();
+
+    // #194: one-shot hint set by the "+" menu's "Propose a change" —
+    // proposals are PRs, so the path runs through a session.
+    if (AppView._proposalHint) {
+      AppView._proposalHint = false;
+      const view = document.getElementById('dc-view');
+      if (view) {
+        view.insertAdjacentHTML('afterbegin',
+          '<div class="mx-3 mt-2 px-3 py-2 rounded-lg bg-violet-500/10 border border-violet-500/20 text-xs text-zinc-600 dark:text-zinc-300 shrink-0">'
+          + 'Describe the change you want — when it\'s ready, promoting this session\'s PR is what creates the proposal everyone votes on.'
+          + '</div>');
+      }
+    }
   },
 
   // Fetch the current secrets summary and paint the preview slot in

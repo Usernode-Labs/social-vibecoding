@@ -11,9 +11,10 @@ const App = {
   // dev sub-tabs by _normalizeTab so old links, notification hrefs, and
   // call sites keep working.
   currentTab: 'app',
-  // Active Dev sub-tab: 'chat' | 'issues' | 'proposals' | 'sessions'.
-  // Only meaningful while currentTab === 'dev'.
-  currentSubTab: 'chat',
+  // Active Dev view: 'forum' (the one-page forum) or 'sessions' (a
+  // dev session open full-screen). Only meaningful while
+  // currentTab === 'dev'.
+  currentSubTab: 'forum',
   // Tracks whether the dedicated #leaderboard-screen is visible.
   // Sibling state to `currentApp`: home / app / leaderboard are the
   // three top-level screens, and they're mutually exclusive. Flipped
@@ -1251,21 +1252,37 @@ const App = {
       }
       if (parts[0] === 'app' && parts[1]) {
         const slug = parts[1];
-        // New hashes (#194): app/{slug}/app, app/{slug}/dev/{subtab}
-        // with an optional deep-link ref (issue number / proposal
-        // session id / dev session id). Legacy hashes — group-chat,
-        // individual-chat[/{sessionId}] — map onto dev sub-tabs so old
-        // links and notification hrefs keep working.
+        // Forum-era hashes (#194 revision): app/{slug}/app,
+        // app/{slug}/dev (the forum page), app/{slug}/dev/issues/{n} and
+        // app/{slug}/dev/proposals/{sessionId} (forum with that card
+        // expanded), app/{slug}/dev/sessions/{sessionId} (session view).
+        // Legacy hashes — group-chat, individual-chat[/{sessionId}], and
+        // the old dev/chat|issues|proposals sub-tab forms — all map onto
+        // the forum so old links and notification hrefs keep working.
         let tab = parts[2] || 'app';
         let subTab = null;
         let ref = null;
         if (tab === 'dev') {
-          subTab = parts[3] || 'chat';
-          ref = parts[4] ? parseInt(parts[4]) : null;
+          const sec = parts[3] || null;
+          if (sec === 'sessions' && parts[4]) {
+            subTab = 'sessions';
+            ref = parseInt(parts[4]) || null;
+          } else if (sec === 'issues' && parts[4]) {
+            subTab = 'forum';
+            ref = { kind: 'issue', id: parseInt(parts[4]) || null };
+          } else if (sec === 'proposals' && parts[4]) {
+            subTab = 'forum';
+            ref = { kind: 'proposal', id: parseInt(parts[4]) || null };
+          } else {
+            // dev, dev/chat, dev/issues, dev/proposals, dev/sessions —
+            // all land on the plain forum.
+            subTab = 'forum';
+          }
         } else if (tab === 'group-chat') {
-          tab = 'dev'; subTab = 'chat';
+          tab = 'dev'; subTab = 'forum';
         } else if (tab === 'individual-chat') {
-          tab = 'dev'; subTab = 'sessions';
+          tab = 'dev';
+          subTab = parts[3] ? 'sessions' : 'forum';
           ref = parts[3] ? parseInt(parts[3]) : null;
         } else {
           tab = 'app';
@@ -1342,16 +1359,19 @@ const App = {
     let newHash;
     if (App.currentApp) {
       if (App.currentTab === 'dev') {
-        const sub = App.currentSubTab || 'chat';
-        newHash = `#app/${App.currentApp}/dev/${sub}`;
-        // Deep-link segment: the open dev session, expanded issue, or
-        // expanded proposal (AppView tracks the latter two).
-        if (sub === 'sessions' && DevChat.currentSession) {
-          newHash += `/${DevChat.currentSession.id}`;
-        } else if (sub === 'issues' && typeof AppView !== 'undefined' && AppView._devIssueOpen) {
-          newHash += `/${AppView._devIssueOpen}`;
-        } else if (sub === 'proposals' && typeof AppView !== 'undefined' && AppView._devProposalOpen) {
-          newHash += `/${AppView._devProposalOpen}`;
+        if (App.currentSubTab === 'sessions' && DevChat.currentSession) {
+          newHash = `#app/${App.currentApp}/dev/sessions/${DevChat.currentSession.id}`;
+        } else {
+          // Forum page; the expanded card (if any) rides along as a
+          // deep-link segment so refresh/back restores it.
+          newHash = `#app/${App.currentApp}/dev`;
+          if (typeof AppView !== 'undefined') {
+            if (AppView._devIssueOpen) {
+              newHash += `/issues/${AppView._devIssueOpen}`;
+            } else if (AppView._devProposalOpen) {
+              newHash += `/proposals/${AppView._devProposalOpen}`;
+            }
+          }
         }
       } else {
         newHash = `#app/${App.currentApp}/app`;
@@ -1368,12 +1388,19 @@ const App = {
     const targetFull = newHash.startsWith('#') ? newHash : '';
     if (currentFull === targetFull) return;
 
-    // Screen id includes the dev sub-tab (4th segment) so switching
-    // sub-tabs pushes a real history entry; the trailing deep-link
-    // segment (session id / issue number / proposal id) still only
-    // replaces in place.
-    const screenIdOf = (h) =>
-      String(h || '').replace(/^#/, '').split('/').slice(0, 4).join('/');
+    // Screen ids: the forum and its expanded-card deep links are one
+    // screen (card expansion replaces in place); the session view is
+    // its own screen (forum ↔ session pushes a history entry), but
+    // which session isn't part of the id (session-to-session replaces).
+    const screenIdOf = (h) => {
+      const segs = String(h || '').replace(/^#/, '').split('/');
+      if (segs[0] === 'app' && segs[2] === 'dev') {
+        return segs[3] === 'sessions'
+          ? segs.slice(0, 4).join('/')
+          : segs.slice(0, 3).join('/');
+      }
+      return segs.slice(0, 3).join('/');
+    };
     const sameScreen = screenIdOf(currentFull) === screenIdOf(targetFull);
 
     if (sameScreen) {
@@ -1658,7 +1685,7 @@ const App = {
       membersBtn.classList.toggle('hidden', !showMembers);
     }
     // The App tab iframes appData.url, which doesn't resolve for the self-
-    // hosted platform row (no per-slug subdomain). Land on Dev → Chat
+    // hosted platform row (no per-slug subdomain). Land on the Dev forum
     // instead — that's where votes/discussion happen and what users
     // actually want when they open the self-app.
     const defaultTab = AppView.appData?.self_hosted ? 'dev' : 'app';
@@ -1740,30 +1767,55 @@ const App = {
     }
   },
 
-  // Map legacy tab names onto the two-mode model (#194). Returns
-  // { tab, subTab } where tab ∈ 'app'|'dev'. Old names keep working at
-  // every entry point (notification hrefs, openAppTab callers, hashes).
-  _normalizeTab(tab, subTab) {
-    if (tab === 'group-chat') return { tab: 'dev', subTab: subTab || 'chat' };
-    if (tab === 'individual-chat') return { tab: 'dev', subTab: subTab || 'sessions' };
-    if (tab === 'dev') return { tab: 'dev', subTab: subTab || 'chat' };
-    return { tab: 'app', subTab: null };
+  // Normalize every tab vocabulary onto the forum-era model (#194
+  // revision). Returns { tab, subTab, ref } where tab ∈ 'app'|'dev' and
+  // subTab ∈ 'forum'|'sessions'. Legacy names (group-chat,
+  // individual-chat, and the old dev sub-tabs chat/issues/proposals)
+  // keep working at every entry point — old sub-tab refs are converted
+  // into typed forum deep links ({ kind: 'issue'|'proposal', id }).
+  _normalizeTab(tab, ref, subTab) {
+    if (tab === 'group-chat') { tab = 'dev'; subTab = 'chat'; }
+    else if (tab === 'individual-chat') { tab = 'dev'; subTab = subTab || 'sessions'; }
+    if (tab !== 'dev') return { tab: 'app', subTab: null, ref: null };
+
+    if (subTab === 'sessions') {
+      const id = (ref && typeof ref === 'object') ? ref.id : parseInt(ref, 10);
+      // No session id → the forum (there is no session-list screen).
+      return Number.isInteger(id) && id > 0
+        ? { tab: 'dev', subTab: 'sessions', ref: id }
+        : { tab: 'dev', subTab: 'forum', ref: null };
+    }
+
+    // forum / chat / issues / proposals / undefined → the forum page.
+    let fref = null;
+    if (ref && typeof ref === 'object' && ref.kind && ref.id) {
+      fref = { kind: ref.kind, id: ref.id };
+    } else if (ref != null && subTab === 'issues') {
+      const id = parseInt(ref, 10);
+      if (Number.isInteger(id) && id > 0) fref = { kind: 'issue', id };
+    } else if (ref != null && subTab === 'proposals') {
+      const id = parseInt(ref, 10);
+      if (Number.isInteger(id) && id > 0) fref = { kind: 'proposal', id };
+    }
+    return { tab: 'dev', subTab: 'forum', ref: fref };
   },
 
-  // `ref` is the sub-tab's deep-link target: a dev-session id for
-  // 'sessions', a GitHub issue number for 'issues', a proposal session
-  // id for 'proposals'. Ignored on the App tab.
+  // `ref` is the view's deep-link target: a dev-session id for the
+  // session view, or { kind: 'issue'|'proposal', id } for a forum card
+  // to expand. Ignored on the App tab.
   async switchTab(tab, ref, subTab) {
-    const norm = App._normalizeTab(tab, subTab);
+    const norm = App._normalizeTab(tab, ref, subTab);
     tab = norm.tab;
     subTab = norm.subTab;
+    ref = norm.ref;
     // The App tab is hidden for self-hosted apps (its iframe target doesn't
     // resolve — see app-view.js renderAppTab). Coerce any incoming request
-    // for it (URL hash, browser back/forward, programmatic) to Dev → Chat
-    // so we never render an unreachable iframe.
+    // for it (URL hash, browser back/forward, programmatic) to the Dev
+    // forum so we never render an unreachable iframe.
     if (tab === 'app' && AppView.appData?.self_hosted) {
       tab = 'dev';
-      subTab = subTab || 'chat';
+      subTab = 'forum';
+      ref = null;
     }
     // The Dev mode is gated for non-collaborators of an invite-only app
     // (the button is hidden by AppView.open; this catches hash/back-
@@ -1772,9 +1824,10 @@ const App = {
     if (tab === 'dev' && AppView.appData && AppView.appData.can_collaborate === false) {
       tab = 'app';
       subTab = null;
+      ref = null;
     }
     App.currentTab = tab;
-    App.currentSubTab = tab === 'dev' ? (subTab || 'chat') : null;
+    App.currentSubTab = tab === 'dev' ? (subTab || 'forum') : null;
     document.querySelectorAll('.app-tab').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.tab === tab);
     });

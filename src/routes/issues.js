@@ -80,9 +80,13 @@ function issueRoutes(config) {
            (SELECT COUNT(*) FROM issue_votes WHERE issue_id = i.id AND vote = 'up') as up_count,
            (SELECT COUNT(*) FROM issue_votes WHERE issue_id = i.id AND vote = 'down') as down_count,
            (SELECT vote FROM issue_votes WHERE issue_id = i.id AND user_id = $2) as my_vote,
-           -- #194: governance-thread message count for the Proposals tab badge.
+           -- #194: governance-thread message count for the chat badge,
+           -- plus the latest thread-message timestamp for the forum
+           -- feed's activity sort.
            (SELECT COUNT(*)::int FROM chat_messages cm
-             WHERE cm.app_id = i.app_id AND cm.thread_type = 'governance' AND cm.thread_ref = i.id) as chat_count
+             WHERE cm.app_id = i.app_id AND cm.thread_type = 'governance' AND cm.thread_ref = i.id) as chat_count,
+           (SELECT MAX(cm.created_at) FROM chat_messages cm
+             WHERE cm.app_id = i.app_id AND cm.thread_type = 'governance' AND cm.thread_ref = i.id) as last_message_at
          FROM issues i
          LEFT JOIN users u ON i.created_by = u.id
          WHERE i.app_id = $1 AND i.status = 'open'
@@ -377,17 +381,18 @@ function issueRoutes(config) {
       );
       const creatorByNumber = new Map(creatorRows.map((r) => [r.n, r.username]));
 
-      // #194: per-issue thread message counts in one grouped query, for
-      // the Issues tab's chat badge. Keyed by GitHub issue number
-      // (thread_ref for thread_type='issue').
+      // #194: per-issue thread message counts (and the latest message
+      // timestamp, for the forum feed's activity sort) in one grouped
+      // query. Keyed by GitHub issue number (thread_ref for
+      // thread_type='issue').
       const { rows: chatRows } = await pool.query(
-        `SELECT thread_ref AS n, COUNT(*)::int AS cnt
+        `SELECT thread_ref AS n, COUNT(*)::int AS cnt, MAX(created_at) AS last_at
            FROM chat_messages
           WHERE app_id = $1 AND thread_type = 'issue'
           GROUP BY thread_ref`,
         [app.id]
       );
-      const chatByNumber = new Map(chatRows.map((r) => [r.n, r.cnt]));
+      const chatByNumber = new Map(chatRows.map((r) => [r.n, r]));
 
       // #155: latest live headless auto session per issue, so the panel can
       // render the right button state (Auto-solve / Generating… / the
@@ -455,7 +460,8 @@ function issueRoutes(config) {
             || creatorFromSourceLine(issue.body)
             || ghLogin,
           headless: headlessByNumber.get(issue.number) || null,
-          chatCount: chatByNumber.get(issue.number) || 0,
+          chatCount: chatByNumber.get(issue.number)?.cnt || 0,
+          lastMessageAt: chatByNumber.get(issue.number)?.last_at || null,
         };
       });
 
