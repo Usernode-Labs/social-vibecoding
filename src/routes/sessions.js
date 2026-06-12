@@ -450,7 +450,7 @@ function sessionRoutes(config) {
       // in flight; 'ready' means the start-from button should be used
       // instead. 'failed' rows don't block a retry, and neither does a
       // 'ready' run that ended with outcome 'question' (#150) — the whole
-      // point is to answer on the issue and press Auto-solve again.
+      // point is to answer on the issue and press Generate proposal again.
       const { rows: existingRows } = await pool.query(
         `SELECT id, headless_status FROM chat_sessions
          WHERE app_id = $1 AND is_headless = TRUE AND headless_issue_number = $2
@@ -2296,7 +2296,7 @@ function buildHeadlessAddendum(issueNumber) {
   return `
 
 HEADLESS AUTO-SESSION MODE: you are running unattended on GitHub issue #${issueNumber} — there is NO human in this chat and there will be NO follow-up turn. Decide ONE action for this single turn, in this order:
-1. FIRST apply the CLARITY GATE (above) to the issue, including any ISSUE COMMENTS included in the message — treat the reporter's comments as their input, and comments marked as earlier auto-solve questions as your own previous turn (answers to them may make the issue clear now). If the issue FAILS the gate, classify each blocking question you would ask:
+1. FIRST apply the CLARITY GATE (above) to the issue, including any ISSUE COMMENTS included in the message — treat the reporter's comments as their input, and comments marked as earlier proposal questions as your own previous turn (answers to them may make the issue clear now). If the issue FAILS the gate, classify each blocking question you would ask:
    - REPO-ANSWERABLE: what exists in the app, where the relevant code lives, how a feature currently behaves, whether the report matches reality. Asking the reporter is a last resort — investigation comes first: these questions go to dispatch_scout (step 2), NOT to the reporter. In the scout prompt, enumerate the unresolved points and instruct it to settle them from the code, choose stated defaults where reasonable, and keep only the genuinely human-only blockers in a "Questions" section.
    - HUMAN-ONLY: what the reporter wants, product/priority choices, reproduction details only the reporter has — things no codebase can answer.
    ONLY if EVERY blocking question is human-only: reply in plain text containing ONLY the numbered clarifying questions with your suggested defaults, and call no tool. Your reply will be posted verbatim as a comment on GitHub issue #${issueNumber} for the reporter to answer — write it for them (no greetings, no meta-talk about sessions or tools). Otherwise dispatch_scout per step 2.
@@ -2350,7 +2350,7 @@ function buildHeadlessSeed(issueNumber, issue, comments, botUsername) {
       && author.toLowerCase().replace(/\[bot\]$/, '') === botUsername.toLowerCase();
     const date = (c.createdAt || '').slice(0, 10);
     const tag = isBot
-      ? `[bot — earlier auto-solve questions${date ? `, ${date}` : ''}]`
+      ? `[bot — earlier proposal questions${date ? `, ${date}` : ''}]`
       : `[${author}${date ? `, ${date}` : ''}]`;
     let text = (c.body || '').toString();
     if (text.length > HEADLESS_SEED_COMMENT_MAX_CHARS) {
@@ -2382,8 +2382,8 @@ function specHasBlockingQuestions(specMd) {
   return /^#{1,6}\s*(?:open\s+)?questions?\b/im.test(specMd || '');
 }
 
-const HEADLESS_QUESTION_FOOTER = '\n\n— Posted by this issue\'s auto-solve session. '
-  + 'Answer in a comment (or edit the issue body), then press **Auto-solve** on the issue again — the next run reads the answers.';
+const HEADLESS_QUESTION_FOOTER = '\n\n— Posted by this issue\'s proposal session. '
+  + 'Answer in a comment (or edit the issue body), then press **Generate proposal** on the issue again — the next run reads the answers.';
 
 // Best-effort: a failed post must never fail or change the run's outcome
 // (the parked session remains the fallback channel). Returns whether the
@@ -2417,8 +2417,8 @@ async function setHeadlessStep(pool, sessionId, step, outcome) {
   });
 }
 
-// #155: the unattended Mayor turn behind the issue panel's "Auto-solve"
-// button. Mirrors one POST /chat turn (phase-1 Mayor + optional dispatch +
+// #155: the unattended Mayor turn behind the issue panel's "Generate
+// proposal" button. Mirrors one POST /chat turn (phase-1 Mayor + optional dispatch +
 // phase-2 wrap-up) with three deliberate differences: there is no SSE
 // stream (events go to the session bus / global WS only), there is no stop
 // handle (nobody is watching), and a build dispatch runs with
@@ -2652,7 +2652,7 @@ async function runHeadlessSession({
         // #178: a spec that still carries a blocking Questions section
         // after the scout's investigation routes to the reporter instead —
         // the decision text becomes a posted issue comment and the run
-        // finalizes as 'question' so Auto-solve can be re-run with answers.
+        // finalizes as 'question' so Generate proposal can be re-run with answers.
         const specHasQuestions = specHasBlockingQuestions(currentSpec);
         const mayor2 = await llm.streamChat({
           messages: phase2Messages,
@@ -3122,7 +3122,7 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
 
   // #178: a 'wrapping' checkpoint written before/during the decision turn
   // carries outcome 'spec' even when the spec still has a blocking
-  // Questions section — flip it so re-running Auto-solve stays unblocked
+  // Questions section — flip it so re-running Generate proposal stays unblocked
   // (no comment is posted; the decision text died with the old process).
   if (outcome === 'spec' && specHasBlockingQuestions(session.spec_md)) {
     outcome = 'question';

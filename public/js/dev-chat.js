@@ -1305,8 +1305,8 @@ const DevChat = {
     // #161 completion tier — set by notification arrival (see
     // setCompletionTitle), not by stream end.
     sessionDone: '✅ Session done · ',
-    autoSolveDone: '🤖 Auto-solve ready · ',
-    autoSolveFailed: '⚠️ Auto-solve failed · ',
+    autoSolveDone: '🤖 Proposal ready · ',
+    autoSolveFailed: '⚠️ Proposal failed · ',
   },
 
   // "Away" = the user can't currently see this page: the browser tab is

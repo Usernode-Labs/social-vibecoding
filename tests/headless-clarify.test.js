@@ -258,7 +258,7 @@ test('buildHeadlessSeed: appends comments oldest-first and tags bot-authored one
       { author: 'reporter', body: 'The home screen.', createdAt: '2026-06-02T00:00:00Z' },
     ], 'usernode-bot');
     assert.ok(seed.includes('ISSUE COMMENTS (oldest first):'));
-    assert.ok(seed.includes('[bot — earlier auto-solve questions, 2026-06-01] 1. Which screen?'));
+    assert.ok(seed.includes('[bot — earlier proposal questions, 2026-06-01] 1. Which screen?'));
     assert.ok(seed.includes('[reporter, 2026-06-02] The home screen.'));
     // Bot questions come before the reporter's answer (oldest first).
     assert.ok(seed.indexOf('Which screen?') < seed.indexOf('The home screen.'));
@@ -274,7 +274,7 @@ test('buildHeadlessSeed: tolerates the GitHub `[bot]` actor suffix', () => {
     const seed = loaded.subject.buildHeadlessSeed(5, { title: 'T', body: '' }, [
       { author: 'usernode-bot[bot]', body: 'Q?', createdAt: '2026-06-01T00:00:00Z' },
     ], 'usernode-bot');
-    assert.ok(seed.includes('[bot — earlier auto-solve questions, 2026-06-01] Q?'));
+    assert.ok(seed.includes('[bot — earlier proposal questions, 2026-06-01] Q?'));
   } finally {
     loaded.restore();
   }
@@ -388,7 +388,7 @@ test('pure-text phase-1 turn posts the questions to the issue exactly once', asy
     assert.equal(commentCalls[0].repo, 'repo');
     assert.equal(commentCalls[0].issueNumber, 5);
     assert.ok(commentCalls[0].body.startsWith('1. Which screen? (default: home)'));
-    assert.ok(commentCalls[0].body.includes('press **Auto-solve** on the issue again'));
+    assert.ok(commentCalls[0].body.includes('press **Generate proposal** on the issue again'));
 
     // The transcript shows the post happened…
     assert.ok(pool.state.messages.some(
@@ -398,7 +398,7 @@ test('pure-text phase-1 turn posts the questions to the issue exactly once', asy
     const seedMsg = pool.state.messages.find((m) => m.role === 'user');
     assert.ok(seedMsg, 'seed user message persisted');
     assert.ok(seedMsg.content.includes('ISSUE COMMENTS (oldest first):'));
-    assert.ok(seedMsg.content.includes('[bot — earlier auto-solve questions, 2026-06-01] Old question?'));
+    assert.ok(seedMsg.content.includes('[bot — earlier proposal questions, 2026-06-01] Old question?'));
     assert.ok(seedMsg.content.includes('[reporter, 2026-06-02] An answer.'));
   } finally {
     await srv.close();
@@ -557,7 +557,7 @@ test('scout leaves Questions in the spec → decision text posted, outcome quest
     assert.equal(commentCalls.length, 1);
     assert.equal(commentCalls[0].issueNumber, 5);
     assert.ok(commentCalls[0].body.startsWith('1. Soft or hard delete? (default: soft)'));
-    assert.ok(commentCalls[0].body.includes('press **Auto-solve** on the issue again'));
+    assert.ok(commentCalls[0].body.includes('press **Generate proposal** on the issue again'));
   } finally {
     await srv.close();
     loaded.restore();
@@ -603,7 +603,7 @@ test('build dispatched over an open Questions section is rejected; phase-3 text 
     assert.deepEqual(execCalls, ['scout']);
     assert.equal(commentCalls.length, 1);
     assert.ok(commentCalls[0].body.startsWith('1. Soft or hard delete? (default: soft)'));
-    assert.ok(commentCalls[0].body.includes('press **Auto-solve** on the issue again'));
+    assert.ok(commentCalls[0].body.includes('press **Generate proposal** on the issue again'));
   } finally {
     await srv.close();
     loaded.restore();
