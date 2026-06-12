@@ -345,6 +345,147 @@ function kudosRoutes(config) {
   });
 
   // --------------------------------------------------------------
+  // GET /api/me/history?type=all|kudos|votes&limit=50&before=<ISO ts>
+  //
+  // Everything the caller has GIVEN — PR kudos, issue-bounty pledges,
+  // PR votes, proposal votes — merged reverse-chronologically. Strictly
+  // me-scoped (every arm filters on req.user.id); must stay OUT of
+  // PUBLIC_PATHS in middleware/auth.js. Keyset pagination on
+  // created_at: `nextBefore` is the last row's timestamp, null when
+  // the page came back short.
+  //
+  // Semantics worth remembering: pr_votes/issue_votes are current-state
+  // ledgers (the vote route upserts with created_at = NOW() on flip,
+  // and re-voting an issue the same way deletes the row), so the vote
+  // arms surface "current standing vote, last changed at", not a full
+  // cast history. pr_kudos is append-only and complete.
+  // --------------------------------------------------------------
+  router.get('/api/me/history', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    const typeArg = ['all', 'kudos', 'votes'].includes(req.query.type)
+      ? req.query.type
+      : 'all';
+    const limit = clampLimit(req.query.limit === undefined ? '50' : req.query.limit);
+    let before = null;
+    if (req.query.before !== undefined && req.query.before !== '') {
+      const t = Date.parse(req.query.before);
+      if (!Number.isFinite(t)) {
+        return res.status(400).json({ error: 'Invalid before timestamp' });
+      }
+      before = new Date(t).toISOString();
+    }
+
+    try {
+      const params = [req.user.id];
+      let beforeIdx = null;
+      if (before) {
+        params.push(before);
+        beforeIdx = params.length;
+      }
+      // Each arm projects the same column list so the UNION ALL lines
+      // up; rows are tagged with a literal `type`. NULL placeholders
+      // stay untyped — Postgres resolves them against the sibling arms.
+      const cut = (col) => (beforeIdx ? `AND ${col} < $${beforeIdx}` : '');
+      const arms = [];
+      if (typeArg === 'all' || typeArg === 'kudos') {
+        arms.push(`
+          SELECT 'kudos' AS type, pk.created_at, NULL AS vote,
+                 cs.status AS status,
+                 cs.id AS session_id, cs.pr_number, cs.pr_title,
+                 au.username AS author_username,
+                 a.slug AS app_slug, a.name AS app_name,
+                 NULL::int AS issue_number, NULL AS issue_title, NULL AS issue_kind,
+                 NULL AS awarded_username, NULL::timestamptz AS awarded_at
+            FROM pr_kudos pk
+            JOIN chat_sessions cs ON cs.id = pk.session_id
+            JOIN apps a ON a.id = cs.app_id
+            LEFT JOIN users au ON au.id = cs.user_id
+           WHERE pk.giver_user_id = $1 ${cut('pk.created_at')}`);
+        arms.push(`
+          SELECT 'bounty' AS type, ib.created_at, NULL AS vote,
+                 ib.status AS status,
+                 NULL::int AS session_id, NULL::int AS pr_number, NULL AS pr_title,
+                 NULL AS author_username,
+                 a.slug AS app_slug, a.name AS app_name,
+                 ib.github_issue_number AS issue_number, NULL AS issue_title, NULL AS issue_kind,
+                 wu.username AS awarded_username, ib.awarded_at
+            FROM issue_bounties ib
+            JOIN apps a ON a.id = ib.app_id
+            LEFT JOIN users wu ON wu.id = ib.awarded_user_id
+           WHERE ib.giver_user_id = $1 ${cut('ib.created_at')}`);
+      }
+      if (typeArg === 'all' || typeArg === 'votes') {
+        arms.push(`
+          SELECT 'pr_vote' AS type, pv.created_at, pv.vote,
+                 cs.status AS status,
+                 cs.id AS session_id, cs.pr_number, cs.pr_title,
+                 au.username AS author_username,
+                 a.slug AS app_slug, a.name AS app_name,
+                 NULL::int AS issue_number, NULL AS issue_title, NULL AS issue_kind,
+                 NULL AS awarded_username, NULL::timestamptz AS awarded_at
+            FROM pr_votes pv
+            JOIN chat_sessions cs ON cs.id = pv.session_id
+            JOIN apps a ON a.id = cs.app_id
+            LEFT JOIN users au ON au.id = cs.user_id
+           WHERE pv.user_id = $1 ${cut('pv.created_at')}`);
+        arms.push(`
+          SELECT 'proposal_vote' AS type, iv.created_at, iv.vote,
+                 i.status AS status,
+                 NULL::int AS session_id, NULL::int AS pr_number, NULL AS pr_title,
+                 NULL AS author_username,
+                 a.slug AS app_slug, a.name AS app_name,
+                 i.github_issue_number AS issue_number, i.title AS issue_title, i.kind AS issue_kind,
+                 NULL AS awarded_username, NULL::timestamptz AS awarded_at
+            FROM issue_votes iv
+            JOIN issues i ON i.id = iv.issue_id
+            JOIN apps a ON a.id = i.app_id
+           WHERE iv.user_id = $1 ${cut('iv.created_at')}`);
+      }
+      params.push(limit);
+      const { rows } = await pool.query(
+        `SELECT * FROM (${arms.join('\nUNION ALL\n')}) h
+          ORDER BY created_at DESC
+          LIMIT $${params.length}`,
+        params
+      );
+
+      const items = rows.map((r) => {
+        const item = {
+          type: r.type,
+          created_at: r.created_at,
+          app: { slug: r.app_slug, name: r.app_name },
+        };
+        if (r.vote != null) item.vote = r.vote;
+        if (r.status != null) item.status = r.status;
+        if (r.type === 'kudos' || r.type === 'pr_vote') {
+          item.pr = {
+            sessionId: r.session_id,
+            number: r.pr_number,
+            title: r.pr_title,
+            // NULL when the PR's author account was deleted (LEFT JOIN).
+            author: r.author_username || null,
+          };
+        } else if (r.type === 'bounty') {
+          item.issue = { number: r.issue_number };
+          if (r.status === 'awarded') {
+            item.awarded = { username: r.awarded_username || null, at: r.awarded_at };
+          }
+        } else if (r.type === 'proposal_vote') {
+          item.issue = { number: r.issue_number, title: r.issue_title, kind: r.issue_kind };
+        }
+        return item;
+      });
+      const nextBefore = rows.length === limit
+        ? rows[rows.length - 1].created_at
+        : null;
+      res.json({ items, nextBefore });
+    } catch (err) {
+      log.error('kudos', 'me/history failed', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // --------------------------------------------------------------
   // GET /api/leaderboard/prs?window=all|week&limit=20
   // Top PRs by kudos count. Joins author + app for the card render.
   // --------------------------------------------------------------

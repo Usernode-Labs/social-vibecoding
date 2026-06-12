@@ -217,6 +217,9 @@ const Kudos = {
         // sessionId-keyed state). Refresh the budget badge so the
         // header re-renders the new remaining count.
         Kudos.Budget.refresh();
+        // The give now belongs in the viewer's "My history" tab — drop
+        // its cached panes so the next visit re-fetches.
+        if (window.Leaderboard?.invalidateHistory) Leaderboard.invalidateHistory();
       } else if (res.status === 429) {
         Kudos._toast(data.error || 'Weekly kudos quota exceeded.');
       } else if (res.status === 403) {
