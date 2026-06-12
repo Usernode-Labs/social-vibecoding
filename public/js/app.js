@@ -713,6 +713,16 @@ const App = {
           if (typeof DevChat.renderChatView === 'function') DevChat.renderChatView();
         }
         break;
+      case 'visuals_ready':
+        // #195: before/after capture finished (it lands after
+        // staging_ready, often after the turn's POST SSE is gone) —
+        // stash the artifact ids and re-render so the staging card
+        // upgrades in place with the media tiles.
+        if (DevChat.currentSession && data.visuals) {
+          DevChat.currentSession.visuals = data.visuals;
+          DevChat.renderMessages();
+        }
+        break;
       case 'cc_progress':
         DevChat._appendProgressLine(data.text);
         DevChat.scrollToBottom();
