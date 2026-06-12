@@ -546,9 +546,13 @@ const GroupChat = {
     GroupChat.activeThread = { type, ref: Number(ref) };
 
     const threadKey = GroupChat.threadKey(type, ref);
+    // fullHeight (#194 card-list revision): the topic sub-view's thread
+    // fills its flex container — messages take the remaining height and
+    // the composer pins to the bottom — instead of the inline 40vh cap.
+    const fill = !!opts.fullHeight;
     container.innerHTML = `
-      <div class="dev-thread border border-zinc-200 dark:border-zinc-800 rounded-lg flex flex-col bg-zinc-50/50 dark:bg-zinc-900/40">
-        <div id="gc-thread-messages" class="overflow-y-auto px-2 py-1 space-y-0.5" style="max-height:40vh;min-height:60px"></div>
+      <div class="dev-thread border border-zinc-200 dark:border-zinc-800 rounded-xl flex flex-col bg-zinc-50/50 dark:bg-zinc-900/40${fill ? ' h-full min-h-0' : ''}">
+        <div id="gc-thread-messages" class="overflow-y-auto px-2 py-1 space-y-0.5${fill ? ' flex-1 min-h-0' : ''}"${fill ? '' : ' style="max-height:40vh;min-height:60px"'}></div>
         <div id="gc-thread-typing" class="px-3 text-xs text-zinc-500 h-4 shrink-0"></div>
         ${opts.readOnly
           ? `<div class="px-3 py-2 text-xs text-zinc-500 border-t border-zinc-200 dark:border-zinc-800">${escapeHtml(opts.notice || 'This thread is read-only.')}</div>`

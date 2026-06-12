@@ -18,18 +18,31 @@ const AppView = {
   // Recently-merged rows — so the whole page reads as one uniform list
   // (same row structure, padding, border, radius). Tappable cards add
   // DEV_CARD_HOVER_CLS on top.
-  DEV_CARD_CLS: 'w-full flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/60 px-3 py-2.5 text-left transition-colors',
-  DEV_CARD_HOVER_CLS: 'hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:border-violet-500/60 cursor-pointer',
+  DEV_CARD_CLS: 'w-full flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 px-3.5 py-3 text-left transition-colors',
+  DEV_CARD_HOVER_CLS: 'hover:border-violet-300 dark:hover:border-violet-700 cursor-pointer',
 
-  // ── Dev view state (#194, forum revision) ─────────────────────────
-  // The Dev mode is one forum page (pinned chat + sessions strip + a
-  // unified feed of issues & proposals) plus a full-screen session
-  // view. These track the feed's accordion expansion (one card open at
-  // a time, across all kinds) so live re-renders and the hash
-  // deep-link segments stay in sync.
-  _devIssueOpen: null,     // expanded GitHub issue number in the feed
-  _devProposalOpen: null,  // expanded PR-proposal session id in the feed
-  _devGovOpen: null,       // expanded governance proposal (issues.id)
+  // Per-type tinted icon chips — the Dev list's identity system, a mini
+  // version of the home tiles' avatar square. [tint classes, SVG path].
+  DEV_CARD_ICONS: {
+    chat: ['bg-violet-600/15 text-violet-500', 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z'],
+    session: ['bg-emerald-500/15 text-emerald-500', 'M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z'],
+    issue: ['bg-amber-500/15 text-amber-500', 'M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z'],
+    proposal: ['bg-sky-500/15 text-sky-500', 'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-11h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5'],
+    gov: ['bg-slate-500/15 text-slate-400', 'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z'],
+    done: ['bg-emerald-500/10 text-emerald-500', 'M5 13l4 4L19 7'],
+  },
+
+  _devCardIcon(type, opts) {
+    const [tint, d] = AppView.DEV_CARD_ICONS[type] || AppView.DEV_CARD_ICONS.issue;
+    const small = !!(opts && opts.small);
+    return `<span class="${small ? 'w-7 h-7' : 'w-9 h-9'} rounded-lg ${tint} flex items-center justify-center shrink-0">`
+      + `<svg class="${small ? 'w-4 h-4' : 'w-5 h-5'}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="${d}"/></svg></span>`;
+  },
+
+  // ── Dev view state (#194, card-list revision) ─────────────────────
+  // The Dev mode is one card list plus full-screen sub-views (general
+  // chat, topics, sessions, settings). _devTopic (declared with the
+  // topic sub-view below) tracks the open topic for hash deep links.
   // How many feed items are visible (the rest sit behind "Show more").
   _feedShown: 20,
   // Refresh timer for the Your-sessions strip's busy indicators;
@@ -365,13 +378,11 @@ const AppView = {
     // Leaving whatever thread surface was open: drop the live render
     // target so incoming thread messages turn into badge bumps.
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
+    if (subTab !== 'topic') AppView._devTopic = null;
 
     // Session view — a single DevChat session, full-screen, reached
     // from the Your-sessions strip, proposal cards, or the "+" flow.
     if (subTab === 'sessions' && ref) {
-      AppView._devIssueOpen = null;
-      AppView._devProposalOpen = null;
-      AppView._devGovOpen = null;
       content.innerHTML = `
         <div class="flex flex-col h-full min-h-0">
           <div id="dev-section" class="flex-1 min-h-0 flex flex-col" style="overflow:hidden"></div>
@@ -383,26 +394,23 @@ const AppView = {
     // Full-screen general chat (card-list revision: chat is a card you
     // tap into, not a pinned pane).
     if (subTab === 'chat') {
-      AppView._devIssueOpen = null;
-      AppView._devProposalOpen = null;
-      AppView._devGovOpen = null;
       AppView._renderChatSubView(content);
       return;
     }
 
     // App settings sub-page (reached from the "+" menu).
     if (subTab === 'settings') {
-      AppView._devIssueOpen = null;
-      AppView._devProposalOpen = null;
-      AppView._devGovOpen = null;
       AppView._renderSettingsView(content);
       return;
     }
 
-    // The card list. Apply the deep-linked card expansion (if any).
-    AppView._devIssueOpen = (ref && ref.kind === 'issue') ? ref.id : null;
-    AppView._devProposalOpen = (ref && ref.kind === 'proposal') ? ref.id : null;
-    AppView._devGovOpen = null;
+    // Full-screen topic (issue / proposal / governance) discussion.
+    if (subTab === 'topic' && ref && ref.kind && ref.id) {
+      await AppView._renderTopicSubView(content, ref);
+      return;
+    }
+
+    // The card list.
     AppView._feedShown = 20;
 
     content.innerHTML = `
@@ -427,13 +435,14 @@ const AppView = {
           </div>
         </div>
 
-        <!-- The card list: general-chat card, sessions strip, the
-             intermixed feed, and the merged section. -->
+        <!-- The card list: locked notice, general-chat card, session
+             rows, the intermixed feed, and the Completed section. -->
         <div id="dev-forum-scroll" class="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+          <div id="dev-locked-notice" class="px-3 pt-2 hidden"></div>
           <div class="px-3 pt-2">
             <button id="dev-chat-card" class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}"
               title="Open the general chat">
-              <span class="text-base shrink-0">&#128172;</span>
+              ${AppView._devCardIcon('chat')}
               <span class="flex-1 min-w-0">
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">General chat</span>
                 <span id="dev-chat-card-preview" class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">Talk with everyone building this app</span>
@@ -455,29 +464,168 @@ const AppView = {
     });
     AppView._loadChatCardPreview();
 
-    // Delegated accordion toggles for every feed card kind. Bound on
-    // the stable #dev-feed container (its innerHTML re-renders, the
-    // node itself survives until the next renderDevView).
+    // Delegated card-open handler: tapping a topic card anywhere except
+    // its links/pills opens that topic full-screen. Bound on the stable
+    // #dev-feed container (its innerHTML re-renders, the node itself
+    // survives until the next renderDevView).
     const feedEl = document.getElementById('dev-feed');
     feedEl.addEventListener('click', (e) => {
-      if (e.target.closest('a, button, input, form, .dev-thread, .dev-issue-expand, .dev-proposal-expand')) return;
+      if (e.target.closest('a, button, input, form')) return;
       const issueRow = e.target.closest('[data-issue-row]');
       if (issueRow) {
-        AppView.toggleIssueThread(parseInt(issueRow.dataset.issueRow, 10));
+        AppView.openTopic('issue', parseInt(issueRow.dataset.issueRow, 10));
         return;
       }
       const prRow = e.target.closest('[data-proposal-row]');
       if (prRow) {
-        AppView.toggleProposalThread(parseInt(prRow.dataset.proposalRow, 10));
+        AppView.openTopic('proposal', parseInt(prRow.dataset.proposalRow, 10));
         return;
       }
       const govRow = e.target.closest('[data-gov-row]');
-      if (govRow) AppView.toggleGovThread(parseInt(govRow.dataset.govRow, 10));
+      if (govRow) AppView.openTopic('gov', parseInt(govRow.dataset.govRow, 10));
     });
 
     AppView._renderSessionsStrip();
     AppView._syncStripPolling();
-    await AppView._loadDevFeed({ scrollToOpen: true });
+    await AppView._loadDevFeed();
+  },
+
+  // ── Full-screen topic sub-view ──────────────────────────────────────
+  // One issue / PR proposal / governance proposal opened from its card
+  // (or a deep link): back header, the card itself (vote/preview/kudos
+  // pills still live, minus the open-discussion affordance), the body
+  // (issue text / vote details), and the discussion thread filling the
+  // remaining height with the composer pinned to the bottom.
+  _devTopic: null, // { kind: 'issue'|'proposal'|'gov', id } while open
+
+  async _renderTopicSubView(content, ref) {
+    AppView._devTopic = { kind: ref.kind, id: ref.id };
+    content.innerHTML = `
+      <div class="flex flex-col h-full min-h-0">
+        <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+          <button id="dev-topic-back" class="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm shrink-0" title="Back to the dev page">&larr;</button>
+          <div id="dev-topic-title" class="flex items-center gap-2 flex-1 min-w-0">
+            <span class="text-xs text-zinc-500 dark:text-zinc-400">Loading…</span>
+          </div>
+        </div>
+        <div class="flex-1 min-h-0 flex flex-col px-3 py-2">
+          <div id="dev-topic-head" class="shrink-0 overflow-y-auto overscroll-contain" style="max-height:45%"></div>
+          <div id="dev-topic-thread" class="flex-1 min-h-0 mt-2"></div>
+        </div>
+      </div>`;
+
+    document.getElementById('dev-topic-back').addEventListener('click', () => {
+      App.switchTab('dev');
+    });
+
+    const ok = await AppView._loadDevData();
+    // The view may have been replaced (or retargeted) while the fetch
+    // was in flight.
+    const t = AppView._devTopic;
+    if (!document.getElementById('dev-topic-head') || !t
+        || t.kind !== ref.kind || t.id !== ref.id) return;
+    if (!ok || !AppView._findTopicItem()) {
+      // Missing ref (closed issue, archived session, bad link) — fall
+      // back to the card list.
+      App.switchTab('dev');
+      return;
+    }
+    AppView._renderTopicHead();
+    AppView._mountTopicThread();
+  },
+
+  _findTopicItem() {
+    const t = AppView._devTopic;
+    if (!t) return null;
+    if (t.kind === 'issue') {
+      return (AppView._ghIssues || []).find((i) => i.number === t.id) || null;
+    }
+    if (t.kind === 'proposal') {
+      // Open proposals first; merged ones stay viewable (read-only thread).
+      return (AppView._proposals || []).find((p) => p.id === t.id)
+        || (AppView._merged || []).find((p) => p.id === t.id) || null;
+    }
+    return (AppView._govProposals || []).find((i) => i.id === t.id) || null;
+  },
+
+  // Paint (or live-refresh) the topic title + header card + body.
+  // Leaves #dev-topic-thread untouched so the mounted thread survives
+  // WS-driven refreshes.
+  _renderTopicHead() {
+    const t = AppView._devTopic;
+    const head = document.getElementById('dev-topic-head');
+    const titleEl = document.getElementById('dev-topic-title');
+    if (!t || !head) return;
+    const item = AppView._findTopicItem();
+    // Closed / merged away mid-view: keep the last render readable.
+    if (!item) return;
+
+    let icon;
+    let label;
+    let cardHtml;
+    let bodyHtml;
+    if (t.kind === 'issue') {
+      icon = 'issue';
+      label = `#${item.number} · ${item.title}`;
+      cardHtml = AppView._renderIssueRow(item, { noNav: true });
+      bodyHtml = AppView._issueBodyHtml(item);
+    } else if (t.kind === 'proposal') {
+      icon = item.status === 'merged' ? 'done' : 'proposal';
+      label = `PR#${item.pr_number || item.id} · ${item.pr_title || `by ${item.username || ''}`}`;
+      cardHtml = AppView._renderProposalCard(item, { noNav: true });
+      bodyHtml = AppView._proposalDetailsHtml(item);
+    } else {
+      icon = 'gov';
+      label = item.kind === 'rename'
+        ? `Rename to "${(item.payload && item.payload.newName) || item.title}"`
+        : item.title;
+      cardHtml = AppView._renderGovCard(item, { noNav: true });
+      bodyHtml = item.description
+        ? `<div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">${escapeHtml(item.description)}</div>`
+        : '';
+    }
+
+    if (titleEl) {
+      titleEl.innerHTML = `${AppView._devCardIcon(icon, { small: true })}`
+        + `<span class="text-xs font-semibold text-zinc-700 dark:text-zinc-300 truncate">${escapeHtml(label)}</span>`;
+    }
+    head.innerHTML = cardHtml + bodyHtml;
+    if (window.Kudos) Kudos.attach(head);
+    if (t.kind === 'proposal' && item.status !== 'merged') AppView._loadVoteRoster(item.id);
+  },
+
+  _mountTopicThread() {
+    const t = AppView._devTopic;
+    const slot = document.getElementById('dev-topic-thread');
+    if (!t || !slot || typeof GroupChat === 'undefined' || !GroupChat.mountThread) return;
+    const typeMap = { issue: 'issue', proposal: 'session', gov: 'governance' };
+    // A proposal that has left voting gets a read-only thread.
+    let readOnly = false;
+    let notice = '';
+    if (t.kind === 'proposal') {
+      const item = AppView._findTopicItem();
+      if (item && item.status === 'merged') {
+        readOnly = true;
+        notice = 'Voting closed — this proposal was merged. The discussion is read-only.';
+      }
+    }
+    GroupChat.mountThread({
+      type: typeMap[t.kind],
+      ref: t.id,
+      container: slot,
+      fullHeight: true,
+      readOnly,
+      notice,
+    });
+  },
+
+  // Open a topic full-screen. Called by the cards' tap handler, the
+  // Discussion buttons, and chat reference chips (revealInDrawer).
+  openTopic(kind, id) {
+    if (!kind || !id) return;
+    if (typeof App !== 'undefined' && App.switchTab) {
+      App.switchTab('dev', { kind, id }, 'topic');
+    }
   },
 
   // ── Full-screen general chat sub-view ───────────────────────────────
@@ -613,6 +761,12 @@ const AppView = {
     if (!AppView.appData || typeof App === 'undefined' || App.currentTab !== 'dev') return;
     if (App.currentSubTab === 'chat') {
       AppView.loadVoteState(AppView.appData.slug);
+      return;
+    }
+    if (App.currentSubTab === 'topic') {
+      // Refresh the header card / roster in place; the mounted thread
+      // is left alone (it receives live messages directly).
+      AppView._loadDevData().then(() => AppView._renderTopicHead());
       return;
     }
     if (App.currentSubTab !== 'forum') return;
@@ -799,9 +953,13 @@ const AppView = {
   // timestamp vs. the latest message in its thread). Data comes from
   // the same four endpoints the old Issues/Proposals tabs used.
 
-  async _loadDevFeed(opts) {
-    const feedEl = document.getElementById('dev-feed');
-    if (!feedEl || !AppView.appData) return;
+  // Fetch + cache everything the dev surfaces render from (the same
+  // four endpoints the old tabs used): GitHub issues, governance
+  // proposals, open PR proposals, merged PRs, plus voteState for the
+  // chat's inline vote rows. Shared by the card list and the topic
+  // sub-view. Returns false on a failed load.
+  async _loadDevData() {
+    if (!AppView.appData) return false;
     const slug = AppView.appData.slug;
     try {
       const [ghRes, issuesRes, promotedRes, mergedRes] = await Promise.all([
@@ -837,7 +995,7 @@ const AppView = {
       const locked = !!promotedData.locked;
 
       // Shared inline-vote snapshot (same shape loadVoteState builds) so
-      // the pinned chat's activity rows stay in sync without a refetch.
+      // the chat view's activity rows stay in sync without a refetch.
       const voteRows = [...(merged || []), ...promoted];
       AppView.voteState = {
         bySession: Object.fromEntries(voteRows.map((pr) => [String(pr.id), pr])),
@@ -864,23 +1022,39 @@ const AppView = {
       };
       AppView._merged = merged;
       AppView._mergedCtx = { majority, activeUsers };
-
-      // Extend the visible cap to include a deep-linked open card.
-      const openIdx = AppView._openFeedIndex();
-      if (openIdx >= (AppView._feedShown || 20)) AppView._feedShown = openIdx + 1;
-
-      AppView._rerenderFeed();
-
-      const mergedEl = document.getElementById('gc-merged');
-      if (mergedEl) {
-        mergedEl.innerHTML = merged.length ? AppView._renderMergedInner() : '';
-        if (window.Kudos) Kudos.attach(mergedEl);
-      }
-
-      if (opts && opts.scrollToOpen) AppView._scrollOpenCardIntoView();
+      return true;
     } catch {
-      feedEl.innerHTML = '<div class="text-xs text-zinc-500 dark:text-zinc-400">Couldn&#39;t load the feed right now.</div>';
+      return false;
     }
+  },
+
+  async _loadDevFeed() {
+    const ok = await AppView._loadDevData();
+    const feedEl = document.getElementById('dev-feed');
+    if (!feedEl) return;
+    if (!ok) {
+      feedEl.innerHTML = '<div class="text-xs text-zinc-500 dark:text-zinc-400">Couldn&#39;t load the feed right now.</div>';
+      return;
+    }
+    AppView._renderLockedNotice();
+    AppView._rerenderFeed();
+    const mergedEl = document.getElementById('gc-merged');
+    if (mergedEl) {
+      mergedEl.innerHTML = (AppView._merged || []).length ? AppView._renderMergedInner() : '';
+      if (window.Kudos) Kudos.attach(mergedEl);
+    }
+  },
+
+  // Locked-app banner at the very top of the card list (above the
+  // General chat card), per the card-list polish revision.
+  _renderLockedNotice() {
+    const el = document.getElementById('dev-locked-notice');
+    if (!el) return;
+    const locked = !!(AppView._proposalsCtx && AppView._proposalsCtx.locked);
+    el.classList.toggle('hidden', !locked);
+    el.innerHTML = locked
+      ? '<div class="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-600 dark:text-amber-400">App is locked — an admin must approve any proposal before it applies.</div>'
+      : '';
   },
 
   // The feed's display order: every item carries a lastActivity sort
@@ -915,33 +1089,12 @@ const AppView = {
     return items.sort((a, b) => b.t - a.t);
   },
 
-  // Index of the currently-expanded card in the sorted feed (-1 when
-  // nothing is open). Used to extend the visible cap for deep links.
-  _openFeedIndex() {
-    if (!AppView._devIssueOpen && !AppView._devProposalOpen && !AppView._devGovOpen) return -1;
-    return AppView._feedItems().findIndex((it) =>
-      (it.kind === 'issue' && it.id === AppView._devIssueOpen)
-      || (it.kind === 'proposal' && it.id === AppView._devProposalOpen)
-      || (it.kind === 'gov' && it.id === AppView._devGovOpen));
-  },
-
-  _scrollOpenCardIntoView() {
-    const sel = AppView._devIssueOpen ? `#dev-feed [data-issue-row="${AppView._devIssueOpen}"]`
-      : AppView._devProposalOpen ? `#dev-feed [data-proposal-row="${AppView._devProposalOpen}"]`
-        : AppView._devGovOpen ? `#dev-feed [data-gov-row="${AppView._devGovOpen}"]` : null;
-    const row = sel && document.querySelector(sel);
-    if (row) row.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  },
-
   _renderFeedInner() {
     const ctx = AppView._proposalsCtx || {};
     const meta = AppView._ghIssuesMeta || {};
     const items = AppView._feedItems();
 
-    let html = `<div class="flex items-center justify-between mb-1"><span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider">Topics</span><button class="gc-vote-btn" title="Report a problem or idea without building it yourself" onclick="AppView.openNewIssueModal()">+ New issue</button></div>`;
-    if (ctx.locked) {
-      html += '<div class="mb-2 text-xs text-amber-500">App is locked — an admin must approve any proposal before it applies.</div>';
-    }
+    let html = `<div class="flex justify-end mb-2"><button class="gc-vote-btn" title="Report a problem or idea without building it yourself" onclick="AppView.openNewIssueModal()">+ New issue</button></div>`;
     if (!items.length) {
       const note = meta.note
         ? 'Couldn&#39;t load open issues right now. '
@@ -983,9 +1136,6 @@ const AppView = {
     if (!el) return;
     el.innerHTML = AppView._renderFeedInner();
     if (window.Kudos) Kudos.attach(el);
-    AppView._mountOpenIssueThread();
-    AppView._mountProposalThread();
-    if (AppView._devProposalOpen) AppView._loadVoteRoster(AppView._devProposalOpen);
   },
 
   showMoreFeed() {
@@ -1014,21 +1164,20 @@ const AppView = {
       if (!live) return;
       if (!mine.length) { live.innerHTML = ''; return; }
       live.innerHTML = `
-        <div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-1">Your sessions</div>
         <div class="space-y-2">
           ${mine.map((s) => {
             const label = escapeHtml(s.pr_title || s.branch_name || `Session #${s.id}`);
-            const dot = s.busy
-              ? '<span class="dc-status-icon dc-status-spinner-arc shrink-0" aria-hidden="true"></span>'
-              : `<span class="inline-block w-1.5 h-1.5 rounded-full shrink-0 ${s.status === 'paused' ? 'bg-zinc-400' : 'bg-emerald-500'}"></span>`;
             const statusTag = s.busy
-              ? '<span class="text-xs text-zinc-500 shrink-0">working…</span>'
+              ? '<span class="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
               : (s.status === 'paused' ? '<span class="text-xs text-zinc-500 shrink-0">paused</span>' : '');
             return `<button data-session-chip="${s.id}"
               class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}"
               title="${s.busy ? 'AI is working — ' : ''}${label}">
-              ${dot}
-              <span class="text-sm text-zinc-800 dark:text-zinc-200 flex-1 min-w-0 truncate">${label}</span>
+              ${AppView._devCardIcon('session')}
+              <span class="flex-1 min-w-0">
+                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">${label}</span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">Your dev session</span>
+              </span>
               ${statusTag}
               <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
             </button>`;
@@ -1058,42 +1207,15 @@ const AppView = {
     }, 15000);
   },
 
-  // Expand/collapse one issue's accordion (one open at a time;
-  // deep-linkable via #app/{slug}/dev/issues/{number}).
-  toggleIssueThread(n) {
-    if (!n) return;
-    AppView._devIssueOpen = AppView._devIssueOpen === n ? null : n;
-    AppView._devProposalOpen = null;
-    AppView._devGovOpen = null;
-    if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
-    AppView._rerenderFeed();
-    if (typeof App !== 'undefined' && App.updateHash) App.updateHash();
-  },
-
-  // Mount the thread chat for the expanded issue into its slot. Called
-  // after every issues re-render — innerHTML replacement wipes any
-  // previous mount.
-  _mountOpenIssueThread() {
-    const n = AppView._devIssueOpen;
-    const slot = document.getElementById('dev-thread-slot-issue');
-    if (!n || !slot || typeof GroupChat === 'undefined' || !GroupChat.mountThread) return;
-    GroupChat.mountThread({ type: 'issue', ref: n, container: slot });
-  },
-
-  // Expansion body for one issue row: the GitHub issue body (already in
-  // the /github-issues payload) plus the thread chat slot.
-  _issueExpansionHtml(issue) {
+  // The issue's body (GitHub markdown), rendered in the topic
+  // sub-view between the header card and the thread.
+  _issueBodyHtml(issue) {
     const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
       ? (s) => DevChat.renderMarkdown(s)
       : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
-    const bodyHtml = issue && issue.body && issue.body.trim()
-      ? `<div class="dev-issue-body text-xs text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 rounded-lg p-2 mb-2 max-h-64 overflow-y-auto">${renderMd(issue.body)}</div>`
+    return issue && issue.body && issue.body.trim()
+      ? `<div class="dev-issue-body text-xs text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 mt-2">${renderMd(issue.body)}</div>`
       : '';
-    return `
-      <div class="dev-issue-expand w-full mt-1 pt-2 border-t border-zinc-200 dark:border-zinc-700">
-        ${bodyHtml}
-        <div id="dev-thread-slot-issue"></div>
-      </div>`;
   },
 
   // "New issue" modal — title + description, posted to the existing
@@ -1166,99 +1288,110 @@ const AppView = {
     setTimeout(() => root.querySelector('#new-issue-title').focus(), 0);
   },
 
-  // One PR-proposal card. Header row reuses the exact control set the
-  // old vote panel rendered (tally pill, Yes/No, Preview, Admin merge,
-  // kudos, merging badge); the expansion adds the vote roster, linked
-  // issues, PR details, and the proposal's thread chat.
-  _renderProposalCard(pr) {
+  // One PR-proposal card: line 1 is identity + info (icon chip, title,
+  // PR meta, tally pill, badges), line 2 is the action pills (vote /
+  // preview / kudos / Discussion / Open session). With { noNav: true }
+  // (the topic sub-view's header card) the tap-to-open affordance and
+  // Discussion button are dropped — you're already in the discussion.
+  _renderProposalCard(pr, opts) {
+    const noNav = !!(opts && opts.noNav);
     const ctx = AppView._proposalsCtx || {};
     const majority = ctx.majority || 1;
     const isMerging = pr.status === 'merging';
-    let labelText;
+    const isMerged = pr.status === 'merged';
+    let titleHtml;
     if (pr.revert_of_session_id) {
       const origLabel = pr.original_pr_title
         ? `${escapeHtml(pr.original_pr_title)}`
         : `PR #${pr.original_pr_number || pr.revert_of_session_id}`;
-      labelText = `<span class="text-amber-500">↩ Revert of</span> ${origLabel} <span class="text-zinc-500">· ${escapeHtml(pr.username)}</span>`;
+      titleHtml = `<span class="text-amber-500">↩ Revert of</span> ${origLabel}`;
     } else {
-      labelText = pr.pr_title
-        ? `${escapeHtml(pr.pr_title)} <span class="text-zinc-500">· ${escapeHtml(pr.username)}</span>`
-        : `by ${escapeHtml(pr.username)}`;
+      titleHtml = pr.pr_title ? escapeHtml(pr.pr_title) : `Change by ${escapeHtml(pr.username || '')}`;
     }
+    const metaParts = [
+      `<a href="${pr.pr_url || '#'}" target="_blank" rel="noopener" class="font-mono text-violet-400 hover:underline">PR#${pr.pr_number || pr.id}</a>`,
+      escapeHtml(pr.username || ''),
+    ];
+    if (pr.created_at) metaParts.push(escapeHtml(relTime(pr.created_at)));
+    const closesPills = AppView.closesPillHtml(pr);
+
     const kudosBtn = window.Kudos ? Kudos.renderButton(pr, { compact: true }) : '';
     const isUnvoted = pr.status === 'promoted' && !pr.my_vote;
     const unvotedBadge = isUnvoted
       ? '<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 shrink-0" title="You haven\'t voted on this yet"><span class="relative flex h-1.5 w-1.5"><span class="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75 animate-ping"></span><span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-violet-500"></span></span>Vote</span>'
       : '';
-    const mergingBadge = isMerging ? AppView.mergingBadgeHtml() : '';
-    const expanded = AppView._devProposalOpen === pr.id;
-    const caret = `<span class="text-[0.6rem] text-zinc-500 shrink-0">${expanded ? '&#9660;' : '&#9654;'}</span>`;
-    // Forum revision: a promoted session IS a proposal card — Discussion
-    // opens its thread (same toggle the row tap performs), Open session
-    // jumps into the dev session behind it. Sessions are owner-scoped
-    // (GET /api/sessions/:id), so the session button only renders for
-    // the proposer.
+    const stateBadge = isMerging ? AppView.mergingBadgeHtml()
+      : isMerged ? AppView.mergedBadgeHtml() : '';
+    // Sessions are owner-scoped (GET /api/sessions/:id), so the session
+    // button only renders for the proposer.
     const chatN = parseInt(pr.chat_count) || 0;
-    const discussBtn = `<button class="gc-vote-btn dev-discuss-btn" data-count="${chatN}" title="Open this proposal's discussion thread" onclick="AppView.toggleProposalThread(${pr.id})">&#128172; Discussion${chatN ? ` (${chatN})` : ''}</button>`;
+    const discussBtn = noNav ? ''
+      : `<button class="gc-vote-btn dev-discuss-btn" data-count="${chatN}" title="Open this proposal's discussion thread" onclick="AppView.openTopic('proposal', ${pr.id})">&#128172; Discussion${chatN ? ` (${chatN})` : ''}</button>`;
     const sessionBtn = (App.user && pr.user_id === App.user.id)
       ? `<button class="gc-vote-btn" title="Open the dev session behind this proposal" onclick="AppView.openProposalSession(${pr.id})">Open session</button>`
       : '';
     // #195: before/after capture tiles so voters can judge a visual change
-    // without opening the staging preview. basis-full forces it onto its own
-    // row below the title + controls.
+    // without opening the staging preview.
     const visualsHtml = AppView.visualsTilesHtml(pr.visuals);
 
-    let html = `
-      <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}" data-proposal-row="${pr.id}" title="Tap to see voting details and the discussion thread">
-        ${caret}
-        <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-violet-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
-        <span class="text-xs text-zinc-700 dark:text-zinc-300 flex-1 min-w-0 truncate">${labelText}</span>
-        ${AppView.closesPillHtml(pr)}
-        <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2 flex-wrap">
-          ${unvotedBadge}
-          ${AppView.voteCountPill(pr, majority)}
-          ${AppView.voteButtonsHtml(pr)}
-          ${mergingBadge}
-          ${kudosBtn}
-          ${discussBtn}
-          ${sessionBtn}
+    // Merged proposals (topic-view fallback) drop the live vote buttons —
+    // the vote is settled; kudos stays open.
+    const actions = (isMerged
+      ? [kudosBtn, sessionBtn]
+      : [AppView.voteButtonsHtml(pr), kudosBtn, discussBtn, sessionBtn]
+    ).filter(Boolean).join('');
+
+    return `
+      <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}"${noNav ? '' : ` data-proposal-row="${pr.id}" title="Open this proposal's discussion"`}>
+        ${AppView._devCardIcon(isMerged ? 'done' : 'proposal')}
+        <div class="flex-1 min-w-0">
+          <div class="text-sm text-zinc-800 dark:text-zinc-200 truncate">${titleHtml}</div>
+          <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate">${metaParts.join(' · ')}${closesPills ? ` ${closesPills}` : ''}</div>
         </div>
+        ${unvotedBadge}
+        ${AppView.voteCountPill(pr, majority)}
+        ${stateBadge}
         ${visualsHtml ? `<div class="basis-full">${visualsHtml}</div>` : ''}
-        ${expanded ? `<div class="basis-full">${AppView._proposalExpansionHtml(pr)}</div>` : ''}
+        ${actions ? `<div class="basis-full flex flex-wrap items-center gap-1.5 mt-1.5">${actions}</div>` : ''}
       </div>`;
-    return html;
   },
 
-  _proposalExpansionHtml(pr) {
+  // The proposal's details block (PR link, proposer, linked issues,
+  // vote roster, locked note), rendered in the topic sub-view between
+  // the header card and the thread.
+  _proposalDetailsHtml(pr) {
     const ctx = AppView._proposalsCtx || {};
     const slug = AppView.appData ? AppView.appData.slug : '';
     const linked = (Array.isArray(pr.linked_issues) ? pr.linked_issues : [])
       .map((v) => (typeof v === 'number' ? v : Number(v)))
       .filter((n) => Number.isInteger(n) && n > 0);
     const chips = linked.map((n) =>
-      `<a href="#app/${slug}/dev/issues/${n}" class="inline-flex items-center text-[0.65rem] font-medium font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20" title="Open issue #${n} in the Issues tab">#${n}</a>`
+      `<a href="#app/${slug}/dev/issues/${n}" class="inline-flex items-center text-[0.65rem] font-medium font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20" title="Open issue #${n}">#${n}</a>`
     ).join(' ');
     const details = [];
     if (pr.pr_url) details.push(`<a href="${pr.pr_url}" target="_blank" rel="noopener" class="text-violet-400 hover:underline">View PR on GitHub</a>`);
     details.push(`proposed by <span class="font-medium">${escapeHtml(pr.username || '')}</span>`);
     if (pr.created_at) details.push(escapeHtml(relTime(pr.created_at)));
-    const lockedNote = ctx.locked
+    const lockedNote = (ctx.locked && pr.status !== 'merged')
       ? '<div class="text-xs text-amber-500 mt-1">App is locked — this also needs at least one admin yes before it merges.</div>'
       : '';
+    const roster = pr.status !== 'merged'
+      ? `<div id="dev-vote-roster-${pr.id}" class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Loading votes…</div>`
+      : '';
     return `
-      <div class="dev-proposal-expand w-full mt-1 pt-2 border-t border-zinc-200 dark:border-zinc-700">
-        <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1">${details.join(' · ')}</div>
-        ${chips ? `<div class="mb-1 flex flex-wrap gap-1 items-center"><span class="text-xs text-zinc-500">Linked issues:</span> ${chips}</div>` : ''}
-        <div id="dev-vote-roster-${pr.id}" class="text-xs text-zinc-500 dark:text-zinc-400 mb-1">Loading votes…</div>
+      <div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">
+        <div>${details.join(' · ')}</div>
+        ${chips ? `<div class="mt-1 flex flex-wrap gap-1 items-center"><span>Linked issues:</span> ${chips}</div>` : ''}
+        ${roster}
         ${lockedNote}
-        <div id="dev-thread-slot-proposal"></div>
       </div>`;
   },
 
   // One governance card (env-var change, or a legacy rename row still
   // open from before renames moved to dapp.json PRs). Up/down controls
   // post to the existing /api/issues/:id/vote.
-  _renderGovCard(issue) {
+  _renderGovCard(issue, opts) {
+    const noNav = !!(opts && opts.noNav);
     const ctx = AppView._proposalsCtx || {};
     const majority = ctx.majority || 1;
     const myVote = issue.my_vote;
@@ -1268,69 +1401,34 @@ const AppView = {
     const titleText = isRename
       ? `Rename to "${(issue.payload && issue.payload.newName) || issue.title}"`
       : issue.title;
-    const creatorSuffix = issue.created_by_username
-      ? ` <span class="text-zinc-500">· ${escapeHtml(issue.created_by_username)}</span>`
-      : '';
+    const metaParts = ['Governance proposal'];
+    if (issue.created_by_username) metaParts.push(escapeHtml(issue.created_by_username));
+    if (issue.created_at) metaParts.push(escapeHtml(relTime(issue.created_at)));
     const tallyPill = AppView.voteCountPill({ yes_count: upCount, no_count: downCount }, majority);
     const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${myVote === 'up' ? ' gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'up')">Yes (${upCount})</button>`;
     const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${myVote === 'down' ? ' gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'down')">No (${downCount})</button>`;
     const adminBtn = (!isRename && App.user?.isAdmin)
       ? `<button class="gc-vote-btn gc-vote-btn-admin" title="Admin: apply this change right now, bypassing the vote majority" onclick="AppView.castIssueAdminApply(${issue.id})">Admin merge</button>`
       : '';
-    const expanded = AppView._devGovOpen === issue.id;
-    const caret = `<span class="text-[0.6rem] text-zinc-500 shrink-0">${expanded ? '&#9660;' : '&#9654;'}</span>`;
     const govChatN = parseInt(issue.chat_count) || 0;
-    const govDiscussBtn = `<button class="gc-vote-btn dev-discuss-btn" data-count="${govChatN}" title="Open this proposal's discussion thread" onclick="AppView.toggleGovThread(${issue.id})">&#128172; Discussion${govChatN ? ` (${govChatN})` : ''}</button>`;
+    const govDiscussBtn = noNav ? ''
+      : `<button class="gc-vote-btn dev-discuss-btn" data-count="${govChatN}" title="Open this proposal's discussion thread" onclick="AppView.openTopic('gov', ${issue.id})">&#128172; Discussion${govChatN ? ` (${govChatN})` : ''}</button>`;
 
-    let html = `
-      <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-gov-row="${issue.id}"${issue.github_issue_number ? ` data-ref-issue="${issue.github_issue_number}"` : ''} title="Tap to open the discussion thread">
-        ${caret}
-        <span class="text-xs text-zinc-700 dark:text-zinc-300 flex-1 min-w-0 truncate">${escapeHtml(titleText)}${creatorSuffix}</span>
-        <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2 flex-wrap">
-          ${tallyPill}
+    return `
+      <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" data-gov-row="${issue.id}"${issue.github_issue_number ? ` data-ref-issue="${issue.github_issue_number}"` : ''}${noNav ? '' : ' title="Open this proposal\'s discussion"'}>
+        ${AppView._devCardIcon('gov')}
+        <div class="flex-1 min-w-0">
+          <div class="text-sm text-zinc-800 dark:text-zinc-200 truncate" title="${escapeHtml(titleText)}">${escapeHtml(titleText)}</div>
+          <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate">${metaParts.join(' · ')}</div>
+        </div>
+        ${tallyPill}
+        <div class="basis-full flex flex-wrap items-center gap-1.5 mt-1.5">
           ${yesBtn}
           ${noBtn}
           ${adminBtn}
           ${govDiscussBtn}
         </div>
-        ${expanded ? `<div class="basis-full"><div class="dev-proposal-expand w-full mt-1 pt-2 border-t border-zinc-200 dark:border-zinc-700">
-          ${issue.description ? `<div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1">${escapeHtml(issue.description)}</div>` : ''}
-          <div id="dev-thread-slot-proposal"></div>
-        </div></div>` : ''}
       </div>`;
-    return html;
-  },
-
-  toggleProposalThread(id) {
-    if (!id) return;
-    AppView._devProposalOpen = AppView._devProposalOpen === id ? null : id;
-    AppView._devGovOpen = null;
-    AppView._devIssueOpen = null;
-    if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
-    AppView._rerenderFeed();
-    if (typeof App !== 'undefined' && App.updateHash) App.updateHash();
-  },
-
-  toggleGovThread(id) {
-    if (!id) return;
-    AppView._devGovOpen = AppView._devGovOpen === id ? null : id;
-    AppView._devProposalOpen = null;
-    AppView._devIssueOpen = null;
-    if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
-    AppView._rerenderFeed();
-    if (typeof App !== 'undefined' && App.updateHash) App.updateHash();
-  },
-
-  // Mount the expanded proposal's thread chat ('session' for PR
-  // proposals, 'governance' for env-var/rename proposals).
-  _mountProposalThread() {
-    const slot = document.getElementById('dev-thread-slot-proposal');
-    if (!slot || typeof GroupChat === 'undefined' || !GroupChat.mountThread) return;
-    if (AppView._devProposalOpen) {
-      GroupChat.mountThread({ type: 'session', ref: AppView._devProposalOpen, container: slot });
-    } else if (AppView._devGovOpen) {
-      GroupChat.mountThread({ type: 'governance', ref: AppView._devGovOpen, container: slot });
-    }
   },
 
   // Who voted yes/no on a PR proposal (GET /api/sessions/:id/votes),
@@ -1421,68 +1519,26 @@ const AppView = {
   },
 
   // #130/#194: reveal a PR / issue reference (from a chat chip or a
-  // notification) on its dev sub-tab — issues open in the Issues tab's
-  // accordion, votable PRs in the Proposals tab. Falls back to opening
-  // the reference on GitHub when it isn't resolvable locally (closed
-  // issue, unknown PR, degraded fetch).
+  // notification) — opens the matching full-screen topic view. Falls
+  // back to GitHub for PR numbers that aren't resolvable locally.
   revealInDrawer(type, number) {
     const n = parseInt(number, 10);
     if (!n || typeof App === 'undefined') return;
 
-    // Already on the forum: expand the card in place (no full dev-view
-    // re-render, which would remount the pinned chat).
-    const onForum = App.currentTab === 'dev' && App.currentSubTab === 'forum'
-      && document.getElementById('dev-feed');
-
     if (type !== 'pr') {
-      // Bare-# chips are issues first. A closed issue simply won't be
-      // in the feed, which mirrors the old "row disappeared from the
-      // drawer" behavior (GitHub fallback below still applies for PRs).
-      if (onForum) {
-        AppView._devIssueOpen = n;
-        AppView._devProposalOpen = null;
-        AppView._devGovOpen = null;
-        const idx = AppView._openFeedIndex();
-        if (idx >= (AppView._feedShown || 20)) AppView._feedShown = idx + 1;
-        AppView._rerenderFeed();
-        AppView._scrollOpenCardIntoView();
-        if (App.updateHash) App.updateHash();
-      } else {
-        App.switchTab('dev', n, 'issues');
-      }
+      // Bare-# chips are issues first. A closed issue won't resolve in
+      // the topic view, which falls back to the card list.
+      AppView.openTopic('issue', n);
       return;
     }
 
     const st = AppView.voteState || {};
     const pr = (st.byPrNumber && st.byPrNumber[String(n)])
       || (st.bySession && st.bySession[String(n)]);
-    if (pr && (pr.status === 'promoted' || pr.status === 'merging')) {
-      if (onForum) {
-        AppView._devProposalOpen = pr.id;
-        AppView._devIssueOpen = null;
-        AppView._devGovOpen = null;
-        const idx = AppView._openFeedIndex();
-        if (idx >= (AppView._feedShown || 20)) AppView._feedShown = idx + 1;
-        AppView._rerenderFeed();
-        AppView._scrollOpenCardIntoView();
-        if (App.updateHash) App.updateHash();
-      } else {
-        App.switchTab('dev', pr.id, 'proposals');
-      }
-      return;
-    }
-    if (pr && pr.status === 'merged') {
-      AppView._mergedExpanded = true;
-      if (onForum) {
-        const el = document.getElementById('gc-merged');
-        if (el) {
-          el.innerHTML = AppView._renderMergedInner();
-          if (window.Kudos) Kudos.attach(el);
-          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
-      } else {
-        App.switchTab('dev');
-      }
+    if (pr) {
+      // Open, merging, or merged — the topic view handles all three
+      // (merged renders with a read-only thread).
+      AppView.openTopic('proposal', pr.id);
       return;
     }
 
@@ -1599,7 +1655,8 @@ const AppView = {
   // Issues section rendered per row (bounty/kudos, Create PR, the
   // Auto-solve state machine, Preview, creator attribution) plus the
   // accordion expansion into the issue body + thread chat.
-  _renderIssueRow(issue) {
+  _renderIssueRow(issue, opts) {
+    const noNav = !!(opts && opts.noNav);
     const meta = AppView._ghIssuesMeta || {};
     const budgetSpent = meta.myRemaining === 0;
     let html = '';
@@ -1669,35 +1726,28 @@ const AppView = {
     } else {
       autoBtn = `<button class="gc-vote-btn" title="Spin up a headless AI session that starts solving this issue on its own — uses your credits" onclick="AppView.confirmAutoSession(${n})">Auto-solve</button>`;
     }
-    // #133: show the creating user next to the title, same "· user"
-    // treatment as PR rows above. created_by_username comes from the
-    // /github-issues route (local issues table → body Source line →
-    // GitHub login); omitted when the creator couldn't be resolved.
-    const creatorSuffix = issue.created_by_username
-      ? ` <span class="text-zinc-500">· ${escapeHtml(issue.created_by_username)}</span>`
-      : '';
+    // #133: the creating user renders in the meta line below the title.
+    // created_by_username comes from the /github-issues route (local
+    // issues table → body Source line → GitHub login); omitted when the
+    // creator couldn't be resolved.
     const rowTitle = issue.created_by_username
       ? `${issue.title} · ${issue.created_by_username}`
       : issue.title;
 
-    // #194: rows are accordion-expandable (one at a time) into the
-    // issue body + its thread chat; the badge shows the thread size.
-    const expanded = AppView._devIssueOpen === n;
-    const caret = `<span class="text-[0.6rem] text-zinc-500 shrink-0">${expanded ? '&#9660;' : '&#9654;'}</span>`;
-
     html += `
-      <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-ref-issue="${n}" data-issue-row="${n}" title="Tap to read the issue and its discussion thread">
-        ${caret}
-        <a href="${href}" target="_blank" rel="noopener" class="text-xs text-violet-400 font-mono hover:underline">#${n}</a>
-        <span class="text-xs text-zinc-700 dark:text-zinc-300 flex-1 min-w-0 truncate" title="${escapeHtml(rowTitle)}">${escapeHtml(issue.title)}${creatorSuffix}</span>
+      <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" data-ref-issue="${n}"${noNav ? '' : ` data-issue-row="${n}" title="Open this issue's discussion"`}>
+        ${AppView._devCardIcon('issue')}
+        <div class="flex-1 min-w-0">
+          <div class="text-sm text-zinc-800 dark:text-zinc-200 truncate" title="${escapeHtml(rowTitle)}">${escapeHtml(issue.title)}</div>
+          <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate"><a href="${href}" target="_blank" rel="noopener" class="font-mono text-violet-400 hover:underline">#${n}</a>${issue.created_by_username ? ` · ${escapeHtml(issue.created_by_username)}` : ''}</div>
+        </div>
         ${bountyPill}
         ${AppView._devChatBadge(issue.chatCount)}
-        <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
+        <div class="basis-full flex flex-wrap items-center gap-1.5 mt-1.5">
           ${kudosBtn}
           ${createBtn}
           ${autoBtn}
         </div>
-        ${expanded ? `<div class="basis-full">${AppView._issueExpansionHtml(issue)}</div>` : ''}
       </div>`;
     return html;
   },
@@ -1719,7 +1769,7 @@ const AppView = {
       ? merged.length
       : Math.min(AppView._mergedShownDefault, merged.length);
 
-    let html = `<div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-1">Recently merged <span class="normal-case font-normal text-zinc-600 dark:text-zinc-500 tracking-normal">(undo opens a revert PR — needs ${majority}/${activeUsers} votes to land)</span></div><div class="space-y-2">`;
+    let html = `<div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-1">Completed</div><div class="space-y-2">`;
     for (let i = 0; i < shown; i++) {
       const pr = merged[i];
       const date = new Date(pr.created_at).toLocaleDateString();
@@ -1727,9 +1777,6 @@ const AppView = {
         ? `${escapeHtml(pr.pr_title)} <span class="text-zinc-500">· ${escapeHtml(pr.username)}</span>`
         : `by ${escapeHtml(pr.username)}`;
       const mergedQuoteTitle = pr.pr_title || `PR #${pr.pr_number || pr.id}`;
-      const mergedQuoteAttrs = `class="text-xs text-zinc-400 flex-1 min-w-0 truncate" `
-        + `data-session-id="${pr.id}" data-pr-number="${pr.pr_number || pr.id}" `
-        + `title="${escapeHtml(mergedQuoteTitle)}"`;
       // Merged PRs are still eligible for kudos (promoted + merging
       // + merged) — that's intentional. People often come back to
       // a recently-merged PR and want to thank the author.
@@ -1774,13 +1821,14 @@ const AppView = {
 
       html += `
         <div class="gc-vote-item ${AppView.DEV_CARD_CLS}" data-ref-pr="${pr.pr_number || pr.id}">
-          <a href="${pr.pr_url || '#'}" target="_blank" class="text-xs text-emerald-400 font-mono hover:underline">PR#${pr.pr_number || pr.id}</a>
-          <span ${mergedQuoteAttrs}>${mergedLabel}</span>
-          ${AppView.closesPillHtml(pr)}
-          <div class="basis-full sm:basis-auto sm:contents flex items-center gap-2">
-            ${AppView.voteCountPill(pr, majority)}
+          ${AppView._devCardIcon('done')}
+          <div class="flex-1 min-w-0">
+            <div class="text-sm text-zinc-800 dark:text-zinc-200 truncate" title="${escapeHtml(mergedQuoteTitle)}">${mergedLabel}</div>
+            <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate"><a href="${pr.pr_url || '#'}" target="_blank" rel="noopener" class="font-mono text-emerald-400 hover:underline">PR#${pr.pr_number || pr.id}</a> · ${date}${AppView.closesPillHtml(pr) ? ` ${AppView.closesPillHtml(pr)}` : ''}</div>
+          </div>
+          ${AppView.voteCountPill(pr, majority)}
+          <div class="basis-full flex flex-wrap items-center gap-1.5 mt-1.5">
             ${AppView.voteButtonsHtml(pr, { collapseVoted: true })}
-            <span class="text-xs text-zinc-600">${date}</span>
             ${undoUI}
             ${kudosBtn}
           </div>

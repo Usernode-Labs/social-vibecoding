@@ -12,9 +12,10 @@ const App = {
   // call sites keep working.
   currentTab: 'app',
   // Active Dev view: 'forum' (the card list, default), 'chat'
-  // (full-screen general chat), 'sessions' (a dev session open
-  // full-screen), or 'settings' (the app-settings page). Only
-  // meaningful while currentTab === 'dev'.
+  // (full-screen general chat), 'topic' (an issue/proposal discussion
+  // open full-screen), 'sessions' (a dev session open full-screen), or
+  // 'settings' (the app-settings page). Only meaningful while
+  // currentTab === 'dev'.
   currentSubTab: 'forum',
   // Tracks whether the dedicated #leaderboard-screen is visible.
   // Sibling state to `currentApp`: home / app / leaderboard are the
@@ -1253,10 +1254,11 @@ const App = {
       }
       if (parts[0] === 'app' && parts[1]) {
         const slug = parts[1];
-        // Forum-era hashes (#194 revision): app/{slug}/app,
-        // app/{slug}/dev (the forum page), app/{slug}/dev/issues/{n} and
-        // app/{slug}/dev/proposals/{sessionId} (forum with that card
-        // expanded), app/{slug}/dev/sessions/{sessionId} (session view).
+        // Card-list hashes (#194 revision): app/{slug}/app,
+        // app/{slug}/dev (the card list), app/{slug}/dev/chat (general
+        // chat), app/{slug}/dev/issues/{n} / dev/proposals/{id} /
+        // dev/governance/{id} (full-screen topic views),
+        // app/{slug}/dev/sessions/{id} (session view), dev/settings.
         // Legacy hashes — group-chat, individual-chat[/{sessionId}], and
         // the old dev/chat|issues|proposals sub-tab forms — all map onto
         // the forum so old links and notification hrefs keep working.
@@ -1275,11 +1277,14 @@ const App = {
           } else if (sec === 'settings') {
             subTab = 'settings';
           } else if (sec === 'issues' && parts[4]) {
-            subTab = 'forum';
+            subTab = 'topic';
             ref = { kind: 'issue', id: parseInt(parts[4]) || null };
           } else if (sec === 'proposals' && parts[4]) {
-            subTab = 'forum';
+            subTab = 'topic';
             ref = { kind: 'proposal', id: parseInt(parts[4]) || null };
+          } else if (sec === 'governance' && parts[4]) {
+            subTab = 'topic';
+            ref = { kind: 'gov', id: parseInt(parts[4]) || null };
           } else {
             // dev, dev/issues, dev/proposals, dev/sessions (no id) —
             // all land on the plain card list.
@@ -1372,17 +1377,14 @@ const App = {
           newHash = `#app/${App.currentApp}/dev/chat`;
         } else if (App.currentSubTab === 'settings') {
           newHash = `#app/${App.currentApp}/dev/settings`;
+        } else if (App.currentSubTab === 'topic'
+            && typeof AppView !== 'undefined' && AppView._devTopic) {
+          const t = AppView._devTopic;
+          const seg = t.kind === 'issue' ? 'issues'
+            : t.kind === 'proposal' ? 'proposals' : 'governance';
+          newHash = `#app/${App.currentApp}/dev/${seg}/${t.id}`;
         } else {
-          // Card list; the expanded card (if any) rides along as a
-          // deep-link segment so refresh/back restores it.
           newHash = `#app/${App.currentApp}/dev`;
-          if (typeof AppView !== 'undefined') {
-            if (AppView._devIssueOpen) {
-              newHash += `/issues/${AppView._devIssueOpen}`;
-            } else if (AppView._devProposalOpen) {
-              newHash += `/proposals/${AppView._devProposalOpen}`;
-            }
-          }
         }
       } else {
         newHash = `#app/${App.currentApp}/app`;
@@ -1399,13 +1401,12 @@ const App = {
     const targetFull = newHash.startsWith('#') ? newHash : '';
     if (currentFull === targetFull) return;
 
-    // Screen ids: the card list and its expanded-card deep links are
-    // one screen (card expansion replaces in place); the chat,
-    // settings, and session sub-views are their own screens (list ↔
-    // sub-view pushes a history entry, so device/browser back mirrors
-    // the in-page back buttons), but which session isn't part of the
-    // id (session-to-session replaces).
-    const SUB_SCREENS = new Set(['sessions', 'chat', 'settings']);
+    // Screen ids: every full-screen sub-view (chat, settings, topics,
+    // sessions) is its own screen — list ↔ sub-view pushes a history
+    // entry, so device/browser back mirrors the in-page back buttons —
+    // but which session/topic isn't part of the id (moving between two
+    // topics of the same kind replaces in place).
+    const SUB_SCREENS = new Set(['sessions', 'chat', 'settings', 'issues', 'proposals', 'governance']);
     const screenIdOf = (h) => {
       const segs = String(h || '').replace(/^#/, '').split('/');
       if (segs[0] === 'app' && segs[2] === 'dev') {
@@ -1804,7 +1805,9 @@ const App = {
     if (subTab === 'chat') return { tab: 'dev', subTab: 'chat', ref: null };
     if (subTab === 'settings') return { tab: 'dev', subTab: 'settings', ref: null };
 
-    // forum / issues / proposals / undefined → the card list.
+    // A typed topic ref — from the 'topic' sub-view itself or the
+    // legacy issues/proposals sub-tab vocabulary — opens that topic
+    // full-screen; everything else lands on the card list.
     let fref = null;
     if (ref && typeof ref === 'object' && ref.kind && ref.id) {
       fref = { kind: ref.kind, id: ref.id };
@@ -1815,7 +1818,9 @@ const App = {
       const id = parseInt(ref, 10);
       if (Number.isInteger(id) && id > 0) fref = { kind: 'proposal', id };
     }
-    return { tab: 'dev', subTab: 'forum', ref: fref };
+    return fref
+      ? { tab: 'dev', subTab: 'topic', ref: fref }
+      : { tab: 'dev', subTab: 'forum', ref: null };
   },
 
   // `ref` is the view's deep-link target: a dev-session id for the
