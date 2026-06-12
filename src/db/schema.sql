@@ -891,3 +891,12 @@ COMMENT ON TABLE app_llm_usage IS 'staging:private';
 -- spend grants (unreviewed PR code).
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS llm_proxy_token TEXT;
 COMMENT ON COLUMN apps.llm_proxy_token IS 'staging:private';
+
+-- #249: meaningful default session names. session_title is the
+-- display-name layer for dev sessions: set from the first interactive
+-- message (Haiku), refreshed at pre-PR turn ends, mirrored from
+-- pr_title once a PR exists, and derived deterministically
+-- ("#N · issue title") for headless auto sessions. NULL falls back to
+-- pr_title then branch_name at every display site. Branch names stay
+-- machine-generated and immutable — this column never affects git.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS session_title VARCHAR(256);

@@ -111,7 +111,7 @@ async function gatherFull(config) {
     ),
     pool.query(
       `SELECT cs.id, cs.app_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
-              cs.staging_container_id, cs.staging_url, cs.status, cs.created_at,
+              cs.session_title, cs.staging_container_id, cs.staging_url, cs.status, cs.created_at,
               u.username, u.id AS user_id, a.slug AS app_slug
        FROM chat_sessions cs
        LEFT JOIN users u ON cs.user_id = u.id
@@ -233,6 +233,7 @@ async function gatherFull(config) {
           prNumber: s.pr_number,
           prUrl: s.pr_url,
           prTitle: s.pr_title,
+          sessionTitle: s.session_title,
           stagingUrl: s.staging_url,
           username: s.username,
           userId: s.user_id,

@@ -1201,7 +1201,7 @@ const AppView = {
       live.innerHTML = `
         <div class="space-y-2">
           ${mine.map((s) => {
-            const label = escapeHtml(s.pr_title || s.branch_name || `Session #${s.id}`);
+            const label = escapeHtml(s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`);
             const statusTag = s.busy
               ? '<span class="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
               : (s.status === 'paused' ? '<span class="text-xs text-zinc-500 shrink-0">paused</span>' : '');
