@@ -36,6 +36,24 @@ function voteRoutes(config) {
       if (!rows.length) return res.status(404).json({ error: 'Active session not found' });
       const session = rows[0];
 
+      // Promoted-PR cap: worker-less promoted sessions don't count
+      // against maxUserSessions (see the create-session cap in
+      // routes/sessions.js), so this is the bound that keeps one user
+      // from accumulating unlimited open-for-vote PRs (each holding a
+      // staging preview and vote-panel attention). Checked before the
+      // lazy PR creation below so an over-cap promote doesn't open a
+      // PR it then refuses to put up for vote.
+      const { rows: promotedRows } = await pool.query(
+        `SELECT COUNT(*) AS cnt FROM chat_sessions
+         WHERE user_id = $1 AND status IN ('promoted', 'merging') AND is_headless = FALSE`,
+        [req.user.id]
+      );
+      if (parseInt(promotedRows[0].cnt) >= config.maxUserPromotedSessions) {
+        return res.status(429).json({
+          error: `You already have ${config.maxUserPromotedSessions} PRs up for vote. Wait for one to merge, or archive one first.`,
+        });
+      }
+
       const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
 
       // #183 lazy PR creation: sessions cloned from a headless auto run

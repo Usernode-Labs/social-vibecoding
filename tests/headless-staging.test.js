@@ -490,6 +490,9 @@ function makePromotePool(sessionRow) {
       if (/is_headless = FALSE/i.test(s) && sessionRow.is_headless) ok = false;
       return { rows: ok ? [{ ...sessionRow }] : [] };
     }
+    if (/SELECT COUNT\(\*\) AS cnt FROM chat_sessions/i.test(s)) {
+      return { rows: [{ cnt: '0' }] };
+    }
     if (/SELECT content FROM chat_session_messages/i.test(s)) {
       return { rows: [{ content: 'please ship the bot change' }] };
     }

@@ -272,6 +272,12 @@ function sessionRoutes(config) {
         [appRows[0].id, req.user.id]
       );
 
+      // `warm` = a worker container currently exists for the session. The
+      // session list uses it to decide whether a promoted row still has a
+      // worker to free (and the create-session cap counts the same thing).
+      const warmIds = new Set(worker.warmRegistrySnapshot().map((w) => w.sessionId));
+      for (const s of rows) s.warm = warmIds.has(s.id);
+
       res.json({ sessions: rows });
     } catch (err) {
       log.error('sessions', 'Failed to list sessions', { message: err.message });
@@ -289,7 +295,9 @@ function sessionRoutes(config) {
       // slot budget. Promoted sessions (PRs up for a merge vote) are
       // deliberately un-pausable — their status must stay 'promoted' so
       // the vote endpoints keep working — so counting them here would
-      // leave the user no way to free a slot by pausing.
+      // leave the user no way to free a slot by pausing. The separate
+      // maxUserPromotedSessions cap (enforced at promote time) bounds
+      // how many vote-only sessions one user can accumulate.
       const { rows: countRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
          WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE`,

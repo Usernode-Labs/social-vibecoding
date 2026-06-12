@@ -64,8 +64,14 @@ function load() {
     //     only (#193). Promoted sessions are exempt: they're un-pausable
     //     while their PR is up for a merge vote, so counting them would
     //     leave the user no way to free a slot by pausing.
+    //   - maxUserPromotedSessions: per-user ceiling on concurrently
+    //     promoted PRs, checked at promote time. Promoted sessions don't
+    //     count toward maxUserSessions, so this is the bound that keeps
+    //     one user from papering the vote panel (and holding N staging
+    //     previews) with open PRs.
     maxGlobalSessions: parseInt(process.env.MAX_GLOBAL_SESSIONS || '25', 10),
     maxUserSessions: parseInt(process.env.MAX_USER_SESSIONS || '3', 10),
+    maxUserPromotedSessions: parseInt(process.env.MAX_USER_PROMOTED_SESSIONS || '5', 10),
     // Per-session worker container resource limits, passed to `docker run`
     // by src/services/worker.js. Defaults preserve historical behavior;
     // shrink them in prod to fit more concurrent warm workers on one box.
@@ -161,6 +167,7 @@ function load() {
   console.log(`  MAX_APPS=${config.maxApps}`);
   console.log(`  MAX_GLOBAL_SESSIONS=${config.maxGlobalSessions}`);
   console.log(`  MAX_USER_SESSIONS=${config.maxUserSessions}`);
+  console.log(`  MAX_USER_PROMOTED_SESSIONS=${config.maxUserPromotedSessions}`);
   console.log(`  WORKER_MEMORY=${config.workerMemory} WORKER_CPUS=${config.workerCpus}`);
   console.log(`  DB_POOL_MAX=${config.dbPoolMax}`);
   console.log(`  SESSION_AUTOPAUSE_IDLE_MS=${config.sessionAutopauseIdleMs}${config.sessionAutopauseIdleMs === 0 ? ' (disabled)' : ''}`);
