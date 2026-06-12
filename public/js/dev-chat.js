@@ -2188,10 +2188,16 @@ const DevChat = {
         s.status === 'promoted' ? 'text-violet-400' :
         s.status === 'paused' ? 'text-zinc-400' :
         'text-zinc-500';
-      const isPausable = s.status === 'active' || s.status === 'promoted';
+      // Promoted sessions can't be demoted to 'paused' (their PR must
+      // stay votable), but a warm worker can still be freed — same
+      // endpoint, server keeps status 'promoted' (keptPromoted). Once
+      // the worker is gone (`warm` false) there's nothing left to free,
+      // so no button.
+      const isPausable = s.status === 'active';
+      const isFreeable = s.status === 'promoted' && s.warm;
       const isPaused = s.status === 'paused';
       const isArchived = s.status === 'archived';
-      const isActionable = isPausable || isPaused;
+      const isActionable = isPausable || isFreeable || isPaused;
       const date = new Date(s.created_at).toLocaleDateString();
       return `
         <div class="dc-session-item px-3 py-2 cursor-pointer hover:bg-zinc-800/50 flex items-center gap-2" data-id="${s.id}">
@@ -2199,6 +2205,7 @@ const DevChat = {
           <span class="text-sm text-zinc-300 flex-1 truncate" title="${escapeHtml(s.branch_name || '')}">${escapeHtml(s.pr_title || s.branch_name || 'Session')}</span>
           ${s.pr_url ? `<a href="${s.pr_url}" target="_blank" class="text-xs text-violet-400 hover:text-violet-300" onclick="event.stopPropagation()">PR#${s.pr_number}</a>` : ''}
           ${isPausable ? `<button class="dc-pause-btn text-xs text-zinc-400 hover:text-emerald-400" data-id="${s.id}" data-action="pause" onclick="event.stopPropagation()">Pause</button>` : ''}
+          ${isFreeable ? `<button class="dc-pause-btn text-xs text-zinc-400 hover:text-emerald-400" data-id="${s.id}" data-action="pause" data-freeing="1" title="Frees the AI worker. The PR stays up for voting." onclick="event.stopPropagation()">Free worker</button>` : ''}
           ${isPaused ? `<button class="dc-pause-btn text-xs text-emerald-400 hover:text-emerald-300" data-id="${s.id}" data-action="resume" onclick="event.stopPropagation()">Resume</button>` : ''}
           ${isArchived ? `<button class="dc-unarchive-btn text-xs text-emerald-400 hover:text-emerald-300" data-id="${s.id}" onclick="event.stopPropagation()" title="Restore this session (reopens the PR)">Unarchive</button>` : ''}
           ${isActionable ? `<button class="dc-archive-btn text-xs text-zinc-500 hover:text-red-400" data-id="${s.id}" data-name="${escapeHtml(s.pr_title || s.branch_name || 'Session')}" title="Archive (frees the slot; restorable for a while)" onclick="event.stopPropagation()">Archive</button>` : ''}
@@ -2214,16 +2221,19 @@ const DevChat = {
       });
     });
 
-    // Pause / Resume buttons. Both share the .dc-pause-btn class
-    // and dispatch via data-action so we don't have two near-identical
-    // handlers. On 4xx (e.g. cap reached on resume), surface the
-    // server's error message rather than silently failing.
+    // Pause / Free-worker / Resume buttons. All share the .dc-pause-btn
+    // class and dispatch via data-action so we don't have near-identical
+    // handlers ("Free worker" is the pause endpoint hitting a promoted
+    // session — the server frees the worker and answers keptPromoted).
+    // On 4xx (e.g. cap reached on resume), surface the server's error
+    // message rather than silently failing.
     container.querySelectorAll('.dc-pause-btn').forEach((btn) => {
       btn.addEventListener('click', async () => {
         const id = btn.dataset.id;
         const action = btn.dataset.action;
+        const freeing = !!btn.dataset.freeing;
         const original = btn.textContent;
-        btn.textContent = action === 'pause' ? 'Pausing…' : 'Resuming…';
+        btn.textContent = action === 'pause' ? (freeing ? 'Freeing…' : 'Pausing…') : 'Resuming…';
         btn.disabled = true;
         try {
           const resp = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
@@ -2234,6 +2244,10 @@ const DevChat = {
             btn.disabled = false;
             return;
           }
+          const data = await resp.json().catch(() => ({}));
+          // The row will re-render without the button (warm flips false),
+          // so flash the outcome here where the user just clicked.
+          if (data.keptPromoted) btn.textContent = 'Worker freed';
         } catch {
           btn.textContent = original;
           btn.disabled = false;

@@ -266,6 +266,12 @@ function sessionRoutes(config) {
         [appRows[0].id, req.user.id]
       );
 
+      // `warm` = a worker container currently exists for the session. The
+      // session list uses it to decide whether a promoted row still has a
+      // worker to free (and the create-session cap counts the same thing).
+      const warmIds = new Set(worker.warmRegistrySnapshot().map((w) => w.sessionId));
+      for (const s of rows) s.warm = warmIds.has(s.id);
+
       res.json({ sessions: rows });
     } catch (err) {
       log.error('sessions', 'Failed to list sessions', { message: err.message });
@@ -279,13 +285,24 @@ function sessionRoutes(config) {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
       if (!app) return res.status(404).json({ error: 'App not found' });
 
-      // Check staging container limits
-      const { rows: countRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions
+      // Per-user cap: count sessions that hold (or can imminently spawn)
+      // a worker — every 'active' row, plus 'promoted' rows that still
+      // have a warm worker container. A promoted session whose worker was
+      // freed (the "Free worker" button in the session list) is just a PR
+      // up for vote — it consumes no worker slot, so it shouldn't block
+      // the owner from starting new work. The separate
+      // maxUserPromotedSessions cap (enforced at promote time) bounds how
+      // many of those vote-only sessions one user can accumulate.
+      const { rows: capRows } = await pool.query(
+        `SELECT id, status FROM chat_sessions
          WHERE user_id = $1 AND status IN ('active', 'promoted') AND is_headless = FALSE`,
         [req.user.id]
       );
-      if (parseInt(countRows[0].cnt) >= config.maxUserSessions) {
+      const warmIds = new Set(worker.warmRegistrySnapshot().map((w) => w.sessionId));
+      const slotCount = capRows.filter(
+        (s) => s.status === 'active' || warmIds.has(s.id)
+      ).length;
+      if (slotCount >= config.maxUserSessions) {
         return res.status(429).json({ error: `You already have ${config.maxUserSessions} active sessions. Pause, archive, or merge one first.` });
       }
 
