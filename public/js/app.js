@@ -11,9 +11,10 @@ const App = {
   // dev sub-tabs by _normalizeTab so old links, notification hrefs, and
   // call sites keep working.
   currentTab: 'app',
-  // Active Dev view: 'forum' (the one-page forum) or 'sessions' (a
-  // dev session open full-screen). Only meaningful while
-  // currentTab === 'dev'.
+  // Active Dev view: 'forum' (the card list, default), 'chat'
+  // (full-screen general chat), 'sessions' (a dev session open
+  // full-screen), or 'settings' (the app-settings page). Only
+  // meaningful while currentTab === 'dev'.
   currentSubTab: 'forum',
   // Tracks whether the dedicated #leaderboard-screen is visible.
   // Sibling state to `currentApp`: home / app / leaderboard are the
@@ -1267,6 +1268,12 @@ const App = {
           if (sec === 'sessions' && parts[4]) {
             subTab = 'sessions';
             ref = parseInt(parts[4]) || null;
+          } else if (sec === 'chat') {
+            // Full-screen general chat (also where legacy group-chat
+            // links land — the old Chat sub-tab's original meaning).
+            subTab = 'chat';
+          } else if (sec === 'settings') {
+            subTab = 'settings';
           } else if (sec === 'issues' && parts[4]) {
             subTab = 'forum';
             ref = { kind: 'issue', id: parseInt(parts[4]) || null };
@@ -1274,12 +1281,12 @@ const App = {
             subTab = 'forum';
             ref = { kind: 'proposal', id: parseInt(parts[4]) || null };
           } else {
-            // dev, dev/chat, dev/issues, dev/proposals, dev/sessions —
-            // all land on the plain forum.
+            // dev, dev/issues, dev/proposals, dev/sessions (no id) —
+            // all land on the plain card list.
             subTab = 'forum';
           }
         } else if (tab === 'group-chat') {
-          tab = 'dev'; subTab = 'forum';
+          tab = 'dev'; subTab = 'chat';
         } else if (tab === 'individual-chat') {
           tab = 'dev';
           subTab = parts[3] ? 'sessions' : 'forum';
@@ -1361,8 +1368,12 @@ const App = {
       if (App.currentTab === 'dev') {
         if (App.currentSubTab === 'sessions' && DevChat.currentSession) {
           newHash = `#app/${App.currentApp}/dev/sessions/${DevChat.currentSession.id}`;
+        } else if (App.currentSubTab === 'chat') {
+          newHash = `#app/${App.currentApp}/dev/chat`;
+        } else if (App.currentSubTab === 'settings') {
+          newHash = `#app/${App.currentApp}/dev/settings`;
         } else {
-          // Forum page; the expanded card (if any) rides along as a
+          // Card list; the expanded card (if any) rides along as a
           // deep-link segment so refresh/back restores it.
           newHash = `#app/${App.currentApp}/dev`;
           if (typeof AppView !== 'undefined') {
@@ -1388,14 +1399,17 @@ const App = {
     const targetFull = newHash.startsWith('#') ? newHash : '';
     if (currentFull === targetFull) return;
 
-    // Screen ids: the forum and its expanded-card deep links are one
-    // screen (card expansion replaces in place); the session view is
-    // its own screen (forum ↔ session pushes a history entry), but
-    // which session isn't part of the id (session-to-session replaces).
+    // Screen ids: the card list and its expanded-card deep links are
+    // one screen (card expansion replaces in place); the chat,
+    // settings, and session sub-views are their own screens (list ↔
+    // sub-view pushes a history entry, so device/browser back mirrors
+    // the in-page back buttons), but which session isn't part of the
+    // id (session-to-session replaces).
+    const SUB_SCREENS = new Set(['sessions', 'chat', 'settings']);
     const screenIdOf = (h) => {
       const segs = String(h || '').replace(/^#/, '').split('/');
       if (segs[0] === 'app' && segs[2] === 'dev') {
-        return segs[3] === 'sessions'
+        return SUB_SCREENS.has(segs[3])
           ? segs.slice(0, 4).join('/')
           : segs.slice(0, 3).join('/');
       }
@@ -1780,13 +1794,17 @@ const App = {
 
     if (subTab === 'sessions') {
       const id = (ref && typeof ref === 'object') ? ref.id : parseInt(ref, 10);
-      // No session id → the forum (there is no session-list screen).
+      // No session id → the card list (there is no session-list screen).
       return Number.isInteger(id) && id > 0
         ? { tab: 'dev', subTab: 'sessions', ref: id }
         : { tab: 'dev', subTab: 'forum', ref: null };
     }
 
-    // forum / chat / issues / proposals / undefined → the forum page.
+    // Full-screen sub-views with no deep-link payload.
+    if (subTab === 'chat') return { tab: 'dev', subTab: 'chat', ref: null };
+    if (subTab === 'settings') return { tab: 'dev', subTab: 'settings', ref: null };
+
+    // forum / issues / proposals / undefined → the card list.
     let fref = null;
     if (ref && typeof ref === 'object' && ref.kind && ref.id) {
       fref = { kind: ref.kind, id: ref.id };

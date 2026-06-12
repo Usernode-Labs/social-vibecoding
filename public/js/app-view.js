@@ -35,8 +35,6 @@ const AppView = {
   // Refresh timer for the Your-sessions strip's busy indicators;
   // self-clears when the strip leaves the DOM.
   _stripTimer: null,
-  // Collapsed/expanded state key for the pinned general-chat pane.
-  _CHAT_PIN_KEY_PREFIX: 'dev-chat-pin-open-v1:',
   // Cached Proposals-tab data for in-place re-renders.
   _proposals: [],
   _govProposals: [],
@@ -382,7 +380,26 @@ const AppView = {
       return;
     }
 
-    // Forum page. Apply the deep-linked card expansion (if any).
+    // Full-screen general chat (card-list revision: chat is a card you
+    // tap into, not a pinned pane).
+    if (subTab === 'chat') {
+      AppView._devIssueOpen = null;
+      AppView._devProposalOpen = null;
+      AppView._devGovOpen = null;
+      AppView._renderChatSubView(content);
+      return;
+    }
+
+    // App settings sub-page (reached from the "+" menu).
+    if (subTab === 'settings') {
+      AppView._devIssueOpen = null;
+      AppView._devProposalOpen = null;
+      AppView._devGovOpen = null;
+      AppView._renderSettingsView(content);
+      return;
+    }
+
+    // The card list. Apply the deep-linked card expansion (if any).
     AppView._devIssueOpen = (ref && ref.kind === 'issue') ? ref.id : null;
     AppView._devProposalOpen = (ref && ref.kind === 'proposal') ? ref.id : null;
     AppView._devGovOpen = null;
@@ -390,57 +407,53 @@ const AppView = {
 
     content.innerHTML = `
       <div class="flex flex-col h-full min-h-0">
-        <!-- Header bar: title + the "+" create menu (top right). -->
+        <!-- Header bar: title + the "+" menu (top right). -->
         <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
           <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider flex-1">Dev</span>
           <div class="relative">
             <button id="dev-plus-btn" aria-haspopup="true" aria-expanded="false"
               class="rounded-lg bg-violet-600 hover:bg-violet-500 w-7 h-7 flex items-center justify-center text-base font-bold leading-none text-white transition-colors"
-              title="Propose a change, file an issue, or propose a secret change">+</button>
+              title="Propose a change or open app settings">+</button>
             <div id="dev-plus-menu" class="hidden absolute right-0 top-9 z-30 w-64 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden">
               <button data-plus="proposal" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Propose a change</span>
                 <span class="block text-xs text-zinc-500 dark:text-zinc-400">Start an AI dev session — promoting its PR creates the proposal</span>
               </button>
-              <button data-plus="issue" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
-                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">New issue</span>
-                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Report a problem or idea without building it yourself</span>
-              </button>
-              <button data-plus="secret" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
-                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Propose a secret change</span>
-                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Set or remove an app secret via a vote</span>
+              <button data-plus="settings" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
+                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">App settings</span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400">App secrets and display name</span>
               </button>
             </div>
           </div>
         </div>
 
-        <!-- Pinned general chat: its own scroll region, capped at 40%
-             of the page, collapsible to the one-line header. -->
-        <div id="dev-chat-pin" class="shrink-0 flex flex-col border-b border-zinc-200 dark:border-zinc-800">
-          <button id="dev-chat-toggle" class="flex items-center gap-2 px-3 py-1.5 text-left shrink-0 w-full">
-            <span id="dev-chat-caret" class="text-xs text-zinc-500">&#9660;</span>
-            <span class="text-xs font-medium text-zinc-700 dark:text-zinc-300">General chat</span>
-            <span class="flex-1"></span>
-            <span id="dev-chat-collapsed-hint" class="hidden text-xs text-zinc-500 dark:text-zinc-400">tap to expand</span>
-          </button>
-          <div id="dev-chat-pin-body" class="flex-1 min-h-0"></div>
-        </div>
-
-        <!-- The forum scroll: sessions strip, intermixed feed, merged
-             section, app-settings footer. -->
+        <!-- The card list: general-chat card, sessions strip, the
+             intermixed feed, and the merged section. -->
         <div id="dev-forum-scroll" class="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+          <div class="px-3 pt-2">
+            <button id="dev-chat-card" class="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-left bg-zinc-50 dark:bg-zinc-800/60 hover:bg-zinc-100 dark:hover:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 hover:border-violet-500/60 transition-colors"
+              title="Open the general chat">
+              <span class="text-base shrink-0">&#128172;</span>
+              <span class="flex-1 min-w-0">
+                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">General chat</span>
+                <span id="dev-chat-card-preview" class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">Talk with everyone building this app</span>
+              </span>
+              <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+            </button>
+          </div>
           <div id="dev-sessions-strip" class="px-3 pt-2"></div>
           <div class="px-3 py-2">
             <div id="dev-feed"><div class="text-xs text-zinc-500 dark:text-zinc-400">Loading…</div></div>
             <div id="gc-merged" class="mt-4"></div>
-            <div id="dev-app-settings" class="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800"></div>
           </div>
         </div>
       </div>`;
 
     AppView._wirePlusMenu(content);
-    AppView._wireChatPin();
-    AppView.renderGroupChatTab();
+    document.getElementById('dev-chat-card').addEventListener('click', () => {
+      App.switchTab('dev', null, 'chat');
+    });
+    AppView._loadChatCardPreview();
 
     // Delegated accordion toggles for every feed card kind. Bound on
     // the stable #dev-feed container (its innerHTML re-renders, the
@@ -464,11 +477,87 @@ const AppView = {
 
     AppView._renderSessionsStrip();
     AppView._syncStripPolling();
-    AppView._renderAppSettings();
     await AppView._loadDevFeed({ scrollToOpen: true });
   },
 
-  // ── "+" create menu ─────────────────────────────────────────────────
+  // ── Full-screen general chat sub-view ───────────────────────────────
+  // A slim back-button header above the existing chat pane.
+  // renderGroupChatTab mounts into #dev-chat-body exactly as it used to
+  // mount into the pinned pane — spec side-panel, autocomplete, drafts,
+  // and scroll restore all unchanged.
+  _renderChatSubView(content) {
+    content.innerHTML = `
+      <div class="flex flex-col h-full min-h-0">
+        <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+          <button id="dev-chat-back" class="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm" title="Back to the dev page">&larr;</button>
+          <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider">General chat</span>
+        </div>
+        <div id="dev-chat-body" class="flex-1 min-h-0"></div>
+      </div>`;
+
+    document.getElementById('dev-chat-back').addEventListener('click', () => {
+      App.switchTab('dev');
+    });
+
+    AppView.renderGroupChatTab();
+    // Vote snapshot for the inline buttons on activity rows — needed
+    // here explicitly since the card list's feed load (which also
+    // builds it) doesn't run for a cold dev/chat deep link.
+    if (AppView.appData) AppView.loadVoteState(AppView.appData.slug);
+  },
+
+  // ── App settings sub-page ───────────────────────────────────────────
+  // The App secrets / display-name flows as a dedicated page (reached
+  // from the "+" menu). Element ids are kept (#dc-edit-secrets /
+  // #dc-secrets-state / #dc-edit-rename) so refreshDevChatSecretsState
+  // and Secrets' post-save sync keep working unmodified. Secret-change
+  // proposals start from the App secrets row — the Secrets modal
+  // already routes non-admins into the vote-based proposal flow.
+  _renderSettingsView(content) {
+    const currentName = escapeHtml(AppView.appData?.name || '');
+    content.innerHTML = `
+      <div class="flex flex-col h-full min-h-0">
+        <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+          <button id="dev-settings-back" class="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm" title="Back to the dev page">&larr;</button>
+          <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider">App settings</span>
+        </div>
+        <div class="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+          <div class="px-3 py-3 space-y-2">
+            <button id="dc-edit-secrets"
+              class="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 transition-colors text-left">
+              <svg class="w-4 h-4 text-zinc-500 dark:text-zinc-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 7a4 4 0 014 4m-4-4a4 4 0 00-4 4 4 4 0 004 4 4 4 0 004-4 4 4 0 00-4-4zm-9.5 12.5L11 13"/></svg>
+              <span class="flex-1 text-zinc-800 dark:text-zinc-200">App secrets</span>
+              <span id="dc-secrets-state" class="text-xs text-zinc-400 dark:text-zinc-500">Loading…</span>
+              <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+            </button>
+            <button id="dc-edit-rename"
+              class="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 transition-colors text-left">
+              <svg class="w-4 h-4 text-zinc-500 dark:text-zinc-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+              <span class="flex-1 text-zinc-800 dark:text-zinc-200">App display name</span>
+              <span class="text-xs text-zinc-400 dark:text-zinc-500 truncate max-w-[40%]" title="${currentName}">${currentName}</span>
+              <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+            </button>
+            <p class="text-xs text-zinc-500 dark:text-zinc-400 pt-1">
+              Secret changes and renames are proposals — they apply once the app's
+              users vote them in (admins can apply secrets directly).
+            </p>
+          </div>
+        </div>
+      </div>`;
+
+    document.getElementById('dev-settings-back').addEventListener('click', () => {
+      App.switchTab('dev');
+    });
+    document.getElementById('dc-edit-secrets').addEventListener('click', () => {
+      if (window.Secrets) Secrets.openForCurrentApp();
+    });
+    document.getElementById('dc-edit-rename').addEventListener('click', () => {
+      AppView.promptRename();
+    });
+    AppView.refreshDevChatSecretsState();
+  },
+
+  // ── "+" menu ────────────────────────────────────────────────────────
   _wirePlusMenu(content) {
     const btn = document.getElementById('dev-plus-btn');
     const menu = document.getElementById('dev-plus-menu');
@@ -491,69 +580,42 @@ const AppView = {
       close();
       AppView.createProposal();
     });
-    menu.querySelector('[data-plus="issue"]').addEventListener('click', () => {
+    menu.querySelector('[data-plus="settings"]').addEventListener('click', () => {
       close();
-      AppView.openNewIssueModal();
-    });
-    menu.querySelector('[data-plus="secret"]').addEventListener('click', () => {
-      close();
-      if (window.Secrets) Secrets.openForCurrentApp();
+      App.switchTab('dev', null, 'settings');
     });
   },
 
-  // ── Pinned chat collapse/expand ─────────────────────────────────────
-  _readChatPinOpen(slug) {
-    if (!slug) return true;
-    try { return localStorage.getItem(AppView._CHAT_PIN_KEY_PREFIX + slug) !== '0'; }
-    catch { return true; }
+  // Best-effort one-line preview of the latest general-chat message for
+  // the chat card. A failed fetch leaves the static fallback line.
+  async _loadChatCardPreview() {
+    const el = document.getElementById('dev-chat-card-preview');
+    if (!el || !AppView.appData) return;
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/messages?limit=1`);
+      if (!res.ok) return;
+      const { messages } = await res.json();
+      const m = messages && messages[messages.length - 1];
+      if (!m || !m.content) return;
+      const live = document.getElementById('dev-chat-card-preview');
+      if (!live) return;
+      const who = m.username || 'System';
+      live.textContent = `${who}: ${String(m.content).slice(0, 140)}`;
+    } catch { /* keep the fallback line */ }
   },
 
-  _writeChatPinOpen(slug, isOpen) {
-    if (!slug) return;
-    try { localStorage.setItem(AppView._CHAT_PIN_KEY_PREFIX + slug, isOpen ? '1' : '0'); }
-    catch {}
-  },
-
-  _applyChatPinState() {
-    const slug = AppView.appData && AppView.appData.slug;
-    const pin = document.getElementById('dev-chat-pin');
-    const body = document.getElementById('dev-chat-pin-body');
-    const caret = document.getElementById('dev-chat-caret');
-    const hint = document.getElementById('dev-chat-collapsed-hint');
-    if (!pin || !body) return;
-    const open = AppView._readChatPinOpen(slug);
-    // Open: the pane owns 40% of the dev page with its own scroll.
-    // Collapsed: just the one-line header bar.
-    pin.style.height = open ? '40%' : '';
-    body.classList.toggle('hidden', !open);
-    if (caret) caret.innerHTML = open ? '&#9660;' : '&#9654;';
-    if (hint) hint.classList.toggle('hidden', open);
-  },
-
-  _wireChatPin() {
-    const toggle = document.getElementById('dev-chat-toggle');
-    if (!toggle) return;
-    toggle.addEventListener('click', () => {
-      const slug = AppView.appData && AppView.appData.slug;
-      AppView._writeChatPinOpen(slug, !AppView._readChatPinOpen(slug));
-      AppView._applyChatPinState();
-      // Re-pin the chat to its bottom when re-expanding (the hidden
-      // container couldn't track scroll while collapsed).
-      if (AppView._readChatPinOpen(slug) && typeof GroupChat !== 'undefined' && GroupChat._lockedToBottom) {
-        GroupChat.scrollToBottom();
-      }
-    });
-    AppView._applyChatPinState();
-  },
-
-  // Re-pull live data for the dev forum. Called from the WS event
+  // Re-pull live data for the dev card list. Called from the WS event
   // handlers in app.js (vote_update / issue_update / session_update /
   // lock_changed). The feed re-render preserves the open accordion
-  // card; the pinned chat lives outside the feed container and is
-  // untouched. The session view has its own refresh paths.
+  // card. The chat view only needs the vote snapshot refreshed; the
+  // session and settings views have their own refresh paths.
   refreshDevData(kind) {
     if (!AppView.appData || typeof App === 'undefined' || App.currentTab !== 'dev') return;
-    if (App.currentSubTab === 'sessions') return;
+    if (App.currentSubTab === 'chat') {
+      AppView.loadVoteState(AppView.appData.slug);
+      return;
+    }
+    if (App.currentSubTab !== 'forum') return;
     AppView._loadDevFeed();
     if (kind === 'session' || kind === 'all') AppView._renderSessionsStrip();
   },
@@ -592,10 +654,10 @@ const AppView = {
   },
 
   renderGroupChatTab() {
-    // Forum revision: general chat mounts into the pinned pane at the
-    // top of the dev page (falling back to the generic container for
-    // any legacy caller).
-    const content = document.getElementById('dev-chat-pin-body') || AppView._devContainer();
+    // Card-list revision: general chat mounts into the full-screen chat
+    // sub-view's body (falling back to the generic container for any
+    // legacy caller).
+    const content = document.getElementById('dev-chat-body') || AppView._devContainer();
     if (!content) return;
 
     // (#3) First-arrival framing: name what Group Chat is for. Group chat
@@ -882,7 +944,7 @@ const AppView = {
     const refreshTitle = AppView._ghRefreshing
       ? 'Refreshing…'
       : (refreshDisabled ? 'Just refreshed — try again in a moment' : 'Check GitHub for new issues');
-    let html = `<div class="flex items-center justify-between mb-1"><span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider">Topics</span><button class="gc-vote-btn"${refreshDisabled ? ' disabled' : ''} title="${refreshTitle}" onclick="AppView.refreshOpenIssues()">&#8635; Refresh</button></div>`;
+    let html = `<div class="flex items-center justify-between mb-1"><span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider">Topics</span><span class="flex items-center gap-2"><button class="gc-vote-btn" title="Report a problem or idea without building it yourself" onclick="AppView.openNewIssueModal()">+ New issue</button><button class="gc-vote-btn"${refreshDisabled ? ' disabled' : ''} title="${refreshTitle}" onclick="AppView.refreshOpenIssues()">&#8635; Refresh</button></span></div>`;
     if (ctx.locked) {
       html += '<div class="mb-2 text-xs text-amber-500">App is locked — an admin must approve any proposal before it applies.</div>';
     }
@@ -996,42 +1058,6 @@ const AppView = {
       }
       AppView._renderSessionsStrip();
     }, 15000);
-  },
-
-  // ── App settings footer ─────────────────────────────────────────────
-  // The App secrets / display-name shortcuts that used to live in the
-  // Sessions tab's meta block, relocated below the feed. Same ids
-  // (#dc-edit-secrets / #dc-secrets-state / #dc-edit-rename) so
-  // refreshDevChatSecretsState and Secrets' post-save sync keep working.
-  _renderAppSettings() {
-    const el = document.getElementById('dev-app-settings');
-    if (!el) return;
-    const currentName = escapeHtml(AppView.appData?.name || '');
-    el.innerHTML = `
-      <div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-2">App settings</div>
-      <div class="space-y-2">
-        <button id="dc-edit-secrets"
-          class="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 transition-colors text-left">
-          <svg class="w-4 h-4 text-zinc-500 dark:text-zinc-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 7a4 4 0 014 4m-4-4a4 4 0 00-4 4 4 4 0 004 4 4 4 0 004-4 4 4 0 00-4-4zm-9.5 12.5L11 13"/></svg>
-          <span class="flex-1 text-zinc-800 dark:text-zinc-200">App secrets</span>
-          <span id="dc-secrets-state" class="text-xs text-zinc-400 dark:text-zinc-500">Loading…</span>
-          <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-        </button>
-        <button id="dc-edit-rename"
-          class="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 transition-colors text-left">
-          <svg class="w-4 h-4 text-zinc-500 dark:text-zinc-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-          <span class="flex-1 text-zinc-800 dark:text-zinc-200">App display name</span>
-          <span class="text-xs text-zinc-400 dark:text-zinc-500 truncate max-w-[40%]" title="${currentName}">${currentName}</span>
-          <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-        </button>
-      </div>`;
-    el.querySelector('#dc-edit-secrets').addEventListener('click', () => {
-      if (window.Secrets) Secrets.openForCurrentApp();
-    });
-    el.querySelector('#dc-edit-rename').addEventListener('click', () => {
-      AppView.promptRename();
-    });
-    AppView.refreshDevChatSecretsState();
   },
 
   // Expand/collapse one issue's accordion (one open at a time;
@@ -2487,9 +2513,9 @@ const AppView = {
   // Forum revision: the dedicated session view. There is no session
   // list / meta panel anymore — sessions are reached from the forum's
   // Your-sessions strip, proposal cards, and the "+" flow, and a
-  // missing/unopenable id bounces back to the forum. The App
+  // missing/unopenable id bounces back to the card list. The App
   // secrets / display-name shortcuts that used to live here moved to
-  // the forum's App settings footer (_renderAppSettings).
+  // the App settings sub-page (_renderSettingsView).
   async renderDevChatTab(restoreSessionId) {
     const content = AppView._devContainer();
     if (!content) return;
