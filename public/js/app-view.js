@@ -2226,6 +2226,49 @@ const AppView = {
     return `<div class="usn-visual-tiles" style="display:flex;gap:8px;align-items:flex-start;margin:4px 0 2px">${before}${after}</div>`;
   },
 
+  // #211: sessions whose before/after tiles the viewer expanded in the
+  // App-information-and-activity panel. Module-level (not DOM) state so
+  // the open/closed choice survives the panel's frequent full re-renders.
+  _visualsOpen: new Set(),
+
+  // #211: collapsed-by-default wrapper around visualsTilesHtml for the
+  // App-information-and-activity panel's PR rows. Renders a small
+  // "Show before/after" toggle; the tiles themselves sit in an inert
+  // <template> until expanded, so hidden screenshots/videos cost no
+  // bandwidth and autoplay loops don't run off-screen. The dev-chat
+  // "Changes ready" card intentionally keeps calling visualsTilesHtml
+  // directly — its inline tiles stay as before (issue #211).
+  visualsToggleHtml(sessionId, visuals) {
+    const tiles = AppView.visualsTilesHtml(visuals);
+    if (!tiles) return '';
+    const open = AppView._visualsOpen.has(sessionId);
+    return `<div class="usn-visuals-toggle">
+      <button type="button" class="gc-vote-btn" aria-expanded="${open}" onclick="AppView.toggleVisuals(${sessionId}, this)">${open ? 'Hide before/after' : 'Show before/after'}</button>
+      <template class="usn-visuals-tpl">${tiles}</template>
+      <div class="usn-visuals-body">${open ? tiles : ''}</div>
+    </div>`;
+  },
+
+  // #211: expand/collapse handler for the toggle above. Injects the tile
+  // markup from the row's <template> on open and clears it on close
+  // (clearing, rather than display:none, stops any looping <video>).
+  toggleVisuals(sessionId, btn) {
+    const wrap = btn.closest('.usn-visuals-toggle');
+    if (!wrap) return;
+    const body = wrap.querySelector('.usn-visuals-body');
+    const tpl = wrap.querySelector('template.usn-visuals-tpl');
+    const open = !AppView._visualsOpen.has(sessionId);
+    if (open) {
+      AppView._visualsOpen.add(sessionId);
+      if (body && tpl) body.innerHTML = tpl.innerHTML;
+    } else {
+      AppView._visualsOpen.delete(sessionId);
+      if (body) body.innerHTML = '';
+    }
+    btn.textContent = open ? 'Hide before/after' : 'Show before/after';
+    btn.setAttribute('aria-expanded', String(open));
+  },
+
   // #80: derive the GitHub issue URL for issue #N from a PR's html_url
   // (https://github.com/<owner>/<repo>/pull/<prNumber>) by swapping the
   // `/pull/<n>` segment for `/issues/<issueNumber>`. Returns '' when the

@@ -413,9 +413,10 @@ function sessionRoutes(config) {
   // runs ONE unattended Mayor turn (scout → spec, build → pushed commit, or
   // a plain-text question) seeded with the issue, then parks as
   // headless_status='ready' so any collaborator can clone it via
-  // POST /api/sessions/:id/clone-headless. Billed to the clicking user
-  // (their BYOK key when on file, else their daily budget) — the UI shows a
-  // confirmation warning + model selector before calling this.
+  // POST /api/sessions/:id/clone-headless. Billed to the clicking user,
+  // limit-first (#212): their daily budget while it lasts, then their BYOK
+  // key when on file — the UI shows a confirmation warning + model
+  // selector before calling this.
   //
   // The run may create + push its branch, but never opens a PR and never
   // builds a staging preview (see runClaudeCodeTool's `headless` flag).
@@ -456,13 +457,12 @@ function sessionRoutes(config) {
         });
       }
 
-      // Billed to the clicking user: BYOK key when on file, else gate on
-      // their shared daily budget exactly like a chat turn would.
-      const userApiKey = await loadUserApiKey(pool, req.user.id, config.jwtSecret);
-      if (!userApiKey) {
-        const budgetCheck = await checkBudget(pool, req.user.id);
-        if (budgetCheck.error) return res.status(429).json({ error: budgetCheck.error });
-      }
+      // Billed to the clicking user, limit-first (#212): their shared
+      // daily allowance while it has headroom, their BYOK key once it's
+      // exhausted — exactly like a chat turn. No headroom + no key → 429.
+      const billing = await limits.resolveBillingPath(pool, config.jwtSecret, req.user.id);
+      if (billing.error) return res.status(429).json({ error: billing.error });
+      const userApiKey = billing.apiKey;
 
       // Headless sessions don't count against the clicking user's session
       // cap (they're shared, unattended work — see the cap query in POST
@@ -1088,28 +1088,17 @@ function sessionRoutes(config) {
       if (!sessionRows.length) return res.status(404).json({ error: 'Active session not found' });
       const session = sessionRows[0];
 
-      // Resolve the caller's BYOK key once up front (#30). If present,
-      // Mayor + CC calls route through it and we skip the shared-budget
-      // check entirely — users paying Anthropic directly aren't subject
-      // to our admin-key cap.
-      let userApiKey = null;
-      try {
-        const { rows: keyRows } = await pool.query(
-          'SELECT anthropic_key_enc FROM users WHERE id = $1',
-          [req.user.id]
-        );
-        if (keyRows[0]?.anthropic_key_enc) {
-          const secrets = require('../services/secrets');
-          userApiKey = secrets.decrypt(keyRows[0].anthropic_key_enc, config.jwtSecret);
-        }
-      } catch (err) {
-        log.warn('sessions', 'Failed to load user API key', { userId: req.user.id, err: err.message });
-      }
-
-      if (!userApiKey) {
-        const budgetCheck = await checkBudget(pool, req.user.id);
-        if (budgetCheck.error) return res.status(429).json({ error: budgetCheck.error });
-      }
+      // Resolve who pays for this turn once up front (#212): the shared
+      // daily allowance is consumed first, and the caller's BYOK key
+      // (#30) takes over only after the budget (user or global cap) is
+      // exhausted. `userApiKey` therefore reflects the ACTUAL payer for
+      // the whole turn — null = platform-billed, non-null = the user's
+      // own key — so every recordSpend(..., { byok: !!userApiKey })
+      // below routes the cost to the right bucket. Allowance gone and
+      // no key on file → the same 429 as always.
+      const billing = await limits.resolveBillingPath(pool, config.jwtSecret, req.user.id);
+      if (billing.error) return res.status(429).json({ error: billing.error });
+      const userApiKey = billing.apiKey;
 
       await pool.query(
         `INSERT INTO chat_session_messages (session_id, role, content) VALUES ($1, 'user', $2)`,
@@ -2238,25 +2227,10 @@ async function checkBudget(pool, userId) {
   return limits.checkBudget(pool, userId);
 }
 
-// Resolve a user's BYOK Anthropic key (#30) outside the chat handler so the
-// headless route (#155) can share the exact same lookup. Returns the
-// decrypted key string or null (missing key, decrypt failure — both mean
-// "bill the shared budget").
-async function loadUserApiKey(pool, userId, jwtSecret) {
-  try {
-    const { rows } = await pool.query(
-      'SELECT anthropic_key_enc FROM users WHERE id = $1',
-      [userId]
-    );
-    if (rows[0]?.anthropic_key_enc) {
-      const secrets = require('../services/secrets');
-      return secrets.decrypt(rows[0].anthropic_key_enc, jwtSecret);
-    }
-  } catch (err) {
-    log.warn('sessions', 'Failed to load user API key', { userId, err: err.message });
-  }
-  return null;
-}
+// The BYOK key lookup that used to live here (loadUserApiKey) moved to
+// services/limits.js (#212) — every call site now goes through
+// limits.resolveBillingPath, which consumes the daily allowance first
+// and only reaches for the key once the budget is exhausted.
 
 // #155: the follow-up assistant message appended to a session cloned from a
 // headless auto session — tells the new owner where the auto run left off
@@ -2701,22 +2675,25 @@ async function runHeadlessSession({
               is_error: true,
             });
           } else if (buildCall) {
-            // Budget re-check before the second dispatch: the scout already
-            // spent real money this run. BYOK users skip this, matching the
-            // route's gate.
-            let budgetError = null;
-            if (!userApiKey) {
-              const budgetCheck = await checkBudget(pool, user.id);
-              if (budgetCheck.error) budgetError = budgetCheck.error;
-            }
+            // Re-resolve the billing path before the second dispatch: the
+            // scout already spent real money this run and may have drained
+            // the daily allowance. Limit-first (#212): headroom left → the
+            // build stays platform-billed; allowance gone + BYOK key on
+            // file → the build proceeds on the key (previously it was
+            // skipped); allowance gone + no key → skip, as today.
+            const buildBilling = await limits.resolveBillingPath(pool, config.jwtSecret, user.id);
             let buildResult;
-            if (budgetError) {
+            if (buildBilling.error) {
               await sendStatus('Spec drafted; implementation skipped — daily budget reached.');
               buildResult = {
                 toolResultText: 'Implementation skipped — the daily LLM budget is exhausted. The spec remains the deliverable; a human will review and build it later.',
                 isError: true,
               };
             } else {
+              // Later phase calls (the build itself, the phase-3 wrap-up
+              // and its debits) must bill the re-resolved payer — the
+              // turn-start resolution may differ now that the scout spent.
+              userApiKey = buildBilling.apiKey;
               await sendStatus('Auto session: spec looks straightforward — implementing it now...');
               const buildPromptArg = typeof buildCall.input?.prompt === 'string' && buildCall.input.prompt.trim()
                 ? buildCall.input.prompt.trim()
@@ -2726,7 +2703,7 @@ async function runHeadlessSession({
               // disambiguates scout vs build on resume.
               await setHeadlessStep(pool, session.id, 'cc_running');
               buildResult = await runClaudeCodeTool({
-                ...toolArgs, toolPromptArg: buildPromptArg, headless: true,
+                ...toolArgs, userApiKey, toolPromptArg: buildPromptArg, headless: true,
               });
             }
             // Build error degrades to 'spec' (NOT 'question' like the
@@ -2938,7 +2915,14 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
     return failHeadlessRun(pool, session, 'Auto session failed after restart: no GitHub repo configured.');
   }
 
-  const userApiKey = await loadUserApiKey(pool, session.user_id, config.jwtSecret);
+  // Limit-first (#212): the resumed run's NEW calls (re-driven phases,
+  // wrap-up Mayor turn) bill the allowance while it has headroom, then
+  // the owner's BYOK key. On { error } (allowance gone, no key) resume
+  // proceeds platform-billed like it always has — the Anthropic proxy
+  // enforces the cap per-call, so the run fails with the same message
+  // it would have shown live rather than dying silently here.
+  const resumeBilling = await limits.resolveBillingPath(pool, config.jwtSecret, session.user_id);
+  const userApiKey = resumeBilling.error ? null : resumeBilling.apiKey;
   // The model picked at start isn't a session column, but every persisted
   // assistant turn carries it — reuse the latest, else the default.
   const { rows: modelRows } = await pool.query(

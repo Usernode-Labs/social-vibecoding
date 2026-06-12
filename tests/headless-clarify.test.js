@@ -106,6 +106,8 @@ function loadSessions(mockPool, overrides = {}) {
     })],
     [paths.limits, stubModule(paths.limits, {
       checkBudget: async () => ({}),
+      // #212 limit-first: allowance always has headroom in these tests.
+      resolveBillingPath: async () => ({ apiKey: null, byok: false }),
       recordSpend: async () => {},
     })],
     [paths.events, stubModule(paths.events, {
