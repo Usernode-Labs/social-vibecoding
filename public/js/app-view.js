@@ -2767,7 +2767,7 @@ const AppView = {
     overlay.classList.remove('hidden');
     if (window.DevConsole) DevConsole.setButtonVisible(true);
 
-    AppView._renderTestingControls(buildSrc, pending);
+    AppView._renderTestingControls(buildSrc, pending, jump);
 
     document.getElementById('staging-back').onclick = () => {
       AppView.closeStagingOverlay();
@@ -2808,8 +2808,10 @@ const AppView = {
   _stagingTesting: null,
 
   // #127: show/hide + wire the overlay's "Test this change" button and the
-  // collapsible "How to test" panel for the current preview.
-  _renderTestingControls(buildSrc, pending) {
+  // collapsible "How to test" panel for the current preview. `jump` is true
+  // only when the preview was entered via an explicit "Test this change"
+  // button — the one path where the panel auto-opens (#237).
+  _renderTestingControls(buildSrc, pending, jump) {
     const btn = document.getElementById('staging-test-btn');
     const panel = document.getElementById('staging-testing-panel');
     const content = document.getElementById('staging-testing-content');
@@ -2826,9 +2828,13 @@ const AppView = {
     }
 
     // Bot-authored markdown: render through DevChat's escaping markdown
-    // pipeline when available, otherwise fall back to escaped plain text.
+    // pipeline (marked + DOMPurify), falling back to escaped plain text if
+    // dev-chat.js failed to load. Reach DevChat via a bare reference and
+    // `typeof` guard rather than `window.DevChat` — DevChat is a top-level
+    // `const`, which never becomes a `window` property (#237; same pitfall
+    // documented in group-chat.js).
     if (t.md) {
-      content.innerHTML = (window.DevChat && typeof DevChat.renderMarkdown === 'function')
+      content.innerHTML = (typeof DevChat !== 'undefined' && typeof DevChat.renderMarkdown === 'function')
         ? DevChat.renderMarkdown(t.md)
         : `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(t.md)}</pre>`;
     } else {
@@ -2838,20 +2844,29 @@ const AppView = {
     btn.classList.remove('hidden');
     btn.title = t.path ? 'Open the preview at the changed feature' : 'Show the testing instructions';
     btn.onclick = () => {
-      if (t.path) {
-        // Retarget the (possibly still pending) load at the deep link.
-        pending.src = buildSrc(t.path);
-        if (iframe && iframe.src) iframe.src = pending.src;
-        if (t.md) panel.classList.remove('hidden');
-      } else {
-        panel.classList.toggle('hidden');
+      // Toggle: a second click (panel already open) just closes it.
+      if (t.md && !panel.classList.contains('hidden')) {
+        panel.classList.add('hidden');
+        return;
       }
+      if (t.path) {
+        // Retarget the (possibly still pending) load at the deep link —
+        // only if it isn't already pointing there, so re-opening the
+        // panel doesn't reload the iframe.
+        const target = buildSrc(t.path);
+        if (pending.src !== target) {
+          pending.src = target;
+          if (iframe && iframe.src) iframe.src = target;
+        }
+      }
+      if (t.md) panel.classList.remove('hidden');
     };
     if (closeBtn) closeBtn.onclick = () => panel.classList.add('hidden');
 
-    // Auto-open the instructions so a tester landing in the preview sees
-    // the steps without hunting; the × dismisses them.
-    if (t.md) panel.classList.remove('hidden');
+    // #237: the panel no longer auto-opens on every preview. It auto-shows
+    // only when the user entered through an explicit "Test this change"
+    // button (jump) — plain Preview keeps it hidden until asked for.
+    if (jump && t.md) panel.classList.remove('hidden');
   },
 
   // Incremented on every swap/close so an in-flight readiness poll for a
