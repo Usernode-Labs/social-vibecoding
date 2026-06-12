@@ -159,6 +159,25 @@ function makeMockPool(initial = {}) {
       ).length;
       return { rows: [{ c }] };
     }
+    // ------------ DELETE pr_kudos (retract) ------------
+    if (/^\s*DELETE FROM pr_kudos/i.test(s)) {
+      const [sessionId, giverId] = params;
+      const idx = state.kudos.findIndex(
+        (k) => k.session_id === sessionId && k.giver_user_id === giverId
+      );
+      if (idx === -1) return { rows: [], rowCount: 0 };
+      const [row] = state.kudos.splice(idx, 1);
+      return { rows: [{ id: row.id, week_start: row.week_start }], rowCount: 1 };
+    }
+    // ------------ DELETE notifications (retract cleanup) ------------
+    if (/^\s*DELETE FROM notifications/i.test(s)) {
+      const [sessionId, sourceUserId] = params;
+      const before = state.notifications.length;
+      state.notifications = state.notifications.filter(
+        (n) => !(n.kind === 'kudos' && n.session_id === sessionId && n.source_user_id === sourceUserId)
+      );
+      return { rows: [], rowCount: before - state.notifications.length };
+    }
     // ------------ INSERT pr_kudos ------------
     if (/^\s*INSERT INTO pr_kudos/i.test(s)) {
       const [sessionId, giverId, weekStart] = params;
@@ -202,12 +221,18 @@ function makeMockPool(initial = {}) {
       return { rows: [{ c }] };
     }
     // ------------ Hydrate kudos givers for GET ------------
+    // Mirrors loadKudosForSession's union: direct pr_kudos rows tagged
+    // source='pr' plus issue bounties AWARDED to the session tagged
+    // source='bounty' (drives the my_kudos_direct distinction).
     if (/SELECT pk\.created_at, u\.username/i.test(s)) {
       const [sid] = params;
-      const rows = state.kudos
+      const direct = state.kudos
         .filter((k) => k.session_id === sid)
-        .map((k) => ({ created_at: k.created_at, username: `u${k.giver_user_id}`, user_id: k.giver_user_id }));
-      return { rows };
+        .map((k) => ({ created_at: k.created_at, username: `u${k.giver_user_id}`, user_id: k.giver_user_id, source: 'pr' }));
+      const awarded = state.bounties
+        .filter((b) => b.awarded_session_id === sid && b.status === 'awarded')
+        .map((b) => ({ created_at: b.awarded_at || null, username: `u${b.giver_user_id}`, user_id: b.giver_user_id, source: 'bounty' }));
+      return { rows: [...direct, ...awarded] };
     }
     // ------------ Leaderboard: users (with kudos_given map) ------------
     // Mirrors the GET /api/leaderboard/users query: received-side
@@ -455,6 +480,196 @@ test('GET kudos-budget reports remaining count', async () => {
     budget = await (await fetch(`${baseUrl}/api/me/kudos-budget`)).json();
     assert.equal(budget.given_this_week, 1);
     assert.equal(budget.remaining, 4);
+  } finally {
+    await close();
+  }
+});
+
+// ─── 2b. DELETE /api/sessions/:id/kudos — retract (issue #197) ───
+//
+// The clock is frozen at Wed 2026-05-20 12:00 UTC, so the current
+// week bucket is 2026-05-18 and the prior week's is 2026-05-11.
+
+test('DELETE kudos: removes the row, refunds the slot, cleans the notification', async () => {
+  const pool = makeMockPool({
+    sessions: [[10, { id: 10, user_id: 999, status: 'merged', app_id: 1 }]],
+  });
+  const { baseUrl, close } = await startTestServer(pool, { id: 1, username: 'alice' });
+  try {
+    const give = await fetch(`${baseUrl}/api/sessions/10/kudos`, { method: 'POST' });
+    assert.equal(give.status, 200);
+    assert.equal(pool.state.kudos.length, 1);
+    assert.equal(pool.state.notifications.length, 1, 'give created the author notification');
+
+    const r = await fetch(`${baseUrl}/api/sessions/10/kudos`, { method: 'DELETE' });
+    assert.equal(r.status, 200);
+    const body = await r.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.remaining, 5, 'current-week slot is refunded');
+    assert.equal(body.limit, 5);
+    assert.equal(pool.state.kudos.length, 0, 'pr_kudos row is gone');
+    assert.equal(pool.state.notifications.length, 0, 'author notification cleaned up');
+
+    const budget = await (await fetch(`${baseUrl}/api/me/kudos-budget`)).json();
+    assert.equal(budget.given_this_week, 0);
+    assert.equal(budget.remaining, 5);
+  } finally {
+    await close();
+  }
+});
+
+test('DELETE kudos: 404 when the viewer has no kudos on the PR', async () => {
+  const pool = makeMockPool({
+    sessions: [[10, { id: 10, user_id: 999, status: 'merged', app_id: 1 }]],
+  });
+  const { baseUrl, close } = await startTestServer(pool, { id: 1, username: 'alice' });
+  try {
+    const r = await fetch(`${baseUrl}/api/sessions/10/kudos`, { method: 'DELETE' });
+    assert.equal(r.status, 404);
+    const body = await r.json();
+    assert.match(body.error, /no kudos to retract/i);
+  } finally {
+    await close();
+  }
+});
+
+test('DELETE kudos: 404 when the session does not exist', async () => {
+  const pool = makeMockPool({ sessions: [] });
+  const { baseUrl, close } = await startTestServer(pool, { id: 1, username: 'alice' });
+  try {
+    const r = await fetch(`${baseUrl}/api/sessions/999/kudos`, { method: 'DELETE' });
+    assert.equal(r.status, 404);
+  } finally {
+    await close();
+  }
+});
+
+test('DELETE kudos: give → retract → give again succeeds (no 409)', async () => {
+  const pool = makeMockPool({
+    sessions: [[10, { id: 10, user_id: 999, status: 'merged', app_id: 1 }]],
+  });
+  const { baseUrl, close } = await startTestServer(pool, { id: 1, username: 'alice' });
+  try {
+    assert.equal((await fetch(`${baseUrl}/api/sessions/10/kudos`, { method: 'POST' })).status, 200);
+    assert.equal((await fetch(`${baseUrl}/api/sessions/10/kudos`, { method: 'DELETE' })).status, 200);
+    const again = await fetch(`${baseUrl}/api/sessions/10/kudos`, { method: 'POST' });
+    assert.equal(again.status, 200, 'UNIQUE row was deleted, so re-give is not a dupe');
+  } finally {
+    await close();
+  }
+});
+
+test('DELETE kudos: quota refund lets a 6th give through after a retract', async () => {
+  const pool = makeMockPool({
+    sessions: [
+      [10, { id: 10, user_id: 999, status: 'merged', app_id: 1 }],
+      [11, { id: 11, user_id: 999, status: 'merged', app_id: 1 }],
+      [12, { id: 12, user_id: 999, status: 'merged', app_id: 1 }],
+      [13, { id: 13, user_id: 999, status: 'merged', app_id: 1 }],
+      [14, { id: 14, user_id: 999, status: 'merged', app_id: 1 }],
+      [15, { id: 15, user_id: 999, status: 'merged', app_id: 1 }],
+    ],
+  });
+  const { baseUrl, close } = await startTestServer(pool, { id: 1, username: 'alice' });
+  try {
+    for (let i = 10; i <= 14; i++) {
+      assert.equal((await fetch(`${baseUrl}/api/sessions/${i}/kudos`, { method: 'POST' })).status, 200);
+    }
+    assert.equal((await fetch(`${baseUrl}/api/sessions/15/kudos`, { method: 'POST' })).status, 429,
+      'quota exhausted before the retract');
+    const retract = await fetch(`${baseUrl}/api/sessions/10/kudos`, { method: 'DELETE' });
+    assert.equal(retract.status, 200);
+    assert.equal((await retract.json()).remaining, 1);
+    assert.equal((await fetch(`${baseUrl}/api/sessions/15/kudos`, { method: 'POST' })).status, 200,
+      'freed slot is spendable on another PR');
+  } finally {
+    await close();
+  }
+});
+
+test('DELETE kudos: retracting a previous-week kudos does not refund this week', async () => {
+  const pool = makeMockPool({
+    sessions: [
+      [10, { id: 10, user_id: 999, status: 'merged', app_id: 1 }],
+      [11, { id: 11, user_id: 999, status: 'merged', app_id: 1 }],
+      [12, { id: 12, user_id: 999, status: 'merged', app_id: 1 }],
+      [13, { id: 13, user_id: 999, status: 'merged', app_id: 1 }],
+      [14, { id: 14, user_id: 999, status: 'merged', app_id: 1 }],
+      [20, { id: 20, user_id: 999, status: 'merged', app_id: 1 }],
+    ],
+  });
+  // A kudos given in the PRIOR week bucket, seeded directly.
+  pool.state.kudos.push({
+    id: 9000, session_id: 20, giver_user_id: 1,
+    week_start: '2026-05-11', created_at: '2026-05-12T00:00:00.000Z',
+  });
+  const { baseUrl, close } = await startTestServer(pool, { id: 1, username: 'alice' });
+  try {
+    // Exhaust the current week.
+    for (let i = 10; i <= 14; i++) {
+      assert.equal((await fetch(`${baseUrl}/api/sessions/${i}/kudos`, { method: 'POST' })).status, 200);
+    }
+    const retract = await fetch(`${baseUrl}/api/sessions/20/kudos`, { method: 'DELETE' });
+    assert.equal(retract.status, 200, 'old-week kudos is still retractable');
+    assert.equal((await retract.json()).remaining, 0,
+      'expired-week slot does not come back to the current week');
+    const budget = await (await fetch(`${baseUrl}/api/me/kudos-budget`)).json();
+    assert.equal(budget.given_this_week, 5);
+    assert.equal(budget.remaining, 0);
+  } finally {
+    await close();
+  }
+});
+
+test('DELETE kudos: bounty-derived credit only (no pr_kudos row) → 404', async () => {
+  const pool = makeMockPool({
+    sessions: [[10, { id: 10, user_id: 999, status: 'merged', app_id: 1 }]],
+  });
+  // Viewer's bounty was awarded to this session — counts as my_kudos
+  // credit, but there is no direct pr_kudos row to retract.
+  pool.state.bounties.push({
+    id: 500, app_id: 1, github_issue_number: 7, giver_user_id: 1,
+    week_start: '2026-05-18', status: 'awarded',
+    awarded_user_id: 999, awarded_session_id: 10,
+    awarded_at: '2026-05-19T00:00:00.000Z',
+  });
+  const { baseUrl, close } = await startTestServer(pool, { id: 1, username: 'alice' });
+  try {
+    const r = await fetch(`${baseUrl}/api/sessions/10/kudos`, { method: 'DELETE' });
+    assert.equal(r.status, 404);
+    const body = await r.json();
+    assert.match(body.error, /no kudos to retract/i);
+  } finally {
+    await close();
+  }
+});
+
+test('GET kudos: my_kudos_direct is true for a direct kudos, false for bounty-only credit', async () => {
+  const pool = makeMockPool({
+    sessions: [
+      [10, { id: 10, user_id: 999, status: 'merged', app_id: 1 }],
+      [11, { id: 11, user_id: 999, status: 'merged', app_id: 1 }],
+    ],
+  });
+  pool.state.bounties.push({
+    id: 500, app_id: 1, github_issue_number: 7, giver_user_id: 1,
+    week_start: '2026-05-18', status: 'awarded',
+    awarded_user_id: 999, awarded_session_id: 11,
+    awarded_at: '2026-05-19T00:00:00.000Z',
+  });
+  const { baseUrl, close } = await startTestServer(pool, { id: 1, username: 'alice' });
+  try {
+    assert.equal((await fetch(`${baseUrl}/api/sessions/10/kudos`, { method: 'POST' })).status, 200);
+
+    const direct = await (await fetch(`${baseUrl}/api/sessions/10/kudos`)).json();
+    assert.equal(direct.count, 1);
+    assert.equal(direct.my_kudos, true);
+    assert.equal(direct.my_kudos_direct, true, 'direct pr_kudos row → retractable');
+
+    const bountyOnly = await (await fetch(`${baseUrl}/api/sessions/11/kudos`)).json();
+    assert.equal(bountyOnly.count, 1);
+    assert.equal(bountyOnly.my_kudos, true, 'awarded bounty still reads as the viewer’s credit');
+    assert.equal(bountyOnly.my_kudos_direct, false, 'but it is not retractable');
   } finally {
     await close();
   }

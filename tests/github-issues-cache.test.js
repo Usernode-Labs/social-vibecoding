@@ -1,7 +1,10 @@
 // Tests for src/services/github.js noteIssueCreated() — the open-issues
 // cache seeding used by routes/feedback.js (#125) so a just-submitted
 // feedback issue shows up in the "Open Issues" panel without waiting out
-// the 5-minute cache TTL or re-hitting GitHub's anonymous rate limit.
+// the 5-minute cache TTL or re-hitting GitHub's anonymous rate limit —
+// plus the #192 recently-created overlay (which makes noteIssueCreated
+// work even with no live cache entry / a stale fresh fetch) and
+// refreshPublicIssues (the panel's throttled manual refresh).
 //
 // fetchPublicIssues talks to api.github.com via global fetch, so we stub
 // fetch with a canned issues payload to populate the cache, then assert
@@ -41,10 +44,12 @@ function stubFetch(issues) {
   return calls;
 }
 
-test('noteIssueCreated returns false when the repo has no cache entry', () => {
+test('noteIssueCreated records into the overlay even with no cache entry (#192)', () => {
+  // Pre-#192 this returned false (the cache seeding was a no-op); the
+  // overlay now records the issue regardless, so any valid input is true.
   assert.strictEqual(
     github.noteIssueCreated('nobody', 'nothing-cached', fakeIssue(1, 'x', '2026-06-10T00:00:00Z')),
-    false
+    true
   );
 });
 
@@ -379,6 +384,189 @@ test('suppression matches owner/repo case-insensitively and ignores a trailing .
     github.noteIssuesClosed('casesup', 'Case-Sup-Repo.git', [8]);
     const res = await github.fetchPublicIssues('CaseSup', 'case-sup-repo');
     assert.strictEqual(res.issues.length, 0);
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+// ------------------------------------------------------------------
+// #192: recently-created overlay — the create-side mirror of #144.
+// noteIssueCreated records every created issue in a TTL'd per-repo
+// overlay that is merged into EVERY fetchPublicIssues result, so a
+// just-created issue renders even when there is no live cache entry
+// and GitHub's eventually-consistent anonymous list still omits it.
+// ------------------------------------------------------------------
+
+function rateLimitedStub() {
+  global.fetch = async () => ({
+    ok: false,
+    status: 429,
+    headers: { get: (h) => (h === 'x-ratelimit-remaining' ? '0' : null) },
+    json: async () => ({}),
+  });
+}
+
+test('overlay surfaces a just-created issue when the fresh fetch payload omits it (the #192 repro)', async () => {
+  const origFetch = global.fetch;
+  try {
+    // No cache entry at creation time; GitHub's list lags the create.
+    assert.strictEqual(
+      github.noteIssueCreated('OvOwner', 'ov-repo', fakeIssue(31, 'created via platform', '2026-06-10T00:00:00Z')),
+      true
+    );
+    const calls = stubFetch([fakeIssue(30, 'older', '2026-06-09T00:00:00Z')]);
+
+    const fresh = await github.fetchPublicIssues('OvOwner', 'ov-repo');
+    assert.strictEqual(calls.length, 1);
+    assert.deepStrictEqual(fresh.issues.map((i) => i.number), [31, 30], 'overlay issue is prepended');
+    assert.strictEqual(fresh.issues[0].title, 'created via platform');
+    assert.strictEqual(fresh.note, undefined);
+
+    // The (stale) fetched payload was cached; a cache-hit read still
+    // shows the overlay issue.
+    const cachedRead = await github.fetchPublicIssues('OvOwner', 'ov-repo');
+    assert.strictEqual(calls.length, 1, 'second read must come from cache');
+    assert.deepStrictEqual(cachedRead.issues.map((i) => i.number), [31, 30]);
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('overlay survives the rate-limited EMPTY fallback (nothing cached)', async () => {
+  const origFetch = global.fetch;
+  try {
+    github.noteIssueCreated('RlovOwner', 'rlov-repo', fakeIssue(2, 'fresh feedback', '2026-06-10T00:00:00Z'));
+    rateLimitedStub();
+
+    const res = await github.fetchPublicIssues('RlovOwner', 'rlov-repo');
+    assert.strictEqual(res.note, 'rate limited');
+    assert.deepStrictEqual(res.issues.map((i) => i.number), [2]);
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('overlay survives the rate-limited STALE-cache fallback', async () => {
+  const origFetch = global.fetch;
+  try {
+    stubFetch([fakeIssue(1, 'pre-existing', '2026-06-09T00:00:00Z')]);
+    await github.fetchPublicIssues('RlstOwner', 'rlst-repo');
+
+    github.noteIssueCreated('RlstOwner', 'rlst-repo', fakeIssue(3, 'fresh', '2026-06-10T00:00:00Z'));
+    rateLimitedStub();
+
+    // Force past the still-valid cache; the refetch 429s and falls back
+    // to the stale entry — the new issue must still be there.
+    const res = await github.refreshPublicIssues('RlstOwner', 'rlst-repo');
+    assert.strictEqual(res.note, 'rate limited');
+    assert.deepStrictEqual(res.issues.map((i) => i.number), [3, 1]);
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('a fresh fetch that contains the issue prunes the overlay (fetched copy wins)', async () => {
+  const origFetch = global.fetch;
+  try {
+    github.noteIssueCreated('PruneOwner', 'prune-repo', fakeIssue(9, 'local copy', '2026-06-10T00:00:00Z'));
+    stubFetch([fakeIssue(9, 'from github', '2026-06-10T01:00:00Z')]);
+
+    const res = await github.fetchPublicIssues('PruneOwner', 'prune-repo');
+    assert.strictEqual(res.issues.length, 1, 'no duplicate');
+    assert.strictEqual(res.issues[0].title, 'from github', 'fetched copy wins over the overlay copy');
+
+    // Pruned for real: a later forced fetch whose payload no longer
+    // lists #9 must NOT resurface it from the overlay.
+    stubFetch([]);
+    const after = await github.refreshPublicIssues('PruneOwner', 'prune-repo');
+    assert.strictEqual(after.refreshed, true);
+    assert.deepStrictEqual(after.issues, []);
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('suppression wins over the overlay — created then quickly closed stays hidden', async () => {
+  const origFetch = global.fetch;
+  try {
+    github.noteIssueCreated('CcOwner', 'cc-repo', fakeIssue(12, 'created then closed', '2026-06-10T00:00:00Z'));
+    github.noteIssuesClosed('CcOwner', 'cc-repo', [12]);
+    stubFetch([]);
+
+    const res = await github.fetchPublicIssues('CcOwner', 'cc-repo');
+    assert.deepStrictEqual(res.issues, []);
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('overlay entries expire after their TTL', async () => {
+  const origFetch = global.fetch;
+  try {
+    // ttlMs 0 → expiresAt === now → treated as already expired (same
+    // convention as the suppression TTL test above).
+    github.noteIssueCreated('ExpOwner', 'exp-repo', fakeIssue(13, 'expired overlay', '2026-06-10T00:00:00Z'), 0);
+    stubFetch([]);
+
+    const res = await github.fetchPublicIssues('ExpOwner', 'exp-repo');
+    assert.deepStrictEqual(res.issues, []);
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('fetchPublicIssue resolves a just-created issue from the overlay without a network call', async () => {
+  const origFetch = global.fetch;
+  try {
+    const longBody = 'v'.repeat(3000);
+    github.noteIssueCreated('SingleOwner', 'single-repo', {
+      ...fakeIssue(14, 'overlaid', '2026-06-10T00:00:00Z'),
+      body: longBody,
+    });
+    global.fetch = async () => { throw new Error('must not fetch'); };
+
+    const res = await github.fetchPublicIssue('SingleOwner', 'single-repo', 14);
+    assert.strictEqual(res.issue.number, 14);
+    assert.strictEqual(res.issue.body, longBody, 'overlay carries the FULL body');
+    assert.strictEqual(res.note, undefined);
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+// ------------------------------------------------------------------
+// #192: refreshPublicIssues — the throttled force-refresh behind the
+// Open Issues panel's manual refresh button.
+// ------------------------------------------------------------------
+
+test('refreshPublicIssues bypasses a valid cache TTL, caches the result, then honors the cooldown', async () => {
+  const origFetch = global.fetch;
+  try {
+    stubFetch([fakeIssue(1, 'v1', '2026-06-09T00:00:00Z')]);
+    await github.fetchPublicIssues('RefOwner', 'ref-repo'); // warm, still-valid cache
+
+    const calls = stubFetch([
+      fakeIssue(2, 'created on github', '2026-06-10T00:00:00Z'),
+      fakeIssue(1, 'v1', '2026-06-09T00:00:00Z'),
+    ]);
+
+    const forced = await github.refreshPublicIssues('RefOwner', 'ref-repo');
+    assert.strictEqual(forced.refreshed, true);
+    assert.strictEqual(forced.retryInMs, 60 * 1000);
+    assert.strictEqual(calls.length, 1, 'force must refetch past the valid cache');
+    assert.deepStrictEqual(forced.issues.map((i) => i.number), [2, 1]);
+
+    // The forced result replaced the cache entry: a plain read is fetch-free.
+    const cached = await github.fetchPublicIssues('RefOwner', 'ref-repo');
+    assert.strictEqual(calls.length, 1);
+    assert.deepStrictEqual(cached.issues.map((i) => i.number), [2, 1]);
+
+    // Within the cooldown a second refresh serves the cache with a retry hint.
+    const second = await github.refreshPublicIssues('RefOwner', 'ref-repo');
+    assert.strictEqual(second.refreshed, false);
+    assert.ok(second.retryInMs > 0 && second.retryInMs <= 60 * 1000);
+    assert.strictEqual(calls.length, 1, 'throttled refresh must not hit the network');
+    assert.deepStrictEqual(second.issues.map((i) => i.number), [2, 1]);
   } finally {
     global.fetch = origFetch;
   }

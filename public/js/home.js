@@ -71,13 +71,15 @@ const Home = {
         // Starred apps only ever render in this section, so tag the
         // cards at render time: data-starred drives the drag wiring's
         // selector, touch-pan-y keeps vertical scrolling alive until a
-        // long-press actually starts a drag, and cursor-grab replaces
-        // cursor-pointer as the discoverability hint.
+        // long-press actually starts a drag, app-card-draggable kills
+        // text selection / the mobile callout during that long-press
+        // (see app.css), and cursor-grab replaces cursor-pointer as
+        // the discoverability hint.
         html += starred.map((a) => {
           let card = Home.renderAppCard(a);
           card = card.replace('class="app-card ', 'data-starred="true" class="app-card ');
           if (canDragStars) {
-            card = card.replace('class="app-card ', 'class="app-card touch-pan-y ');
+            card = card.replace('class="app-card ', 'class="app-card app-card-draggable touch-pan-y ');
             card = card.replace('cursor-pointer', 'cursor-grab');
           }
           return card;
@@ -706,7 +708,13 @@ const Home = {
         // so the browser doesn't take over mid-drag with a pan.
         touchAction: 'none',
       });
+      // The cards themselves are already select-none via
+      // .app-card-draggable; this covers the rest of the page so a
+      // mouse drag that sweeps across headers / other sections
+      // doesn't paint a selection. webkitUserSelect alongside the
+      // standard property for older WebKit.
       document.body.style.userSelect = 'none';
+      document.body.style.webkitUserSelect = 'none';
       document.body.style.cursor = 'grabbing';
     };
 
@@ -780,6 +788,7 @@ const Home = {
         c.style.transform = '';
       }
       document.body.style.userSelect = '';
+      document.body.style.webkitUserSelect = '';
       document.body.style.cursor = '';
       Home._dragActive = false;
     };

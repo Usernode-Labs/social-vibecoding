@@ -724,6 +724,16 @@ const App = {
           if (typeof DevChat.renderChatView === 'function') DevChat.renderChatView();
         }
         break;
+      case 'visuals_ready':
+        // #195: before/after capture finished (it lands after
+        // staging_ready, often after the turn's POST SSE is gone) —
+        // stash the artifact ids and re-render so the staging card
+        // upgrades in place with the media tiles.
+        if (DevChat.currentSession && data.visuals) {
+          DevChat.currentSession.visuals = data.visuals;
+          DevChat.renderMessages();
+        }
+        break;
       case 'cc_progress':
         DevChat._appendProgressLine(data.text);
         DevChat.scrollToBottom();
@@ -1232,7 +1242,11 @@ const App = {
 
       const parts = hash.split('/');
       if (parts[0] === 'leaderboard') {
-        App.navigateToLeaderboard();
+        // Optional sub-view segment (#leaderboard/history etc.) — pass
+        // it through so deep links land on the right tab. Bare
+        // #leaderboard keeps whatever tab was last active (Top PRs on
+        // first visit).
+        App.navigateToLeaderboard(parts[1]);
         return;
       }
       if (parts[0] === 'app' && parts[1]) {
@@ -1280,7 +1294,7 @@ const App = {
   // Show the leaderboard screen. Sibling to navigateToApp/navigateHome —
   // hides home + app, reveals the dedicated #leaderboard-screen, lets
   // the Leaderboard module render itself into #leaderboard-root.
-  navigateToLeaderboard() {
+  navigateToLeaderboard(sub) {
     if (App.currentApp) {
       AppView.close();
       App.currentApp = null;
@@ -1298,6 +1312,11 @@ const App = {
     if (_drs) _drs.classList.add('hidden');
     App.setHeaderTitle('Kudos leaderboard');
     App._inLeaderboard = true;
+    // Apply the deep-linked sub-view (prs|users|history) before open()
+    // renders — _setSub validates the value and no-ops on garbage. When
+    // the screen is already open it re-renders in place; open() below
+    // dedupes the in-flight load.
+    if (sub && window.Leaderboard?._setSub) Leaderboard._setSub(sub);
     if (window.Leaderboard?.open) Leaderboard.open();
   },
 

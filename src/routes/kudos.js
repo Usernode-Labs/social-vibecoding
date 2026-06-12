@@ -89,14 +89,16 @@ async function loadKudosForSession(pool, sessionId, viewerUserId) {
   // card counts). LEFT JOIN on the bounty side so an awarded bounty whose
   // giver was since deleted (giver_user_id → NULL) still counts; it just
   // can't be attributed to a username in the popover.
+  // Each branch tags its rows with a `source` so my_kudos_direct (below)
+  // can tell a retractable direct kudos apart from bounty-derived credit.
   const { rows } = await pool.query(
-    `SELECT created_at, username, user_id FROM (
-       SELECT pk.created_at, u.username, u.id AS user_id
+    `SELECT created_at, username, user_id, source FROM (
+       SELECT pk.created_at, u.username, u.id AS user_id, 'pr' AS source
          FROM pr_kudos pk
          JOIN users u ON u.id = pk.giver_user_id
         WHERE pk.session_id = $1
        UNION ALL
-       SELECT ib.awarded_at AS created_at, bu.username, ib.giver_user_id AS user_id
+       SELECT ib.awarded_at AS created_at, bu.username, ib.giver_user_id AS user_id, 'bounty' AS source
          FROM issue_bounties ib
          LEFT JOIN users bu ON bu.id = ib.giver_user_id
         WHERE ib.awarded_session_id = $1 AND ib.status = 'awarded'
@@ -108,6 +110,12 @@ async function loadKudosForSession(pool, sessionId, viewerUserId) {
   const myKudos = viewerUserId
     ? rows.some((r) => r.user_id === viewerUserId)
     : false;
+  // my_kudos_direct: the viewer has an actual pr_kudos row (retractable
+  // via DELETE), as opposed to credit that arrived through an awarded
+  // issue bounty (not retractable here).
+  const myKudosDirect = viewerUserId
+    ? rows.some((r) => r.source === 'pr' && r.user_id === viewerUserId)
+    : false;
   // Only rows with a resolvable username make the giver list; a deleted-user
   // bounty still counts above but has no name to show.
   const givers = rows
@@ -116,7 +124,7 @@ async function loadKudosForSession(pool, sessionId, viewerUserId) {
       username: r.username,
       createdAt: r.created_at,
     }));
-  return { count, givers, my_kudos: myKudos };
+  return { count, givers, my_kudos: myKudos, my_kudos_direct: myKudosDirect };
 }
 
 function kudosRoutes(config) {
@@ -299,6 +307,118 @@ function kudosRoutes(config) {
   });
 
   // --------------------------------------------------------------
+  // DELETE /api/sessions/:id/kudos — retract a previously given kudos
+  // (issue #197: undo for mis-clicks).
+  //
+  // Status codes:
+  //   200 ok        — kudos removed; remaining/limit reflect the
+  //                    refunded current-week slot
+  //   401 unauth    — handled by authMiddleware upstream
+  //   404 not_found — session doesn't exist, OR the viewer has no
+  //                    direct kudos row on it (bounty-derived credit
+  //                    is not retractable here)
+  //
+  // No session-status gate: if the row exists it was eligible at give
+  // time, and retraction is harmless in any state (the merged list is
+  // the primary mis-click surface). The quota refund is emergent —
+  // countWeeklyAllowanceUsed counts rows by week_start, so deleting a
+  // current-week row frees a slot while deleting an old-week row
+  // changes nothing for this week.
+  // --------------------------------------------------------------
+  router.delete('/api/sessions/:id/kudos', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    const sessionId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(sessionId)) {
+      return res.status(400).json({ error: 'Invalid session id' });
+    }
+
+    try {
+      // Session + app context up front (same query shape as the give
+      // path) so the broadcast and analytics below have appSlug/appId
+      // without extra round-trips.
+      const { rows: sessionRows } = await pool.query(
+        `SELECT cs.id, cs.user_id, cs.status, cs.pr_number, cs.pr_title,
+                cs.app_id, a.slug AS app_slug, a.name AS app_name
+           FROM chat_sessions cs
+           JOIN apps a ON a.id = cs.app_id
+           WHERE cs.id = $1`,
+        [sessionId]
+      );
+      if (!sessionRows.length) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+      const session = sessionRows[0];
+
+      // Single atomic DELETE is the source of truth — no prior
+      // existence check needed, and a parallel retract race just
+      // 404s on the loser.
+      const { rows: deleted } = await pool.query(
+        `DELETE FROM pr_kudos
+           WHERE session_id = $1 AND giver_user_id = $2
+           RETURNING id, week_start`,
+        [sessionId, req.user.id]
+      );
+      if (!deleted.length) {
+        return res.status(404).json({ error: 'No kudos to retract on this PR' });
+      }
+
+      // Best-effort cleanup of the author's "gave kudos" notification —
+      // the underlying event no longer stands, read or unread. Never
+      // fail the retract itself over it. (No WS "notification removed"
+      // push exists; an open dropdown stays stale until next load.)
+      try {
+        await pool.query(
+          `DELETE FROM notifications
+             WHERE kind = 'kudos' AND session_id = $1 AND source_user_id = $2`,
+          [sessionId, req.user.id]
+        );
+      } catch (err) {
+        log.warn('kudos', 'notification cleanup failed', {
+          sessionId, giver: req.user.id, err: err.message,
+        });
+      }
+
+      events.record(pool, {
+        type: events.EVENT_TYPES.KUDOS_RETRACTED,
+        userId: req.user.id,
+        appId: session.app_id,
+        sessionId,
+        metadata: { recipientId: session.user_id || null },
+      });
+
+      // Broadcast the new count so open PR cards / leaderboards
+      // re-render in place. `retractedUsername` (instead of
+      // giverUsername) tells Kudos.applyLiveUpdate which direction
+      // this update went.
+      try {
+        const { rows: countRows } = await pool.query(
+          `SELECT COUNT(*)::int AS c FROM pr_kudos WHERE session_id = $1`,
+          [sessionId]
+        );
+        ws.pushKudosUpdate({
+          sessionId,
+          appSlug: session.app_slug,
+          count: countRows[0]?.c || 0,
+          retractedUsername: req.user.username,
+        });
+      } catch (err) {
+        log.warn('kudos', 'broadcast failed', { sessionId, err: err.message });
+      }
+
+      const weekStart = weekStartUtc();
+      const given = await countWeeklyAllowanceUsed(pool, req.user.id, weekStart);
+      const remaining = Math.max(0, WEEKLY_KUDOS_LIMIT - given);
+      log.info('kudos', 'kudos retracted', {
+        sessionId, giverId: req.user.id, weekStart: deleted[0].week_start, remaining,
+      });
+      res.json({ ok: true, remaining, limit: WEEKLY_KUDOS_LIMIT });
+    } catch (err) {
+      log.error('kudos', 'retract failed', { sessionId, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // --------------------------------------------------------------
   // GET /api/sessions/:id/kudos — count + giver list for hover popover.
   // --------------------------------------------------------------
   router.get('/api/sessions/:id/kudos', async (req, res) => {
@@ -340,6 +460,147 @@ function kudosRoutes(config) {
       });
     } catch (err) {
       log.error('kudos', 'budget failed', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // --------------------------------------------------------------
+  // GET /api/me/history?type=all|kudos|votes&limit=50&before=<ISO ts>
+  //
+  // Everything the caller has GIVEN — PR kudos, issue-bounty pledges,
+  // PR votes, proposal votes — merged reverse-chronologically. Strictly
+  // me-scoped (every arm filters on req.user.id); must stay OUT of
+  // PUBLIC_PATHS in middleware/auth.js. Keyset pagination on
+  // created_at: `nextBefore` is the last row's timestamp, null when
+  // the page came back short.
+  //
+  // Semantics worth remembering: pr_votes/issue_votes are current-state
+  // ledgers (the vote route upserts with created_at = NOW() on flip,
+  // and re-voting an issue the same way deletes the row), so the vote
+  // arms surface "current standing vote, last changed at", not a full
+  // cast history. pr_kudos is append-only and complete.
+  // --------------------------------------------------------------
+  router.get('/api/me/history', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    const typeArg = ['all', 'kudos', 'votes'].includes(req.query.type)
+      ? req.query.type
+      : 'all';
+    const limit = clampLimit(req.query.limit === undefined ? '50' : req.query.limit);
+    let before = null;
+    if (req.query.before !== undefined && req.query.before !== '') {
+      const t = Date.parse(req.query.before);
+      if (!Number.isFinite(t)) {
+        return res.status(400).json({ error: 'Invalid before timestamp' });
+      }
+      before = new Date(t).toISOString();
+    }
+
+    try {
+      const params = [req.user.id];
+      let beforeIdx = null;
+      if (before) {
+        params.push(before);
+        beforeIdx = params.length;
+      }
+      // Each arm projects the same column list so the UNION ALL lines
+      // up; rows are tagged with a literal `type`. NULL placeholders
+      // stay untyped — Postgres resolves them against the sibling arms.
+      const cut = (col) => (beforeIdx ? `AND ${col} < $${beforeIdx}` : '');
+      const arms = [];
+      if (typeArg === 'all' || typeArg === 'kudos') {
+        arms.push(`
+          SELECT 'kudos' AS type, pk.created_at, NULL AS vote,
+                 cs.status AS status,
+                 cs.id AS session_id, cs.pr_number, cs.pr_title,
+                 au.username AS author_username,
+                 a.slug AS app_slug, a.name AS app_name,
+                 NULL::int AS issue_number, NULL AS issue_title, NULL AS issue_kind,
+                 NULL AS awarded_username, NULL::timestamptz AS awarded_at
+            FROM pr_kudos pk
+            JOIN chat_sessions cs ON cs.id = pk.session_id
+            JOIN apps a ON a.id = cs.app_id
+            LEFT JOIN users au ON au.id = cs.user_id
+           WHERE pk.giver_user_id = $1 ${cut('pk.created_at')}`);
+        arms.push(`
+          SELECT 'bounty' AS type, ib.created_at, NULL AS vote,
+                 ib.status AS status,
+                 NULL::int AS session_id, NULL::int AS pr_number, NULL AS pr_title,
+                 NULL AS author_username,
+                 a.slug AS app_slug, a.name AS app_name,
+                 ib.github_issue_number AS issue_number, NULL AS issue_title, NULL AS issue_kind,
+                 wu.username AS awarded_username, ib.awarded_at
+            FROM issue_bounties ib
+            JOIN apps a ON a.id = ib.app_id
+            LEFT JOIN users wu ON wu.id = ib.awarded_user_id
+           WHERE ib.giver_user_id = $1 ${cut('ib.created_at')}`);
+      }
+      if (typeArg === 'all' || typeArg === 'votes') {
+        arms.push(`
+          SELECT 'pr_vote' AS type, pv.created_at, pv.vote,
+                 cs.status AS status,
+                 cs.id AS session_id, cs.pr_number, cs.pr_title,
+                 au.username AS author_username,
+                 a.slug AS app_slug, a.name AS app_name,
+                 NULL::int AS issue_number, NULL AS issue_title, NULL AS issue_kind,
+                 NULL AS awarded_username, NULL::timestamptz AS awarded_at
+            FROM pr_votes pv
+            JOIN chat_sessions cs ON cs.id = pv.session_id
+            JOIN apps a ON a.id = cs.app_id
+            LEFT JOIN users au ON au.id = cs.user_id
+           WHERE pv.user_id = $1 ${cut('pv.created_at')}`);
+        arms.push(`
+          SELECT 'proposal_vote' AS type, iv.created_at, iv.vote,
+                 i.status AS status,
+                 NULL::int AS session_id, NULL::int AS pr_number, NULL AS pr_title,
+                 NULL AS author_username,
+                 a.slug AS app_slug, a.name AS app_name,
+                 i.github_issue_number AS issue_number, i.title AS issue_title, i.kind AS issue_kind,
+                 NULL AS awarded_username, NULL::timestamptz AS awarded_at
+            FROM issue_votes iv
+            JOIN issues i ON i.id = iv.issue_id
+            JOIN apps a ON a.id = i.app_id
+           WHERE iv.user_id = $1 ${cut('iv.created_at')}`);
+      }
+      params.push(limit);
+      const { rows } = await pool.query(
+        `SELECT * FROM (${arms.join('\nUNION ALL\n')}) h
+          ORDER BY created_at DESC
+          LIMIT $${params.length}`,
+        params
+      );
+
+      const items = rows.map((r) => {
+        const item = {
+          type: r.type,
+          created_at: r.created_at,
+          app: { slug: r.app_slug, name: r.app_name },
+        };
+        if (r.vote != null) item.vote = r.vote;
+        if (r.status != null) item.status = r.status;
+        if (r.type === 'kudos' || r.type === 'pr_vote') {
+          item.pr = {
+            sessionId: r.session_id,
+            number: r.pr_number,
+            title: r.pr_title,
+            // NULL when the PR's author account was deleted (LEFT JOIN).
+            author: r.author_username || null,
+          };
+        } else if (r.type === 'bounty') {
+          item.issue = { number: r.issue_number };
+          if (r.status === 'awarded') {
+            item.awarded = { username: r.awarded_username || null, at: r.awarded_at };
+          }
+        } else if (r.type === 'proposal_vote') {
+          item.issue = { number: r.issue_number, title: r.issue_title, kind: r.issue_kind };
+        }
+        return item;
+      });
+      const nextBefore = rows.length === limit
+        ? rows[rows.length - 1].created_at
+        : null;
+      res.json({ items, nextBefore });
+    } catch (err) {
+      log.error('kudos', 'me/history failed', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

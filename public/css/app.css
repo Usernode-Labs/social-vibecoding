@@ -80,6 +80,20 @@ html, body {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%238b5cf6' stroke-opacity='0.75' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
 }
 
+/* Drag-reorderable starred cards (issue #191): a long-press must
+   pick the card up, not select its title text or pop the mobile
+   copy/look-up callout. Static rather than toggled at drag start
+   because selection begins during the ~350ms long-press window,
+   before any JS drag state exists. Scoped to the drag-enabled
+   class (added in home.js only when reordering is possible) so
+   text everywhere else on the page selects normally. */
+.app-card-draggable {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
 /* ── Favorites section headers ─────────────────────────── */
 
 .home-section-header {
@@ -1482,6 +1496,48 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   min-height: 0;
   overflow-y: auto;
   padding: 12px;
+}
+
+/* #196: two-half spec tabs (User-facing / Technical). Rendered only
+   when the doc contains both marker headings — legacy specs keep the
+   single untabbed body (see public/js/spec-sections.js). */
+.dc-spec-viewer-preamble {
+  margin-bottom: 12px;
+}
+
+.dc-spec-viewer-tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,0.12));
+}
+
+.dc-spec-viewer-tab {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary, #a1a1aa);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.dc-spec-viewer-tab:hover {
+  color: var(--text-primary, #e4e4e7);
+}
+
+.dc-spec-viewer-tab-active {
+  color: var(--accent);
+  border-bottom-color: currentColor;
+  font-weight: 600;
+}
+
+.dc-spec-tab-empty {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--text-secondary, #a1a1aa);
 }
 
 /* Footer bar reminding the user that a spec is a plan, not a built

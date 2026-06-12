@@ -19,17 +19,38 @@ const CACHE_TTL_MS = 30 * 60 * 1000;
 // Anonymous GitHub REST needs a User-Agent or it 403s every request.
 const GITHUB_USER_AGENT = 'usernode-platform';
 
+// Headers for the read-only public fetch paths (fetchPublicIssues,
+// fetchPublicIssue, fetchIssueComments). When the bot PAT is configured
+// these requests authenticate as the bot — 5,000 req/hr on the token —
+// instead of burning the per-IP ANONYMOUS 60 req/hr budget, which is
+// shared by every app on the host and was routinely exhausted in prod
+// (every issue panel then degraded to "Couldn't load open issues").
+// Without a PAT they stay anonymous and the cache/stale-fallback layers
+// below remain the only defense.
+function publicFetchHeaders() {
+  const headers = { 'Accept': 'application/vnd.github+json', 'User-Agent': GITHUB_USER_AGENT };
+  const pat = process.env.GITHUB_BOT_TOKEN;
+  if (pat) headers['Authorization'] = `Bearer ${pat}`;
+  return headers;
+}
+
 // Read-only open-issues fetch (fetchPublicIssues) tunables. The 5-minute
-// cache is the primary defense against GitHub's 60-req/hr/IP anonymous
-// limit — all three agent surfaces (Mayor tool, scout, build) resolve
-// through one function, so they share one cache entry per repo. The page
+// cache keeps these reads off GitHub's rate budget (the bot PAT's 5,000
+// req/hr when configured, the brutal 60-req/hr/IP anonymous limit when
+// not — see publicFetchHeaders) — all three agent surfaces (Mayor tool,
+// scout, build) resolve through one function, so they share one cache
+// entry per repo. The page
 // ceiling bounds worst-case work for a repo with thousands of issues.
 //
 // Freshness on the "Open Issues" panel doesn't rely on this TTL: when a PR
 // merges through the platform (routes/votes.js checkAndMerge) the closed
 // issues are known from session.linked_issues, so the merge path busts this
-// entry via invalidateIssuesCache() and broadcasts a refresh. The TTL is the
-// backstop for closes that don't go through a platform merge.
+// entry via invalidateIssuesCache() and broadcasts a refresh; when an issue
+// is created through the platform, noteIssueCreated records it in the
+// recently-created overlay (and seeds any live cache entry) so it shows
+// immediately (#192). The TTL — plus the panel's throttled manual refresh
+// (refreshPublicIssues) — is the backstop for creates/closes that happen
+// directly on GitHub.
 const issuesCache = new Map();
 const ISSUES_CACHE_TTL_MS = 5 * 60 * 1000;
 const ISSUES_MAX_PAGES = 10;          // 10 * 100 = up to 1000 open issues
@@ -61,6 +82,33 @@ const ISSUES_FETCH_TIMEOUT_MS = 8000; // per-page request timeout
 // Map<normalized "owner/repo", Map<issueNumber, expiresAtMs>>.
 const closedIssueSuppressions = new Map();
 const ISSUES_CLOSED_SUPPRESS_TTL_MS = 10 * 60 * 1000;
+
+// #192: recently-created overlay — the create-side mirror of #144 above.
+// noteIssueCreated's cache seeding only helps when the repo has a LIVE
+// cache entry; with no entry (server restart, idle panel) or an expired
+// one, the very next fetch reads GitHub's eventually-consistent anonymous
+// list, which can still OMIT a just-created issue — and that stale list
+// then gets cached for the full TTL. (The pushIssueUpdate broadcast makes
+// clients re-pull the panel immediately, so that refetch is exactly the
+// request that locks the stale list in.)
+//
+// So alongside seeding we keep a per-repo map of just-created issues
+// (full normalized shape, not just numbers); every fetchPublicIssues
+// result — fresh, cached, or any fallback — gets the live overlay
+// entries merged in. Entries expire after a TTL (GitHub's list lag is
+// minutes at most) and are dropped early once a fresh fetch proves the
+// list now serves the issue. Suppressions are applied AFTER the overlay
+// so a created-then-quickly-closed issue stays hidden.
+// Map<normalized "owner/repo", Map<issueNumber, { issue, expiresAt }>>.
+const recentIssueCreations = new Map();
+const ISSUES_CREATED_OVERLAY_TTL_MS = 10 * 60 * 1000;
+
+// #192: manual-refresh cooldown. refreshPublicIssues bypasses the cache
+// TTL at most once per repo per this window so the Open Issues panel's
+// refresh button can't burn the shared anonymous 60-req/hr/IP budget.
+// Map<normalized "owner/repo", lastForcedAtMs>.
+const FORCE_REFRESH_COOLDOWN_MS = 60 * 1000;
+const forceRefreshLastAt = new Map();
 
 // Same normalization noteIssueCreated uses for cache-key matching:
 // owner/repo are case-insensitive on GitHub and repo_url parsing can
@@ -140,6 +188,60 @@ function applyClosedSuppressions(owner, repo, result) {
   if (!live || !result || !Array.isArray(result.issues)) return result;
   const issues = result.issues.filter((i) => !live.has(i.number));
   return issues.length === result.issues.length ? result : { ...result, issues };
+}
+
+// Live (non-expired) created-overlay entries for a repo, pruning expired
+// ones as a side effect. Returns null when nothing is overlaid. Mirrors
+// liveSuppressions above.
+function liveCreatedOverlay(owner, repo) {
+  const key = normRepoKey(owner, repo);
+  const entry = recentIssueCreations.get(key);
+  if (!entry) return null;
+  const now = Date.now();
+  for (const [n, { expiresAt }] of entry) {
+    if (expiresAt <= now) entry.delete(n);
+  }
+  if (!entry.size) {
+    recentIssueCreations.delete(key);
+    return null;
+  }
+  return entry;
+}
+
+// Merge a repo's live created-overlay issues into a fetchPublicIssues-
+// shaped result: overlay issues not already present are PREPENDED
+// (descending number among themselves, so newest first — consistent with
+// the list's sort=updated&direction=desc order). When the list already
+// carries the number, the fetched/cached copy wins (it's fresher). Never
+// mutates the input; truncatedList/note are left untouched.
+function applyCreatedOverlay(owner, repo, result) {
+  const live = liveCreatedOverlay(owner, repo);
+  if (!live || !result || !Array.isArray(result.issues)) return result;
+  const present = new Set(result.issues.map((i) => i.number));
+  const missing = [...live.entries()]
+    .filter(([n]) => !present.has(n))
+    .sort(([a], [b]) => b - a)
+    .map(([, v]) => v.issue);
+  return missing.length ? { ...result, issues: [...missing, ...result.issues] } : result;
+}
+
+// The full freshness pipeline applied to every result fetchPublicIssues
+// hands out: merge just-created issues in, then filter known-closed ones
+// out. Suppressions go LAST so a created-then-quickly-closed issue stays
+// hidden.
+function applyIssueOverlays(owner, repo, result) {
+  return applyClosedSuppressions(owner, repo, applyCreatedOverlay(owner, repo, result));
+}
+
+// Drop created-overlay entries that a successful FRESH fetch proved
+// GitHub's list now serves — the overlay is redundant from then on
+// (mirrors the spirit of unsuppressIssues on the close side).
+function confirmCreatedIssues(owner, repo, issues) {
+  const key = normRepoKey(owner, repo);
+  const entry = recentIssueCreations.get(key);
+  if (!entry) return;
+  for (const issue of issues) entry.delete(issue.number);
+  if (!entry.size) recentIssueCreations.delete(key);
 }
 
 async function init(config) {
@@ -371,6 +473,20 @@ async function getPR(owner, repo, prNumber) {
     pull_number: prNumber,
   });
   return data;
+}
+
+// List the file paths changed between two refs ("main...branch-name").
+// Used by the visuals capture heuristic (src/services/visuals.js) to decide
+// whether a commit range plausibly touches the UI. Uses the compare API
+// (not pulls.listFiles) so it works on the headless path, where no PR
+// exists yet. The compare endpoint returns at most 300 files per page —
+// plenty for a "does anything frontend-ish appear?" check.
+async function listChangedFiles(owner, repo, basehead) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
+    owner, repo, basehead, per_page: 100,
+  });
+  return (data.files || []).map((f) => f.filename);
 }
 
 // Close an issue. Goes through getOctokit (PAT-preferred) so we get a
@@ -672,7 +788,8 @@ function truncateIssueBodies(result, fullTextHint) {
   };
 }
 
-// Read-only, anonymous fetch of a PUBLIC repo's OPEN issues. Powers the
+// Read-only fetch of a PUBLIC repo's OPEN issues (bot-PAT-authenticated
+// when configured, anonymous otherwise — publicFetchHeaders). Powers the
 // `list_github_issues` tool on all three agent surfaces (the Mayor's
 // Anthropic tool directly; scout + build via the worker's usernode-issues
 // CLI → GET /api/internal/sessions/:id/issues, which calls this).
@@ -680,18 +797,28 @@ function truncateIssueBodies(result, fullTextHint) {
 // NEVER throws and NEVER returns null: every failure mode resolves to a
 // well-formed `{ issues, truncatedList, note }` so callers can hand the
 // result straight back to the model without special-casing. Notes:
-//   - 'rate limited'        anonymous 60/hr exhausted (returns stale cache
+//   - 'rate limited'        rate budget exhausted (returns stale cache
 //                           contents when we have them)
 //   - 'issues unavailable'  404 (private or nonexistent — treated the same
 //                           since we assume public)
 //   - 'fetch failed'        network error / timeout / unexpected payload
 // Success returns `{ issues, truncatedList }` (no note). truncatedList is
 // true when the repo has more open issues than the page ceiling allows.
-async function fetchPublicIssues(owner, repo) {
+//
+// Every exit path runs through applyIssueOverlays (#192/#144): the
+// recently-created overlay is merged in and known-closed suppressions
+// filtered out, so a platform-created issue renders even when the cache,
+// GitHub's lagging anonymous list, or a rate-limit/fetch failure would
+// otherwise hide it.
+//
+// `force: true` (internal — used by refreshPublicIssues only) skips the
+// still-valid-cache early return and refetches; everything else (rate-
+// limited stale fallback, caching the result, overlays) is unchanged.
+async function fetchPublicIssues(owner, repo, { force = false } = {}) {
   const cacheKey = `${owner}/${repo}`;
   const cached = issuesCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    return applyClosedSuppressions(owner, repo, cached.result);
+  if (!force && cached && cached.expiresAt > Date.now()) {
+    return applyIssueOverlays(owner, repo, cached.result);
   }
 
   let url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`
@@ -708,7 +835,7 @@ async function fetchPublicIssues(owner, repo) {
       let resp;
       try {
         resp = await fetch(url, {
-          headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': GITHUB_USER_AGENT },
+          headers: publicFetchHeaders(),
           signal: controller.signal,
         });
       } finally {
@@ -722,20 +849,20 @@ async function fetchPublicIssues(owner, repo) {
         log.warn('github', 'Issue fetch rate-limited', { repo: cacheKey });
         const stale = issuesCache.get(cacheKey);
         if (stale) {
-          return { ...applyClosedSuppressions(owner, repo, stale.result), note: 'rate limited' };
+          return { ...applyIssueOverlays(owner, repo, stale.result), note: 'rate limited' };
         }
-        return { issues: [], truncatedList: false, note: 'rate limited' };
+        return { ...applyIssueOverlays(owner, repo, { issues: [], truncatedList: false }), note: 'rate limited' };
       }
       if (resp.status === 404) {
-        return { issues: [], truncatedList: false, note: 'issues unavailable' };
+        return { ...applyIssueOverlays(owner, repo, { issues: [], truncatedList: false }), note: 'issues unavailable' };
       }
       if (!resp.ok) {
-        return { issues: [], truncatedList: false, note: 'fetch failed' };
+        return { ...applyIssueOverlays(owner, repo, { issues: [], truncatedList: false }), note: 'fetch failed' };
       }
 
       const batch = await resp.json();
       if (!Array.isArray(batch)) {
-        return { issues: [], truncatedList: false, note: 'fetch failed' };
+        return { ...applyIssueOverlays(owner, repo, { issues: [], truncatedList: false }), note: 'fetch failed' };
       }
       for (const item of batch) {
         // The /issues endpoint returns PRs too; drop anything carrying a
@@ -751,19 +878,45 @@ async function fetchPublicIssues(owner, repo) {
 
     const result = { issues: collected, truncatedList };
     issuesCache.set(cacheKey, { result, expiresAt: Date.now() + ISSUES_CACHE_TTL_MS });
-    // Filter the RETURNED copy, not the cached one: a freshly-fetched
-    // list can itself be stale (GitHub's anonymous list endpoint lags
-    // closes), and caching it unfiltered means suppression expiry alone
-    // is what resurfaces a wrongly-suppressed issue.
-    return applyClosedSuppressions(owner, repo, result);
+    // A successful fresh fetch is proof GitHub's list now serves any
+    // overlaid issue it contains — drop those overlay entries early.
+    confirmCreatedIssues(owner, repo, collected);
+    // Overlay/filter the RETURNED copy, not the cached one: a freshly-
+    // fetched list can itself be stale (GitHub's anonymous list endpoint
+    // lags both creates and closes), and caching it unmodified means TTL
+    // expiry alone is what reconciles a wrong overlay or suppression.
+    return applyIssueOverlays(owner, repo, result);
   } catch (err) {
     log.warn('github', 'Issue fetch failed', { repo: cacheKey, err: err.message });
-    return { issues: [], truncatedList: false, note: 'fetch failed' };
+    return { ...applyIssueOverlays(owner, repo, { issues: [], truncatedList: false }), note: 'fetch failed' };
   }
 }
 
-// Read-only, anonymous fetch of ONE issue with its FULL (untruncated)
-// body. Backs the Mayor's get_github_issue tool and the worker's
+// Force-refresh a repo's open-issues list past the cache TTL, throttled
+// per repo (#192) — backs the Open Issues panel's manual refresh button,
+// covering issues created directly on GitHub (where the platform gets no
+// create signal). Within the cooldown it serves the normal (cached) flow
+// with `refreshed: false`; otherwise it stamps the cooldown FIRST (so a
+// failing repo can't be hammered) and refetches. Deliberately not
+// invalidateIssuesCache()+fetch: deleting the entry would lose the
+// stale-cache fallback the rate-limited path depends on. Same
+// never-throws contract as fetchPublicIssues, plus `refreshed` and
+// `retryInMs` (ms until the next force is allowed).
+async function refreshPublicIssues(owner, repo) {
+  const key = normRepoKey(owner, repo);
+  const now = Date.now();
+  const last = forceRefreshLastAt.get(key) || 0;
+  if (now - last < FORCE_REFRESH_COOLDOWN_MS) {
+    const result = await fetchPublicIssues(owner, repo);
+    return { ...result, refreshed: false, retryInMs: FORCE_REFRESH_COOLDOWN_MS - (now - last) };
+  }
+  forceRefreshLastAt.set(key, now);
+  const result = await fetchPublicIssues(owner, repo, { force: true });
+  return { ...result, refreshed: true, retryInMs: FORCE_REFRESH_COOLDOWN_MS };
+}
+
+// Read-only fetch of ONE issue with its FULL (untruncated) body, using
+// the same publicFetchHeaders auth as fetchPublicIssues. Backs the Mayor's get_github_issue tool and the worker's
 // `usernode-issues <number>` CLI form — the on-demand escape hatch for
 // bodies the list surfaces clip at ISSUE_BODY_MAX (#158).
 //
@@ -790,6 +943,13 @@ async function fetchPublicIssue(owner, repo, number) {
     if (hit) return { issue: hit };
   }
 
+  // #192: a just-created issue may predate both the cache and GitHub's
+  // lagging anonymous endpoints — the overlay carries its full body, so
+  // serving from it costs no network call (and no rate-limit budget).
+  const overlay = liveCreatedOverlay(owner, repo);
+  const overlayHit = overlay && overlay.get(n);
+  if (overlayHit) return { issue: overlayHit.issue };
+
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), ISSUES_FETCH_TIMEOUT_MS);
@@ -798,7 +958,7 @@ async function fetchPublicIssue(owner, repo, number) {
       resp = await fetch(
         `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${n}`,
         {
-          headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': GITHUB_USER_AGENT },
+          headers: publicFetchHeaders(),
           signal: controller.signal,
         }
       );
@@ -838,8 +998,8 @@ async function fetchPublicIssue(owner, repo, number) {
   }
 }
 
-// Fetch an issue's comments via the same unauthenticated public REST
-// pattern as fetchPublicIssue (timeout, User-Agent, rate-limit
+// Fetch an issue's comments via the same public REST pattern as
+// fetchPublicIssue (timeout, publicFetchHeaders auth, rate-limit
 // handling). Used by the headless auto-solve seed (#150) so answers the
 // reporter left as comments are visible to the run. NEVER throws: every
 // outcome resolves to `{ comments: [{ author, body, createdAt }], note? }`
@@ -860,7 +1020,7 @@ async function fetchIssueComments(owner, repo, number, { max = 20 } = {}) {
       resp = await fetch(
         `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${n}/comments?per_page=${max}`,
         {
-          headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': GITHUB_USER_AGENT },
+          headers: publicFetchHeaders(),
           signal: controller.signal,
         }
       );
@@ -917,33 +1077,50 @@ function invalidateIssuesCache(owner, repo) {
   return false;
 }
 
-// Prepend a just-created issue to a repo's cached open-issues list so the
-// very next fetchPublicIssues call sees it. Called from the feedback path
-// (routes/feedback.js) right after createIssue succeeds, paired with a
-// pushIssueUpdate broadcast that makes clients re-pull the "Open Issues"
-// panel. Seeding instead of invalidating keeps the cache warm — no extra
-// anonymous GitHub list call against the 60/hr/IP budget, and no
-// read-after-write lag from GitHub's list endpoint hiding the new issue.
+// Record a just-created issue so every fetchPublicIssues result includes
+// it immediately. Called from both platform creation paths
+// (routes/issues.js and routes/feedback.js) right after createIssue
+// succeeds, paired with a pushIssueUpdate broadcast that makes clients
+// re-pull the "Open Issues" panel. Two halves:
+//
+// 1. Overlay (#192) — ALWAYS records the normalized issue in
+//    recentIssueCreations, so it survives a missing/expired cache entry
+//    and the refetch race where GitHub's eventually-consistent anonymous
+//    list still omits the new issue (and would otherwise be re-cached
+//    without it for the full TTL).
+// 2. Cache seeding (#125) — when the repo has a cache entry, the issue is
+//    also prepended into it: keeps the warm path's ordering and means the
+//    cached payload itself is already correct.
+//
 // Match is case-insensitive and ignores a trailing `.git` on the repo
 // (mirrors how repo_url parsing can capture it). Dedupes by issue number.
-// No-op (returns false) when the repo has no live cache entry — the next
-// fetch reads fresh from GitHub and picks the issue up there.
-function noteIssueCreated(owner, repo, rawIssue) {
+// Returns true whenever the issue was recorded (i.e. for any valid
+// input, cache entry or not); false only on malformed input.
+function noteIssueCreated(owner, repo, rawIssue, ttlMs = ISSUES_CREATED_OVERLAY_TTL_MS) {
   if (!owner || !repo || !rawIssue || rawIssue.number == null) return false;
-  const norm = (o, r) => `${o}/${r}`.toLowerCase().replace(/\.git$/, '');
-  const target = norm(owner, repo);
+  const normalized = normalizeIssue(rawIssue);
+  const target = normRepoKey(owner, repo);
+
+  let overlay = recentIssueCreations.get(target);
+  if (!overlay) {
+    overlay = new Map();
+    recentIssueCreations.set(target, overlay);
+  }
+  overlay.set(normalized.number, { issue: normalized, expiresAt: Date.now() + ttlMs });
+  log.debug('github', 'Recorded just-created issue in overlay', { repo: target, issue: normalized.number });
+
   for (const key of issuesCache.keys()) {
     if (key.toLowerCase().replace(/\.git$/, '') !== target) continue;
     const entry = issuesCache.get(key);
     const issues = [
-      normalizeIssue(rawIssue),
-      ...entry.result.issues.filter((i) => i.number !== rawIssue.number),
+      normalized,
+      ...entry.result.issues.filter((i) => i.number !== normalized.number),
     ];
     issuesCache.set(key, { ...entry, result: { ...entry.result, issues } });
-    log.debug('github', 'Seeded open-issues cache with new issue', { repo: key, issue: rawIssue.number });
-    return true;
+    log.debug('github', 'Seeded open-issues cache with new issue', { repo: key, issue: normalized.number });
+    break;
   }
-  return false;
+  return true;
 }
 
 module.exports = {
@@ -963,6 +1140,7 @@ module.exports = {
   reopenPR,
   mergePR,
   getPR,
+  listChangedFiles,
   getIssue,
   createIssue,
   createIssueComment,
@@ -977,6 +1155,7 @@ module.exports = {
   fetchPublicIssues,
   fetchPublicIssue,
   fetchIssueComments,
+  refreshPublicIssues,
   truncateIssueBodies,
   invalidateIssuesCache,
   noteIssueCreated,

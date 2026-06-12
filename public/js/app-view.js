@@ -14,6 +14,14 @@ const AppView = {
   _ghIssuesMeta: { truncatedList: false, note: null, repoUrl: null, myRemaining: null },
   _ghIssuesShown: 5,
   _bountyInFlight: new Set(),
+  // #192: manual-refresh state for the Open Issues section. `_ghRefreshing`
+  // guards re-entrancy while a ?refresh=1 fetch is in flight;
+  // `_ghRefreshNextAt` is the epoch-ms end of the server-reported cooldown
+  // (the button renders disabled until then); `_ghRefreshTimer` re-renders
+  // once at expiry so the button re-enables without user interaction.
+  _ghRefreshing: false,
+  _ghRefreshNextAt: 0,
+  _ghRefreshTimer: null,
 
   // ── Dev view state (#194) ─────────────────────────────────────────
   // The Dev mode's four sub-tabs are rendered by renderDevView; these
@@ -921,6 +929,10 @@ const AppView = {
     const mergingBadge = isMerging ? AppView.mergingBadgeHtml() : '';
     const expanded = AppView._devProposalOpen === pr.id;
     const caret = `<span class="text-[0.6rem] text-zinc-500 shrink-0">${expanded ? '&#9660;' : '&#9654;'}</span>`;
+    // #195: before/after capture tiles so voters can judge a visual change
+    // without opening the staging preview. basis-full forces it onto its own
+    // row below the title + controls.
+    const visualsHtml = AppView.visualsTilesHtml(pr.visuals);
 
     let html = `
       <div class="gc-vote-item flex flex-wrap items-center gap-x-2 gap-y-1 py-1 cursor-pointer${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}" data-proposal-row="${pr.id}" title="Tap to see voting details and the discussion thread">
@@ -936,6 +948,7 @@ const AppView = {
           ${mergingBadge}
           ${kudosBtn}
         </div>
+        ${visualsHtml ? `<div class="basis-full">${visualsHtml}</div>` : ''}
       </div>`;
     if (expanded) html += AppView._proposalExpansionHtml(pr);
     return html;
@@ -1258,7 +1271,18 @@ const AppView = {
   _renderOpenIssuesInner() {
     const issues = AppView._visibleGhIssues();
     const meta = AppView._ghIssuesMeta || {};
-    const heading = `<div class="text-xs text-zinc-500 mb-1 font-medium">Open Issues</div>`;
+    // #192: throttled manual refresh — covers issues created directly on
+    // GitHub, which the server's 5-minute cache would otherwise hide.
+    // Disabled while a refresh is in flight and for the server-reported
+    // cooldown after one. Rendered in the empty/degraded state too: "No
+    // open issues." while a stale cache hides a new issue is exactly when
+    // the button is needed.
+    const refreshDisabled = AppView._ghRefreshing || Date.now() < (AppView._ghRefreshNextAt || 0);
+    const refreshTitle = AppView._ghRefreshing
+      ? 'Refreshing…'
+      : (refreshDisabled ? 'Just refreshed — try again in a moment' : 'Check GitHub for new issues');
+    const refreshBtn = `<button class="gc-vote-btn"${refreshDisabled ? ' disabled' : ''} title="${refreshTitle}" onclick="AppView.refreshOpenIssues()">&#8635; Refresh</button>`;
+    const heading = `<div class="flex items-center justify-between mb-1"><span class="text-xs text-zinc-500 font-medium">Open Issues</span>${refreshBtn}</div>`;
 
     // Degraded / empty states. A `note` means fetchPublicIssues couldn't
     // return a live list (rate limited / unavailable / fetch failed); show a
@@ -1406,6 +1430,47 @@ const AppView = {
   // paging over the already-fetched list; repeatable.
   showMoreIssues() {
     AppView._ghIssuesShown = (AppView._ghIssuesShown || 5) + 5;
+    AppView._rerenderOpenIssues();
+  },
+
+  // #192: manual refresh — re-pull the Open Issues list with ?refresh=1,
+  // which forces the server past its 5-minute cache (throttled per repo
+  // server-side; within the cooldown it serves the cache and reports
+  // refreshed:false). Replaces the cached list in place (an explicit user
+  // refresh may clobber optimistic bounty/headless tweaks — same trade
+  // loadVotePanel makes on every WS-triggered reload) but preserves the
+  // user's "Show 5 more" paging. On failure it silently re-enables the
+  // button, mirroring the section's muted degraded states — no toast.
+  async refreshOpenIssues() {
+    if (AppView._ghRefreshing) return;
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug) return;
+    AppView._ghRefreshing = true;
+    AppView._rerenderOpenIssues();
+    try {
+      const res = await fetch(`/api/apps/${slug}/github-issues?refresh=1`);
+      if (res.ok) {
+        const data = await res.json();
+        AppView._ghIssues = Array.isArray(data.issues) ? data.issues : [];
+        AppView._ghIssuesMeta = {
+          truncatedList: !!data.truncatedList,
+          note: data.note || null,
+          repoUrl: (AppView.appData && AppView.appData.repo_url) || null,
+          myRemaining: typeof data.myRemaining === 'number' ? data.myRemaining : null,
+        };
+        AppView._ghRefreshNextAt = Date.now()
+          + (typeof data.refreshRetryMs === 'number' ? data.refreshRetryMs : 60000);
+        // One timer (replacing any prior) re-renders at cooldown expiry so
+        // the button re-enables without user interaction. The renderer
+        // already syncs headless polling, so no extra wiring needed.
+        if (AppView._ghRefreshTimer) clearTimeout(AppView._ghRefreshTimer);
+        AppView._ghRefreshTimer = setTimeout(() => {
+          AppView._ghRefreshTimer = null;
+          if (document.getElementById('gc-open-issues')) AppView._rerenderOpenIssues();
+        }, Math.max(0, AppView._ghRefreshNextAt - Date.now()) + 50);
+      }
+    } catch {}
+    AppView._ghRefreshing = false;
     AppView._rerenderOpenIssues();
   },
 
@@ -1833,6 +1898,39 @@ const AppView = {
   // rows after a PR lands so the voting info doesn't disappear.
   mergedBadgeHtml() {
     return `<span class="gc-merged-badge">✓ Merged</span>`;
+  },
+
+  // #195: before/after visual tiles for a session's stored capture
+  // artifacts. `visuals` is the server shape { before: {png,webm,gif},
+  // after: {...} } of /visuals/:id tokens. Shared by the vote-panel PR
+  // rows here and the dev-chat staging card (which calls through
+  // window.AppView). Webm plays as a silent loop with the PNG as poster;
+  // PNG-only sets render a plain image. Click opens full size in a new
+  // tab. Deliberately dedicated DOM — the markdown sanitizer's whitelist
+  // stays untouched (<img>/<video> remain stripped from chat markdown).
+  visualsTilesHtml(visuals) {
+    if (!visuals) return '';
+    const idOk = (id) => typeof id === 'string' && /^[a-f0-9]{32}$/.test(id);
+    const tile = (label, v) => {
+      if (!v) return '';
+      const png = idOk(v.png) ? v.png : null;
+      const webm = idOk(v.webm) ? v.webm : null;
+      const gif = idOk(v.gif) ? v.gif : null;
+      if (!png && !webm && !gif) return '';
+      const mediaStyle = 'display:block;width:100%;max-height:160px;object-fit:contain;object-position:top;background:rgba(0,0,0,0.25);border:1px solid rgba(127,127,127,0.25);border-radius:6px';
+      const media = webm
+        ? `<video src="/visuals/${webm}"${png ? ` poster="/visuals/${png}"` : ''} muted loop autoplay playsinline style="${mediaStyle}"></video>`
+        : `<img src="/visuals/${png || gif}" alt="${label}" loading="lazy" style="${mediaStyle}">`;
+      const href = `/visuals/${webm || gif || png}`;
+      return `<a href="${href}" target="_blank" rel="noopener" title="${label} — open full size" style="flex:1 1 0;min-width:0;display:block;text-decoration:none">
+        <div class="text-[0.65rem] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}</div>
+        ${media}
+      </a>`;
+    };
+    const before = tile('Before', visuals.before);
+    const after = tile('After', visuals.after);
+    if (!after && !before) return '';
+    return `<div class="usn-visual-tiles" style="display:flex;gap:8px;align-items:flex-start;margin:4px 0 2px">${before}${after}</div>`;
   },
 
   // #80: derive the GitHub issue URL for issue #N from a PR's html_url
