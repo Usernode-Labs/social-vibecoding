@@ -25,6 +25,8 @@ async function migrate(config) {
   await seedStagingEnvProposal(pool, config);
   await seedStagingMergedPrs(pool, config);
   await seedStagingActiveSessions(pool, config);
+  await seedStagingDemoAppCard(pool);
+  await seedStagingLeaderboardProfile(pool);
   await seedStagingQaSession(pool, config);
   await seedStagingHeadlessFixtures(pool, config);
   await backfillEvents(pool);
@@ -1071,6 +1073,140 @@ async function seedStagingActiveSessions(pool, config) {
     total: fixtures.length,
     inserted,
   });
+}
+
+// Fixtures for the home-card activity chips (#57): one dedicated demo
+// app whose card exercises all three chips at once. chat_sessions is
+// staging:private (schema-only in staging), so without seeded sessions
+// the "to vote" / "in dev" chips would read zero on every card; the
+// demo issue guarantees the issues chip is non-zero on a card testers
+// can find by name. Explicit IDs sit in the 900xxx range so they can't
+// collide with cloned prod rows, every row carries the "Staging demo"
+// prefix per the mock-data convention, and ON CONFLICT DO NOTHING
+// keeps the re-run-on-every-boot path idempotent. The demo user's
+// password is a plain marker string — bcrypt.compare against a
+// non-hash always fails, so the account can't be logged into.
+async function seedStagingDemoAppCard(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password)
+       VALUES (900001, 'staging-demo-user', 'staging-demo-not-a-login')
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, view_visibility, created_by)
+       VALUES (900001, 'Staging demo app', 'staging-demo-app', 'running', 'public', 900001)
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_title, status, promoted_at)
+       VALUES
+         (900001, 900001, 900001, 'staging-demo/promoted-pr', 900001,
+          'Staging demo PR — awaiting votes', 'promoted', NOW()),
+         (900002, 900001, 900001, 'staging-demo-branch', NULL, NULL, 'active', NULL)
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO issues (id, app_id, title, description, created_by, status)
+       VALUES (900001, 900001, 'Staging demo issue',
+               'Staging demo issue so the home-card issues chip has a row to count.',
+               900001, 'open')
+       ON CONFLICT DO NOTHING`
+    );
+    log.info('db', 'Staging demo app-card fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Staging demo app-card seeding failed', { message: err.message });
+  }
+}
+
+// (#60) Fixtures for the leaderboard user-profile drill-in. The profile
+// view lists a user's PROPOSED PRs (chat_sessions) with kudos counts
+// (pr_kudos) — both staging:private tables, so without seeding the view
+// is empty for every user in staging. Seeds two obviously-fake users
+// (never reference real ones) at high fixed ids, a handful of sessions
+// covering each status badge the view renders (merged / open / merging
+// / closed), and kudos from the second user so counts are non-zero and
+// @staging-demo-author ranks visibly on the Top users tab. Idempotent
+// via ON CONFLICT DO NOTHING on the fixed ids; strictly a no-op outside
+// staging.
+async function seedStagingLeaderboardProfile(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    `SELECT id FROM apps WHERE view_visibility = 'public' ORDER BY id LIMIT 1`
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging leaderboard-profile fixtures skipped: no public app');
+    return;
+  }
+
+  // Password is a non-bcrypt sentinel — these accounts can never log in.
+  const AUTHOR_ID = 900001;
+  const GIVER_ID = 900002;
+  await pool.query(
+    `INSERT INTO users (id, username, password)
+     VALUES ($1, 'staging-demo-author', '!staging-fixture-no-login!'),
+            ($2, 'staging-demo-giver',  '!staging-fixture-no-login!')
+     ON CONFLICT DO NOTHING`,
+    [AUTHOR_ID, GIVER_ID]
+  );
+
+  // One session per status the profile renders a badge for. created_at
+  // is staggered so the newest-first ordering is visible; merged_at /
+  // promoted_at follow what the real lifecycle would have written. The
+  // archived row keeps promoted_at set — that's what makes it a CLOSED
+  // PR (proposed, then abandoned) rather than a private draft, which
+  // the profile endpoint excludes. pr_url present on the merged row so
+  // the external GitHub icon renders on at least one fixture.
+  const sessions = [
+    { id: 9000201, pr: 900301, status: 'merged', hoursAgo: 6,
+      title: '[Mock] Staging demo PR — merged: tidy profile chips',
+      promoted: true, merged: true, url: true },
+    { id: 9000202, pr: 900302, status: 'promoted', hoursAgo: 30,
+      title: '[Mock] Staging demo PR — open for vote: dark-mode polish',
+      promoted: true, merged: false, url: false },
+    { id: 9000203, pr: 900303, status: 'merging', hoursAgo: 54,
+      title: '[Mock] Staging demo PR — merging: debounce search box',
+      promoted: true, merged: false, url: false },
+    { id: 9000204, pr: 900304, status: 'archived', hoursAgo: 80,
+      title: '[Mock] Staging demo PR — closed without merging',
+      promoted: true, merged: false, url: false },
+  ];
+  for (const s of sessions) {
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_title, pr_url,
+          status, created_at, promoted_at, merged_at)
+       VALUES
+         ($1, $2, $3, $4, $5, $6, $7, $8,
+          NOW() - ($9::int * INTERVAL '1 hour'),
+          CASE WHEN $10 THEN NOW() - ($9::int * INTERVAL '1 hour') END,
+          CASE WHEN $11 THEN NOW() - (($9 - 1)::int * INTERVAL '1 hour') END)
+       ON CONFLICT (id) DO NOTHING`,
+      [s.id, appId, AUTHOR_ID, `staging-fixture/profile-pr-${s.id}`,
+       s.pr, s.title,
+       s.url ? `https://github.com/usernode-staging/demo/pull/${s.pr}` : null,
+       s.status, s.hoursAgo, s.promoted, s.merged]
+    );
+  }
+
+  // Kudos from the giver on the merged + open PRs: non-zero per-row
+  // counts, and merged credit so the author scores on Top users.
+  for (const sessionId of [9000201, 9000202]) {
+    await pool.query(
+      `INSERT INTO pr_kudos (session_id, giver_user_id, week_start, created_at)
+       SELECT $1, $2, date_trunc('week', NOW() AT TIME ZONE 'UTC')::date, NOW()
+        WHERE EXISTS (SELECT 1 FROM chat_sessions WHERE id = $1)
+       ON CONFLICT (session_id, giver_user_id) DO NOTHING`,
+      [sessionId, GIVER_ID]
+    );
+  }
+
+  log.info('db', 'Staging leaderboard-profile fixtures seeded', { appId });
 }
 
 // Q/A-mode fixture (#32): one demo dev-chat session whose latest Mayor
