@@ -25,6 +25,7 @@ async function migrate(config) {
   await seedStagingEnvProposal(pool, config);
   await seedStagingMergedPrs(pool, config);
   await seedStagingActiveSessions(pool, config);
+  await seedStagingHeadlessFixtures(pool, config);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
   // Must run BEFORE backfillOrphanedSpecDrafts: unwrapping spec_md after that
@@ -1068,6 +1069,122 @@ async function seedStagingActiveSessions(pool, config) {
     owner: owner.username,
     total: fixtures.length,
     inserted,
+  });
+}
+
+// Staging fixtures for the issue panel's headless proposal-run states
+// (#228 rename verification). The /github-issues route serves mock issues
+// 900001–900005 in staging (stagingMockIssues, routes/issues.js), but the
+// per-issue `headless` field comes from chat_sessions rows that never
+// exist in a staging clone — so the "Generating proposal…" / retry /
+// notification states would be unreachable by clicking around. Seed one
+// headless session per state, keyed to the mock issue numbers, plus the
+// two auto_solve_done notifications (notifications is staging:private,
+// copied schema-only).
+//
+// user_id is deliberately NULL on every fixture session: boot-time
+// resumeHeadlessRuns INNER JOINs users, so NULL keeps the 'generating'
+// fixture from being "resumed" (which would hit GitHub for a mock issue
+// number and fail the run); the issue panel and notification queries both
+// LEFT JOIN and degrade gracefully. headless_step is set on the
+// 'generating' row so failOrphanedHeadlessRuns (which sweeps step-less
+// generating rows) leaves it alone. Idempotent: sessions keyed off their
+// fixture branch name, notifications off (user, app, kind, session).
+async function seedStagingHeadlessFixtures(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging headless fixtures skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username, is_admin
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging headless fixtures skipped: no users');
+    return;
+  }
+  const target = userRows[0];
+
+  // Issue numbers match stagingMockIssues; 900001 is left without a run so
+  // the idle "Generate proposal" button stays reachable on its row.
+  const fixtures = [
+    { branch: 'staging-fixture/headless-generating', status: 'generating', outcome: null, issue: 900002, step: 'planning' },
+    { branch: 'staging-fixture/headless-question', status: 'ready', outcome: 'question', issue: 900003, step: null },
+    { branch: 'staging-fixture/headless-spec', status: 'ready', outcome: 'spec', issue: 900004, step: null },
+    { branch: 'staging-fixture/headless-failed', status: 'failed', outcome: null, issue: 900005, step: null },
+  ];
+
+  const sessionIds = {};
+  let inserted = 0;
+  for (const f of fixtures) {
+    const { rows: existing } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, f.branch]
+    );
+    if (existing.length) {
+      sessionIds[f.branch] = existing[0].id;
+      continue;
+    }
+    const { rows } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, status, is_headless,
+          headless_status, headless_outcome, headless_issue_number,
+          headless_step, created_at)
+       VALUES ($1, NULL, $2, 'active', TRUE, $3, $4, $5, $6,
+               NOW() - INTERVAL '30 minutes')
+       RETURNING id`,
+      [appId, f.branch, f.status, f.outcome, f.issue, f.step]
+    );
+    sessionIds[f.branch] = rows[0].id;
+    inserted++;
+  }
+
+  // Unread completion notifications for the renamed drawer rows / toast /
+  // tab-title markers: one ready-with-spec, one failed.
+  const notifFixtures = [
+    { branch: 'staging-fixture/headless-spec', detail: 'spec', minutesAgo: 4 },
+    { branch: 'staging-fixture/headless-failed', detail: 'failed', minutesAgo: 3 },
+  ];
+  let notifInserted = 0;
+  for (const f of notifFixtures) {
+    const sessionId = sessionIds[f.branch];
+    if (!sessionId) continue;
+    const { rows: existing } = await pool.query(
+      `SELECT id FROM notifications
+        WHERE user_id = $1 AND app_id = $2 AND kind = 'auto_solve_done'
+          AND session_id = $3
+        LIMIT 1`,
+      [target.id, appId, sessionId]
+    );
+    if (existing.length) continue;
+    await pool.query(
+      `INSERT INTO notifications
+         (user_id, app_id, session_id, source_user_id, kind, detail,
+          read_at, created_at)
+       VALUES ($1, $2, $3, NULL, 'auto_solve_done', $4, NULL,
+               NOW() - ($5::int * INTERVAL '1 minute'))`,
+      [target.id, appId, sessionId, f.detail, f.minutesAgo]
+    );
+    notifInserted++;
+  }
+
+  log.info('db', 'Staging headless proposal fixtures seeded', {
+    appId,
+    targetUser: target.username,
+    sessionsInserted: inserted,
+    notificationsInserted: notifInserted,
   });
 }
 

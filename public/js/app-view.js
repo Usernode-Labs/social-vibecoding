@@ -1692,7 +1692,7 @@ const AppView = {
 
   // One issue row for the forum feed, with everything the old Open
   // Issues section rendered per row (bounty/kudos, Create PR, the
-  // Auto-solve state machine, Preview, creator attribution) plus the
+  // Generate-proposal state machine, Preview, creator attribution) plus the
   // accordion expansion into the issue body + thread chat.
   _renderIssueRow(issue, opts) {
     const noNav = !!(opts && opts.noNav);
@@ -1719,7 +1719,7 @@ const AppView = {
     const createBtn = `<button class="gc-vote-btn" title="Start a dev chat to solve this issue" onclick="AppView.createPrForIssue(${n})">Create PR</button>`;
     // #155: headless auto-session button. Four states driven by the
     // issue's `headless` field from /github-issues:
-    //   none/failed → "Auto-solve" (opens the confirm + model popup)
+    //   none/failed → "Generate proposal" (opens the confirm + model popup)
     //   generating  → disabled progress label
     //   ready       → contextual clone-for-me label by outcome (#168):
     //                 "Review spec / Review solution / Answer question
@@ -1730,7 +1730,7 @@ const AppView = {
     const h = issue.headless;
     let autoBtn;
     if (h && h.status === 'generating') {
-      autoBtn = `<button class="gc-vote-btn" disabled title="A headless AI session is working on this issue${h.username ? ` (started by ${escapeAttr(h.username)})` : ''}">Generating auto-solve&hellip;</button>`;
+      autoBtn = `<button class="gc-vote-btn" disabled title="A headless AI session is working on this issue${h.username ? ` (started by ${escapeAttr(h.username)})` : ''}">Generating proposal&hellip;</button>`;
     } else if (h && h.status === 'ready') {
       // #183: a code/spec_code run with a live preview gets the
       // changes-ready treatment — label + a Preview button that opens
@@ -1739,10 +1739,10 @@ const AppView = {
       // degrades back to the plain outcome wording.
       const hasPreview = !!h.stagingUrl && (h.outcome === 'code' || h.outcome === 'spec_code');
       const previewBtn = hasPreview
-        ? `<button class="gc-vote-btn gc-vote-btn-preview" title="Open the auto-solve staging preview" onclick="AppView.swapToStagingForSession(${h.sessionId}, '${h.stagingUrl}')">Preview</button>`
+        ? `<button class="gc-vote-btn gc-vote-btn-preview" title="Open the proposal's staging preview" onclick="AppView.swapToStagingForSession(${h.sessionId}, '${h.stagingUrl}')">Preview</button>`
         : '';
       if (h.mySessionId) {
-        autoBtn = `${previewBtn}<button class="gc-vote-btn" title="You already started a session from this auto session — open it" onclick="AppView.goToAutoSessionClone(${h.mySessionId})">Go to session</button>`;
+        autoBtn = `${previewBtn}<button class="gc-vote-btn" title="You already started a session from this proposal — open it" onclick="AppView.goToAutoSessionClone(${h.mySessionId})">Go to session</button>`;
       } else {
         const outcomeNote = h.outcome === 'spec' ? 'it drafted a spec'
           : h.outcome === 'code' ? 'it pushed a code change'
@@ -1752,18 +1752,18 @@ const AppView = {
           : h.outcome === 'spec' ? 'Review spec &amp; start session'
           : h.outcome === 'code' ? 'Review solution &amp; start session'
           : h.outcome === 'question' ? 'Answer question &amp; start session'
-          : 'Start session from auto session';
-        autoBtn = `${previewBtn}<button class="gc-vote-btn" title="Clone the finished auto session (${outcomeNote}) into your own dev chat — others can clone it too" onclick="AppView.startFromAutoSession(${h.sessionId})">${autoLabel}</button>`;
+          : 'Start session from proposal';
+        autoBtn = `${previewBtn}<button class="gc-vote-btn" title="Clone the finished proposal (${outcomeNote}) into your own dev chat — others can clone it too" onclick="AppView.startFromAutoSession(${h.sessionId})">${autoLabel}</button>`;
       }
       // #150: a question outcome doesn't block re-running — answer the
-      // questions on the issue, then press Auto-solve again and the new
-      // run reads the answers. Both paths stay available (whether or not
-      // the viewer already cloned this run).
+      // questions on the issue, then press Generate proposal again and
+      // the new run reads the answers. Both paths stay available (whether
+      // or not the viewer already cloned this run).
       if (h.outcome === 'question') {
-        autoBtn += `<button class="gc-vote-btn" title="Questions were posted on the issue — answer them, then run auto-solve again" onclick="AppView.confirmAutoSession(${n})">Auto-solve</button>`;
+        autoBtn += `<button class="gc-vote-btn" title="Questions were posted on the issue — answer them, then generate a proposal again" onclick="AppView.confirmAutoSession(${n})">Generate proposal</button>`;
       }
     } else {
-      autoBtn = `<button class="gc-vote-btn" title="Spin up a headless AI session that starts solving this issue on its own — uses your credits" onclick="AppView.confirmAutoSession(${n})">Auto-solve</button>`;
+      autoBtn = `<button class="gc-vote-btn" title="Spin up a headless AI session that starts solving this issue on its own — uses your credits" onclick="AppView.confirmAutoSession(${n})">Generate proposal</button>`;
     }
     // #133: the creating user renders in the meta line below the title.
     // created_by_username comes from the /github-issues route (local
@@ -1970,7 +1970,7 @@ const AppView = {
 
   _headlessPollTimer: null,
 
-  // "Auto-solve" — confirmation popup (token warning + model selector)
+  // "Generate proposal" — confirmation popup (token warning + model selector)
   // before spinning up a headless AI session on this issue. The session is
   // billed to the clicking user but isn't attached to their dev chat.
   async confirmAutoSession(issueNumber) {
@@ -2004,18 +2004,18 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        alert(data.error || `Couldn't start the auto session (HTTP ${resp.status}).`);
+        alert(data.error || `Couldn't start generating the proposal (HTTP ${resp.status}).`);
         return;
       }
       const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
       if (issue) issue.headless = { sessionId: data.session.id, status: 'generating' };
       AppView._rerenderFeed();
     } catch (err) {
-      alert(`Couldn't start the auto session: ${err.message}`);
+      alert(`Couldn't start generating the proposal: ${err.message}`);
     }
   },
 
-  // Singleton confirm popup for Auto-solve. Same scrim/card styling as
+  // Singleton confirm popup for Generate proposal. Same scrim/card styling as
   // ConfirmModal (confirm-modal.js) plus a model <select>; resolves to the
   // chosen model id, or null on cancel/backdrop/Esc.
   _showAutoSessionModal(issueNumber, models, preselect) {
@@ -2030,7 +2030,7 @@ const AppView = {
     root.innerHTML = `
       <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
         <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl relative">
-          <h2 class="text-lg font-bold mb-2 text-zinc-900 dark:text-zinc-100">Start auto session for issue #${issueNumber}?</h2>
+          <h2 class="text-lg font-bold mb-2 text-zinc-900 dark:text-zinc-100">Generate proposal for issue #${issueNumber}?</h2>
           <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
             This spins up a <b>headless AI session</b> that immediately starts working on the
             issue on its own — investigating the repo and drafting a spec, pushing a code
@@ -2053,7 +2053,7 @@ const AppView = {
             <button data-role="cancel" type="button"
               class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
             <button data-role="confirm" type="button"
-              class="rounded-lg px-4 py-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-500 transition-colors">Start auto session</button>
+              class="rounded-lg px-4 py-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-500 transition-colors">Generate proposal</button>
           </div>
         </div>
       </div>`;
@@ -2083,7 +2083,7 @@ const AppView = {
     });
   },
 
-  // "Start session from auto session" — clone the finished headless session
+  // "Start session from proposal" — clone the finished headless session
   // (chat history + spec + branch + CC memory) into a dev chat owned by the
   // clicking user, then land them in it. Any number of users can do this
   // independently; each clone gets its own branch and PR path.
@@ -2093,7 +2093,7 @@ const AppView = {
       const resp = await fetch(`/api/sessions/${headlessSessionId}/clone-headless`, { method: 'POST' });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        alert(data.error || `Couldn't start a session from the auto session (HTTP ${resp.status}).`);
+        alert(data.error || `Couldn't start a session from the proposal (HTTP ${resp.status}).`);
         return;
       }
       // #172: remember the clone locally so a back-navigation to the
@@ -2110,7 +2110,7 @@ const AppView = {
         await App.switchTab('dev', data.session.id, 'sessions');
       }
     } catch (err) {
-      alert(`Couldn't start a session from the auto session: ${err.message}`);
+      alert(`Couldn't start a session from the proposal: ${err.message}`);
     }
   },
 
@@ -2127,7 +2127,7 @@ const AppView = {
 
   // While any rendered issue shows a generating auto session, poll the
   // issues endpoint so the button flips to its outcome-specific "Review
-  // … & start session" label (or back to Auto-solve on failure) without
+  // … & start session" label (or back to Generate proposal on failure) without
   // a manual refresh.
   _syncHeadlessPolling() {
     const generating = (AppView._ghIssues || []).some(
