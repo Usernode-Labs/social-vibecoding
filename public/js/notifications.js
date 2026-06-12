@@ -327,43 +327,50 @@ const Notifications = {
     // notifications. The drawer only dismisses via outside-click or the
     // explicit close button.
     Notifications._markOneRead(id);
-    // #161: completion notifications deep-link past the group-chat
-    // default. session_done opens the dev session itself; auto_solve_done
-    // opens the group-chat tab and reveals the issue row (deferred via
-    // _pendingReveal because the info panel loads asynchronously).
+    // #161/#194: completion notifications deep-link to their dev
+    // sub-tab. session_done opens the dev session itself;
+    // auto_solve_done opens the Issues tab with that issue's accordion
+    // expanded.
     if (item.kind === 'session_done' && item.appSlug && item.sessionId) {
       if (typeof App !== 'undefined' && App.openAppTab) {
-        App.openAppTab(item.appSlug, 'individual-chat', { sessionId: item.sessionId });
+        App.openAppTab(item.appSlug, 'dev', { subTab: 'sessions', sessionId: item.sessionId });
       } else {
-        window.location.hash = `#app/${item.appSlug}/individual-chat/${item.sessionId}`;
+        window.location.hash = `#app/${item.appSlug}/dev/sessions/${item.sessionId}`;
       }
       return;
     }
     if (item.kind === 'auto_solve_done' && item.appSlug) {
-      if (typeof AppView !== 'undefined' && item.headlessIssueNumber) {
-        AppView._pendingReveal = { type: 'issue', number: item.headlessIssueNumber };
-      }
       if (typeof App !== 'undefined' && App.openAppTab) {
-        App.openAppTab(item.appSlug, 'group-chat');
+        App.openAppTab(item.appSlug, 'dev', {
+          subTab: 'issues',
+          ref: item.headlessIssueNumber || null,
+        });
       } else {
-        window.location.hash = `#app/${item.appSlug}/group-chat`;
+        window.location.hash = item.headlessIssueNumber
+          ? `#app/${item.appSlug}/dev/issues/${item.headlessIssueNumber}`
+          : `#app/${item.appSlug}/dev/issues`;
       }
       return;
     }
     if (item.appSlug) {
-      // Both mention and kudos notifications land on the app's group
-      // chat. Mentions originate there; kudos's PR is rendered in the
-      // group-chat tab's vote panel (Open PRs / Merged), where the
-      // user can scroll to it and reciprocate if they want.
+      // Mentions/replies/reactions land on the app's Dev → Chat;
+      // vote nudges and kudos land on the Proposals tab where their PR
+      // card lives (deep-linked when we know the session).
       //
       // Navigate via App.openAppTab rather than assigning location.hash:
       // a same-value hash assignment fires no `hashchange`, so clicking a
       // notification for the app/tab already on screen wouldn't re-render.
       // openAppTab always renders (and keeps the URL in sync internally).
+      const voteKinds = new Set(['pr_proposed', 'stale_pr', 'kudos']);
+      const toProposals = voteKinds.has(item.kind);
       if (typeof App !== 'undefined' && App.openAppTab) {
-        App.openAppTab(item.appSlug, 'group-chat');
+        App.openAppTab(item.appSlug, 'dev', toProposals
+          ? { subTab: 'proposals', ref: item.sessionId || null }
+          : { subTab: 'chat' });
       } else {
-        window.location.hash = `#app/${item.appSlug}/group-chat`;
+        window.location.hash = toProposals
+          ? `#app/${item.appSlug}/dev/proposals${item.sessionId ? `/${item.sessionId}` : ''}`
+          : `#app/${item.appSlug}/dev/chat`;
       }
     }
   },

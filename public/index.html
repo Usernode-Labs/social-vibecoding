@@ -271,11 +271,13 @@
       <!-- Tab content renders here -->
     </div>
 
-    <!-- Bottom tabs -->
+    <!-- Bottom tabs — two modes (#194): App (the running iframe) and
+         Dev (everything about changing the app, organized into the
+         Chat / Issues / Proposals / Sessions sub-tabs rendered by
+         AppView.renderDevView). -->
     <nav id="app-tabs" class="flex border-t border-zinc-200 dark:border-zinc-800 shrink-0">
       <button class="app-tab flex-1 py-3 text-center text-sm font-medium transition-colors" data-tab="app">App</button>
-      <button class="app-tab flex-1 py-3 text-center text-sm font-medium transition-colors" data-tab="group-chat">Group Chat</button>
-      <button class="app-tab flex-1 py-3 text-center text-sm font-medium transition-colors" data-tab="individual-chat">Dev Chat</button>
+      <button class="app-tab flex-1 py-3 text-center text-sm font-medium transition-colors" data-tab="dev">Dev</button>
     </nav>
   </div>
 

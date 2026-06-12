@@ -163,10 +163,12 @@ const Leaderboard = {
         const slug = el.dataset.lbPrRoute;
         const sid = el.dataset.lbPrSession;
         if (!slug) return;
-        // Land on the app's group-chat tab. The PR appears in the
-        // promoted/merged list there; the user can hit kudos right
-        // from the panel.
-        window.location.hash = `#app/${slug}/group-chat`;
+        // Land on the app's Proposals tab. The PR appears in the
+        // open/merged list there; the user can hit kudos right
+        // from the card. Deep-link to the session when we have it.
+        window.location.hash = sid
+          ? `#app/${slug}/dev/proposals/${sid}`
+          : `#app/${slug}/dev/proposals`;
       });
     });
   },

@@ -416,6 +416,20 @@ CREATE INDEX IF NOT EXISTS idx_chat_session_specs_session
 -- without overloading the free-form `content` field.
 ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
 
+-- #194: thread scoping for chat_messages. NULL thread_type = general
+-- chat (all pre-existing rows; no backfill needed). thread_type is one
+-- of 'issue' | 'session' | 'governance'; thread_ref is, respectively,
+-- the GitHub issue number (consistent with
+-- issue_bounties.github_issue_number keying), chat_sessions.id (PR
+-- proposals), or the internal issues.id (governance proposals). No FK
+-- on thread_ref — GitHub issue numbers aren't a local table; session /
+-- governance refs are validated server-side at post time (ws.js).
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS thread_type VARCHAR(16);
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS thread_ref INTEGER;
+CREATE INDEX IF NOT EXISTS idx_chat_messages_thread
+  ON chat_messages (app_id, thread_type, thread_ref, id)
+  WHERE thread_type IS NOT NULL;
+
 -- #25: emoji reactions on group-chat messages (WhatsApp-style, but
 -- Slack-model: a user may add multiple distinct emoji to one message,
 -- hence UNIQUE(message_id, user_id, emoji) rather than per-user). Toggled

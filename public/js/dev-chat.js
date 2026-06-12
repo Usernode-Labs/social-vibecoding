@@ -370,7 +370,7 @@ const DevChat = {
             if (typeof App !== 'undefined' && App.updateHash) App.updateHash();
           });
         } else {
-          location.hash = `#app/${slug}/individual-chat/${id}`;
+          location.hash = `#app/${slug}/dev/sessions/${id}`;
         }
       });
     });
@@ -1258,7 +1258,7 @@ const DevChat = {
   // is the mounted tab — a turn finishing while the user is on the App
   // or Group Chat tab must not decorate those views' titles.
   setTitleStatus(status) {
-    if (status && (typeof App === 'undefined' || App.currentTab !== 'individual-chat')) {
+    if (status && (typeof App === 'undefined' || !(App.currentTab === 'dev' && App.currentSubTab === 'sessions'))) {
       status = null;
     }
     if (DevChat._titleStatus === status) return;
@@ -3002,7 +3002,7 @@ DevChat._awayReturnHandler = () => {
   if (DevChat.isStreaming && DevChat.currentSession) {
     if (away) {
       DevChat._setNotifyOnDone(DevChat.currentSession.id, true);
-    } else if (typeof App !== 'undefined' && App.currentTab === 'individual-chat') {
+    } else if (typeof App !== 'undefined' && (App.currentTab === 'dev' && App.currentSubTab === 'sessions')) {
       DevChat._setNotifyOnDone(DevChat.currentSession.id, false);
     }
   }

@@ -20,6 +20,20 @@ function chatRoutes(config) {
     const before = req.query.before;
     const limit = Math.min(parseInt(req.query.limit || '50', 10), 100);
 
+    // #194: optional thread scoping. Absent → general chat only
+    // (thread_type IS NULL) — this is what keeps thread messages out of
+    // the general stream. Both params must be present and valid to
+    // select a thread; a malformed pair is a 400 rather than silently
+    // falling back to general chat.
+    const THREAD_TYPES = new Set(['issue', 'session', 'governance']);
+    const threadType = req.query.thread_type || null;
+    const threadRef = req.query.thread_ref != null ? parseInt(req.query.thread_ref, 10) : null;
+    if (threadType || req.query.thread_ref != null) {
+      if (!THREAD_TYPES.has(threadType) || !Number.isInteger(threadRef) || threadRef <= 0) {
+        return res.status(400).json({ error: 'Invalid thread_type/thread_ref' });
+      }
+    }
+
     try {
       // Group chat is a collaboration surface — collab-level access (404
       // on deny so private apps aren't enumerable).
@@ -31,27 +45,32 @@ function chatRoutes(config) {
       }
 
       const appId = app.id;
-      let query, params;
 
-      if (before) {
-        query = `
-          SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.metadata, m.created_at
-          FROM chat_messages m
-          LEFT JOIN users u ON m.user_id = u.id
-          WHERE m.app_id = $1 AND m.id < $2
-          ORDER BY m.id DESC
-          LIMIT $3`;
-        params = [appId, before, limit];
+      // Thread filter: a specific thread when requested, else the
+      // general stream (thread_type IS NULL — all legacy rows).
+      const params = [appId];
+      let threadClause;
+      if (threadType) {
+        params.push(threadType, threadRef);
+        threadClause = `m.thread_type = $2 AND m.thread_ref = $3`;
       } else {
-        query = `
-          SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.metadata, m.created_at
-          FROM chat_messages m
-          LEFT JOIN users u ON m.user_id = u.id
-          WHERE m.app_id = $1
-          ORDER BY m.id DESC
-          LIMIT $2`;
-        params = [appId, limit];
+        threadClause = `m.thread_type IS NULL`;
       }
+      let beforeClause = '';
+      if (before) {
+        params.push(before);
+        beforeClause = ` AND m.id < $${params.length}`;
+      }
+      params.push(limit);
+
+      const query = `
+        SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.metadata,
+               m.thread_type, m.thread_ref, m.created_at
+        FROM chat_messages m
+        LEFT JOIN users u ON m.user_id = u.id
+        WHERE m.app_id = $1 AND ${threadClause}${beforeClause}
+        ORDER BY m.id DESC
+        LIMIT $${params.length}`;
 
       const { rows } = await pool.query(query, params);
       const messages = rows.reverse();

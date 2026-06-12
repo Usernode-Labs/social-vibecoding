@@ -255,11 +255,52 @@ function broadcastGlobal(data) {
   }
 }
 
+// #194: validate an inbound thread reference { type, ref } for an app.
+// Returns { type, ref } when valid, null otherwise. 'session' and
+// 'governance' refs must exist for THIS app (DB lookup); 'issue' refs
+// accept any positive integer — the GitHub issue list is cached and
+// eventual, so a strict existence check would reject messages on
+// fresh issues for up to the cache TTL.
+async function validateThread(pool, appId, thread) {
+  if (!thread || typeof thread !== 'object') return null;
+  const type = thread.type;
+  const ref = Number(thread.ref);
+  if (!['issue', 'session', 'governance'].includes(type)) return null;
+  if (!Number.isInteger(ref) || ref <= 0) return null;
+  if (type === 'session') {
+    const { rows } = await pool.query(
+      'SELECT 1 FROM chat_sessions WHERE id = $1 AND app_id = $2', [ref, appId]
+    );
+    if (!rows.length) return null;
+  } else if (type === 'governance') {
+    const { rows } = await pool.query(
+      'SELECT 1 FROM issues WHERE id = $1 AND app_id = $2', [ref, appId]
+    );
+    if (!rows.length) return null;
+  }
+  return { type, ref };
+}
+
 async function handleMessage(pool, client, msg) {
   switch (msg.type) {
     case 'chat': {
       if (!msg.content?.trim()) return;
       const content = msg.content.trim().substring(0, 2000);
+
+      // #194: optional thread scoping. An invalid/spoofed ref drops the
+      // whole message (never silently re-route a thread post into the
+      // general stream — the sender's client is buggy or hostile either
+      // way, and general chat is the louder surface).
+      let thread = null;
+      if (msg.thread) {
+        thread = await validateThread(pool, client.appId, msg.thread);
+        if (!thread) {
+          log.warn('ws', 'chat message dropped: invalid thread ref', {
+            appId: client.appId, userId: client.user.id,
+          });
+          return;
+        }
+      }
 
       // #15: optional quote (Signal-style reply). The client only sends a
       // reference (refMsgId for a chat row, or sessionId for a PR); we
@@ -335,11 +376,12 @@ async function handleMessage(pool, client, msg) {
 
       const metadata = quote ? { quote } : null;
       const { rows } = await pool.query(
-        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata)
-         VALUES ($1, $2, $3, 'message', $4)
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
+         VALUES ($1, $2, $3, 'message', $4, $5, $6)
          RETURNING id, created_at`,
         // metadata is NOT NULL DEFAULT '{}', so always pass a JSON object.
-        [client.appId, client.user.id, content, JSON.stringify(metadata || {})]
+        [client.appId, client.user.id, content, JSON.stringify(metadata || {}),
+         thread ? thread.type : null, thread ? thread.ref : null]
       );
 
       const outMsg = {
@@ -350,6 +392,7 @@ async function handleMessage(pool, client, msg) {
         content,
         msgType: 'message',
         ...(metadata ? { metadata } : {}),
+        ...(thread ? { thread } : {}),
         createdAt: rows[0].created_at,
       };
 
@@ -536,10 +579,20 @@ async function handleMessage(pool, client, msg) {
     }
 
     case 'typing': {
+      // #194: pass the (shape-checked) thread along so typing indicators
+      // don't bleed between general chat and threads. No DB lookup —
+      // typing is ephemeral and the worst a bogus ref does is show a
+      // typing line in a thread nobody has open.
+      const t = msg.thread;
+      const typingThread = (t && typeof t === 'object'
+        && ['issue', 'session', 'governance'].includes(t.type)
+        && Number.isInteger(Number(t.ref)) && Number(t.ref) > 0)
+        ? { type: t.type, ref: Number(t.ref) } : null;
       broadcast(client.appId, {
         type: 'typing',
         userId: client.user.id,
         username: client.user.username,
+        ...(typingThread ? { thread: typingThread } : {}),
       }, client.ws);
       break;
     }
@@ -589,13 +642,18 @@ async function getReactionsForMessages(pool, messageIds) {
 // (JSONB) and echoed on the live broadcast. Used e.g. by the vote-activity
 // lines (promote / vote cast) to carry { vote: { sessionId, prNumber } } so
 // the group-chat client can render live vote buttons inline on the row.
-async function sendSystemMessage(pool, appId, content, msgType = 'system', metadata = null) {
+// #194: optional `thread` ({ type: 'issue'|'session'|'governance', ref })
+// scopes the system message into that thread instead of general chat
+// (used by the per-vote activity rows, which post into the proposal's
+// thread). Callers are trusted — no ref validation here.
+async function sendSystemMessage(pool, appId, content, msgType = 'system', metadata = null, thread = null) {
   const { rows } = await pool.query(
-    `INSERT INTO chat_messages (app_id, content, msg_type, metadata)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO chat_messages (app_id, content, msg_type, metadata, thread_type, thread_ref)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING id, created_at`,
     // metadata is NOT NULL DEFAULT '{}', so always pass a JSON object.
-    [appId, content, msgType, JSON.stringify(metadata || {})]
+    [appId, content, msgType, JSON.stringify(metadata || {}),
+     thread ? thread.type : null, thread ? thread.ref : null]
   );
 
   broadcast(appId, {
@@ -606,6 +664,7 @@ async function sendSystemMessage(pool, appId, content, msgType = 'system', metad
     content,
     msgType,
     ...(metadata ? { metadata } : {}),
+    ...(thread ? { thread } : {}),
     createdAt: rows[0].created_at,
   });
 }
