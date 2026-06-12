@@ -4,7 +4,7 @@
   --bg-tertiary: #e4e4e7;
   --bg-code: #f4f4f5;
   --bg-code-header: #e4e4e7;
-  --bg-card: rgba(139, 92, 246, 0.06);
+  --bg-card: rgba(77, 111, 174, 0.06);
   --bg-card-alt: rgba(16, 185, 129, 0.04);
   --bg-input: #f4f4f5;
   --border: #d4d4d8;
@@ -14,8 +14,8 @@
   --text-muted: #71717a;
   --text-faint: #a1a1aa;
   --text-code: #3f3f46;
-  --accent: #7c3aed;
-  --accent-light: #8b5cf6;
+  --accent: #3b5998;
+  --accent-light: #4d6fae;
 }
 
 .dark {
@@ -24,7 +24,7 @@
   --bg-tertiary: #2e2e50;
   --bg-code: #0f0f1a;
   --bg-code-header: #1a1a30;
-  --bg-card: rgba(139, 92, 246, 0.08);
+  --bg-card: rgba(77, 111, 174, 0.08);
   --bg-card-alt: rgba(16, 185, 129, 0.05);
   --bg-input: #1a1a30;
   --border: #2e2e50;
@@ -34,8 +34,8 @@
   --text-muted: #6e6e8a;
   --text-faint: #9898b0;
   --text-code: #e4e4e7;
-  --accent: #a78bfa;
-  --accent-light: #c4b5fd;
+  --accent: #6f93cf;
+  --accent-light: #9bb8e2;
 }
 
 html, body {
@@ -297,7 +297,7 @@ html, body {
   transition: background 300ms;
 }
 
-.dc-pr-card-highlight { background: rgba(139, 92, 246, 0.2); }
+.dc-pr-card-highlight { background: rgba(77, 111, 174, 0.2); }
 .dc-pr-card-header { margin-bottom: 8px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 
 .dc-pr-link { font-size: 14px; font-weight: 600; color: var(--accent); text-decoration: none; }
@@ -324,8 +324,8 @@ html, body {
 }
 .dc-pr-btn-preview:hover { background: var(--bg-tertiary); }
 
-.dc-pr-btn-promote { background: #7c3aed; color: white; }
-.dc-pr-btn-promote:hover { background: #6d28d9; }
+.dc-pr-btn-promote { background: #3b5998; color: white; }
+.dc-pr-btn-promote:hover { background: #324a7e; }
 .dc-pr-btn-promote:disabled { background: #3f3f46; cursor: not-allowed; }
 
 /* ── Claude Code log (collapsible) ─────────────────────── */
@@ -486,7 +486,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .gc-vote-btn-no { color: #ef4444; }
 .gc-vote-btn-no:hover { background: rgba(239, 68, 68, 0.15); }
 .gc-vote-btn-preview { color: var(--accent); }
-.gc-vote-btn-preview:hover { background: rgba(167, 139, 250, 0.15); }
+.gc-vote-btn-preview:hover { background: rgba(111, 147, 207, 0.15); }
 /* Admin force-merge / force-undo buttons. Amber instead of red so
  * they don't visually dominate the Yes/No pair, but distinct enough
  * from the regular vote buttons that an admin clicking through the
@@ -543,7 +543,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 }
 /* Outline color by tally state: purple = not enough votes yet,
    green = Yes reached majority, red = No reached majority. */
-.gc-vote-count-pending { color: #7c3aed; }
+.gc-vote-count-pending { color: #3b5998; }
 .gc-vote-count-yes { color: #22c55e; }
 .gc-vote-count-no { color: #ef4444; }
 /* Proportional fill stripes: top = Yes share, bottom = No share, each a
@@ -579,7 +579,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   gap: 4px;
   font-size: 11px;
   font-weight: 600;
-  color: #8b5cf6;
+  color: #4d6fae;
   white-space: nowrap;
 }
 /* Row text tint by the viewer's vote status: faded once they've voted,
@@ -695,7 +695,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   font-weight: 500;
 }
 .gc-mention-self {
-  background: rgba(139, 92, 246, 0.18);
+  background: rgba(77, 111, 174, 0.18);
   padding: 0 4px;
   border-radius: 4px;
   color: var(--accent-light, var(--accent));
@@ -1043,7 +1043,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   background: rgb(16 185 129); /* emerald-500 */
 }
 .dc-active-dot-promoted {
-  background: rgb(139 92 246); /* violet-500 */
+  background: rgb(77 111 174); /* violet-500 */
 }
 .dc-active-dot-paused {
   background: var(--text-faint); /* zinc-400-ish */
@@ -1063,9 +1063,9 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
 }
 @keyframes dc-active-pulse-violet {
-  0%   { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.45); }
-  70%  { box-shadow: 0 0 0 6px rgba(139, 92, 246, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0); }
+  0%   { box-shadow: 0 0 0 0 rgba(77, 111, 174, 0.45); }
+  70%  { box-shadow: 0 0 0 6px rgba(77, 111, 174, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(77, 111, 174, 0); }
 }
 
 /* Primary action button (Pause/Resume). Tinted by intent —
@@ -1168,7 +1168,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   margin: 4px 12px 8px;
   padding: 10px 12px;
   border: 1px solid var(--border, rgba(255,255,255,0.12));
-  border-left: 3px solid rgb(139 92 246); /* violet-500 */
+  border-left: 3px solid rgb(77 111 174); /* violet-500 */
   border-radius: 6px;
   background: var(--bg-secondary, #18181b);
   cursor: pointer;
@@ -1177,8 +1177,8 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 
 .dc-spec-preview-card:hover,
 .dc-spec-preview-card:focus-visible {
-  border-color: rgb(139 92 246);
-  background: rgba(139, 92, 246, 0.06);
+  border-color: rgb(77 111 174);
+  background: rgba(77, 111, 174, 0.06);
   outline: none;
 }
 
@@ -1198,7 +1198,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .dc-spec-preview-cta {
   margin-left: auto;
   font-size: 11px;
-  color: rgb(139 92 246);
+  color: rgb(77 111 174);
 }
 
 .dc-spec-preview-snippet {
@@ -1299,7 +1299,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 
 .dc-spec-resizer:hover,
 .dc-spec-resizer-active {
-  background: rgb(139 92 246);
+  background: rgb(77 111 174);
 }
 
 @media (min-width: 1024px) {
@@ -1385,7 +1385,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 }
 
 .dc-spec-action-btn:hover:not(:disabled) {
-  border-color: rgb(139 92 246);
+  border-color: rgb(77 111 174);
 }
 
 .dc-spec-action-btn:disabled {
@@ -1404,7 +1404,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   margin: 6px 0;
   padding: 10px 12px;
   border: 1px solid var(--border, rgba(255,255,255,0.12));
-  border-left: 3px solid rgb(139 92 246);
+  border-left: 3px solid rgb(77 111 174);
   border-radius: 6px;
   background: var(--bg-secondary, #18181b);
 }
@@ -1486,12 +1486,12 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 }
 
 .gc-spec-card-view:hover:not(:disabled) {
-  border-color: rgb(139 92 246);
-  color: rgb(139 92 246);
+  border-color: rgb(77 111 174);
+  color: rgb(77 111 174);
 }
 
 .gc-spec-pr {
-  color: rgb(139 92 246);
+  color: rgb(77 111 174);
   text-decoration: none;
 }
 .gc-spec-pr:hover { text-decoration: underline; }
@@ -1571,7 +1571,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 
 .gc-panel-resizer-draggable:hover,
 .gc-panel-resizer-active {
-  background: rgb(139 92 246);
+  background: rgb(77 111 174);
 }
 
 /* Draggable divider between chat pane and spec panel. Hidden by
@@ -1590,7 +1590,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 
 .gc-spec-resizer:hover,
 .gc-spec-resizer-active {
-  background: rgb(139 92 246);
+  background: rgb(77 111 174);
 }
 
 @media (min-width: 1024px) {
@@ -1814,20 +1814,20 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 /* "Platform has rolled past the SHA this tab loaded against — reload to
    pick up the new client code." Click to reload; styled as a button. */
 .app-version-pill--stale {
-  background: rgba(139, 92, 246, 0.12);
-  border-color: rgba(139, 92, 246, 0.45);
-  color: #a78bfa;
+  background: rgba(77, 111, 174, 0.12);
+  border-color: rgba(77, 111, 174, 0.45);
+  color: #6f93cf;
   cursor: pointer;
   font: inherit;
 }
 .app-version-pill--stale:hover {
-  background: rgba(139, 92, 246, 0.2);
-  border-color: rgba(139, 92, 246, 0.65);
-  color: #c4b5fd;
+  background: rgba(77, 111, 174, 0.2);
+  border-color: rgba(77, 111, 174, 0.65);
+  color: #9bb8e2;
 }
 .app-version-pill--stale .app-version-pill-dot {
-  background: #a78bfa;
-  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.22);
+  background: #6f93cf;
+  box-shadow: 0 0 0 2px rgba(77, 111, 174, 0.22);
   animation: app-version-pill-pulse 1.6s ease-in-out infinite;
 }
 @keyframes app-version-pill-pulse {
@@ -1941,7 +1941,7 @@ html.in-native-webview #header-title {
   height: 12px;
   margin-right: 6px;
   border-radius: 50%;
-  border: 2px solid rgba(124, 58, 237, 0.25);
+  border: 2px solid rgba(59, 89, 152, 0.25);
   border-top-color: var(--accent);
   animation: import-spin 0.8s linear infinite;
   vertical-align: -2px;

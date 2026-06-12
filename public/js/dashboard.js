@@ -124,8 +124,8 @@ function renderGrowth(g) {
   const weeks = g.weeks || [];
   const labels = weeks.map((w) => weekLabel(w.wk));
   const series = [
-    { key: 'new_users', label: 'New users', color: '#8b5cf6' },
-    { key: 'new_apps', label: 'New apps', color: '#a78bfa' },
+    { key: 'new_users', label: 'New users', color: '#4d6fae' },
+    { key: 'new_apps', label: 'New apps', color: '#6f93cf' },
     { key: 'promoted_prs', label: 'Promoted PRs', color: '#34d399' },
     { key: 'merged_prs', label: 'Merged PRs', color: '#60a5fa' },
   ];
@@ -168,7 +168,7 @@ function renderRetention(r) {
       if (v == null) { cells.push('<td class="px-2 py-1 text-center text-zinc-700">·</td>'); continue; }
       const p = pct(v, c.cohortSize);
       const alpha = Math.max(0.06, Math.min(1, p / 100));
-      cells.push(`<td class="px-2 py-1 text-center" style="background:rgba(139,92,246,${alpha})">
+      cells.push(`<td class="px-2 py-1 text-center" style="background:rgba(77,111,174,${alpha})">
         <span class="text-[11px] ${p >= 45 ? 'text-white' : 'text-zinc-300'}">${p}%</span></td>`);
     }
     return `<tr>
@@ -202,15 +202,15 @@ function renderStickiness(rows) {
     const ratio = r.mau > 0 ? Math.round((r.wau / r.mau) * 100) : 0;
     const x = (i * step).toFixed(1);
     const y = (H - (wau[i] / max) * (H - 16)).toFixed(1);
-    return `<circle cx="${x}" cy="${y}" r="2.5" fill="#8b5cf6"><title>${esc(labels[i])} — WAU ${wau[i]}, MAU ${mau[i]}, stickiness ${ratio}%</title></circle>`;
+    return `<circle cx="${x}" cy="${y}" r="2.5" fill="#4d6fae"><title>${esc(labels[i])} — WAU ${wau[i]}, MAU ${mau[i]}, stickiness ${ratio}%</title></circle>`;
   }).join('');
   document.getElementById('stickiness').innerHTML = `
     <div class="flex items-center gap-4 text-xs text-zinc-400 mb-2">
-      <span><span class="inline-block w-3 h-0.5 align-middle" style="background:#8b5cf6"></span> WAU</span>
+      <span><span class="inline-block w-3 h-0.5 align-middle" style="background:#4d6fae"></span> WAU</span>
       <span><span class="inline-block w-3 h-0.5 align-middle" style="background:#60a5fa"></span> MAU (28d)</span>
     </div>
     <svg viewBox="0 0 ${W} ${H}" class="w-full" style="height:120px">
-      ${line(mau, '#60a5fa')}${line(wau, '#8b5cf6')}${dots}
+      ${line(mau, '#60a5fa')}${line(wau, '#4d6fae')}${dots}
     </svg>
     <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
       <span>${esc(labels[0] || '')}</span>
@@ -237,7 +237,7 @@ function renderEngagement(e) {
       latest == null ? '' : `${fmtInt(latest)} this week`;
   };
 
-  block('eng-dau', 'eng-dau-latest', dau, '#8b5cf6');
+  block('eng-dau', 'eng-dau-latest', dau, '#4d6fae');
   block('eng-wau', 'eng-wau-latest', wau, '#34d399');
 }
 
