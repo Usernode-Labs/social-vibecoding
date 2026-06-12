@@ -8,9 +8,11 @@
 // 'pr_proposed' (a PR was promoted for voting — fanned out to the app's
 // active users + creator + favoriters so they come vote; self-app PRs
 // go to creator + favoriters only), 'session_done'
-// (#161 — a dev-session turn finished after its owner left) and
+// (#161 — a dev-session turn finished after its owner left),
 // 'auto_solve_done' (#161 — a headless auto-solve run finished; `detail`
-// holds the outcome: spec | code | spec_code (#170) | question | failed).
+// holds the outcome: spec | code | spec_code (#170) | question | failed)
+// and 'spec_shared' (#86 — someone privately shared a spec version with
+// you; `detail` carries the version number as a string).
 
 const log = require('./logger');
 const { listActiveUserIds } = require('./active-users');
@@ -186,6 +188,26 @@ async function createAutoSolveDoneNotification(pool, { userId, appId, sessionId,
       )
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
     [userId, appId, sessionId, (detail || '').slice(0, 32) || null]
+  );
+  return rows;
+}
+
+// #86: private spec share (kind='spec_shared'). Fired by the
+// share-user endpoint after a NEW chat_session_spec_user_shares row is
+// inserted (the endpoint skips this entirely on a duplicate share, so
+// a recipient is pinged at most once per spec version). `session_id`
+// points at the dev session — listForUser/hydrateAndPush already join
+// chat_sessions, so prTitle/branchName ride along for the row label.
+// `detail` carries the spec version as a string (same generic-detail
+// pattern as 'reaction') so the click handler can open the exact
+// version in the read-only spec panel.
+async function createSpecSharedNotification(pool, { recipientId, appId, sessionId, sharerId, version }) {
+  if (!recipientId || !sessionId || version == null) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
+     VALUES ($1, $2, $3, $4, 'spec_shared', $5)
+     RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
+    [recipientId, appId, sessionId, sharerId || null, String(version).slice(0, 32)]
   );
   return rows;
 }
@@ -598,12 +620,14 @@ function serialize(row) {
 
 module.exports = {
   parseMentions,
+  resolveUsers,
   createMentionNotifications,
   createReplyNotification,
   createReactionNotification,
   createStalePrNotification,
   createSessionDoneNotification,
   createAutoSolveDoneNotification,
+  createSpecSharedNotification,
   hydrateAndPush,
   createPrProposedNotifications,
   createCollabInviteNotification,

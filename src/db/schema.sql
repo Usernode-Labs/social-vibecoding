@@ -411,6 +411,27 @@ CREATE TABLE IF NOT EXISTS chat_session_specs (
 CREATE INDEX IF NOT EXISTS idx_chat_session_specs_session
   ON chat_session_specs (session_id, version DESC);
 
+-- #86: private spec shares. Each row grants ONE user read access to ONE
+-- frozen spec version (the "Share to user" button on the dev-session
+-- spec viewer). This table is the authorization source of truth for the
+-- widened read gate on GET /api/sessions/:id/specs/:version — the
+-- matching 'spec_shared' notification row is just UI. The unique
+-- constraint makes re-shares idempotent (and is what keeps a recipient
+-- from being re-notified per spec version). Independent of
+-- chat_session_specs.shared_to_group_at: a later group share simply
+-- makes these rows redundant, never conflicting.
+CREATE TABLE IF NOT EXISTS chat_session_spec_user_shares (
+  id            SERIAL PRIMARY KEY,
+  session_id    INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  version       INTEGER NOT NULL,
+  recipient_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  shared_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(session_id, version, recipient_id)
+);
+CREATE INDEX IF NOT EXISTS idx_spec_user_shares_recipient
+  ON chat_session_spec_user_shares (recipient_id, created_at DESC);
+
 -- Allow group-chat messages to carry structured payloads (spec_share
 -- card metadata today; future: PR previews, system-link metadata, etc.)
 -- without overloading the free-form `content` field.
@@ -532,9 +553,11 @@ ON CONFLICT (key) DO NOTHING;
 -- was promoted for voting — session_id points to it; fanned out to the
 -- app's active users + creator + favoriters in src/routes/votes.js),
 -- 'session_done' (#161 — a dev-session turn finished after its owner
--- left; session_id points to the session) and 'auto_solve_done' (#161 —
+-- left; session_id points to the session), 'auto_solve_done' (#161 —
 -- a headless auto-solve run finished; `detail` holds the outcome:
--- spec | code | spec_code | question | failed).
+-- spec | code | spec_code | question | failed) and 'spec_shared' (#86 —
+-- someone privately shared a spec version with you; session_id points
+-- to the dev session, `detail` holds the version number as a string).
 CREATE TABLE IF NOT EXISTS notifications (
   id              SERIAL PRIMARY KEY,
   user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -606,6 +629,7 @@ COMMENT ON TABLE activation_codes       IS 'staging:private';
 COMMENT ON TABLE chat_sessions          IS 'staging:private';
 COMMENT ON TABLE chat_session_messages  IS 'staging:private';
 COMMENT ON TABLE chat_session_specs     IS 'staging:private';
+COMMENT ON TABLE chat_session_spec_user_shares IS 'staging:private';
 COMMENT ON TABLE llm_usage              IS 'staging:private';
 COMMENT ON TABLE notifications          IS 'staging:private';
 COMMENT ON TABLE app_secrets            IS 'staging:private';

@@ -3153,6 +3153,14 @@ const DevChat = {
       ? `<button class="dc-spec-action-btn" disabled title="No spec version to share yet">Share to group</button>`
       : `<button id="dc-spec-viewer-share" class="dc-spec-action-btn" ${alreadyShared ? 'disabled' : ''} title="${alreadyShared ? 'Already shared to group chat' : 'Post a card linking to this spec in the group chat'}">${alreadyShared ? 'Shared' : 'Share to group'}</button>`;
 
+    // (#86) Private share: send this version to ONE person, who gets a
+    // notification deep-linking to the read-only spec panel. Repeatable
+    // (no alreadyShared disabling — the owner can share with several
+    // people one at a time) and independent of the group-share state.
+    const shareUserBtnHtml = (!selectedVersion || isEmpty)
+      ? `<button class="dc-spec-action-btn" disabled title="No spec version to share yet">Share to user</button>`
+      : `<button id="dc-spec-viewer-share-user" class="dc-spec-action-btn" title="Privately share this spec version with one person">Share to user</button>`;
+
     // #196: a conforming spec (BOTH marker headings present — see
     // public/js/spec-sections.js) renders as two tabs so non-technical
     // readers land on the plain-language half. The preamble (title +
@@ -3204,8 +3212,16 @@ const DevChat = {
           ${hasVersions ? versionOptions : '<option>No versions yet</option>'}
         </select>
         <span class="flex-1"></span>
+        ${shareUserBtnHtml}
         ${shareBtnHtml}
         <button id="dc-spec-viewer-close" class="dc-spec-viewer-close" aria-label="Close spec viewer">×</button>
+        <div id="dc-spec-share-pop" class="dc-spec-share-pop hidden">
+          <input id="dc-spec-share-input" class="dc-spec-share-input" type="text"
+                 placeholder="Username…" autocomplete="off" spellcheck="false" maxlength="32" />
+          <div id="dc-spec-share-suggestions" class="dc-spec-share-suggestions"></div>
+          <div id="dc-spec-share-error" class="dc-spec-share-error hidden"></div>
+          <button id="dc-spec-share-send" class="dc-spec-action-btn dc-spec-share-send">Send</button>
+        </div>
       </div>
       <div class="dc-spec-viewer-body-wrap">
         ${bodyHtml}
@@ -3224,6 +3240,9 @@ const DevChat = {
 
     const shareBtn = pane.querySelector('#dc-spec-viewer-share');
     if (shareBtn && selectedVersion) shareBtn.addEventListener('click', () => DevChat._shareSpecVersion(selectedVersion.version));
+
+    const shareUserBtn = pane.querySelector('#dc-spec-viewer-share-user');
+    if (shareUserBtn && selectedVersion) DevChat._bindSpecSharePopover(pane, shareUserBtn, selectedVersion.version);
 
     // #196: tab switches are pure re-renders of cached content — no
     // refetch. The selection lives in specViewer.activeTab so it
@@ -3284,6 +3303,126 @@ const DevChat = {
       DevChat._renderSpecViewer();
     } catch (err) {
       console.warn('shareSpecVersion failed:', err);
+    }
+  },
+
+  // (#86) Wire the "Share to user" button + its popover. The popover
+  // lives inside the freshly-rendered pane, so all state here is local
+  // to this render pass — a re-render (version switch, spec update)
+  // simply closes it. Suggestions come from the same endpoint the
+  // group-chat @mention autocomplete uses, fetched once per open and
+  // prefix-filtered client-side as the user types.
+  _bindSpecSharePopover(pane, btn, version) {
+    const pop = pane.querySelector('#dc-spec-share-pop');
+    const input = pane.querySelector('#dc-spec-share-input');
+    const sugBox = pane.querySelector('#dc-spec-share-suggestions');
+    const errBox = pane.querySelector('#dc-spec-share-error');
+    const sendBtn = pane.querySelector('#dc-spec-share-send');
+    if (!pop || !input || !sugBox || !errBox || !sendBtn) return;
+
+    let suggestions = [];
+
+    const setError = (msg) => {
+      errBox.textContent = msg || '';
+      errBox.classList.toggle('hidden', !msg);
+    };
+
+    const renderSuggestions = () => {
+      const q = input.value.trim().toLowerCase();
+      const matches = suggestions
+        .filter((name) => !q || name.toLowerCase().startsWith(q))
+        .slice(0, 6);
+      sugBox.innerHTML = matches
+        .map((name) => `<button type="button" class="dc-spec-share-sug" data-username="${escapeHtml(name)}">@${escapeHtml(name)}</button>`)
+        .join('');
+      sugBox.querySelectorAll('.dc-spec-share-sug').forEach((s) => {
+        s.addEventListener('click', () => {
+          input.value = s.dataset.username;
+          sugBox.innerHTML = '';
+          input.focus();
+        });
+      });
+    };
+
+    const close = () => {
+      pop.classList.add('hidden');
+      document.removeEventListener('pointerdown', onOutside, true);
+    };
+    const onOutside = (e) => {
+      if (pop.contains(e.target) || e.target === btn) return;
+      close();
+    };
+
+    btn.addEventListener('click', async () => {
+      if (!pop.classList.contains('hidden')) { close(); return; }
+      pop.classList.remove('hidden');
+      setError(null);
+      input.value = '';
+      sugBox.innerHTML = '';
+      input.focus();
+      document.addEventListener('pointerdown', onOutside, true);
+      // Lazy one-shot fetch of mention candidates for this app.
+      if (!suggestions.length
+          && typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug) {
+        try {
+          const res = await fetch(`/api/apps/${AppView.appData.slug}/mention-suggestions`);
+          if (res.ok) {
+            const { users } = await res.json();
+            suggestions = Array.isArray(users)
+              ? users.map((u) => (u && u.username) || '').filter(Boolean)
+              : [];
+            if (!pop.classList.contains('hidden')) renderSuggestions();
+          }
+        } catch { /* suggestions are best-effort; exact usernames still work */ }
+      }
+    });
+
+    input.addEventListener('input', () => { setError(null); renderSuggestions(); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); sendBtn.click(); }
+      if (e.key === 'Escape') close();
+    });
+
+    sendBtn.addEventListener('click', async () => {
+      const username = input.value.trim().replace(/^@/, '');
+      if (!username) { setError('Enter a username'); return; }
+      sendBtn.disabled = true;
+      sendBtn.textContent = 'Sending…';
+      const result = await DevChat._shareSpecToUser(version, username);
+      sendBtn.disabled = false;
+      sendBtn.textContent = 'Send';
+      if (!result.ok) {
+        setError(result.error || 'Failed to share');
+        return;
+      }
+      // Transient confirmation, then reset for the next share.
+      setError(null);
+      sugBox.innerHTML = '';
+      const sentName = (result.recipient && result.recipient.username) || username;
+      btn.textContent = `Sent to @${sentName}`;
+      close();
+      setTimeout(() => { btn.textContent = 'Share to user'; }, 2500);
+    });
+  },
+
+  // POST the private share; returns the parsed response (or an {ok:false,
+  // error} shape) so the popover can surface server-side 4xx messages
+  // ("User not found", "That user doesn't have access…") inline.
+  async _shareSpecToUser(version, username) {
+    if (!DevChat.currentSession || version == null) return { ok: false, error: 'No session' };
+    const sid = DevChat.currentSession.id;
+    try {
+      const resp = await fetch(`/api/sessions/${sid}/specs/${version}/share-user`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username }),
+      });
+      let data = {};
+      try { data = await resp.json(); } catch {}
+      if (!resp.ok) return { ok: false, error: data.error || `HTTP ${resp.status}` };
+      return data;
+    } catch {
+      return { ok: false, error: 'Network error' };
     }
   },
 };
