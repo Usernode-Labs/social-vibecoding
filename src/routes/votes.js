@@ -426,11 +426,15 @@ function voteRoutes(config) {
            -- merge (a bounty resolves into kudos credit for the closing PR's
            -- author), so the count matches the leaderboards. my_kudos is
            -- likewise true if the viewer either gave a PR kudos OR pledged a
-           -- bounty that was awarded to this PR.
+           -- bounty that was awarded to this PR. my_kudos_direct isolates
+           -- the first source — only a direct pr_kudos row is retractable
+           -- (DELETE /api/sessions/:id/kudos), so the FE needs to know
+           -- which kind of credit it's rendering.
            ((SELECT COUNT(*)::int FROM pr_kudos WHERE session_id = cs.id)
              + (SELECT COUNT(*)::int FROM issue_bounties WHERE awarded_session_id = cs.id AND status = 'awarded')) as kudos_count,
            (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)
                  OR EXISTS(SELECT 1 FROM issue_bounties WHERE awarded_session_id = cs.id AND status = 'awarded' AND giver_user_id = $2)) as my_kudos,
+           (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)) as my_kudos_direct,
            -- #11: revert_of_session_id is non-null on PRs that are
            -- themselves a git-revert of an earlier merged PR. The
            -- vote panel uses this to render a Revert label
@@ -526,11 +530,15 @@ function voteRoutes(config) {
            -- merge (a bounty resolves into kudos credit for the closing PR's
            -- author), so the count matches the leaderboards. my_kudos is
            -- likewise true if the viewer either gave a PR kudos OR pledged a
-           -- bounty that was awarded to this PR.
+           -- bounty that was awarded to this PR. my_kudos_direct isolates
+           -- the first source — only a direct pr_kudos row is retractable
+           -- (DELETE /api/sessions/:id/kudos), so the FE needs to know
+           -- which kind of credit it's rendering.
            ((SELECT COUNT(*)::int FROM pr_kudos WHERE session_id = cs.id)
              + (SELECT COUNT(*)::int FROM issue_bounties WHERE awarded_session_id = cs.id AND status = 'awarded')) as kudos_count,
            (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)
                  OR EXISTS(SELECT 1 FROM issue_bounties WHERE awarded_session_id = cs.id AND status = 'awarded' AND giver_user_id = $2)) as my_kudos,
+           (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)) as my_kudos_direct,
            rv.id        as revert_session_id,
            rv.pr_number as revert_pr_number,
            rv.pr_url    as revert_pr_url,
