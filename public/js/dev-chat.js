@@ -644,8 +644,14 @@ const DevChat = {
           if (m.metadata.progressLog) m.progressLog = m.metadata.progressLog;
           // Spec preview cards: scout dispatches persist these on the
           // status row so a refresh re-renders the same inline card the
-          // user saw mid-stream. See runScoutTool.
+          // user saw mid-stream. See runScoutTool. Older recovered scout
+          // turns persisted scoutOutput without specPreview — derive the
+          // preview so their cards still render.
           if (m.metadata.specPreview) m.specPreview = m.metadata.specPreview;
+          else if (m.metadata.scoutOutput && m.metadata.specVersion != null) {
+            const t = String(m.metadata.scoutOutput);
+            m.specPreview = t.length <= 400 ? t : `${t.slice(0, 400)}…`;
+          }
           if (m.metadata.specLines) m.specLines = m.metadata.specLines;
           if (m.metadata.specVersion != null) m.specVersion = m.metadata.specVersion;
           // Q/A mode (#32): suggested-answer chips for the Mayor's

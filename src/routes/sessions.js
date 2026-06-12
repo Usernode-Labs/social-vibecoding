@@ -3078,7 +3078,10 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
           `INSERT INTO chat_session_messages (session_id, role, content, metadata)
            VALUES ($1, 'system', $2, $3)`,
           [session.id, `Scout drafted a ${lineCount}-line spec from the codebase.`,
-            JSON.stringify({ specLines: lineCount, scoutOutput: ccText, specVersion })]
+            // specPreview drives the tappable spec card in dev-chat; omitting
+            // it here left recovered scout turns (and their clones) with a
+            // message claiming a spec exists but no card to open it.
+            JSON.stringify({ specPreview: buildSpecPreview(ccText), specLines: lineCount, scoutOutput: ccText, specVersion })]
         ).catch(() => {});
         // #178: blocking Questions in the recovered spec finalize as
         // 'question' so the answer-and-re-run loop survives the restart
