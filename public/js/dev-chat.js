@@ -82,6 +82,7 @@ const DevChat = {
     viewVersion: 'latest',     // 'latest' (follow the highest version) or a specific version number
     viewVersionContent: null,  // cached content for a non-latest selection
     isLoading: false,
+    activeTab: 'user',         // #196: 'user' | 'tech' — selected half of a two-section spec
   },
 
   // Initial MODELS map. Populated authoritatively from GET /api/models
@@ -184,6 +185,7 @@ const DevChat = {
       viewVersion: 'latest',
       viewVersionContent: null,
       isLoading: false,
+      activeTab: 'user',
     };
   },
 
@@ -622,6 +624,7 @@ const DevChat = {
         DevChat.specViewer.sessionId = sessionId;
         DevChat.specViewer.viewVersion = 'latest';
         DevChat.specViewer.viewVersionContent = null;
+        DevChat.specViewer.activeTab = 'user';
         // Don't await — caller's renderChatView shouldn't block on
         // the fetch. _loadSpecViewer calls _renderSpecViewer when it
         // resolves, which patches the body in place.
@@ -2933,10 +2936,39 @@ const DevChat = {
       ? `<button class="dc-spec-action-btn" disabled title="No spec version to share yet">Share to group</button>`
       : `<button id="dc-spec-viewer-share" class="dc-spec-action-btn" ${alreadyShared ? 'disabled' : ''} title="${alreadyShared ? 'Already shared to group chat' : 'Post a card linking to this spec in the group chat'}">${alreadyShared ? 'Shared' : 'Share to group'}</button>`;
 
+    // #196: a conforming spec (BOTH marker headings present — see
+    // public/js/spec-sections.js) renders as two tabs so non-technical
+    // readers land on the plain-language half. The preamble (title +
+    // summary before the first marker) stays visible above the tabs.
+    // A null split — legacy or non-conforming doc — renders the single
+    // untabbed body exactly as before.
+    const split = displayContent ? splitSpecSections(displayContent) : null;
+    let specBodyHtml = '';
+    if (split) {
+      const activeTab = DevChat.specViewer.activeTab === 'tech' ? 'tech' : 'user';
+      const activeHalf = activeTab === 'tech' ? split.technical : split.userFacing;
+      const tabBtn = (key, label) =>
+        `<button class="dc-spec-viewer-tab${activeTab === key ? ' dc-spec-viewer-tab-active' : ''}" role="tab" aria-selected="${activeTab === key}" data-spec-tab="${key}">${label}</button>`;
+      // An empty-but-present half still gets its tab (with a muted
+      // placeholder) so the toggle doesn't appear/disappear between
+      // versions.
+      specBodyHtml = `${split.preamble ? `<div class="dc-spec-viewer-body dc-spec-viewer-preamble">${DevChat.renderMarkdown(split.preamble, { breaks: false })}</div>` : ''}
+        <div class="dc-spec-viewer-tabs" role="tablist" aria-label="Spec sections">
+          ${tabBtn('user', 'User-facing')}
+          ${tabBtn('tech', 'Technical')}
+        </div>
+        <div class="dc-spec-viewer-body" role="tabpanel">${
+          activeHalf
+            ? DevChat.renderMarkdown(activeHalf, { breaks: false })
+            : '<p class="dc-spec-tab-empty">Nothing in this section.</p>'
+        }</div>`;
+    } else if (displayContent) {
+      specBodyHtml = `<div class="dc-spec-viewer-body">${DevChat.renderMarkdown(displayContent, { breaks: false })}</div>`;
+    }
     const bodyHtml = DevChat.specViewer.isLoading && !displayContent
       ? `<div class="p-4 text-sm text-zinc-500">Loading spec…</div>`
       : displayContent
-        ? `<div class="dc-spec-viewer-body">${DevChat.renderMarkdown(displayContent, { breaks: false })}</div>`
+        ? specBodyHtml
         : `<div class="p-4 text-sm text-zinc-500">No spec yet. Ask the AI to draft one.</div>`;
 
     // Spec planning and building are two separate steps: drafting a spec
@@ -2975,6 +3007,19 @@ const DevChat = {
 
     const shareBtn = pane.querySelector('#dc-spec-viewer-share');
     if (shareBtn && selectedVersion) shareBtn.addEventListener('click', () => DevChat._shareSpecVersion(selectedVersion.version));
+
+    // #196: tab switches are pure re-renders of cached content — no
+    // refetch. The selection lives in specViewer.activeTab so it
+    // survives version switches and spec_updated refreshes within the
+    // panel's lifetime.
+    pane.querySelectorAll('.dc-spec-viewer-tab').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const tab = btn.dataset.specTab === 'tech' ? 'tech' : 'user';
+        if (DevChat.specViewer.activeTab === tab) return;
+        DevChat.specViewer.activeTab = tab;
+        DevChat._renderSpecViewer();
+      });
+    });
 
     // Lazy-fetch frozen content when an older (non-latest) version is
     // selected and we don't have it cached.
