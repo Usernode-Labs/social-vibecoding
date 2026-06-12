@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const { getPool } = require('./pool');
 const log = require('../services/logger');
@@ -20,6 +21,7 @@ async function migrate(config) {
   log.info('db', 'Schema up to date');
 
   await seedAdmin(pool, config);
+  await seedCaptureUser(pool);
   await seedSelfApp(pool, config);
   await seedStagingNotifications(pool, config);
   await seedStagingEnvProposal(pool, config);
@@ -465,6 +467,42 @@ async function seedAdmin(pool, config) {
     log.info('db', 'Admin user created', { username: config.adminUsername });
   } else {
     log.debug('db', 'Admin user already exists');
+  }
+}
+
+// Dedicated identity for the before/after screenshot pipeline (#195 fix).
+// services/visuals.js signs capture requests as this user so screenshots
+// show the real, logged-in app instead of the login screen. An ordinary
+// non-admin account (is_admin/can_create_apps both FALSE) because the
+// resulting artifacts are public (unauthenticated /visuals/:id route +
+// GitHub PR bodies) — it must never see admin-only UI or anyone's
+// personal data. The password is a bcrypt hash of 32 random bytes that
+// are immediately discarded, so the account can never log in
+// interactively; visuals.js authenticates it by minting a JWT / session
+// row directly. Idempotent: keyed on the unique username, DO NOTHING on
+// conflict (the random hash is never rotated).
+async function seedCaptureUser(pool) {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id FROM users WHERE username = $1',
+      ['usernode-capture']
+    );
+    if (rows.length) {
+      log.debug('db', 'Capture user already exists');
+      return;
+    }
+    const hash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12);
+    await pool.query(
+      `INSERT INTO users (username, password, is_admin, can_create_apps)
+       VALUES ($1, $2, FALSE, FALSE)
+       ON CONFLICT (username) DO NOTHING`,
+      ['usernode-capture', hash]
+    );
+    log.info('db', 'Capture user created', { username: 'usernode-capture' });
+  } catch (err) {
+    // Best-effort: a missing capture user only degrades screenshots back
+    // to today's unauthenticated behaviour — never abort boot over it.
+    log.warn('db', 'Capture user seed failed', { err: err.message });
   }
 }
 

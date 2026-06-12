@@ -14,6 +14,11 @@
 //   AFTER_URL           staging target    ('' / unset = skip "after")
 //   BEFORE_FALLBACK_URL retried once when BEFORE_URL answers HTTP >= 400
 //                       (a newly-added page 404s on prod; fall back to /)
+//   BEFORE_COOKIE       optional `name=value` cookie set on the "before"
+//                       page before navigation (self-app prod auth — the
+//                       platform never honours query tokens in prod)
+//   AFTER_COOKIE        same for "after"; plumbed for symmetry, unused
+//                       today (the after side authenticates via ?token=)
 //
 // Output protocol (stdout), mirroring the worker's __USERNODE_*__ style —
 // one frame per artifact:
@@ -28,7 +33,6 @@
 
 const fs = require('fs');
 const { execFile } = require('child_process');
-const puppeteer = require('puppeteer-core');
 
 const VIEWPORT = { width: 1280, height: 800, deviceScaleFactor: 1 };
 const NAV_TIMEOUT_MS = 30000;
@@ -40,6 +44,20 @@ const GIF_FPS = 10;
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+// Parse the `name=value` cookie env form into { name, value }, or null
+// when unset/malformed. Splits on the FIRST '=' only — session tokens
+// are hex today, but the value side must survive '=' chars regardless.
+function parseCookie(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  const eq = s.indexOf('=');
+  if (eq <= 0) return null;
+  const name = s.slice(0, eq).trim();
+  const value = s.slice(eq + 1).trim();
+  if (!name || !value) return null;
+  return { name, value };
 }
 
 function emit(kind, media, status, buf) {
@@ -107,12 +125,18 @@ async function scrollPass(page) {
   }, SHORT_PAGE_HOLD_MS);
 }
 
-async function captureTarget(browser, kind, url, fallbackUrl) {
+async function captureTarget(browser, kind, url, fallbackUrl, cookie) {
   const page = await browser.newPage();
   let navigated = false;
   let status = 200;
   try {
     await page.setViewport(VIEWPORT);
+    // Auth cookie (self-app prod): set against the target URL so domain/
+    // path resolve before the first navigation. The fallback URL is the
+    // same origin, so the one cookie covers the retry navigation too.
+    if (cookie) {
+      await page.setCookie({ name: cookie.name, value: cookie.value, url });
+    }
     try {
       const resp = await page.goto(url, { waitUntil: 'networkidle2', timeout: NAV_TIMEOUT_MS });
       status = resp ? resp.status() : 200;
@@ -187,11 +211,16 @@ async function main() {
   const beforeUrl = (process.env.BEFORE_URL || '').trim();
   const afterUrl = (process.env.AFTER_URL || '').trim();
   const beforeFallbackUrl = (process.env.BEFORE_FALLBACK_URL || '').trim();
+  const beforeCookie = parseCookie(process.env.BEFORE_COOKIE);
+  const afterCookie = parseCookie(process.env.AFTER_COOKIE);
   if (!beforeUrl && !afterUrl) {
     process.stderr.write('capture: no BEFORE_URL or AFTER_URL set\n');
     return;
   }
 
+  // Required lazily so the platform's test suite (no puppeteer-core
+  // outside the capture image) can require this file for parseCookie.
+  const puppeteer = require('puppeteer-core');
   const browser = await puppeteer.launch({
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
     headless: true,
@@ -207,17 +236,21 @@ async function main() {
   });
 
   try {
-    if (beforeUrl) await captureTarget(browser, 'before', beforeUrl, beforeFallbackUrl);
-    if (afterUrl) await captureTarget(browser, 'after', afterUrl, '');
+    if (beforeUrl) await captureTarget(browser, 'before', beforeUrl, beforeFallbackUrl, beforeCookie);
+    if (afterUrl) await captureTarget(browser, 'after', afterUrl, '', afterCookie);
   } finally {
     await browser.close().catch(() => {});
   }
 }
 
-main()
-  .catch((err) => {
-    // Never a non-zero exit: missing frames are the platform's failure
-    // signal, and a hard exit code would just add noise to the logs.
-    process.stderr.write(`capture: fatal ${err.message}\n`);
-  })
-  .then(() => process.exit(0));
+if (require.main === module) {
+  main()
+    .catch((err) => {
+      // Never a non-zero exit: missing frames are the platform's failure
+      // signal, and a hard exit code would just add noise to the logs.
+      process.stderr.write(`capture: fatal ${err.message}\n`);
+    })
+    .then(() => process.exit(0));
+}
+
+module.exports = { parseCookie };

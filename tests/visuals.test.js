@@ -8,6 +8,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const visuals = require('../src/services/visuals');
+const { parseCookie } = require('../capture/capture');
 const { buildVisualsBlock, upsertVisualsBlock } = require('../src/services/pr-metadata');
 
 const ID_A = 'a'.repeat(32);
@@ -43,6 +44,63 @@ test('isUiAffecting needs >= 1 frontend file', () => {
   assert.equal(visuals.isUiAffecting(['server.js', 'README.md']), false);
   assert.equal(visuals.isUiAffecting(['server.js', 'public/index.html']), true);
   assert.equal(visuals.isUiAffecting([]), false);
+});
+
+// ── withToken (capture-auth query param) ───────────────────────────────
+
+test('withToken joins with ? on a plain path', () => {
+  assert.equal(visuals.withToken('http://x:3000/', 'tok'), 'http://x:3000/?token=tok');
+  assert.equal(visuals.withToken('http://x:3000/board', 'tok'), 'http://x:3000/board?token=tok');
+});
+
+test('withToken joins with & when the path already carries a query string', () => {
+  assert.equal(
+    visuals.withToken('http://x:3000/board?demo-pr=1', 'tok'),
+    'http://x:3000/board?demo-pr=1&token=tok'
+  );
+});
+
+test('withToken URL-encodes the token', () => {
+  assert.equal(visuals.withToken('http://x:3000/', 'a+b/c'), 'http://x:3000/?token=a%2Bb%2Fc');
+});
+
+test('withToken passes the URL through unchanged on an empty token', () => {
+  assert.equal(visuals.withToken('http://x:3000/board?demo-pr=1', ''), 'http://x:3000/board?demo-pr=1');
+  assert.equal(visuals.withToken('http://x:3000/', null), 'http://x:3000/');
+});
+
+// ── beforeContainerName ("before" target resolution) ───────────────────
+
+test('normal slugs resolve to usernode-app-<slug>', () => {
+  const config = { selfAppSlug: 'usernode-2d5619', selfAppContainer: 'usernode' };
+  assert.equal(visuals.beforeContainerName(config, 'my-cool-app'), 'usernode-app-my-cool-app');
+});
+
+test('the self-app slug resolves to the platform container', () => {
+  const config = { selfAppSlug: 'usernode-2d5619', selfAppContainer: 'usernode' };
+  assert.equal(visuals.beforeContainerName(config, 'usernode-2d5619'), 'usernode');
+});
+
+test('SELF_APP_CONTAINER override is honoured, with a usernode fallback', () => {
+  const overridden = { selfAppSlug: 'usernode-2d5619', selfAppContainer: 'my-fork-platform' };
+  assert.equal(visuals.beforeContainerName(overridden, 'usernode-2d5619'), 'my-fork-platform');
+  const unset = { selfAppSlug: 'usernode-2d5619' };
+  assert.equal(visuals.beforeContainerName(unset, 'usernode-2d5619'), 'usernode');
+});
+
+// ── parseCookie (capture.js BEFORE_COOKIE / AFTER_COOKIE env form) ─────
+
+test('parseCookie splits name=value on the first equals sign', () => {
+  assert.deepEqual(parseCookie('session=abc123'), { name: 'session', value: 'abc123' });
+  assert.deepEqual(parseCookie(' session = a=b=c '), { name: 'session', value: 'a=b=c' });
+});
+
+test('parseCookie returns null on unset or malformed input', () => {
+  assert.equal(parseCookie(''), null);
+  assert.equal(parseCookie(undefined), null);
+  assert.equal(parseCookie('no-equals-here'), null);
+  assert.equal(parseCookie('=value-without-name'), null);
+  assert.equal(parseCookie('name='), null);
 });
 
 // ── parseShots ─────────────────────────────────────────────────────────
