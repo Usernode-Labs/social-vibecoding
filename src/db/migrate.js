@@ -25,6 +25,7 @@ async function migrate(config) {
   await seedStagingEnvProposal(pool, config);
   await seedStagingMergedPrs(pool, config);
   await seedStagingActiveSessions(pool, config);
+  await seedStagingDemoAppCard(pool);
   await seedStagingLeaderboardProfile(pool);
   await seedStagingQaSession(pool, config);
   await seedStagingHeadlessFixtures(pool, config);
@@ -1072,6 +1073,53 @@ async function seedStagingActiveSessions(pool, config) {
     total: fixtures.length,
     inserted,
   });
+}
+
+// Fixtures for the home-card activity chips (#57): one dedicated demo
+// app whose card exercises all three chips at once. chat_sessions is
+// staging:private (schema-only in staging), so without seeded sessions
+// the "to vote" / "in dev" chips would read zero on every card; the
+// demo issue guarantees the issues chip is non-zero on a card testers
+// can find by name. Explicit IDs sit in the 900xxx range so they can't
+// collide with cloned prod rows, every row carries the "Staging demo"
+// prefix per the mock-data convention, and ON CONFLICT DO NOTHING
+// keeps the re-run-on-every-boot path idempotent. The demo user's
+// password is a plain marker string — bcrypt.compare against a
+// non-hash always fails, so the account can't be logged into.
+async function seedStagingDemoAppCard(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password)
+       VALUES (900001, 'staging-demo-user', 'staging-demo-not-a-login')
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, view_visibility, created_by)
+       VALUES (900001, 'Staging demo app', 'staging-demo-app', 'running', 'public', 900001)
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_title, status, promoted_at)
+       VALUES
+         (900001, 900001, 900001, 'staging-demo/promoted-pr', 900001,
+          'Staging demo PR — awaiting votes', 'promoted', NOW()),
+         (900002, 900001, 900001, 'staging-demo-branch', NULL, NULL, 'active', NULL)
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO issues (id, app_id, title, description, created_by, status)
+       VALUES (900001, 900001, 'Staging demo issue',
+               'Staging demo issue so the home-card issues chip has a row to count.',
+               900001, 'open')
+       ON CONFLICT DO NOTHING`
+    );
+    log.info('db', 'Staging demo app-card fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Staging demo app-card seeding failed', { message: err.message });
+  }
 }
 
 // (#60) Fixtures for the leaderboard user-profile drill-in. The profile
