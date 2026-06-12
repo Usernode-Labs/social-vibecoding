@@ -1109,9 +1109,12 @@ const App = {
           // panel without a reload. The server seeds its issues cache and
           // broadcasts an issue_update (handled in connectEvents) for
           // other clients; this direct refresh covers the submitting tab
-          // even if its events socket is momentarily down.
-          if (target === 'app' && body.appSlug && App.currentApp === body.appSlug
-              && typeof AppView !== 'undefined' && App.currentTab === 'dev') {
+          // even if its events socket is momentarily down. Platform-
+          // targeted feedback lands in the self-hosted platform app's
+          // issue list, so refresh that panel too when it's the one open.
+          if (typeof AppView !== 'undefined' && App.currentTab === 'dev'
+              && ((target === 'app' && body.appSlug && App.currentApp === body.appSlug)
+                || (target === 'platform' && AppView?.appData?.self_hosted))) {
             AppView.refreshDevData('issue');
           }
           setTimeout(() => document.getElementById('feedback-cancel').click(), 1500);
@@ -1128,7 +1131,10 @@ const App = {
       feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
     };
 
-    document.getElementById('feedback-btn').addEventListener('click', () => {
+    // Open the Send Feedback modal. Shared by the header feedback button
+    // (no opts) and the dev view's plus-menu "New issue" item, which
+    // passes { fromDev: true } — see issue #226.
+    App.openFeedbackModal = (opts = {}) => {
       document.getElementById('feedback-modal').classList.remove('hidden');
       // Reset any "Submitted" lock from a prior session so a returning
       // user can file another piece of feedback without reloading.
@@ -1141,22 +1147,34 @@ const App = {
       // so users can still see both choices, and we default to platform.
       const appData = (typeof AppView !== 'undefined' && AppView.appData) || null;
       const repoUrl = appData?.repo_url || '';
-      const canTargetApp = !!App.currentApp
-        && App.currentTab === 'app'
-        && /github\.com\/[^/]+\/[^/]+/.test(repoUrl);
+      const hasRepo = /github\.com\/[^/]+\/[^/]+/.test(repoUrl);
+      // fromDev callers are by construction inside an open app's dev
+      // view, so the header button's currentTab === 'app' gate doesn't
+      // apply. The self-hosted platform app is excluded: targeting "this
+      // app" would file into the same platform repo via a different
+      // credential path and skip the usernode label, so we force the
+      // Platform target instead.
+      const canTargetApp = opts.fromDev
+        ? !!appData && hasRepo && !appData.self_hosted
+        : !!App.currentApp && App.currentTab === 'app' && hasRepo;
       if (canTargetApp) {
         feedbackTargetApp.textContent = appData?.name ? `This app (${appData.name})` : 'This app';
         setAppTargetEnabled(true);
         // Default to the app the user is looking at — most likely intent.
         setFeedbackTarget('app');
       } else {
-        feedbackTargetApp.textContent = 'No app open';
+        // With an app actually open (dev-view caller) keep its name on
+        // the grayed label — "No app open" would be wrong there.
+        feedbackTargetApp.textContent = (opts.fromDev && appData)
+          ? (appData.name ? `This app (${appData.name})` : 'This app')
+          : 'No app open';
         setAppTargetEnabled(false);
         setFeedbackTarget('platform');
       }
 
       feedbackText.focus();
-    });
+    };
+    document.getElementById('feedback-btn').addEventListener('click', () => App.openFeedbackModal());
     document.getElementById('feedback-cancel').addEventListener('click', () => {
       document.getElementById('feedback-modal').classList.add('hidden');
       feedbackText.value = '';
