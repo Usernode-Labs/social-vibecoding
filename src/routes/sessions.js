@@ -1150,7 +1150,10 @@ function sessionRoutes(config) {
       // swallowed, and the matching SSE delivery would then be deduped-skipped
       // — the mayor's response would be written to the DB but never appear in
       // the live UI until the user refreshes.
-      const SSE_ONLY = new Set(['token', 'usage', 'error', 'mayor_reasoning']);
+      // 'suggestions' (#32) follows mayor_reasoning's posture: SSE +
+      // session bus only — a refresh restores chips from the assistant
+      // row's metadata, so the global WS adds nothing but dedup risk.
+      const SSE_ONLY = new Set(['token', 'usage', 'error', 'mayor_reasoning', 'suggestions']);
       const send = (type, data) => {
         const seq = `${seqPrefix}-${++eventSeq}`;
         const event = { type, _seq: seq, ...data };
@@ -1317,9 +1320,12 @@ function sessionRoutes(config) {
         // available even when a worker is busy: they're read-only and cheap,
         // and reading the tracker while a build runs is a legitimate chat
         // action. The dispatch tools remain gated by isWorkerBusy as before.
+        // suggest_answers (#32) rides along in BOTH branches — it's not a
+        // dispatch, so asking clarifying questions with tappable answers
+        // is fine even while a worker is busy.
         const tools = isWorkerBusy
-          ? [LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL]
-          : [DISPATCH_TOOL, DISPATCH_SCOUT_TOOL, LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL];
+          ? [SUGGEST_ANSWERS_TOOL, LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL]
+          : [DISPATCH_TOOL, DISPATCH_SCOUT_TOOL, SUGGEST_ANSWERS_TOOL, LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL];
 
         setPhase('mayor1');
         let mayor1;
@@ -1352,9 +1358,14 @@ function sessionRoutes(config) {
             // terminal tool_use dangling -> Anthropic 400. Break instead and
             // let the phase-2 wrap-up resolve every tool_use (it already
             // re-fetches any stray list_github_issues).
+            // suggest_answers (#32) is terminal here too: the turn ends as
+            // a question turn, so re-invoking would leave its tool_use
+            // dangling in mayorConvo (Anthropic 400). End-of-turn dangling
+            // is harmless — buildMayorMessages rebuilds from text rows.
             const hasTerminalTool = mayor1.toolUses.some((t) =>
               t.name === 'dispatch_claude_code'
-              || t.name === 'dispatch_scout');
+              || t.name === 'dispatch_scout'
+              || t.name === 'suggest_answers');
             if (!issuesCalls.length || hasTerminalTool || issuesIters >= MAYOR_ISSUES_MAX_ITERS) break;
             issuesIters += 1;
 
@@ -1465,6 +1476,17 @@ function sessionRoutes(config) {
             .trim() || '(I described what should change, but didn\'t actually run the coding agent — try sending again.)';
         }
 
+        // Q/A mode (#32): suggested answers for clarifying questions.
+        // Dropped when a dispatch tool co-occurred (clarity gate forbids
+        // ask+dispatch — dispatch wins); skipped entirely when there is
+        // no assistant text to attach them to.
+        const { suggestions, droppedForDispatch } = resolveSuggestedAnswers(mayor1.toolUses);
+        if (droppedForDispatch) {
+          log.warn('sessions', 'Mayor emitted suggest_answers alongside a dispatch tool — dropping suggestions', {
+            sessionId: session.id,
+          });
+        }
+
         // Always debit the Mayor's phase-1 spend — even on tool-only
         // turns where mayorText1 is empty (the Anthropic call still
         // happened and was billed). chat_session_messages still gets
@@ -1474,10 +1496,12 @@ function sessionRoutes(config) {
         if (mayorText1.trim()) {
           send('mayor_reasoning', { text: mayorText1 });
           await pool.query(
-            `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
-             VALUES ($1, 'assistant', $2, $3, $4, $5)`,
-            [session.id, mayorText1, selectedModel, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1]
+            `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
+             VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
+            [session.id, mayorText1, selectedModel, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1,
+             JSON.stringify(suggestions ? { suggestions } : {})]
           );
+          if (suggestions) send('suggestions', { suggestions });
         }
         // BYOK users pay Anthropic directly, so their spend lands in
         // the display-only byok_cost_cents bucket (#119) — only
@@ -2476,7 +2500,7 @@ async function runHeadlessSession({
 
     const headlessAddendum = buildHeadlessAddendum(issueNumber);
     const mayorPrompt = getMayorSystemPrompt(session.app_name, false, '', !!session.app_self_hosted, null) + headlessAddendum;
-    const tools = [DISPATCH_TOOL, DISPATCH_SCOUT_TOOL, LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL];
+    const tools = [DISPATCH_TOOL, DISPATCH_SCOUT_TOOL, SUGGEST_ANSWERS_TOOL, LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL];
 
     // --- Phase 1: Mayor turn (same issue-data loop as the chat handler) ---
     let mayor1;
@@ -2492,8 +2516,11 @@ async function runHeadlessSession({
       });
 
       const issuesCalls = mayor1.toolUses.filter((t) => ISSUE_DATA_TOOL_NAMES.has(t.name));
+      // suggest_answers (#32) is terminal here too — same dangling-
+      // tool_use rationale as the interactive loop.
       const hasTerminalTool = mayor1.toolUses.some((t) =>
-        t.name === 'dispatch_claude_code' || t.name === 'dispatch_scout');
+        t.name === 'dispatch_claude_code' || t.name === 'dispatch_scout'
+        || t.name === 'suggest_answers');
       if (!issuesCalls.length || hasTerminalTool || issuesIters >= MAYOR_ISSUES_MAX_ITERS) break;
       issuesIters += 1;
 
@@ -2516,13 +2543,18 @@ async function runHeadlessSession({
     }
 
     const mayorText1 = mayor1.text;
+    // Q/A mode (#32): same suggestion handling as the interactive route —
+    // persisted on the assistant row so the cloned session a human picks
+    // up renders the answer chips. Dropped if a dispatch co-occurred.
+    const { suggestions: headlessSuggestions } = resolveSuggestedAnswers(mayor1.toolUses);
     const costCents1 = mayor1.usage ? llm.estimateCostCents(mayor1.usage, selectedModel) : 0;
     if (mayorText1.trim()) {
       send('mayor_reasoning', { text: mayorText1 });
       await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
-         VALUES ($1, 'assistant', $2, $3, $4, $5)`,
-        [session.id, mayorText1, selectedModel, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1]
+        `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
+         VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
+        [session.id, mayorText1, selectedModel, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1,
+         JSON.stringify(headlessSuggestions ? { suggestions: headlessSuggestions } : {})]
       );
     }
     await debitMayorUsage(mayor1.usage);
@@ -3294,6 +3326,98 @@ const GET_GITHUB_ISSUE_TOOL = {
     required: ['number'],
   },
 };
+
+// Q/A mode (#32): structured suggested answers attached to the Mayor's
+// clarifying questions. NOT a dispatch — the turn still ends as a plain
+// question turn. The input is sanitized server-side
+// (sanitizeSuggestedAnswers) and persisted as metadata.suggestions on
+// the assistant row so the dev-chat client renders tappable answer
+// chips both live (the 'suggestions' SSE event) and on refresh.
+const SUGGEST_ANSWERS_TOOL = {
+  name: 'suggest_answers',
+  description:
+    'Attach short suggested answers to the clarifying questions you are asking in THIS SAME message, so the user can tap one instead of typing. '
+    + 'Call this ONLY when your message asks clarifying questions per the CLARITY GATE — never on a normal reply, and NEVER alongside '
+    + 'dispatch_scout or dispatch_claude_code (asking and dispatching in the same turn is forbidden; if both appear, the suggestions are dropped). '
+    + 'Provide one entry per question, in the same order as the numbered questions in your text, with your suggested default FIRST. '
+    + 'Every answer must be a short (under 80 characters), self-contained reply the user could send verbatim.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      questions: {
+        type: 'array',
+        description:
+          'One entry per clarifying question asked in this message (1-3 entries, matching your numbered questions in order).',
+        items: {
+          type: 'object',
+          properties: {
+            question: {
+              type: 'string',
+              description: 'Short restatement of the question (a few words — used as the chip-row label).',
+            },
+            answers: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                '2-5 short candidate answers, your suggested default FIRST. Each must read as a complete reply the user could send verbatim.',
+            },
+          },
+          required: ['question', 'answers'],
+        },
+      },
+    },
+    required: ['questions'],
+  },
+};
+
+// Sanitizer for suggest_answers tool input (#32). Caps mirror the
+// clarity gate (at most 3 questions) plus the tool contract (5 answers
+// each, short strings). Returns a clean [{ question, answers }] array,
+// or null when nothing usable survives — callers skip persistence and
+// the SSE event on null, so a malformed call degrades to today's
+// plain-text questions instead of breaking the turn.
+const QA_MAX_QUESTIONS = 3;
+const QA_MAX_ANSWERS = 5;
+const QA_MAX_ANSWER_LEN = 80;
+const QA_MAX_QUESTION_LEN = 200;
+
+function sanitizeSuggestedAnswers(input) {
+  const raw = input && Array.isArray(input.questions) ? input.questions : null;
+  if (!raw) return null;
+  const toText = (v, max) => (
+    (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')
+      ? String(v).trim().slice(0, max).trim()
+      : ''
+  );
+  const out = [];
+  for (const entry of raw) {
+    if (out.length >= QA_MAX_QUESTIONS) break;
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const question = toText(entry.question, QA_MAX_QUESTION_LEN);
+    const answers = (Array.isArray(entry.answers) ? entry.answers : [])
+      .map((a) => toText(a, QA_MAX_ANSWER_LEN))
+      .filter(Boolean)
+      .slice(0, QA_MAX_ANSWERS);
+    if (!answers.length) continue;
+    out.push({ question, answers });
+  }
+  return out.length ? out : null;
+}
+
+// Resolve a phase-1 suggest_answers call against the same-turn tool set
+// (#32). The clarity gate forbids asking + dispatching in one turn, so a
+// dispatch/scout tool_use in the same response wins and the suggestions
+// are dropped — same server-side priority-enforcement posture as the
+// scout > build resolution in the chat handler.
+function resolveSuggestedAnswers(toolUses) {
+  const calls = Array.isArray(toolUses) ? toolUses : [];
+  const suggestCall = calls.find((t) => t && t.name === 'suggest_answers');
+  if (!suggestCall) return { suggestions: null, droppedForDispatch: false };
+  const hasDispatch = calls.some((t) =>
+    t && (t.name === 'dispatch_claude_code' || t.name === 'dispatch_scout'));
+  if (hasDispatch) return { suggestions: null, droppedForDispatch: true };
+  return { suggestions: sanitizeSuggestedAnswers(suggestCall.input), droppedForDispatch: false };
+}
 
 // The Mayor's read-only issue DATA tools — resolved in-process and looped
 // back as tool_results (unlike the terminal dispatch tools).
@@ -4331,7 +4455,8 @@ If a request is UNCLEAR, ask clarifying questions INSTEAD of calling any tool. C
 - Never ask something the repo can answer — that's a dispatch_scout signal, not a question.
 - Never ask when a sensible default exists — state the assumption in one sentence and proceed.
 - Ask at most 3 numbered questions in a single message, each with your suggested default so a one-word reply ("defaults are fine") unblocks. Ask once — don't drip-feed questions across turns.
-- Never dispatch while also asking for clarification (asking and dispatching in the same turn is forbidden).
+- When you DO ask clarifying questions, ALSO call the suggest_answers tool in the same message — one entry per question, in the same order as your numbered questions, with your suggested default as the FIRST answer — so the user can tap an answer chip instead of typing. Each answer must be a short, self-contained reply the user could send verbatim. suggest_answers is the ONLY tool allowed alongside questions.
+- Never dispatch while also asking for clarification (asking and dispatching in the same turn is forbidden — suggest_answers accompanying a dispatch is dropped).
 - If the user replies "your call" / "just do it", proceed with stated assumptions instead of re-asking.
 
 TWO TOOLS, in priority order:
@@ -4354,8 +4479,8 @@ GENERAL RULES (apply to all tools):
   * chatting, brainstorming, or just acknowledging
   * giving feedback that isn't a concrete change request ("this looks bad" alone — ask what they want instead)
   * asking for something that looks like a brand-new, standalone app unrelated to "${appName}" (e.g. they're chatting here but describe building a totally different product). In that case, DO NOT dispatch — instead, gently point them to the home page to create a new app, e.g. "That sounds like a separate app from ${appName}. You can head back to the home screen and spin up a new app for it." Only dispatch if they confirm they want it added to this app.
-- If the request fails the CLARITY GATE above, ask clarifying questions (per its rules) INSTEAD of calling any tool. Never dispatch while also asking for clarification.
-- At most ONE tool call per user message.
+- If the request fails the CLARITY GATE above, ask clarifying questions (per its rules) INSTEAD of calling any dispatch tool — the one tool that belongs WITH questions is suggest_answers. Never dispatch while also asking for clarification.
+- At most ONE tool call per user message (suggest_answers accompanying your clarifying questions does not count toward this limit).
 - Never call dispatch_scout and dispatch_claude_code in the same turn. The user dispatches the build themselves.
 
 AFTER A TOOL RETURNS:
@@ -4519,4 +4644,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDoneIfArmed, notifyAutoSolveDone, buildHeadlessSeed, shouldPostHeadlessQuestionComment, specHasBlockingQuestions };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDoneIfArmed, notifyAutoSolveDone, buildHeadlessSeed, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers };
