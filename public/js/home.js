@@ -346,7 +346,7 @@ const Home = {
 
     let rows = '';
     for (const s of shown) {
-      const title = s.pr_title || s.branch_name || `Session #${s.id}`;
+      const title = s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`;
       const rel = formatRelativeTime(s.last_activity_at || s.created_at);
       const busyTag = s.busy
         ? '<span class="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'

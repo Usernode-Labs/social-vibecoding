@@ -7,6 +7,7 @@ const llm = require('../services/llm');
 const github = require('../services/github');
 const webFetch = require('../services/web-fetch');
 const prMetadata = require('../services/pr-metadata');
+const sessionTitles = require('../services/session-title');
 const testingNotes = require('../services/testing-notes');
 const staging = require('../services/staging');
 const visuals = require('../services/visuals');
@@ -278,7 +279,7 @@ function sessionRoutes(config) {
       // not by creation order.
       const { rows } = await pool.query(
         `SELECT cs.id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
-                cs.status, cs.linked_issues, cs.created_at,
+                cs.session_title, cs.status, cs.linked_issues, cs.created_at,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
                 a.slug AS app_slug, a.name AS app_name
          FROM chat_sessions cs
@@ -325,7 +326,7 @@ function sessionRoutes(config) {
       const appRows = [app];
 
       const { rows } = await pool.query(
-        `SELECT id, branch_name, pr_number, pr_url, pr_title, staging_url, status, linked_issues, behind_main, created_at
+        `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, staging_url, status, linked_issues, behind_main, created_at
          FROM chat_sessions
          WHERE app_id = $1 AND user_id = $2 AND is_headless = FALSE
          ORDER BY created_at DESC`,
@@ -511,13 +512,19 @@ function sessionRoutes(config) {
         log.warn('sessions', 'GitHub branch creation failed (continuing)', { err: err.message });
       }
 
+      // #249: deterministic display name — "#N · issue title" — set at
+      // creation (no LLM call), so the auto session is named both while
+      // generating and after. Null when the issue fetch degraded to
+      // number-only; the UI then falls back to the branch name.
+      const autoTitle = sessionTitles.headlessTitle(issueNumber, issue && issue.title);
+
       // linked_issues is seeded with the issue so a PR opened later from a
       // CLONED session carries `Closes #N` (the clone copies the linkage).
       const { rows } = await pool.query(
-        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, headless_status, headless_issue_number, linked_issues)
-         VALUES ($1, $2, $3, 'active', TRUE, 'generating', $4, $5)
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, headless_status, headless_issue_number, linked_issues, session_title)
+         VALUES ($1, $2, $3, 'active', TRUE, 'generating', $4, $5, $6)
          RETURNING *`,
-        [app.id, req.user.id, branchName, issueNumber, [issueNumber]]
+        [app.id, req.user.id, branchName, issueNumber, [issueNumber], autoTitle]
       );
       const session = rows[0];
       // The runner reuses chat-handler helpers that expect the app fields
@@ -624,11 +631,25 @@ function sessionRoutes(config) {
         }
       }
 
+      // #249: the clone inherits the auto session's display name.
+      // Sources that predate session_title fall back to the same
+      // "#N · issue title" derivation (best-effort, cache-first fetch
+      // — a failure just leaves the branch-name fallback).
+      let cloneTitle = src.session_title || null;
+      if (!cloneTitle && src.headless_issue_number && github.isEnabled() && repoOwner && repoName) {
+        try {
+          const { issue } = await github.fetchPublicIssue(repoOwner, repoName, src.headless_issue_number);
+          cloneTitle = sessionTitles.headlessTitle(src.headless_issue_number, issue && issue.title);
+        } catch (err) {
+          log.warn('sessions', 'Issue fetch for clone title failed (continuing untitled)', { err: err.message });
+        }
+      }
+
       const { rows } = await pool.query(
-        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, spec_md, linked_issues, testing_md, testing_path, cloned_from_session_id)
-         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8)
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, spec_md, linked_issues, testing_md, testing_path, cloned_from_session_id, session_title)
+         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9)
          RETURNING *`,
-        [src.app_id, req.user.id, branchName, src.spec_md || '', src.linked_issues, src.testing_md, src.testing_path, src.id]
+        [src.app_id, req.user.id, branchName, src.spec_md || '', src.linked_issues, src.testing_md, src.testing_path, src.id, cloneTitle]
       );
       const session = rows[0];
 
@@ -1210,6 +1231,32 @@ function sessionRoutes(config) {
         send('phase', { phase });
       };
 
+      // #249: first-message naming — a brand-new session (no title yet,
+      // no PR) gets a readable display name from its opening ask, long
+      // before any code lands. Fire-and-forget: the turn never waits on
+      // it, and any failure just keeps the branch-name fallback. The
+      // billing path resolved above means the Haiku call is debited to
+      // the requesting user (BYOK-aware), like every other turn cost.
+      const titledThisTurn = !session.session_title && !session.pr_number;
+      if (titledThisTurn) {
+        sessionTitles.maybeTitleFirstMessage({
+          pool, session, message: message.trim(),
+          userId: req.user.id, apiKey: userApiKey, send,
+        });
+      }
+      // #249: pre-PR turn-end refresh — re-title from the full request
+      // history + latest spec draft so a vague opening ask sharpens once
+      // the direction is clear. Once a PR exists applyPrMetadata owns
+      // the name (it mirrors pr_title into session_title), so this
+      // never fires again; and the first-message hook already covers
+      // the turn it ran on. Fire-and-forget like the hook above.
+      const refreshTitleAtTurnEnd = () => {
+        if (titledThisTurn || session.pr_number) return;
+        sessionTitles.refreshFromHistory({
+          pool, session, userId: req.user.id, apiKey: userApiKey, send,
+        });
+      };
+
       try {
         // Parse repo info
         const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
@@ -1529,6 +1576,7 @@ function sessionRoutes(config) {
 
         if (!activeToolCall) {
           // Pure chat turn — no tool call needed.
+          refreshTitleAtTurnEnd();
           send('done', {});
           res.end();
           setTimeout(() => sessionBus.clearSession(session.id), 30000);
@@ -1769,6 +1817,10 @@ function sessionRoutes(config) {
         }
       }
 
+      // #249: covers every turn that reached the main exit without a PR
+      // — no-changes turns, scout/spec turns, errored dispatches. PR
+      // turns skip it (applyPrMetadata mirrored the title already).
+      refreshTitleAtTurnEnd();
       send('done', {});
       res.end();
       // Drop the session-bus ring buffer shortly after completion.

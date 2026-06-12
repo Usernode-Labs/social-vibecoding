@@ -949,7 +949,18 @@ const App = {
         if (DevChat.currentSession) {
           if (data.prNumber) DevChat.currentSession.pr_number = data.prNumber;
           if (data.prUrl) DevChat.currentSession.pr_url = data.prUrl;
-          if (data.prTitle) DevChat.currentSession.pr_title = data.prTitle;
+          if (data.prTitle) {
+            DevChat.currentSession.pr_title = data.prTitle;
+            // #249: server mirrors pr_title into session_title.
+            DevChat.currentSession.session_title = data.prTitle;
+          }
+          if (typeof DevChat.renderChatView === 'function') DevChat.renderChatView();
+        }
+        break;
+      case 'session_titled':
+        // #249: pre-PR display name landed — refresh header/session UI.
+        if (DevChat.currentSession && data.sessionTitle) {
+          DevChat.currentSession.session_title = data.sessionTitle;
           if (typeof DevChat.renderChatView === 'function') DevChat.renderChatView();
         }
         break;

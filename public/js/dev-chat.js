@@ -329,7 +329,7 @@ const DevChat = {
     const currentSlug = (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug) || '';
 
     container.innerHTML = sorted.map((s) => {
-      const title = escapeHtml(s.pr_title || s.branch_name || 'Session');
+      const title = escapeHtml(s.session_title || s.pr_title || s.branch_name || 'Session');
       const appName = escapeHtml(s.app_name || s.app_slug || '');
       const isOtherApp = s.app_slug && s.app_slug !== currentSlug;
       // Dot color tracks lifecycle:
@@ -932,10 +932,24 @@ const DevChat = {
                 if (DevChat.currentSession) {
                   if (data.prNumber) DevChat.currentSession.pr_number = data.prNumber;
                   if (data.prUrl) DevChat.currentSession.pr_url = data.prUrl;
-                  if (data.prTitle) DevChat.currentSession.pr_title = data.prTitle;
+                  if (data.prTitle) {
+                    DevChat.currentSession.pr_title = data.prTitle;
+                    // #249: the server mirrors pr_title into
+                    // session_title; mirror client-side too so the
+                    // display name flips without a refetch.
+                    DevChat.currentSession.session_title = data.prTitle;
+                  }
                   // Re-render so the new title shows up in the PR card / header
                   // immediately (these only re-render on renderChatView / message
                   // pushes, not on raw event arrival).
+                  DevChat.renderChatView();
+                }
+                break;
+              case 'session_titled':
+                // #249: a pre-PR display name landed (first message or
+                // turn-end refresh) — update the header + session lists.
+                if (DevChat.currentSession && data.sessionTitle) {
+                  DevChat.currentSession.session_title = data.sessionTitle;
                   DevChat.renderChatView();
                 }
                 break;
@@ -1247,7 +1261,18 @@ const DevChat = {
         if (DevChat.currentSession) {
           if (data.prNumber) DevChat.currentSession.pr_number = data.prNumber;
           if (data.prUrl) DevChat.currentSession.pr_url = data.prUrl;
-          if (data.prTitle) DevChat.currentSession.pr_title = data.prTitle;
+          if (data.prTitle) {
+            DevChat.currentSession.pr_title = data.prTitle;
+            // #249: server mirrors pr_title into session_title.
+            DevChat.currentSession.session_title = data.prTitle;
+          }
+          DevChat.renderChatView();
+        }
+        break;
+      case 'session_titled':
+        // #249: pre-PR display name landed — refresh header/session UI.
+        if (DevChat.currentSession && data.sessionTitle) {
+          DevChat.currentSession.session_title = data.sessionTitle;
           DevChat.renderChatView();
         }
         break;
@@ -1685,7 +1710,11 @@ const DevChat = {
         if (data.prNumber) {
           DevChat.currentSession.pr_number = data.prNumber;
           if (data.prUrl) DevChat.currentSession.pr_url = data.prUrl;
-          if (data.prTitle) DevChat.currentSession.pr_title = data.prTitle;
+          if (data.prTitle) {
+            DevChat.currentSession.pr_title = data.prTitle;
+            // #249: server mirrors pr_title into session_title.
+            DevChat.currentSession.session_title = data.prTitle;
+          }
         }
         DevChat.renderMessages();
       } else {
@@ -1879,7 +1908,7 @@ const DevChat = {
             <div class="dc-pr-card" id="dc-pr-card">
               <div class="dc-pr-card-header">
                 ${session?.pr_url ? `<a href="${session.pr_url}" target="_blank" class="dc-pr-link">PR #${session.pr_number}</a>` : '<span style="color:var(--text-muted)">Changes ready</span>'}
-                ${session?.pr_title ? `<span class="dc-pr-title">${escapeHtml(session.pr_title)}</span>` : ''}
+                ${(session?.session_title || session?.pr_title) ? `<span class="dc-pr-title">${escapeHtml(session.session_title || session.pr_title)}</span>` : ''}
                 ${window.AppView ? AppView.closesPillHtml(session) : ''}
                 <span style="font-size:9px;opacity:0.4;margin-left:8px">${stgId} ${stgTs}</span>
               </div>
@@ -2434,13 +2463,13 @@ const DevChat = {
       return `
         <div class="dc-session-item px-3 py-2 cursor-pointer hover:bg-zinc-800/50 flex items-center gap-2" data-id="${s.id}">
           <span class="text-xs ${statusColor} font-mono">${s.status}</span>
-          <span class="text-sm text-zinc-300 flex-1 truncate" title="${escapeHtml(s.branch_name || '')}">${escapeHtml(s.pr_title || s.branch_name || 'Session')}</span>
+          <span class="text-sm text-zinc-300 flex-1 truncate" title="${escapeHtml(s.branch_name || '')}">${escapeHtml(s.session_title || s.pr_title || s.branch_name || 'Session')}</span>
           ${s.pr_url ? `<a href="${s.pr_url}" target="_blank" class="text-xs text-violet-400 hover:text-violet-300" onclick="event.stopPropagation()">PR#${s.pr_number}</a>` : ''}
           ${isPausable ? `<button class="dc-pause-btn text-xs text-zinc-400 hover:text-emerald-400" data-id="${s.id}" data-action="pause" onclick="event.stopPropagation()">Pause</button>` : ''}
           ${isFreeable ? `<button class="dc-pause-btn text-xs text-zinc-400 hover:text-emerald-400" data-id="${s.id}" data-action="pause" data-freeing="1" title="Frees the AI worker. The PR stays up for voting." onclick="event.stopPropagation()">Free worker</button>` : ''}
           ${isPaused ? `<button class="dc-pause-btn text-xs text-emerald-400 hover:text-emerald-300" data-id="${s.id}" data-action="resume" onclick="event.stopPropagation()">Resume</button>` : ''}
           ${isArchived ? `<button class="dc-unarchive-btn text-xs text-emerald-400 hover:text-emerald-300" data-id="${s.id}" onclick="event.stopPropagation()" title="Restore this session (reopens the PR)">Unarchive</button>` : ''}
-          ${isActionable ? `<button class="dc-archive-btn text-xs text-zinc-500 hover:text-red-400" data-id="${s.id}" data-name="${escapeHtml(s.pr_title || s.branch_name || 'Session')}" title="Archive (frees the slot; restorable for a while)" onclick="event.stopPropagation()">Archive</button>` : ''}
+          ${isActionable ? `<button class="dc-archive-btn text-xs text-zinc-500 hover:text-red-400" data-id="${s.id}" data-name="${escapeHtml(s.session_title || s.pr_title || s.branch_name || 'Session')}" title="Archive (frees the slot; restorable for a while)" onclick="event.stopPropagation()">Archive</button>` : ''}
           <span class="text-xs text-zinc-600">${date}</span>
         </div>`;
     }).join('');
@@ -2754,7 +2783,7 @@ const DevChat = {
     content.innerHTML = `
       <div class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
         <button id="dc-back" class="text-zinc-400 hover:text-zinc-200 text-sm">&larr;</button>
-        <span class="text-xs text-zinc-400 truncate flex-1" title="${escapeHtml(DevChat.currentSession.branch_name || '')}">${escapeHtml(DevChat.currentSession.pr_title || DevChat.currentSession.branch_name || 'Session')}</span>
+        <span class="text-xs text-zinc-400 truncate flex-1" title="${escapeHtml(DevChat.currentSession.branch_name || '')}">${escapeHtml(DevChat.currentSession.session_title || DevChat.currentSession.pr_title || DevChat.currentSession.branch_name || 'Session')}</span>
         ${DevChat.currentSession.pr_number
           ? `<button id="dc-pr-header-link" class="text-xs text-violet-400 hover:text-violet-300" title="This session's pull request — every change in this chat goes to PR #${DevChat.currentSession.pr_number}. Use “Start a new change” for separate work.">PR #${DevChat.currentSession.pr_number}</button>`
           : '<span class="text-xs text-zinc-500" title="This chat is one change → one pull request. A PR opens after the first build.">New change</span>'}

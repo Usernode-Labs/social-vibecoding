@@ -380,8 +380,11 @@ async function applyPrMetadata({
       session.pr_number = pr.number;
       session.pr_url = pr.html_url;
       session.pr_title = prTitle;
+      // #249: once a PR exists its title owns the session's display
+      // name — mirror it so every list shows one name everywhere.
+      session.session_title = prTitle;
       await pool.query(
-        `UPDATE chat_sessions SET pr_number = $1, pr_url = $2, pr_title = $3, pr_linked_issues_applied = $4, pr_testing_applied = $5, pr_visuals_applied = $6 WHERE id = $7`,
+        `UPDATE chat_sessions SET pr_number = $1, pr_url = $2, pr_title = $3, session_title = $3, pr_linked_issues_applied = $4, pr_testing_applied = $5, pr_visuals_applied = $6 WHERE id = $7`,
         [pr.number, pr.html_url, prTitle, linkedIssues, testingBlock || null, visualsBlock || null, session.id]
       );
       if (broadcast) broadcast('pr_created', { prNumber: pr.number, prUrl: pr.html_url, prTitle });
@@ -407,8 +410,10 @@ async function applyPrMetadata({
       body: prBody,
     });
     session.pr_title = prTitle;
+    // #249: keep the session display name tracking the PR title.
+    session.session_title = prTitle;
     await pool.query(
-      `UPDATE chat_sessions SET pr_title = $1, pr_linked_issues_applied = $2, pr_testing_applied = $3, pr_visuals_applied = $4 WHERE id = $5`,
+      `UPDATE chat_sessions SET pr_title = $1, session_title = $1, pr_linked_issues_applied = $2, pr_testing_applied = $3, pr_visuals_applied = $4 WHERE id = $5`,
       [prTitle, linkedIssues, testingBlock || null, visualsBlock || null, session.id]
     );
     if (broadcast) broadcast('pr_updated', { prNumber: session.pr_number, prUrl: session.pr_url, prTitle });
