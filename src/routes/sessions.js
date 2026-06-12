@@ -2022,7 +2022,13 @@ function sessionRoutes(config) {
     // without guessing from container status alone.
     const phase = stopRegistry.get(sessionId)?.phase || null;
 
-    res.json({ busy, progress, phase });
+    // #239: whether the auto-conflict-resolver currently has a resolve
+    // in flight for this session. The client's "resolving merge
+    // conflicts" banner polls this as its reload-recovery and
+    // missed-WS-event safety net.
+    const { isResolving } = require('../services/conflict-resolver');
+
+    res.json({ busy, progress, phase, resolving: isResolving(sessionId) });
   });
 
   // Stop an in-flight turn (#28). Aborts the Mayor's Anthropic stream

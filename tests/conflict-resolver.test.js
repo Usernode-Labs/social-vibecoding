@@ -227,6 +227,9 @@ function loadResolverForCoalesce({
   // override this with a BYOK spillover or an error.
   limitsImpl = { resolveBillingPath: async () => ({ apiKey: null, byok: false }) },
   onSystemMessage = null,
+  // #239: the retried merge's result drives the terminal
+  // resolutionOutcome (merged vs synced_awaiting_votes).
+  checkAndMergeImpl = async () => ({ merged: true }),
 }) {
   const ids = {
     logger: require.resolve('../src/services/logger'),
@@ -244,7 +247,7 @@ function loadResolverForCoalesce({
   const sessionRow = {
     id: 7, status: 'promoted', repo_url: 'https://github.com/acme/widget',
     pr_number: 12, behind_main: 0, user_id: 3, app_id: 5,
-    app_slug: 'widget', app_name: 'Widget',
+    app_slug: 'widget', app_name: 'Widget', app_self_hosted: true,
   };
   // pollMergeable → false (forces needsSync); waitForMergeableTrue → true.
   let mi = 0;
@@ -269,9 +272,12 @@ function loadResolverForCoalesce({
   stub(ids.pool, {
     getPool: () => makePool([[/SELECT cs\.\*, a\.slug/, [sessionRow]]]),
   });
-  stub(ids.votes, { checkAndMerge: async () => ({ merged: true }) });
+  stub(ids.votes, { checkAndMerge: checkAndMergeImpl });
+  // #239: record the resolver's lifecycle vote_update broadcasts so
+  // tests can assert the start/terminal pair.
+  const voteUpdates = [];
   stub(ids.ws, {
-    pushVoteUpdate() {},
+    pushVoteUpdate(data) { voteUpdates.push(data); },
     sendSystemMessage: async (_pool, _appId, content) => {
       if (onSystemMessage) onSystemMessage(content);
     },
@@ -284,7 +290,7 @@ function loadResolverForCoalesce({
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { subject, restore };
+  return { subject, voteUpdates, restore };
 }
 
 test('resolveAndMaybeRetry: concurrent resolves of one session share a single worker run', async () => {
@@ -352,6 +358,149 @@ test('resolveAndMaybeRetry: over-budget owner WITH a BYOK key syncs on the key i
     const r = await subject.resolveAndMaybeRetry({ jwtSecret: 's' }, { sessionId: 7 });
     assert.equal(syncCalls, 1, 'the sync must proceed on the owner key, not skip');
     assert.equal(r.reason, 'synced_and_merged');
+  } finally {
+    restore();
+  }
+});
+
+// ── #239: resolution lifecycle broadcasts ──────────────────────────────
+// The resolver emits vote_update { resolving:true } right before the
+// worker sync starts (past the needsSync + billing gates, so no-op
+// sweeps never flash the banner) and exactly one terminal
+// { resolving:false, resolutionOutcome } when the deduped promise
+// settles. Clients drive the platform banner and vote-panel badge off
+// these.
+
+const startEvents = (updates) => updates.filter((u) => u.resolving === true);
+const terminalEvents = (updates) => updates.filter((u) => u.resolving === false);
+
+test('lifecycle: start broadcast fires before a real sync, terminal maps synced_and_merged → merged', async () => {
+  const { subject, voteUpdates, restore } = loadResolverForCoalesce({
+    runSyncMainImpl: async () => ({ ok: true, syncResult: 'resolved', behind: 0 }),
+  });
+  try {
+    const r = await subject.resolveAndMaybeRetry({ jwtSecret: 's' }, { sessionId: 7 });
+    assert.equal(r.reason, 'synced_and_merged');
+
+    const starts = startEvents(voteUpdates);
+    assert.equal(starts.length, 1, 'exactly one start broadcast');
+    assert.equal(starts[0].sessionId, 7);
+    assert.equal(starts[0].appSlug, 'widget');
+    assert.equal(starts[0].selfHosted, true);
+
+    const terminals = terminalEvents(voteUpdates);
+    assert.equal(terminals.length, 1, 'exactly one terminal broadcast');
+    assert.equal(terminals[0].sessionId, 7);
+    assert.equal(terminals[0].appSlug, 'widget');
+    assert.equal(terminals[0].resolutionOutcome, 'merged');
+    assert.equal(terminals[0].selfHosted, true);
+  } finally {
+    restore();
+  }
+});
+
+test('lifecycle: no start broadcast on the no_conflict early-bail path', async () => {
+  const { subject, voteUpdates, restore } = loadResolverForCoalesce({
+    // GitHub never settles (null forever) + behind_main 0 → no sync runs.
+    mergeableSeq: [null],
+    runSyncMainImpl: async () => {
+      throw new Error('sync must not run on the no_conflict path');
+    },
+  });
+  try {
+    const r = await subject.resolveAndMaybeRetry({ jwtSecret: 's' }, { sessionId: 7 });
+    assert.equal(r.reason, 'no_conflict');
+    assert.equal(startEvents(voteUpdates).length, 0, 'no-op resolves must not flash the banner');
+    const terminals = terminalEvents(voteUpdates);
+    assert.equal(terminals.length, 1);
+    assert.equal(terminals[0].resolutionOutcome, 'noop');
+  } finally {
+    restore();
+  }
+});
+
+test('lifecycle: synced but not merged (awaiting votes) → resolutionOutcome synced', async () => {
+  const { subject, voteUpdates, restore } = loadResolverForCoalesce({
+    runSyncMainImpl: async () => ({ ok: true, syncResult: 'resolved', behind: 0 }),
+    checkAndMergeImpl: async () => ({ merged: false, yesCount: 1, needed: 2 }),
+  });
+  try {
+    const r = await subject.resolveAndMaybeRetry({ jwtSecret: 's' }, { sessionId: 7 });
+    assert.equal(r.reason, 'synced_awaiting_votes');
+    const terminals = terminalEvents(voteUpdates);
+    assert.equal(terminals.length, 1);
+    assert.equal(terminals[0].resolutionOutcome, 'synced');
+  } finally {
+    restore();
+  }
+});
+
+test('lifecycle: unresolved conflict → resolutionOutcome failed (after a start broadcast)', async () => {
+  const { subject, voteUpdates, restore } = loadResolverForCoalesce({
+    runSyncMainImpl: async () => ({ ok: false, syncResult: 'conflict', behind: 2 }),
+  });
+  try {
+    const r = await subject.resolveAndMaybeRetry({ jwtSecret: 's' }, { sessionId: 7 });
+    assert.equal(r.reason, 'unresolved_conflict');
+    assert.equal(startEvents(voteUpdates).length, 1, 'a real sync ran, so the start fired');
+    const terminals = terminalEvents(voteUpdates);
+    assert.equal(terminals.length, 1);
+    assert.equal(terminals[0].resolutionOutcome, 'failed');
+  } finally {
+    restore();
+  }
+});
+
+test('lifecycle: over-budget skip → resolutionOutcome failed with NO start broadcast', async () => {
+  const { subject, voteUpdates, restore } = loadResolverForCoalesce({
+    mergeableSeq: [false],
+    limitsImpl: { resolveBillingPath: async () => ({ error: 'Daily limit reached.' }) },
+    runSyncMainImpl: async () => ({ ok: true, syncResult: 'resolved', behind: 0 }),
+  });
+  try {
+    const r = await subject.resolveAndMaybeRetry({ jwtSecret: 's' }, { sessionId: 7 });
+    assert.equal(r.reason, 'over_budget');
+    assert.equal(startEvents(voteUpdates).length, 0, 'billing gate fires before the start broadcast');
+    const terminals = terminalEvents(voteUpdates);
+    assert.equal(terminals.length, 1);
+    assert.equal(terminals[0].resolutionOutcome, 'failed');
+  } finally {
+    restore();
+  }
+});
+
+test('lifecycle: two concurrent resolves of one session produce a single start/terminal pair', async () => {
+  const { subject, voteUpdates, restore } = loadResolverForCoalesce({
+    runSyncMainImpl: async () => {
+      await new Promise((r) => setTimeout(r, 20));
+      return { ok: true, syncResult: 'resolved', behind: 0 };
+    },
+  });
+  try {
+    const p1 = subject.resolveAndMaybeRetry({ jwtSecret: 's' }, { sessionId: 7 });
+    const p2 = subject.resolveAndMaybeRetry({ jwtSecret: 's' }, { sessionId: 7 });
+    await Promise.all([p1, p2]);
+    assert.equal(startEvents(voteUpdates).length, 1, 'coalesced resolves share one start');
+    assert.equal(terminalEvents(voteUpdates).length, 1, 'coalesced resolves share one terminal');
+  } finally {
+    restore();
+  }
+});
+
+test('isResolving: true while the deduped promise is in flight, false after it settles', async () => {
+  const { subject, restore } = loadResolverForCoalesce({
+    runSyncMainImpl: async () => {
+      await new Promise((r) => setTimeout(r, 20));
+      return { ok: true, syncResult: 'resolved', behind: 0 };
+    },
+  });
+  try {
+    assert.equal(subject.isResolving(7), false, 'idle before any resolve');
+    const p = subject.resolveAndMaybeRetry({ jwtSecret: 's' }, { sessionId: 7 });
+    assert.equal(subject.isResolving(7), true, 'in flight while the promise is pending');
+    assert.equal(subject.isResolving(8), false, 'scoped per session');
+    await p;
+    assert.equal(subject.isResolving(7), false, 'cleared once the resolve settles');
   } finally {
     restore();
   }

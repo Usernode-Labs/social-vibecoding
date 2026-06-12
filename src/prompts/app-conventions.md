@@ -492,6 +492,109 @@ Leave **non-private** (the default) for:
    staging) — added `staging_default: 'sk_test_publishable_dummy'`
    so staging gets a no-op test key."
 
+## App LLM access — the platform Claude proxy
+
+Apps that want AI features call Claude **through the platform's
+LLM proxy**, billed to the signed-in user's existing daily AI budget
+under an explicit per-app, per-user permission grant. **Never ask
+users for Anthropic API keys, and never store an API key as an app
+secret** — the proxy exists precisely so apps don't handle keys.
+
+Production containers receive two extra env vars (platform-injected;
+both are reserved manifest keys you must not declare):
+
+- `USERNODE_LLM_PROXY_URL` — base URL of the proxy
+  (`http://usernode:3000/api/app-llm` in-network).
+- `USERNODE_LLM_PROXY_TOKEN` — this app's opaque credential.
+
+**Staging containers receive NEITHER** (unreviewed PR code must not be
+able to spend users' budgets), and standalone deploys have no platform
+to call. Always detect absence and degrade gracefully:
+
+```js
+const LLM_ENABLED = !!process.env.USERNODE_LLM_PROXY_TOKEN;
+// When false: hide/disable AI features in the UI, or return a clear
+// "AI features are unavailable in this environment" from the API.
+```
+
+### Calling the proxy (server-side)
+
+The app's **server** calls the proxy, forwarding the user's iframe
+token (the same `x-usernode-token` value the frontend already sends —
+see "Auth"). Two endpoints are available, both POST, mirroring the
+Anthropic Messages API:
+
+- `POST ${USERNODE_LLM_PROXY_URL}/v1/messages`
+- `POST ${USERNODE_LLM_PROXY_URL}/v1/messages/count_tokens`
+
+```js
+const resp = await fetch(`${process.env.USERNODE_LLM_PROXY_URL}/v1/messages`, {
+  method: 'POST',
+  headers: {
+    'content-type': 'application/json',
+    'anthropic-version': '2023-06-01',
+    'x-usernode-app-token': process.env.USERNODE_LLM_PROXY_TOKEN,
+    'x-usernode-user-token': req.headers['x-usernode-token'],
+  },
+  body: JSON.stringify({ model, max_tokens, messages }),
+});
+```
+
+The body/response are standard Anthropic Messages API shapes
+(streaming SSE included). Error codes the app must handle:
+
+- `403 { code: 'grant_required' }` — the user hasn't granted this app
+  access (or revoked it). Surface this to the frontend, have it call
+  `usernode.requestLlmAccess()` (below), then retry.
+- `429 { code: 'app_cap_exceeded' }` — the user's per-app daily cap is
+  spent. Show "daily AI cap for this app reached — resets at midnight
+  UTC"; do not retry until tomorrow.
+- `429 { code: 'budget_exceeded' }` — the user's overall daily budget
+  is exhausted.
+
+### Requesting consent (frontend, via the bridge)
+
+The hosted bridge (see "Bridge") provides:
+
+- `usernode.requestLlmAccess()` — asks the **platform shell** to show
+  its consent dialog (app name, your declared purpose, an editable
+  daily cap). Resolves `{ granted, dailyCapCents, allowByok }` or
+  `{ granted: false, declined: true }`. The dialog is platform-owned;
+  an app cannot approve itself.
+- `usernode.getLlmAccess()` — read-only grant state, same shape.
+
+Both reject when there's no platform shell (standalone/dev) — treat a
+rejection like `LLM_ENABLED === false`.
+
+Recommended pattern: call the proxy; on `grant_required`, have the
+frontend `await usernode.requestLlmAccess()` and retry once granted.
+
+### Declaring consent metadata in `dapp.json`
+
+An optional top-level `llm` block shapes the consent dialog:
+
+```json
+{
+  "llm": {
+    "purpose": "Summarizes long threads for you",
+    "suggested_daily_cap_cents": 300
+  }
+}
+```
+
+- `purpose` — one short line (≤140 chars) shown in the dialog so the
+  user knows why the app wants AI. Always declare it for AI features.
+- `suggested_daily_cap_cents` — pre-fills the dialog's editable cap
+  field instead of the $1.00 default. Suggest a **modest** value that
+  matches the feature's real cost; the user sees and can change the
+  number, and the platform clamps it to the user's own daily limit.
+  Omit it unless the default is genuinely too small.
+
+Users manage grants (cap, revocation, BYOK spillover) in the
+platform's Settings → "App AI permissions"; revocation is immediate,
+so treat `grant_required` as a state that can appear at any time, not
+just on first use.
+
 ## Don't `git push` yourself
 
 The worker container runs with **zero GitHub credentials in env** —

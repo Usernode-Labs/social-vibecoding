@@ -95,7 +95,8 @@ async function waitForMergeableTrue(owner, repo, prNumber, { afterPush = false }
 // trigger fired).
 async function loadSession(pool, sessionId) {
   const { rows } = await pool.query(
-    `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.name AS app_name
+    `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.name AS app_name,
+            a.self_hosted AS app_self_hosted
      FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
      WHERE cs.id = $1`,
     [sessionId]
@@ -152,6 +153,29 @@ async function checkAndResolveConflicts(config, mergedSession) {
 // one worker turn / one merge attempt) and receive the same result.
 const _inFlightResolves = new Map(); // sessionId -> Promise<result>
 
+// Process-local "is a resolve currently in flight for this session?" —
+// authoritative because the platform runs as a single Node process.
+// Read by GET /api/sessions/:id/status (the banner's reload-recovery
+// poll) and GET /api/apps/:slug/promoted (the vote-panel badge).
+function isResolving(sessionId) {
+  return _inFlightResolves.has(sessionId);
+}
+
+// #239: map the inner resolve's exit `reason` onto the coarse outcome
+// the client banner switches on. `failed` covers every exit where the
+// branch is still broken (or the sync never ran for a budget/error
+// reason after a real conflict was detected); `synced` means the branch
+// is fixed but the merge still needs votes; everything that did nothing
+// user-visible is `noop`.
+function resolutionOutcomeFor(reason) {
+  if (reason === 'synced_and_merged' || reason === 'merged') return 'merged';
+  if (reason === 'synced_awaiting_votes' || reason === 'mergeable_recompute_pending') return 'synced';
+  if (['unresolved_conflict', 'sync_threw', 'still_conflicting', 'over_budget', 'retry_threw'].includes(reason)) {
+    return 'failed';
+  }
+  return 'noop';
+}
+
 async function resolveAndMaybeRetry(config, target) {
   const sessionId = target.sessionId != null ? target.sessionId : target.session?.id;
   if (sessionId != null && _inFlightResolves.has(sessionId)) {
@@ -164,6 +188,25 @@ async function resolveAndMaybeRetry(config, target) {
       if (_inFlightResolves.get(sessionId) === p) _inFlightResolves.delete(sessionId);
     });
   }
+  // #239: terminal lifecycle broadcast — exactly once per in-flight
+  // resolve (deduped callers share `p`, so they share this too). The
+  // inner resolve decorates its result with appSlug/selfHosted once the
+  // session row is loaded; exits before that (session_not_found) carry
+  // no appSlug and are skipped. Clients use this to clear the resolving
+  // banner / vote-panel badge.
+  p.then((result) => {
+    if (!result || !result.appSlug) return;
+    try {
+      const { pushVoteUpdate } = require('./ws');
+      pushVoteUpdate({
+        sessionId: result.sessionId != null ? result.sessionId : sessionId,
+        appSlug: result.appSlug,
+        resolving: false,
+        resolutionOutcome: resolutionOutcomeFor(result.reason),
+        selfHosted: !!result.selfHosted,
+      });
+    } catch (_) { /* ws non-fatal */ }
+  }).catch(() => { /* inner never throws by contract; belt-and-braces */ });
   return p;
 }
 
@@ -174,7 +217,20 @@ async function resolveAndMaybeRetryInner(config, target) {
     session = await loadSession(pool, target.sessionId);
     if (!session) return { ok: false, reason: 'session_not_found' };
   }
+  const result = await resolveWithSession(config, pool, session);
+  // #239: decorate every loaded-session exit with the fields the
+  // wrapper's terminal broadcast needs. Pre-loaded sessions from
+  // checkAndMerge already carry app_slug / app_self_hosted; loadSession
+  // selects them too.
+  return {
+    ...result,
+    sessionId: session.id,
+    appSlug: session.app_slug,
+    selfHosted: !!session.app_self_hosted,
+  };
+}
 
+async function resolveWithSession(config, pool, session) {
   if (!github.isEnabled() || !session.repo_url || !session.pr_number) {
     return { ok: false, reason: 'github_disabled_or_no_pr' };
   }
@@ -225,6 +281,22 @@ async function resolveAndMaybeRetryInner(config, target) {
       );
       return { ok: false, reason: 'over_budget' };
     }
+
+    // #239: start lifecycle broadcast — emitted only here, past the
+    // needsSync + billing gates, so the frequent no-op sweeps (post-merge
+    // sibling sweep / drift poller calls that find nothing to do) never
+    // flash the resolving banner. Clients arm the non-blocking
+    // "resolving merge conflicts" banner (self-hosted) and the
+    // vote-panel badge off this.
+    try {
+      const { pushVoteUpdate } = require('./ws');
+      pushVoteUpdate({
+        sessionId: session.id,
+        appSlug: session.app_slug,
+        resolving: true,
+        selfHosted: !!session.app_self_hosted,
+      });
+    } catch (_) { /* ws non-fatal */ }
 
     let sync;
     try {
@@ -331,4 +403,4 @@ async function postGroupMessage(pool, session, content) {
   }
 }
 
-module.exports = { checkAndResolveConflicts, resolveAndMaybeRetry, pollMergeable };
+module.exports = { checkAndResolveConflicts, resolveAndMaybeRetry, pollMergeable, isResolving };
