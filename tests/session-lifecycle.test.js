@@ -56,6 +56,8 @@ function loadWithStubs() {
     reopenPR: [],
     reopenShouldThrow: false,
     pushSessionUpdate: [],
+    sendSystemMessage: [],
+    sendSystemMessageShouldThrow: false,
   };
 
   const stub = (id, exports) => {
@@ -84,6 +86,10 @@ function loadWithStubs() {
   });
   stub(ids.ws, {
     pushSessionUpdate: (payload) => { spies.pushSessionUpdate.push(payload); },
+    sendSystemMessage: async (pool, appId, content, msgType, metadata) => {
+      spies.sendSystemMessage.push({ appId, content, msgType, metadata });
+      if (spies.sendSystemMessageShouldThrow) throw new Error('chat insert failed');
+    },
   });
 
   delete require.cache[ids.subject];
@@ -168,6 +174,92 @@ test('archiveSession: returns archived=false when no row matched', async () => {
     assert.equal(res.archived, false);
     assert.deepEqual(spies.destroyWorker, []);
     assert.deepEqual(spies.closePR, []);
+  } finally {
+    restore();
+  }
+});
+
+// ── PR-withdrawn group-chat announcement (#200) ─────────────────────────
+
+test('archiveSession: manual archive announces "<user> withdrew PR #N — Title"', async () => {
+  const { subject, spies, restore } = loadWithStubs();
+  try {
+    const pool = makePool([
+      [/SET status = 'archived'/, [{ id: 7 }]],
+      [/SELECT cs\.\*/, [{
+        id: 7, app_id: 4, app_slug: 'whiteboard', repo_url: REPO,
+        pr_number: 53, pr_title: 'Add sticky notes', owner_username: 'evan',
+      }]],
+    ]);
+
+    const res = await subject.archiveSession({ pool, sessionId: 7, userId: 3, reason: 'manual' });
+
+    assert.equal(res.archived, true);
+    assert.equal(spies.sendSystemMessage.length, 1);
+    assert.equal(spies.sendSystemMessage[0].appId, 4);
+    assert.equal(spies.sendSystemMessage[0].content, 'evan withdrew PR #53 — Add sticky notes');
+    assert.equal(spies.sendSystemMessage[0].msgType, 'system');
+  } finally {
+    restore();
+  }
+});
+
+test('archiveSession: sweeper archive announces the actor-less form', async () => {
+  const { subject, spies, restore } = loadWithStubs();
+  try {
+    const pool = makePool([
+      [/SET status = 'archived'/, [{ id: 9 }]],
+      [/SELECT cs\.\*/, [{
+        // owner_username present but no userId — the actor-less wording
+        // must win (nobody clicked anything; the sweeper did this).
+        id: 9, app_id: 4, app_slug: 'w', repo_url: REPO,
+        pr_number: 99, pr_title: null, owner_username: 'evan',
+      }]],
+    ]);
+
+    await subject.archiveSession({ pool, sessionId: 9, reason: 'stale-pr' });
+
+    assert.equal(spies.sendSystemMessage.length, 1);
+    // pr_title null → label falls back to the bare PR number.
+    assert.equal(spies.sendSystemMessage[0].content, 'PR #99 was withdrawn (no vote activity)');
+    assert.equal(spies.sendSystemMessage[0].msgType, 'system');
+  } finally {
+    restore();
+  }
+});
+
+test('archiveSession: no announcement when the session has no PR', async () => {
+  const { subject, spies, restore } = loadWithStubs();
+  try {
+    const pool = makePool([
+      [/SET status = 'archived'/, [{ id: 5 }]],
+      [/SELECT cs\.\*/, [{ id: 5, app_id: 4, app_slug: 'w', repo_url: REPO, pr_number: null, owner_username: 'evan' }]],
+    ]);
+    await subject.archiveSession({ pool, sessionId: 5, userId: 3 });
+    assert.deepEqual(spies.sendSystemMessage, []);
+  } finally {
+    restore();
+  }
+});
+
+test('archiveSession: a failing chat insert never fails the archive', async () => {
+  const { subject, spies, restore } = loadWithStubs();
+  try {
+    spies.sendSystemMessageShouldThrow = true;
+    const pool = makePool([
+      [/SET status = 'archived'/, [{ id: 7 }]],
+      [/SELECT cs\.\*/, [{
+        id: 7, app_id: 4, app_slug: 'widget', repo_url: REPO,
+        pr_number: 12, pr_title: 'Fix nav', owner_username: 'evan',
+      }]],
+    ]);
+
+    const res = await subject.archiveSession({ pool, sessionId: 7, userId: 3, reason: 'manual' });
+
+    assert.equal(res.archived, true, 'chat failure is non-fatal');
+    assert.equal(spies.sendSystemMessage.length, 1, 'the send was attempted');
+    assert.deepEqual(spies.closePR, [{ owner: 'acme', repo: 'widget', pr: 12 }]);
+    assert.equal(spies.pushSessionUpdate[0].action, 'archived');
   } finally {
     restore();
   }
