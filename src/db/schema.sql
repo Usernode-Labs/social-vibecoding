@@ -456,6 +456,8 @@ CREATE TABLE IF NOT EXISTS issue_votes (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(issue_id, user_id)
 );
+-- User-first scan for the "My history" view (GET /api/me/history).
+CREATE INDEX IF NOT EXISTS idx_issue_votes_user ON issue_votes (user_id, created_at DESC);
 
 -- PR votes
 CREATE TABLE IF NOT EXISTS pr_votes (
@@ -466,6 +468,8 @@ CREATE TABLE IF NOT EXISTS pr_votes (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(session_id, user_id)
 );
+-- User-first scan for the "My history" view (GET /api/me/history).
+CREATE INDEX IF NOT EXISTS idx_pr_votes_user ON pr_votes (user_id, created_at DESC);
 
 -- LLM usage tracking
 CREATE TABLE IF NOT EXISTS llm_usage (
