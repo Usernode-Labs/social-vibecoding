@@ -25,6 +25,7 @@ async function migrate(config) {
   await seedStagingEnvProposal(pool, config);
   await seedStagingMergedPrs(pool, config);
   await seedStagingActiveSessions(pool, config);
+  await seedStagingQaSession(pool, config);
   await seedStagingHeadlessFixtures(pool, config);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
@@ -1069,6 +1070,90 @@ async function seedStagingActiveSessions(pool, config) {
     owner: owner.username,
     total: fixtures.length,
     inserted,
+  });
+}
+
+// Q/A-mode fixture (#32): one demo dev-chat session whose latest Mayor
+// turn asks two numbered clarifying questions and carries a matching
+// metadata.suggestions payload, so a tester can see and tap the
+// suggested-answer chips without burning a live LLM call.
+// chat_sessions / chat_session_messages are staging:private (copied
+// schema-only into staging), hence the seed. Same owner selection as
+// the other session fixtures — the user the tester logs in as.
+// Idempotent via the branch-name existence check.
+async function seedStagingQaSession(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging Q/A fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username, is_admin
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging Q/A fixture skipped: no users');
+    return;
+  }
+  const owner = userRows[0];
+
+  const branch = 'staging-fixture/qa-suggestions';
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, branch]
+  );
+  if (existing.length) return;
+
+  const { rows: sessionRows } = await pool.query(
+    `INSERT INTO chat_sessions
+       (app_id, user_id, branch_name, pr_title, status, created_at)
+     VALUES
+       ($1, $2, $3, $4, 'active', NOW() - INTERVAL '30 minutes')
+     RETURNING id`,
+    [appId, owner.id, branch, '[staging fixture] Staging demo: Q/A suggested answers']
+  );
+  const sessionId = sessionRows[0].id;
+
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, created_at)
+     VALUES ($1, 'user', $2, NOW() - INTERVAL '29 minutes')`,
+    [sessionId, 'Make the header nicer']
+  );
+
+  const assistantContent = 'Happy to! Two quick questions before I dispatch anything:\n\n'
+    + '1. Which header — the platform-wide top bar, or the app view header? (suggested: the platform-wide top bar)\n'
+    + '2. What does "nicer" mean here — tidier spacing, or a bolder visual refresh? (suggested: tidier spacing)';
+  const suggestions = [
+    {
+      question: 'Which header?',
+      answers: ['The platform-wide top bar', 'The app view header'],
+    },
+    {
+      question: 'What does "nicer" mean?',
+      answers: ['Tidier spacing', 'A bolder visual refresh'],
+    },
+  ];
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+     VALUES ($1, 'assistant', $2, $3, NOW() - INTERVAL '28 minutes')`,
+    [sessionId, assistantContent, JSON.stringify({ suggestions })]
+  );
+
+  log.info('db', 'Staging Q/A fixture seeded', {
+    appId,
+    owner: owner.username,
+    sessionId,
   });
 }
 

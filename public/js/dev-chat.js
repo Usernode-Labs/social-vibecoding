@@ -632,6 +632,9 @@ const DevChat = {
         // resolves, which patches the body in place.
         DevChat._loadSpecViewer({ force: true });
       }
+      // Q/A chip selection is per-question-turn — never carry one across
+      // a session switch / reload.
+      DevChat._qaSelection = {};
       DevChat.messages = messages.map((m) => {
         if (m.metadata) {
           if (m.metadata.stagingUrl) m.stagingUrl = m.metadata.stagingUrl;
@@ -645,6 +648,9 @@ const DevChat = {
           if (m.metadata.specPreview) m.specPreview = m.metadata.specPreview;
           if (m.metadata.specLines) m.specLines = m.metadata.specLines;
           if (m.metadata.specVersion != null) m.specVersion = m.metadata.specVersion;
+          // Q/A mode (#32): suggested-answer chips for the Mayor's
+          // clarifying questions survive refresh via metadata.
+          if (m.metadata.suggestions) m.suggestions = m.metadata.suggestions;
         }
         return m;
       });
@@ -703,6 +709,10 @@ const DevChat = {
     DevChat.isStreaming = true;
     DevChat._setStreamingUI(true);
     DevChat._seenSeqs = new Set();
+    // Any Q/A chip selection belonged to the question turn we're now
+    // answering — the chips vanish on re-render (the question row is no
+    // longer last), so the selection must not leak into a later turn.
+    DevChat._qaSelection = {};
 
     // A previous turn's progress message may still be flagged as the live
     // append target. Clear it so this turn's cc_progress events create a
@@ -944,6 +954,19 @@ const DevChat = {
                 DevChat.scrollToBottom();
                 break;
               }
+              case 'suggestions': {
+                // Q/A mode (#32): structured suggested answers for the
+                // clarifying questions in the current bubble. Sent right
+                // after mayor_reasoning, so the assistant message exists;
+                // renderMessages draws the tappable chips under it.
+                if (!Array.isArray(data.suggestions) || !data.suggestions.length) break;
+                if (assistantPushed) {
+                  assistantMsg.suggestions = data.suggestions;
+                  DevChat.renderMessages();
+                  DevChat.scrollToBottom();
+                }
+                break;
+              }
               case 'cc_progress': {
                 DevChat._appendProgressLine(data.text);
                 DevChat.scrollToBottom();
@@ -1118,6 +1141,20 @@ const DevChat = {
         }
         DevChat.renderMessages();
         DevChat.scrollToBottom();
+        break;
+      }
+      case 'suggestions': {
+        // Q/A mode (#32): attach the suggested answers to the live
+        // assistant bubble (replayed right after mayor_reasoning). A
+        // sealed bubble means a dispatch turn, where suggestions were
+        // already dropped server-side — skip rather than mis-attach.
+        if (!Array.isArray(data.suggestions) || !data.suggestions.length) break;
+        const am = lastAssistantMsg();
+        if (am && !am._finalized) {
+          am.suggestions = data.suggestions;
+          DevChat.renderMessages();
+          DevChat.scrollToBottom();
+        }
         break;
       }
       case 'done':
@@ -1722,7 +1759,18 @@ const DevChat = {
       }
     }
 
-    container.innerHTML = DevChat.messages.map((msg) => {
+    // Q/A mode (#32): suggested-answer chips render only under the LAST
+    // non-system message — and only when the session is one the viewer
+    // can still act in. Once the user replies (chip or typed), the
+    // question row stops being last and the chips vanish on re-render,
+    // so no explicit teardown is needed.
+    let qaLastConvoIdx = -1;
+    for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+      if (DevChat.messages[i].role !== 'system') { qaLastConvoIdx = i; break; }
+    }
+    const qaInteractive = !!session && (session.status === 'active' || session.status === 'promoted');
+
+    container.innerHTML = DevChat.messages.map((msg, msgIdx) => {
       // System messages — each is a single immutable status line
       if (msg.role === 'system') {
         // Inline spec preview card. The Mayor's scout dispatch
@@ -1915,6 +1963,18 @@ const DevChat = {
           </div>`;
       }
 
+      // Q/A chips (#32): only on the latest assistant message of an
+      // interactive session. Rendered even mid-stream (the 'done' event
+      // re-renders before isStreaming flips, so gating on it here would
+      // hide the chips forever) — taps are guarded by isStreaming in the
+      // click handlers instead.
+      const qaChips = (!isUser
+        && msgIdx === qaLastConvoIdx
+        && qaInteractive
+        && Array.isArray(msg.suggestions) && msg.suggestions.length)
+        ? DevChat._qaChipsHtml(msg)
+        : '';
+
       return `
         <div class="dc-msg ${isUser ? 'dc-msg-user' : 'dc-msg-assistant'}">
           <div class="dc-msg-header">
@@ -1924,10 +1984,102 @@ const DevChat = {
           </div>
           <div class="dc-msg-content">${isUser ? DevChat.renderMarkdown(content) : displayContent}</div>
           ${isUser ? '' : reasoningDetail}
+          ${qaChips}
         </div>`;
     }).join('');
 
     DevChat._applyDetailsPersistence();
+  },
+
+  // ── Q/A mode: suggested-answer chips (#32) ─────────────────
+  //
+  // `suggestions` is [{ question, answers }] — sanitized server-side
+  // (the Mayor's suggest_answers tool) and persisted as
+  // metadata.suggestions on the assistant row. Single question: tapping
+  // a chip sends that answer immediately. Multiple questions: taps
+  // select one answer per group (held in _qaSelection, keyed by group
+  // index) and "Send answers" / "Use the suggested defaults" compose a
+  // numbered reply. The textarea stays usable throughout — chips are a
+  // shortcut, never a constraint.
+
+  _qaSelection: {},
+
+  _qaChipsHtml(msg) {
+    const groups = msg.suggestions;
+    const multi = groups.length > 1;
+    const groupsHtml = groups.map((g, gi) => {
+      const chips = (g.answers || []).map((a, ai) => {
+        const selected = multi && DevChat._qaSelection[gi] === ai;
+        const cls = `dc-qa-chip${ai === 0 ? ' dc-qa-chip-default' : ''}${selected ? ' dc-qa-chip-selected' : ''}`;
+        const hint = ai === 0 ? '<span class="dc-qa-chip-hint">suggested</span>' : '';
+        return `<button type="button" class="${cls}" data-qa-group="${gi}" data-qa-answer="${ai}">${escapeHtml(a)}${hint}</button>`;
+      }).join('');
+      const label = multi && g.question
+        ? `<div class="dc-qa-group-label">${escapeHtml(g.question)}</div>`
+        : '';
+      return `<div class="dc-qa-group">${label}<div class="dc-qa-chip-row">${chips}</div></div>`;
+    }).join('');
+    const actions = multi
+      ? `<div class="dc-qa-actions">
+          <button type="button" class="dc-qa-send" data-qa-send="1">Send answers</button>
+          <button type="button" class="dc-qa-defaults" data-qa-defaults="1">Use the suggested defaults</button>
+        </div>`
+      : '';
+    return `<div class="dc-qa-chips">${groupsHtml}${actions}</div>`;
+  },
+
+  // The chips on screen always belong to the last non-system message
+  // (renderMessages gates rendering to exactly that row), so handlers
+  // resolve the suggestion groups from it rather than trusting the DOM.
+  _qaCurrentGroups() {
+    for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+      const m = DevChat.messages[i];
+      if (m.role === 'system') continue;
+      return (m.role === 'assistant' && Array.isArray(m.suggestions) && m.suggestions.length)
+        ? m.suggestions
+        : null;
+    }
+    return null;
+  },
+
+  _onQaChipClick(chip) {
+    if (DevChat.isStreaming) return;
+    const groups = DevChat._qaCurrentGroups();
+    if (!groups) return;
+    const gi = parseInt(chip.dataset.qaGroup, 10);
+    const ai = parseInt(chip.dataset.qaAnswer, 10);
+    const answer = groups[gi]?.answers?.[ai];
+    if (answer == null) return;
+    if (groups.length === 1) {
+      DevChat.sendMessage(answer);
+      return;
+    }
+    // Multi-question: toggle this group's selection; sending happens via
+    // the "Send answers" / defaults buttons.
+    if (DevChat._qaSelection[gi] === ai) delete DevChat._qaSelection[gi];
+    else DevChat._qaSelection[gi] = ai;
+    DevChat.renderMessages();
+  },
+
+  _qaSendSelected() {
+    if (DevChat.isStreaming) return;
+    const groups = DevChat._qaCurrentGroups();
+    if (!groups) return;
+    const parts = [];
+    for (let gi = 0; gi < groups.length; gi++) {
+      const ai = DevChat._qaSelection[gi];
+      const answer = ai != null ? groups[gi]?.answers?.[ai] : null;
+      if (answer != null) parts.push(`${gi + 1}. ${answer}`);
+    }
+    if (!parts.length) return;
+    DevChat.sendMessage(parts.join('\n'));
+  },
+
+  _qaSendDefaults() {
+    if (DevChat.isStreaming) return;
+    const groups = DevChat._qaCurrentGroups();
+    if (!groups) return;
+    DevChat.sendMessage(groups.map((g, gi) => `${gi + 1}. ${g.answers[0]}`).join('\n'));
   },
 
   // ── <details> open/closed persistence ─────────────────────
@@ -2151,6 +2303,12 @@ const DevChat = {
     // listener here is enough — innerHTML rewrites inside renderMessages
     // don't break it.
     container.addEventListener('click', (e) => {
+      // Q/A chips (#32) — delegated like the spec cards, so innerHTML
+      // rewrites inside renderMessages don't drop the handlers.
+      const chip = e.target.closest('[data-qa-group]');
+      if (chip) { DevChat._onQaChipClick(chip); return; }
+      if (e.target.closest('[data-qa-send]')) { DevChat._qaSendSelected(); return; }
+      if (e.target.closest('[data-qa-defaults]')) { DevChat._qaSendDefaults(); return; }
       const card = e.target.closest('.dc-spec-preview-card');
       if (!card) return;
       const version = card.dataset.specVersion;
