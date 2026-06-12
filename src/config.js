@@ -60,14 +60,13 @@ function load() {
     // src/routes/sessions.js; lifted here so prod can tune them via env
     // without a code deploy. See the scaling notes in README / SPEC.
     //   - maxGlobalSessions: platform-wide active+promoted session ceiling.
-    //   - maxUserSessions:   per-user ceiling on sessions that hold (or can
-    //     imminently spawn) a worker: 'active' rows plus 'promoted' rows
-    //     that still have a warm worker container. Promoted sessions whose
-    //     worker was freed (the "Free worker" button) stop counting — they
-    //     are just a PR up for vote at that point.
+    //   - maxUserSessions:   per-user ceiling on 'active'-status sessions
+    //     only (#193). Promoted sessions are exempt: they're un-pausable
+    //     while their PR is up for a merge vote, so counting them would
+    //     leave the user no way to free a slot by pausing.
     //   - maxUserPromotedSessions: per-user ceiling on concurrently
-    //     promoted PRs, checked at promote time. Worker-less promoted
-    //     sessions escape maxUserSessions, so this is the bound that keeps
+    //     promoted PRs, checked at promote time. Promoted sessions don't
+    //     count toward maxUserSessions, so this is the bound that keeps
     //     one user from papering the vote panel (and holding N staging
     //     previews) with open PRs.
     maxGlobalSessions: parseInt(process.env.MAX_GLOBAL_SESSIONS || '25', 10),

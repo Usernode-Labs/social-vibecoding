@@ -210,11 +210,16 @@ function sessionRoutes(config) {
   //
   //   "totals" lets the caller render the (x/y) header without a
   //   second pass through the array:
-  //     - active = active + promoted (the sessions counting against
-  //                the 3-slot cap; visually green/violet in the UI)
-  //     - paused = paused-status sessions (no warm worker)
-  //     - busy   = subset of `active` where CC is mid-turn right now
-  //     - total  = active + paused (i.e. every non-archived row we returned)
+  //     - active   = 'active'-status sessions only — the set counting
+  //                  against the per-user slot cap (#193). Promoted
+  //                  sessions no longer count (they're un-pausable while
+  //                  their PR is up for vote).
+  //     - promoted = 'promoted'-status sessions (PR in a merge vote;
+  //                  violet in the UI, exempt from the per-user cap)
+  //     - paused   = paused-status sessions (no warm worker)
+  //     - busy     = subset of active+promoted where CC is mid-turn right now
+  //     - total    = active + promoted + paused (every non-archived row
+  //                  we returned)
   router.get('/api/me/active-sessions', async (req, res) => {
     try {
       const { rows } = await pool.query(
@@ -235,11 +240,12 @@ function sessionRoutes(config) {
       const totals = sessions.reduce(
         (acc, s) => {
           if (s.status === 'paused') acc.paused += 1;
-          else acc.active += 1; // 'active' or 'promoted'
+          else if (s.status === 'promoted') acc.promoted += 1;
+          else acc.active += 1;
           if (s.busy) acc.busy += 1;
           return acc;
         },
-        { active: 0, paused: 0, busy: 0 }
+        { active: 0, promoted: 0, paused: 0, busy: 0 }
       );
       totals.total = sessions.length;
       res.json({ sessions, totals });
@@ -285,25 +291,20 @@ function sessionRoutes(config) {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
       if (!app) return res.status(404).json({ error: 'App not found' });
 
-      // Per-user cap: count sessions that hold (or can imminently spawn)
-      // a worker — every 'active' row, plus 'promoted' rows that still
-      // have a warm worker container. A promoted session whose worker was
-      // freed (the "Free worker" button in the session list) is just a PR
-      // up for vote — it consumes no worker slot, so it shouldn't block
-      // the owner from starting new work. The separate
-      // maxUserPromotedSessions cap (enforced at promote time) bounds how
-      // many of those vote-only sessions one user can accumulate.
-      const { rows: capRows } = await pool.query(
-        `SELECT id, status FROM chat_sessions
-         WHERE user_id = $1 AND status IN ('active', 'promoted') AND is_headless = FALSE`,
+      // Per-user cap (#193): only 'active' sessions count toward the
+      // slot budget. Promoted sessions (PRs up for a merge vote) are
+      // deliberately un-pausable — their status must stay 'promoted' so
+      // the vote endpoints keep working — so counting them here would
+      // leave the user no way to free a slot by pausing. The separate
+      // maxUserPromotedSessions cap (enforced at promote time) bounds
+      // how many vote-only sessions one user can accumulate.
+      const { rows: countRows } = await pool.query(
+        `SELECT COUNT(*) as cnt FROM chat_sessions
+         WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE`,
         [req.user.id]
       );
-      const warmIds = new Set(worker.warmRegistrySnapshot().map((w) => w.sessionId));
-      const slotCount = capRows.filter(
-        (s) => s.status === 'active' || warmIds.has(s.id)
-      ).length;
-      if (slotCount >= config.maxUserSessions) {
-        return res.status(429).json({ error: `You already have ${config.maxUserSessions} active sessions. Pause, archive, or merge one first.` });
+      if (parseInt(countRows[0].cnt) >= config.maxUserSessions) {
+        return res.status(429).json({ error: `You already have ${config.maxUserSessions} running sessions. Pause or archive one first.` });
       }
 
       const { rows: globalRows } = await pool.query(
@@ -523,13 +524,15 @@ function sessionRoutes(config) {
       }
 
       // The clone is an ordinary dev-chat session, so the usual caps apply.
+      // Per-user cap counts only 'active' sessions (#193) — promoted ones
+      // are un-pausable while their PR is in a vote, so they're exempt.
       const { rows: countRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
-         WHERE user_id = $1 AND status IN ('active', 'promoted') AND is_headless = FALSE`,
+         WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE`,
         [req.user.id]
       );
       if (parseInt(countRows[0].cnt) >= config.maxUserSessions) {
-        return res.status(429).json({ error: `You already have ${config.maxUserSessions} active sessions. Pause, archive, or merge one first.` });
+        return res.status(429).json({ error: `You already have ${config.maxUserSessions} running sessions. Pause or archive one first.` });
       }
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
@@ -878,9 +881,13 @@ function sessionRoutes(config) {
         }
       }
 
+      // Per-user cap counts only 'active' sessions (#193) — promoted ones
+      // are un-pausable while their PR is in a vote, so they're exempt.
+      // This also keeps the count consistent with the LRU eviction below,
+      // which has always only considered 'active' victims.
       const { rows: countRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
-         WHERE user_id = $1 AND status IN ('active', 'promoted')`,
+         WHERE user_id = $1 AND status = 'active'`,
         [req.user.id]
       );
       if (parseInt(countRows[0].cnt) >= config.maxUserSessions) {
