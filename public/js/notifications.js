@@ -24,8 +24,6 @@ const EXPANDED_STORAGE_KEY = 'notif_expanded_groups_v1';
 // Beyond this the group renders an inline pagination button that reveals
 // the next page of already-loaded leaves in place (no navigation away).
 const GROUP_LEAF_CAP = 10;
-// How close to the bottom (px) before we prefetch the next page.
-const LOAD_MORE_THRESHOLD = 64;
 
 const Notifications = {
   items: [],   // newest-first; the single source of truth
@@ -35,7 +33,7 @@ const Notifications = {
   invites: [],
   unread: 0,
   open: false,
-  // Pagination cursor for scroll-to-load-more.
+  // Pagination cursor for the per-group "Show more →" pager.
   nextBefore: null,  // { createdAt, id } | null
   hasMore: false,
   loading: false,
@@ -45,7 +43,6 @@ const Notifications = {
   // that group. Ephemeral (not persisted): resets on reload so the
   // drawer opens compact. An absent key means the default GROUP_LEAF_CAP.
   revealed: new Map(),
-  _scrollWired: false,
 
   init() {
     Notifications._loadExpanded();
@@ -66,7 +63,6 @@ const Notifications = {
       Notifications.hide();
     });
 
-    Notifications._wireScroll();
     Notifications.refresh();
   },
 
@@ -135,7 +131,6 @@ const Notifications = {
   async loadMore() {
     if (Notifications.loading || !Notifications.hasMore || !Notifications.nextBefore) return;
     Notifications.loading = true;
-    Notifications._renderLoadingState();
     try {
       const { createdAt, id } = Notifications.nextBefore;
       const params = new URLSearchParams({
@@ -631,7 +626,7 @@ const Notifications = {
       entries.push(renderGroup(g, Notifications.expanded.has(g.key)));
     }
     const APP_DIVIDER = '<div role="separator" class="border-t-2 border-zinc-200 dark:border-zinc-700"></div>';
-    list.innerHTML = entries.join(APP_DIVIDER) + renderLoadMore();
+    list.innerHTML = entries.join(APP_DIVIDER);
 
     // Leaf-row clicks (standalone single-item rows + leaves inside an
     // expanded group). stopPropagation so the document-level outside-click
@@ -695,26 +690,6 @@ const Notifications = {
       Notifications.revealed.set(key, current + GROUP_LEAF_CAP);
       Notifications.loadMore();
     }
-  },
-
-  // Re-render just the load-more footer's spinner without rebuilding the
-  // whole list (called when a fetch starts).
-  _renderLoadingState() {
-    const footer = document.getElementById('notifications-loadmore');
-    if (footer) footer.textContent = 'Loading…';
-  },
-
-  _wireScroll() {
-    if (Notifications._scrollWired) return;
-    const list = document.getElementById('notifications-list');
-    if (!list) return;
-    list.addEventListener('scroll', () => {
-      if (!Notifications.hasMore || Notifications.loading) return;
-      const nearBottom =
-        list.scrollTop + list.clientHeight >= list.scrollHeight - LOAD_MORE_THRESHOLD;
-      if (nearBottom) Notifications.loadMore();
-    });
-    Notifications._scrollWired = true;
   },
 
 };
@@ -801,12 +776,6 @@ function renderGroup(g, isExpanded) {
     more = `<button data-group-showmore="${escapeHtml(g.key)}" class="${btnCls}">Show more →</button>`;
   }
   return `${header}<div class="pl-2 bg-zinc-50/50 dark:bg-zinc-950/30">${leaves}${more}</div>`;
-}
-
-// Footer row used both as the scroll sentinel and the empty/has-more hint.
-function renderLoadMore() {
-  if (!Notifications.hasMore) return '';
-  return `<div id="notifications-loadmore" class="px-3 py-2.5 text-center text-xs text-zinc-500 dark:text-zinc-400">Scroll for older…</div>`;
 }
 
 // One-line summary used in a collapsed group header. Mirrors the per-kind
