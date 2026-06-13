@@ -1068,7 +1068,7 @@ const DevChat = {
               }
               case 'cc_estimate':
                 // Experimental AI progress estimate (opt-in, server-gated).
-                DevChat._applyEstimate(data.text);
+                DevChat._applyEstimate(data.text, data.remainingSeconds);
                 break;
               case 'cc_log':
                 DevChat.messages.push({ role: 'system', ccLog: data.log, content: 'Claude Code log', created_at: new Date().toISOString() });
@@ -1347,7 +1347,7 @@ const DevChat = {
         break;
       case 'cc_estimate':
         // Experimental AI progress estimate (opt-in, server-gated).
-        DevChat._applyEstimate(data.text);
+        DevChat._applyEstimate(data.text, data.remainingSeconds);
         break;
       case 'cc_log':
         DevChat.messages.push({ role: 'system', ccLog: data.log, content: 'Claude Code log', created_at: new Date().toISOString() });
@@ -1630,7 +1630,15 @@ const DevChat = {
 
         // Experimental AI progress estimate: the /status fallback carries
         // the latest in-memory guess so an SSE/WS drop doesn't lose it.
-        if (estimate) DevChat._applyEstimate(estimate);
+        // `estimate` is now { text, remainingSeconds }; tolerate a legacy
+        // bare-string shape from an older server.
+        if (estimate) {
+          if (typeof estimate === 'string') {
+            DevChat._applyEstimate(estimate);
+          } else {
+            DevChat._applyEstimate(estimate.text, estimate.remainingSeconds);
+          }
+        }
 
         if (!busy) {
           DevChat._stopProgressPolling();
@@ -1766,7 +1774,17 @@ const DevChat = {
   // The server only emits cc_estimate when the user's toggle is ON, so
   // with the toggle off this never runs and the line is pixel-identical
   // to before.
-  _applyEstimate(text) {
+  // The trailing "· ~X left" numeric suffix (#50 follow-up). remainingSeconds
+  // is the model's seconds-remaining guess, or null/absent when it declined
+  // a number — in which case the phrase renders alone, exactly as before.
+  _estimateSuffix(remainingSeconds) {
+    if (remainingSeconds == null || typeof formatElapsed !== 'function') return '';
+    const n = Number(remainingSeconds);
+    if (!Number.isFinite(n) || n < 0) return '';
+    return ` · ~${formatElapsed(n * 1000)} left`;
+  },
+
+  _applyEstimate(text, remainingSeconds) {
     const clean = (text || '').toString().trim();
     if (!clean) return;
     let target = null;
@@ -1776,10 +1794,11 @@ const DevChat = {
     }
     if (!target) return;
     target._estimate = clean;
+    target._estimateRemaining = remainingSeconds == null ? null : remainingSeconds;
     // Patch in place — the active run's span is the last one rendered.
     const spans = document.querySelectorAll('#dc-messages .dc-cc-estimate');
     const span = spans.length ? spans[spans.length - 1] : null;
-    if (span) span.textContent = `· ✦ AI guess: ${clean}`;
+    if (span) span.textContent = `· ✦ AI guess: ${clean}${DevChat._estimateSuffix(remainingSeconds)}`;
   },
 
   // ── #50: elapsed-time ticker ────────────────────────────────
@@ -2153,7 +2172,7 @@ const DevChat = {
           // Experimental AI progress estimate: rendered unconditionally
           // (even empty) so _applyEstimate can patch it in place; only
           // populated while the server emits cc_estimate for this run.
-          const estimateSpan = `<span class="dc-cc-estimate" title="Experimental: a small AI model's rough guess from the progress log. May be wrong.">${msg._estimate ? `· ✦ AI guess: ${escapeHtml(msg._estimate)}` : ''}</span>`;
+          const estimateSpan = `<span class="dc-cc-estimate" title="Experimental: a small AI model's rough guess from the progress log. May be wrong.">${msg._estimate ? `· ✦ AI guess: ${escapeHtml(msg._estimate)}${escapeHtml(DevChat._estimateSuffix(msg._estimateRemaining))}` : ''}</span>`;
           return `<details class="dc-cc-attached" data-persist-id="${outerPid}" data-default-open="1" open><summary class="${sumClass}">${iconHtml} ${msg.content}${currentSpan}${stepsSpan}${estimateSpan}${elapsedHtml}${chevron}${tsSpan}</summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
         }
 

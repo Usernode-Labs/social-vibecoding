@@ -2196,11 +2196,10 @@ function sessionRoutes(config) {
     // null) — the dev-chat sync banner's reload recovery and poll
     // fallback read this the same way the resolving banner reads
     // `resolving`.
+    // Keys: busy, progress, phase, estimate (+ resolving, sync). `estimate`
+    // is { text, remainingSeconds } | null — see workerProgress.setEstimate.
     res.json({
-      busy,
-      progress,
-      phase,
-      estimate,
+      busy, progress, phase, estimate,
       resolving: isResolving(sessionId),
       sync: syncMainSvc.getSyncState(sessionId),
     });
@@ -4332,15 +4331,34 @@ path: /another/changed/view
           elapsedMs: Date.now() - turnStartedMs,
           steps: liveProgressLines.filter((l) => CC_ACTION_RE.test(l)).length,
           apiKey: userApiKey || undefined,
-        }).then(async ({ text, usage, model: estModel }) => {
+        }).then(async ({ text, remainingSeconds, usage, model: estModel }) => {
           estimateFailures = 0;
           estimateSuccesses++;
           linesAtLastEstimate = linesAtStart;
+          const elapsedAtEstimate = Date.now() - turnStartedMs;
           // A call resolving after the user hit stop is dropped — the
           // running line is already deactivated client-side.
           if (!(stopHandle && stopHandle.stopped)) {
-            send('cc_estimate', { text, elapsedMs: Date.now() - turnStartedMs });
-            workerProgress.setEstimate(session.id, text);
+            send('cc_estimate', { text, remainingSeconds, elapsedMs: elapsedAtEstimate });
+            workerProgress.setEstimate(session.id, { text, remainingSeconds });
+            // Persist this tick to the accuracy dataset (#50 follow-up).
+            // Fire-and-forget: persistence must never fail or block a turn,
+            // matching the progressLog UPDATE posture below. The turn's
+            // actual outcome is backfilled at the terminal choke point.
+            pool.query(
+              `INSERT INTO progress_estimates
+                 (session_id, progress_message_id, user_id, model,
+                  elapsed_ms, step_count, progress_lines,
+                  estimate_text, predicted_remaining_seconds)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+              [
+                session.id, progressMsgId, req.user.id, estModel,
+                elapsedAtEstimate,
+                liveProgressLines.filter((l) => CC_ACTION_RE.test(l)).length,
+                liveProgressLines.length,
+                text, remainingSeconds,
+              ]
+            ).catch(() => {});
           }
           if (usage) {
             const cents = llm.estimateCostCents(usage, estModel);
@@ -4390,6 +4408,29 @@ path: /another/changed/view
     } finally {
       clearInterval(heartbeat);
       if (estimator) clearInterval(estimator);
+      // Backfill the actual outcome onto this turn's estimate rows (#50
+      // follow-up). Single choke point: the turn's wall clock is known
+      // here and the interval is being torn down. Per-tick ground-truth
+      // remaining = actual_total_ms - that tick's elapsed_ms. Outcome is
+      // derived from the turn result: stopped > error > committed > noop.
+      // Guarded on estimatorEnabled so non-opted runs do nothing, and
+      // fire-and-forget so a DB hiccup never affects the run.
+      if (estimatorEnabled) {
+        const durationMs = Date.now() - turnStartedMs;
+        const outcome = (stopHandle && stopHandle.stopped) ? 'stopped'
+          : (!result || result.isError) ? 'error'
+          : (result.ahead > 0 && result.sha) ? 'committed'
+          : 'noop';
+        pool.query(
+          `UPDATE progress_estimates
+              SET actual_total_ms = $1,
+                  actual_remaining_ms = $1 - elapsed_ms,
+                  outcome = $2,
+                  resolved_at = NOW()
+            WHERE progress_message_id = $3 AND actual_total_ms IS NULL`,
+          [durationMs, outcome, progressMsgId]
+        ).catch(() => {});
+      }
     }
 
     const newCcId = result.sessionId || result.initSessionId || null;
