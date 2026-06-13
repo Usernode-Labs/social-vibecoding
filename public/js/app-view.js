@@ -1715,9 +1715,13 @@ const AppView = {
       }
       // #150: a question outcome doesn't block re-running — answer the
       // questions on the issue, then press Generate proposal again and
-      // the new run reads the answers. Both paths stay available (whether
-      // or not the viewer already cloned this run).
-      if (h.outcome === 'question') {
+      // the new run reads the answers. But only offer this when the viewer
+      // has NOT already cloned the run: once h.mySessionId is set the row
+      // shows "Go to session", and appending "Generate proposal" there
+      // produces two competing actions for a proposal that already exists.
+      // Gate on !h.mySessionId so the rerun affordance stays only on the
+      // no-session path (where "Go to session" never appears).
+      if (h.outcome === 'question' && !h.mySessionId) {
         autoBtn += `<button class="gc-vote-btn" title="Questions were posted on the issue — answer them, then generate a proposal again" onclick="AppView.confirmAutoSession(${n})">Generate proposal</button>`;
       }
     } else {
