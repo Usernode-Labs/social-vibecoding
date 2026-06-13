@@ -1586,17 +1586,30 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .dc-spec-viewer-header {
   display: flex;
   align-items: center;
+  /* Wrap so the share buttons drop to a second line on narrow (phone)
+     widths instead of overflowing horizontally and shoving the close
+     button off-screen. Harmless on the wide side-panel layout where the
+     row already fits. (#86 spec-viewer header overflow fix) */
+  flex-wrap: wrap;
   gap: 8px;
+  row-gap: 6px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border, rgba(255,255,255,0.12));
   flex-shrink: 0;
 }
 
 .dc-spec-viewer-close {
+  /* margin-left:auto pins the close to the trailing edge of the first
+     row so it stays top-right no matter what else wraps; flex-shrink:0
+     guarantees it is never compressed or displaced off-screen. */
+  margin-left: auto;
+  flex-shrink: 0;
   font-size: 20px;
   line-height: 1;
-  width: 28px;
-  height: 28px;
+  /* ~44px tap target for thumbs; padding keeps the glyph visually small. */
+  width: 44px;
+  height: 44px;
+  padding: 8px;
   border: none;
   border-radius: 4px;
   background: transparent;
@@ -1607,6 +1620,17 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .dc-spec-viewer-close:hover {
   color: var(--text-primary, #e4e4e7);
   background: var(--bg-secondary, #18181b);
+}
+
+/* Let the version dropdown shrink and ellipsise rather than forcing the
+   header wide — a <select> won't shrink below its content's intrinsic
+   width without min-width:0. Long labels (vN (latest) · date · PR #N)
+   get a trailing "…" instead of overflowing the row. */
+#dc-spec-viewer-version {
+  min-width: 0;
+  flex: 0 1 auto;
+  max-width: 220px;
+  text-overflow: ellipsis;
 }
 
 .dc-spec-viewer-body-wrap {
