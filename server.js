@@ -690,21 +690,44 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   const commitHash = compare.commits[compare.commits.length - 1]?.sha || 'latest';
   const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
 
-  // Create PR if missing (active-session recovery only).
+  // Create PR if missing (active-session recovery only). Route through
+  // applyPrMetadata — NOT a bare createPR — so the PR gets a real
+  // generated title/body and pr_title/session_title are persisted. A
+  // bare createPR here used to mint PRs titled "Changes on <branch>"
+  // with pr_title left NULL; the promote path then trusted pr_number's
+  // presence and skipped its own metadata pass, so the throwaway title
+  // stuck (the UI then renders its own "Change by <user>" NULL-fallback).
   if (!session.pr_number) {
     try {
-      const pr = await ghub.createPR(owner, repo, {
-        branch: session.branch_name,
-        title: `Changes on ${session.branch_name}`,
-        body: `Recovered dev session via Usernode`,
-      });
-      await pool.query(
-        `UPDATE chat_sessions SET pr_number = $1, pr_url = $2 WHERE id = $3`,
-        [pr.number, pr.html_url, session.id]
+      // username + latest user message give applyPrMetadata the same
+      // signals the live dev-turn path has; without the username the
+      // fallback title would read "undefined's changes".
+      const { rows: ctxRows } = await pool.query(
+        `SELECT u.username,
+                (SELECT content FROM chat_session_messages
+                  WHERE session_id = cs.id AND role = 'user'
+                  ORDER BY id DESC LIMIT 1) AS last_user_message
+           FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id
+          WHERE cs.id = $1`,
+        [session.id]
       );
-      session.pr_number = pr.number;
-      session.pr_url = pr.html_url;
-    } catch {}
+      const username = ctxRows[0]?.username || session.username || 'someone';
+      const recoveredUserMessage = ctxRows[0]?.last_user_message || '';
+      const prMetadata = require('./src/services/pr-metadata');
+      await prMetadata.applyPrMetadata({
+        pool, session, repoOwner: owner, repoName: repo,
+        userMessage: recoveredUserMessage,
+        ccSummary: '',
+        username,
+        userId: session.user_id,
+        broadcast: (event, data) =>
+          broadcastGlobal({ type: 'session_event', sessionId: session.id, event, ...data }),
+      });
+    } catch (err) {
+      log.warn('server', 'Recovery PR creation via applyPrMetadata failed', {
+        sessionId: session.id, err: err.message,
+      });
+    }
   }
 
   const stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);

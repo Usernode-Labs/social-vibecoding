@@ -131,7 +131,17 @@ function voteRoutes(config) {
       // branch — so the vote has something to merge. applyPrMetadata reads
       // the clone's copied history via gatherSessionContext, so the PR
       // title/body get the full auto-session context.
-      if (!session.pr_number) {
+      //
+      // Also runs when a PR exists but pr_title is missing: staging
+      // recovery (server.js rebuildSessionStaging) can mint a PR before
+      // promotion without a generated title, and a NULL pr_title would
+      // otherwise render as "Change by <user>" forever. Backfilling it
+      // here updates both GitHub and pr_title/session_title.
+      if (!session.pr_number || !session.pr_title) {
+        // Distinguish creating a PR (no pr_number → a failure must block
+        // promotion) from merely backfilling a missing title on an
+        // existing PR (best-effort — never block promotion on it).
+        const isBackfill = !!session.pr_number;
         const { rows: msgRows } = await pool.query(
           `SELECT content FROM chat_session_messages
            WHERE session_id = $1 AND role = 'user'
@@ -149,9 +159,9 @@ function voteRoutes(config) {
             userId: req.user.id,
           });
         } catch (err) {
-          log.warn('votes', 'Lazy PR creation threw', { sessionId: session.id, err: err.message });
+          log.warn('votes', 'Lazy PR creation/backfill threw', { sessionId: session.id, backfill: isBackfill, err: err.message });
         }
-        if (!prResult || !session.pr_number) {
+        if (!isBackfill && (!prResult || !session.pr_number)) {
           // Refuse to promote PR-less — a vote with nothing to merge is a
           // dead end. The user can retry; nothing was mutated yet.
           return res.status(502).json({ error: 'Could not create the pull request for this change — try again in a moment.' });
