@@ -581,6 +581,32 @@ const DevChat = {
         && Number(DevChat.currentSession.id) !== Number(sessionId)) {
       DevChat._setNotifyOnDone(DevChat.currentSession.id, true);
     }
+
+    // Session-open is authoritative for the streaming UI. When opening a
+    // DIFFERENT session than the one currently tracked, tear down the
+    // per-turn client streaming state to idle FIRST, so a
+    // previously-streaming session can't leak its red Stop button or
+    // "⏳ Thinking…" title into a freshly-opened idle session (e.g. a
+    // proposal clone, which is always idle on open). The `if (busy)`
+    // block further down is then the SOLE place that re-arms streaming,
+    // so a session that is genuinely mid-turn still re-enters the live
+    // UI. We only tear down THIS tab's UI + subscriptions here — the
+    // previous session's server-side turn keeps running untouched (its
+    // completion notification was just armed above). Gated on a
+    // session-id change so reopening a genuinely busy session doesn't
+    // flicker the Stop button off and immediately back on (or needlessly
+    // drop and reopen its resumable stream). _setStreamingUI(false)
+    // clears the live 'thinking' marker but leaves the sticky #161
+    // completion marker (_titleCompletion) alone.
+    const switchingSession = !DevChat.currentSession
+      || Number(DevChat.currentSession.id) !== Number(sessionId);
+    if (switchingSession) {
+      DevChat.isStreaming = false;
+      DevChat._streamingPhase = null;
+      DevChat._stopProgressPolling();
+      DevChat._closeResumableStream();
+      DevChat._setStreamingUI(false);
+    }
     try {
       const res = await fetch(`/api/sessions/${sessionId}`);
       if (!res.ok) return;
