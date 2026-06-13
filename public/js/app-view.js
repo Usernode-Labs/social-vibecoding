@@ -43,18 +43,16 @@ const AppView = {
     // the proposal cards, while the page shape stays distinct from their
     // thumbs-up: this is a drafted spec on an issue, not a PR up for a vote.
     issueProposal: ['bg-sky-500/15 text-sky-500', 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'],
-    // "Mine" variants — distinguished from their base by BOTH glyph and tint:
-    // a distinct blue (deeper than the sky base, so it stands out from
-    // others' rows) PLUS a pencil/edit mark = "your work-in-progress, jump
-    // back in." They mark the two feed rows where the viewer already has a
-    // session waiting: a ready issue they cloned (Go to session) and an open
-    // PR they authored (Open session). Each uses a self-contained pencil glyph
-    // (no manual coordinate compositing): issueProposalMine is a true
+    // "Mine" variants — distinguished from their base by GLYPH ONLY: they keep
+    // the same sky tint as the base issue/PR chips but swap in a self-contained
+    // pencil/edit mark = "your work-in-progress, jump back in." They mark the
+    // two feed rows where the viewer already has a session waiting: a ready
+    // issue they cloned (Go to session) and an open PR they authored (Open
+    // session). No manual coordinate compositing: issueProposalMine is a true
     // document-with-pencil (page + folded corner + pencil) so it still reads
-    // as a document; proposalMine is a pencil-in-circle "edit" mark. Blue
-    // stays distinct from sky (others') and emerald (done).
-    issueProposalMine: ['bg-blue-600/15 text-blue-600', 'M14 3v4a1 1 0 0 0 1 1h4M17 21h-7a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v4M18.42 15.61a2.1 2.1 0 0 1 2.97 2.97l-3.39 3.42h-3v-3l3.42 -3.39z'],
-    proposalMine: ['bg-blue-600/15 text-blue-600', 'M12 15l8.385 -8.415a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3zM16 5l3 3M9 7.07a7.002 7.002 0 0 0 1 13.93a7.002 7.002 0 0 0 6.929 -6'],
+    // as a document; proposalMine is a pencil-in-circle "edit" mark.
+    issueProposalMine: ['bg-sky-500/15 text-sky-500', 'M14 3v4a1 1 0 0 0 1 1h4M17 21h-7a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v4M18.42 15.61a2.1 2.1 0 0 1 2.97 2.97l-3.39 3.42h-3v-3l3.42 -3.39z'],
+    proposalMine: ['bg-sky-500/15 text-sky-500', 'M12 15l8.385 -8.415a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3zM16 5l3 3M9 7.07a7.002 7.002 0 0 0 1 13.93a7.002 7.002 0 0 0 6.929 -6'],
   },
 
   _devCardIcon(type, opts) {
