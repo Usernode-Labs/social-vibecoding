@@ -668,6 +668,27 @@
 
       <div id="settings-status" class="text-sm mt-3 hidden"></div>
 
+      <!-- Change password (issue #282). Calls POST /api/me/password. The
+           current password is always required (the server doesn't track
+           per-session wallet origin); users who signed in with a temporary
+           password from an admin enter that as their current password. -->
+      <div id="change-password-section" class="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
+        <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Change password</h3>
+        <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
+          Set a new password for web login. If an admin gave you a temporary password, enter it as your current password here.
+        </p>
+        <div class="space-y-2">
+          <input id="cp-current" type="password" autocomplete="current-password" placeholder="Current password"
+            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500" />
+          <input id="cp-new" type="password" autocomplete="new-password" placeholder="New password (at least 8 characters)"
+            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500" />
+          <input id="cp-confirm" type="password" autocomplete="new-password" placeholder="Confirm new password"
+            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500" />
+        </div>
+        <button id="cp-save" class="mt-2 w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Change password</button>
+        <div id="cp-status" class="text-sm mt-2 hidden"></div>
+      </div>
+
       <!-- App AI permissions (issue #34). Lists every app the user has
            granted access to their daily AI budget: today's spend vs the
            per-app cap, a cap editor, the BYOK spillover toggle, and

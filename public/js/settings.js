@@ -35,6 +35,10 @@
       const logoutBtn = document.getElementById('settings-logout');
       if (logoutBtn) logoutBtn.addEventListener('click', () => this.logout());
 
+      // Change password (issue #282) → POST /api/me/password.
+      const cpSave = document.getElementById('cp-save');
+      if (cpSave) cpSave.addEventListener('click', () => this.changePassword());
+
       // Dev console "always show" toggle. State lives in DevConsole +
       // localStorage; we just mirror it here. Wire change immediately
       // so the icon appears/disappears without needing to close the
@@ -328,6 +332,51 @@
       } finally {
         saveBtn.disabled = false;
         removeBtn.disabled = false;
+      }
+    },
+
+    // ── Change password (issue #282) ─────────────────────────────
+    _setCpStatus(text, kind) {
+      const el = document.getElementById('cp-status');
+      if (!el) return;
+      el.textContent = text;
+      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
+      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
+      el.classList.add(cls);
+    },
+
+    async changePassword() {
+      const currentEl = document.getElementById('cp-current');
+      const newEl = document.getElementById('cp-new');
+      const confirmEl = document.getElementById('cp-confirm');
+      const btn = document.getElementById('cp-save');
+      const currentPassword = currentEl.value;
+      const newPassword = newEl.value;
+      const confirm = confirmEl.value;
+
+      if (!currentPassword) { this._setCpStatus('Enter your current password.', 'error'); return; }
+      if (newPassword.length < 8) { this._setCpStatus('New password must be at least 8 characters.', 'error'); return; }
+      if (newPassword !== confirm) { this._setCpStatus('New passwords do not match.', 'error'); return; }
+
+      btn.disabled = true;
+      this._setCpStatus('Saving…', 'info');
+      try {
+        const r = await fetch('/api/me/password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ currentPassword, newPassword }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { this._setCpStatus(j.error || 'Failed to change password.', 'error'); return; }
+        currentEl.value = '';
+        newEl.value = '';
+        confirmEl.value = '';
+        this._setCpStatus('Password changed.', 'ok');
+      } catch (err) {
+        this._setCpStatus(`Network error: ${err.message}`, 'error');
+      } finally {
+        btn.disabled = false;
       }
     },
 

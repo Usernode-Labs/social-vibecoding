@@ -10,6 +10,9 @@ const PUBLIC_PATHS = [
   '/api/auth/register',
   '/api/auth/wallet-check',
   '/api/auth/wallet-verify',
+  // Self-service wallet password reset is pre-login by definition — the
+  // wallet signature is the only credential (issue #282).
+  '/api/auth/wallet-reset-verify',
   '/api/auth/wallet-register',
   '/api/auth/wallet-link-login',
   // Read-only kudos leaderboard (Top PRs / Top users). Public so the

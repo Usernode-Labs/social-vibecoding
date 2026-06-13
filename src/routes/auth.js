@@ -8,6 +8,7 @@ const log = require('../services/logger');
 const { authLimiter, walletCheckLimiter } = require('../middleware/rate-limits');
 const genesisAccounts = require('../services/genesis-accounts');
 const events = require('../services/events');
+const { validatePassword } = require('../services/password-policy');
 
 const SESSION_DAYS = 7;
 
@@ -244,6 +245,49 @@ function authRoutes(config) {
     }
   });
 
+  // Change password for a signed-in user (issue #282). Wired from
+  // Settings → "Change password". We always require the current password:
+  // we don't track per-session wallet origin (no schema change), and every
+  // account has a knowable current password anyway — set at registration,
+  // handed over as an admin temporary password, or just chosen during a
+  // wallet reset. Wallet users who've forgotten it use the pre-login
+  // wallet-reset flow instead.
+  router.post('/api/me/password', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const { currentPassword, newPassword } = req.body || {};
+
+    const policy = validatePassword(newPassword);
+    if (!policy.ok) return res.status(400).json({ error: policy.error });
+
+    if (!currentPassword || typeof currentPassword !== 'string') {
+      return res.status(400).json({ error: 'Current password is required' });
+    }
+
+    try {
+      const { rows } = await pool.query(
+        'SELECT password FROM users WHERE id = $1',
+        [req.user.id]
+      );
+      if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
+
+      const valid = await bcrypt.compare(currentPassword, rows[0].password);
+      if (!valid) {
+        return res.status(401).json({ error: 'Current password is incorrect' });
+      }
+      if (currentPassword === newPassword) {
+        return res.status(400).json({ error: 'New password must be different from your current password' });
+      }
+
+      const hash = await bcrypt.hash(newPassword, 12);
+      await pool.query('UPDATE users SET password = $1 WHERE id = $2', [hash, req.user.id]);
+      log.info('auth', 'Password changed', { userId: req.user.id });
+      res.json({ ok: true });
+    } catch (err) {
+      log.error('auth', 'Change password failed', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Experimental: per-user "AI progress estimate" toggle (default OFF).
   // Gates the Haiku estimator that watches in-flight Claude Code runs —
   // see runClaudeCodeTool in src/routes/sessions.js. Wired to the
@@ -476,6 +520,73 @@ function authRoutes(config) {
       res.json({ user: { id: user.id, username: user.username, isAdmin: user.is_admin } });
     } catch (err) {
       log.error('wallet-auth', 'wallet-verify failed', { url: verifyUrl, err: err.message, code: err.code, stack: err.stack?.split('\n')[0] });
+      res.status(500).json({ error: 'Signature verification service unavailable' });
+    }
+  });
+
+  // Self-service password reset proven by a linked wallet (issue #282).
+  // Structurally this is wallet-verify that ends in a password write
+  // instead of just a login. Key invariants:
+  //   - NO genesis gate. We mirror wallet-verify, which already resolves
+  //     the account by `usernode_pubkey` alone — proving control of the
+  //     specific linked key is the whole proof, so genesis status is
+  //     irrelevant here and would only block legitimate linked non-genesis
+  //     users.
+  //   - Account lookup is keyed ONLY on the verified pubkey, never a
+  //     username, so this pre-login endpoint is not a username oracle.
+  //   - On success every existing session is deleted (a leaked/old session
+  //     must not outlive a reset) and a fresh session is minted.
+  router.post('/api/auth/wallet-reset-verify', authLimiter, async (req, res) => {
+    const { pubkey, publicKey, challenge, signature, newPassword } = req.body || {};
+    if (!pubkey || !challenge || !signature) {
+      return res.status(400).json({ error: 'pubkey, challenge, and signature required' });
+    }
+
+    const policy = validatePassword(newPassword);
+    if (!policy.ok) return res.status(400).json({ error: policy.error });
+
+    const entry = walletChallenges.get(challenge);
+    if (!entry || entry.pubkey !== pubkey.trim() || Date.now() > entry.expiresAt) {
+      return res.status(401).json({ error: 'Invalid or expired challenge' });
+    }
+    walletChallenges.delete(challenge);
+
+    const cryptoKey = (publicKey || pubkey).trim();
+    const verifyUrl = `${config.nodeRpcUrl}/misc/verify-signature`;
+    try {
+      const verifyResp = await httpJson('POST', verifyUrl, {
+        public_key: cryptoKey,
+        message: challenge,
+        signature,
+      });
+
+      if (!verifyResp || !verifyResp.valid) {
+        log.warn('wallet-auth', 'Reset signature invalid', { resp: verifyResp });
+        return res.status(401).json({ error: 'Signature verification failed' });
+      }
+
+      const { rows } = await pool.query(
+        'SELECT id, username, is_admin FROM users WHERE usernode_pubkey = $1',
+        [pubkey.trim()]
+      );
+      if (rows.length === 0) {
+        return res.status(401).json({ error: 'No account linked to this pubkey' });
+      }
+
+      const user = rows[0];
+      const hash = await bcrypt.hash(newPassword, 12);
+      await pool.query('UPDATE users SET password = $1 WHERE id = $2', [hash, user.id]);
+      // Invalidate every existing session for this user before minting the
+      // new one, so a stale/leaked session can't survive the reset.
+      await pool.query('DELETE FROM sessions WHERE user_id = $1', [user.id]);
+
+      const { token, expiresAt } = await createSession(pool, user.id);
+      createSessionCookie(res, token, expiresAt);
+
+      log.info('wallet-auth', 'Wallet password reset successful', { userId: user.id, username: user.username });
+      res.json({ user: { id: user.id, username: user.username, isAdmin: user.is_admin } });
+    } catch (err) {
+      log.error('wallet-auth', 'wallet-reset-verify failed', { url: verifyUrl, err: err.message, code: err.code });
       res.status(500).json({ error: 'Signature verification service unavailable' });
     }
   });
