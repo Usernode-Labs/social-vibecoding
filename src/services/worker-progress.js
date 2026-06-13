@@ -12,7 +12,27 @@ function set(sessionId, text, { model } = {}) {
     at: new Date().toISOString(),
     startedAt: prev?.startedAt || new Date().toISOString(),
     model: model || prev?.model || null,
+    estimate: prev?.estimate || null,
   });
+}
+
+// Experimental AI progress estimate: latest Haiku guess for this run.
+// Stored on the same in-memory entry so the dev-chat polling fallback
+// (GET /api/sessions/:id/status) can carry it; ephemeral by design.
+function setEstimate(sessionId, text) {
+  if (!sessionId) return;
+  const prev = progress.get(sessionId);
+  if (!prev) {
+    progress.set(sessionId, {
+      text: '',
+      at: new Date().toISOString(),
+      startedAt: new Date().toISOString(),
+      model: null,
+      estimate: (text || '').toString().substring(0, 200),
+    });
+    return;
+  }
+  prev.estimate = (text || '').toString().substring(0, 200);
 }
 
 function get(sessionId) {
@@ -27,4 +47,4 @@ function all() {
   return Array.from(progress.entries()).map(([sessionId, p]) => ({ sessionId, ...p }));
 }
 
-module.exports = { set, get, clear, all };
+module.exports = { set, setEstimate, get, clear, all };

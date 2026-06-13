@@ -2181,6 +2181,11 @@ function sessionRoutes(config) {
     // without guessing from container status alone.
     const phase = stopRegistry.get(sessionId)?.phase || null;
 
+    // Experimental AI progress estimate: latest in-memory Haiku guess for
+    // the run, so the 3s polling fallback carries it when SSE/WS drop.
+    // Null whenever the per-user toggle is off or no estimate exists yet.
+    const estimate = workerProgress.get(sessionId)?.estimate || null;
+
     // #239: whether the auto-conflict-resolver currently has a resolve
     // in flight for this session. The client's "resolving merge
     // conflicts" banner polls this as its reload-recovery and
@@ -2195,6 +2200,7 @@ function sessionRoutes(config) {
       busy,
       progress,
       phase,
+      estimate,
       resolving: isResolving(sessionId),
       sync: syncMainSvc.getSyncState(sessionId),
     });
@@ -3755,6 +3761,9 @@ async function runScoutTool({
   headless = false,
 }) {
   activeWorkers.add(session.id);
+  // #50: wall-clock start for the durationMs persisted on terminal
+  // statuses, so the dev-chat "(took Xm Ys)" suffix survives reloads.
+  const turnStartedMs = Date.now();
   const modelLabel = prettyModelLabel(selectedModel);
   await sendStatus(`Scouting the repo for context (${modelLabel})...`);
 
@@ -3910,7 +3919,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
     if (stopHandle && stopHandle.stopped) {
       isError = true;
       const byStr = stopHandle.stoppedBy ? ` by @${stopHandle.stoppedBy}` : '';
-      await sendStatus(`Scout stopped${byStr}.`);
+      await sendStatus(`Scout stopped${byStr}.`, { durationMs: Date.now() - turnStartedMs });
       summaryParts.push(`The scout was stopped${byStr} before it finished. The spec doc was not updated.`);
       return { toolResultText: summaryParts.join('\n\n') || 'Stopped.', isError: true };
     }
@@ -3950,7 +3959,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
         existingSpec
           ? `Scout revised the spec (now ${lineCount} lines).`
           : `Scout drafted a ${lineCount}-line spec from the codebase.`,
-        { specPreview: preview, specLines: lineCount, scoutOutput: ccText, specVersion }
+        { specPreview: preview, specLines: lineCount, scoutOutput: ccText, specVersion, durationMs: Date.now() - turnStartedMs }
       );
       send('spec_updated', { length: ccText.length, lines: lineCount, version: specVersion });
       summaryParts.push(
@@ -4112,6 +4121,9 @@ async function runClaudeCodeTool({
   headless = false,
 }) {
   activeWorkers.add(session.id);
+  // #50: wall-clock start for the durationMs persisted on terminal
+  // statuses, so the dev-chat "(took Xm Ys)" suffix survives reloads.
+  const turnStartedMs = Date.now();
   // Name the model in the spin-up status so users can see at a glance
   // that Claude Code is using the model they selected in the dropdown.
   // Without this, the only place the model is surfaced is the cost
@@ -4284,6 +4296,65 @@ path: /another/changed/view
     );
     const progressMsgId = progRows[0].id;
 
+    // Experimental AI progress estimate: while the per-user toggle is ON,
+    // a 60s ticker asks Haiku to skim the progress-log tail and emits a
+    // vague "AI guess" via send('cc_estimate'). Gated hard: never for
+    // headless turns (no live watcher), never without an LLM client, and
+    // the whole block is skipped when the toggle is off â€” degradation to
+    // today's behavior is structural, not a runtime branch. Estimates are
+    // ephemeral (in-memory + SSE only, never persisted).
+    const estimatorEnabled = !headless && !!req?.user?.aiProgressEstimate
+      && (llm.isEnabled() || !!userApiKey);
+    const liveProgressLines = [];
+    let estimator = null;
+    if (estimatorEnabled) {
+      let estimateInFlight = false;
+      let linesAtLastEstimate = 0;
+      let estimateFailures = 0;
+      let estimateSuccesses = 0;
+      const CC_ACTION_RE = /^(Reading |Writing |Editing |\$ |Using )/;
+      estimator = setInterval(() => {
+        // Cost containment: one call in flight at a time; skip while the
+        // run is idle (no new lines â€” re-guessing identical input wastes
+        // money); stop for good after 3 consecutive failures or 20
+        // estimates (bounds a pathological multi-hour run).
+        if (estimateInFlight) return;
+        if (estimateFailures >= 3 || estimateSuccesses >= 20) {
+          clearInterval(estimator);
+          return;
+        }
+        if (liveProgressLines.length === linesAtLastEstimate) return;
+        estimateInFlight = true;
+        const linesAtStart = liveProgressLines.length;
+        llm.estimateRunProgress({
+          userRequest: userMessage,
+          progressTail: liveProgressLines,
+          elapsedMs: Date.now() - turnStartedMs,
+          steps: liveProgressLines.filter((l) => CC_ACTION_RE.test(l)).length,
+          apiKey: userApiKey || undefined,
+        }).then(async ({ text, usage, model: estModel }) => {
+          estimateFailures = 0;
+          estimateSuccesses++;
+          linesAtLastEstimate = linesAtStart;
+          // A call resolving after the user hit stop is dropped â€” the
+          // running line is already deactivated client-side.
+          if (!(stopHandle && stopHandle.stopped)) {
+            send('cc_estimate', { text, elapsedMs: Date.now() - turnStartedMs });
+            workerProgress.setEstimate(session.id, text);
+          }
+          if (usage) {
+            const cents = llm.estimateCostCents(usage, estModel);
+            await limits.recordSpend(pool, req.user.id, cents, { byok: !!userApiKey });
+          }
+        }).catch((err) => {
+          estimateFailures++;
+          log.warn('chat', 'AI progress estimate failed', { sessionId: session.id, err: err.message });
+        }).finally(() => {
+          estimateInFlight = false;
+        });
+      }, 60_000);
+    }
+
     let result;
     try {
       const dispatchBuild = () => worker.execInWorker(session.id, {
@@ -4297,6 +4368,7 @@ path: /another/changed/view
         onProgress: (text) => {
           send('cc_progress', { text });
           workerProgress.set(session.id, text, { model: selectedModel });
+          if (estimatorEnabled) liveProgressLines.push(text);
           pool.query(
             `UPDATE chat_session_messages SET metadata = jsonb_set(
               metadata, '{progressLog}',
@@ -4317,6 +4389,7 @@ path: /another/changed/view
       }
     } finally {
       clearInterval(heartbeat);
+      if (estimator) clearInterval(estimator);
     }
 
     const newCcId = result.sessionId || result.initSessionId || null;
@@ -4337,7 +4410,7 @@ path: /another/changed/view
     if (stopHandle && stopHandle.stopped) {
       isError = true;
       const byStr = stopHandle.stoppedBy ? ` by @${stopHandle.stoppedBy}` : '';
-      await sendStatus(`Claude Code stopped${byStr}.`);
+      await sendStatus(`Claude Code stopped${byStr}.`, { durationMs: Date.now() - turnStartedMs });
       summaryParts.push(`Claude Code was stopped${byStr} before it finished. No commit was pushed.`);
       return {
         toolResultText: summaryParts.join('\n\n') || 'Stopped.',
@@ -4682,7 +4755,7 @@ path: /another/changed/view
     }
 
     if (ccText) {
-      await sendStatus('Claude Code finished', { ccOutput: ccText });
+      await sendStatus('Claude Code finished', { ccOutput: ccText, durationMs: Date.now() - turnStartedMs });
       // Prepend CC's own description so the Mayor leads with what was
       // actually built, with our outcome bullets as supplementary context.
       summaryParts.unshift(`What the agent did:\n${ccText}`);

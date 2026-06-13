@@ -549,6 +549,59 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   border: none;
 }
 
+/* ── #50: progress indicator — elapsed ticker + live activity ──
+   .dc-status-elapsed shows a per-second ticking timer while a status
+   line is active and a static "(took Xm Ys)" once it finishes;
+   tabular-nums keeps the ticking digits from jittering the layout.
+   .dc-cc-current is the "what is it doing right now" snippet in the
+   running summary — ellipsized with a max-width so the right-aligned
+   id/timestamp span never shifts as the label changes. */
+.dc-status-elapsed {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.dc-cc-current {
+  color: var(--text-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40%;
+  min-width: 0;
+}
+
+.dc-cc-steps {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Experimental AI progress estimate (opt-in): italic and extra-muted so
+   the guess reads as tentative next to the honest timer/step count. */
+.dc-cc-estimate {
+  color: var(--text-muted);
+  opacity: 0.75;
+  font-style: italic;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40%;
+  min-width: 0;
+}
+
+/* Narrow viewports: drop the activity snippet (the log itself is one
+   tap away) but keep the elapsed timer at all widths. */
+@media (max-width: 640px) {
+  .dc-cc-current { display: none; }
+  .dc-cc-estimate { display: none; }
+}
+
 /* Sibling of .dc-cc-attached-log for the post-turn ccOutput
    markdown summary (rather than a monospaced live-log). Same
    indent + muted color, but body font and a bit more room for

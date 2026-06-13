@@ -172,6 +172,9 @@ function authRoutes(config) {
         // anyone who can't create — admins implicitly can, see the
         // canCreate helper in public/js/home.js.
         canCreateApps: !!req.user.canCreateApps,
+        // Experimental: opt-in AI progress estimate for coding runs
+        // (Settings → Experimental). Default OFF.
+        aiProgressEstimate: !!req.user.aiProgressEstimate,
         hasApiKey,
         keyLast4,
         usernodePubkey,
@@ -237,6 +240,29 @@ function authRoutes(config) {
       res.json({ ok: true });
     } catch (err) {
       log.error('byok', 'Failed to remove key', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Experimental: per-user "AI progress estimate" toggle (default OFF).
+  // Gates the Haiku estimator that watches in-flight Claude Code runs —
+  // see runClaudeCodeTool in src/routes/sessions.js. Wired to the
+  // Settings modal's Experimental section (fires on checkbox change).
+  router.post('/api/me/ai-progress-estimate', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const { enabled } = req.body || {};
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'enabled must be a boolean' });
+    }
+    try {
+      await pool.query(
+        'UPDATE users SET ai_progress_estimate = $1 WHERE id = $2',
+        [enabled, req.user.id]
+      );
+      log.info('settings', 'AI progress estimate toggled', { userId: req.user.id, enabled });
+      res.json({ ok: true, enabled });
+    } catch (err) {
+      log.error('settings', 'Failed to toggle AI progress estimate', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

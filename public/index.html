@@ -756,6 +756,27 @@
         </p>
       </div>
 
+      <!-- Experimental: AI progress estimate (default OFF). When enabled,
+           a small Haiku call skims the in-flight Claude Code progress log
+           about once a minute and shows a vague "AI guess" next to the
+           timer on the running line in dev-chat. Server-gated per user;
+           settings.js wires the change handler to
+           POST /api/me/ai-progress-estimate. -->
+      <div class="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
+        <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Experimental</h3>
+        <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
+          Early features we're still testing. They may change or disappear.
+        </p>
+        <label class="flex items-center gap-2 cursor-pointer select-none">
+          <input id="ai-progress-estimate" type="checkbox" class="accent-violet-500 w-4 h-4" />
+          <span class="text-sm text-zinc-800 dark:text-zinc-200">AI progress estimate</span>
+        </label>
+        <p class="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+          While the coding agent works, a small AI model skims its progress log about once a minute and shows a rough guess of how far along it is. It's clearly labeled a guess and can be wrong. Adds a tiny per-run cost (billed to your own API key if you've saved one above).
+        </p>
+        <div id="ai-progress-estimate-status" class="text-xs mt-2 hidden"></div>
+      </div>
+
       <div class="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
         <button id="settings-logout"
           class="w-full rounded-lg border border-red-400 dark:border-red-700 px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors">
@@ -799,6 +820,10 @@
   <!-- Pure two-half spec splitter (#196). Must load BEFORE dev-chat.js,
        whose spec viewer calls window.splitSpecSections. -->
   <script src="/js/spec-sections.js"></script>
+  <!-- Pure progress-indicator helpers (#50). Must load BEFORE dev-chat.js,
+       whose elapsed ticker / live-activity summary call formatElapsed and
+       summarizeCcProgress. -->
+  <script src="/js/cc-progress-summary.js"></script>
   <script src="/js/dev-chat.js"></script>
   <!-- Kudos widget (button + budget badge) and leaderboard screen.
        Loaded BEFORE app-view.js so the panel renderer can use

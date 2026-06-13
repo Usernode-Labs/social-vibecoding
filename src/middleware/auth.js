@@ -58,7 +58,7 @@ function authMiddleware(config) {
     if (cookieToken) {
       try {
         const { rows } = await pool.query(
-          `SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.can_create_apps
+          `SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.can_create_apps, u.ai_progress_estimate
            FROM sessions s JOIN users u ON s.user_id = u.id
            WHERE s.token = $1`,
           [cookieToken]
@@ -73,6 +73,9 @@ function authMiddleware(config) {
             // implicitly bypass — callers should check `isAdmin ||
             // canCreateApps`.
             canCreateApps: !!rows[0].can_create_apps,
+            // Experimental per-user opt-in (default FALSE) — read by
+            // runClaudeCodeTool to gate the Haiku progress estimator.
+            aiProgressEstimate: !!rows[0].ai_progress_estimate,
           };
           log.debug('auth', 'Session validated', { userId: req.user.id });
           return next();
@@ -135,7 +138,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
   let userRow;
   try {
     const { rows } = await pool.query(
-      'SELECT id, username, is_admin, can_create_apps FROM users WHERE id = $1',
+      'SELECT id, username, is_admin, can_create_apps, ai_progress_estimate FROM users WHERE id = $1',
       [payload.id]
     );
     userRow = rows[0];
@@ -185,6 +188,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
     username: userRow.username,
     isAdmin: userRow.is_admin,
     canCreateApps: !!userRow.can_create_apps,
+    aiProgressEstimate: !!userRow.ai_progress_estimate,
   };
 }
 
