@@ -608,11 +608,14 @@ function voteRoutes(config) {
                AND cm.msg_type = 'message') as chat_count,
            (SELECT MAX(cm.created_at) FROM chat_messages cm
              WHERE cm.app_id = cs.app_id AND cm.thread_type = 'session' AND cm.thread_ref = cs.id) as last_message_at,
-           -- #195: before/after capture artifact ids, aggregated to one
-           -- jsonb per row ('before_png' -> id, 'after_webm' -> id, ...)
-           -- so the vote card can render media tiles without N extra
-           -- round-trips. Shaped client-friendly below via visuals.shapeAgg.
-           (SELECT jsonb_object_agg(sv.kind || '_' || sv.media, sv.id)
+           -- #195/#270: before/after capture artifact ids, aggregated to
+           -- one jsonb per row. Key is 'kind_index_media'
+           -- ('before_0_png' -> id, 'after_1_webm' -> id, ...) so multiple
+           -- captured routes (capture_index) don't collide. Shaped into the
+           -- grouped client form below via visuals.shapeAgg (which also
+           -- still accepts the legacy 'kind_media' key for pre-#270 rows).
+           (SELECT jsonb_object_agg(
+                     sv.kind || '_' || sv.capture_index || '_' || sv.media, sv.id)
               FROM session_visuals sv WHERE sv.session_id = cs.id) as visuals_agg
          FROM chat_sessions cs
          JOIN users u ON cs.user_id = u.id

@@ -349,6 +349,13 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS linked_issues_backfilled  BOO
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS testing_md         TEXT;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS testing_path       VARCHAR(512);
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_testing_applied TEXT;
+--   testing_paths      : ordered list of validated deep-link paths the
+--                        before/after capture pipeline shoots a pair at
+--                        (#270). NULL/absent falls back to [testing_path
+--                        || '/'], so legacy single-path rows are unchanged.
+--                        testing_path stays the PRIMARY path (= the first
+--                        of this list) for the "Test this change" button.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS testing_paths      JSONB;
 
 -- Stale-promoted-PR policy + reversible archive.
 --   promoted_at       : when the session was proposed to the group. With
@@ -860,8 +867,15 @@ CREATE TABLE IF NOT EXISTS session_visuals (
   content_type  VARCHAR(32) NOT NULL,
   data          BYTEA       NOT NULL,
   captured_path VARCHAR(512),
+  -- #270: capture order within a session. A proposal can now point its
+  -- screenshots at a short ordered list of routes; each route is a
+  -- "capture group" sharing one capture_index, and the renderers emit one
+  -- labelled before/after row per group. Defaults to 0 so pre-#270 rows
+  -- form a single legacy group with no migration backfill needed.
+  capture_index SMALLINT NOT NULL DEFAULT 0,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE session_visuals ADD COLUMN IF NOT EXISTS capture_index SMALLINT NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_session_visuals_session ON session_visuals(session_id);
 
 -- Private like its parent chat_sessions (public-FK-to-private is the

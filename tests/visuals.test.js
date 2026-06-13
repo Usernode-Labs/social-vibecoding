@@ -8,7 +8,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const visuals = require('../src/services/visuals');
-const { parseCookie } = require('../capture/capture');
+const { parseCookie, resolveTargets } = require('../capture/capture');
 const { buildVisualsBlock, upsertVisualsBlock } = require('../src/services/pr-metadata');
 
 const ID_A = 'a'.repeat(32);
@@ -116,7 +116,7 @@ test('parseShots decodes well-formed frames and failures independently', () => {
     + frame('after', 'gif', 'GIF1');
   const { shots, failures } = visuals.parseShots(stdout);
   assert.equal(shots.length, 2);
-  assert.deepEqual(shots[0], { kind: 'before', media: 'png', status: 200, buf: Buffer.from('PNG1') });
+  assert.deepEqual(shots[0], { kind: 'before', media: 'png', status: 200, index: 0, buf: Buffer.from('PNG1') });
   assert.equal(shots[1].kind, 'after');
   assert.equal(shots[1].media, 'gif');
   assert.equal(failures.length, 1);
@@ -186,11 +186,180 @@ test('replaces an existing marker-delimited block idempotently', () => {
 
 // ── shapeAgg (vote-panel query shaping) ────────────────────────────────
 
-test('shapeAgg shapes the jsonb_object_agg form and drops junk keys', () => {
+test('shapeAgg accepts the legacy kind_media key as a single group 0', () => {
   const shaped = visuals.shapeAgg({
     before_png: ID_A, after_gif: ID_B, garbage_key: 'x', after_avi: 'y',
   });
-  assert.deepEqual(shaped, { before: { png: ID_A }, after: { gif: ID_B } });
+  assert.deepEqual(shaped, {
+    captures: [{ index: 0, path: '/', before: { png: ID_A }, after: { gif: ID_B } }],
+  });
   assert.equal(visuals.shapeAgg(null), null);
   assert.equal(visuals.shapeAgg({}), null);
+});
+
+test('shapeAgg parses the new kind_index_media key into ordered groups', () => {
+  const shaped = visuals.shapeAgg({
+    before_0_png: ID_A, after_0_png: ID_B,
+    after_1_gif: ID_A, before_1_png: ID_B,
+    junk_2_x: 'q',
+  });
+  assert.equal(shaped.captures.length, 2);
+  assert.deepEqual(shaped.captures[0], { index: 0, path: '/', before: { png: ID_A }, after: { png: ID_B } });
+  assert.deepEqual(shaped.captures[1], { index: 1, path: '/', before: { png: ID_B }, after: { gif: ID_A } });
+});
+
+test('shapeAgg drops a group with no after artifact', () => {
+  // index 1 has only a before — nothing to show, so it's omitted.
+  const shaped = visuals.shapeAgg({ before_0_png: ID_A, after_0_png: ID_B, before_1_png: ID_A });
+  assert.equal(shaped.captures.length, 1);
+  assert.equal(shaped.captures[0].index, 0);
+});
+
+// ── parseShots index attribute (#270) ──────────────────────────────────
+
+test('parseShots reads the index attribute, defaulting to 0 when absent', () => {
+  const withIdx = `__USERNODE_SHOT__ kind=after media=png status=200 bytes=4 index=2\n${Buffer.from('PNG1').toString('base64')}\n__USERNODE_SHOT_END__\n`;
+  const r1 = visuals.parseShots(withIdx);
+  assert.equal(r1.shots.length, 1);
+  assert.equal(r1.shots[0].index, 2);
+  // Legacy frame with no index= → 0.
+  const r2 = visuals.parseShots(frame('after', 'png', 'PNG1'));
+  assert.equal(r2.shots[0].index, 0);
+});
+
+// ── storeArtifacts grouping (#270) ─────────────────────────────────────
+
+// Minimal fake pool: records the INSERTed rows so we can assert grouping
+// without a real database. connect() returns a client whose query() is a
+// no-op for BEGIN/DELETE/COMMIT and captures INSERT params.
+function fakePool() {
+  const inserted = [];
+  const client = {
+    query: async (sql, params) => {
+      if (/^INSERT INTO session_visuals/.test(sql)) inserted.push(params);
+      return { rows: [] };
+    },
+    release: () => {},
+  };
+  return { inserted, connect: async () => client };
+}
+
+test('storeArtifacts groups rows by capture_index and labels each group', async () => {
+  const pool = fakePool();
+  const buf = Buffer.from('x');
+  const targets = [{ index: 0, path: '/' }, { index: 1, path: '/board' }];
+  const shots = [
+    { kind: 'before', media: 'png', status: 200, index: 0, buf },
+    { kind: 'after', media: 'png', status: 200, index: 0, buf },
+    { kind: 'before', media: 'png', status: 200, index: 1, buf },
+    { kind: 'after', media: 'png', status: 200, index: 1, buf },
+  ];
+  const stored = await visuals.storeArtifacts(pool, 7, 'abc', targets, shots);
+  assert.equal(stored.captures.length, 2);
+  assert.equal(stored.captures[0].index, 0);
+  assert.equal(stored.captures[0].path, '/');
+  assert.ok(stored.captures[0].before.png && stored.captures[0].after.png);
+  assert.equal(stored.captures[1].index, 1);
+  assert.equal(stored.captures[1].path, '/board');
+  // Each row was persisted with its capture_index (last param) + path.
+  assert.equal(pool.inserted.length, 4);
+  assert.equal(pool.inserted[0][8], 0); // capture_index column
+  assert.equal(pool.inserted[2][7], '/board'); // captured_path column
+  assert.equal(pool.inserted[2][8], 1);
+});
+
+test('storeArtifacts keeps only groups that have an after artifact', async () => {
+  const pool = fakePool();
+  const buf = Buffer.from('x');
+  const targets = [{ index: 0, path: '/' }, { index: 1, path: '/settings' }];
+  const shots = [
+    { kind: 'after', media: 'png', status: 200, index: 0, buf },
+    { kind: 'before', media: 'png', status: 200, index: 1, buf }, // no after → dropped
+  ];
+  const stored = await visuals.storeArtifacts(pool, 7, null, targets, shots);
+  assert.equal(stored.captures.length, 1);
+  assert.equal(stored.captures[0].index, 0);
+});
+
+test('storeArtifacts returns null when no after artifact at all', async () => {
+  const pool = fakePool();
+  const buf = Buffer.from('x');
+  const shots = [{ kind: 'before', media: 'png', status: 200, index: 0, buf }];
+  assert.equal(await visuals.storeArtifacts(pool, 7, null, [{ index: 0, path: '/' }], shots), null);
+});
+
+// ── buildVisualsBlock grouped + back-compat (#270) ─────────────────────
+
+test('buildVisualsBlock single root group is byte-identical to the legacy form', () => {
+  // Legacy flat shape and a single-root grouped shape produce the same block.
+  const legacy = buildVisualsBlock({ before: { gif: ID_A }, after: { gif: ID_B } }, DOMAIN);
+  const grouped = buildVisualsBlock(
+    { captures: [{ index: 0, path: '/', before: { gif: ID_A }, after: { gif: ID_B } }] },
+    DOMAIN
+  );
+  assert.equal(legacy, grouped);
+  assert.ok(legacy.includes('## Before / after\n'));
+  assert.ok(!legacy.includes('Before / after —'));
+});
+
+test('buildVisualsBlock emits one labelled table per capture group', () => {
+  const block = buildVisualsBlock({
+    captures: [
+      { index: 0, path: '/board', before: { gif: ID_A }, after: { gif: ID_B } },
+      { index: 1, path: '/settings', before: null, after: { png: ID_A } },
+    ],
+  }, DOMAIN);
+  assert.ok(block.includes('### Before / after — `/board`'));
+  assert.ok(block.includes('### Before / after — `/settings`'));
+  assert.ok(block.includes('| Before | After |'));
+  // The after-only group falls back to the one-column variant.
+  assert.ok(block.includes('No production version to compare'));
+  // GIF preferred over PNG within a group.
+  assert.ok(block.includes(`![Before](https://${DOMAIN}/visuals/${ID_A})`));
+});
+
+test('buildVisualsBlock labels a single non-root group with its path', () => {
+  const block = buildVisualsBlock(
+    { captures: [{ index: 0, path: '/board', after: { gif: ID_A } }] },
+    DOMAIN
+  );
+  assert.ok(block.includes('### Before / after — `/board`'));
+});
+
+// ── resolveTargets (container env, #270) ───────────────────────────────
+
+test('resolveTargets parses the TARGETS JSON into normalized targets', () => {
+  const env = {
+    TARGETS: JSON.stringify([
+      { index: 0, beforeUrl: 'http://b/', afterUrl: 'http://a/', beforeFallbackUrl: '', beforeCookie: 'session=tok', afterCookie: '' },
+      { index: 1, beforeUrl: '', afterUrl: 'http://a/board' },
+    ]),
+  };
+  const t = resolveTargets(env);
+  assert.equal(t.length, 2);
+  assert.equal(t[0].index, 0);
+  assert.deepEqual(t[0].beforeCookie, { name: 'session', value: 'tok' });
+  assert.equal(t[1].beforeUrl, '');
+  assert.equal(t[1].afterUrl, 'http://a/board');
+});
+
+test('resolveTargets falls back to the scalar env vars when TARGETS is unset', () => {
+  const t = resolveTargets({ BEFORE_URL: 'http://b/', AFTER_URL: 'http://a/', BEFORE_FALLBACK_URL: 'http://b/root' });
+  assert.equal(t.length, 1);
+  assert.equal(t[0].index, 0);
+  assert.equal(t[0].beforeUrl, 'http://b/');
+  assert.equal(t[0].beforeFallbackUrl, 'http://b/root');
+});
+
+test('resolveTargets drops targets with neither before nor after url', () => {
+  const env = { TARGETS: JSON.stringify([{ index: 0, beforeUrl: '', afterUrl: '' }, { index: 1, afterUrl: 'http://a/' }]) };
+  const t = resolveTargets(env);
+  assert.equal(t.length, 1);
+  assert.equal(t[0].index, 1);
+});
+
+test('resolveTargets falls back to scalars on unparseable TARGETS', () => {
+  const t = resolveTargets({ TARGETS: '{not json', AFTER_URL: 'http://a/' });
+  assert.equal(t.length, 1);
+  assert.equal(t[0].afterUrl, 'http://a/');
 });

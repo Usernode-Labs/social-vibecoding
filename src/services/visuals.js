@@ -27,6 +27,7 @@ const github = require('./github');
 const caddy = require('./caddy');
 const prMetadata = require('./pr-metadata');
 const sessionBus = require('./session-bus');
+const { CAPTURE_MAX_PATHS } = require('./testing-notes');
 const { getPool } = require('../db/pool');
 
 const CAPTURE_IMAGE = 'usernode-capture:latest';
@@ -125,10 +126,12 @@ function ensureCaptureImage() {
 
 // ── Output protocol parsing ────────────────────────────────────────────
 // capture.js emits one frame per artifact:
-//   __USERNODE_SHOT__ kind=before media=png status=200 bytes=12345
+//   __USERNODE_SHOT__ kind=before media=png status=200 bytes=12345 index=0
 //   <base64, single line>
 //   __USERNODE_SHOT_END__
-// and __USERNODE_SHOT_FAIL__ kind=... media=... reason=... for failures.
+// and __USERNODE_SHOT_FAIL__ kind=... media=... reason=... index=... for
+// failures. `index` is the capture group (multi-route, #270); it defaults
+// to 0 when absent so an older capture container is parsed as one group.
 function parseShots(stdout) {
   const shots = [];
   const failures = [];
@@ -149,6 +152,7 @@ function parseShots(stdout) {
               kind: attrs.kind,
               media: attrs.media,
               status: parseInt(attrs.status, 10) || 0,
+              index: parseInt(attrs.index, 10) || 0,
               buf,
             });
           }
@@ -168,21 +172,64 @@ function parseShots(stdout) {
 }
 
 // ── Storage ────────────────────────────────────────────────────────────
+// Client shape (#270): an ordered list of capture groups —
+//   { captures: [ { index, path, before: {png,webm,gif}, after: {...} } ] }
+// one group per captured route, ascending by capture_index. A group is
+// only kept when it has an "after" artifact (nothing to show otherwise).
+// A single-route proposal yields a one-element list, so the common case is
+// unchanged in substance — just wrapped. Renderers (pr-metadata.js,
+// app-view.js) iterate `captures` and label each row with its `path`.
+
+// Assemble rows ([{kind, media, capture_index, captured_path, id}]) into
+// the ordered { captures: [...] } shape. Groups missing an "after" are
+// dropped. Shared by storeArtifacts / getForSession / shapeAgg so all
+// three surfaces emit byte-identical shapes.
+function groupRows(rows) {
+  const byIndex = new Map();
+  for (const r of rows) {
+    const idx = Number.isInteger(r.index) ? r.index : (parseInt(r.capture_index, 10) || 0);
+    let g = byIndex.get(idx);
+    if (!g) { g = { index: idx, path: null }; byIndex.set(idx, g); }
+    if (!g[r.kind]) g[r.kind] = {};
+    g[r.kind][r.media] = r.id;
+    const p = r.path || r.captured_path;
+    if (p && !g.path) g.path = p;
+  }
+  const captures = [];
+  for (const idx of Array.from(byIndex.keys()).sort((a, b) => a - b)) {
+    const g = byIndex.get(idx);
+    if (!g.after) continue; // nothing to show without an "after"
+    captures.push({ index: g.index, path: g.path || '/', before: g.before || null, after: g.after });
+  }
+  return captures.length ? { captures } : null;
+}
+
 // Latest set per session only: each successful capture deletes the
-// session's prior rows and inserts the fresh set inside one transaction,
-// bounding growth at <= 6 artifacts per session ever. Returns the shaped
-// id map ({ before: {png,webm,gif}, after: {...} }) or null when nothing
-// usable was stored (no "after" artifact = nothing to show).
-async function storeArtifacts(pool, sessionId, commitHash, capturedPath, shots) {
+// session's prior rows and inserts the fresh set inside one transaction.
+// Growth is bounded at <= 6 artifacts per group; with CAPTURE_MAX_PATHS
+// groups that's <= 18 rows/session ever. `targets` is the ordered capture
+// target list ([{ index, path }]) so each row records its capture_index +
+// captured_path (the group label). Returns the grouped shape, or null when
+// nothing usable was stored (no group has an "after").
+async function storeArtifacts(pool, sessionId, commitHash, targets, shots) {
+  const pathByIndex = new Map();
+  for (const t of (Array.isArray(targets) ? targets : [])) pathByIndex.set(t.index, t.path);
+
   const rows = [];
   for (const s of shots) {
     if (s.buf.length > MAX_BYTES[s.media]) {
       log.warn('visuals', 'Artifact over size cap — dropped', {
-        sessionId, kind: s.kind, media: s.media, bytes: s.buf.length,
+        sessionId, kind: s.kind, media: s.media, bytes: s.buf.length, index: s.index,
       });
       continue;
     }
-    rows.push({ id: crypto.randomBytes(16).toString('hex'), ...s });
+    const index = Number.isInteger(s.index) ? s.index : 0;
+    rows.push({
+      id: crypto.randomBytes(16).toString('hex'),
+      index,
+      capturedPath: pathByIndex.has(index) ? pathByIndex.get(index) : null,
+      ...s,
+    });
   }
   if (!rows.some((r) => r.kind === 'after')) return null;
 
@@ -192,9 +239,9 @@ async function storeArtifacts(pool, sessionId, commitHash, capturedPath, shots) 
     await client.query('DELETE FROM session_visuals WHERE session_id = $1', [sessionId]);
     for (const r of rows) {
       await client.query(
-        `INSERT INTO session_visuals (id, session_id, commit_hash, kind, media, content_type, data, captured_path)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [r.id, sessionId, commitHash || null, r.kind, r.media, CONTENT_TYPES[r.media], r.buf, capturedPath || null]
+        `INSERT INTO session_visuals (id, session_id, commit_hash, kind, media, content_type, data, captured_path, capture_index)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [r.id, sessionId, commitHash || null, r.kind, r.media, CONTENT_TYPES[r.media], r.buf, r.capturedPath || null, r.index]
       );
     }
     await client.query('COMMIT');
@@ -205,46 +252,44 @@ async function storeArtifacts(pool, sessionId, commitHash, capturedPath, shots) 
     client.release();
   }
 
-  const shaped = {};
-  for (const r of rows) {
-    if (!shaped[r.kind]) shaped[r.kind] = {};
-    shaped[r.kind][r.media] = r.id;
-  }
-  shaped.capturedPath = capturedPath || '/';
-  return shaped;
+  return groupRows(rows.map((r) => ({
+    kind: r.kind, media: r.media, id: r.id, index: r.index, captured_path: r.capturedPath,
+  })));
 }
 
-// Shape a session's stored artifact ids for clients:
-// { before: {png,webm,gif}, after: {...}, capturedPath } or null.
-// Used by GET /api/sessions/:id (history reloads) and exported for any
-// other surface that wants the same shape.
+// Shape a session's stored artifact ids for clients into the grouped
+// { captures: [...] } form (ascending by capture_index). Used by GET
+// /api/sessions/:id (history reloads) and exported for any other surface
+// that wants the same shape. Pre-#270 rows all carry capture_index 0, so
+// they collapse into a single legacy group — back-compatible by default.
 async function getForSession(pool, sessionId) {
   const { rows } = await pool.query(
-    `SELECT id, kind, media, captured_path FROM session_visuals WHERE session_id = $1`,
+    `SELECT id, kind, media, captured_path, capture_index FROM session_visuals WHERE session_id = $1`,
     [sessionId]
   );
   if (!rows.length) return null;
-  const shaped = {};
-  for (const r of rows) {
-    if (!shaped[r.kind]) shaped[r.kind] = {};
-    shaped[r.kind][r.media] = r.id;
-    if (r.captured_path) shaped.capturedPath = r.captured_path;
-  }
-  return shaped;
+  return groupRows(rows);
 }
 
-// Shape the jsonb_object_agg('kind_media' -> id) form produced by the
-// /promoted vote-panel query into the same client shape as above.
+// Shape the jsonb_object_agg(... -> id) form produced by the /promoted
+// vote-panel query into the grouped client shape. The agg key is
+// `kind_index_media` (#270); the legacy `kind_media` key (pre-#270 stored
+// rows, or an older query) is also accepted, mapping to capture group 0.
+// captured_path isn't carried in the agg, so group labels default to '/'
+// (the vote-panel tiles already render fine without an explicit label).
 function shapeAgg(agg) {
   if (!agg || typeof agg !== 'object') return null;
-  const shaped = {};
+  const rows = [];
   for (const [key, id] of Object.entries(agg)) {
-    const m = key.match(/^(before|after)_(png|webm|gif)$/);
-    if (!m) continue;
-    if (!shaped[m[1]]) shaped[m[1]] = {};
-    shaped[m[1]][m[2]] = id;
+    let m = key.match(/^(before|after)_(\d+)_(png|webm|gif)$/);
+    if (m) {
+      rows.push({ kind: m[1], index: parseInt(m[2], 10) || 0, media: m[3], id });
+      continue;
+    }
+    m = key.match(/^(before|after)_(png|webm|gif)$/);
+    if (m) rows.push({ kind: m[1], index: 0, media: m[2], id });
   }
-  return Object.keys(shaped).length ? shaped : null;
+  return groupRows(rows);
 }
 
 // ── PR body patch ──────────────────────────────────────────────────────
@@ -349,56 +394,86 @@ async function captureForSession(config, session, app, commitHash, stagingResult
 
     // Targets, reached directly over the shared docker network — same
     // access model waitForHealthy uses, bypassing Caddy's forward-auth
-    // gate. testing_path was validated by testing-notes.validatePath
-    // before it was persisted.
-    const capturePath = (session.testing_path || '/');
+    // gate. The capture routes are the validated testing_paths list
+    // (#270), falling back to [testing_path || '/'] for pre-#270 rows;
+    // deduped (preserving order), capped at CAPTURE_MAX_PATHS, always
+    // non-empty (a change with nothing to point at still shoots '/').
+    const capturePaths = (() => {
+      const raw = (Array.isArray(session.testing_paths) && session.testing_paths.length)
+        ? session.testing_paths
+        : [session.testing_path || '/'];
+      const seen = new Set();
+      const out = [];
+      for (const p of raw) {
+        const v = (typeof p === 'string' && p) ? p : null;
+        if (!v || seen.has(v)) continue;
+        seen.add(v);
+        out.push(v);
+        if (out.length >= CAPTURE_MAX_PATHS) break;
+      }
+      return out.length ? out : ['/'];
+    })();
+
     const stagingName = `usernode-staging-${app.slug}--${session.id}`;
-    const afterUrl = withToken(`http://${stagingName}:3000${capturePath}`, captureToken);
     const isSelfApp = app.slug === config.selfAppSlug;
     const prodName = beforeContainerName(config, app.slug);
-    let beforeUrl = '';
-    let beforeFallbackUrl = '';
+    const prodRunning = (await docker.getContainerStatus(prodName)) === 'running';
+
+    // Self-app "before" auth: the production platform never honours the
+    // query token by design (replay protection — middleware/auth.js gates
+    // the iframe-JWT path on USERNODE_ENV === 'staging'). For the self-app,
+    // `pool` IS the platform's own DB, so mint ONE transient sessions-table
+    // cookie for the capture user and reuse it across every before-path
+    // (same origin, same TTL); deleted once in the finally below, with the
+    // short expiry as the backstop if the process dies.
     let beforeCookie = '';
     let beforeSessionToken = '';
-    if ((await docker.getContainerStatus(prodName)) === 'running') {
-      if (isSelfApp) {
-        // The production platform never honours the query token by design
-        // (replay protection — middleware/auth.js gates the iframe-JWT
-        // path on USERNODE_ENV === 'staging'). For the self-app, `pool`
-        // IS the platform's own DB, so mint a transient sessions-table
-        // cookie for the capture user instead; deleted after the run,
-        // with the short expiry as the backstop if the process dies.
-        beforeUrl = `http://${prodName}:3000${capturePath}`;
-        // A newly-added page 404s on prod — capture.js retries at / so
-        // "before" shows the app's prior state rather than an error page.
-        if (capturePath !== '/') beforeFallbackUrl = `http://${prodName}:3000/`;
-        if (captureUser) {
-          try {
-            beforeSessionToken = crypto.randomBytes(32).toString('hex');
-            await pool.query(
-              'INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)',
-              [beforeSessionToken, captureUser.id, new Date(Date.now() + CAPTURE_AUTH_TTL_MS)]
-            );
-            beforeCookie = `session=${beforeSessionToken}`;
-          } catch (err) {
-            beforeSessionToken = '';
-            log.warn('visuals', 'Capture session-cookie mint failed — "before" unauthenticated', {
-              sessionId: session.id, err: err.message,
-            });
-          }
-        }
-      } else {
-        // Child-app prod verifies the query token directly (scaffold
-        // middleware, app-conventions.md "Auth — iframe token injection").
-        beforeUrl = withToken(`http://${prodName}:3000${capturePath}`, captureToken);
-        if (capturePath !== '/') {
-          beforeFallbackUrl = withToken(`http://${prodName}:3000/`, captureToken);
-        }
+    if (prodRunning && isSelfApp && captureUser) {
+      try {
+        beforeSessionToken = crypto.randomBytes(32).toString('hex');
+        await pool.query(
+          'INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)',
+          [beforeSessionToken, captureUser.id, new Date(Date.now() + CAPTURE_AUTH_TTL_MS)]
+        );
+        beforeCookie = `session=${beforeSessionToken}`;
+      } catch (err) {
+        beforeSessionToken = '';
+        log.warn('visuals', 'Capture session-cookie mint failed — "before" unauthenticated', {
+          sessionId: session.id, err: err.message,
+        });
       }
     }
 
+    // One capture target per path. The "after" (staging) target always
+    // exists; the "before" (prod) target only when prod is running. A
+    // newly-added deep page 404s on prod, so each before-target falls back
+    // to '/' (capture.js retries) — "before" shows the prior root state
+    // rather than an error page. Child-app prod verifies the query token
+    // directly (scaffold middleware); the self-app uses the minted cookie.
+    const targets = capturePaths.map((p, index) => {
+      const afterUrl = withToken(`http://${stagingName}:3000${p}`, captureToken);
+      let beforeUrl = '';
+      let beforeFallbackUrl = '';
+      if (prodRunning) {
+        if (isSelfApp) {
+          beforeUrl = `http://${prodName}:3000${p}`;
+          if (p !== '/') beforeFallbackUrl = `http://${prodName}:3000/`;
+        } else {
+          beforeUrl = withToken(`http://${prodName}:3000${p}`, captureToken);
+          if (p !== '/') beforeFallbackUrl = withToken(`http://${prodName}:3000/`, captureToken);
+        }
+      }
+      return {
+        index, path: p, afterUrl, beforeUrl, beforeFallbackUrl,
+        beforeCookie: (beforeUrl && isSelfApp) ? beforeCookie : '',
+        // Plumbed for symmetry; unused today (the after side always
+        // authenticates via the query token).
+        afterCookie: '',
+      };
+    });
+
     log.info('visuals', 'Starting capture', {
-      sessionId: session.id, slug: app.slug, before: !!beforeUrl, path: capturePath,
+      sessionId: session.id, slug: app.slug, before: prodRunning, paths: capturePaths,
       authenticated: !!captureToken, selfApp: isSelfApp,
     });
     let stdout;
@@ -406,12 +481,22 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       ({ stdout } = await docker.runOneShot(`usernode-capture-${session.id}`, {
         image: CAPTURE_IMAGE,
         env: {
-          BEFORE_URL: beforeUrl,
-          AFTER_URL: afterUrl,
-          BEFORE_FALLBACK_URL: beforeFallbackUrl,
-          BEFORE_COOKIE: beforeCookie,
-          // Plumbed for symmetry; unused today (the after side always
-          // authenticates via the query token).
+          // Multi-target protocol (#270). The container loops over these
+          // sequentially and tags each shot frame with its index=.
+          TARGETS: JSON.stringify(targets.map((t) => ({
+            index: t.index,
+            beforeUrl: t.beforeUrl,
+            afterUrl: t.afterUrl,
+            beforeFallbackUrl: t.beforeFallbackUrl,
+            beforeCookie: t.beforeCookie,
+            afterCookie: t.afterCookie,
+          }))),
+          // Scalar single-target fallback (first target) so an older
+          // capture image still works during a rolling platform deploy.
+          BEFORE_URL: targets[0].beforeUrl,
+          AFTER_URL: targets[0].afterUrl,
+          BEFORE_FALLBACK_URL: targets[0].beforeFallbackUrl,
+          BEFORE_COOKIE: targets[0].beforeCookie,
           AFTER_COOKIE: '',
         },
         timeoutMs: RUN_TIMEOUT_MS,
@@ -431,7 +516,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       log.warn('visuals', 'Capture frame failed', { sessionId: session.id, ...f });
     }
 
-    const stored = await storeArtifacts(pool, session.id, commitHash, capturePath, shots);
+    const stored = await storeArtifacts(pool, session.id, commitHash, targets, shots);
     if (!stored) {
       log.warn('visuals', 'No usable "after" artifact — nothing stored', { sessionId: session.id });
       return;
@@ -486,6 +571,7 @@ function notifyVisualsReady(sessionId, visuals, send) {
 
 module.exports = {
   captureForSession,
+  storeArtifacts,
   getForSession,
   shapeAgg,
   isFrontendFile,
