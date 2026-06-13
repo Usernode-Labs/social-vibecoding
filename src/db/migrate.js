@@ -29,6 +29,7 @@ async function migrate(config) {
   await seedStagingMyOpenPr(pool, config);
   await seedStagingActiveSessions(pool, config);
   await seedStagingDemoAppCard(pool);
+  await seedStagingVisuals(pool);
   await seedStagingLeaderboardProfile(pool);
   await seedStagingQaSession(pool, config);
   await seedStagingSpecViewerSessions(pool, config);
@@ -1263,6 +1264,59 @@ async function seedStagingDemoAppCard(pool) {
     log.info('db', 'Staging demo app-card fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging demo app-card seeding failed', { message: err.message });
+  }
+}
+
+// (#270) Fixtures for the multi-route before/after gallery. The grouped
+// gallery renders one labelled before/after row per captured route, but
+// session_visuals is staging:private (schema-only in staging, always
+// empty) so without seeding every proposal's "Show before/after" panel is
+// blank in a staging preview. Attaches to the promoted demo session
+// (900001) seeded by seedStagingDemoAppCard above — so it shows up on the
+// Staging demo app's proposals/vote panel — with TWO capture groups
+// (capture_index 0 -> '/', 1 -> '/board'), each carrying a before.png +
+// after.png so the grouped gallery renders multiple labelled rows. Tiny
+// 1x1 inline PNG bytes are enough — the test is layout, not content.
+// Idempotent via fixed 32-hex ids + ON CONFLICT DO NOTHING, obviously
+// fake, and a strict no-op outside staging.
+async function seedStagingVisuals(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  // 1x1 transparent PNG — valid image bytes for the <img>/embed surfaces.
+  const PNG_1X1 = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+    'base64'
+  );
+  const DEMO_SESSION_ID = 900001;
+  // 32-hex ids (match the /^[a-f0-9]{32}$/ token the renderers validate).
+  const rows = [
+    { id: 'a'.repeat(32), kind: 'before', media: 'png', idx: 0, path: '/' },
+    { id: 'b'.repeat(32), kind: 'after',  media: 'png', idx: 0, path: '/' },
+    { id: 'c'.repeat(32), kind: 'before', media: 'png', idx: 1, path: '/board' },
+    { id: 'd'.repeat(32), kind: 'after',  media: 'png', idx: 1, path: '/board' },
+  ];
+
+  try {
+    // Point the demo session's testing_paths at the two captured routes so
+    // the persisted annotation matches the seeded capture groups.
+    await pool.query(
+      `UPDATE chat_sessions SET testing_paths = $1::jsonb
+         WHERE id = $2 AND testing_paths IS NULL`,
+      [JSON.stringify(['/', '/board']), DEMO_SESSION_ID]
+    );
+    for (const r of rows) {
+      await pool.query(
+        `INSERT INTO session_visuals
+           (id, session_id, commit_hash, kind, media, content_type, data, captured_path, capture_index)
+         SELECT $1, $2, NULL, $3, $4, 'image/png', $5, $6, $7
+          WHERE EXISTS (SELECT 1 FROM chat_sessions WHERE id = $2)
+         ON CONFLICT (id) DO NOTHING`,
+        [r.id, DEMO_SESSION_ID, r.kind, r.media, PNG_1X1, r.path, r.idx]
+      );
+    }
+    log.info('db', 'Staging multi-path visuals fixtures seeded', { sessionId: DEMO_SESSION_ID });
+  } catch (err) {
+    log.warn('db', 'Staging visuals seeding failed', { message: err.message });
   }
 }
 

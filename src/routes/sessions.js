@@ -650,10 +650,11 @@ function sessionRoutes(config) {
       }
 
       const { rows } = await pool.query(
-        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, spec_md, linked_issues, testing_md, testing_path, cloned_from_session_id, session_title)
-         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9)
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, spec_md, linked_issues, testing_md, testing_path, testing_paths, cloned_from_session_id, session_title)
+         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10)
          RETURNING *`,
-        [src.app_id, req.user.id, branchName, src.spec_md || '', src.linked_issues, src.testing_md, src.testing_path, src.id, cloneTitle]
+        [src.app_id, req.user.id, branchName, src.spec_md || '', src.linked_issues, src.testing_md, src.testing_path,
+         src.testing_paths != null ? JSON.stringify(src.testing_paths) : null, src.id, cloneTitle]
       );
       const session = rows[0];
 
@@ -3279,8 +3280,8 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
       if (hasChanges && !result.fatalError) {
         if (testing.testingMd || testing.testingPath) {
           await pool.query(
-            'UPDATE chat_sessions SET testing_md = $1, testing_path = $2 WHERE id = $3',
-            [testing.testingMd, testing.testingPath, session.id]
+            'UPDATE chat_sessions SET testing_md = $1, testing_path = $2, testing_paths = $3 WHERE id = $4',
+            [testing.testingMd, testing.testingPath, JSON.stringify(testing.testingPaths || []), session.id]
           ).catch(() => {});
         }
         outcome = session.spec_md ? 'spec_code' : 'code';
@@ -4192,15 +4193,26 @@ INSTRUCTIONS:
 
 ==== TESTING ====
 path: /relative/path?demo=1
+path: /another/changed/view
 1. First step a tester should take.
 2. What they should see if the change works.
 ==== END TESTING ====
 
   Rules for the testing block:
-  - The "path:" line is optional. If present it must be a RELATIVE path
-    within the app (starts with "/", no scheme or host) that lands the
-    tester as close to the changed feature as possible. Omit the line when
-    the app's root is the right place to start.
+  - The "path:" line points the before/after screenshots (and the "Test
+    this change" button) at the route where the change is visible. Each
+    must be a RELATIVE path within the app (starts with "/", no scheme or
+    host).
+  - REQUIRED for user-visible changes that are NOT on the app's root: you
+    MUST include at least one "path:" pointing at the view where the change
+    shows up. Otherwise the screenshots default to the home page and show a
+    screen your change never touched. Only omit "path:" when the change
+    genuinely lives on "/" (the home page is the right place to start).
+  - You may give MORE THAN ONE "path:" line (one per line, up to 3,
+    captured in the order written) when the change spans several views —
+    e.g. a new nav item plus the page it opens. Each becomes its own
+    labelled before/after row. The FIRST path is also the deep link the
+    "Test this change" button jumps to.
   - The steps are short markdown (numbered list preferred), written for a
     non-technical tester looking at a staging preview seeded with a copy of
     production data.
@@ -4401,11 +4413,12 @@ path: /relative/path?demo=1
       summaryParts.push(`Commit ${commitHash.substring(0, 8)} pushed to ${session.branch_name}.`);
       if (testing.testingMd || testing.testingPath) {
         await pool.query(
-          `UPDATE chat_sessions SET testing_md = $1, testing_path = $2 WHERE id = $3`,
-          [testing.testingMd, testing.testingPath, session.id]
+          `UPDATE chat_sessions SET testing_md = $1, testing_path = $2, testing_paths = $3 WHERE id = $4`,
+          [testing.testingMd, testing.testingPath, JSON.stringify(testing.testingPaths || []), session.id]
         ).catch((err) => log.warn('sessions', 'Failed to persist testing guidance', { sessionId: session.id, err: err.message }));
         session.testing_md = testing.testingMd;
         session.testing_path = testing.testingPath;
+        session.testing_paths = testing.testingPaths || [];
       }
       await sendStatus('Changes committed and pushed (headless) — building staging preview (no PR yet)...');
 
@@ -4484,11 +4497,12 @@ path: /relative/path?demo=1
       // earlier guidance is kept so a small follow-up turn doesn't wipe it.
       if (testing.testingMd || testing.testingPath) {
         await pool.query(
-          `UPDATE chat_sessions SET testing_md = $1, testing_path = $2 WHERE id = $3`,
-          [testing.testingMd, testing.testingPath, session.id]
+          `UPDATE chat_sessions SET testing_md = $1, testing_path = $2, testing_paths = $3 WHERE id = $4`,
+          [testing.testingMd, testing.testingPath, JSON.stringify(testing.testingPaths || []), session.id]
         ).catch((err) => log.warn('sessions', 'Failed to persist testing guidance', { sessionId: session.id, err: err.message }));
         session.testing_md = testing.testingMd;
         session.testing_path = testing.testingPath;
+        session.testing_paths = testing.testingPaths || [];
       }
 
       const wasNewPR = !session.pr_number;
