@@ -355,6 +355,8 @@ function voteRoutes(config) {
         [session.id, req.user.id, vote]
       );
 
+      require('../services/badges').checkAndAwardBadges(pool, req.user.id, 'vote').catch(() => {});
+
       // Any voting activity revives a going-stale PR: clear the warning
       // flag so the stale sweeper restarts its clock instead of archiving.
       if (session.stale_notified_at) {
@@ -1132,6 +1134,10 @@ async function checkAndMerge(config, pool, session, options = {}) {
        WHERE id = $1`,
       [session.id, mergeCommitSha, majority, activeCount]
     );
+
+    if (session.user_id) {
+      require('../services/badges').checkAndAwardBadges(pool, session.user_id, 'merge').catch(() => {});
+    }
 
     // pr_merged is the terminal stage of the PR-promotion funnel and the
     // signal behind the "merges over time" growth chart (now exact thanks

@@ -65,7 +65,19 @@ function chatRoutes(config) {
 
       const query = `
         SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.metadata,
-               m.thread_type, m.thread_ref, m.created_at
+               m.thread_type, m.thread_ref, m.created_at,
+               (SELECT badge_key FROM user_badges
+                WHERE user_id = m.user_id
+                ORDER BY CASE badge_key
+                  WHEN 'voter_streak_30'   THEN 1
+                  WHEN 'kudos_given_10'    THEN 2
+                  WHEN 'merges_10'         THEN 3
+                  WHEN 'merges_5'          THEN 4
+                  WHEN 'first_kudos_given' THEN 5
+                  WHEN 'first_vote'        THEN 6
+                  WHEN 'first_merge'       THEN 7
+                  ELSE 8 END
+                LIMIT 1) AS top_badge
         FROM chat_messages m
         LEFT JOIN users u ON m.user_id = u.id
         WHERE m.app_id = $1 AND ${threadClause}${beforeClause}

@@ -1212,11 +1212,17 @@ const GroupChat = {
     // quoted block above the content; data-msg-id lets a reply elsewhere
     // scroll back to this row. #25: reactions + the hover react button.
     const quotedHtml = GroupChat._renderQuotedBlock(msg.metadata || msg.meta);
+    const BADGE_EMOJI = { voter_streak_30: '📅', kudos_given_10: '🌟', merges_10: '💎', merges_5: '🔥', first_kudos_given: '👏', first_vote: '🗳️', first_merge: '🏅' };
+    const BADGE_LABEL = { voter_streak_30: '30-day voter', kudos_given_10: '10 kudos given', merges_10: '10 merges', merges_5: '5 merges', first_kudos_given: 'First kudos', first_vote: 'First vote', first_merge: 'First merge' };
+    const topBadge = msg.topBadge || msg.top_badge || null;
+    const badgeHtml = topBadge && BADGE_EMOJI[topBadge]
+      ? `<span class="gc-msg-badge" title="${escapeHtml(BADGE_LABEL[topBadge] || '')}" style="font-size:0.75em;vertical-align:middle">${BADGE_EMOJI[topBadge]}</span>`
+      : '';
     return `
       <div class="gc-msg ${isSelf ? 'gc-msg-self' : ''}" data-msg-id="${msg.id || ''}" data-username="${escapeHtml(username)}">
         <div class="gc-msg-header">
           ${GroupChat._unreadDotHtml(msg)}
-          <span class="gc-msg-username ${isSelf ? 'gc-msg-username-self' : ''}">${escapeHtml(username)}</span>
+          <span class="gc-msg-username ${isSelf ? 'gc-msg-username-self' : ''}">${escapeHtml(username)}</span>${badgeHtml}
           <span class="gc-msg-time">${time}</span>
           ${GroupChat._renderReactAddBtn(msg)}
         </div>

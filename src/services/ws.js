@@ -396,6 +396,25 @@ async function handleMessage(pool, client, msg) {
         createdAt: rows[0].created_at,
       };
 
+      try {
+        const { rows: bRows } = await pool.query(
+          `SELECT badge_key FROM user_badges WHERE user_id = $1
+           ORDER BY CASE badge_key
+             WHEN 'voter_streak_30'   THEN 1
+             WHEN 'kudos_given_10'    THEN 2
+             WHEN 'merges_10'         THEN 3
+             WHEN 'merges_5'          THEN 4
+             WHEN 'first_kudos_given' THEN 5
+             WHEN 'first_vote'        THEN 6
+             WHEN 'first_merge'       THEN 7
+             ELSE 8 END
+           LIMIT 1`,
+          [client.user.id]
+        );
+        const topBadge = bRows[0]?.badge_key || null;
+        if (topBadge) outMsg.topBadge = topBadge;
+      } catch {}
+
       broadcast(client.appId, outMsg);
 
       events.record(pool, {

@@ -928,3 +928,32 @@ COMMENT ON COLUMN apps.llm_proxy_token IS 'staging:private';
 -- pr_title then branch_name at every display site. Branch names stay
 -- machine-generated and immutable — this column never affects git.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS session_title VARCHAR(256);
+
+-- User reputation badges. Permanent once earned (no DELETE).
+-- badge_key values: first_merge, merges_5, merges_10, first_kudos_given,
+--   kudos_given_10, first_vote, voter_streak_30.
+-- Awarded fire-and-forget from merge/kudos/vote hot paths via
+-- src/services/badges.js checkAndAwardBadges().
+CREATE TABLE IF NOT EXISTS user_badges (
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  badge_key  VARCHAR(64) NOT NULL,
+  earned_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, badge_key)
+);
+CREATE INDEX IF NOT EXISTS idx_user_badges_user ON user_badges (user_id, earned_at DESC);
+
+-- Proposal auto-expiry (#feature-3). General governance proposals that
+-- receive zero votes within `proposal_expiry_days` days are auto-closed
+-- by the sweeper in server.js. expires_at is set at INSERT time for
+-- kind='general' rows using a platform_settings subquery; NULL for all
+-- other kinds. expiry_notified_at is set when the 3-day warning is sent
+-- to the author so the sweeper never double-warns.
+ALTER TABLE issues ADD COLUMN IF NOT EXISTS expires_at          TIMESTAMPTZ;
+ALTER TABLE issues ADD COLUMN IF NOT EXISTS expiry_notified_at  TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_issues_expiry
+  ON issues (expires_at)
+  WHERE status = 'open' AND expires_at IS NOT NULL;
+
+INSERT INTO platform_settings (key, value) VALUES
+  ('proposal_expiry_days', '14')
+ON CONFLICT (key) DO NOTHING;

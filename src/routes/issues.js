@@ -265,8 +265,13 @@ function issueRoutes(config) {
       }
 
       const { rows } = await pool.query(
-        `INSERT INTO issues (app_id, github_issue_number, title, description, kind, payload, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+        `INSERT INTO issues (app_id, github_issue_number, title, description, kind, payload, created_by, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7,
+           CASE WHEN $5 = 'general' THEN NOW() + (
+             COALESCE(NULLIF((SELECT value FROM platform_settings WHERE key = 'proposal_expiry_days'), ''), '14')::int
+             || ' days'
+           )::interval ELSE NULL END)
+         RETURNING *`,
         [app.id, githubIssueNumber, title, description, kind, JSON.stringify(payload), req.user.id]
       );
 

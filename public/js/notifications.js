@@ -406,6 +406,15 @@ const Notifications = {
           return;
         }
       }
+      const governanceKinds = new Set(['proposal_expiry_warning', 'proposal_expired']);
+      if (governanceKinds.has(item.kind)) {
+        if (typeof App !== 'undefined' && App.openAppTab) {
+          App.openAppTab(item.appSlug, 'dev', { subTab: 'governance' });
+        } else {
+          window.location.hash = `#app/${item.appSlug}/dev/governance`;
+        }
+        return;
+      }
       const voteKinds = new Set(['pr_proposed', 'stale_pr', 'kudos']);
       const toProposals = voteKinds.has(item.kind);
       if (typeof App !== 'undefined' && App.openAppTab) {
@@ -830,6 +839,8 @@ function previewText(n) {
         : n.detail === 'question'
           ? `🤖 Proposal for issue #${n.headlessIssueNumber || '?'} has questions for you`
           : `🤖 Proposal for issue #${n.headlessIssueNumber || '?'} is ready`;
+    case 'proposal_expiry_warning': return '⏰ Your proposal will close in 3 days';
+    case 'proposal_expired':        return '🔒 Your proposal was auto-closed';
     default:            return who;
   }
 }
@@ -1014,6 +1025,25 @@ function renderRow(n) {
         <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
         <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
       </div>
+    </button>`;
+  }
+
+  if (n.kind === 'proposal_expiry_warning' || n.kind === 'proposal_expired') {
+    const icon = n.kind === 'proposal_expiry_warning' ? '⏰' : '🔒';
+    const verb = n.kind === 'proposal_expiry_warning'
+      ? 'will close in 3 days — add your vote'
+      : 'was auto-closed (no votes received)';
+    const proposalLabel = n.detail ? escapeHtml(n.detail) : 'your proposal';
+    return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
+      <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1 flex-wrap">
+        ${dot}
+        <span aria-hidden="true">${icon}</span>
+        <span>Your proposal in</span>
+        <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
+        <span>${verb}</span>
+        <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
+      </div>
+      <div class="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2 font-medium">${proposalLabel}</div>
     </button>`;
   }
 

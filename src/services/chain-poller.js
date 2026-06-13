@@ -191,4 +191,27 @@ function getStatus() {
   };
 }
 
-module.exports = { start, stop, getStatus };
+const balanceCache = new Map();
+const BALANCE_CACHE_TTL_MS = 30_000;
+
+async function fetchBalance(pubkey) {
+  if (!pubkey) return null;
+  const cached = balanceCache.get(pubkey);
+  if (cached !== undefined && Date.now() - (cached.fetchedAt || 0) < BALANCE_CACHE_TTL_MS) {
+    return cached.data || null;
+  }
+  if (!chainId) {
+    try { await discoverChainId(); } catch { return null; }
+    if (!chainId) return null;
+  }
+  try {
+    const data = await httpJson('GET', `${baseUrl()}/${chainId}/account/${pubkey}`);
+    balanceCache.set(pubkey, { data, fetchedAt: Date.now() });
+    return data;
+  } catch {
+    balanceCache.set(pubkey, { data: null, fetchedAt: Date.now() });
+    return null;
+  }
+}
+
+module.exports = { start, stop, getStatus, fetchBalance };

@@ -618,6 +618,28 @@ function serialize(row) {
   };
 }
 
+async function createProposalExpiryWarningNotification(pool, { userId, appId, issueTitle }) {
+  if (!userId) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail)
+     VALUES ($1, $2, NULL, 'proposal_expiry_warning', $3)
+     RETURNING id, user_id, app_id, source_user_id, kind, detail, created_at`,
+    [userId, appId, (issueTitle || '').slice(0, 32)]
+  );
+  return rows;
+}
+
+async function createProposalExpiredNotification(pool, { userId, appId, issueTitle }) {
+  if (!userId) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail)
+     VALUES ($1, $2, NULL, 'proposal_expired', $3)
+     RETURNING id, user_id, app_id, source_user_id, kind, detail, created_at`,
+    [userId, appId, (issueTitle || '').slice(0, 32)]
+  );
+  return rows;
+}
+
 module.exports = {
   parseMentions,
   resolveUsers,
@@ -632,6 +654,8 @@ module.exports = {
   createPrProposedNotifications,
   createCollabInviteNotification,
   createCollabInviteAcceptedNotification,
+  createProposalExpiryWarningNotification,
+  createProposalExpiredNotification,
   listPendingInvites,
   markInviteNotificationsRead,
   filterToCollaborators,

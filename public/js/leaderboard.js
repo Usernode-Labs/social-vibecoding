@@ -377,7 +377,16 @@ const Leaderboard = {
       listHtml = Leaderboard._renderProfilePrRows(items) + more;
     }
 
-    body.innerHTML = stats + listHtml;
+    const BADGE_EMOJI = { voter_streak_30: '📅', kudos_given_10: '🌟', merges_10: '💎', merges_5: '🔥', first_kudos_given: '👏', first_vote: '🗳️', first_merge: '🏅' };
+    const BADGE_LABEL = { voter_streak_30: '30-day voter', kudos_given_10: '10 kudos given', merges_10: '10 merges', merges_5: '5 merges', first_kudos_given: 'First kudos', first_vote: 'First vote', first_merge: 'First merge' };
+    const badges = Array.isArray(data.badges) ? data.badges : [];
+    const badgeStrip = badges.length
+      ? `<div class="flex items-center gap-1 mb-3 flex-wrap">
+           ${badges.map((b) => `<span class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-xs" title="${escapeAttr(BADGE_LABEL[b.key] || b.key)}">${BADGE_EMOJI[b.key] || ''}<span class="text-zinc-500 dark:text-zinc-400">${escapeHtml(BADGE_LABEL[b.key] || b.key)}</span></span>`).join('')}
+         </div>`
+      : '';
+
+    body.innerHTML = badgeStrip + stats + listHtml;
     const moreBtn = body.querySelector('[data-lb-more]');
     if (moreBtn) moreBtn.addEventListener('click', () => Leaderboard._loadMore());
     Leaderboard._wireRouteButtons(body);

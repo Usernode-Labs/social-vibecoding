@@ -180,6 +180,26 @@ function authRoutes(config) {
     });
   });
 
+  router.get('/api/me/wallet-balance', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+      const { rows } = await pool.query(
+        'SELECT usernode_pubkey FROM users WHERE id = $1',
+        [req.user.id]
+      );
+      const pubkey = rows[0]?.usernode_pubkey || null;
+      if (!pubkey) return res.json({ balance: null });
+      const chainPoller = require('../services/chain-poller');
+      const data = await chainPoller.fetchBalance(pubkey);
+      const balance = data
+        ? { amount: data.balance ?? data.amount ?? null, unit: data.unit ?? data.symbol ?? null }
+        : null;
+      return res.json({ balance });
+    } catch {
+      return res.json({ balance: null });
+    }
+  });
+
   // #30 BYOK: set / replace the user's Anthropic key. We verify with a
   // cheap 1-token ping before persisting so we never save a key that
   // the Anthropic API would reject at runtime.

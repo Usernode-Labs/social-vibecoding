@@ -453,6 +453,9 @@ async function start() {
   // window elapses. Day-scale, so it polls on its own slow interval.
   startStalePrSweeper(config);
 
+  // Auto-expiry for general governance proposals with zero votes.
+  startProposalExpirySweeper(config);
+
   // If the previous server died mid-merge, some sessions may be stuck
   // in the 'merging' claim state. There's no way to know from here
   // whether the GitHub merge + prod rebuild actually completed — but
@@ -1468,6 +1471,7 @@ function startSessionAutoPauseSweeper(config) {
 }
 
 let stalePrSweeperHandle = null;
+let proposalExpirySweeperHandle = null;
 
 // Stale-promoted-PR policy + reversible-archive hard GC.
 //   Pass 1 (notify): a promoted PR with no voting interest for
@@ -1584,6 +1588,119 @@ function startStalePrSweeper(config) {
   }, config.staleSweepIntervalMs).unref();
 }
 
+// Auto-expiry for general governance proposals with zero votes.
+//   Pass 1 (warn): notify authors of proposals expiring within 3 days
+//     (fires once via expiry_notified_at).
+//   Pass 2 (close): close proposals past expires_at with zero votes,
+//     post a governance-thread system message, notify author.
+const PROPOSAL_EXPIRY_INTERVAL_MS = 60 * 60 * 1000; // hourly
+
+function startProposalExpirySweeper(config) {
+  if (proposalExpirySweeperHandle) return;
+  const pool = getPool(config);
+  const notifications = require('./src/services/notifications');
+  log.info('server', 'Proposal expiry sweeper started');
+
+  proposalExpirySweeperHandle = setInterval(async () => {
+    if (lifecycle.isShuttingDown()) return;
+
+    // Pass 1: warn authors of proposals expiring within 3 days.
+    try {
+      const { rows: warnRows } = await pool.query(
+        `SELECT i.id, i.app_id, i.title, i.created_by,
+                a.slug AS app_slug, a.name AS app_name
+         FROM issues i JOIN apps a ON a.id = i.app_id
+         WHERE i.kind = 'general'
+           AND i.status = 'open'
+           AND i.expires_at IS NOT NULL
+           AND i.expiry_notified_at IS NULL
+           AND i.expires_at <= NOW() + INTERVAL '3 days'
+         LIMIT 50`
+      );
+      for (const row of warnRows) {
+        try {
+          const inserted = await notifications.createProposalExpiryWarningNotification(pool, {
+            userId: row.created_by, appId: row.app_id, issueTitle: row.title,
+          });
+          await pool.query(
+            `UPDATE issues SET expiry_notified_at = NOW() WHERE id = $1`,
+            [row.id]
+          );
+          if (inserted[0] && row.created_by) {
+            ws.pushNotificationToUser(row.created_by, {
+              type: 'notification_new',
+              notification: notifications.serialize({
+                id: inserted[0].id, kind: 'proposal_expiry_warning', read_at: null,
+                created_at: inserted[0].created_at,
+                app_id: row.app_id, app_slug: row.app_slug, app_name: row.app_name,
+                chat_message_id: null, message_content: null,
+                session_id: null, pr_title: null, pr_number: null,
+                source_username: null, detail: (row.title || '').slice(0, 32),
+              }),
+            });
+          }
+        } catch (err) {
+          log.warn('server', 'Proposal expiry warn failed', { issueId: row.id, err: err.message });
+        }
+      }
+    } catch (err) {
+      log.warn('server', 'Proposal expiry warn sweep failed', { err: err.message });
+    }
+
+    // Pass 2: close proposals past expires_at with zero votes.
+    try {
+      const { rows: expiredRows } = await pool.query(
+        `SELECT i.id, i.app_id, i.title, i.created_by,
+                a.slug AS app_slug, a.name AS app_name
+         FROM issues i JOIN apps a ON a.id = i.app_id
+         WHERE i.kind = 'general'
+           AND i.status = 'open'
+           AND i.expires_at IS NOT NULL
+           AND i.expires_at <= NOW()
+           AND NOT EXISTS (
+             SELECT 1 FROM issue_votes iv WHERE iv.issue_id = i.id
+           )
+         LIMIT 50`
+      );
+      for (const row of expiredRows) {
+        try {
+          await pool.query(
+            `UPDATE issues SET status = 'closed' WHERE id = $1`,
+            [row.id]
+          );
+          await ws.sendSystemMessage(
+            pool, row.app_id,
+            `Proposal "${row.title}" was auto-closed — no votes received within the deadline.`,
+            'system', null, { type: 'governance', ref: row.id }
+          ).catch(() => {});
+          if (row.created_by) {
+            const inserted = await notifications.createProposalExpiredNotification(pool, {
+              userId: row.created_by, appId: row.app_id, issueTitle: row.title,
+            });
+            if (inserted[0]) {
+              ws.pushNotificationToUser(row.created_by, {
+                type: 'notification_new',
+                notification: notifications.serialize({
+                  id: inserted[0].id, kind: 'proposal_expired', read_at: null,
+                  created_at: inserted[0].created_at,
+                  app_id: row.app_id, app_slug: row.app_slug, app_name: row.app_name,
+                  chat_message_id: null, message_content: null,
+                  session_id: null, pr_title: null, pr_number: null,
+                  source_username: null, detail: (row.title || '').slice(0, 32),
+                }),
+              });
+            }
+          }
+        } catch (err) {
+          log.warn('server', 'Proposal expiry close failed', { issueId: row.id, err: err.message });
+        }
+      }
+    } catch (err) {
+      log.warn('server', 'Proposal expiry close sweep failed', { err: err.message });
+    }
+  }, PROPOSAL_EXPIRY_INTERVAL_MS).unref();
+}
+
 // Graceful shutdown: mark drain state so new chats/app-creates/builds get
 // 503'd, wait up to DRAIN_TIMEOUT_MS for in-flight HTTP handlers to
 // finish flushing DB writes, then exit.
@@ -1618,6 +1735,10 @@ async function cleanup() {
   if (stalePrSweeperHandle) {
     clearInterval(stalePrSweeperHandle);
     stalePrSweeperHandle = null;
+  }
+  if (proposalExpirySweeperHandle) {
+    clearInterval(proposalExpirySweeperHandle);
+    proposalExpirySweeperHandle = null;
   }
 
   const startingCount = getActiveWorkerCount();

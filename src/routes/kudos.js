@@ -225,6 +225,8 @@ function kudosRoutes(config) {
         throw err;
       }
 
+      require('../services/badges').checkAndAwardBadges(pool, req.user.id, 'kudos_given').catch(() => {});
+
       events.record(pool, {
         type: events.EVENT_TYPES.KUDOS_GIVEN,
         userId: req.user.id,
@@ -893,9 +895,16 @@ function kudosRoutes(config) {
       const nextBefore = rows.length === limit
         ? rows[rows.length - 1].created_at
         : null;
+
+      const { rows: badgeRows } = await pool.query(
+        `SELECT badge_key, earned_at FROM user_badges WHERE user_id = $1 ORDER BY earned_at ASC`,
+        [user.id]
+      );
+
       res.json({
         user: { user_id: user.id, username: user.username },
         stats: statRows[0],
+        badges: badgeRows.map((r) => ({ key: r.badge_key, earnedAt: r.earned_at })),
         items: rows,
         nextBefore,
       });

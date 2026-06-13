@@ -320,13 +320,21 @@ function adminRoutes(config) {
   // 10s in src/services/limits.js; PUTs invalidate that cache so the
   // new value takes effect on the next request from any worker.
 
+  const KEY_EXPIRY_DAYS = 'proposal_expiry_days';
+
   router.get('/api/admin/limits', async (_req, res) => {
     try {
       const userCents = await limits.getDefaultUserLimitCents(pool);
       const globalCents = await limits.getGlobalLimitCents(pool);
+      const { rows: expiryRows } = await pool.query(
+        `SELECT value FROM platform_settings WHERE key = $1`,
+        [KEY_EXPIRY_DAYS]
+      );
+      const expiryDays = expiryRows[0]?.value != null ? parseInt(expiryRows[0].value, 10) : 14;
       res.json({
         user_daily_limit_cents: userCents,
         global_daily_limit_cents: globalCents,
+        proposal_expiry_days: Number.isFinite(expiryDays) ? expiryDays : 14,
       });
     } catch (err) {
       log.error('admin', 'Read limits failed', { message: err.message });
@@ -335,7 +343,7 @@ function adminRoutes(config) {
   });
 
   router.put('/api/admin/limits', async (req, res) => {
-    const { user, global } = req.body || {};
+    const { user, global, expiry_days } = req.body || {};
     const updates = [];
     const validate = (label, v) => {
       if (v === undefined) return null;
@@ -349,11 +357,22 @@ function adminRoutes(config) {
     if (typeof userN === 'string') return res.status(400).json({ error: userN });
     const globalN = validate('global', global);
     if (typeof globalN === 'string') return res.status(400).json({ error: globalN });
-    if (userN === null && globalN === null) {
-      return res.status(400).json({ error: 'Provide at least one of: user, global' });
+
+    let expiryN = null;
+    if (expiry_days !== undefined) {
+      const n = Number(expiry_days);
+      if (!Number.isInteger(n) || n < 1) {
+        return res.status(400).json({ error: 'expiry_days must be a positive integer' });
+      }
+      expiryN = n;
+    }
+
+    if (userN === null && globalN === null && expiryN === null) {
+      return res.status(400).json({ error: 'Provide at least one of: user, global, expiry_days' });
     }
     if (userN !== null) updates.push([limits.KEY_USER, String(userN)]);
     if (globalN !== null) updates.push([limits.KEY_GLOBAL, String(globalN)]);
+    if (expiryN !== null) updates.push([KEY_EXPIRY_DAYS, String(expiryN)]);
 
     try {
       for (const [key, value] of updates) {
@@ -365,18 +384,22 @@ function adminRoutes(config) {
           [key, value, req.user.id]
         );
       }
-      // Hot-flip the cache so new limits apply on the very next request
-      // instead of waiting up to 10s for the TTL to expire.
       limits.invalidate(...updates.map(([k]) => k));
       log.info('admin', 'Platform limits updated', {
         by: req.user.username,
-        user: userN, global: globalN,
+        user: userN, global: globalN, expiry_days: expiryN,
       });
       const userCents = await limits.getDefaultUserLimitCents(pool);
       const globalCents = await limits.getGlobalLimitCents(pool);
+      const { rows: expiryRows } = await pool.query(
+        `SELECT value FROM platform_settings WHERE key = $1`,
+        [KEY_EXPIRY_DAYS]
+      );
+      const savedExpiry = expiryRows[0]?.value != null ? parseInt(expiryRows[0].value, 10) : 14;
       res.json({
         user_daily_limit_cents: userCents,
         global_daily_limit_cents: globalCents,
+        proposal_expiry_days: Number.isFinite(savedExpiry) ? savedExpiry : 14,
       });
     } catch (err) {
       log.error('admin', 'Update limits failed', { message: err.message });

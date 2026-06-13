@@ -33,6 +33,7 @@ async function migrate(config) {
   await seedStagingSpecViewerSessions(pool, config);
   await seedStagingSpecUserShareFixtures(pool, config);
   await seedStagingHeadlessFixtures(pool, config);
+  await seedStagingBadgesAndProposals(pool, config);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
   // Must run BEFORE backfillOrphanedSpecDrafts: unwrapping spec_md after that
@@ -1812,6 +1813,64 @@ async function migrateAppDbsToPerRole(pool, config) {
       }
     }
   }
+}
+
+// Staging fixtures for user reputation badges and near-expiry governance proposals.
+// Badges are awarded to the first admin user (staging-tester or the real admin
+// account). Proposals use the self-app so the governance tab shows them.
+async function seedStagingBadgesAndProposals(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  // Use the first admin user as the target for badge/proposal seeds.
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username FROM users ORDER BY is_admin DESC, id ASC LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging badges/proposals fixtures skipped: no users');
+    return;
+  }
+  const target = userRows[0];
+
+  // Award a representative set of badges.
+  const badgeKeys = ['first_merge', 'merges_5', 'first_vote', 'first_kudos_given'];
+  for (const badgeKey of badgeKeys) {
+    await pool.query(
+      `INSERT INTO user_badges (user_id, badge_key) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [target.id, badgeKey]
+    );
+  }
+
+  // Seed governance proposals near expiry on the self-app.
+  const { rows: appRows } = await pool.query(
+    `SELECT id FROM apps WHERE slug = $1 LIMIT 1`,
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging proposals fixtures skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const proposals = [
+    { id: 9100001, title: '[Mock] Add dark-mode toggle to settings', daysLeft: 2 },
+    { id: 9100002, title: '[Mock] Improve mobile layout on home screen', daysLeft: 12 },
+  ];
+  for (const p of proposals) {
+    await pool.query(
+      `INSERT INTO issues (id, app_id, title, description, kind, created_by, expires_at)
+       VALUES ($1, $2, $3, 'Staging fixture proposal — not a real proposal.', 'general', $4,
+               NOW() + ($5::int * INTERVAL '1 day'))
+       ON CONFLICT (id) DO NOTHING`,
+      [p.id, appId, p.title, target.id, p.daysLeft]
+    );
+  }
+
+  log.info('db', 'Staging badges/proposals fixtures seeded', {
+    targetUser: target.username, badgeCount: badgeKeys.length,
+    proposalCount: proposals.length,
+  });
 }
 
 module.exports = { migrate };

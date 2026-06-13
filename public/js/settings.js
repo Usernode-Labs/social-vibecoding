@@ -121,6 +121,7 @@
       this._refreshSpend();
       this._renderLlmGrants();
       this._renderWalletSection();
+      if (this.state.usernodePubkey) this._fetchWalletBalance();
       this._renderDevConsoleSection();
       this._renderAdminSection();
       this._clearStatus();
@@ -509,6 +510,25 @@
         linking.classList.remove('hidden');
       } else {
         unlinked.classList.remove('hidden');
+      }
+    },
+
+    async _fetchWalletBalance() {
+      const el = document.getElementById('wallet-balance');
+      if (!el) return;
+      el.textContent = 'Loading balance…';
+      try {
+        const r = await fetch('/api/me/wallet-balance', { credentials: 'same-origin' });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j.balance) {
+          el.textContent = '';
+          return;
+        }
+        const amount = j.balance.amount != null ? j.balance.amount : '';
+        const unit = j.balance.unit ? ` ${j.balance.unit}` : '';
+        el.textContent = `Balance: ${amount}${unit}`;
+      } catch {
+        el.textContent = '';
       }
     },
 
