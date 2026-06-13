@@ -26,6 +26,7 @@ async function migrate(config) {
   await seedStagingNotifications(pool, config);
   await seedStagingEnvProposal(pool, config);
   await seedStagingMergedPrs(pool, config);
+  await seedStagingMyOpenPr(pool, config);
   await seedStagingActiveSessions(pool, config);
   await seedStagingDemoAppCard(pool);
   await seedStagingLeaderboardProfile(pool);
@@ -1659,6 +1660,34 @@ async function seedStagingHeadlessFixtures(pool, config) {
     inserted++;
   }
 
+  // Viewer-owned clone of the ready/spec headless session for issue 900004,
+  // so the issues route resolves mySessionId for the tester (the target
+  // admin) and that row renders "Go to session" + the violet
+  // issueProposalMine chip. Owned by `target` (the user the tester logs in
+  // as) and cloned_from the headless-spec session; non-headless, 'active'
+  // (the myCloneByHeadlessId lookup excludes 'archived'). The other ready
+  // issues stay clone-less so a reviewer sees the sky-vs-violet contrast.
+  const specHeadlessId = sessionIds['staging-fixture/headless-spec'];
+  let cloneInserted = 0;
+  if (specHeadlessId) {
+    const cloneBranch = 'staging-fixture/headless-spec-myclone';
+    const { rows: existingClone } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, cloneBranch]
+    );
+    if (!existingClone.length) {
+      await pool.query(
+        `INSERT INTO chat_sessions
+           (app_id, user_id, branch_name, status, is_headless,
+            cloned_from_session_id, created_at)
+         VALUES ($1, $2, $3, 'active', FALSE, $4,
+                 NOW() - INTERVAL '20 minutes')`,
+        [appId, target.id, cloneBranch, specHeadlessId]
+      );
+      cloneInserted++;
+    }
+  }
+
   // Unread completion notifications for the renamed drawer rows / toast /
   // tab-title markers: one ready-with-spec, one failed.
   const notifFixtures = [
@@ -1692,7 +1721,91 @@ async function seedStagingHeadlessFixtures(pool, config) {
     appId,
     targetUser: target.username,
     sessionsInserted: inserted,
+    clonesInserted: cloneInserted,
     notificationsInserted: notifInserted,
+  });
+}
+
+// Fixture for the "PR proposal I created" violet chip (proposalMine). The
+// notifications fixture above seeds a promoted PR, but owns it to the
+// `source` user, so it never shows "Open session" for the tester. This
+// seeds one open/awaiting-votes (status 'promoted') PR owned by the
+// `target` user — the admin the tester logs in as — so pr.user_id ===
+// App.user.id holds, rendering the violet proposalMine chip + the "Open
+// session" button. A couple of pr_votes give the tally pill a realistic
+// fill, matching the merged-PR fixture pattern. chat_sessions is
+// staging:private (schema-only in staging), so this is the only way the
+// state is reachable; gated on staging + idempotent by branch name.
+async function seedStagingMyOpenPr(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging my-open-PR fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: users } = await pool.query(
+    `SELECT id, username
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 3`
+  );
+  if (!users.length) {
+    log.warn('db', 'Staging my-open-PR fixture skipped: no users');
+    return;
+  }
+  const target = users[0];
+
+  const branch = 'staging-fixture/my-open-pr';
+  let sessionId;
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, branch]
+  );
+  if (existing.length) {
+    sessionId = existing[0].id;
+  } else {
+    const { rows } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_number, pr_title, status,
+          votes_required, created_at)
+       VALUES
+         ($1, $2, $3, 9200, '[staging fixture] My open PR — awaiting votes',
+          'promoted', $4, NOW() - INTERVAL '15 minutes')
+       RETURNING id`,
+      [appId, target.id, branch, Math.max(1, Math.ceil(users.length / 2))]
+    );
+    sessionId = rows[0].id;
+  }
+
+  // A yes-vote or two so the tally pill renders a realistic fill. The
+  // author's own vote plus a second user when one exists.
+  await pool.query(
+    `INSERT INTO pr_votes (session_id, user_id, vote, created_at)
+     VALUES ($1, $2, 'yes', NOW() - INTERVAL '14 minutes')
+     ON CONFLICT (session_id, user_id) DO NOTHING`,
+    [sessionId, target.id]
+  );
+  if (users.length > 1) {
+    await pool.query(
+      `INSERT INTO pr_votes (session_id, user_id, vote, created_at)
+       VALUES ($1, $2, 'yes', NOW() - INTERVAL '13 minutes')
+       ON CONFLICT (session_id, user_id) DO NOTHING`,
+      [sessionId, users[1].id]
+    );
+  }
+
+  log.info('db', 'Staging my-open-PR fixture seeded', {
+    appId,
+    targetUser: target.username,
+    sessionId,
   });
 }
 

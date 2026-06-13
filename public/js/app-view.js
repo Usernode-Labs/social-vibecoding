@@ -43,6 +43,14 @@ const AppView = {
     // the proposal cards, while the page shape stays distinct from their
     // thumbs-up: this is a drafted spec on an issue, not a PR up for a vote.
     issueProposal: ['bg-sky-500/15 text-sky-500', 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'],
+    // "Mine" variants — same glyph as their base (so issue-vs-PR identity is
+    // preserved) but violet, the app's "yours/you" accent (General-chat chip,
+    // hover borders, PR# links). They mark the two feed rows where the viewer
+    // already has a session waiting: a ready issue they cloned (Go to session)
+    // and an open PR they authored (Open session). Distinct from sky (others')
+    // and emerald (done), so a violet chip = "I have a session here".
+    issueProposalMine: ['bg-violet-600/15 text-violet-500', 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'],
+    proposalMine: ['bg-violet-600/15 text-violet-500', 'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-11h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5'],
   },
 
   _devCardIcon(type, opts) {
@@ -1307,7 +1315,10 @@ const AppView = {
     // Sessions are owner-scoped (GET /api/sessions/:id), so the session
     // button only renders for the proposer.
     const chatN = parseInt(pr.chat_count) || 0;
-    const sessionBtn = (App.user && pr.user_id === App.user.id)
+    // mine: the viewer authored this PR, so they own its dev session. Drives
+    // both the "Open session" button and the violet "yours" chip below.
+    const mine = !!(App.user && pr.user_id === App.user.id);
+    const sessionBtn = mine
       ? `<button class="gc-vote-btn" title="Open the dev session behind this proposal" onclick="AppView.openProposalSession(${pr.id})">Open session</button>`
       : '';
     // #195/#211: before/after capture tiles, collapsed by default behind a
@@ -1333,7 +1344,7 @@ const AppView = {
 
     return `
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}"${visualTiles ? ' data-visuals-scope="1"' : ''}${noNav ? '' : ` data-proposal-row="${pr.id}" title="Open this proposal's discussion"`}>
-        ${AppView._devCardIcon(isMerged ? 'done' : 'proposal')}
+        ${AppView._devCardIcon(isMerged ? 'done' : (mine ? 'proposalMine' : 'proposal'), mine && !isMerged ? { title: 'This is your PR — open its session.' } : undefined)}
         <div class="flex-1 min-w-0">
           <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
             <div class="dev-card-headline">
@@ -1728,10 +1739,15 @@ const AppView = {
     // document once ready (any outcome, question included: there's something
     // to review either way), plain amber issue chip otherwise. Unknown
     // statuses fall through to the plain chip like _headlessRank's bucket.
+    // When the viewer already has a session cloned off this ready issue
+    // (h.mySessionId — same signal as the "Go to session" button), the
+    // document goes violet to mark it as one of "yours" in the feed.
     const icon = h && h.status === 'generating'
       ? AppView._devCardIcon('issueProposal', { pulse: true, title: 'A proposal is being generated for this issue' })
       : h && h.status === 'ready'
-        ? AppView._devCardIcon('issueProposal', { title: 'Proposal ready — review it to start a session' })
+        ? (h.mySessionId
+            ? AppView._devCardIcon('issueProposalMine', { title: 'You have a session for this issue — go to it.' })
+            : AppView._devCardIcon('issueProposal', { title: 'Proposal ready — review it to start a session' }))
         : AppView._devCardIcon('issue');
     // #133: the creating user renders in the meta line below the title.
     // created_by_username comes from the /github-issues route (local
