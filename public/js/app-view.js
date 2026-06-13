@@ -56,7 +56,7 @@ const AppView = {
     // clears the thumb), the same compose-base+pencil pattern `issue` uses.
     // Violet stays distinct from sky (others') and emerald (done).
     issueProposalMine: ['bg-violet-600/15 text-violet-500', 'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z'],
-    proposalMine: ['bg-violet-600/15 text-violet-500', 'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-11h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5M17.35 2.95a1.2 1.2 0 111.7 1.7l-5.15 5.15H12.2v-1.7l5.15-5.15z'],
+    proposalMine: ['bg-violet-600/15 text-violet-500', 'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-11h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5M20.35 1.95a1.2 1.2 0 111.7 1.7l-5.15 5.15H15.2v-1.7l5.15-5.15z'],
   },
 
   _devCardIcon(type, opts) {
