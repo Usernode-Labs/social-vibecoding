@@ -50,9 +50,9 @@ const AppView = {
     // issue they cloned (Go to session) and an open PR they authored (Open
     // session). No manual coordinate compositing: issueProposalMine is a true
     // document-with-pencil (page + folded corner + pencil) so it still reads
-    // as a document; proposalMine is a pencil-in-circle "edit" mark.
+    // as a document; proposalMine is a plain pencil "edit" mark.
     issueProposalMine: ['bg-sky-500/15 text-sky-500', 'M14 3v4a1 1 0 0 0 1 1h4M17 21h-7a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v4M18.42 15.61a2.1 2.1 0 0 1 2.97 2.97l-3.39 3.42h-3v-3l3.42 -3.39z'],
-    proposalMine: ['bg-sky-500/15 text-sky-500', 'M12 15l8.385 -8.415a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3zM16 5l3 3M9 7.07a7.002 7.002 0 0 0 1 13.93a7.002 7.002 0 0 0 6.929 -6'],
+    proposalMine: ['bg-sky-500/15 text-sky-500', 'M12 15l8.385 -8.415a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3zM16 5l3 3'],
   },
 
   _devCardIcon(type, opts) {
