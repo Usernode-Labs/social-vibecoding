@@ -96,7 +96,6 @@ const DevChat = {
     'claude-haiku-4-5': { label: 'Haiku 4.5', outputCostPerMTok: 5 },
     'claude-sonnet-4-6': { label: 'Sonnet 4.6', outputCostPerMTok: 15 },
     'claude-opus-4-8': { label: 'Opus 4.8', outputCostPerMTok: 25 },
-    'claude-fable-5': { label: 'Fable 5', outputCostPerMTok: 50 },
   },
 
   // Default model id used when sanitization rejects a stale storage
@@ -329,7 +328,7 @@ const DevChat = {
     const currentSlug = (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug) || '';
 
     container.innerHTML = sorted.map((s) => {
-      const title = escapeHtml(s.pr_title || s.branch_name || 'Session');
+      const title = escapeHtml(s.session_title || s.pr_title || s.branch_name || 'Session');
       const appName = escapeHtml(s.app_name || s.app_slug || '');
       const isOtherApp = s.app_slug && s.app_slug !== currentSlug;
       // Dot color tracks lifecycle:
@@ -582,6 +581,32 @@ const DevChat = {
         && Number(DevChat.currentSession.id) !== Number(sessionId)) {
       DevChat._setNotifyOnDone(DevChat.currentSession.id, true);
     }
+
+    // Session-open is authoritative for the streaming UI. When opening a
+    // DIFFERENT session than the one currently tracked, tear down the
+    // per-turn client streaming state to idle FIRST, so a
+    // previously-streaming session can't leak its red Stop button or
+    // "⏳ Thinking…" title into a freshly-opened idle session (e.g. a
+    // proposal clone, which is always idle on open). The `if (busy)`
+    // block further down is then the SOLE place that re-arms streaming,
+    // so a session that is genuinely mid-turn still re-enters the live
+    // UI. We only tear down THIS tab's UI + subscriptions here — the
+    // previous session's server-side turn keeps running untouched (its
+    // completion notification was just armed above). Gated on a
+    // session-id change so reopening a genuinely busy session doesn't
+    // flicker the Stop button off and immediately back on (or needlessly
+    // drop and reopen its resumable stream). _setStreamingUI(false)
+    // clears the live 'thinking' marker but leaves the sticky #161
+    // completion marker (_titleCompletion) alone.
+    const switchingSession = !DevChat.currentSession
+      || Number(DevChat.currentSession.id) !== Number(sessionId);
+    if (switchingSession) {
+      DevChat.isStreaming = false;
+      DevChat._streamingPhase = null;
+      DevChat._stopProgressPolling();
+      DevChat._closeResumableStream();
+      DevChat._setStreamingUI(false);
+    }
     try {
       const res = await fetch(`/api/sessions/${sessionId}`);
       if (!res.ok) return;
@@ -615,6 +640,17 @@ const DevChat = {
       // deliberately untouched here — it stays sticky while the user is
       // away and clears on return / notification read.
       DevChat.setTitleStatus(null);
+      // #233: the spec viewer is a single global state slot, not keyed
+      // per session — switching sessions must drop the previous
+      // session's content (and open flag) or it leaks into the new
+      // session's panel. Number-compare because openSession receives
+      // the id from DOM datasets (string) while openSpecViewer stores
+      // currentSession.id (number). Re-opening the SAME session keeps
+      // the cached content so returning repaints instantly.
+      if (DevChat.specViewer.sessionId != null
+          && Number(DevChat.specViewer.sessionId) !== Number(sessionId)) {
+        DevChat._resetSpecViewer();
+      }
       // Restore the spec viewer's open/closed state from localStorage
       // before the caller's renderChatView fires, so a refresh on a
       // session that had the viewer open paints with the panel
@@ -632,6 +668,9 @@ const DevChat = {
         // resolves, which patches the body in place.
         DevChat._loadSpecViewer({ force: true });
       }
+      // Q/A chip selection is per-question-turn — never carry one across
+      // a session switch / reload.
+      DevChat._qaSelection = {};
       DevChat.messages = messages.map((m) => {
         if (m.metadata) {
           if (m.metadata.stagingUrl) m.stagingUrl = m.metadata.stagingUrl;
@@ -644,20 +683,55 @@ const DevChat = {
           if (m.metadata.durationMs != null) m.durationMs = m.metadata.durationMs;
           // Spec preview cards: scout dispatches persist these on the
           // status row so a refresh re-renders the same inline card the
-          // user saw mid-stream. See runScoutTool.
+          // user saw mid-stream. See runScoutTool. Older recovered scout
+          // turns persisted scoutOutput without specPreview — derive the
+          // preview so their cards still render.
           if (m.metadata.specPreview) m.specPreview = m.metadata.specPreview;
+          else if (m.metadata.scoutOutput && m.metadata.specVersion != null) {
+            const t = String(m.metadata.scoutOutput);
+            m.specPreview = t.length <= 400 ? t : `${t.slice(0, 400)}…`;
+          }
           if (m.metadata.specLines) m.specLines = m.metadata.specLines;
           if (m.metadata.specVersion != null) m.specVersion = m.metadata.specVersion;
+          // Q/A mode (#32): suggested-answer chips for the Mayor's
+          // clarifying questions survive refresh via metadata.
+          if (m.metadata.suggestions) m.suggestions = m.metadata.suggestions;
         }
         return m;
       });
+
+      // #252: sync state is keyed per session — drop a stale indicator
+      // (in-flight or terminal feedback) when switching to a different
+      // session. Re-opening the SAME session keeps it; the status
+      // check below refreshes the in-flight phase from the server.
+      if (DevChat._syncState
+          && Number(DevChat._syncState.sessionId) !== Number(sessionId)) {
+        DevChat._syncState = null;
+        DevChat._stopSyncPolling();
+      }
 
       // Check if Claude Code is running for this session
       try {
         const statusRes = await fetch(`/api/sessions/${sessionId}/status`);
         if (statusRes.ok) {
-          const { busy, progress, phase } = await statusRes.json();
-          if (busy) {
+          const { busy, progress, phase, sync } = await statusRes.json();
+          // #252: reload recovery for the sync banner. A MODE=sync turn
+          // also flips `busy` (it holds the worker), so check it first
+          // and don't arm the chat-turn streaming UI for a sync.
+          if (sync && sync.phase) {
+            DevChat._syncState = {
+              sessionId: Number(sessionId), phase: sync.phase, since: Date.now(),
+            };
+            DevChat._startSyncPolling(Number(sessionId));
+          } else if (DevChat._syncState && !DevChat._syncState.terminal) {
+            // Stale in-flight state with nothing running server-side
+            // (e.g. the platform restarted mid-sync) — clear it.
+            // Terminal feedback is left alone so refresh-triggered
+            // openSession calls don't wipe the success/failure notice.
+            DevChat._syncState = null;
+            DevChat._stopSyncPolling();
+          }
+          if (busy && !(sync && sync.phase)) {
             DevChat.isStreaming = true;
             DevChat._setStreamingUI(true, phase || null);
             // Reuse the most recent persisted progress message as the live
@@ -706,6 +780,10 @@ const DevChat = {
     DevChat.isStreaming = true;
     DevChat._setStreamingUI(true);
     DevChat._seenSeqs = new Set();
+    // Any Q/A chip selection belonged to the question turn we're now
+    // answering — the chips vanish on re-render (the question row is no
+    // longer last), so the selection must not leak into a later turn.
+    DevChat._qaSelection = {};
 
     // A previous turn's progress message may still be flagged as the live
     // append target. Clear it so this turn's cc_progress events create a
@@ -908,10 +986,24 @@ const DevChat = {
                 if (DevChat.currentSession) {
                   if (data.prNumber) DevChat.currentSession.pr_number = data.prNumber;
                   if (data.prUrl) DevChat.currentSession.pr_url = data.prUrl;
-                  if (data.prTitle) DevChat.currentSession.pr_title = data.prTitle;
+                  if (data.prTitle) {
+                    DevChat.currentSession.pr_title = data.prTitle;
+                    // #249: the server mirrors pr_title into
+                    // session_title; mirror client-side too so the
+                    // display name flips without a refetch.
+                    DevChat.currentSession.session_title = data.prTitle;
+                  }
                   // Re-render so the new title shows up in the PR card / header
                   // immediately (these only re-render on renderChatView / message
                   // pushes, not on raw event arrival).
+                  DevChat.renderChatView();
+                }
+                break;
+              case 'session_titled':
+                // #249: a pre-PR display name landed (first message or
+                // turn-end refresh) — update the header + session lists.
+                if (DevChat.currentSession && data.sessionTitle) {
+                  DevChat.currentSession.session_title = data.sessionTitle;
                   DevChat.renderChatView();
                 }
                 break;
@@ -945,6 +1037,19 @@ const DevChat = {
                 }
                 DevChat.renderMessages();
                 DevChat.scrollToBottom();
+                break;
+              }
+              case 'suggestions': {
+                // Q/A mode (#32): structured suggested answers for the
+                // clarifying questions in the current bubble. Sent right
+                // after mayor_reasoning, so the assistant message exists;
+                // renderMessages draws the tappable chips under it.
+                if (!Array.isArray(data.suggestions) || !data.suggestions.length) break;
+                if (assistantPushed) {
+                  assistantMsg.suggestions = data.suggestions;
+                  DevChat.renderMessages();
+                  DevChat.scrollToBottom();
+                }
                 break;
               }
               case 'cc_progress': {
@@ -1127,6 +1232,20 @@ const DevChat = {
         DevChat.scrollToBottom();
         break;
       }
+      case 'suggestions': {
+        // Q/A mode (#32): attach the suggested answers to the live
+        // assistant bubble (replayed right after mayor_reasoning). A
+        // sealed bubble means a dispatch turn, where suggestions were
+        // already dropped server-side — skip rather than mis-attach.
+        if (!Array.isArray(data.suggestions) || !data.suggestions.length) break;
+        const am = lastAssistantMsg();
+        if (am && !am._finalized) {
+          am.suggestions = data.suggestions;
+          DevChat.renderMessages();
+          DevChat.scrollToBottom();
+        }
+        break;
+      }
       case 'done':
         DevChat._deactivateLastStatus();
         DevChat._finishStreaming();
@@ -1200,7 +1319,18 @@ const DevChat = {
         if (DevChat.currentSession) {
           if (data.prNumber) DevChat.currentSession.pr_number = data.prNumber;
           if (data.prUrl) DevChat.currentSession.pr_url = data.prUrl;
-          if (data.prTitle) DevChat.currentSession.pr_title = data.prTitle;
+          if (data.prTitle) {
+            DevChat.currentSession.pr_title = data.prTitle;
+            // #249: server mirrors pr_title into session_title.
+            DevChat.currentSession.session_title = data.prTitle;
+          }
+          DevChat.renderChatView();
+        }
+        break;
+      case 'session_titled':
+        // #249: pre-PR display name landed — refresh header/session UI.
+        if (DevChat.currentSession && data.sessionTitle) {
+          DevChat.currentSession.session_title = data.sessionTitle;
           DevChat.renderChatView();
         }
         break;
@@ -1279,8 +1409,8 @@ const DevChat = {
     // #161 completion tier — set by notification arrival (see
     // setCompletionTitle), not by stream end.
     sessionDone: '✅ Session done · ',
-    autoSolveDone: '🤖 Auto-solve ready · ',
-    autoSolveFailed: '⚠️ Auto-solve failed · ',
+    autoSolveDone: '🤖 Proposal ready · ',
+    autoSolveFailed: '⚠️ Proposal failed · ',
   },
 
   // "Away" = the user can't currently see this page: the browser tab is
@@ -1414,6 +1544,11 @@ const DevChat = {
 
     const input = document.getElementById('dc-input');
     if (input) input.disabled = streaming;
+
+    // #252: the sync banner's button disables (with a hint) while a
+    // chat turn holds the worker — keep it in step with every
+    // streaming transition. Cheap no-op when no banner is mounted.
+    if (document.getElementById('dc-sync-banner')) DevChat._applySyncBanner();
   },
 
   async _stopCurrentTurn() {
@@ -1761,7 +1896,11 @@ const DevChat = {
         if (data.prNumber) {
           DevChat.currentSession.pr_number = data.prNumber;
           if (data.prUrl) DevChat.currentSession.pr_url = data.prUrl;
-          if (data.prTitle) DevChat.currentSession.pr_title = data.prTitle;
+          if (data.prTitle) {
+            DevChat.currentSession.pr_title = data.prTitle;
+            // #249: server mirrors pr_title into session_title.
+            DevChat.currentSession.session_title = data.prTitle;
+          }
         }
         DevChat.renderMessages();
       } else {
@@ -1852,7 +1991,18 @@ const DevChat = {
       }
     }
 
-    container.innerHTML = DevChat.messages.map((msg) => {
+    // Q/A mode (#32): suggested-answer chips render only under the LAST
+    // non-system message — and only when the session is one the viewer
+    // can still act in. Once the user replies (chip or typed), the
+    // question row stops being last and the chips vanish on re-render,
+    // so no explicit teardown is needed.
+    let qaLastConvoIdx = -1;
+    for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+      if (DevChat.messages[i].role !== 'system') { qaLastConvoIdx = i; break; }
+    }
+    const qaInteractive = !!session && (session.status === 'active' || session.status === 'promoted');
+
+    container.innerHTML = DevChat.messages.map((msg, msgIdx) => {
       // System messages — each is a single immutable status line
       if (msg.role === 'system') {
         // Inline spec preview card. The Mayor's scout dispatch
@@ -1944,7 +2094,7 @@ const DevChat = {
             <div class="dc-pr-card" id="dc-pr-card">
               <div class="dc-pr-card-header">
                 ${session?.pr_url ? `<a href="${session.pr_url}" target="_blank" class="dc-pr-link">PR #${session.pr_number}</a>` : '<span style="color:var(--text-muted)">Changes ready</span>'}
-                ${session?.pr_title ? `<span class="dc-pr-title">${escapeHtml(session.pr_title)}</span>` : ''}
+                ${(session?.session_title || session?.pr_title) ? `<span class="dc-pr-title">${escapeHtml(session.session_title || session.pr_title)}</span>` : ''}
                 ${window.AppView ? AppView.closesPillHtml(session) : ''}
                 <span style="font-size:9px;opacity:0.4;margin-left:8px">${stgId} ${stgTs}</span>
               </div>
@@ -2061,6 +2211,18 @@ const DevChat = {
           </div>`;
       }
 
+      // Q/A chips (#32): only on the latest assistant message of an
+      // interactive session. Rendered even mid-stream (the 'done' event
+      // re-renders before isStreaming flips, so gating on it here would
+      // hide the chips forever) — taps are guarded by isStreaming in the
+      // click handlers instead.
+      const qaChips = (!isUser
+        && msgIdx === qaLastConvoIdx
+        && qaInteractive
+        && Array.isArray(msg.suggestions) && msg.suggestions.length)
+        ? DevChat._qaChipsHtml(msg)
+        : '';
+
       return `
         <div class="dc-msg ${isUser ? 'dc-msg-user' : 'dc-msg-assistant'}">
           <div class="dc-msg-header">
@@ -2070,6 +2232,7 @@ const DevChat = {
           </div>
           <div class="dc-msg-content">${isUser ? DevChat.renderMarkdown(content) : displayContent}</div>
           ${isUser ? '' : reasoningDetail}
+          ${qaChips}
         </div>`;
     }).join('');
 
@@ -2077,6 +2240,97 @@ const DevChat = {
     // #50: start/stop the shared elapsed ticker based on whether this
     // render left any active status line in the DOM.
     DevChat._syncElapsedTicker();
+  },
+
+  // ── Q/A mode: suggested-answer chips (#32) ─────────────────
+  //
+  // `suggestions` is [{ question, answers }] — sanitized server-side
+  // (the Mayor's suggest_answers tool) and persisted as
+  // metadata.suggestions on the assistant row. Single question: tapping
+  // a chip sends that answer immediately. Multiple questions: taps
+  // select one answer per group (held in _qaSelection, keyed by group
+  // index) and "Send answers" / "Use the suggested defaults" compose a
+  // numbered reply. The textarea stays usable throughout — chips are a
+  // shortcut, never a constraint.
+
+  _qaSelection: {},
+
+  _qaChipsHtml(msg) {
+    const groups = msg.suggestions;
+    const multi = groups.length > 1;
+    const groupsHtml = groups.map((g, gi) => {
+      const chips = (g.answers || []).map((a, ai) => {
+        const selected = multi && DevChat._qaSelection[gi] === ai;
+        const cls = `dc-qa-chip${ai === 0 ? ' dc-qa-chip-default' : ''}${selected ? ' dc-qa-chip-selected' : ''}`;
+        const hint = ai === 0 ? '<span class="dc-qa-chip-hint">suggested</span>' : '';
+        return `<button type="button" class="${cls}" data-qa-group="${gi}" data-qa-answer="${ai}">${escapeHtml(a)}${hint}</button>`;
+      }).join('');
+      const label = multi && g.question
+        ? `<div class="dc-qa-group-label">${escapeHtml(g.question)}</div>`
+        : '';
+      return `<div class="dc-qa-group">${label}<div class="dc-qa-chip-row">${chips}</div></div>`;
+    }).join('');
+    const actions = multi
+      ? `<div class="dc-qa-actions">
+          <button type="button" class="dc-qa-send" data-qa-send="1">Send answers</button>
+          <button type="button" class="dc-qa-defaults" data-qa-defaults="1">Use the suggested defaults</button>
+        </div>`
+      : '';
+    return `<div class="dc-qa-chips">${groupsHtml}${actions}</div>`;
+  },
+
+  // The chips on screen always belong to the last non-system message
+  // (renderMessages gates rendering to exactly that row), so handlers
+  // resolve the suggestion groups from it rather than trusting the DOM.
+  _qaCurrentGroups() {
+    for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+      const m = DevChat.messages[i];
+      if (m.role === 'system') continue;
+      return (m.role === 'assistant' && Array.isArray(m.suggestions) && m.suggestions.length)
+        ? m.suggestions
+        : null;
+    }
+    return null;
+  },
+
+  _onQaChipClick(chip) {
+    if (DevChat.isStreaming) return;
+    const groups = DevChat._qaCurrentGroups();
+    if (!groups) return;
+    const gi = parseInt(chip.dataset.qaGroup, 10);
+    const ai = parseInt(chip.dataset.qaAnswer, 10);
+    const answer = groups[gi]?.answers?.[ai];
+    if (answer == null) return;
+    if (groups.length === 1) {
+      DevChat.sendMessage(answer);
+      return;
+    }
+    // Multi-question: toggle this group's selection; sending happens via
+    // the "Send answers" / defaults buttons.
+    if (DevChat._qaSelection[gi] === ai) delete DevChat._qaSelection[gi];
+    else DevChat._qaSelection[gi] = ai;
+    DevChat.renderMessages();
+  },
+
+  _qaSendSelected() {
+    if (DevChat.isStreaming) return;
+    const groups = DevChat._qaCurrentGroups();
+    if (!groups) return;
+    const parts = [];
+    for (let gi = 0; gi < groups.length; gi++) {
+      const ai = DevChat._qaSelection[gi];
+      const answer = ai != null ? groups[gi]?.answers?.[ai] : null;
+      if (answer != null) parts.push(`${gi + 1}. ${answer}`);
+    }
+    if (!parts.length) return;
+    DevChat.sendMessage(parts.join('\n'));
+  },
+
+  _qaSendDefaults() {
+    if (DevChat.isStreaming) return;
+    const groups = DevChat._qaCurrentGroups();
+    if (!groups) return;
+    DevChat.sendMessage(groups.map((g, gi) => `${gi + 1}. ${g.answers[0]}`).join('\n'));
   },
 
   // ── <details> open/closed persistence ─────────────────────
@@ -2300,6 +2554,12 @@ const DevChat = {
     // listener here is enough — innerHTML rewrites inside renderMessages
     // don't break it.
     container.addEventListener('click', (e) => {
+      // Q/A chips (#32) — delegated like the spec cards, so innerHTML
+      // rewrites inside renderMessages don't drop the handlers.
+      const chip = e.target.closest('[data-qa-group]');
+      if (chip) { DevChat._onQaChipClick(chip); return; }
+      if (e.target.closest('[data-qa-send]')) { DevChat._qaSendSelected(); return; }
+      if (e.target.closest('[data-qa-defaults]')) { DevChat._qaSendDefaults(); return; }
       const card = e.target.closest('.dc-spec-preview-card');
       if (!card) return;
       const version = card.dataset.specVersion;
@@ -2408,13 +2668,13 @@ const DevChat = {
       return `
         <div class="dc-session-item px-3 py-2 cursor-pointer hover:bg-zinc-800/50 flex items-center gap-2" data-id="${s.id}">
           <span class="text-xs ${statusColor} font-mono">${s.status}</span>
-          <span class="text-sm text-zinc-300 flex-1 truncate" title="${escapeHtml(s.branch_name || '')}">${escapeHtml(s.pr_title || s.branch_name || 'Session')}</span>
+          <span class="text-sm text-zinc-300 flex-1 truncate" title="${escapeHtml(s.branch_name || '')}">${escapeHtml(s.session_title || s.pr_title || s.branch_name || 'Session')}</span>
           ${s.pr_url ? `<a href="${s.pr_url}" target="_blank" class="text-xs text-violet-400 hover:text-violet-300" onclick="event.stopPropagation()">PR#${s.pr_number}</a>` : ''}
           ${isPausable ? `<button class="dc-pause-btn text-xs text-zinc-400 hover:text-emerald-400" data-id="${s.id}" data-action="pause" onclick="event.stopPropagation()">Pause</button>` : ''}
           ${isFreeable ? `<button class="dc-pause-btn text-xs text-zinc-400 hover:text-emerald-400" data-id="${s.id}" data-action="pause" data-freeing="1" title="Frees the AI worker. The PR stays up for voting." onclick="event.stopPropagation()">Free worker</button>` : ''}
           ${isPaused ? `<button class="dc-pause-btn text-xs text-emerald-400 hover:text-emerald-300" data-id="${s.id}" data-action="resume" onclick="event.stopPropagation()">Resume</button>` : ''}
           ${isArchived ? `<button class="dc-unarchive-btn text-xs text-emerald-400 hover:text-emerald-300" data-id="${s.id}" onclick="event.stopPropagation()" title="Restore this session (reopens the PR)">Unarchive</button>` : ''}
-          ${isActionable ? `<button class="dc-archive-btn text-xs text-zinc-500 hover:text-red-400" data-id="${s.id}" data-name="${escapeHtml(s.pr_title || s.branch_name || 'Session')}" title="Archive (frees the slot; restorable for a while)" onclick="event.stopPropagation()">Archive</button>` : ''}
+          ${isActionable ? `<button class="dc-archive-btn text-xs text-zinc-500 hover:text-red-400" data-id="${s.id}" data-name="${escapeHtml(s.session_title || s.pr_title || s.branch_name || 'Session')}" title="Archive (frees the slot; restorable for a while)" onclick="event.stopPropagation()">Archive</button>` : ''}
           <span class="text-xs text-zinc-600">${date}</span>
         </div>`;
     }).join('');
@@ -2534,35 +2794,106 @@ const DevChat = {
     });
   },
 
-  // ── Sync-with-main banner (#8) ────────────────────────────
+  // ── Sync-with-main banner (#8, progress #252) ─────────────
   //
   // Shows up below the session header whenever the branch is behind
-  // origin/main. Click triggers POST /api/sessions/:id/sync-main,
-  // which dispatches a worker turn in MODE=sync. The worker
-  // short-circuits when the merge is clean (no LLM spend); only
-  // dispatches CC when there are real conflicts to resolve.
+  // origin/main OR a sync is in flight. Click triggers
+  // POST /api/sessions/:id/sync-main, which dispatches a worker turn
+  // in MODE=sync. The worker short-circuits when the merge is clean
+  // (no LLM spend); only dispatches CC when there are real conflicts
+  // to resolve.
   //
   // The behind count is refreshed live via the WS session_update
-  // event (action='behind_main'); see App.handleSessionUpdate.
+  // event (action='behind_main'), and the in-flight phase / terminal
+  // outcome via action='sync_status'; see App.handleSessionUpdate.
+  //
+  // _syncState is the server-derived sync indicator (NOT a per-tab
+  // flag): null when idle, { sessionId, phase, since } while a sync
+  // runs anywhere (this tab, another tab, the resume auto-trigger or
+  // the conflict-resolver), and { sessionId, terminal, ok, message }
+  // once it finishes. Fed by WS sync_status events, openSession's
+  // status check, the poll fallback, and optimistically by the click.
+  _syncState: null,
+  _syncPollTimer: null,
+
+  _syncPhaseLabel(phase) {
+    switch (phase) {
+      case 'resolving': return 'Resolving merge conflicts with Claude…';
+      case 'pushing': return 'Pushing the merged branch…';
+      default: return 'Syncing with main…'; // starting / merging
+    }
+  },
+
+  // The current _syncState if (and only if) it belongs to the given
+  // session — a terminal notice from session A must not render on
+  // session B's banner.
+  _syncStateFor(session) {
+    const st = DevChat._syncState;
+    if (!st || !session) return null;
+    return Number(st.sessionId) === Number(session.id) ? st : null;
+  },
 
   _renderSyncBannerHtml(session) {
     const behind = session && Number(session.behind_main) || 0;
-    if (behind <= 0) return '';
-    const syncing = !!DevChat._syncInFlight;
+    const sync = DevChat._syncStateFor(session);
+    if (behind <= 0 && !sync) return '';
+
+    const warnIcon = `<svg class="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.732 0 2.814-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
+        </svg>`;
+    const btnCls = 'rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-60 disabled:cursor-not-allowed px-3 py-1 text-xs font-medium text-white transition-colors shrink-0';
+    const chatBusy = !!DevChat.isStreaming;
+    const busyAttr = chatBusy
+      ? 'disabled title="Claude is busy with a turn — sync will be available when it finishes"'
+      : '';
+
+    // In flight — spinner + phase text, disabled button.
+    if (sync && !sync.terminal) {
+      return `
+      <div id="dc-sync-banner" class="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs">
+        <svg class="w-4 h-4 animate-spin text-amber-600 dark:text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+        </svg>
+        <span class="text-amber-800 dark:text-amber-200 flex-1">${escapeHtml(DevChat._syncPhaseLabel(sync.phase))}</span>
+        <button id="dc-sync-btn" type="button" disabled class="${btnCls}">Syncing…</button>
+      </div>`;
+    }
+
+    // Terminal success — green confirmation; auto-dismissed by the
+    // timer in _setSyncTerminal (the behind_main → 0 broadcast removes
+    // the banner anyway).
+    if (sync && sync.terminal && sync.ok) {
+      return `
+      <div id="dc-sync-banner" class="flex items-center gap-2 px-3 py-2 bg-emerald-50 dark:bg-emerald-950/30 border-b border-emerald-200 dark:border-emerald-900/50 text-xs">
+        <svg class="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/>
+        </svg>
+        <span class="text-emerald-800 dark:text-emerald-200 flex-1">${escapeHtml(sync.message || 'Synced with main.')}</span>
+      </div>`;
+    }
+
+    // Terminal failure (unresolved conflict, budget/infra error, or the
+    // 409 chat-turn-busy notice) — the message stays put with a
+    // re-enabled Try again button. No alert() popups.
+    if (sync && sync.terminal && !sync.ok) {
+      return `
+      <div id="dc-sync-banner" class="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs">
+        ${warnIcon}
+        <span class="text-amber-800 dark:text-amber-200 flex-1">${escapeHtml(sync.message || 'Sync with main failed.')}</span>
+        <button id="dc-sync-btn" type="button" ${busyAttr} class="${btnCls}">Try again</button>
+      </div>`;
+    }
+
+    // Idle — behind main, nothing in flight.
     const noun = behind === 1 ? 'commit' : 'commits';
     return `
       <div id="dc-sync-banner" class="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs">
-        <svg class="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.732 0 2.814-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
-        </svg>
+        ${warnIcon}
         <span class="text-amber-800 dark:text-amber-200 flex-1">
           main has moved <span class="font-semibold">${behind}</span> ${noun} ahead of this branch.
         </span>
-        <button id="dc-sync-btn" type="button"
-          ${syncing ? 'disabled' : ''}
-          class="rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-60 disabled:cursor-not-allowed px-3 py-1 text-xs font-medium text-white transition-colors">
-          ${syncing ? 'Syncing…' : 'Sync with main'}
-        </button>
+        <button id="dc-sync-btn" type="button" ${busyAttr} class="${btnCls}">Sync with main</button>
       </div>`;
   },
 
@@ -2618,35 +2949,160 @@ const DevChat = {
     if (typeof DevChat.loadActiveSessions === 'function') DevChat.loadActiveSessions();
   },
 
+  // Replace just the banner element if the rest of the chat view is
+  // mounted; otherwise full re-render so the new element lands in the
+  // right slot. Shared by every path that mutates banner-relevant
+  // state (behind_main updates, sync_status events, the click handler).
+  _applySyncBanner() {
+    const existing = document.getElementById('dc-sync-banner');
+    const html = DevChat.currentSession
+      ? DevChat._renderSyncBannerHtml(DevChat.currentSession) : '';
+    if (existing) {
+      if (html) {
+        existing.outerHTML = html;
+        DevChat._wireSyncBanner();
+      } else {
+        existing.remove();
+      }
+    } else if (html) {
+      DevChat.renderChatView();
+    }
+  },
+
+  _setSyncInFlight(sessionId, phase) {
+    DevChat._syncState = { sessionId: Number(sessionId), phase, since: Date.now() };
+    DevChat._applySyncBanner();
+    DevChat._startSyncPolling(Number(sessionId));
+  },
+
+  _setSyncTerminal(sessionId, { ok, message }) {
+    DevChat._stopSyncPolling();
+    const t = {
+      sessionId: Number(sessionId),
+      terminal: true,
+      ok: !!ok,
+      message: message || (ok ? 'Synced with main.' : 'Sync with main failed.'),
+      since: Date.now(),
+    };
+    DevChat._syncState = t;
+    DevChat._applySyncBanner();
+    if (ok) {
+      // Success feedback is transient — dismiss after ~5s. Failure
+      // sticks around with its Try again button. Identity check so a
+      // newer state (e.g. a retry already in flight) is never clobbered.
+      setTimeout(() => {
+        if (DevChat._syncState === t) {
+          DevChat._syncState = null;
+          DevChat._applySyncBanner();
+        }
+      }, 5000);
+    }
+  },
+
+  // Called by App.handleSessionUpdate when an action='sync_status'
+  // event arrives (from this tab's click, another tab, the resume
+  // auto-trigger or the conflict-resolver). No-op when the event is
+  // for a session that isn't open — list rows are out of scope (#252).
+  applySyncStatusUpdate(data) {
+    const sessionId = Number(data.sessionId);
+    if (!DevChat.currentSession || Number(DevChat.currentSession.id) !== sessionId) return;
+    if (data.state === 'done' || data.state === 'failed') {
+      DevChat._setSyncTerminal(sessionId, {
+        ok: data.state === 'done',
+        message: data.message,
+      });
+      // Refresh so the persisted system note + new behind_main land.
+      // Idempotent with the click handler's own refresh.
+      DevChat.openSession(sessionId)
+        .then(() => DevChat.renderChatView())
+        .catch(() => {});
+    } else {
+      DevChat._setSyncInFlight(sessionId, data.state);
+    }
+  },
+
+  // Poll fallback while a sync is in flight: catches a missed terminal
+  // WS event (tab offline, server restart mid-sync) and keeps the
+  // phase text honest if a phase broadcast was dropped. Cleared on any
+  // terminal transition and when the open session changes.
+  _startSyncPolling(sessionId) {
+    if (DevChat._syncPollTimer) return;
+    DevChat._syncPollTimer = setInterval(async () => {
+      const st = DevChat._syncState;
+      if (!st || st.terminal || Number(st.sessionId) !== Number(sessionId)
+          || !DevChat.currentSession
+          || Number(DevChat.currentSession.id) !== Number(sessionId)) {
+        DevChat._stopSyncPolling();
+        return;
+      }
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}/status`);
+        if (!res.ok) return;
+        const { sync } = await res.json();
+        if (sync && sync.phase) {
+          if (DevChat._syncState && !DevChat._syncState.terminal
+              && DevChat._syncState.phase !== sync.phase) {
+            DevChat._syncState = { ...DevChat._syncState, phase: sync.phase };
+            DevChat._applySyncBanner();
+          }
+        } else if (Date.now() - st.since > 5000) {
+          // No sync in flight server-side — we missed the terminal
+          // event. The grace window keeps the optimistic click-state
+          // from being cleared before the server registers the run.
+          DevChat._stopSyncPolling();
+          DevChat._syncState = null;
+          await DevChat.openSession(sessionId);
+          DevChat.renderChatView();
+        }
+      } catch {}
+    }, 4000);
+  },
+
+  _stopSyncPolling() {
+    if (DevChat._syncPollTimer) {
+      clearInterval(DevChat._syncPollTimer);
+      DevChat._syncPollTimer = null;
+    }
+  },
+
   _wireSyncBanner() {
     const btn = document.getElementById('dc-sync-btn');
     if (!btn) return;
     btn.addEventListener('click', async () => {
-      if (DevChat._syncInFlight) return;
+      const st = DevChat._syncState;
+      if (st && !st.terminal) return; // already in flight
       const sessionId = DevChat.currentSession?.id;
       if (!sessionId) return;
-      DevChat._syncInFlight = true;
-      btn.disabled = true;
-      btn.textContent = 'Syncing…';
+      // Optimistic in-flight state; the WS sync_status events and the
+      // poll fallback take over from here. If a sync is already
+      // running server-side this POST coalesces onto it and returns
+      // the same final result.
+      DevChat._setSyncInFlight(sessionId, 'starting');
       try {
         const resp = await fetch(`/api/sessions/${sessionId}/sync-main`, { method: 'POST' });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
-          alert(data.error || `Sync failed (HTTP ${resp.status}).`);
-        } else if (data.message) {
-          // Refresh the session record so behind_main + chat history
-          // pick up the new state, then re-render. The
-          // session_update WS broadcast from persistBehindMain also
-          // triggers this path, but doing it explicitly here covers
-          // the case where the user has the tab inactive when the
-          // WS event fires.
+          // 409 = a chat turn holds the worker (friendly message from
+          // the route); anything else is a real failure. Either way:
+          // inline banner text, never alert().
+          DevChat._setSyncTerminal(sessionId, {
+            ok: false,
+            message: data.error || `Sync failed (HTTP ${resp.status}).`,
+          });
+        } else {
+          // The POST response is the authoritative final result —
+          // applied idempotently with the WS terminal event. Refresh
+          // the session record so behind_main + the system note pick
+          // up the new state even if the tab missed the WS events.
+          DevChat._setSyncTerminal(sessionId, {
+            ok: data.ok !== false,
+            message: data.message,
+          });
           await DevChat.openSession(sessionId);
           DevChat.renderChatView();
         }
       } catch (err) {
-        alert(`Sync failed: ${err.message}`);
-      } finally {
-        DevChat._syncInFlight = false;
+        DevChat._setSyncTerminal(sessionId, { ok: false, message: `Sync failed: ${err.message}` });
       }
     });
   },
@@ -2666,22 +3122,7 @@ const DevChat = {
       return;
     }
     DevChat.currentSession.behind_main = behindMain;
-    // Replace just the banner element if the rest of the chat view
-    // is mounted; otherwise full re-render.
-    const existing = document.getElementById('dc-sync-banner');
-    const html = DevChat._renderSyncBannerHtml(DevChat.currentSession);
-    if (existing) {
-      if (html) {
-        existing.outerHTML = html;
-        DevChat._wireSyncBanner();
-      } else {
-        existing.remove();
-      }
-    } else if (html) {
-      // No prior banner — easiest is a full re-render so the new
-      // element ends up in the right slot.
-      DevChat.renderChatView();
-    }
+    DevChat._applySyncBanner();
   },
 
   // ── Chat view ─────────────────────────────────────────────
@@ -2728,7 +3169,7 @@ const DevChat = {
     content.innerHTML = `
       <div class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
         <button id="dc-back" class="text-zinc-400 hover:text-zinc-200 text-sm">&larr;</button>
-        <span class="text-xs text-zinc-400 truncate flex-1" title="${escapeHtml(DevChat.currentSession.branch_name || '')}">${escapeHtml(DevChat.currentSession.pr_title || DevChat.currentSession.branch_name || 'Session')}</span>
+        <span class="text-xs text-zinc-400 truncate flex-1" title="${escapeHtml(DevChat.currentSession.branch_name || '')}">${escapeHtml(DevChat.currentSession.session_title || DevChat.currentSession.pr_title || DevChat.currentSession.branch_name || 'Session')}</span>
         ${DevChat.currentSession.pr_number
           ? `<button id="dc-pr-header-link" class="text-xs text-violet-400 hover:text-violet-300" title="This session's pull request — every change in this chat goes to PR #${DevChat.currentSession.pr_number}. Use “Start a new change” for separate work.">PR #${DevChat.currentSession.pr_number}</button>`
           : '<span class="text-xs text-zinc-500" title="This chat is one change → one pull request. A PR opens after the first build.">New change</span>'}
@@ -3077,6 +3518,11 @@ const DevChat = {
     const pane = document.getElementById('dc-spec-viewer');
     if (!pane || !DevChat.currentSession) return;
     if (!DevChat.specViewer.open) return;
+    // #233 fail-closed guard: never render another session's spec. Any
+    // path that forgets to reset the global specViewer slot on a
+    // session switch gets a blank panel, not stale content.
+    if (DevChat.specViewer.sessionId != null
+        && Number(DevChat.specViewer.sessionId) !== Number(DevChat.currentSession.id)) return;
 
     // Numbered versions are the single spec surface now (#69). The
     // dropdown lists v1…vN; the highest is the live latest and its
@@ -3121,6 +3567,14 @@ const DevChat = {
     const shareBtnHtml = (!selectedVersion || isEmpty)
       ? `<button class="dc-spec-action-btn" disabled title="No spec version to share yet">Share to group</button>`
       : `<button id="dc-spec-viewer-share" class="dc-spec-action-btn" ${alreadyShared ? 'disabled' : ''} title="${alreadyShared ? 'Already shared to group chat' : 'Post a card linking to this spec in the group chat'}">${alreadyShared ? 'Shared' : 'Share to group'}</button>`;
+
+    // (#86) Private share: send this version to ONE person, who gets a
+    // notification deep-linking to the read-only spec panel. Repeatable
+    // (no alreadyShared disabling — the owner can share with several
+    // people one at a time) and independent of the group-share state.
+    const shareUserBtnHtml = (!selectedVersion || isEmpty)
+      ? `<button class="dc-spec-action-btn" disabled title="No spec version to share yet">Share to user</button>`
+      : `<button id="dc-spec-viewer-share-user" class="dc-spec-action-btn" title="Privately share this spec version with one person">Share to user</button>`;
 
     // #196: a conforming spec (BOTH marker headings present — see
     // public/js/spec-sections.js) renders as two tabs so non-technical
@@ -3172,9 +3626,16 @@ const DevChat = {
         <select id="dc-spec-viewer-version" class="text-xs rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1" ${hasVersions ? '' : 'disabled'}>
           ${hasVersions ? versionOptions : '<option>No versions yet</option>'}
         </select>
-        <span class="flex-1"></span>
+        ${shareUserBtnHtml}
         ${shareBtnHtml}
         <button id="dc-spec-viewer-close" class="dc-spec-viewer-close" aria-label="Close spec viewer">×</button>
+        <div id="dc-spec-share-pop" class="dc-spec-share-pop hidden">
+          <input id="dc-spec-share-input" class="dc-spec-share-input" type="text"
+                 placeholder="Username…" autocomplete="off" spellcheck="false" maxlength="32" />
+          <div id="dc-spec-share-suggestions" class="dc-spec-share-suggestions"></div>
+          <div id="dc-spec-share-error" class="dc-spec-share-error hidden"></div>
+          <button id="dc-spec-share-send" class="dc-spec-action-btn dc-spec-share-send">Send</button>
+        </div>
       </div>
       <div class="dc-spec-viewer-body-wrap">
         ${bodyHtml}
@@ -3193,6 +3654,9 @@ const DevChat = {
 
     const shareBtn = pane.querySelector('#dc-spec-viewer-share');
     if (shareBtn && selectedVersion) shareBtn.addEventListener('click', () => DevChat._shareSpecVersion(selectedVersion.version));
+
+    const shareUserBtn = pane.querySelector('#dc-spec-viewer-share-user');
+    if (shareUserBtn && selectedVersion) DevChat._bindSpecSharePopover(pane, shareUserBtn, selectedVersion.version);
 
     // #196: tab switches are pure re-renders of cached content — no
     // refetch. The selection lives in specViewer.activeTab so it
@@ -3253,6 +3717,126 @@ const DevChat = {
       DevChat._renderSpecViewer();
     } catch (err) {
       console.warn('shareSpecVersion failed:', err);
+    }
+  },
+
+  // (#86) Wire the "Share to user" button + its popover. The popover
+  // lives inside the freshly-rendered pane, so all state here is local
+  // to this render pass — a re-render (version switch, spec update)
+  // simply closes it. Suggestions come from the same endpoint the
+  // group-chat @mention autocomplete uses, fetched once per open and
+  // prefix-filtered client-side as the user types.
+  _bindSpecSharePopover(pane, btn, version) {
+    const pop = pane.querySelector('#dc-spec-share-pop');
+    const input = pane.querySelector('#dc-spec-share-input');
+    const sugBox = pane.querySelector('#dc-spec-share-suggestions');
+    const errBox = pane.querySelector('#dc-spec-share-error');
+    const sendBtn = pane.querySelector('#dc-spec-share-send');
+    if (!pop || !input || !sugBox || !errBox || !sendBtn) return;
+
+    let suggestions = [];
+
+    const setError = (msg) => {
+      errBox.textContent = msg || '';
+      errBox.classList.toggle('hidden', !msg);
+    };
+
+    const renderSuggestions = () => {
+      const q = input.value.trim().toLowerCase();
+      const matches = suggestions
+        .filter((name) => !q || name.toLowerCase().startsWith(q))
+        .slice(0, 6);
+      sugBox.innerHTML = matches
+        .map((name) => `<button type="button" class="dc-spec-share-sug" data-username="${escapeHtml(name)}">@${escapeHtml(name)}</button>`)
+        .join('');
+      sugBox.querySelectorAll('.dc-spec-share-sug').forEach((s) => {
+        s.addEventListener('click', () => {
+          input.value = s.dataset.username;
+          sugBox.innerHTML = '';
+          input.focus();
+        });
+      });
+    };
+
+    const close = () => {
+      pop.classList.add('hidden');
+      document.removeEventListener('pointerdown', onOutside, true);
+    };
+    const onOutside = (e) => {
+      if (pop.contains(e.target) || e.target === btn) return;
+      close();
+    };
+
+    btn.addEventListener('click', async () => {
+      if (!pop.classList.contains('hidden')) { close(); return; }
+      pop.classList.remove('hidden');
+      setError(null);
+      input.value = '';
+      sugBox.innerHTML = '';
+      input.focus();
+      document.addEventListener('pointerdown', onOutside, true);
+      // Lazy one-shot fetch of mention candidates for this app.
+      if (!suggestions.length
+          && typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug) {
+        try {
+          const res = await fetch(`/api/apps/${AppView.appData.slug}/mention-suggestions`);
+          if (res.ok) {
+            const { users } = await res.json();
+            suggestions = Array.isArray(users)
+              ? users.map((u) => (u && u.username) || '').filter(Boolean)
+              : [];
+            if (!pop.classList.contains('hidden')) renderSuggestions();
+          }
+        } catch { /* suggestions are best-effort; exact usernames still work */ }
+      }
+    });
+
+    input.addEventListener('input', () => { setError(null); renderSuggestions(); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); sendBtn.click(); }
+      if (e.key === 'Escape') close();
+    });
+
+    sendBtn.addEventListener('click', async () => {
+      const username = input.value.trim().replace(/^@/, '');
+      if (!username) { setError('Enter a username'); return; }
+      sendBtn.disabled = true;
+      sendBtn.textContent = 'Sending…';
+      const result = await DevChat._shareSpecToUser(version, username);
+      sendBtn.disabled = false;
+      sendBtn.textContent = 'Send';
+      if (!result.ok) {
+        setError(result.error || 'Failed to share');
+        return;
+      }
+      // Transient confirmation, then reset for the next share.
+      setError(null);
+      sugBox.innerHTML = '';
+      const sentName = (result.recipient && result.recipient.username) || username;
+      btn.textContent = `Sent to @${sentName}`;
+      close();
+      setTimeout(() => { btn.textContent = 'Share to user'; }, 2500);
+    });
+  },
+
+  // POST the private share; returns the parsed response (or an {ok:false,
+  // error} shape) so the popover can surface server-side 4xx messages
+  // ("User not found", "That user doesn't have access…") inline.
+  async _shareSpecToUser(version, username) {
+    if (!DevChat.currentSession || version == null) return { ok: false, error: 'No session' };
+    const sid = DevChat.currentSession.id;
+    try {
+      const resp = await fetch(`/api/sessions/${sid}/specs/${version}/share-user`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username }),
+      });
+      let data = {};
+      try { data = await resp.json(); } catch {}
+      if (!resp.ok) return { ok: false, error: data.error || `HTTP ${resp.status}` };
+      return data;
+    } catch {
+      return { ok: false, error: 'Network error' };
     }
   },
 };

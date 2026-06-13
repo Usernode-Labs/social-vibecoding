@@ -419,6 +419,27 @@ CREATE TABLE IF NOT EXISTS chat_session_specs (
 CREATE INDEX IF NOT EXISTS idx_chat_session_specs_session
   ON chat_session_specs (session_id, version DESC);
 
+-- #86: private spec shares. Each row grants ONE user read access to ONE
+-- frozen spec version (the "Share to user" button on the dev-session
+-- spec viewer). This table is the authorization source of truth for the
+-- widened read gate on GET /api/sessions/:id/specs/:version — the
+-- matching 'spec_shared' notification row is just UI. The unique
+-- constraint makes re-shares idempotent (and is what keeps a recipient
+-- from being re-notified per spec version). Independent of
+-- chat_session_specs.shared_to_group_at: a later group share simply
+-- makes these rows redundant, never conflicting.
+CREATE TABLE IF NOT EXISTS chat_session_spec_user_shares (
+  id            SERIAL PRIMARY KEY,
+  session_id    INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  version       INTEGER NOT NULL,
+  recipient_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  shared_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(session_id, version, recipient_id)
+);
+CREATE INDEX IF NOT EXISTS idx_spec_user_shares_recipient
+  ON chat_session_spec_user_shares (recipient_id, created_at DESC);
+
 -- Allow group-chat messages to carry structured payloads (spec_share
 -- card metadata today; future: PR previews, system-link metadata, etc.)
 -- without overloading the free-form `content` field.
@@ -540,9 +561,11 @@ ON CONFLICT (key) DO NOTHING;
 -- was promoted for voting — session_id points to it; fanned out to the
 -- app's active users + creator + favoriters in src/routes/votes.js),
 -- 'session_done' (#161 — a dev-session turn finished after its owner
--- left; session_id points to the session) and 'auto_solve_done' (#161 —
+-- left; session_id points to the session), 'auto_solve_done' (#161 —
 -- a headless auto-solve run finished; `detail` holds the outcome:
--- spec | code | spec_code | question | failed).
+-- spec | code | spec_code | question | failed) and 'spec_shared' (#86 —
+-- someone privately shared a spec version with you; session_id points
+-- to the dev session, `detail` holds the version number as a string).
 CREATE TABLE IF NOT EXISTS notifications (
   id              SERIAL PRIMARY KEY,
   user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -614,6 +637,7 @@ COMMENT ON TABLE activation_codes       IS 'staging:private';
 COMMENT ON TABLE chat_sessions          IS 'staging:private';
 COMMENT ON TABLE chat_session_messages  IS 'staging:private';
 COMMENT ON TABLE chat_session_specs     IS 'staging:private';
+COMMENT ON TABLE chat_session_spec_user_shares IS 'staging:private';
 COMMENT ON TABLE llm_usage              IS 'staging:private';
 COMMENT ON TABLE notifications          IS 'staging:private';
 COMMENT ON TABLE app_secrets            IS 'staging:private';
@@ -773,6 +797,10 @@ COMMENT ON TABLE events IS 'staging:private';
 -- means the viewer list IS the collaborator list (viewers are never
 -- separately enumerated). Admins always see everything — enforced in
 -- src/services/app-access.js, the shared gate every route goes through.
+-- Post-creation changes go through dapp.json's top-level `visibility`
+-- block (issue #124): a vote-gated PR edits the block and the merge's
+-- production rebuild reconciles these columns to it
+-- (services/app-manifest.js reconcileAppVisibility).
 -- Defaults make every pre-migration app public/public (no behavior change).
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS collab_visibility VARCHAR(10) NOT NULL DEFAULT 'public';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS view_visibility   VARCHAR(10) NOT NULL DEFAULT 'public';
@@ -848,3 +876,63 @@ COMMENT ON TABLE session_visuals IS 'staging:private';
 -- targeted post-capture body patch so the next turn doesn't rewrite an
 -- unchanged body.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_visuals_applied TEXT;
+
+-- App access to user LLM budgets (issue #34). One row per (app, user)
+-- consent: the user explicitly allowed this app to spend from their
+-- daily AI budget through the platform proxy (/api/app-llm), up to
+-- daily_cap_cents per day. Revocation keeps the row (usage history,
+-- easy re-grant) and just flips status; the proxy requires
+-- status='active'. allow_byok extends the grant onto the user's own
+-- stored Anthropic key once the platform allowance is exhausted —
+-- strictly opt-in per app, still bounded by the cap.
+CREATE TABLE IF NOT EXISTS app_llm_grants (
+  app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status          VARCHAR(16) NOT NULL DEFAULT 'active',
+  daily_cap_cents INTEGER NOT NULL DEFAULT 100,
+  allow_byok      BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  revoked_at      TIMESTAMPTZ,
+  PRIMARY KEY (app_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_app_llm_grants_user ON app_llm_grants(user_id);
+-- Consent/financial-adjacent rows must not leak into staging clones.
+-- (A private table may FK public tables; only the reverse is barred.)
+COMMENT ON TABLE app_llm_grants IS 'staging:private';
+
+-- Per-app daily spend ledger, mirroring llm_usage's split: total goes
+-- against the platform daily caps, byok is the display-only bucket for
+-- spend billed to the user's own key. The proxy writes BOTH this table
+-- and llm_usage (via limits.recordSpend) so platform-wide caps and the
+-- existing /api/budget display stay correct.
+CREATE TABLE IF NOT EXISTS app_llm_usage (
+  app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  date            DATE NOT NULL DEFAULT CURRENT_DATE,
+  total_cost_cents NUMERIC(10,4) NOT NULL DEFAULT 0,
+  byok_cost_cents  NUMERIC(10,4) NOT NULL DEFAULT 0,
+  UNIQUE(app_id, user_id, date)
+);
+-- Sibling of llm_usage, which is already staging:private.
+COMMENT ON TABLE app_llm_usage IS 'staging:private';
+
+-- Per-app credential identifying the calling app to the LLM proxy.
+-- Random 64-hex, generated lazily at production deploy when NULL (same
+-- adoption shape as db_password). Deliberately NOT a JWT: every dapp
+-- container holds the shared JWT_SECRET, so a JWT-based app identity
+-- would be forgeable by any other app; a random opaque token is not.
+-- staging:private so the column-scrub in cloneDatabase blanks it —
+-- staging containers never receive the token and therefore can't
+-- spend grants (unreviewed PR code).
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS llm_proxy_token TEXT;
+COMMENT ON COLUMN apps.llm_proxy_token IS 'staging:private';
+
+-- #249: meaningful default session names. session_title is the
+-- display-name layer for dev sessions: set from the first interactive
+-- message (Haiku), refreshed at pre-PR turn ends, mirrored from
+-- pr_title once a PR exists, and derived deterministically
+-- ("#N · issue title") for headless auto sessions. NULL falls back to
+-- pr_title then branch_name at every display site. Branch names stay
+-- machine-generated and immutable — this column never affects git.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS session_title VARCHAR(256);

@@ -4,7 +4,7 @@ const log = require('../services/logger');
 const github = require('../services/github');
 const staging = require('../services/staging');
 const docker = require('../services/docker');
-const { checkAndResolveConflicts, resolveAndMaybeRetry } = require('../services/conflict-resolver');
+const { checkAndResolveConflicts, resolveAndMaybeRetry, isResolving } = require('../services/conflict-resolver');
 const { sendSystemMessage, pushNotificationToUser } = require('../services/ws');
 const { getActiveUserStats, isUserActive } = require('../services/active-users');
 const notifications = require('../services/notifications');
@@ -52,6 +52,7 @@ function stagingMockProposals() {
     chat_count: chat,
     last_message_at: chat ? hoursAgo(Math.max(0, hours - 1)) : null,
     visuals: null,
+    resolving: false,
   });
   return [
     mk(9000001, 900101,
@@ -62,6 +63,21 @@ function stagingMockProposals() {
       '[Mock] Long-title test: walk brand-new collaborators through '
       + 'voting, kudos and dev sessions step by step',
       11, 0, 1, 0),
+    // #239: a row mid-auto-conflict-resolution so the "Resolving
+    // conflicts…" badge is verifiable on staging via ?demo=1 without
+    // manufacturing a real merge conflict.
+    {
+      ...mk(9000003, 900103,
+        '[Mock] Resolving-state test: add a dark-mode toggle to the settings drawer',
+        1, 2, 0, 2),
+      resolving: true,
+    },
+    // #124: a visibility-change proposal (a dapp.json PR opened by the
+    // Members & visibility modal) so its self-describing card is
+    // reviewable on staging via ?demo=1.
+    mk(9000004, 900104,
+      '[Mock] Make this app invite-only build, public to view',
+      2, 1, 0, 1),
   ];
 }
 
@@ -115,7 +131,17 @@ function voteRoutes(config) {
       // branch — so the vote has something to merge. applyPrMetadata reads
       // the clone's copied history via gatherSessionContext, so the PR
       // title/body get the full auto-session context.
-      if (!session.pr_number) {
+      //
+      // Also runs when a PR exists but pr_title is missing: staging
+      // recovery (server.js rebuildSessionStaging) can mint a PR before
+      // promotion without a generated title, and a NULL pr_title would
+      // otherwise render as "Change by <user>" forever. Backfilling it
+      // here updates both GitHub and pr_title/session_title.
+      if (!session.pr_number || !session.pr_title) {
+        // Distinguish creating a PR (no pr_number → a failure must block
+        // promotion) from merely backfilling a missing title on an
+        // existing PR (best-effort — never block promotion on it).
+        const isBackfill = !!session.pr_number;
         const { rows: msgRows } = await pool.query(
           `SELECT content FROM chat_session_messages
            WHERE session_id = $1 AND role = 'user'
@@ -133,9 +159,9 @@ function voteRoutes(config) {
             userId: req.user.id,
           });
         } catch (err) {
-          log.warn('votes', 'Lazy PR creation threw', { sessionId: session.id, err: err.message });
+          log.warn('votes', 'Lazy PR creation/backfill threw', { sessionId: session.id, backfill: isBackfill, err: err.message });
         }
-        if (!prResult || !session.pr_number) {
+        if (!isBackfill && (!prResult || !session.pr_number)) {
           // Refuse to promote PR-less — a vote with nothing to merge is a
           // dead end. The user can retry; nothing was mutated yet.
           return res.status(502).json({ error: 'Could not create the pull request for this change — try again in a moment.' });
@@ -600,6 +626,11 @@ function voteRoutes(config) {
       for (const row of rows) {
         row.visuals = visualsService.shapeAgg(row.visuals_agg);
         delete row.visuals_agg;
+        // #239: surface in-flight auto-conflict-resolution so the vote
+        // panel can render a "Resolving conflicts…" badge. Process-local
+        // map lookup (no SQL) — authoritative in the single-process
+        // platform, and self-healing on every panel refresh.
+        row.resolving = isResolving(row.id);
       }
 
       // Staging-only demo mode (?demo=1): append long-title mock
@@ -1290,6 +1321,19 @@ async function checkAndMerge(config, pool, session, options = {}) {
       [session.id]
     ).catch(() => {});
 
+    // #9: detect GitHub's "merge conflict" rejection specifically.
+    // Octokit returns status 405 with a message containing "merge
+    // conflict" or "not mergeable" when `pulls.merge` is called on
+    // an unmergeable PR. Computed before the mergeFailed broadcast
+    // below so the broadcast can flag whether the auto-resolver is
+    // about to kick in (#239).
+    const msg = String(err.message || '').toLowerCase();
+    const isConflict =
+      err.status === 405 ||
+      msg.includes('merge conflict') ||
+      msg.includes('not mergeable') ||
+      msg.includes('pull request is not mergeable');
+
     // Un-latch clients. The `merging:true` broadcast above armed the
     // Phase 3 "Platform updating…" banner on every tab for self-hosted
     // apps — and that banner only dismisses on a /api/version SHA flip,
@@ -1298,6 +1342,13 @@ async function checkAndMerge(config, pool, session, options = {}) {
     // merge leaves the whole platform read-only for everyone until the
     // 5-minute stuck timer. mergeFailed:false-positives are harmless:
     // the client just clears a banner that wasn't armed.
+    //
+    // #239: `resolving` rides along when the failure is a conflict AND
+    // the auto-resolver is about to be fired below — clients transition
+    // the banner in place (updating → resolving) instead of silently
+    // dismissing it while the resolver spends 1–2 minutes fixing the
+    // branch. The resolver's own start broadcast can lag by a few
+    // seconds (pollMergeable runs first), so this flag closes the gap.
     try {
       const { pushVoteUpdate } = require('../services/ws');
       pushVoteUpdate({
@@ -1306,14 +1357,12 @@ async function checkAndMerge(config, pool, session, options = {}) {
         merged: false,
         merging: false,
         mergeFailed: true,
+        resolving: isConflict && autoResolve,
         selfHosted: !!session.app_self_hosted,
       });
     } catch (_) { /* ws failures non-fatal */ }
 
-    // #9: detect GitHub's "merge conflict" rejection specifically.
-    // Octokit returns status 405 with a message containing "merge
-    // conflict" or "not mergeable" when `pulls.merge` is called on
-    // an unmergeable PR. The pre-merge gate in checkAndMerge catches
+    // The pre-merge gate in checkAndMerge catches
     // the common case (our recorded behind_main > 0), but races
     // (another PR merging in the window between our last sync and
     // the vote crossing threshold) can slip past it. When that
@@ -1328,13 +1377,6 @@ async function checkAndMerge(config, pool, session, options = {}) {
     //      pre-merge gate's wording, so the user knows it's a
     //      "owner needs to click Sync" situation rather than a
     //      mysterious GitHub blowup.
-    const msg = String(err.message || '').toLowerCase();
-    const isConflict =
-      err.status === 405 ||
-      msg.includes('merge conflict') ||
-      msg.includes('not mergeable') ||
-      msg.includes('pull request is not mergeable');
-
     if (isConflict) {
       try {
         const { rows: bumpRows } = await pool.query(

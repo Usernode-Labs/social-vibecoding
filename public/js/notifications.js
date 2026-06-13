@@ -339,6 +339,29 @@ const Notifications = {
       }
       return;
     }
+    // (#86) Private spec share: persist the spec-panel open state for
+    // the app, then land on Dev → Chat — GroupChat's mount path
+    // (_restoreSpecPanelIfSaved) opens the read-only panel and fetches
+    // the version through the share-widened access check. GroupChat is
+    // a same-script-scope global (const-declared, so not on window) —
+    // hence the bare reference behind a typeof guard.
+    if (item.kind === 'spec_shared' && item.appSlug && item.sessionId) {
+      const version = parseInt(item.detail, 10);
+      if (Number.isInteger(version) && version > 0
+          && typeof GroupChat !== 'undefined' && GroupChat._writeSpecPanelOpen) {
+        GroupChat._writeSpecPanelOpen(item.appSlug, {
+          sessionId: item.sessionId,
+          version,
+          title: `Spec v${version}`,
+        });
+      }
+      if (typeof App !== 'undefined' && App.openAppTab) {
+        App.openAppTab(item.appSlug, 'dev', { subTab: 'chat' });
+      } else {
+        window.location.hash = `#app/${item.appSlug}/dev/chat`;
+      }
+      return;
+    }
     if (item.kind === 'auto_solve_done' && item.appSlug) {
       if (typeof App !== 'undefined' && App.openAppTab) {
         App.openAppTab(item.appSlug, 'dev', {
@@ -797,15 +820,16 @@ function previewText(n) {
     case 'pr_proposed': return `\u{1F5F3}️ ${who} proposed a PR to vote on`;
     case 'reply':       return `${who} replied to you`;
     case 'mention':     return `${who} mentioned you`;
+    case 'spec_shared': return `\u{1F4CB} ${who} shared a spec with you`;
     case 'collab_invite':          return `✉️ ${who} invited you to collaborate`;
     case 'collab_invite_accepted': return `✅ ${who} accepted your invite`;
     case 'session_done':           return `✅ Your dev session finished`;
     case 'auto_solve_done':
       return n.detail === 'failed'
-        ? `⚠️ Auto-solve for issue #${n.headlessIssueNumber || '?'} failed`
+        ? `⚠️ Proposal for issue #${n.headlessIssueNumber || '?'} failed`
         : n.detail === 'question'
-          ? `🤖 Auto-solve for issue #${n.headlessIssueNumber || '?'} has questions for you`
-          : `🤖 Auto-solve for issue #${n.headlessIssueNumber || '?'} is ready`;
+          ? `🤖 Proposal for issue #${n.headlessIssueNumber || '?'} has questions for you`
+          : `🤖 Proposal for issue #${n.headlessIssueNumber || '?'} is ready`;
     default:            return who;
   }
 }
@@ -918,9 +942,9 @@ function renderRow(n) {
     </button>`;
   }
 
-  // #161: headless auto-solve completion. Clicking lands on the app's
+  // #161: headless proposal-run completion. Clicking lands on the app's
   // group chat and reveals the issue row (where "Start session from
-  // auto-solve" lives).
+  // proposal" lives).
   if (n.kind === 'auto_solve_done') {
     const failed = n.detail === 'failed';
     const icon = failed ? '⚠️' : '\u{1F916}';
@@ -940,7 +964,7 @@ function renderRow(n) {
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1 flex-wrap">
         ${dot}
         <span aria-hidden="true">${icon}</span>
-        <span>Auto-solve for</span>
+        <span>Proposal for</span>
         <span class="font-medium text-zinc-700 dark:text-zinc-300">${escapeHtml(issueLabel)}</span>
         <span>in</span>
         <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
@@ -948,6 +972,28 @@ function renderRow(n) {
         <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
       </div>
       <div class="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2 font-medium">${escapeHtml(outcomeText)}</div>
+    </button>`;
+  }
+
+  // (#86) Private spec share: someone sent this user a spec version.
+  // Clicking opens the app's group chat with the read-only spec panel
+  // showing that exact version (see _onItemClick). Second line prefers
+  // the session's PR title / branch name (already joined server-side);
+  // the spec's own H1 appears as soon as the panel loads.
+  if (n.kind === 'spec_shared') {
+    const specLabel = n.prTitle
+      ? escapeHtml(n.prTitle)
+      : (n.branchName ? escapeHtml(n.branchName) : `Spec v${escapeHtml(n.detail || '?')}`);
+    return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
+      <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1 flex-wrap">
+        ${dot}
+        <span aria-hidden="true">\u{1F4CB}</span>
+        <span class="font-medium text-zinc-800 dark:text-zinc-200">@${who}</span>
+        <span>shared a spec with you in</span>
+        <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
+        <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
+      </div>
+      <div class="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2 font-medium">${specLabel}</div>
     </button>`;
   }
 

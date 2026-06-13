@@ -38,12 +38,31 @@ const AppView = {
     proposal: ['bg-sky-500/15 text-sky-500', 'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-11h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5'],
     gov: ['bg-slate-500/15 text-slate-400', 'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z'],
     done: ['bg-emerald-500/10 text-emerald-500', 'M5 13l4 4L19 7'],
+    // Document-text (Heroicons outline) — an issue with an auto-generated
+    // proposal attached (#250). Sky keeps "blue = proposal" consistent with
+    // the proposal cards, while the page shape stays distinct from their
+    // thumbs-up: this is a drafted spec on an issue, not a PR up for a vote.
+    issueProposal: ['bg-sky-500/15 text-sky-500', 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'],
+    // "Mine" variants — distinguished from their base by GLYPH ONLY: they keep
+    // the same sky tint as the base issue/PR chips but swap in a self-contained
+    // pencil/edit mark = "your work-in-progress, jump back in." They mark the
+    // two feed rows where the viewer already has a session waiting: a ready
+    // issue they cloned (Go to session) and an open PR they authored (Open
+    // session). No manual coordinate compositing: issueProposalMine is a true
+    // document-with-pencil (page + folded corner + pencil) so it still reads
+    // as a document; proposalMine is a pencil-in-circle "edit" mark.
+    issueProposalMine: ['bg-sky-500/15 text-sky-500', 'M14 3v4a1 1 0 0 0 1 1h4M17 21h-7a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v4M18.42 15.61a2.1 2.1 0 0 1 2.97 2.97l-3.39 3.42h-3v-3l3.42 -3.39z'],
+    proposalMine: ['bg-sky-500/15 text-sky-500', 'M12 15l8.385 -8.415a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3zM16 5l3 3M9 7.07a7.002 7.002 0 0 0 1 13.93a7.002 7.002 0 0 0 6.929 -6'],
   },
 
   _devCardIcon(type, opts) {
     const [tint, d] = AppView.DEV_CARD_ICONS[type] || AppView.DEV_CARD_ICONS.issue;
     const small = !!(opts && opts.small);
-    return `<span class="${small ? 'w-7 h-7' : 'w-9 h-9'} rounded-lg ${tint} flex items-center justify-center shrink-0">`
+    // pulse: animate the whole chip for in-progress states (#250).
+    // title: hover tooltip naming the state the tint encodes.
+    const pulse = opts && opts.pulse ? ' animate-pulse' : '';
+    const title = opts && opts.title ? ` title="${escapeAttr(opts.title)}"` : '';
+    return `<span class="${small ? 'w-7 h-7' : 'w-9 h-9'} rounded-lg ${tint} flex items-center justify-center shrink-0${pulse}"${title}>`
       + `<svg class="${small ? 'w-4 h-4' : 'w-5 h-5'}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="${d}"/></svg></span>`;
   },
 
@@ -727,7 +746,10 @@ const AppView = {
     });
     menu.querySelector('[data-plus="issue"]').addEventListener('click', () => {
       close();
-      AppView.openNewIssueModal();
+      // Open the shared Send Feedback modal with the dev-context mode:
+      // the open app is preselected as the target (Platform for the
+      // self-hosted app or while the repo doesn't exist yet) — #226.
+      App.openFeedbackModal({ fromDev: true });
     });
     menu.querySelector('[data-plus="settings"]').addEventListener('click', () => {
       close();
@@ -1070,13 +1092,15 @@ const AppView = {
 
   // The feed's display order: fixed groups — proposals being voted on
   // (PR promotions and governance proposals alike) above open issues —
-  // and most-recent-activity-first within each group. Every item
-  // carries a lastActivity sort key = max(its own timestamp, the
-  // latest message in its thread). Ties keep the per-source order
-  // (which preserves the #177 auto-solve-first ranking among quiet
-  // issues). The general-chat card and the viewer's session rows sit
-  // above this feed in the card list, so the full order the user sees
-  // is: chat → sessions → proposals → issues.
+  // then auto-solve rank within the issues group (#227: 'generating'
+  // runs first, finished 'ready' runs awaiting review next, plain
+  // issues last — see _headlessRank), then most-recent-activity-first.
+  // Every item carries a lastActivity sort key = max(its own timestamp,
+  // the latest message in its thread); equal keys keep the per-source
+  // order (GitHub updated-desc for issues) via stable sort. The
+  // general-chat card and the viewer's session rows sit above this feed
+  // in the card list, so the full order the user sees is:
+  // chat → sessions → proposals → issues.
   _feedItems() {
     const ts = (v) => {
       const t = Date.parse(v || '');
@@ -1088,23 +1112,27 @@ const AppView = {
     for (const issue of AppView._visibleGhIssues()) {
       items.push({
         kind: 'issue', id: issue.number, item: issue,
+        r: AppView._headlessRank(issue),
         t: Math.max(ts(issue.updatedAt), ts(issue.lastMessageAt)),
       });
     }
     for (const pr of AppView._proposals || []) {
       items.push({
-        kind: 'proposal', id: pr.id, item: pr,
+        kind: 'proposal', id: pr.id, item: pr, r: 0,
         t: Math.max(ts(pr.promoted_at || pr.created_at), ts(pr.last_message_at)),
       });
     }
     for (const g of AppView._govProposals || []) {
       items.push({
-        kind: 'gov', id: g.id, item: g,
+        kind: 'gov', id: g.id, item: g, r: 0,
         t: Math.max(ts(g.created_at), ts(g.last_message_at)),
       });
     }
     // Array.prototype.sort is stable, so equal keys keep source order.
-    return items.sort((a, b) => (GROUP[a.kind] - GROUP[b.kind]) || (b.t - a.t));
+    // Rank only competes within the issues group — proposals/gov all
+    // carry r: 0 and never share a group with issues.
+    return items.sort((a, b) =>
+      (GROUP[a.kind] - GROUP[b.kind]) || (a.r - b.r) || (b.t - a.t));
   },
 
   _renderFeedInner() {
@@ -1192,7 +1220,7 @@ const AppView = {
       live.innerHTML = `
         <div class="space-y-2">
           ${mine.map((s) => {
-            const label = escapeHtml(s.pr_title || s.branch_name || `Session #${s.id}`);
+            const label = escapeHtml(s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`);
             const statusTag = s.busy
               ? '<span class="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
               : (s.status === 'paused' ? '<span class="text-xs text-zinc-500 shrink-0">paused</span>' : '');
@@ -1244,76 +1272,6 @@ const AppView = {
       : '';
   },
 
-  // "New issue" modal — title + description, posted to the existing
-  // POST /api/apps/:slug/issues with kind='general' (which creates the
-  // GitHub twin and announces to general chat).
-  openNewIssueModal() {
-    const slug = AppView.appData && AppView.appData.slug;
-    if (!slug) return;
-    let root = document.getElementById('new-issue-modal');
-    if (root) root.remove();
-    root = document.createElement('div');
-    root.id = 'new-issue-modal';
-    root.className = 'fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
-    root.innerHTML = `
-      <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
-        <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl relative">
-          <h2 class="text-lg font-bold mb-3 text-zinc-900 dark:text-zinc-100">New issue</h2>
-          <label class="block text-xs font-medium text-zinc-500 mb-1" for="new-issue-title">Title</label>
-          <input id="new-issue-title" maxlength="200" autocomplete="off"
-            class="w-full mb-3 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100"
-            placeholder="Short summary of the problem or idea">
-          <label class="block text-xs font-medium text-zinc-500 mb-1" for="new-issue-desc">Description <span class="text-zinc-400 font-normal">(optional)</span></label>
-          <textarea id="new-issue-desc" rows="4" maxlength="5000"
-            class="w-full mb-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100"
-            placeholder="What's wrong, or what should the app do?"></textarea>
-          <p id="new-issue-error" class="hidden text-xs text-red-400 mb-2"></p>
-          <div class="flex justify-end gap-2">
-            <button data-role="cancel" type="button"
-              class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
-            <button data-role="create" type="button"
-              class="rounded-lg px-4 py-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-500 transition-colors">Create issue</button>
-          </div>
-        </div>
-      </div>`;
-    document.body.appendChild(root);
-    const close = () => root.remove();
-    root.querySelector('[data-role="cancel"]').addEventListener('click', close);
-    root.addEventListener('click', (e) => {
-      if (e.target === root || e.target.dataset.modalBackdrop !== undefined) close();
-    });
-    const createBtn = root.querySelector('[data-role="create"]');
-    createBtn.addEventListener('click', async () => {
-      const title = root.querySelector('#new-issue-title').value.trim();
-      const description = root.querySelector('#new-issue-desc').value.trim();
-      const err = root.querySelector('#new-issue-error');
-      if (!title) {
-        err.textContent = 'Title required';
-        err.classList.remove('hidden');
-        return;
-      }
-      createBtn.disabled = true;
-      createBtn.textContent = 'Creating…';
-      try {
-        const res = await fetch(`/api/apps/${slug}/issues`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title, description, kind: 'general' }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-        close();
-        AppView.refreshDevData('issue');
-      } catch (e2) {
-        err.textContent = e2.message;
-        err.classList.remove('hidden');
-        createBtn.disabled = false;
-        createBtn.textContent = 'Create issue';
-      }
-    });
-    setTimeout(() => root.querySelector('#new-issue-title').focus(), 0);
-  },
-
   // One PR-proposal card: line 1 is identity + info (icon chip, title,
   // PR meta, tally pill, badges), line 2 is the action pills (vote /
   // preview / kudos / Discussion / Open session). With { noNav: true }
@@ -1350,12 +1308,19 @@ const AppView = {
     const unvotedBadge = isUnvoted
       ? '<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 shrink-0" title="You haven\'t voted on this yet"><span class="relative flex h-1.5 w-1.5"><span class="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75 animate-ping"></span><span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-violet-500"></span></span>Vote</span>'
       : '';
+    // #239: resolving badge only when not already merging/merged — the
+    // merge pipeline states outrank the resolver's. No opacity-70 fade
+    // and no disabled vote controls: voting during resolution is valid.
     const stateBadge = isMerging ? AppView.mergingBadgeHtml()
-      : isMerged ? AppView.mergedBadgeHtml() : '';
+      : isMerged ? AppView.mergedBadgeHtml()
+      : pr.resolving ? AppView.resolvingBadgeHtml() : '';
     // Sessions are owner-scoped (GET /api/sessions/:id), so the session
     // button only renders for the proposer.
     const chatN = parseInt(pr.chat_count) || 0;
-    const sessionBtn = (App.user && pr.user_id === App.user.id)
+    // mine: the viewer authored this PR, so they own its dev session. Drives
+    // both the "Open session" button and the violet "yours" chip below.
+    const mine = !!(App.user && pr.user_id === App.user.id);
+    const sessionBtn = mine
       ? `<button class="gc-vote-btn" title="Open the dev session behind this proposal" onclick="AppView.openProposalSession(${pr.id})">Open session</button>`
       : '';
     // #195/#211: before/after capture tiles, collapsed by default behind a
@@ -1381,7 +1346,7 @@ const AppView = {
 
     return `
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}"${visualTiles ? ' data-visuals-scope="1"' : ''}${noNav ? '' : ` data-proposal-row="${pr.id}" title="Open this proposal's discussion"`}>
-        ${AppView._devCardIcon(isMerged ? 'done' : 'proposal')}
+        ${AppView._devCardIcon(isMerged ? 'done' : (mine ? 'proposalMine' : 'proposal'), mine && !isMerged ? { title: 'This is your PR — open its session.' } : undefined)}
         <div class="flex-1 min-w-0">
           <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
             <div class="dev-card-headline">
@@ -1668,31 +1633,37 @@ const AppView = {
 
   // ---- Open Issues section ------------------------------------------------
 
+  // Auto-solve rank for the feed sort (#177/#227). Lower renders first
+  // within the issues group: an in-flight run ('generating') tops the
+  // list, a finished run awaiting review ('ready') follows, everything
+  // else — no headless session, or defensively any unknown/future
+  // status — sorts as a plain issue. 'failed' never reaches the client
+  // (the /github-issues query filters to generating/ready), so it lands
+  // in the plain bucket too. Ranking happens at render time (not
+  // server-side) because the optimistic auto-solve start and the
+  // headless poller both mutate `headless` in place and re-render
+  // without refetching.
+  _headlessRank(issue) {
+    const s = issue.headless && issue.headless.status;
+    return s === 'generating' ? 0 : s === 'ready' ? 1 : 2;
+  },
+
   // The Open Issues list exactly as rendered: env-var-proposal twins
   // filtered out (#131 — those rows render in the dedicated Environment
-  // variables section), then sorted so issues with a live auto-solve
-  // session float to the top (#177): ongoing ('generating') first,
-  // finished ('ready') next, everything else after. Within each group the
-  // fetch order (GitHub updated-desc) is preserved — sort() is stable and
-  // runs on the filter copy, so _ghIssues itself keeps the canonical fetch
-  // order. Sorting happens here at render time (not server-side) because
-  // the optimistic auto-solve start and the headless poller both mutate
-  // `headless` in place and re-render without refetching. Paging
-  // The feed renderer and the open-card index lookup must both use
-  // this helper so paging counts match what's on screen.
+  // variables section). Ordering is owned by _feedItems(), whose
+  // comparator folds in the auto-solve rank (_headlessRank) ahead of
+  // recency. The filter runs on a copy, so _ghIssues itself keeps the
+  // canonical fetch order (GitHub updated-desc). The feed renderer and
+  // the open-card index lookup must both use this helper so paging
+  // counts match what's on screen.
   _visibleGhIssues() {
-    const rank = (i) => {
-      const s = i.headless && i.headless.status;
-      return s === 'generating' ? 0 : s === 'ready' ? 1 : 2;
-    };
     return (AppView._ghIssues || [])
-      .filter((i) => !(AppView._envIssueNumbers && AppView._envIssueNumbers.has(i.number)))
-      .sort((a, b) => rank(a) - rank(b));
+      .filter((i) => !(AppView._envIssueNumbers && AppView._envIssueNumbers.has(i.number)));
   },
 
   // One issue row for the forum feed, with everything the old Open
   // Issues section rendered per row (bounty/kudos, Create PR, the
-  // Auto-solve state machine, Preview, creator attribution) plus the
+  // Generate-proposal state machine, Preview, creator attribution) plus the
   // accordion expansion into the issue body + thread chat.
   _renderIssueRow(issue, opts) {
     const noNav = !!(opts && opts.noNav);
@@ -1719,7 +1690,7 @@ const AppView = {
     const createBtn = `<button class="gc-vote-btn" title="Start a dev chat to solve this issue" onclick="AppView.createPrForIssue(${n})">Create PR</button>`;
     // #155: headless auto-session button. Four states driven by the
     // issue's `headless` field from /github-issues:
-    //   none/failed → "Auto-solve" (opens the confirm + model popup)
+    //   none/failed → "Generate proposal" (opens the confirm + model popup)
     //   generating  → disabled progress label
     //   ready       → contextual clone-for-me label by outcome (#168):
     //                 "Review spec / Review solution / Answer question
@@ -1730,7 +1701,7 @@ const AppView = {
     const h = issue.headless;
     let autoBtn;
     if (h && h.status === 'generating') {
-      autoBtn = `<button class="gc-vote-btn" disabled title="A headless AI session is working on this issue${h.username ? ` (started by ${escapeAttr(h.username)})` : ''}">Generating auto-solve&hellip;</button>`;
+      autoBtn = `<button class="gc-vote-btn" disabled title="A headless AI session is working on this issue${h.username ? ` (started by ${escapeAttr(h.username)})` : ''}">Generating proposal&hellip;</button>`;
     } else if (h && h.status === 'ready') {
       // #183: a code/spec_code run with a live preview gets the
       // changes-ready treatment — label + a Preview button that opens
@@ -1739,10 +1710,10 @@ const AppView = {
       // degrades back to the plain outcome wording.
       const hasPreview = !!h.stagingUrl && (h.outcome === 'code' || h.outcome === 'spec_code');
       const previewBtn = hasPreview
-        ? `<button class="gc-vote-btn gc-vote-btn-preview" title="Open the auto-solve staging preview" onclick="AppView.swapToStagingForSession(${h.sessionId}, '${h.stagingUrl}')">Preview</button>`
+        ? `<button class="gc-vote-btn gc-vote-btn-preview" title="Open the proposal's staging preview" onclick="AppView.swapToStagingForSession(${h.sessionId}, '${h.stagingUrl}')">Preview</button>`
         : '';
       if (h.mySessionId) {
-        autoBtn = `${previewBtn}<button class="gc-vote-btn" title="You already started a session from this auto session — open it" onclick="AppView.goToAutoSessionClone(${h.mySessionId})">Go to session</button>`;
+        autoBtn = `${previewBtn}<button class="gc-vote-btn" title="You already started a session from this proposal — open it" onclick="AppView.goToAutoSessionClone(${h.mySessionId})">Go to session</button>`;
       } else {
         const outcomeNote = h.outcome === 'spec' ? 'it drafted a spec'
           : h.outcome === 'code' ? 'it pushed a code change'
@@ -1752,19 +1723,38 @@ const AppView = {
           : h.outcome === 'spec' ? 'Review spec &amp; start session'
           : h.outcome === 'code' ? 'Review solution &amp; start session'
           : h.outcome === 'question' ? 'Answer question &amp; start session'
-          : 'Start session from auto session';
-        autoBtn = `${previewBtn}<button class="gc-vote-btn" title="Clone the finished auto session (${outcomeNote}) into your own dev chat — others can clone it too" onclick="AppView.startFromAutoSession(${h.sessionId})">${autoLabel}</button>`;
+          : 'Start session from proposal';
+        autoBtn = `${previewBtn}<button class="gc-vote-btn" title="Clone the finished proposal (${outcomeNote}) into your own dev chat — others can clone it too" onclick="AppView.startFromAutoSession(${h.sessionId})">${autoLabel}</button>`;
       }
       // #150: a question outcome doesn't block re-running — answer the
-      // questions on the issue, then press Auto-solve again and the new
-      // run reads the answers. Both paths stay available (whether or not
-      // the viewer already cloned this run).
-      if (h.outcome === 'question') {
-        autoBtn += `<button class="gc-vote-btn" title="Questions were posted on the issue — answer them, then run auto-solve again" onclick="AppView.confirmAutoSession(${n})">Auto-solve</button>`;
+      // questions on the issue, then press Generate proposal again and
+      // the new run reads the answers. But only offer this when the viewer
+      // has NOT already cloned the run: once h.mySessionId is set the row
+      // shows "Go to session", and appending "Generate proposal" there
+      // produces two competing actions for a proposal that already exists.
+      // Gate on !h.mySessionId so the rerun affordance stays only on the
+      // no-session path (where "Go to session" never appears).
+      if (h.outcome === 'question' && !h.mySessionId) {
+        autoBtn += `<button class="gc-vote-btn" title="Questions were posted on the issue — answer them, then generate a proposal again" onclick="AppView.confirmAutoSession(${n})">Generate proposal</button>`;
       }
     } else {
-      autoBtn = `<button class="gc-vote-btn" title="Spin up a headless AI session that starts solving this issue on its own — uses your credits" onclick="AppView.confirmAutoSession(${n})">Auto-solve</button>`;
+      autoBtn = `<button class="gc-vote-btn" title="Spin up a headless AI session that starts solving this issue on its own — uses your credits" onclick="AppView.confirmAutoSession(${n})">Generate proposal</button>`;
     }
+    // #250: the chip icon mirrors the auto-solve state so proposal issues
+    // read at a glance — pulsing sky document while generating, steady sky
+    // document once ready (any outcome, question included: there's something
+    // to review either way), plain amber issue chip otherwise. Unknown
+    // statuses fall through to the plain chip like _headlessRank's bucket.
+    // When the viewer already has a session cloned off this ready issue
+    // (h.mySessionId — same signal as the "Go to session" button), the
+    // document goes violet to mark it as one of "yours" in the feed.
+    const icon = h && h.status === 'generating'
+      ? AppView._devCardIcon('issueProposal', { pulse: true, title: 'A proposal is being generated for this issue' })
+      : h && h.status === 'ready'
+        ? (h.mySessionId
+            ? AppView._devCardIcon('issueProposalMine', { title: 'You have a session for this issue — go to it.' })
+            : AppView._devCardIcon('issueProposal', { title: 'Proposal ready — review it to start a session' }))
+        : AppView._devCardIcon('issue');
     // #133: the creating user renders in the meta line below the title.
     // created_by_username comes from the /github-issues route (local
     // issues table → body Source line → GitHub login); omitted when the
@@ -1775,7 +1765,7 @@ const AppView = {
 
     html += `
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" data-ref-issue="${n}"${noNav ? '' : ` data-issue-row="${n}" title="Open this issue's discussion"`}>
-        ${AppView._devCardIcon('issue')}
+        ${icon}
         <div class="flex-1 min-w-0">
           <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
             <div class="dev-card-headline">
@@ -1970,7 +1960,7 @@ const AppView = {
 
   _headlessPollTimer: null,
 
-  // "Auto-solve" — confirmation popup (token warning + model selector)
+  // "Generate proposal" — confirmation popup (token warning + model selector)
   // before spinning up a headless AI session on this issue. The session is
   // billed to the clicking user but isn't attached to their dev chat.
   async confirmAutoSession(issueNumber) {
@@ -2004,18 +1994,18 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        alert(data.error || `Couldn't start the auto session (HTTP ${resp.status}).`);
+        alert(data.error || `Couldn't start generating the proposal (HTTP ${resp.status}).`);
         return;
       }
       const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
       if (issue) issue.headless = { sessionId: data.session.id, status: 'generating' };
       AppView._rerenderFeed();
     } catch (err) {
-      alert(`Couldn't start the auto session: ${err.message}`);
+      alert(`Couldn't start generating the proposal: ${err.message}`);
     }
   },
 
-  // Singleton confirm popup for Auto-solve. Same scrim/card styling as
+  // Singleton confirm popup for Generate proposal. Same scrim/card styling as
   // ConfirmModal (confirm-modal.js) plus a model <select>; resolves to the
   // chosen model id, or null on cancel/backdrop/Esc.
   _showAutoSessionModal(issueNumber, models, preselect) {
@@ -2030,7 +2020,7 @@ const AppView = {
     root.innerHTML = `
       <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
         <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl relative">
-          <h2 class="text-lg font-bold mb-2 text-zinc-900 dark:text-zinc-100">Start auto session for issue #${issueNumber}?</h2>
+          <h2 class="text-lg font-bold mb-2 text-zinc-900 dark:text-zinc-100">Generate proposal for issue #${issueNumber}?</h2>
           <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
             This spins up a <b>headless AI session</b> that immediately starts working on the
             issue on its own — investigating the repo and drafting a spec, pushing a code
@@ -2053,7 +2043,7 @@ const AppView = {
             <button data-role="cancel" type="button"
               class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
             <button data-role="confirm" type="button"
-              class="rounded-lg px-4 py-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-500 transition-colors">Start auto session</button>
+              class="rounded-lg px-4 py-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-500 transition-colors">Generate proposal</button>
           </div>
         </div>
       </div>`;
@@ -2083,7 +2073,7 @@ const AppView = {
     });
   },
 
-  // "Start session from auto session" — clone the finished headless session
+  // "Start session from proposal" — clone the finished headless session
   // (chat history + spec + branch + CC memory) into a dev chat owned by the
   // clicking user, then land them in it. Any number of users can do this
   // independently; each clone gets its own branch and PR path.
@@ -2093,7 +2083,7 @@ const AppView = {
       const resp = await fetch(`/api/sessions/${headlessSessionId}/clone-headless`, { method: 'POST' });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        alert(data.error || `Couldn't start a session from the auto session (HTTP ${resp.status}).`);
+        alert(data.error || `Couldn't start a session from the proposal (HTTP ${resp.status}).`);
         return;
       }
       // #172: remember the clone locally so a back-navigation to the
@@ -2110,7 +2100,7 @@ const AppView = {
         await App.switchTab('dev', data.session.id, 'sessions');
       }
     } catch (err) {
-      alert(`Couldn't start a session from the auto session: ${err.message}`);
+      alert(`Couldn't start a session from the proposal: ${err.message}`);
     }
   },
 
@@ -2127,7 +2117,7 @@ const AppView = {
 
   // While any rendered issue shows a generating auto session, poll the
   // issues endpoint so the button flips to its outcome-specific "Review
-  // … & start session" label (or back to Auto-solve on failure) without
+  // … & start session" label (or back to Generate proposal on failure) without
   // a manual refresh.
   _syncHeadlessPolling() {
     const generating = (AppView._ghIssues || []).some(
@@ -2215,6 +2205,15 @@ const AppView = {
   // Shared by the vote panel rows and the inline group-chat rows.
   mergingBadgeHtml() {
     return `<span class="gc-merging-badge"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Merging…</span>`;
+  },
+
+  // #239: "Resolving conflicts…" badge — same slot and treatment as the
+  // merging badge, shown while the auto-conflict-resolver has a sync in
+  // flight for the PR (row.resolving from GET /api/apps/:slug/promoted).
+  // Voting stays enabled while it's up: votes cast during resolution
+  // count toward the retried merge.
+  resolvingBadgeHtml() {
+    return `<span class="gc-merging-badge gc-resolving-badge"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Resolving conflicts…</span>`;
   },
 
   // "Merged" badge — the settled counterpart of the merging badge, shown
@@ -2822,7 +2821,7 @@ const AppView = {
     overlay.classList.remove('hidden');
     if (window.DevConsole) DevConsole.setButtonVisible(true);
 
-    AppView._renderTestingControls(buildSrc, pending);
+    AppView._renderTestingControls(buildSrc, pending, jump);
 
     document.getElementById('staging-back').onclick = () => {
       AppView.closeStagingOverlay();
@@ -2863,8 +2862,10 @@ const AppView = {
   _stagingTesting: null,
 
   // #127: show/hide + wire the overlay's "Test this change" button and the
-  // collapsible "How to test" panel for the current preview.
-  _renderTestingControls(buildSrc, pending) {
+  // collapsible "How to test" panel for the current preview. `jump` is true
+  // only when the preview was entered via an explicit "Test this change"
+  // button — the one path where the panel auto-opens (#237).
+  _renderTestingControls(buildSrc, pending, jump) {
     const btn = document.getElementById('staging-test-btn');
     const panel = document.getElementById('staging-testing-panel');
     const content = document.getElementById('staging-testing-content');
@@ -2881,9 +2882,13 @@ const AppView = {
     }
 
     // Bot-authored markdown: render through DevChat's escaping markdown
-    // pipeline when available, otherwise fall back to escaped plain text.
+    // pipeline (marked + DOMPurify), falling back to escaped plain text if
+    // dev-chat.js failed to load. Reach DevChat via a bare reference and
+    // `typeof` guard rather than `window.DevChat` — DevChat is a top-level
+    // `const`, which never becomes a `window` property (#237; same pitfall
+    // documented in group-chat.js).
     if (t.md) {
-      content.innerHTML = (window.DevChat && typeof DevChat.renderMarkdown === 'function')
+      content.innerHTML = (typeof DevChat !== 'undefined' && typeof DevChat.renderMarkdown === 'function')
         ? DevChat.renderMarkdown(t.md)
         : `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(t.md)}</pre>`;
     } else {
@@ -2893,20 +2898,29 @@ const AppView = {
     btn.classList.remove('hidden');
     btn.title = t.path ? 'Open the preview at the changed feature' : 'Show the testing instructions';
     btn.onclick = () => {
-      if (t.path) {
-        // Retarget the (possibly still pending) load at the deep link.
-        pending.src = buildSrc(t.path);
-        if (iframe && iframe.src) iframe.src = pending.src;
-        if (t.md) panel.classList.remove('hidden');
-      } else {
-        panel.classList.toggle('hidden');
+      // Toggle: a second click (panel already open) just closes it.
+      if (t.md && !panel.classList.contains('hidden')) {
+        panel.classList.add('hidden');
+        return;
       }
+      if (t.path) {
+        // Retarget the (possibly still pending) load at the deep link —
+        // only if it isn't already pointing there, so re-opening the
+        // panel doesn't reload the iframe.
+        const target = buildSrc(t.path);
+        if (pending.src !== target) {
+          pending.src = target;
+          if (iframe && iframe.src) iframe.src = target;
+        }
+      }
+      if (t.md) panel.classList.remove('hidden');
     };
     if (closeBtn) closeBtn.onclick = () => panel.classList.add('hidden');
 
-    // Auto-open the instructions so a tester landing in the preview sees
-    // the steps without hunting; the × dismisses them.
-    if (t.md) panel.classList.remove('hidden');
+    // #237: the panel no longer auto-opens on every preview. It auto-shows
+    // only when the user entered through an explicit "Test this change"
+    // button (jump) — plain Preview keeps it hidden until asked for.
+    if (jump && t.md) panel.classList.remove('hidden');
   },
 
   // Incremented on every swap/close so an in-flight readiness poll for a
@@ -3024,11 +3038,28 @@ const AppView = {
       view: appData.view_visibility || 'public',
     };
 
-    // Visibility section: creator/admin only.
+    // Visibility section: creator/admin only. Changing visibility opens
+    // a dapp.json PR (issue #124), so it needs a repo — without one the
+    // pills are disabled with a hint.
     const visSection = document.getElementById('members-visibility-section');
+    const visStatus = document.getElementById('members-vis-error');
+    if (visStatus) {
+      visStatus.textContent = '';
+      visStatus.className = 'text-red-400 text-sm hidden';
+    }
     if (visSection) {
       visSection.classList.toggle('hidden', !appData.can_manage);
-      if (appData.can_manage) AppView._renderMembersVisPills();
+      if (appData.can_manage) {
+        AppView._renderMembersVisPills();
+        if (!appData.repo_url) {
+          visSection.querySelectorAll('[data-m-collab-vis], [data-m-view-vis]')
+            .forEach((p) => { p.disabled = true; });
+          if (visStatus) {
+            visStatus.textContent = 'Visibility changes are proposed as a dapp.json pull request — this app has no GitHub repository, so they\'re unavailable.';
+            visStatus.className = 'text-sm text-zinc-500 dark:text-zinc-400';
+          }
+        }
+      }
     }
     AppView._wireMembersModal();
 
@@ -3097,51 +3128,62 @@ const AppView = {
     if (hint) hint.classList.toggle('hidden', !collabPublic);
   },
 
-  // Pill click → optimistic local state + PATCH. On failure, revert to
-  // the server's last-known values from appData.
+  // Pill click → confirm → open a visibility-change proposal (a PR that
+  // edits dapp.json's `visibility` block — issue #124). NOT optimistic:
+  // the pills keep showing the current values until the proposal passes
+  // its vote, merges, and the redeploy's reconcile fires the
+  // `visibility_changed` WS event (handled in app.js, which re-renders
+  // the pills if this modal is open).
   async _setMembersVisibility(kind, value) {
-    const prev = { ...AppView._membersVis };
+    const cur = {
+      collab: AppView.appData.collab_visibility || 'public',
+      view: AppView.appData.view_visibility || 'public',
+    };
     const v = value === 'private' ? 'private' : 'public';
+    const target = { ...cur };
     if (kind === 'collab') {
-      AppView._membersVis.collab = v;
-      if (v === 'public') AppView._membersVis.view = 'public';
+      target.collab = v;
+      if (v === 'public') target.view = 'public';
     } else {
-      AppView._membersVis.view = (AppView._membersVis.collab === 'private') ? v : 'public';
+      target.view = (cur.collab === 'private') ? v : 'public';
     }
-    AppView._renderMembersVisPills();
-    if (prev.collab === AppView._membersVis.collab && prev.view === AppView._membersVis.view) return;
+    if (target.collab === cur.collab && target.view === cur.view) return;
 
-    const errEl = document.getElementById('members-vis-error');
-    if (errEl) errEl.classList.add('hidden');
+    const statusEl = document.getElementById('members-vis-error');
+    const setStatus = (msg, isError) => {
+      if (!statusEl) return;
+      statusEl.textContent = msg;
+      statusEl.className = `text-sm ${isError ? 'text-red-400' : 'text-zinc-500 dark:text-zinc-400'}`;
+      statusEl.classList.toggle('hidden', !msg);
+    };
+    setStatus('', false);
+
+    if (!window.confirm(
+      'Changing visibility opens a proposal that needs the group\'s vote. '
+      + 'The change applies after the vote passes and the app redeploys. Open the proposal?'
+    )) return;
+
     try {
-      const res = await fetch(`/api/apps/${AppView.appData.slug}/visibility`, {
-        method: 'PATCH',
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/visibility-pr`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          collabVisibility: AppView._membersVis.collab,
-          viewVisibility: AppView._membersVis.view,
+          collabVisibility: target.collab,
+          viewVisibility: target.view,
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      // Keep the in-memory app row honest so re-opens render correctly
-      // and tab gating recomputes on the next open.
-      AppView.appData.collab_visibility = AppView._membersVis.collab;
-      AppView.appData.view_visibility = AppView._membersVis.view;
-      // Going collab-public dissolves the invite/member sections.
-      const isPrivate = AppView._membersVis.collab === 'private';
-      const inviteSection = document.getElementById('members-invite-section');
-      const listSection = document.getElementById('members-list-section');
-      if (inviteSection) inviteSection.classList.toggle('hidden', !isPrivate);
-      if (listSection) listSection.classList.toggle('hidden', !isPrivate);
-      if (isPrivate) AppView.loadCollaborators();
-    } catch (err) {
-      AppView._membersVis = prev;
-      AppView._renderMembersVisPills();
-      if (errEl) {
-        errEl.textContent = `Visibility change failed: ${err.message}`;
-        errEl.classList.remove('hidden');
+      if (res.status === 409) {
+        setStatus('A visibility change is already up for vote — see the proposal in the Dev tab\'s vote panel.', false);
+        return;
       }
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setStatus(
+        `Proposal opened (PR #${data.prNumber}) — it needs the group's vote in the Dev tab's vote panel before the new visibility applies.`,
+        false
+      );
+    } catch (err) {
+      setStatus(`Could not open the visibility proposal: ${err.message}`, true);
     }
   },
 
@@ -3261,7 +3303,198 @@ const AppView = {
       }
     }
   },
+
+  // ── App LLM access consent flow (issue #34) ────────────────────────
+  //
+  // The bridge's usernode.requestLlmAccess()/getLlmAccess() post a
+  // `__usernode_llm` message to window.parent; the shell (this file —
+  // it owns the app iframe) answers. The consent dialog is
+  // platform-owned: it renders over the app, from our origin, so an
+  // app cannot approve itself. Wired via the top-level message
+  // listener at the bottom of this file.
+
+  async handleLlmBridgeMessage(e) {
+    const data = e.data;
+    if (!data || !data.id) return;
+    const type = data.__usernode_llm;
+    if (type !== 'request-access' && type !== 'get-access') return;
+
+    // Only the app iframes this shell owns may ask. The staging
+    // preview iframe is accepted too so AI-consent flows are
+    // exercisable in PR previews (the staging proxy path itself is
+    // disabled server-side — staging containers hold no proxy token).
+    const appIframe = document.getElementById('app-iframe');
+    const stagingIframe = document.getElementById('staging-iframe');
+    const fromApp = appIframe && e.source === appIframe.contentWindow;
+    const fromStaging = stagingIframe && e.source === stagingIframe.contentWindow;
+    if (!fromApp && !fromStaging) return;
+    const slug = AppView.appData?.slug;
+    if (!slug) return;
+
+    const reply = (value, error) => {
+      try {
+        e.source.postMessage(
+          { __usernode_llm: 'response', id: data.id, value: value ?? null, error: error ?? null },
+          '*'
+        );
+      } catch {}
+    };
+    // Ack immediately so the bridge stops its "no shell here" timer —
+    // the user may take minutes on the dialog below.
+    try { e.source.postMessage({ __usernode_llm: 'ack', id: data.id }, '*'); } catch {}
+
+    let info;
+    try {
+      const r = await fetch(`/api/apps/${slug}/llm-grant`, { credentials: 'same-origin' });
+      if (!r.ok) throw new Error(`status ${r.status}`);
+      info = await r.json();
+    } catch (err) {
+      reply(null, 'Failed to load AI permission state.');
+      return;
+    }
+
+    const active = info.grant && info.grant.status === 'active';
+    const current = active
+      ? { granted: true, dailyCapCents: info.grant.dailyCapCents, allowByok: info.grant.allowByok }
+      : { granted: false };
+    if (type === 'get-access' || active) {
+      reply(current);
+      return;
+    }
+
+    const decision = await AppView.showLlmConsentModal(info);
+    if (!decision) {
+      reply({ granted: false, declined: true });
+      return;
+    }
+    try {
+      const r = await fetch('/api/me/llm-grants', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          appSlug: slug,
+          dailyCapCents: decision.dailyCapCents,
+          allowByok: decision.allowByok,
+        }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        reply(null, j.error || 'Failed to save permission.');
+        return;
+      }
+      reply({
+        granted: true,
+        dailyCapCents: j.grant.dailyCapCents,
+        allowByok: j.grant.allowByok,
+      });
+    } catch (err) {
+      reply(null, 'Network error saving permission.');
+    }
+  },
+
+  // Singleton consent dialog, same scrim/card pattern as
+  // confirm-modal.js. Resolves { dailyCapCents, allowByok } on Allow,
+  // null on "Not now" / backdrop / Esc.
+  _llmModalEl: null,
+  showLlmConsentModal(info) {
+    return new Promise((resolve) => {
+      // Recreate the element on every open so listeners from a prior
+      // dialog don't accumulate on the reused node.
+      if (AppView._llmModalEl) {
+        AppView._llmModalEl.remove();
+        AppView._llmModalEl = null;
+      }
+      const root = document.createElement('div');
+      root.id = 'llm-consent-modal';
+      root.className = 'hidden fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
+      document.body.appendChild(root);
+      AppView._llmModalEl = root;
+
+      const appName = info.app?.name || info.app?.slug || 'This app';
+      const suggested = info.llm?.suggestedCapCents ?? null;
+      const prefillCents = suggested ?? info.defaultCapCents ?? 100;
+      const maxCents = info.maxCapCents || 2500;
+      const purposeLine = info.llm?.purpose
+        ? `<p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3 italic">&ldquo;${escapeHtml(info.llm.purpose)}&rdquo;</p>`
+        : '';
+      const suggestedNote = suggested != null
+        ? `<p class="text-xs text-zinc-500 dark:text-zinc-500 mt-1">Suggested by this app &mdash; you can change it.</p>`
+        : `<p class="text-xs text-zinc-500 dark:text-zinc-500 mt-1">You can change this anytime in Settings.</p>`;
+      const byokBlock = info.hasApiKey
+        ? `<label class="flex items-start gap-2 cursor-pointer select-none mt-4">
+             <input id="llm-consent-byok" type="checkbox" class="accent-violet-500 w-4 h-4 mt-0.5" />
+             <span class="text-xs text-zinc-700 dark:text-zinc-300">If my daily platform budget runs out, let this app keep going on my own API key (still limited by the cap above).</span>
+           </label>`
+        : '';
+
+      root.innerHTML = `
+        <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
+          <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl relative">
+            <h2 class="text-lg font-bold mb-2 text-zinc-900 dark:text-zinc-100">Allow ${escapeHtml(appName)} to use AI?</h2>
+            ${purposeLine}
+            <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
+              This lets <strong>${escapeHtml(appName)}</strong> spend from your daily AI budget &mdash; the same one your dev chats use &mdash; up to the daily cap below.
+            </p>
+            <label class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1" for="llm-consent-cap">Daily cap for this app ($ per day)</label>
+            <input id="llm-consent-cap" type="number" min="0.01" step="0.01"
+              value="${(prefillCents / 100).toFixed(2)}"
+              class="w-32 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono" />
+            ${suggestedNote}
+            ${byokBlock}
+            <div id="llm-consent-error" class="hidden text-sm text-red-500 mt-3"></div>
+            <div class="flex justify-end gap-2 mt-5">
+              <button id="llm-consent-decline" type="button"
+                class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Not now</button>
+              <button id="llm-consent-allow" type="button"
+                class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Allow</button>
+            </div>
+          </div>
+        </div>`;
+
+      const done = (result) => {
+        root.classList.add('hidden');
+        document.removeEventListener('keydown', onKey);
+        resolve(result);
+      };
+      const onKey = (ev) => {
+        if (ev.key === 'Escape') done(null);
+      };
+      document.addEventListener('keydown', onKey);
+
+      root.addEventListener('click', (ev) => {
+        if (ev.target === root || ev.target.dataset.modalBackdrop !== undefined) done(null);
+      }, { once: false });
+      root.querySelector('#llm-consent-decline').addEventListener('click', () => done(null));
+      root.querySelector('#llm-consent-allow').addEventListener('click', () => {
+        const errEl = root.querySelector('#llm-consent-error');
+        const dollars = parseFloat(root.querySelector('#llm-consent-cap').value);
+        const cents = Math.round(dollars * 100);
+        if (!Number.isFinite(dollars) || !Number.isInteger(cents) || cents <= 0) {
+          errEl.textContent = 'Enter a valid daily cap (at least $0.01).';
+          errEl.classList.remove('hidden');
+          return;
+        }
+        if (cents > maxCents) {
+          errEl.textContent = `The cap can't exceed your own daily limit ($${(maxCents / 100).toFixed(2)}).`;
+          errEl.classList.remove('hidden');
+          return;
+        }
+        const byokInput = root.querySelector('#llm-consent-byok');
+        done({ dailyCapCents: cents, allowByok: !!(byokInput && byokInput.checked) });
+      });
+
+      root.classList.remove('hidden');
+    });
+  },
 };
+
+// Bridge → shell consent relay for app LLM access (issue #34). One
+// top-level listener; handleLlmBridgeMessage verifies the source is an
+// iframe this shell owns and ignores everything else.
+window.addEventListener('message', (e) => {
+  try { AppView.handleLlmBridgeMessage(e); } catch {}
+});
 
 // Small helpers used by the #21 version pill. Kept local so app-view
 // stays self-contained — the dev-console has its own copy of these.

@@ -3617,4 +3617,104 @@
       });
     };
   }
+
+  // =====================================================================
+  //  Public API: LLM access (usernode.requestLlmAccess / getLlmAccess)
+  // =====================================================================
+  //
+  // Consent flow for the platform's app-LLM proxy (issue #34). These do
+  // NOT ride the native relay above — they target the Usernode Social
+  // Vibecoding shell (the parent page owning the app iframe), which
+  // listens for the distinct `__usernode_llm` message family and opens
+  // a platform-owned consent dialog. An app cannot approve itself.
+  //
+  //   usernode.getLlmAccess()      → { granted, dailyCapCents?, allowByok? }
+  //       read-only: the current user's grant state for this app.
+  //   usernode.requestLlmAccess()  → same shape (plus declined: true
+  //       when the user picked "Not now"); opens the consent dialog
+  //       when no active grant exists.
+  //
+  // Both reject on a short ack-timeout when there is no parent shell
+  // (standalone page, non-SV host, or an old shell that predates the
+  // feature). After the shell acks, requestLlmAccess waits much longer
+  // — the user is reading a dialog.
+  //
+  // Recommended app pattern: the app SERVER calls the proxy
+  // (USERNODE_LLM_PROXY_URL) and surfaces its 403 grant_required to the
+  // frontend, which calls usernode.requestLlmAccess() and retries.
+  (function () {
+    var _LLM_ACK_TIMEOUT_MS = 15000;
+    var _LLM_DECISION_TIMEOUT_MS = 5 * 60 * 1000;
+    var _llmPending = {};
+
+    window.addEventListener("message", function (e) {
+      if (e.source !== window.parent) return;
+      var data = e.data;
+      if (!data || !data.__usernode_llm || !data.id) return;
+      var entry = _llmPending[data.id];
+      if (!entry) return;
+      if (data.__usernode_llm === "ack") {
+        // Shell received the request; the user may take a while now.
+        if (entry.ackTimer) { clearTimeout(entry.ackTimer); entry.ackTimer = null; }
+        return;
+      }
+      if (data.__usernode_llm === "response") {
+        delete _llmPending[data.id];
+        if (entry.ackTimer) clearTimeout(entry.ackTimer);
+        if (entry.timer) clearTimeout(entry.timer);
+        if (data.error) entry.reject(new Error(data.error));
+        else entry.resolve(data.value);
+      }
+    });
+
+    function llmCall(type) {
+      return new Promise(function (resolve, reject) {
+        if (window === window.parent) {
+          reject(new Error(
+            "LLM access requires the Usernode platform shell (not available standalone)."
+          ));
+          return;
+        }
+        var id = "llm-" + String(Date.now()) + "-" +
+          Math.random().toString(16).slice(2);
+        var entry = { resolve: resolve, reject: reject, ackTimer: null, timer: null };
+        _llmPending[id] = entry;
+        entry.ackTimer = setTimeout(function () {
+          if (!_llmPending[id]) return;
+          delete _llmPending[id];
+          if (entry.timer) clearTimeout(entry.timer);
+          reject(new Error(
+            "Usernode shell did not respond — not running inside the platform, " +
+            "or the host page predates LLM access."
+          ));
+        }, _LLM_ACK_TIMEOUT_MS);
+        entry.timer = setTimeout(function () {
+          if (!_llmPending[id]) return;
+          delete _llmPending[id];
+          if (entry.ackTimer) clearTimeout(entry.ackTimer);
+          reject(new Error("LLM access request timed out."));
+        }, _LLM_DECISION_TIMEOUT_MS);
+        try {
+          console.log(_BRIDGE_TAG, "llm → parent:", type, "id", id);
+          window.parent.postMessage({ __usernode_llm: type, id: id }, "*");
+        } catch (err) {
+          delete _llmPending[id];
+          if (entry.ackTimer) clearTimeout(entry.ackTimer);
+          if (entry.timer) clearTimeout(entry.timer);
+          reject(err);
+        }
+      });
+    }
+
+    if (typeof window.usernode.requestLlmAccess !== "function") {
+      window.usernode.requestLlmAccess = function requestLlmAccess() {
+        return llmCall("request-access");
+      };
+    }
+    if (typeof window.usernode.getLlmAccess !== "function") {
+      window.usernode.getLlmAccess = function getLlmAccess() {
+        return llmCall("get-access");
+      };
+    }
+  })();
 })();

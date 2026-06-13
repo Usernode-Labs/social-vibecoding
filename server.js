@@ -22,6 +22,8 @@ const { statusRoutes } = require('./src/routes/status');
 const { internalRoutes } = require('./src/routes/internal');
 const { visualsRoutes } = require('./src/routes/visuals');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
+const appLlmProxyRoutes = require('./src/routes/app-llm-proxy');
+const { llmGrantsRoutes } = require('./src/routes/llm-grants');
 const github = require('./src/services/github');
 const llm = require('./src/services/llm');
 const worker = require('./src/services/worker');
@@ -123,6 +125,7 @@ app.use('/explorer-api', (req, res) => {
 // large limit. See routes/anthropic-proxy.js for the scoped parser.
 app.use((req, res, next) => {
   if (req.path.startsWith('/api/internal/anthropic/')) return next();
+  if (req.path.startsWith('/api/app-llm/')) return next();
   express.json()(req, res, next);
 });
 app.use(cookieParser());
@@ -263,6 +266,17 @@ app.use(internalRoutes(config));
 // gate as internalRoutes; not reachable through Caddy externally.
 app.use(anthropicProxyRoutes(config));
 
+// Dapp → platform LLM proxy (issue #34). App containers call
+// /api/app-llm/v1/messages with their per-app token
+// (USERNODE_LLM_PROXY_TOKEN) plus the user's iframe JWT; the proxy
+// verifies both, requires an active per-(app,user) grant, swaps in the
+// real key (platform or the user's own, per the grant), meters spend
+// against the user's daily budget AND the grant's per-app cap, and
+// forwards to api.anthropic.com. Same private-IP gate as the worker
+// proxy; mounted before authMiddleware because callers are app
+// containers, not browser sessions.
+app.use(appLlmProxyRoutes(config));
+
 // Before/after visuals artifacts (#195). Public by design: GitHub's camo
 // proxy fetches the PR-body embeds anonymously, so this must not redirect
 // to login. Access control is the unguessable 32-hex artifact id.
@@ -281,6 +295,7 @@ app.use(dashboardRoutes(config));
 app.use(feedbackRoutes(config));
 app.use(notificationsRoutes(config));
 app.use(collaboratorRoutes(config));
+app.use(llmGrantsRoutes(config));
 
 app.get('/api/iframe-token', async (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
@@ -675,21 +690,44 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   const commitHash = compare.commits[compare.commits.length - 1]?.sha || 'latest';
   const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
 
-  // Create PR if missing (active-session recovery only).
+  // Create PR if missing (active-session recovery only). Route through
+  // applyPrMetadata — NOT a bare createPR — so the PR gets a real
+  // generated title/body and pr_title/session_title are persisted. A
+  // bare createPR here used to mint PRs titled "Changes on <branch>"
+  // with pr_title left NULL; the promote path then trusted pr_number's
+  // presence and skipped its own metadata pass, so the throwaway title
+  // stuck (the UI then renders its own "Change by <user>" NULL-fallback).
   if (!session.pr_number) {
     try {
-      const pr = await ghub.createPR(owner, repo, {
-        branch: session.branch_name,
-        title: `Changes on ${session.branch_name}`,
-        body: `Recovered dev session via Usernode`,
-      });
-      await pool.query(
-        `UPDATE chat_sessions SET pr_number = $1, pr_url = $2 WHERE id = $3`,
-        [pr.number, pr.html_url, session.id]
+      // username + latest user message give applyPrMetadata the same
+      // signals the live dev-turn path has; without the username the
+      // fallback title would read "undefined's changes".
+      const { rows: ctxRows } = await pool.query(
+        `SELECT u.username,
+                (SELECT content FROM chat_session_messages
+                  WHERE session_id = cs.id AND role = 'user'
+                  ORDER BY id DESC LIMIT 1) AS last_user_message
+           FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id
+          WHERE cs.id = $1`,
+        [session.id]
       );
-      session.pr_number = pr.number;
-      session.pr_url = pr.html_url;
-    } catch {}
+      const username = ctxRows[0]?.username || session.username || 'someone';
+      const recoveredUserMessage = ctxRows[0]?.last_user_message || '';
+      const prMetadata = require('./src/services/pr-metadata');
+      await prMetadata.applyPrMetadata({
+        pool, session, repoOwner: owner, repoName: repo,
+        userMessage: recoveredUserMessage,
+        ccSummary: '',
+        username,
+        userId: session.user_id,
+        broadcast: (event, data) =>
+          broadcastGlobal({ type: 'session_event', sessionId: session.id, event, ...data }),
+      });
+    } catch (err) {
+      log.warn('server', 'Recovery PR creation via applyPrMetadata failed', {
+        sessionId: session.id, err: err.message,
+      });
+    }
   }
 
   const stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);

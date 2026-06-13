@@ -17,6 +17,7 @@
       document.documentElement.classList.remove('dark');
     }
   </script>
+  <script src="/js/theme.js"></script>
   <script src="/usernode-bridge.js"></script>
   <script>
     // Hide the header title when running as the top frame of the
@@ -178,6 +179,21 @@
       <span class="text-sm font-medium">Settings</span>
       <span id="drawer-byok-dot" class="hidden ml-auto w-2 h-2 rounded-full bg-emerald-500 shrink-0" aria-hidden="true"></span>
     </button>
+    <!-- Theme — Light / Dark / System segmented control. Unlike the rows
+         above this is a live control, not a navigation action: it is a
+         non-clickable container (no hover bg) and tapping a mode does NOT
+         close the drawer. Wired in App.HeaderMenu (app.js); active state
+         is driven from Theme.get() via _renderThemeButtons(). -->
+    <div id="drawer-row-theme"
+         class="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300">
+      <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+      <span class="text-sm font-medium">Theme</span>
+      <div class="ml-auto flex items-center gap-1 text-xs">
+        <button data-theme-mode="light" class="px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">Light</button>
+        <button data-theme-mode="dark" class="px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">Dark</button>
+        <button data-theme-mode="system" class="px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">System</button>
+      </div>
+    </div>
   </div>
 
   <!-- Persistent banner shown only while an admin has flipped the
@@ -213,6 +229,13 @@
     <button id="platform-updating-reload" type="button"
             class="hidden ml-2 px-2 py-0.5 rounded border border-current text-xs font-semibold hover:bg-current/10"
             onclick="location.reload()">Reload</button>
+    <!-- #239: shown only in the resolving banner's red "resolution
+         failed" terminal state — that variant has no SHA flip or
+         reload coming, so the user dismisses it by hand (it also
+         auto-hides after ~20s). -->
+    <button id="platform-updating-dismiss" type="button"
+            class="hidden ml-2 px-2 py-0.5 rounded border border-current text-xs font-semibold hover:bg-current/10"
+            onclick="App.PlatformUpdating.dismissResolveFailure()">Dismiss</button>
   </div>
 
   <!-- Home screen: app list. Rendered as a responsive grid of tiles
@@ -324,8 +347,10 @@
     <div class="relative flex-1">
       <iframe id="staging-iframe" class="absolute inset-0 w-full h-full border-0" style="background:#08080f"></iframe>
       <!-- #127: collapsible "How to test" panel overlaying the top of the
-           preview. Content is bot-authored markdown rendered through the
-           escaping markdown pipeline in AppView._renderTestingPanel. -->
+           preview. Hidden until requested via the "Test this change" button
+           (auto-shown only for that explicit entry path, #237). Content is
+           bot-authored markdown rendered through the escaping markdown
+           pipeline in AppView._renderTestingControls. -->
       <div id="staging-testing-panel" class="hidden absolute top-2 left-2 right-2 sm:left-auto sm:w-96 z-10 rounded-lg border border-violet-500/30 bg-zinc-900/95 backdrop-blur shadow-xl">
         <div class="flex items-center gap-2 px-3 py-2 border-b border-zinc-800">
           <span class="text-xs font-semibold text-violet-300">How to test</span>
@@ -642,6 +667,20 @@
       </p>
 
       <div id="settings-status" class="text-sm mt-3 hidden"></div>
+
+      <!-- App AI permissions (issue #34). Lists every app the user has
+           granted access to their daily AI budget: today's spend vs the
+           per-app cap, a cap editor, the BYOK spillover toggle, and
+           Revoke. Rendered by Settings._renderLlmGrants() on modal open
+           from GET /api/me/llm-grants (?demo=1 passthrough in staging). -->
+      <div id="llm-grants-section" class="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
+        <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">App AI permissions</h3>
+        <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
+          Apps you've allowed to use AI on your behalf. Their spend counts against your normal daily budget, plus the per-app cap you set. Revoking takes effect immediately.
+        </p>
+        <div id="llm-grants-list" class="space-y-2"></div>
+        <div id="llm-grants-status" class="text-sm mt-2 hidden"></div>
+      </div>
 
       <!-- Wallet linking section -->
       <div id="wallet-section" class="hidden mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">

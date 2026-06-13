@@ -5,7 +5,9 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const llm = require('../services/llm');
 const github = require('../services/github');
+const webFetch = require('../services/web-fetch');
 const prMetadata = require('../services/pr-metadata');
+const sessionTitles = require('../services/session-title');
 const testingNotes = require('../services/testing-notes');
 const staging = require('../services/staging');
 const visuals = require('../services/visuals');
@@ -25,8 +27,12 @@ const appAccess = require('../services/app-access');
 const notifications = require('../services/notifications');
 // runSyncMain + persistBehindMain now live in services/sync-main.js so
 // the conflict-resolver can drive a sync turn without a route-requires-
-// route cycle. Re-exported below for backwards compatibility.
-const { runSyncMain, persistBehindMain } = require('../services/sync-main');
+// route cycle. Re-exported below for backwards compatibility. Route
+// handlers call through the module object (syncMainSvc.*) so tests can
+// monkey-patch individual functions, mirroring how worker.isInFlight
+// is stubbed in the route suites.
+const syncMainSvc = require('../services/sync-main');
+const { runSyncMain, persistBehindMain } = syncMainSvc;
 
 // Track sessions with active Claude Code workers. The Set lives in a
 // shared module so services/sync-main.js writes to the same instance
@@ -277,7 +283,7 @@ function sessionRoutes(config) {
       // not by creation order.
       const { rows } = await pool.query(
         `SELECT cs.id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
-                cs.status, cs.linked_issues, cs.created_at,
+                cs.session_title, cs.status, cs.linked_issues, cs.created_at,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
                 a.slug AS app_slug, a.name AS app_name
          FROM chat_sessions cs
@@ -324,7 +330,7 @@ function sessionRoutes(config) {
       const appRows = [app];
 
       const { rows } = await pool.query(
-        `SELECT id, branch_name, pr_number, pr_url, pr_title, staging_url, status, linked_issues, behind_main, created_at
+        `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, staging_url, status, linked_issues, behind_main, created_at
          FROM chat_sessions
          WHERE app_id = $1 AND user_id = $2 AND is_headless = FALSE
          ORDER BY created_at DESC`,
@@ -450,7 +456,7 @@ function sessionRoutes(config) {
       // in flight; 'ready' means the start-from button should be used
       // instead. 'failed' rows don't block a retry, and neither does a
       // 'ready' run that ended with outcome 'question' (#150) — the whole
-      // point is to answer on the issue and press Auto-solve again.
+      // point is to answer on the issue and press Generate proposal again.
       const { rows: existingRows } = await pool.query(
         `SELECT id, headless_status FROM chat_sessions
          WHERE app_id = $1 AND is_headless = TRUE AND headless_issue_number = $2
@@ -510,13 +516,19 @@ function sessionRoutes(config) {
         log.warn('sessions', 'GitHub branch creation failed (continuing)', { err: err.message });
       }
 
+      // #249: deterministic display name — "#N · issue title" — set at
+      // creation (no LLM call), so the auto session is named both while
+      // generating and after. Null when the issue fetch degraded to
+      // number-only; the UI then falls back to the branch name.
+      const autoTitle = sessionTitles.headlessTitle(issueNumber, issue && issue.title);
+
       // linked_issues is seeded with the issue so a PR opened later from a
       // CLONED session carries `Closes #N` (the clone copies the linkage).
       const { rows } = await pool.query(
-        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, headless_status, headless_issue_number, linked_issues)
-         VALUES ($1, $2, $3, 'active', TRUE, 'generating', $4, $5)
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, headless_status, headless_issue_number, linked_issues, session_title)
+         VALUES ($1, $2, $3, 'active', TRUE, 'generating', $4, $5, $6)
          RETURNING *`,
-        [app.id, req.user.id, branchName, issueNumber, [issueNumber]]
+        [app.id, req.user.id, branchName, issueNumber, [issueNumber], autoTitle]
       );
       const session = rows[0];
       // The runner reuses chat-handler helpers that expect the app fields
@@ -623,11 +635,25 @@ function sessionRoutes(config) {
         }
       }
 
+      // #249: the clone inherits the auto session's display name.
+      // Sources that predate session_title fall back to the same
+      // "#N · issue title" derivation (best-effort, cache-first fetch
+      // — a failure just leaves the branch-name fallback).
+      let cloneTitle = src.session_title || null;
+      if (!cloneTitle && src.headless_issue_number && github.isEnabled() && repoOwner && repoName) {
+        try {
+          const { issue } = await github.fetchPublicIssue(repoOwner, repoName, src.headless_issue_number);
+          cloneTitle = sessionTitles.headlessTitle(src.headless_issue_number, issue && issue.title);
+        } catch (err) {
+          log.warn('sessions', 'Issue fetch for clone title failed (continuing untitled)', { err: err.message });
+        }
+      }
+
       const { rows } = await pool.query(
-        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, spec_md, linked_issues, testing_md, testing_path, cloned_from_session_id)
-         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8)
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, spec_md, linked_issues, testing_md, testing_path, cloned_from_session_id, session_title)
+         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9)
          RETURNING *`,
-        [src.app_id, req.user.id, branchName, src.spec_md || '', src.linked_issues, src.testing_md, src.testing_path, src.id]
+        [src.app_id, req.user.id, branchName, src.spec_md || '', src.linked_issues, src.testing_md, src.testing_path, src.id, cloneTitle]
       );
       const session = rows[0];
 
@@ -1065,7 +1091,20 @@ function sessionRoutes(config) {
         });
       }
 
-      const result = await runSyncMain(config, pool, sessionId, { sessionRow: session });
+      // #252: a regular chat turn holds the worker — dispatching a sync
+      // now would just trip execInWorker's "a turn is already in
+      // flight" guard with a raw 500. Surface it as a friendly 409
+      // instead. When the in-flight turn IS a sync, fall through:
+      // runSyncMain coalesces and this caller joins the running sync.
+      if (!syncMainSvc.getSyncState(sessionId)
+          && (activeWorkers.has(sessionId) || worker.isInFlight(sessionId))) {
+        return res.status(409).json({
+          error: 'Claude is still working in this session — wait for the turn to finish before syncing.',
+          busy: true,
+        });
+      }
+
+      const result = await syncMainSvc.runSyncMain(config, pool, sessionId, { sessionRow: session });
       res.json(result);
     } catch (err) {
       log.error('sessions', 'sync-main failed', { sessionId, err: err.message });
@@ -1150,7 +1189,10 @@ function sessionRoutes(config) {
       // swallowed, and the matching SSE delivery would then be deduped-skipped
       // — the mayor's response would be written to the DB but never appear in
       // the live UI until the user refreshes.
-      const SSE_ONLY = new Set(['token', 'usage', 'error', 'mayor_reasoning']);
+      // 'suggestions' (#32) follows mayor_reasoning's posture: SSE +
+      // session bus only — a refresh restores chips from the assistant
+      // row's metadata, so the global WS adds nothing but dedup risk.
+      const SSE_ONLY = new Set(['token', 'usage', 'error', 'mayor_reasoning', 'suggestions']);
       const send = (type, data) => {
         const seq = `${seqPrefix}-${++eventSeq}`;
         const event = { type, _seq: seq, ...data };
@@ -1204,6 +1246,32 @@ function sessionRoutes(config) {
       const setPhase = (phase) => {
         stopHandle.phase = phase;
         send('phase', { phase });
+      };
+
+      // #249: first-message naming — a brand-new session (no title yet,
+      // no PR) gets a readable display name from its opening ask, long
+      // before any code lands. Fire-and-forget: the turn never waits on
+      // it, and any failure just keeps the branch-name fallback. The
+      // billing path resolved above means the Haiku call is debited to
+      // the requesting user (BYOK-aware), like every other turn cost.
+      const titledThisTurn = !session.session_title && !session.pr_number;
+      if (titledThisTurn) {
+        sessionTitles.maybeTitleFirstMessage({
+          pool, session, message: message.trim(),
+          userId: req.user.id, apiKey: userApiKey, send,
+        });
+      }
+      // #249: pre-PR turn-end refresh — re-title from the full request
+      // history + latest spec draft so a vague opening ask sharpens once
+      // the direction is clear. Once a PR exists applyPrMetadata owns
+      // the name (it mirrors pr_title into session_title), so this
+      // never fires again; and the first-message hook already covers
+      // the turn it ran on. Fire-and-forget like the hook above.
+      const refreshTitleAtTurnEnd = () => {
+        if (titledThisTurn || session.pr_number) return;
+        sessionTitles.refreshFromHistory({
+          pool, session, userId: req.user.id, apiKey: userApiKey, send,
+        });
       };
 
       try {
@@ -1313,25 +1381,29 @@ function sessionRoutes(config) {
         // enforced both by the system prompt AND by the resolution code
         // below — models sometimes ignore prose constraints, so we
         // belt-and-suspenders it server-side.
-        // The issue data tools (list_github_issues / get_github_issue) stay
-        // available even when a worker is busy: they're read-only and cheap,
-        // and reading the tracker while a build runs is a legitimate chat
-        // action. The dispatch tools remain gated by isWorkerBusy as before.
+        // The data tools (list_github_issues / get_github_issue / web_fetch)
+        // stay available even when a worker is busy: they're read-only and
+        // cheap, and reading the tracker or a linked page while a build runs
+        // is a legitimate chat action. The dispatch tools remain gated by
+        // isWorkerBusy as before.
+        // suggest_answers (#32) rides along in BOTH branches — it's not a
+        // dispatch, so asking clarifying questions with tappable answers
+        // is fine even while a worker is busy.
         const tools = isWorkerBusy
-          ? [LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL]
-          : [DISPATCH_TOOL, DISPATCH_SCOUT_TOOL, LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL];
+          ? [SUGGEST_ANSWERS_TOOL, LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL, WEB_FETCH_TOOL]
+          : [DISPATCH_TOOL, DISPATCH_SCOUT_TOOL, SUGGEST_ANSWERS_TOOL, LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL, WEB_FETCH_TOOL];
 
         setPhase('mayor1');
         let mayor1;
-        // The conversation we feed the Mayor. list_github_issues and
-        // get_github_issue are read-only DATA tools: when the Mayor calls
-        // one, we resolve it in-process, append the result as a tool_result,
-        // and re-invoke so the Mayor reasons with it in the SAME turn. This
-        // loop drains issue-calls out BEFORE the terminal-tool (dispatch/spec)
-        // selection below, so in the common case mayor1.rawContent carries no
-        // dangling issue-data tool_use into phase-2.
+        // The conversation we feed the Mayor. list_github_issues,
+        // get_github_issue, and web_fetch are read-only DATA tools: when the
+        // Mayor calls one, we resolve it in-process, append the result as a
+        // tool_result, and re-invoke so the Mayor reasons with it in the SAME
+        // turn. This loop drains data-calls out BEFORE the terminal-tool
+        // (dispatch/spec) selection below, so in the common case
+        // mayor1.rawContent carries no dangling data tool_use into phase-2.
         let mayorConvo = messages;
-        let issuesIters = 0;
+        let dataIters = 0;
         try {
           for (;;) {
             mayor1 = await llm.streamChat({
@@ -1344,19 +1416,24 @@ function sessionRoutes(config) {
               apiKey: userApiKey,
             });
 
-            const issuesCalls = mayor1.toolUses.filter((t) => ISSUE_DATA_TOOL_NAMES.has(t.name));
+            const dataCalls = mayor1.toolUses.filter((t) => DATA_TOOL_NAMES.has(t.name));
             // Parallel tool use is enabled, so the Mayor may emit
-            // an issue data tool ALONGSIDE a terminal tool in one response.
+            // a data tool ALONGSIDE a terminal tool in one response.
             // If a terminal tool is present we must NOT re-invoke here: the
-            // re-invocation only answers the issues tool_use, leaving the
+            // re-invocation only answers the data tool_use, leaving the
             // terminal tool_use dangling -> Anthropic 400. Break instead and
             // let the phase-2 wrap-up resolve every tool_use (it already
-            // re-fetches any stray list_github_issues).
+            // re-fetches any stray data call).
+            // suggest_answers (#32) is terminal here too: the turn ends as
+            // a question turn, so re-invoking would leave its tool_use
+            // dangling in mayorConvo (Anthropic 400). End-of-turn dangling
+            // is harmless — buildMayorMessages rebuilds from text rows.
             const hasTerminalTool = mayor1.toolUses.some((t) =>
               t.name === 'dispatch_claude_code'
-              || t.name === 'dispatch_scout');
-            if (!issuesCalls.length || hasTerminalTool || issuesIters >= MAYOR_ISSUES_MAX_ITERS) break;
-            issuesIters += 1;
+              || t.name === 'dispatch_scout'
+              || t.name === 'suggest_answers');
+            if (!dataCalls.length || hasTerminalTool || dataIters >= MAYOR_DATA_TOOLS_MAX_ITERS) break;
+            dataIters += 1;
 
             // Bill each intermediate data-tool turn — the Anthropic call
             // happened and is invoiced whether or not it produced text.
@@ -1390,9 +1467,9 @@ function sessionRoutes(config) {
             // follow-up text appends to the bubble above the status.
             send('assistant_message_end', {});
 
-            await sendStatus("Reading the repo's GitHub issues...");
-            const issuesResults = await Promise.all(
-              issuesCalls.map((tc) => resolveIssueDataToolResult(tc, repoOwner, repoName))
+            await sendStatus(dataToolStatusLine(dataCalls));
+            const dataResults = await Promise.all(
+              dataCalls.map((tc) => resolveDataToolResult(tc, repoOwner, repoName))
             );
             mayorConvo = [
               ...mayorConvo,
@@ -1401,10 +1478,10 @@ function sessionRoutes(config) {
               { role: 'assistant', content: mayor1.rawContent },
               {
                 role: 'user',
-                content: issuesCalls.map((tc, i) => ({
+                content: dataCalls.map((tc, i) => ({
                   type: 'tool_result',
                   tool_use_id: tc.id,
-                  content: issuesResults[i],
+                  content: dataResults[i],
                 })),
               },
             ];
@@ -1465,6 +1542,17 @@ function sessionRoutes(config) {
             .trim() || '(I described what should change, but didn\'t actually run the coding agent — try sending again.)';
         }
 
+        // Q/A mode (#32): suggested answers for clarifying questions.
+        // Dropped when a dispatch tool co-occurred (clarity gate forbids
+        // ask+dispatch — dispatch wins); skipped entirely when there is
+        // no assistant text to attach them to.
+        const { suggestions, droppedForDispatch } = resolveSuggestedAnswers(mayor1.toolUses);
+        if (droppedForDispatch) {
+          log.warn('sessions', 'Mayor emitted suggest_answers alongside a dispatch tool — dropping suggestions', {
+            sessionId: session.id,
+          });
+        }
+
         // Always debit the Mayor's phase-1 spend — even on tool-only
         // turns where mayorText1 is empty (the Anthropic call still
         // happened and was billed). chat_session_messages still gets
@@ -1474,10 +1562,12 @@ function sessionRoutes(config) {
         if (mayorText1.trim()) {
           send('mayor_reasoning', { text: mayorText1 });
           await pool.query(
-            `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
-             VALUES ($1, 'assistant', $2, $3, $4, $5)`,
-            [session.id, mayorText1, selectedModel, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1]
+            `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
+             VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
+            [session.id, mayorText1, selectedModel, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1,
+             JSON.stringify(suggestions ? { suggestions } : {})]
           );
+          if (suggestions) send('suggestions', { suggestions });
         }
         // BYOK users pay Anthropic directly, so their spend lands in
         // the display-only byok_cost_cents bucket (#119) — only
@@ -1503,6 +1593,7 @@ function sessionRoutes(config) {
 
         if (!activeToolCall) {
           // Pure chat turn — no tool call needed.
+          refreshTitleAtTurnEnd();
           send('done', {});
           res.end();
           setTimeout(() => sessionBus.clearSession(session.id), 30000);
@@ -1626,14 +1717,14 @@ function sessionRoutes(config) {
         // the `activeWorkers` race check or accidentally re-dispatch).
         //
         // Base on mayorConvo (not the original `messages`) so any
-        // issue-data round-trips resolved above stay in context for
+        // data-tool round-trips resolved above stay in context for
         // the wrap-up. Answer EVERY tool_use in the final assistant turn —
-        // not just the terminal one we ran: if the Mayor combined an
-        // issue-data call with a terminal tool (or hit the issues
+        // not just the terminal one we ran: if the Mayor combined a
+        // data call with a terminal tool (or hit the data-tool
         // loop cap), a leftover tool_use would otherwise dangle and Anthropic
         // would 400 the wrap-up. The terminal tool gets the real result; any
-        // stray issue-data call gets a fresh fetch; anything else gets a
-        // benign skip note.
+        // stray data call gets a fresh fetch (re-fetching is acceptable);
+        // anything else gets a benign skip note.
         const phase2ToolResults = [];
         for (const tu of mayor1.toolUses) {
           if (tu.id === activeToolCall.id) {
@@ -1643,11 +1734,11 @@ function sessionRoutes(config) {
               content: toolResult.toolResultText,
               ...(toolResult.isError ? { is_error: true } : {}),
             });
-          } else if (ISSUE_DATA_TOOL_NAMES.has(tu.name)) {
+          } else if (DATA_TOOL_NAMES.has(tu.name)) {
             phase2ToolResults.push({
               type: 'tool_result',
               tool_use_id: tu.id,
-              content: await resolveIssueDataToolResult(tu, repoOwner, repoName),
+              content: await resolveDataToolResult(tu, repoOwner, repoName),
             });
           } else {
             phase2ToolResults.push({
@@ -1743,6 +1834,10 @@ function sessionRoutes(config) {
         }
       }
 
+      // #249: covers every turn that reached the main exit without a PR
+      // — no-changes turns, scout/spec turns, errored dispatches. PR
+      // turns skip it (applyPrMetadata mirrored the title already).
+      refreshTitleAtTurnEnd();
       send('done', {});
       res.end();
       // Drop the session-bus ring buffer shortly after completion.
@@ -1827,6 +1922,10 @@ function sessionRoutes(config) {
   //     share card; the body of the spec should be reachable too,
   //     otherwise the "View full spec" affordance on the card 404s
   //     for everyone except the original sharer (#6).
+  //   - (#86) A user the owner privately shared this exact version with
+  //     via POST /specs/:version/share-user — the
+  //     chat_session_spec_user_shares row is the authorization source
+  //     of truth, scoped to (session, version, recipient).
   router.get('/api/sessions/:id/specs/:version', async (req, res) => {
     const sessionId = parseInt(req.params.id, 10);
     const version = parseInt(req.params.version, 10);
@@ -1840,7 +1939,13 @@ function sessionRoutes(config) {
          JOIN chat_sessions cs ON cs.id = s.session_id
          WHERE s.session_id = $1
            AND s.version = $2
-           AND (cs.user_id = $3 OR s.shared_to_group_at IS NOT NULL)`,
+           AND (cs.user_id = $3 OR s.shared_to_group_at IS NOT NULL
+                OR EXISTS (
+                  SELECT 1 FROM chat_session_spec_user_shares us
+                   WHERE us.session_id = s.session_id
+                     AND us.version = s.version
+                     AND us.recipient_id = $3
+                ))`,
         [sessionId, version, req.user.id]
       );
       if (!rows.length) return res.status(404).json({ error: 'Spec version not found' });
@@ -1957,6 +2062,83 @@ function sessionRoutes(config) {
     }
   });
 
+  // (#86) Privately share a frozen spec version with ONE user. Unlike
+  // the group share above, nothing is posted to chat and the spec is
+  // NOT marked shared_to_group_at — the recipient gets a 'spec_shared'
+  // notification that deep-links into the read-only spec panel, and the
+  // chat_session_spec_user_shares row widens the GET /specs/:version
+  // gate for exactly (session, version, recipient). Repeatable: the
+  // owner can share with several people one at a time; re-sharing with
+  // the same person is an idempotent no-op (no second notification).
+  router.post('/api/sessions/:id/specs/:version/share-user', async (req, res) => {
+    const sessionId = parseInt(req.params.id, 10);
+    const version = parseInt(req.params.version, 10);
+    if (Number.isNaN(sessionId) || Number.isNaN(version)) {
+      return res.status(400).json({ error: 'Bad id/version' });
+    }
+    const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
+    if (!username) return res.status(400).json({ error: 'Username required' });
+
+    try {
+      // Owner-only, same as the group-share route.
+      const { rows: sessionRows } = await pool.query(
+        `SELECT cs.id, cs.app_id
+         FROM chat_sessions cs
+         WHERE cs.id = $1 AND cs.user_id = $2`,
+        [sessionId, req.user.id]
+      );
+      if (!sessionRows.length) return res.status(404).json({ error: 'Session not found' });
+      const appId = sessionRows[0].app_id;
+
+      const { rows: specRows } = await pool.query(
+        `SELECT version FROM chat_session_specs
+         WHERE session_id = $1 AND version = $2`,
+        [sessionId, version]
+      );
+      if (!specRows.length) return res.status(404).json({ error: 'Spec version not found' });
+
+      const users = await notifications.resolveUsers(pool, [username.toLowerCase()]);
+      if (!users.length) return res.status(404).json({ error: 'User not found' });
+      const recipient = users[0];
+      if (recipient.id === req.user.id) {
+        return res.status(400).json({ error: 'You already have this spec' });
+      }
+
+      // Collab-private apps: a share must not grant a non-member a spec
+      // they'd have no app context for. Explicit error (not a silent
+      // drop) — the sharer needs the feedback.
+      const allowed = await notifications.filterToCollaborators(pool, appId, [recipient.id]);
+      if (!allowed.includes(recipient.id)) {
+        return res.status(400).json({ error: "That user doesn't have access to this app" });
+      }
+
+      const { rowCount } = await pool.query(
+        `INSERT INTO chat_session_spec_user_shares (session_id, version, recipient_id, shared_by)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (session_id, version, recipient_id) DO NOTHING`,
+        [sessionId, version, recipient.id, req.user.id]
+      );
+      if (rowCount === 0) {
+        // Already shared with this person — re-shares must not re-ping.
+        return res.json({ ok: true, alreadyShared: true, recipient: { username: recipient.username } });
+      }
+
+      const rows = await notifications.createSpecSharedNotification(pool, {
+        recipientId: recipient.id,
+        appId,
+        sessionId,
+        sharerId: req.user.id,
+        version,
+      });
+      for (const row of rows) await notifications.hydrateAndPush(pool, row);
+
+      res.json({ ok: true, recipient: { username: recipient.username } });
+    } catch (err) {
+      log.error('sessions', 'Share spec to user failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Check if a session has an active worker + get latest progress
   router.get('/api/sessions/:id/status', async (req, res) => {
     const sessionId = parseInt(req.params.id);
@@ -2003,7 +2185,24 @@ function sessionRoutes(config) {
     // Null whenever the per-user toggle is off or no estimate exists yet.
     const estimate = workerProgress.get(sessionId)?.estimate || null;
 
-    res.json({ busy, progress, phase, estimate });
+    // #239: whether the auto-conflict-resolver currently has a resolve
+    // in flight for this session. The client's "resolving merge
+    // conflicts" banner polls this as its reload-recovery and
+    // missed-WS-event safety net.
+    const { isResolving } = require('../services/conflict-resolver');
+
+    // #252: in-flight sync-with-main state ({ phase, startedAt } |
+    // null) — the dev-chat sync banner's reload recovery and poll
+    // fallback read this the same way the resolving banner reads
+    // `resolving`.
+    res.json({
+      busy,
+      progress,
+      phase,
+      estimate,
+      resolving: isResolving(sessionId),
+      sync: syncMainSvc.getSyncState(sessionId),
+    });
   });
 
   // Stop an in-flight turn (#28). Aborts the Mayor's Anthropic stream
@@ -2277,7 +2476,7 @@ function buildHeadlessAddendum(issueNumber) {
   return `
 
 HEADLESS AUTO-SESSION MODE: you are running unattended on GitHub issue #${issueNumber} — there is NO human in this chat and there will be NO follow-up turn. Decide ONE action for this single turn, in this order:
-1. FIRST apply the CLARITY GATE (above) to the issue, including any ISSUE COMMENTS included in the message — treat the reporter's comments as their input, and comments marked as earlier auto-solve questions as your own previous turn (answers to them may make the issue clear now). If the issue FAILS the gate, classify each blocking question you would ask:
+1. FIRST apply the CLARITY GATE (above) to the issue, including any ISSUE COMMENTS included in the message — treat the reporter's comments as their input, and comments marked as earlier proposal questions as your own previous turn (answers to them may make the issue clear now). If the issue FAILS the gate, classify each blocking question you would ask:
    - REPO-ANSWERABLE: what exists in the app, where the relevant code lives, how a feature currently behaves, whether the report matches reality. Asking the reporter is a last resort — investigation comes first: these questions go to dispatch_scout (step 2), NOT to the reporter. In the scout prompt, enumerate the unresolved points and instruct it to settle them from the code, choose stated defaults where reasonable, and keep only the genuinely human-only blockers in a "Questions" section.
    - HUMAN-ONLY: what the reporter wants, product/priority choices, reproduction details only the reporter has — things no codebase can answer.
    ONLY if EVERY blocking question is human-only: reply in plain text containing ONLY the numbered clarifying questions with your suggested defaults, and call no tool. Your reply will be posted verbatim as a comment on GitHub issue #${issueNumber} for the reporter to answer — write it for them (no greetings, no meta-talk about sessions or tools). Otherwise dispatch_scout per step 2.
@@ -2331,7 +2530,7 @@ function buildHeadlessSeed(issueNumber, issue, comments, botUsername) {
       && author.toLowerCase().replace(/\[bot\]$/, '') === botUsername.toLowerCase();
     const date = (c.createdAt || '').slice(0, 10);
     const tag = isBot
-      ? `[bot — earlier auto-solve questions${date ? `, ${date}` : ''}]`
+      ? `[bot — earlier proposal questions${date ? `, ${date}` : ''}]`
       : `[${author}${date ? `, ${date}` : ''}]`;
     let text = (c.body || '').toString();
     if (text.length > HEADLESS_SEED_COMMENT_MAX_CHARS) {
@@ -2363,8 +2562,8 @@ function specHasBlockingQuestions(specMd) {
   return /^#{1,6}\s*(?:open\s+)?questions?\b/im.test(specMd || '');
 }
 
-const HEADLESS_QUESTION_FOOTER = '\n\n— Posted by this issue\'s auto-solve session. '
-  + 'Answer in a comment (or edit the issue body), then press **Auto-solve** on the issue again — the next run reads the answers.';
+const HEADLESS_QUESTION_FOOTER = '\n\n— Posted by this issue\'s proposal session. '
+  + 'Answer in a comment (or edit the issue body), then press **Generate proposal** on the issue again — the next run reads the answers.';
 
 // Best-effort: a failed post must never fail or change the run's outcome
 // (the parked session remains the fallback channel). Returns whether the
@@ -2398,8 +2597,8 @@ async function setHeadlessStep(pool, sessionId, step, outcome) {
   });
 }
 
-// #155: the unattended Mayor turn behind the issue panel's "Auto-solve"
-// button. Mirrors one POST /chat turn (phase-1 Mayor + optional dispatch +
+// #155: the unattended Mayor turn behind the issue panel's "Generate
+// proposal" button. Mirrors one POST /chat turn (phase-1 Mayor + optional dispatch +
 // phase-2 wrap-up) with three deliberate differences: there is no SSE
 // stream (events go to the session bus / global WS only), there is no stop
 // handle (nobody is watching), and a build dispatch runs with
@@ -2481,12 +2680,14 @@ async function runHeadlessSession({
 
     const headlessAddendum = buildHeadlessAddendum(issueNumber);
     const mayorPrompt = getMayorSystemPrompt(session.app_name, false, '', !!session.app_self_hosted, null) + headlessAddendum;
-    const tools = [DISPATCH_TOOL, DISPATCH_SCOUT_TOOL, LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL];
+    const tools = [DISPATCH_TOOL, DISPATCH_SCOUT_TOOL, SUGGEST_ANSWERS_TOOL, LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL, WEB_FETCH_TOOL];
 
-    // --- Phase 1: Mayor turn (same issue-data loop as the chat handler) ---
+    // --- Phase 1: Mayor turn (same data-tool loop as the chat handler) ---
+    // web_fetch is available here too (#30): if the issue links to a web
+    // page, the auto-solve run can read it before dispatching.
     let mayor1;
     let mayorConvo = [{ role: 'user', content: seed }];
-    let issuesIters = 0;
+    let dataIters = 0;
     for (;;) {
       mayor1 = await llm.streamChat({
         messages: mayorConvo,
@@ -2496,38 +2697,46 @@ async function runHeadlessSession({
         apiKey: userApiKey,
       });
 
-      const issuesCalls = mayor1.toolUses.filter((t) => ISSUE_DATA_TOOL_NAMES.has(t.name));
+      const dataCalls = mayor1.toolUses.filter((t) => DATA_TOOL_NAMES.has(t.name));
+      // suggest_answers (#32) is terminal here too — same dangling-
+      // tool_use rationale as the interactive loop.
       const hasTerminalTool = mayor1.toolUses.some((t) =>
-        t.name === 'dispatch_claude_code' || t.name === 'dispatch_scout');
-      if (!issuesCalls.length || hasTerminalTool || issuesIters >= MAYOR_ISSUES_MAX_ITERS) break;
-      issuesIters += 1;
+        t.name === 'dispatch_claude_code' || t.name === 'dispatch_scout'
+        || t.name === 'suggest_answers');
+      if (!dataCalls.length || hasTerminalTool || dataIters >= MAYOR_DATA_TOOLS_MAX_ITERS) break;
+      dataIters += 1;
 
       await debitMayorUsage(mayor1.usage);
-      const issuesResults = await Promise.all(
-        issuesCalls.map((tc) => resolveIssueDataToolResult(tc, repoOwner, repoName))
+      const dataResults = await Promise.all(
+        dataCalls.map((tc) => resolveDataToolResult(tc, repoOwner, repoName))
       );
       mayorConvo = [
         ...mayorConvo,
         { role: 'assistant', content: mayor1.rawContent },
         {
           role: 'user',
-          content: issuesCalls.map((tc, i) => ({
+          content: dataCalls.map((tc, i) => ({
             type: 'tool_result',
             tool_use_id: tc.id,
-            content: issuesResults[i],
+            content: dataResults[i],
           })),
         },
       ];
     }
 
     const mayorText1 = mayor1.text;
+    // Q/A mode (#32): same suggestion handling as the interactive route —
+    // persisted on the assistant row so the cloned session a human picks
+    // up renders the answer chips. Dropped if a dispatch co-occurred.
+    const { suggestions: headlessSuggestions } = resolveSuggestedAnswers(mayor1.toolUses);
     const costCents1 = mayor1.usage ? llm.estimateCostCents(mayor1.usage, selectedModel) : 0;
     if (mayorText1.trim()) {
       send('mayor_reasoning', { text: mayorText1 });
       await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
-         VALUES ($1, 'assistant', $2, $3, $4, $5)`,
-        [session.id, mayorText1, selectedModel, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1]
+        `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
+         VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
+        [session.id, mayorText1, selectedModel, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1,
+         JSON.stringify(headlessSuggestions ? { suggestions: headlessSuggestions } : {})]
       );
     }
     await debitMayorUsage(mayor1.usage);
@@ -2593,11 +2802,11 @@ async function runHeadlessSession({
             content: toolResult.toolResultText,
             ...(toolResult.isError ? { is_error: true } : {}),
           });
-        } else if (ISSUE_DATA_TOOL_NAMES.has(tu.name)) {
+        } else if (DATA_TOOL_NAMES.has(tu.name)) {
           phase2ToolResults.push({
             type: 'tool_result',
             tool_use_id: tu.id,
-            content: await resolveIssueDataToolResult(tu, repoOwner, repoName),
+            content: await resolveDataToolResult(tu, repoOwner, repoName),
           });
         } else {
           phase2ToolResults.push({
@@ -2625,7 +2834,7 @@ async function runHeadlessSession({
         // #178: a spec that still carries a blocking Questions section
         // after the scout's investigation routes to the reporter instead —
         // the decision text becomes a posted issue comment and the run
-        // finalizes as 'question' so Auto-solve can be re-run with answers.
+        // finalizes as 'question' so Generate proposal can be re-run with answers.
         const specHasQuestions = specHasBlockingQuestions(currentSpec);
         const mayor2 = await llm.streamChat({
           messages: phase2Messages,
@@ -3051,7 +3260,10 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
           `INSERT INTO chat_session_messages (session_id, role, content, metadata)
            VALUES ($1, 'system', $2, $3)`,
           [session.id, `Scout drafted a ${lineCount}-line spec from the codebase.`,
-            JSON.stringify({ specLines: lineCount, scoutOutput: ccText, specVersion })]
+            // specPreview drives the tappable spec card in dev-chat; omitting
+            // it here left recovered scout turns (and their clones) with a
+            // message claiming a spec exists but no card to open it.
+            JSON.stringify({ specPreview: buildSpecPreview(ccText), specLines: lineCount, scoutOutput: ccText, specVersion })]
         ).catch(() => {});
         // #178: blocking Questions in the recovered spec finalize as
         // 'question' so the answer-and-re-run loop survives the restart
@@ -3095,7 +3307,7 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
 
   // #178: a 'wrapping' checkpoint written before/during the decision turn
   // carries outcome 'spec' even when the spec still has a blocking
-  // Questions section — flip it so re-running Auto-solve stays unblocked
+  // Questions section — flip it so re-running Generate proposal stays unblocked
   // (no comment is posted; the decision text died with the old process).
   if (outcome === 'spec' && specHasBlockingQuestions(session.spec_md)) {
     outcome = 'question';
@@ -3300,14 +3512,137 @@ const GET_GITHUB_ISSUE_TOOL = {
   },
 };
 
-// The Mayor's read-only issue DATA tools — resolved in-process and looped
-// back as tool_results (unlike the terminal dispatch tools).
-const ISSUE_DATA_TOOL_NAMES = new Set(['list_github_issues', 'get_github_issue']);
+// Third data tool (#30): fetch ONE public web page and return its text,
+// so the Mayor can read a URL the user linked (docs, an example site, an
+// API reference) inline in the turn instead of guessing or burning a
+// 30-60s scout container on one page. Same read-only, available-every-
+// turn posture as the issue tools; resolves in-process via
+// services/web-fetch.js, which never throws and enforces SSRF blocking,
+// redirect re-validation, a 10s budget, and size/content caps.
+const WEB_FETCH_TOOL = {
+  name: 'web_fetch',
+  description:
+    'Fetch ONE public web page and return its extracted text as JSON (read-only). '
+    + 'Returns `{ url, finalUrl, status, contentType, title, content, truncated }` on success, or '
+    + '`{ url, content: null, note }` when the page cannot be fetched (private/internal address, timeout, '
+    + 'redirect limit, non-text content, network error). '
+    + 'Call it when the user shares a URL, or when answering depends on the content of an external page — '
+    + 'read the page BEFORE writing scout/build prompts grounded in it, so dispatches reflect the real content. '
+    + 'It fetches public pages only: it cannot log in, click, run scripts, or reach private/internal network '
+    + 'addresses. HTML is returned as plain text (scripts/styles stripped); very large pages are truncated '
+    + 'with `truncated: true` and an explicit marker. Images, PDFs, and other binary content are refused with a note.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      url: {
+        type: 'string',
+        description: 'The absolute http(s) URL of the page to fetch (e.g. https://example.com/docs/api).',
+      },
+    },
+    required: ['url'],
+  },
+};
 
-// Cap on how many consecutive issue-data-tool fetches we'll service
+// Q/A mode (#32): structured suggested answers attached to the Mayor's
+// clarifying questions. NOT a dispatch — the turn still ends as a plain
+// question turn. The input is sanitized server-side
+// (sanitizeSuggestedAnswers) and persisted as metadata.suggestions on
+// the assistant row so the dev-chat client renders tappable answer
+// chips both live (the 'suggestions' SSE event) and on refresh.
+const SUGGEST_ANSWERS_TOOL = {
+  name: 'suggest_answers',
+  description:
+    'Attach short suggested answers to the clarifying questions you are asking in THIS SAME message, so the user can tap one instead of typing. '
+    + 'Call this ONLY when your message asks clarifying questions per the CLARITY GATE — never on a normal reply, and NEVER alongside '
+    + 'dispatch_scout or dispatch_claude_code (asking and dispatching in the same turn is forbidden; if both appear, the suggestions are dropped). '
+    + 'Provide one entry per question, in the same order as the numbered questions in your text, with your suggested default FIRST. '
+    + 'Every answer must be a short (under 80 characters), self-contained reply the user could send verbatim.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      questions: {
+        type: 'array',
+        description:
+          'One entry per clarifying question asked in this message (1-3 entries, matching your numbered questions in order).',
+        items: {
+          type: 'object',
+          properties: {
+            question: {
+              type: 'string',
+              description: 'Short restatement of the question (a few words — used as the chip-row label).',
+            },
+            answers: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                '2-5 short candidate answers, your suggested default FIRST. Each must read as a complete reply the user could send verbatim.',
+            },
+          },
+          required: ['question', 'answers'],
+        },
+      },
+    },
+    required: ['questions'],
+  },
+};
+
+// Sanitizer for suggest_answers tool input (#32). Caps mirror the
+// clarity gate (at most 3 questions) plus the tool contract (5 answers
+// each, short strings). Returns a clean [{ question, answers }] array,
+// or null when nothing usable survives — callers skip persistence and
+// the SSE event on null, so a malformed call degrades to today's
+// plain-text questions instead of breaking the turn.
+const QA_MAX_QUESTIONS = 3;
+const QA_MAX_ANSWERS = 5;
+const QA_MAX_ANSWER_LEN = 80;
+const QA_MAX_QUESTION_LEN = 200;
+
+function sanitizeSuggestedAnswers(input) {
+  const raw = input && Array.isArray(input.questions) ? input.questions : null;
+  if (!raw) return null;
+  const toText = (v, max) => (
+    (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')
+      ? String(v).trim().slice(0, max).trim()
+      : ''
+  );
+  const out = [];
+  for (const entry of raw) {
+    if (out.length >= QA_MAX_QUESTIONS) break;
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const question = toText(entry.question, QA_MAX_QUESTION_LEN);
+    const answers = (Array.isArray(entry.answers) ? entry.answers : [])
+      .map((a) => toText(a, QA_MAX_ANSWER_LEN))
+      .filter(Boolean)
+      .slice(0, QA_MAX_ANSWERS);
+    if (!answers.length) continue;
+    out.push({ question, answers });
+  }
+  return out.length ? out : null;
+}
+
+// Resolve a phase-1 suggest_answers call against the same-turn tool set
+// (#32). The clarity gate forbids asking + dispatching in one turn, so a
+// dispatch/scout tool_use in the same response wins and the suggestions
+// are dropped — same server-side priority-enforcement posture as the
+// scout > build resolution in the chat handler.
+function resolveSuggestedAnswers(toolUses) {
+  const calls = Array.isArray(toolUses) ? toolUses : [];
+  const suggestCall = calls.find((t) => t && t.name === 'suggest_answers');
+  if (!suggestCall) return { suggestions: null, droppedForDispatch: false };
+  const hasDispatch = calls.some((t) =>
+    t && (t.name === 'dispatch_claude_code' || t.name === 'dispatch_scout'));
+  if (hasDispatch) return { suggestions: null, droppedForDispatch: true };
+  return { suggestions: sanitizeSuggestedAnswers(suggestCall.input), droppedForDispatch: false };
+}
+
+// The Mayor's read-only DATA tools — resolved in-process and looped
+// back as tool_results (unlike the terminal dispatch tools).
+const DATA_TOOL_NAMES = new Set(['list_github_issues', 'get_github_issue', 'web_fetch']);
+
+// Cap on how many consecutive data-tool fetches we'll service
 // within a single Mayor turn before forcing the model to move on. Bounds
 // the worst case where the model loops on the data tools instead of acting.
-const MAYOR_ISSUES_MAX_ITERS = 3;
+const MAYOR_DATA_TOOLS_MAX_ITERS = 3;
 
 // Resolve a list_github_issues tool call to the JSON string we hand back as
 // tool_result content. Owner/repo come straight from apps.repo_url; when
@@ -3333,12 +3668,37 @@ async function resolveGithubIssueToolResult(repoOwner, repoName, number) {
   return JSON.stringify(await github.fetchPublicIssue(repoOwner, repoName, number));
 }
 
-// Route one issue-data tool_use to its resolver. Callers guard on
-// ISSUE_DATA_TOOL_NAMES so `tu.name` is always one of the two.
-function resolveIssueDataToolResult(tu, repoOwner, repoName) {
+// Resolve a web_fetch tool call (#30). webFetch.fetchUrl never throws —
+// SSRF refusals, timeouts, and network errors all come back as
+// { url, content: null, note } and the Mayor reasons with the note.
+async function resolveWebFetchToolResult(rawUrl) {
+  return JSON.stringify(await webFetch.fetchUrl(rawUrl));
+}
+
+// Route one data tool_use to its resolver. Callers guard on
+// DATA_TOOL_NAMES so `tu.name` is always one of the three.
+function resolveDataToolResult(tu, repoOwner, repoName) {
+  if (tu.name === 'web_fetch') {
+    return resolveWebFetchToolResult(tu.input && tu.input.url);
+  }
   return tu.name === 'get_github_issue'
     ? resolveGithubIssueToolResult(repoOwner, repoName, tu.input && tu.input.number)
     : resolveGithubIssuesToolResult(repoOwner, repoName);
+}
+
+// Status line for a batch of data-tool calls being resolved. web_fetch
+// shows the hostname (not the full URL — the persisted system row stays
+// tidy); issue calls keep the historical wording.
+function dataToolStatusLine(calls) {
+  const wf = calls.find((tc) => tc.name === 'web_fetch');
+  if (wf) {
+    try {
+      return `Fetching ${new URL(String(wf.input && wf.input.url)).hostname}...`;
+    } catch {
+      return 'Fetching a web page...';
+    }
+  }
+  return "Reading the repo's GitHub issues...";
 }
 
 // Build the Mayor's message history from chat_session_messages rows.
@@ -3509,7 +3869,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
 
     let result;
     try {
-      result = await worker.execInWorker(session.id, {
+      const dispatchScout = () => worker.execInWorker(session.id, {
         mode: 'scout',
         prompt: scoutPrompt,
         model: selectedModel,
@@ -3529,6 +3889,15 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
           ).catch(() => {});
         },
       });
+      result = await dispatchScout();
+      // Headless auto-retry: a markerless turn that produced no spec text
+      // gets exactly one re-dispatch (the retry wraps the call site, not
+      // execInWorker, so active_turn bookkeeping stays per-attempt).
+      if (headless && shouldRetryHeadlessTurn(result, stopHandle, !!(result.lastResultText || '').trim())) {
+        await sendStatus('The coding step failed unexpectedly — retrying once…');
+        await waitForTurnStopped(session.id, containerName);
+        result = await dispatchScout();
+      }
     } finally {
       clearInterval(heartbeat);
     }
@@ -3568,7 +3937,11 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       summaryParts.push(msg);
     } else if (!ccText) {
       isError = true;
-      const msg = 'Scout finished but produced no spec text.';
+      // Markerless exits (exitCode -1, or null — never normalized) mean
+      // the run died, not that the scout chose to write nothing.
+      const msg = (result.exitCode === -1 || result.exitCode == null)
+        ? `${describeMarkerlessExit(result.markerlessCause)} No spec text was produced.`
+        : 'Scout finished but produced no spec text.';
       await sendStatus(msg);
       summaryParts.push(msg);
     } else {
@@ -3617,6 +3990,54 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       || (isError ? 'Scout did not complete successfully.' : 'Scout finished with no summary.'),
     isError,
   };
+}
+
+// Plain-terms explanation of a markerless turn (worker exitCode -1 / null
+// — the detached wrapper never wrote its __USERNODE_EXIT__ line). The
+// cause tag is set by worker.js's journal consumer; the bare
+// "exited with code -1" wording is deliberately gone (it read like a
+// Claude Code failure when the agent was usually healthy).
+function describeMarkerlessExit(cause) {
+  switch (cause) {
+    case 'oom_killed':
+      return 'The coding agent was killed — most likely it ran out of memory.';
+    case 'container_gone':
+      return "The coding agent's worker container disappeared mid-run.";
+    case 'probe_unobservable':
+      return "The platform lost contact with the coding agent's run.";
+    case 'turn_process_gone':
+      return "The coding agent's process ended without reporting a result.";
+    default:
+      return "The coding agent's run ended without reporting a result.";
+  }
+}
+
+// One automatic retry for headless scout/build turns that died without
+// producing anything: markerless exit, no __USERNODE_RESULT__ line, and
+// no per-mode output (commit for build, spec text for scout — the caller
+// passes that as `producedOutput`). Interactive turns stay single-shot —
+// a human is present to re-dispatch — and a user-stopped turn is a
+// deliberate end, not a failure to retry.
+function shouldRetryHeadlessTurn(result, stopHandle, producedOutput) {
+  if (!result || producedOutput) return false;
+  if (stopHandle && stopHandle.stopped) return false;
+  return result.exitCode === -1 && !result.resultSeen;
+}
+
+// Pre-retry safety: kill any zombie turn process and wait (bounded) for
+// the container to probe idle, so the re-dispatch can't race two claudes
+// in one container (the new wrapper's `rm -f turn-*.log` only runs once
+// the old turn is confirmed dead). Returns whether idle was confirmed;
+// the caller retries either way — worst case the dispatch itself fails.
+async function waitForTurnStopped(sessionId, containerName, { timeoutMs = 30000 } = {}) {
+  try { await worker.stopTurn(sessionId); } catch {}
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const busy = await worker.isWorkerExecuting(containerName);
+    if (busy === false) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
 }
 
 // Runs the full Claude Code pipeline for one tool invocation and returns
@@ -3924,7 +4345,7 @@ path: /relative/path?demo=1
 
     let result;
     try {
-      result = await worker.execInWorker(session.id, {
+      const dispatchBuild = () => worker.execInWorker(session.id, {
         mode: 'build',
         prompt: claudePrompt,
         model: selectedModel,
@@ -3945,6 +4366,15 @@ path: /relative/path?demo=1
           ).catch(() => {});
         },
       });
+      result = await dispatchBuild();
+      // Headless auto-retry: a markerless turn that committed nothing
+      // gets exactly one re-dispatch (the retry wraps the call site, not
+      // execInWorker, so active_turn bookkeeping stays per-attempt).
+      if (headless && shouldRetryHeadlessTurn(result, stopHandle, result.ahead > 0)) {
+        await sendStatus('The coding step failed unexpectedly — retrying once…');
+        await waitForTurnStopped(session.id, containerName);
+        result = await dispatchBuild();
+      }
     } finally {
       clearInterval(heartbeat);
       if (estimator) clearInterval(estimator);
@@ -4017,9 +4447,16 @@ path: /relative/path?demo=1
       summaryParts.push(msg);
     } else if (!hasChanges) {
       isError = true;
-      const msg = result.exitCode !== 0
-        ? `Claude Code exited with code ${result.exitCode} — no changes were made.`
-        : 'No changes were made by Claude Code.';
+      let msg;
+      if (result.exitCode === 0) {
+        msg = 'No changes were made by Claude Code.';
+      } else if (result.exitCode === -1 || result.exitCode == null) {
+        // Markerless turn — say WHY in plain terms instead of a bare
+        // "-1" (which also normalizes the old "code null" rendering).
+        msg = `${describeMarkerlessExit(result.markerlessCause)} No changes were made.`;
+      } else {
+        msg = `Claude Code exited with code ${result.exitCode} — no changes were made.`;
+      }
       await sendStatus(msg);
       summaryParts.push(msg);
     } else if (headless) {
@@ -4403,7 +4840,8 @@ If a request is UNCLEAR, ask clarifying questions INSTEAD of calling any tool. C
 - Never ask something the repo can answer — that's a dispatch_scout signal, not a question.
 - Never ask when a sensible default exists — state the assumption in one sentence and proceed.
 - Ask at most 3 numbered questions in a single message, each with your suggested default so a one-word reply ("defaults are fine") unblocks. Ask once — don't drip-feed questions across turns.
-- Never dispatch while also asking for clarification (asking and dispatching in the same turn is forbidden).
+- When you DO ask clarifying questions, ALSO call the suggest_answers tool in the same message — one entry per question, in the same order as your numbered questions, with your suggested default as the FIRST answer — so the user can tap an answer chip instead of typing. Each answer must be a short, self-contained reply the user could send verbatim. suggest_answers is the ONLY tool allowed alongside questions.
+- Never dispatch while also asking for clarification (asking and dispatching in the same turn is forbidden — suggest_answers accompanying a dispatch is dropped).
 - If the user replies "your call" / "just do it", proceed with stated assumptions instead of re-asking.
 
 TWO TOOLS, in priority order:
@@ -4426,8 +4864,8 @@ GENERAL RULES (apply to all tools):
   * chatting, brainstorming, or just acknowledging
   * giving feedback that isn't a concrete change request ("this looks bad" alone — ask what they want instead)
   * asking for something that looks like a brand-new, standalone app unrelated to "${appName}" (e.g. they're chatting here but describe building a totally different product). In that case, DO NOT dispatch — instead, gently point them to the home page to create a new app, e.g. "That sounds like a separate app from ${appName}. You can head back to the home screen and spin up a new app for it." Only dispatch if they confirm they want it added to this app.
-- If the request fails the CLARITY GATE above, ask clarifying questions (per its rules) INSTEAD of calling any tool. Never dispatch while also asking for clarification.
-- At most ONE tool call per user message.
+- If the request fails the CLARITY GATE above, ask clarifying questions (per its rules) INSTEAD of calling any dispatch tool — the one tool that belongs WITH questions is suggest_answers. Never dispatch while also asking for clarification.
+- At most ONE tool call per user message (suggest_answers accompanying your clarifying questions does not count toward this limit).
 - Never call dispatch_scout and dispatch_claude_code in the same turn. The user dispatches the build themselves.
 
 AFTER A TOOL RETURNS:
@@ -4591,4 +5029,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDoneIfArmed, notifyAutoSolveDone, buildHeadlessSeed, shouldPostHeadlessQuestionComment, specHasBlockingQuestions };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDoneIfArmed, notifyAutoSolveDone, buildHeadlessSeed, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, describeMarkerlessExit, shouldRetryHeadlessTurn };

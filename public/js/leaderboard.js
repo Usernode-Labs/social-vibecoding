@@ -20,6 +20,11 @@ const Leaderboard = {
   _open: false,
   sub: 'prs',           // 'prs' | 'users' | 'history'
   window: 'all',         // 'all' | 'week'
+  // (#60) Profile drill-in from the Top-users tab. Non-null = the
+  // profile view for that username replaces the tab strip. Set via
+  // openProfile() (hash #leaderboard/users/<name>), cleared by any
+  // _setSub() (i.e. returning to a plain tab hash).
+  profileUser: null,
   // History filter chips. Both on (the default) or both off = show
   // everything; exactly one on = narrow to that half.
   _histKudos: true,
@@ -54,7 +59,12 @@ const Leaderboard = {
     // My history only changes from the viewer's OWN actions (see
     // invalidateHistory below) — other people's kudos can't add rows,
     // so skip the re-fetch entirely while it's the active pane.
-    if (Leaderboard.sub === 'history') return;
+    if (Leaderboard.sub === 'history' && !Leaderboard.profileUser) return;
+    // Profile panes show per-PR kudos counts, so any kudos_update can
+    // change them — drop them all; inactive ones re-fetch on next open.
+    for (const k of [...Leaderboard._cache.keys()]) {
+      if (k.startsWith('user|')) Leaderboard._cache.delete(k);
+    }
     // Just invalidate the active pane; the others stay cached and
     // re-fetch on next tab click. Refresh is cheap (one query each),
     // but spamming every pane on every kudos give would be wasteful.
@@ -74,6 +84,8 @@ const Leaderboard = {
   },
 
   _key(sub, win) {
+    // Profile view supersedes the tab panes while it's open.
+    if (Leaderboard.profileUser) return `user|${Leaderboard.profileUser}`;
     if (sub === 'history') return `history|${Leaderboard._historyType()}`;
     return `${sub}|${win}`;
   },
@@ -88,9 +100,26 @@ const Leaderboard = {
   _setSub(sub) {
     if (sub !== 'prs' && sub !== 'users' && sub !== 'history') return;
     Leaderboard.sub = sub;
+    // Any plain tab navigation leaves the profile drill-in.
+    Leaderboard.profileUser = null;
     Leaderboard._syncHash();
     // Called before open() during deep-link restore — just record the
     // state; open() does the first render.
+    if (!Leaderboard._open) return;
+    Leaderboard._render();
+    Leaderboard._load();
+  },
+
+  // (#60) Open the per-user profile view (all of <username>'s proposed
+  // PRs). Mirrors _setSub's contract: record state + sync the hash;
+  // render/load only when the screen is already mounted (deep-link
+  // restore calls this before open()).
+  openProfile(username) {
+    if (!username) return;
+    Leaderboard.profileUser = username;
+    // The profile is users-tab territory — back lands on Top users.
+    Leaderboard.sub = 'users';
+    Leaderboard._syncHash();
     if (!Leaderboard._open) return;
     Leaderboard._render();
     Leaderboard._load();
@@ -100,7 +129,9 @@ const Leaderboard = {
   // polluting history — replaceState, and only while we're actually on
   // a leaderboard hash (never hijack an app route mid-navigation).
   _syncHash() {
-    const target = `#leaderboard/${Leaderboard.sub}`;
+    const target = Leaderboard.profileUser
+      ? `#leaderboard/users/${encodeURIComponent(Leaderboard.profileUser)}`
+      : `#leaderboard/${Leaderboard.sub}`;
     if (location.hash.startsWith('#leaderboard') && location.hash !== target) {
       history.replaceState(null, '', target);
     }
@@ -133,14 +164,19 @@ const Leaderboard = {
     Leaderboard._loadingKey = key;
     try {
       let res;
-      if (Leaderboard.sub === 'history') {
+      if (Leaderboard.profileUser) {
+        res = await fetch(
+          `/api/leaderboard/users/${encodeURIComponent(Leaderboard.profileUser)}/prs?limit=50`
+        );
+      } else if (Leaderboard.sub === 'history') {
         res = await fetch(`/api/me/history?type=${Leaderboard._historyType()}&limit=50`);
       } else {
         const path = Leaderboard.sub === 'prs' ? 'prs' : 'users';
         res = await fetch(`/api/leaderboard/${path}?window=${Leaderboard.window}&limit=20`);
       }
       if (!res.ok) {
-        Leaderboard._cache.set(key, { error: true });
+        // notFound drives the profile pane's "User not found" copy.
+        Leaderboard._cache.set(key, { error: true, notFound: res.status === 404 });
       } else {
         const data = await res.json();
         Leaderboard._cache.set(key, data);
@@ -156,28 +192,31 @@ const Leaderboard = {
     }
   },
 
-  // Append-mode fetch of the next history page using the keyset cursor.
+  // Append-mode fetch of the next page (profile PR list or history)
+  // using the keyset cursor.
   async _loadMore() {
-    if (Leaderboard.sub !== 'history' || Leaderboard._moreLoading) return;
+    if (Leaderboard._moreLoading) return;
+    if (!Leaderboard.profileUser && Leaderboard.sub !== 'history') return;
     const key = Leaderboard._key('history');
     const data = Leaderboard._cache.get(key);
     if (!data || data.error || !data.nextBefore) return;
+    const url = Leaderboard.profileUser
+      ? `/api/leaderboard/users/${encodeURIComponent(Leaderboard.profileUser)}/prs?limit=50&before=${encodeURIComponent(data.nextBefore)}`
+      : `/api/me/history?type=${Leaderboard._historyType()}&limit=50&before=${encodeURIComponent(data.nextBefore)}`;
     Leaderboard._moreLoading = true;
     Leaderboard._renderBody();
     try {
-      const res = await fetch(
-        `/api/me/history?type=${Leaderboard._historyType()}&limit=50&before=${encodeURIComponent(data.nextBefore)}`
-      );
+      const res = await fetch(url);
       if (res.ok) {
         const page = await res.json();
         data.items = (data.items || []).concat(page.items || []);
         data.nextBefore = page.nextBefore;
       } else {
         // Leave the cursor in place so the button retries.
-        console.warn('[leaderboard] history load-more failed', res.status);
+        console.warn('[leaderboard] load-more failed', res.status);
       }
     } catch (err) {
-      console.warn('[leaderboard] history load-more failed', err);
+      console.warn('[leaderboard] load-more failed', err);
     } finally {
       Leaderboard._moreLoading = false;
       Leaderboard._renderBody();
@@ -187,6 +226,32 @@ const Leaderboard = {
   _render() {
     const root = document.getElementById('leaderboard-root');
     if (!root) return;
+    // Profile drill-in replaces the whole tab chrome while open; the
+    // body (stats + PR list) renders via _renderBody once data lands.
+    if (Leaderboard.profileUser) {
+      const who = Leaderboard.profileUser;
+      const initial = (who[0] || '?').toUpperCase();
+      root.innerHTML = `
+        <header class="mb-4">
+          <button data-lb-back class="text-sm font-medium text-violet-600 dark:text-violet-400 hover:underline mb-3">← Top users</button>
+          <div class="flex items-center gap-3">
+            <div class="w-12 h-12 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-lg">${escapeHtml(initial)}</div>
+            <div class="min-w-0">
+              <h2 class="text-2xl font-bold text-zinc-900 dark:text-zinc-100 truncate">@${escapeHtml(who)}</h2>
+              <p class="text-sm text-zinc-500 dark:text-zinc-400">All PRs this user has proposed, newest first.</p>
+            </div>
+          </div>
+        </header>
+        <div id="leaderboard-body" class="mt-2"></div>
+      `;
+      root.querySelector('[data-lb-back]').addEventListener('click', () => {
+        // Real hash navigation so browser/WebView back behaves; the
+        // hashchange route clears profileUser via _setSub('users').
+        window.location.hash = '#leaderboard/users';
+      });
+      Leaderboard._renderBody();
+      return;
+    }
     const isHistory = Leaderboard.sub === 'history';
     const subTabs = ['prs', 'users', 'history'].map((s) => {
       const active = s === Leaderboard.sub;
@@ -234,6 +299,10 @@ const Leaderboard = {
   _renderBody() {
     const body = document.getElementById('leaderboard-body');
     if (!body) return;
+    if (Leaderboard.profileUser) {
+      Leaderboard._renderProfileBody(body);
+      return;
+    }
     if (Leaderboard.sub === 'history') {
       Leaderboard._renderHistoryBody(body);
       return;
@@ -261,6 +330,127 @@ const Leaderboard = {
       ? Leaderboard._renderPrRows(items)
       : Leaderboard._renderUserRows(items);
     Leaderboard._wireRouteButtons(body);
+    Leaderboard._wireUserRows(body);
+  },
+
+  // (#60) Profile pane body: stat chips + the user's proposed-PR list,
+  // with the same Load-more keyset flow as My history.
+  _renderProfileBody(body) {
+    const key = Leaderboard._key();
+    const data = Leaderboard._cache.get(key);
+
+    if (!data) {
+      body.innerHTML = `<div class="py-8 text-center text-sm text-zinc-500">Loading…</div>`;
+      return;
+    }
+    if (data.error) {
+      body.innerHTML = data.notFound
+        ? `<div class="py-8 text-center text-sm text-zinc-500">User not found.</div>`
+        : `<div class="py-8 text-center text-sm text-red-500">Couldn’t load this profile. Try again later.</div>`;
+      return;
+    }
+
+    const s = data.stats || {};
+    const chip = (label, title) =>
+      `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 text-xs font-medium" ${title ? `title="${escapeAttr(title)}"` : ''}>${label}</span>`;
+    const stats = `
+      <div class="flex items-center gap-2 mb-3 flex-wrap">
+        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-900/30 border border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300 text-xs font-semibold" title="Kudos earned on merged PRs — the leaderboard ranking score">
+          <span aria-hidden="true">\u{1F44F}</span><span>${s.kudos_merged || 0} on merged</span>
+        </span>
+        ${chip(`${s.prs_merged || 0} merged`, 'PRs of theirs that landed')}
+        ${chip(`${s.prs_total || 0} PR${(s.prs_total || 0) === 1 ? '' : 's'} proposed`, 'Everything they put up for the group, including open and closed PRs')}
+      </div>`;
+
+    const items = Array.isArray(data.items) ? data.items : [];
+    let listHtml;
+    if (!items.length) {
+      listHtml = `<div class="py-8 text-center text-sm text-zinc-500">No PRs proposed yet.</div>`;
+    } else {
+      const more = data.nextBefore
+        ? `<div class="mt-3 text-center">
+             <button data-lb-more class="px-4 py-1.5 text-sm font-medium rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900" ${Leaderboard._moreLoading ? 'disabled' : ''}>
+               ${Leaderboard._moreLoading ? 'Loading…' : 'Load more'}
+             </button>
+           </div>`
+        : '';
+      listHtml = Leaderboard._renderProfilePrRows(items) + more;
+    }
+
+    body.innerHTML = stats + listHtml;
+    const moreBtn = body.querySelector('[data-lb-more]');
+    if (moreBtn) moreBtn.addEventListener('click', () => Leaderboard._loadMore());
+    Leaderboard._wireRouteButtons(body);
+    // The GitHub icon is a real anchor INSIDE the routed row — stop the
+    // click from also triggering the row navigation.
+    body.querySelectorAll('[data-lb-ext]').forEach((a) => {
+      a.addEventListener('click', (e) => e.stopPropagation());
+    });
+  },
+
+  _renderProfilePrRows(items) {
+    const rows = items.map((row) => {
+      const title = row.pr_title || `PR #${row.pr_number || row.session_id}`;
+      const appName = row.app_name || row.app_slug || 'app';
+      const badge = Leaderboard._statusBadge(row.status);
+      const when = Leaderboard._fmtDate(row.created_at);
+      // External GitHub link, when the PR has one. The row itself is a
+      // div[role=button] (not <button>) because an <a> may not nest
+      // inside a <button>.
+      const ext = row.pr_url
+        ? `<a href="${escapeAttr(row.pr_url)}" target="_blank" rel="noopener" data-lb-ext
+              title="Open on GitHub"
+              class="shrink-0 px-1.5 py-0.5 rounded text-sm text-zinc-400 hover:text-violet-600 dark:hover:text-violet-400"><span aria-hidden="true">↗</span><span class="sr-only">Open on GitHub</span></a>`
+        : '';
+      return `
+        <div role="button" tabindex="0"
+             data-lb-pr-route="${escapeAttr(row.app_slug)}" data-lb-pr-session="${row.session_id}"
+             class="w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors cursor-pointer">
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate">${escapeHtml(title)}</div>
+            <div class="text-xs text-zinc-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
+              ${badge}
+              <span>${escapeHtml(appName)}</span>
+              <span class="text-zinc-400">·</span>
+              <span>${escapeHtml(when)}</span>
+            </div>
+          </div>
+          ${ext}
+          <div class="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-900/30 border border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300 text-sm font-semibold">
+            <span aria-hidden="true">\u{1F44F}</span>
+            <span>${row.kudos_count}</span>
+          </div>
+        </div>`;
+    }).join('');
+    return `<div class="space-y-2">${rows}</div>`;
+  },
+
+  // Status → badge for the profile PR list. Same palette as the Top PRs
+  // badges, plus 'closed' (archived-after-promotion) in the zinc tone
+  // the voided-bounty chip uses.
+  _statusBadge(status) {
+    if (status === 'merged') {
+      return '<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">merged</span>';
+    }
+    if (status === 'merging') {
+      return '<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">merging</span>';
+    }
+    if (status === 'archived') {
+      return '<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">closed</span>';
+    }
+    return '<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">open</span>';
+  },
+
+  // Top-users rows route to the user's profile via a real hash change
+  // (pushes a history entry, so back returns to the tab).
+  _wireUserRows(body) {
+    body.querySelectorAll('[data-lb-user]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const who = el.dataset.lbUser;
+        if (!who) return;
+        window.location.hash = `#leaderboard/users/${encodeURIComponent(who)}`;
+      });
+    });
   },
 
   _renderHistoryBody(body) {
@@ -392,6 +582,16 @@ const Leaderboard = {
   // each body render so we don't fight with the rerender.
   _wireRouteButtons(body) {
     body.querySelectorAll('[data-lb-pr-route]').forEach((el) => {
+      // Profile rows are div[role=button] (they nest an <a>), which
+      // doesn't get native Enter/Space activation — emulate it.
+      if (el.tagName !== 'BUTTON') {
+        el.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            el.click();
+          }
+        });
+      }
       el.addEventListener('click', () => {
         const slug = el.dataset.lbPrRoute;
         if (!slug) return;
@@ -465,7 +665,8 @@ const Leaderboard = {
         ? `<span class="shrink-0 text-[11px] text-amber-600 dark:text-amber-400" title="Kudos on PRs that haven’t merged yet — not counted toward ranking">+${kudosOnUnmerged} on unmerged</span>`
         : '';
       return `
-        <div class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-800">
+        <button data-lb-user="${escapeAttr(who)}"
+                class="w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors">
           <div class="w-7 text-center text-sm font-mono text-zinc-500">${rank}</div>
           <div class="w-9 h-9 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-sm">${escapeHtml(initial)}</div>
           <div class="flex-1 min-w-0">
@@ -480,7 +681,7 @@ const Leaderboard = {
             <span aria-hidden="true">\u{1F44F}</span>
             <span>${mergedKudos}</span>
           </div>
-        </div>`;
+        </button>`;
     }).join('');
     return `<div class="space-y-2">${rows}</div>`;
   },
