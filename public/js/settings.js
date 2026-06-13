@@ -39,6 +39,15 @@
       const cpSave = document.getElementById('cp-save');
       if (cpSave) cpSave.addEventListener('click', () => this.changePassword());
 
+      // Wallet-signed change-password → POST /api/me/wallet-change-password.
+      // Only reachable when the wallet-mode link is shown (native + linked).
+      const cpWalletSave = document.getElementById('cp-wallet-save');
+      if (cpWalletSave) cpWalletSave.addEventListener('click', () => this.changePasswordWithWallet());
+      const useWallet = document.getElementById('cp-use-wallet');
+      if (useWallet) useWallet.addEventListener('click', (e) => { e.preventDefault(); this._setChangePasswordMode('wallet'); });
+      const usePassword = document.getElementById('cp-use-password');
+      if (usePassword) usePassword.addEventListener('click', (e) => { e.preventDefault(); this._setChangePasswordMode('password'); });
+
       // Dev console "always show" toggle. State lives in DevConsole +
       // localStorage; we just mirror it here. Wire change immediately
       // so the icon appears/disappears without needing to close the
@@ -135,6 +144,7 @@
       this._refreshSpend();
       this._renderLlmGrants();
       this._renderWalletSection();
+      this._renderChangePasswordSection();
       this._renderDevConsoleSection();
       this._renderExperimentalSection();
       this._renderAdminSection();
@@ -343,6 +353,98 @@
       el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
       const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
       el.classList.add(cls);
+    },
+
+    // Decide whether the wallet option is even offered, then default to
+    // the password form. The "Use your wallet instead" link only appears
+    // in the Usernode native app (signMessage available) AND when the
+    // logged-in account has a linked wallet to prove control of.
+    _renderChangePasswordSection() {
+      const section = document.getElementById('change-password-section');
+      if (!section) return;
+      const isNative = !!(window.usernode && window.usernode.isNative);
+      this._walletChangeAvailable = isNative && !!this.state.usernodePubkey;
+      // Clear any stale field values / status on each open.
+      ['cp-current', 'cp-new', 'cp-confirm'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+      });
+      const status = document.getElementById('cp-status');
+      if (status) { status.classList.add('hidden'); status.textContent = ''; }
+      this._setChangePasswordMode('password');
+    },
+
+    _setChangePasswordMode(mode) {
+      // In password mode (or when wallet isn't available) show the
+      // current-password field + the normal submit, and offer the
+      // "use your wallet" link only if it's available. In wallet mode hide
+      // the current-password field, swap the submit, and offer the way back.
+      const wallet = mode === 'wallet' && this._walletChangeAvailable;
+      const show = (id, on) => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('hidden', !on);
+      };
+      show('cp-current-row', !wallet);
+      show('cp-save', !wallet);
+      show('cp-wallet-save', wallet);
+      // Offer the "switch to wallet" link only in password mode and only
+      // when wallet change is available; offer the way back in wallet mode.
+      show('cp-wallet-mode', !wallet && this._walletChangeAvailable);
+      show('cp-password-mode', wallet);
+    },
+
+    async changePasswordWithWallet() {
+      const newEl = document.getElementById('cp-new');
+      const confirmEl = document.getElementById('cp-confirm');
+      const btn = document.getElementById('cp-wallet-save');
+      const newPassword = newEl.value;
+      const confirm = confirmEl.value;
+
+      if (newPassword.length < 8) { this._setCpStatus('New password must be at least 8 characters.', 'error'); return; }
+      if (newPassword !== confirm) { this._setCpStatus('New passwords do not match.', 'error'); return; }
+      if (!(window.usernode && window.usernode.isNative) || typeof window.signMessage !== 'function') {
+        this._setCpStatus('Wallet signing is only available in the Usernode app.', 'error');
+        return;
+      }
+
+      btn.disabled = true;
+      this._setCpStatus('Verifying identity…', 'info');
+      try {
+        const pubkey = this.state.usernodePubkey || (window.getNodeAddress ? await window.getNodeAddress() : null);
+        if (!pubkey) { this._setCpStatus('Could not read your wallet address.', 'error'); return; }
+
+        // Fresh single-use challenge from the shared wallet-check endpoint.
+        const checkRes = await fetch('/api/auth/wallet-check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ pubkey }),
+        });
+        const checkData = await checkRes.json().catch(() => ({}));
+        const challenge = checkData.challenge;
+        if (!challenge) { this._setCpStatus('Could not get a challenge from the server.', 'error'); return; }
+
+        const sig = await window.signMessage(challenge);
+        const r = await fetch('/api/me/wallet-change-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ publicKey: sig.publicKey, challenge, signature: sig.signature, newPassword }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { this._setCpStatus(j.error || 'Failed to change password.', 'error'); return; }
+        newEl.value = '';
+        confirmEl.value = '';
+        this._setCpStatus('Password changed.', 'ok');
+      } catch (err) {
+        if (err && err.message && err.message.includes('denied')) {
+          this._setCpStatus('Signature request was denied.', 'error');
+        } else {
+          this._setCpStatus(`Wallet change failed: ${err.message || err}`, 'error');
+        }
+      } finally {
+        btn.disabled = false;
+      }
     },
 
     async changePassword() {

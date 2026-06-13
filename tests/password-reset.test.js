@@ -22,13 +22,17 @@ const bcrypt = require('bcrypt');
 // ── Pool stub: query-aware, captures everything ────────────────────
 const poolMod = require('../src/db/pool');
 let capturedQueries = [];
-let userByPubkey = null;   // row returned for SELECT ... WHERE usernode_pubkey
+let userByPubkey = null;   // row returned for SELECT ... WHERE usernode_pubkey = $1
 let userPasswordRow = null; // row returned for SELECT password ... WHERE id
+let userLinkedPubkeyRow = null; // row for SELECT usernode_pubkey FROM users WHERE id
 let updateReturns = [];     // rows returned for UPDATE ... RETURNING
 
 poolMod.getPool = () => ({
   query: async (sql, params) => {
     capturedQueries.push({ sql, params });
+    if (/SELECT usernode_pubkey FROM users WHERE id/.test(sql)) {
+      return { rows: userLinkedPubkeyRow ? [userLinkedPubkeyRow] : [] };
+    }
     if (/SELECT .*usernode_pubkey = \$1/s.test(sql)) {
       return { rows: userByPubkey ? [userByPubkey] : [] };
     }
@@ -97,6 +101,7 @@ function reset() {
   logCalls = [];
   userByPubkey = null;
   userPasswordRow = null;
+  userLinkedPubkeyRow = null;
   updateReturns = [];
   rpcValid = true;
   currentUser = null;
@@ -237,6 +242,158 @@ test('wallet-reset: a linked NON-genesis wallet is accepted (no genesis gate)', 
 
     const r = await post(server, '/api/auth/wallet-reset-verify', {
       pubkey: 'ut1carol', challenge, signature: 'ok', newPassword: 'brand-new-pw',
+    });
+    assert.strictEqual(r.res.status, 200);
+    assert.ok(capturedQueries.some((q) => /UPDATE users SET password/.test(q.sql)), 'password written for non-genesis linked wallet');
+  } finally {
+    genesisAccounts.isGenesisAddress = origIsGenesis;
+    server.close();
+    rpc.close();
+  }
+});
+
+// ── POST /api/me/wallet-change-password ────────────────────────────
+test('wallet-change: rejected without a session', async () => {
+  reset();
+  currentUser = null; // no req.user injected
+  const rpc = await startRpc();
+  const server = await startApp(authRoutes, { nodeRpcUrl: `http://127.0.0.1:${rpc.address().port}` });
+  try {
+    const r = await post(server, '/api/me/wallet-change-password', {
+      challenge: 'x', signature: 'y', newPassword: 'brand-new-pw',
+    });
+    assert.strictEqual(r.res.status, 401);
+    assert.ok(!capturedQueries.some((q) => /UPDATE users SET password/.test(q.sql)));
+  } finally {
+    server.close();
+    rpc.close();
+  }
+});
+
+test('wallet-change: rejects when the account has no linked wallet', async () => {
+  reset();
+  currentUser = { id: 9, username: 'bob', isAdmin: false };
+  userLinkedPubkeyRow = { usernode_pubkey: null };
+  const rpc = await startRpc();
+  const server = await startApp(authRoutes, { nodeRpcUrl: `http://127.0.0.1:${rpc.address().port}` });
+  try {
+    const r = await post(server, '/api/me/wallet-change-password', {
+      challenge: 'x', signature: 'y', newPassword: 'brand-new-pw',
+    });
+    assert.strictEqual(r.res.status, 400);
+    assert.ok(!capturedQueries.some((q) => /UPDATE users SET password/.test(q.sql)));
+  } finally {
+    server.close();
+    rpc.close();
+  }
+});
+
+test('wallet-change: rejects an invalid/expired challenge before touching the DB', async () => {
+  reset();
+  currentUser = { id: 9, username: 'bob', isAdmin: false };
+  userLinkedPubkeyRow = { usernode_pubkey: 'ut1bob' };
+  const rpc = await startRpc();
+  const server = await startApp(authRoutes, { nodeRpcUrl: `http://127.0.0.1:${rpc.address().port}` });
+  try {
+    const r = await post(server, '/api/me/wallet-change-password', {
+      challenge: 'never-issued', signature: 'y', newPassword: 'brand-new-pw',
+    });
+    assert.strictEqual(r.res.status, 401);
+    assert.ok(!capturedQueries.some((q) => /UPDATE users SET password/.test(q.sql)));
+  } finally {
+    server.close();
+    rpc.close();
+  }
+});
+
+test('wallet-change: rejects a challenge issued for a DIFFERENT pubkey (binding)', async () => {
+  reset();
+  currentUser = { id: 9, username: 'bob', isAdmin: false };
+  userLinkedPubkeyRow = { usernode_pubkey: 'ut1bob' };
+  // wallet-check will issue a challenge for whatever pubkey we ask about.
+  userByPubkey = { id: 99, username: 'attacker', is_admin: false };
+  const rpc = await startRpc();
+  const server = await startApp(authRoutes, { nodeRpcUrl: `http://127.0.0.1:${rpc.address().port}` });
+  try {
+    // Challenge bound to someone else's wallet, not bob's linked key.
+    const chk = await post(server, '/api/auth/wallet-check', { pubkey: 'ut1attacker' });
+    const challenge = chk.body.challenge;
+    assert.ok(challenge);
+
+    const r = await post(server, '/api/me/wallet-change-password', {
+      challenge, signature: 'ok', newPassword: 'brand-new-pw',
+    });
+    assert.strictEqual(r.res.status, 401);
+    assert.ok(!capturedQueries.some((q) => /UPDATE users SET password/.test(q.sql)), 'no password write for mismatched pubkey');
+  } finally {
+    server.close();
+    rpc.close();
+  }
+});
+
+test('wallet-change: rejects when the node RPC reports the signature invalid', async () => {
+  reset();
+  currentUser = { id: 9, username: 'bob', isAdmin: false };
+  userLinkedPubkeyRow = { usernode_pubkey: 'ut1bob' };
+  userByPubkey = { id: 9, username: 'bob', is_admin: false };
+  rpcValid = false;
+  const rpc = await startRpc();
+  const server = await startApp(authRoutes, { nodeRpcUrl: `http://127.0.0.1:${rpc.address().port}` });
+  try {
+    const chk = await post(server, '/api/auth/wallet-check', { pubkey: 'ut1bob' });
+    const r = await post(server, '/api/me/wallet-change-password', {
+      challenge: chk.body.challenge, signature: 'bad', newPassword: 'brand-new-pw',
+    });
+    assert.strictEqual(r.res.status, 401);
+    assert.ok(!capturedQueries.some((q) => /UPDATE users SET password/.test(q.sql)));
+  } finally {
+    server.close();
+    rpc.close();
+  }
+});
+
+test('wallet-change: valid signature matching the linked wallet writes a fresh hash and does NOT delete sessions', async () => {
+  reset();
+  currentUser = { id: 9, username: 'bob', isAdmin: false };
+  userLinkedPubkeyRow = { usernode_pubkey: 'ut1bob' };
+  userByPubkey = { id: 9, username: 'bob', is_admin: false };
+  const rpc = await startRpc();
+  const server = await startApp(authRoutes, { nodeRpcUrl: `http://127.0.0.1:${rpc.address().port}` });
+  try {
+    const chk = await post(server, '/api/auth/wallet-check', { pubkey: 'ut1bob' });
+    const r = await post(server, '/api/me/wallet-change-password', {
+      publicKey: 'ut1bob', challenge: chk.body.challenge, signature: 'ok', newPassword: 'brand-new-pw',
+    });
+    assert.strictEqual(r.res.status, 200);
+    assert.strictEqual(r.body.ok, true);
+
+    const upd = capturedQueries.find((q) => /UPDATE users SET password/.test(q.sql));
+    assert.ok(upd, 'password updated');
+    assert.ok(await bcrypt.compare('brand-new-pw', upd.params[0]));
+    assert.strictEqual(upd.params[1], 9, 'updated for the logged-in user id');
+
+    // A change (not a reset) leaves existing sessions intact.
+    assert.ok(!capturedQueries.some((q) => /DELETE FROM sessions/.test(q.sql)), 'sessions not wiped');
+  } finally {
+    server.close();
+    rpc.close();
+  }
+});
+
+test('wallet-change: a NON-genesis matching pubkey is accepted (no genesis gate)', async () => {
+  reset();
+  currentUser = { id: 12, username: 'carol', isAdmin: false };
+  userLinkedPubkeyRow = { usernode_pubkey: 'ut1carol' };
+  userByPubkey = { id: 12, username: 'carol', is_admin: false };
+  const origIsGenesis = genesisAccounts.isGenesisAddress;
+  genesisAccounts.isGenesisAddress = () => false;
+  const rpc = await startRpc();
+  const server = await startApp(authRoutes, { nodeRpcUrl: `http://127.0.0.1:${rpc.address().port}` });
+  try {
+    const chk = await post(server, '/api/auth/wallet-check', { pubkey: 'ut1carol' });
+    assert.strictEqual(chk.body.isGenesis, false);
+    const r = await post(server, '/api/me/wallet-change-password', {
+      publicKey: 'ut1carol', challenge: chk.body.challenge, signature: 'ok', newPassword: 'brand-new-pw',
     });
     assert.strictEqual(r.res.status, 200);
     assert.ok(capturedQueries.some((q) => /UPDATE users SET password/.test(q.sql)), 'password written for non-genesis linked wallet');

@@ -591,6 +591,79 @@ function authRoutes(config) {
     }
   });
 
+  // Authenticated wallet-signed change-password (issue #282). The way back
+  // for a logged-in user (e.g. signed in via an admin temporary password,
+  // or a still-valid session) who has a linked wallet but has FORGOTTEN the
+  // password the normal /api/me/password form would require. Stays behind
+  // the auth gate (NOT in PUBLIC_PATHS) — it requires both a live session
+  // AND a wallet signature bound to this account's linked key. Key
+  // invariants:
+  //   - The verified pubkey must equal THIS logged-in user's own linked
+  //     usernode_pubkey (looked up by req.user.id). A valid signature from
+  //     any other wallet — even a genesis one — cannot set this user's
+  //     password.
+  //   - NO genesis gate, mirroring wallet-verify / wallet-reset-verify.
+  //   - Unlike the reset paths, existing sessions are left intact — this is
+  //     a change by an already-authenticated user, matching the semantics
+  //     of /api/me/password.
+  router.post('/api/me/wallet-change-password', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const { publicKey, challenge, signature, newPassword } = req.body || {};
+    if (!challenge || !signature) {
+      return res.status(400).json({ error: 'challenge and signature required' });
+    }
+
+    const policy = validatePassword(newPassword);
+    if (!policy.ok) return res.status(400).json({ error: policy.error });
+
+    // Resolve this user's linked wallet first — there's nothing to prove
+    // against if the account has no linked key.
+    let linkedPubkey;
+    try {
+      const { rows } = await pool.query(
+        'SELECT usernode_pubkey FROM users WHERE id = $1',
+        [req.user.id]
+      );
+      linkedPubkey = rows[0]?.usernode_pubkey || null;
+    } catch (err) {
+      log.error('wallet-auth', 'wallet-change-password lookup failed', { userId: req.user.id, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+    if (!linkedPubkey) {
+      return res.status(400).json({ error: 'No wallet is linked to your account' });
+    }
+
+    const entry = walletChallenges.get(challenge);
+    if (!entry || entry.pubkey !== linkedPubkey || Date.now() > entry.expiresAt) {
+      return res.status(401).json({ error: 'Invalid or expired challenge' });
+    }
+    walletChallenges.delete(challenge);
+
+    const cryptoKey = (publicKey || linkedPubkey).trim();
+    const verifyUrl = `${config.nodeRpcUrl}/misc/verify-signature`;
+    try {
+      const verifyResp = await httpJson('POST', verifyUrl, {
+        public_key: cryptoKey,
+        message: challenge,
+        signature,
+      });
+
+      if (!verifyResp || !verifyResp.valid) {
+        log.warn('wallet-auth', 'Change-password signature invalid', { userId: req.user.id, resp: verifyResp });
+        return res.status(401).json({ error: 'Signature verification failed' });
+      }
+
+      const hash = await bcrypt.hash(newPassword, 12);
+      await pool.query('UPDATE users SET password = $1 WHERE id = $2', [hash, req.user.id]);
+
+      log.info('wallet-auth', 'Wallet-signed password change successful', { userId: req.user.id });
+      res.json({ ok: true });
+    } catch (err) {
+      log.error('wallet-auth', 'wallet-change-password failed', { url: verifyUrl, err: err.message, code: err.code });
+      res.status(500).json({ error: 'Signature verification service unavailable' });
+    }
+  });
+
   router.post('/api/auth/wallet-register', authLimiter, async (req, res) => {
     const { username, password, pubkey } = req.body || {};
     if (!username?.trim() || !password || !pubkey?.trim()) {
