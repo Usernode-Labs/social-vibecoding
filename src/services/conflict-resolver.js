@@ -36,6 +36,23 @@ const MERGEABLE_AFTER_PUSH_INITIAL_MS = Number.isFinite(parseInt(process.env.CON
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Per-request hard timeout for the GitHub mergeability reads. octokit
+// (fetch transport) has NO default request timeout, so a single stalled
+// socket — e.g. a stale keepalive connection right after a platform
+// restart — hangs the read forever. That's the PR #245 wedge: the
+// resolve sat in waitForMergeableTrue's octokit.request indefinitely, so
+// _inFlightResolves never cleared and the resolving banner never
+// dismissed. AbortSignal.timeout makes each read fail fast; the callers
+// already treat a thrown/null read as "couldn't determine — bail
+// cleanly".
+const GH_REQUEST_TIMEOUT_MS = parseInt(process.env.CONFLICT_GH_REQUEST_TIMEOUT_MS, 10) || 15000;
+
+// Wall-clock ceiling on a whole resolve attempt. Belt-and-braces over the
+// per-request timeout above: guarantees _inFlightResolves[sessionId] (and
+// thus the "resolving" banner / vote-panel badge) always clears, no
+// matter where a future code path might stall.
+const RESOLVE_TIMEOUT_MS = parseInt(process.env.CONFLICT_RESOLVE_TIMEOUT_MS, 10) || 6 * 60 * 1000;
+
 function parseRepo(repoUrl) {
   const [, owner, repo] = (repoUrl || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/) || [];
   return owner && repo ? { owner, repo } : null;
@@ -55,7 +72,7 @@ async function pollMergeable(owner, repo, prNumber) {
   for (let i = 0; i < MERGEABLE_POLL_TRIES; i++) {
     const { data: pr } = await octokit.request(
       'GET /repos/{owner}/{repo}/pulls/{pull_number}',
-      { owner, repo, pull_number: prNumber }
+      { owner, repo, pull_number: prNumber, request: { signal: AbortSignal.timeout(GH_REQUEST_TIMEOUT_MS) } }
     );
     if (pr.mergeable === true || pr.mergeable === false) return pr.mergeable;
     if (i < MERGEABLE_POLL_TRIES - 1) {
@@ -79,7 +96,7 @@ async function waitForMergeableTrue(owner, repo, prNumber, { afterPush = false }
   for (let i = 0; i < MERGEABLE_TRUE_TRIES; i++) {
     const { data: pr } = await octokit.request(
       'GET /repos/{owner}/{repo}/pulls/{pull_number}',
-      { owner, repo, pull_number: prNumber }
+      { owner, repo, pull_number: prNumber, request: { signal: AbortSignal.timeout(GH_REQUEST_TIMEOUT_MS) } }
     );
     if (pr.mergeable === true) return true;
     if (pr.mergeable === false) return false;
@@ -170,10 +187,37 @@ function isResolving(sessionId) {
 function resolutionOutcomeFor(reason) {
   if (reason === 'synced_and_merged' || reason === 'merged') return 'merged';
   if (reason === 'synced_awaiting_votes' || reason === 'mergeable_recompute_pending') return 'synced';
-  if (['unresolved_conflict', 'sync_threw', 'still_conflicting', 'over_budget', 'retry_threw'].includes(reason)) {
+  if (['unresolved_conflict', 'sync_threw', 'still_conflicting', 'over_budget', 'retry_threw', 'resolve_timeout'].includes(reason)) {
     return 'failed';
   }
   return 'noop';
+}
+
+// Race a resolve against the wall-clock ceiling. On timeout we RESOLVE
+// (never reject) with a synthetic 'resolve_timeout' result carrying the
+// best app/session context we have, so the wrapper's terminal broadcast
+// below still fires and clears the resolving banner / vote badge. The
+// inner promise keeps running in the background to its own conclusion;
+// its late settle is swallowed.
+function guardResolveTimeout(inner, ctx) {
+  inner.catch(() => {});
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => {
+      log.error('conflict', 'Resolve exceeded wall-clock ceiling — releasing in-flight lock', {
+        sessionId: ctx.sessionId, timeoutMs: RESOLVE_TIMEOUT_MS,
+      });
+      resolve({
+        ok: false,
+        reason: 'resolve_timeout',
+        sessionId: ctx.sessionId,
+        appSlug: ctx.appSlug,
+        selfHosted: ctx.selfHosted,
+      });
+    }, RESOLVE_TIMEOUT_MS);
+    if (timer.unref) timer.unref();
+  });
+  return Promise.race([inner, timeout]).finally(() => { if (timer) clearTimeout(timer); });
 }
 
 async function resolveAndMaybeRetry(config, target) {
@@ -181,7 +225,14 @@ async function resolveAndMaybeRetry(config, target) {
   if (sessionId != null && _inFlightResolves.has(sessionId)) {
     return _inFlightResolves.get(sessionId);
   }
-  const p = resolveAndMaybeRetryInner(config, target);
+  // Shared context the inner fills in once it has loaded the session, so
+  // a timeout fallback can still address the right app/banner.
+  const ctx = {
+    sessionId,
+    appSlug: target.session?.app_slug || null,
+    selfHosted: !!target.session?.app_self_hosted,
+  };
+  const p = guardResolveTimeout(resolveAndMaybeRetryInner(config, target, ctx), ctx);
   if (sessionId != null) {
     _inFlightResolves.set(sessionId, p);
     p.finally(() => {
@@ -210,13 +261,18 @@ async function resolveAndMaybeRetry(config, target) {
   return p;
 }
 
-async function resolveAndMaybeRetryInner(config, target) {
+async function resolveAndMaybeRetryInner(config, target, ctx = {}) {
   const pool = getPool(config);
   let session = target.session || null;
   if (!session) {
     session = await loadSession(pool, target.sessionId);
     if (!session) return { ok: false, reason: 'session_not_found' };
   }
+  // Populate the timeout context the moment the session is known so a
+  // wall-clock fallback can still clear the right banner.
+  ctx.sessionId = session.id;
+  ctx.appSlug = session.app_slug;
+  ctx.selfHosted = !!session.app_self_hosted;
   const result = await resolveWithSession(config, pool, session);
   // #239: decorate every loaded-session exit with the fields the
   // wrapper's terminal broadcast needs. Pre-loaded sessions from

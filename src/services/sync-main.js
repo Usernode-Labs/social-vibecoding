@@ -58,6 +58,19 @@ async function persistBehindMain(pool, session, behind) {
 //   sessionId(Number) -> { phase, startedAt, promise }
 const _inFlightSyncs = new Map();
 
+// Hard wall-clock ceiling on a single sync turn's promise. The detached
+// worker turn (docker exec -d + journal tail) is supposed to always
+// terminate via its own liveness watchdog, but if any link in that chain
+// stalls (a lingering `claude` child keeping the probe "busy", a wedged
+// journal tail, a hung post-turn GitHub poll), the in-flight promise
+// would never settle — and because runSyncMain coalesces per session on
+// that promise (see below), the session would be permanently
+// un-resyncable until a platform restart (the PR #245 failure mode).
+// This timeout guarantees the lock releases so the next trigger gets a
+// fresh attempt. A sync is mechanical (git merge + small CC pass), so a
+// generous-but-finite ceiling never truncates legitimate work.
+const SYNC_TURN_TIMEOUT_MS = parseInt(process.env.SYNC_TURN_TIMEOUT_MS, 10) || 8 * 60 * 1000;
+
 // Read by GET /api/sessions/:id/status for reload recovery and the
 // client's poll fallback. Null when nothing is syncing.
 function getSyncState(sessionId) {
@@ -115,8 +128,33 @@ async function runSyncMain(config, pool, sessionId, opts = {}) {
 
   const entry = { phase: 'starting', startedAt: Date.now(), promise: null };
   _inFlightSyncs.set(key, entry);
-  entry.promise = runSyncMainInner(config, pool, sessionId, opts, entry)
+  // Race the inner run against a wall-clock ceiling. On timeout the
+  // promise rejects (so callers — route / conflict-resolver — fail
+  // cleanly instead of hanging) and, critically, the `.finally` below
+  // still fires and clears the lock, so the session can be retried. The
+  // detached worker turn keeps running to completion in the background;
+  // the next runSyncMain just opens a fresh attempt.
+  let timer;
+  const inner = runSyncMainInner(config, pool, sessionId, opts, entry);
+  // If the timeout wins the race, `inner` is the losing branch and its
+  // eventual settle is ignored — swallow a late rejection so it doesn't
+  // surface as an unhandledRejection.
+  inner.catch(() => {});
+  const guarded = Promise.race([
+    inner,
+    new Promise((_resolve, reject) => {
+      timer = setTimeout(() => {
+        log.error('sync-main', 'Sync turn exceeded wall-clock ceiling — releasing lock', {
+          sessionId: key, timeoutMs: SYNC_TURN_TIMEOUT_MS, phase: entry.phase,
+        });
+        reject(new Error(`sync turn timed out after ${SYNC_TURN_TIMEOUT_MS}ms`));
+      }, SYNC_TURN_TIMEOUT_MS);
+      if (timer.unref) timer.unref();
+    }),
+  ]);
+  entry.promise = guarded
     .finally(() => {
+      if (timer) clearTimeout(timer);
       if (_inFlightSyncs.get(key) === entry) _inFlightSyncs.delete(key);
     });
   return entry.promise;
@@ -181,7 +219,16 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger }
   // broadcasts still fire regardless. `behind_main` is the last persisted
   // drift count (the same value the banner reads).
   const behindPrecheck = Number(session.behind_main) || 0;
-  const emitActivity = behindPrecheck > 0;
+  // Normally we gate the visible "Syncing… / resolved" breadcrumbs on a
+  // non-zero `behind` so a no-op /resume auto-sync leaves no noise. But a
+  // PR can CONFLICT (mergeable:false) while `behind_main` is 0/stale —
+  // exactly the case the conflict-resolver fires on. Suppressing activity
+  // there is why auto-conflict-resolution looked like it "did nothing" in
+  // chat (PR #245). So always narrate when the resolver drove us in:
+  // there is real merge work by construction (it only calls us on
+  // behind>0 OR mergeable===false), so this never leaves an orphan
+  // already_synced row.
+  const emitActivity = behindPrecheck > 0 || trigger === 'conflict_resolver';
 
   // The collapsible progress row is created lazily on the first progress
   // line so an already-synced run that never streams a marker leaves no

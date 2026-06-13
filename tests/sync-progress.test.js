@@ -455,6 +455,37 @@ test('activity: a behind==0 pre-check stays silent — no activity rows, no even
   }
 });
 
+test('activity: a conflict-resolver sync narrates even when behind_main is 0 (PR #245 regression)', async () => {
+  // A PR can CONFLICT (mergeable:false) while behind_main is 0/stale.
+  // The conflict-resolver only calls us when there is real merge work, so
+  // its syncs must narrate in chat regardless of the behind pre-check —
+  // suppressing them is why auto-resolution looked like it did nothing.
+  const { subject, updates, globals, restore } = loadSyncMain({
+    execImpl: async (opts) => {
+      opts.onProgress('[sync_merge]');
+      opts.onProgress('[sync_conflict_cc]');
+      opts.onProgress('[sync_push]');
+      return { syncResult: 'resolved', behind: 0, sha: 'feed1234', pushOk: true, exitCode: 0 };
+    },
+  });
+  try {
+    const pool = activityPool();
+    await subject.runSyncMain({ jwtSecret: 's' }, pool, 7, {
+      sessionRow: ownerRow({ behind_main: 0 }), trigger: 'conflict_resolver',
+    });
+
+    const contents = statusContents(pool);
+    assert.equal(contents[0], 'Syncing with main…', 'opening status row inserted despite behind_main=0');
+    assert.ok(contents.some((c) => /Claude resolved merge conflicts/i.test(c)), 'terminal status persisted');
+    assert.ok(pool.calls.some((c) => /Claude Code progress/.test(c.sql)), 'progress row created');
+    assert.ok(globals.some((g) => g.event === 'status'), 'live status broadcast');
+    assert.equal(eventInserts(pool).length, 1, 'SYNC_MAIN analytics row recorded');
+    assert.equal(syncEvents(updates)[syncEvents(updates).length - 1].state, 'done');
+  } finally {
+    restore();
+  }
+});
+
 // ── Routes: 409 busy guard + /status sync field ─────────────────────
 
 function activeSessionRow(id) {
