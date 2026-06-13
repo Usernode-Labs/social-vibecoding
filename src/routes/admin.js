@@ -1,5 +1,6 @@
 const { Router } = require('express');
 const crypto = require('crypto');
+const bcrypt = require('bcrypt');
 const { getPool } = require('../db/pool');
 const { adminMiddleware } = require('../middleware/admin');
 const log = require('../services/logger');
@@ -261,6 +262,47 @@ function adminRoutes(config) {
       res.status(500).json({ error: 'Internal server error' });
     } finally {
       client.release();
+    }
+  });
+
+  // Admin-issued temporary password (issue #282). The universal recovery
+  // path for accounts that can't self-reset with a wallet (no wallet
+  // linked, or on plain desktop web). Gated by the same router-level
+  // adminMiddleware as every other user route — any admin may issue one,
+  // consistent with the rest of admin user-management.
+  //
+  // We generate a one-time temporary password, store only its bcrypt hash,
+  // and return the plaintext exactly ONCE in the response for the admin to
+  // relay out-of-band. The plaintext is never logged. Resetting deletes all
+  // of the target's sessions so a leaked/old session can't outlive it. No
+  // last-admin concern — this doesn't touch is_admin — and an admin may
+  // reset their own password too.
+  router.post('/api/admin/users/:id/reset-password', async (req, res) => {
+    const userId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(userId)) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+    try {
+      // URL-safe, ~12-char temporary password. base64url avoids +/=
+      // so it's painless to relay over chat or read aloud.
+      const tempPassword = crypto.randomBytes(9).toString('base64url');
+      const hash = await bcrypt.hash(tempPassword, 12);
+
+      const { rows } = await pool.query(
+        'UPDATE users SET password = $1 WHERE id = $2 RETURNING id, username',
+        [hash, userId]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'User not found' });
+
+      await pool.query('DELETE FROM sessions WHERE user_id = $1', [userId]);
+
+      log.info('admin', 'Password reset issued', {
+        id: rows[0].id, username: rows[0].username, by: req.user.username,
+      });
+      res.json({ ok: true, username: rows[0].username, tempPassword });
+    } catch (err) {
+      log.error('admin', 'Password reset failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
     }
   });
 

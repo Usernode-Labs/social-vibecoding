@@ -120,6 +120,24 @@
     </div>
   </div>
 
+  <!-- Temporary password modal (issue #282). Shown ONCE after an admin
+       resets a user's password. The plaintext is returned only in the
+       reset response and never persisted in cleartext, so this is the only
+       chance to copy it — the admin relays it to the user out-of-band. -->
+  <div id="temp-pw-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl border border-zinc-200 dark:border-zinc-800">
+      <h2 class="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">Temporary password</h2>
+      <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
+        Give this to <span id="temp-pw-username" class="font-medium text-zinc-800 dark:text-zinc-200"></span> out-of-band (chat, in person). They use it as their password to log in, then set their own from Settings → Change password. It signs them out everywhere and <span class="font-medium">won't be shown again</span>.
+      </p>
+      <div class="flex gap-2">
+        <code id="temp-pw-value" class="flex-1 min-w-0 break-all rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-900 dark:text-zinc-100"></code>
+        <button id="temp-pw-copy" class="shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Copy</button>
+      </div>
+      <button id="temp-pw-close" class="mt-4 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Done</button>
+    </div>
+  </div>
+
   <script>
     async function loadCodes() {
       const res = await fetch('/api/admin/codes');
@@ -292,6 +310,7 @@
           ${limitHtml}
           ${adminToggleHtml}
           ${toggleHtml}
+          <button data-reset-id="${user.id}" data-username="${escapeHtml(user.username)}" class="text-violet-400 hover:text-violet-300 text-sm reset-pw-btn">Reset password</button>
           ${!user.is_admin ? `<button data-delete-id="${user.id}" class="text-red-400 hover:text-red-300 text-sm delete-btn">Delete</button>` : ''}
         `;
         list.appendChild(el);
@@ -413,6 +432,57 @@
           if (res.ok) { loadUsers(); loadCodes(); }
         });
       });
+
+      list.querySelectorAll('.reset-pw-btn').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const username = btn.dataset.username;
+          if (!confirm(`Reset ${username}'s password? This signs them out everywhere and issues a one-time temporary password.`)) return;
+          btn.disabled = true;
+          try {
+            const res = await fetch(`/api/admin/users/${btn.dataset.resetId}/reset-password`, { method: 'POST' });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              alert(data.error || `Reset failed (HTTP ${res.status})`);
+              return;
+            }
+            showTempPasswordModal(data.username || username, data.tempPassword);
+          } catch (err) {
+            alert(`Reset failed: ${err.message}`);
+          } finally {
+            btn.disabled = false;
+          }
+        });
+      });
+    }
+
+    // Temporary-password modal — shows the one-time plaintext exactly once.
+    function showTempPasswordModal(username, tempPassword) {
+      const modal = document.getElementById('temp-pw-modal');
+      document.getElementById('temp-pw-username').textContent = username;
+      const valueEl = document.getElementById('temp-pw-value');
+      valueEl.textContent = tempPassword;
+      const copyBtn = document.getElementById('temp-pw-copy');
+      copyBtn.textContent = 'Copy';
+      copyBtn.onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(tempPassword);
+          copyBtn.textContent = 'Copied';
+        } catch {
+          // Clipboard API can be blocked (insecure context); select instead.
+          const range = document.createRange();
+          range.selectNodeContents(valueEl);
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+          copyBtn.textContent = 'Select & copy';
+        }
+      };
+      const close = () => {
+        modal.classList.add('hidden');
+        valueEl.textContent = '';
+      };
+      document.getElementById('temp-pw-close').onclick = close;
+      modal.classList.remove('hidden');
     }
 
     function escapeHtml(str) {
