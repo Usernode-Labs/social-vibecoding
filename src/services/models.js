@@ -14,7 +14,6 @@ const MODELS = {
   'claude-haiku-4-5':    { label: 'Haiku 4.5', tier: 'haiku', outputCostPerMTok: 5 },
   'claude-sonnet-4-6':  { label: 'Sonnet 4.6', tier: 'sonnet', outputCostPerMTok: 15 },
   'claude-opus-4-8':    { label: 'Opus 4.8', tier: 'opus', outputCostPerMTok: 25 },
-  'claude-fable-5':     { label: 'Fable 5', tier: 'fable', outputCostPerMTok: 50 },
 };
 
 const DEFAULT_MODEL = 'claude-sonnet-4-6';

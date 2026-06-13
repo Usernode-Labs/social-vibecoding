@@ -43,6 +43,16 @@ const AppView = {
     // the proposal cards, while the page shape stays distinct from their
     // thumbs-up: this is a drafted spec on an issue, not a PR up for a vote.
     issueProposal: ['bg-sky-500/15 text-sky-500', 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'],
+    // "Mine" variants — distinguished from their base by GLYPH ONLY: they keep
+    // the same sky tint as the base issue/PR chips but swap in a self-contained
+    // pencil/edit mark = "your work-in-progress, jump back in." They mark the
+    // two feed rows where the viewer already has a session waiting: a ready
+    // issue they cloned (Go to session) and an open PR they authored (Open
+    // session). No manual coordinate compositing: issueProposalMine is a true
+    // document-with-pencil (page + folded corner + pencil) so it still reads
+    // as a document; proposalMine is a plain pencil "edit" mark.
+    issueProposalMine: ['bg-sky-500/15 text-sky-500', 'M14 3v4a1 1 0 0 0 1 1h4M17 21h-7a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v4M18.42 15.61a2.1 2.1 0 0 1 2.97 2.97l-3.39 3.42h-3v-3l3.42 -3.39z'],
+    proposalMine: ['bg-sky-500/15 text-sky-500', 'M12 15l8.385 -8.415a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3zM16 5l3 3'],
   },
 
   _devCardIcon(type, opts) {
@@ -1307,7 +1317,10 @@ const AppView = {
     // Sessions are owner-scoped (GET /api/sessions/:id), so the session
     // button only renders for the proposer.
     const chatN = parseInt(pr.chat_count) || 0;
-    const sessionBtn = (App.user && pr.user_id === App.user.id)
+    // mine: the viewer authored this PR, so they own its dev session. Drives
+    // both the "Open session" button and the violet "yours" chip below.
+    const mine = !!(App.user && pr.user_id === App.user.id);
+    const sessionBtn = mine
       ? `<button class="gc-vote-btn" title="Open the dev session behind this proposal" onclick="AppView.openProposalSession(${pr.id})">Open session</button>`
       : '';
     // #195/#211: before/after capture tiles, collapsed by default behind a
@@ -1333,7 +1346,7 @@ const AppView = {
 
     return `
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}"${visualTiles ? ' data-visuals-scope="1"' : ''}${noNav ? '' : ` data-proposal-row="${pr.id}" title="Open this proposal's discussion"`}>
-        ${AppView._devCardIcon(isMerged ? 'done' : 'proposal')}
+        ${AppView._devCardIcon(isMerged ? 'done' : (mine ? 'proposalMine' : 'proposal'), mine && !isMerged ? { title: 'This is your PR — open its session.' } : undefined)}
         <div class="flex-1 min-w-0">
           <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
             <div class="dev-card-headline">
@@ -1715,9 +1728,13 @@ const AppView = {
       }
       // #150: a question outcome doesn't block re-running — answer the
       // questions on the issue, then press Generate proposal again and
-      // the new run reads the answers. Both paths stay available (whether
-      // or not the viewer already cloned this run).
-      if (h.outcome === 'question') {
+      // the new run reads the answers. But only offer this when the viewer
+      // has NOT already cloned the run: once h.mySessionId is set the row
+      // shows "Go to session", and appending "Generate proposal" there
+      // produces two competing actions for a proposal that already exists.
+      // Gate on !h.mySessionId so the rerun affordance stays only on the
+      // no-session path (where "Go to session" never appears).
+      if (h.outcome === 'question' && !h.mySessionId) {
         autoBtn += `<button class="gc-vote-btn" title="Questions were posted on the issue — answer them, then generate a proposal again" onclick="AppView.confirmAutoSession(${n})">Generate proposal</button>`;
       }
     } else {
@@ -1728,10 +1745,15 @@ const AppView = {
     // document once ready (any outcome, question included: there's something
     // to review either way), plain amber issue chip otherwise. Unknown
     // statuses fall through to the plain chip like _headlessRank's bucket.
+    // When the viewer already has a session cloned off this ready issue
+    // (h.mySessionId — same signal as the "Go to session" button), the
+    // document goes violet to mark it as one of "yours" in the feed.
     const icon = h && h.status === 'generating'
       ? AppView._devCardIcon('issueProposal', { pulse: true, title: 'A proposal is being generated for this issue' })
       : h && h.status === 'ready'
-        ? AppView._devCardIcon('issueProposal', { title: 'Proposal ready — review it to start a session' })
+        ? (h.mySessionId
+            ? AppView._devCardIcon('issueProposalMine', { title: 'You have a session for this issue — go to it.' })
+            : AppView._devCardIcon('issueProposal', { title: 'Proposal ready — review it to start a session' }))
         : AppView._devCardIcon('issue');
     // #133: the creating user renders in the meta line below the title.
     // created_by_username comes from the /github-issues route (local
@@ -2201,17 +2223,32 @@ const AppView = {
     return `<span class="gc-merged-badge">✓ Merged</span>`;
   },
 
-  // #195: before/after visual tiles for a session's stored capture
-  // artifacts. `visuals` is the server shape { before: {png,webm,gif},
-  // after: {...} } of /visuals/:id tokens. Shared by the vote-panel PR
-  // rows here and the dev-chat staging card (which calls through
-  // window.AppView). Webm plays as a silent loop with the PNG as poster;
-  // PNG-only sets render a plain image. Click opens full size in a new
-  // tab. Deliberately dedicated DOM — the markdown sanitizer's whitelist
-  // stays untouched (<img>/<video> remain stripped from chat markdown).
+  // #195/#270: before/after visual tiles for a session's stored capture
+  // artifacts. `visuals` is the server shape — either the grouped form
+  // { captures: [ { index, path, before: {png,webm,gif}, after: {...} } ] }
+  // (one group per captured route), or the legacy flat form
+  // { before, after, capturedPath } which is normalized to a single group.
+  // Shared by the vote-panel PR rows here and the dev-chat staging card
+  // (which calls through window.AppView). Webm plays as a silent loop with
+  // the PNG as poster; PNG-only sets render a plain image. Click opens full
+  // size in a new tab. One labelled row per group — the label names the
+  // captured path so reviewers see which screen each pair shows; a single
+  // root-only group renders unlabelled, exactly as before. Deliberately
+  // dedicated DOM — the markdown sanitizer's whitelist stays untouched
+  // (<img>/<video> remain stripped from chat markdown).
   visualsTilesHtml(visuals) {
     if (!visuals) return '';
+    const groups = Array.isArray(visuals.captures)
+      ? visuals.captures
+      : ((visuals.before || visuals.after)
+        ? [{ path: visuals.capturedPath || '/', before: visuals.before, after: visuals.after }]
+        : []);
+    if (!groups.length) return '';
+
     const idOk = (id) => typeof id === 'string' && /^[a-f0-9]{32}$/.test(id);
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]
+    ));
     const tile = (label, v) => {
       if (!v) return '';
       const png = idOk(v.png) ? v.png : null;
@@ -2228,10 +2265,22 @@ const AppView = {
         ${media}
       </a>`;
     };
-    const before = tile('Before', visuals.before);
-    const after = tile('After', visuals.after);
-    if (!after && !before) return '';
-    return `<div class="usn-visual-tiles" style="display:flex;gap:8px;align-items:flex-start;margin:4px 0 2px">${before}${after}</div>`;
+
+    const single = groups.length === 1;
+    const rows = [];
+    for (const g of groups) {
+      const before = tile('Before', g.before);
+      const after = tile('After', g.after);
+      if (!after && !before) continue;
+      const path = g.path || '/';
+      // Label the row with its captured path unless it's the single
+      // root-only group (unchanged from the pre-#270 single-tile output).
+      const label = (single && (path === '/' || !path))
+        ? ''
+        : `<div class="text-[0.7rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin:6px 0 2px">Before / after — <code>${esc(path)}</code></div>`;
+      rows.push(`${label}<div class="usn-visual-tiles" style="display:flex;gap:8px;align-items:flex-start;margin:4px 0 2px">${before}${after}</div>`);
+    }
+    return rows.join('');
   },
 
   // #211: sessions whose before/after tiles the viewer expanded in the

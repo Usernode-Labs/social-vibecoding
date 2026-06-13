@@ -27,8 +27,12 @@ const appAccess = require('../services/app-access');
 const notifications = require('../services/notifications');
 // runSyncMain + persistBehindMain now live in services/sync-main.js so
 // the conflict-resolver can drive a sync turn without a route-requires-
-// route cycle. Re-exported below for backwards compatibility.
-const { runSyncMain, persistBehindMain } = require('../services/sync-main');
+// route cycle. Re-exported below for backwards compatibility. Route
+// handlers call through the module object (syncMainSvc.*) so tests can
+// monkey-patch individual functions, mirroring how worker.isInFlight
+// is stubbed in the route suites.
+const syncMainSvc = require('../services/sync-main');
+const { runSyncMain, persistBehindMain } = syncMainSvc;
 
 // Track sessions with active Claude Code workers. The Set lives in a
 // shared module so services/sync-main.js writes to the same instance
@@ -646,10 +650,11 @@ function sessionRoutes(config) {
       }
 
       const { rows } = await pool.query(
-        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, spec_md, linked_issues, testing_md, testing_path, cloned_from_session_id, session_title)
-         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9)
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, spec_md, linked_issues, testing_md, testing_path, testing_paths, cloned_from_session_id, session_title)
+         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10)
          RETURNING *`,
-        [src.app_id, req.user.id, branchName, src.spec_md || '', src.linked_issues, src.testing_md, src.testing_path, src.id, cloneTitle]
+        [src.app_id, req.user.id, branchName, src.spec_md || '', src.linked_issues, src.testing_md, src.testing_path,
+         src.testing_paths != null ? JSON.stringify(src.testing_paths) : null, src.id, cloneTitle]
       );
       const session = rows[0];
 
@@ -1042,7 +1047,7 @@ function sessionRoutes(config) {
         // Fire-and-forget. Failures are logged but don't bubble up;
         // the user explicitly clicking "Sync with main" later will
         // re-attempt with full surface area for errors.
-        runSyncMain(config, pool, sessionId).catch((err) => {
+        runSyncMain(config, pool, sessionId, { trigger: 'resume_autosync' }).catch((err) => {
           log.warn('sessions', 'Background sync-on-resume failed', {
             sessionId, err: err.message,
           });
@@ -1087,7 +1092,20 @@ function sessionRoutes(config) {
         });
       }
 
-      const result = await runSyncMain(config, pool, sessionId, { sessionRow: session });
+      // #252: a regular chat turn holds the worker — dispatching a sync
+      // now would just trip execInWorker's "a turn is already in
+      // flight" guard with a raw 500. Surface it as a friendly 409
+      // instead. When the in-flight turn IS a sync, fall through:
+      // runSyncMain coalesces and this caller joins the running sync.
+      if (!syncMainSvc.getSyncState(sessionId)
+          && (activeWorkers.has(sessionId) || worker.isInFlight(sessionId))) {
+        return res.status(409).json({
+          error: 'Claude is still working in this session — wait for the turn to finish before syncing.',
+          busy: true,
+        });
+      }
+
+      const result = await syncMainSvc.runSyncMain(config, pool, sessionId, { sessionRow: session });
       res.json(result);
     } catch (err) {
       log.error('sessions', 'sync-main failed', { sessionId, err: err.message });
@@ -2169,7 +2187,17 @@ function sessionRoutes(config) {
     // missed-WS-event safety net.
     const { isResolving } = require('../services/conflict-resolver');
 
-    res.json({ busy, progress, phase, resolving: isResolving(sessionId) });
+    // #252: in-flight sync-with-main state ({ phase, startedAt } |
+    // null) — the dev-chat sync banner's reload recovery and poll
+    // fallback read this the same way the resolving banner reads
+    // `resolving`.
+    res.json({
+      busy,
+      progress,
+      phase,
+      resolving: isResolving(sessionId),
+      sync: syncMainSvc.getSyncState(sessionId),
+    });
   });
 
   // Stop an in-flight turn (#28). Aborts the Mayor's Anthropic stream
@@ -3252,8 +3280,8 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
       if (hasChanges && !result.fatalError) {
         if (testing.testingMd || testing.testingPath) {
           await pool.query(
-            'UPDATE chat_sessions SET testing_md = $1, testing_path = $2 WHERE id = $3',
-            [testing.testingMd, testing.testingPath, session.id]
+            'UPDATE chat_sessions SET testing_md = $1, testing_path = $2, testing_paths = $3 WHERE id = $4',
+            [testing.testingMd, testing.testingPath, JSON.stringify(testing.testingPaths || []), session.id]
           ).catch(() => {});
         }
         outcome = session.spec_md ? 'spec_code' : 'code';
@@ -4165,15 +4193,26 @@ INSTRUCTIONS:
 
 ==== TESTING ====
 path: /relative/path?demo=1
+path: /another/changed/view
 1. First step a tester should take.
 2. What they should see if the change works.
 ==== END TESTING ====
 
   Rules for the testing block:
-  - The "path:" line is optional. If present it must be a RELATIVE path
-    within the app (starts with "/", no scheme or host) that lands the
-    tester as close to the changed feature as possible. Omit the line when
-    the app's root is the right place to start.
+  - The "path:" line points the before/after screenshots (and the "Test
+    this change" button) at the route where the change is visible. Each
+    must be a RELATIVE path within the app (starts with "/", no scheme or
+    host).
+  - REQUIRED for user-visible changes that are NOT on the app's root: you
+    MUST include at least one "path:" pointing at the view where the change
+    shows up. Otherwise the screenshots default to the home page and show a
+    screen your change never touched. Only omit "path:" when the change
+    genuinely lives on "/" (the home page is the right place to start).
+  - You may give MORE THAN ONE "path:" line (one per line, up to 3,
+    captured in the order written) when the change spans several views —
+    e.g. a new nav item plus the page it opens. Each becomes its own
+    labelled before/after row. The FIRST path is also the deep link the
+    "Test this change" button jumps to.
   - The steps are short markdown (numbered list preferred), written for a
     non-technical tester looking at a staging preview seeded with a copy of
     production data.
@@ -4374,11 +4413,12 @@ path: /relative/path?demo=1
       summaryParts.push(`Commit ${commitHash.substring(0, 8)} pushed to ${session.branch_name}.`);
       if (testing.testingMd || testing.testingPath) {
         await pool.query(
-          `UPDATE chat_sessions SET testing_md = $1, testing_path = $2 WHERE id = $3`,
-          [testing.testingMd, testing.testingPath, session.id]
+          `UPDATE chat_sessions SET testing_md = $1, testing_path = $2, testing_paths = $3 WHERE id = $4`,
+          [testing.testingMd, testing.testingPath, JSON.stringify(testing.testingPaths || []), session.id]
         ).catch((err) => log.warn('sessions', 'Failed to persist testing guidance', { sessionId: session.id, err: err.message }));
         session.testing_md = testing.testingMd;
         session.testing_path = testing.testingPath;
+        session.testing_paths = testing.testingPaths || [];
       }
       await sendStatus('Changes committed and pushed (headless) — building staging preview (no PR yet)...');
 
@@ -4457,11 +4497,12 @@ path: /relative/path?demo=1
       // earlier guidance is kept so a small follow-up turn doesn't wipe it.
       if (testing.testingMd || testing.testingPath) {
         await pool.query(
-          `UPDATE chat_sessions SET testing_md = $1, testing_path = $2 WHERE id = $3`,
-          [testing.testingMd, testing.testingPath, session.id]
+          `UPDATE chat_sessions SET testing_md = $1, testing_path = $2, testing_paths = $3 WHERE id = $4`,
+          [testing.testingMd, testing.testingPath, JSON.stringify(testing.testingPaths || []), session.id]
         ).catch((err) => log.warn('sessions', 'Failed to persist testing guidance', { sessionId: session.id, err: err.message }));
         session.testing_md = testing.testingMd;
         session.testing_path = testing.testingPath;
+        session.testing_paths = testing.testingPaths || [];
       }
 
       const wasNewPR = !session.pr_number;

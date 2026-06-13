@@ -50,42 +50,81 @@ function buildTestingBlock(testingMd, testingPath) {
 const VISUALS_MARKER_START = '<!-- usernode:visuals -->';
 const VISUALS_MARKER_END = '<!-- /usernode:visuals -->';
 
-// Build the deterministic "Before / after" section for a PR body (#195)
-// from the session's stored capture artifacts. `visuals` is the shape
-// returned by visuals.getForSession: { before: {png,webm,gif}, after:
-// {...} } of /visuals/:id tokens. Per side we embed the GIF when one was
-// stored (GitHub camo proxies + autoplays GIFs inline), falling back to
-// the PNG when the GIF was skipped or over-cap. webm is never referenced
-// here — GitHub PR bodies can only inline-embed images; the webm exists
-// for the in-app <video> surfaces. Empty string when there is nothing
-// usable to show (no "after" artifact), keeping legacy bodies identical.
+// Normalize the visuals argument to an ordered list of capture groups
+// (#270). Accepts BOTH the grouped shape from visuals.getForSession —
+// { captures: [ { index, path, before, after } ] } — and the legacy flat
+// shape { before: {png,webm,gif}, after: {...}, capturedPath } so already-
+// stored / older-callsite visuals still render. Returns [] when there's
+// nothing usable.
+function visualGroups(visuals) {
+  if (!visuals || typeof visuals !== 'object') return [];
+  if (Array.isArray(visuals.captures)) return visuals.captures;
+  if (visuals.before || visuals.after) {
+    return [{ index: 0, path: visuals.capturedPath || '/', before: visuals.before || null, after: visuals.after || null }];
+  }
+  return [];
+}
+
+// Build the deterministic "Before / after" section for a PR body (#195,
+// #270) from the session's stored capture artifacts. A proposal can point
+// its screenshots at a short ordered list of routes, so this emits one
+// labelled "Before / after — `<path>`" table per capture group. Per side
+// we embed the GIF when one was stored (GitHub camo proxies + autoplays
+// GIFs inline), falling back to the PNG when the GIF was skipped or
+// over-cap. webm is never referenced here — GitHub PR bodies can only
+// inline-embed images; the webm exists for the in-app <video> surfaces.
+//
+// Byte-identical to the pre-#270 output for the common single-group-at-`/`
+// case: that one group renders as "## Before / after" with no path suffix.
+// Empty string when there is nothing usable to show (no group with an
+// "after"), keeping legacy bodies identical.
 function buildVisualsBlock(visuals, domain) {
-  if (!visuals || !domain) return '';
-  const embed = (side) => {
-    const v = visuals[side];
+  if (!domain) return '';
+  const groups = visualGroups(visuals);
+  const embed = (v) => {
     if (!v) return null;
     const id = v.gif || v.png;
     return id ? `https://${domain}/visuals/${id}` : null;
   };
-  const before = embed('before');
-  const after = embed('after');
-  if (!after) return '';
-  const lines = [VISUALS_MARKER_START, '## Before / after', ''];
-  if (before) {
-    lines.push(
-      '| Before | After |',
-      '| --- | --- |',
-      `| ![Before](${before}) | ![After](${after}) |`
-    );
-  } else {
-    lines.push(
-      '| After |',
-      '| --- |',
-      `| ![After](${after}) |`,
-      '',
-      '_No production version to compare — showing the staging preview only._'
-    );
+
+  // Only groups with a usable "after" produce output.
+  const usable = [];
+  for (const g of groups) {
+    const after = embed(g.after);
+    if (!after) continue;
+    usable.push({ path: g.path || '/', before: embed(g.before), after });
   }
+  if (!usable.length) return '';
+
+  // Single group at the app root → the legacy heading with no suffix, so
+  // existing PR bodies stay byte-identical. Otherwise label each group
+  // with its captured path so reviewers know which screen each pair shows.
+  const single = usable.length === 1 && (usable[0].path === '/' || !usable[0].path);
+
+  const lines = [VISUALS_MARKER_START];
+  usable.forEach((g, i) => {
+    if (i > 0) lines.push('');
+    if (single) {
+      lines.push('## Before / after', '');
+    } else {
+      lines.push(`### Before / after — \`${g.path}\``, '');
+    }
+    if (g.before) {
+      lines.push(
+        '| Before | After |',
+        '| --- | --- |',
+        `| ![Before](${g.before}) | ![After](${g.after}) |`
+      );
+    } else {
+      lines.push(
+        '| After |',
+        '| --- |',
+        `| ![After](${g.after}) |`,
+        '',
+        '_No production version to compare — showing the staging preview only._'
+      );
+    }
+  });
   lines.push(VISUALS_MARKER_END);
   return lines.join('\n');
 }
@@ -269,17 +308,32 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
       // require; visuals.js depends on pr-metadata for the block builder.
       ctx.appliedVisuals = (liveRows[0] && liveRows[0].pr_visuals_applied) || null;
       try {
+        // #270: group by capture_index (ascending) into the same ordered
+        // { captures: [ { index, path, before, after } ] } shape
+        // buildVisualsBlock consumes, using captured_path as each group's
+        // label. Pre-#270 rows all carry capture_index 0 → a single group.
         const { rows: visRows } = await pool.query(
-          `SELECT id, kind, media FROM session_visuals WHERE session_id = $1`,
+          `SELECT id, kind, media, captured_path, capture_index
+             FROM session_visuals WHERE session_id = $1`,
           [sessionId]
         );
         if (visRows.length) {
-          const shaped = {};
+          const byIndex = new Map();
           for (const v of visRows) {
-            if (!shaped[v.kind]) shaped[v.kind] = {};
-            shaped[v.kind][v.media] = v.id;
+            const idx = parseInt(v.capture_index, 10) || 0;
+            let g = byIndex.get(idx);
+            if (!g) { g = { index: idx, path: null }; byIndex.set(idx, g); }
+            if (!g[v.kind]) g[v.kind] = {};
+            g[v.kind][v.media] = v.id;
+            if (v.captured_path && !g.path) g.path = v.captured_path;
           }
-          ctx.visuals = shaped;
+          const captures = Array.from(byIndex.keys())
+            .sort((a, b) => a - b)
+            .map((idx) => {
+              const g = byIndex.get(idx);
+              return { index: g.index, path: g.path || '/', before: g.before || null, after: g.after || null };
+            });
+          ctx.visuals = { captures };
         }
       } catch (err) {
         log.warn('pr-metadata', 'Failed to gather session visuals', { err: err.message, sessionId });

@@ -6,17 +6,17 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { extract, validatePath, TESTING_MD_MAX } = require('../src/services/testing-notes');
+const { extract, validatePath, TESTING_MD_MAX, CAPTURE_MAX_PATHS } = require('../src/services/testing-notes');
 
-test('no block -> text unchanged, both fields null', () => {
+test('no block -> text unchanged, fields null/empty', () => {
   const text = 'Built the thing.\n\n- added a route\n- wired the UI';
-  assert.deepEqual(extract(text), { cleanedText: text, testingMd: null, testingPath: null });
+  assert.deepEqual(extract(text), { cleanedText: text, testingMd: null, testingPath: null, testingPaths: [] });
 });
 
 test('handles empty / non-string input', () => {
-  assert.deepEqual(extract(''), { cleanedText: '', testingMd: null, testingPath: null });
-  assert.deepEqual(extract(null), { cleanedText: '', testingMd: null, testingPath: null });
-  assert.deepEqual(extract(undefined), { cleanedText: '', testingMd: null, testingPath: null });
+  assert.deepEqual(extract(''), { cleanedText: '', testingMd: null, testingPath: null, testingPaths: [] });
+  assert.deepEqual(extract(null), { cleanedText: '', testingMd: null, testingPath: null, testingPaths: [] });
+  assert.deepEqual(extract(undefined), { cleanedText: '', testingMd: null, testingPath: null, testingPaths: [] });
 });
 
 test('extracts a full block with path and instructions', () => {
@@ -107,6 +107,71 @@ test('testingMd is truncated to the cap', () => {
   const long = 'x'.repeat(TESTING_MD_MAX + 500);
   const r = extract(`S.\n==== TESTING ====\n${long}\n==== END TESTING ====`);
   assert.equal(r.testingMd.length, TESTING_MD_MAX);
+});
+
+// ── multiple path: lines (#270) ────────────────────────────────────────
+
+test('single path -> testingPaths is the one path, testingPath the same', () => {
+  const r = extract('S.\n==== TESTING ====\npath: /board\nSteps.\n==== END TESTING ====');
+  assert.deepEqual(r.testingPaths, ['/board']);
+  assert.equal(r.testingPath, '/board');
+});
+
+test('multiple consecutive path lines parse into testingPaths in order', () => {
+  const text = [
+    'S.', '==== TESTING ====',
+    'path: /board', 'path: /settings?demo=1', 'path: /profile',
+    '1. Step one.', '==== END TESTING ====',
+  ].join('\n');
+  const r = extract(text);
+  assert.deepEqual(r.testingPaths, ['/board', '/settings?demo=1', '/profile']);
+  assert.equal(r.testingPath, '/board');
+  assert.equal(r.testingMd, '1. Step one.');
+});
+
+test('blank lines between path lines are tolerated', () => {
+  const text = 'S.\n==== TESTING ====\n\npath: /a\n\npath: /b\n\nSteps.\n==== END TESTING ====';
+  const r = extract(text);
+  assert.deepEqual(r.testingPaths, ['/a', '/b']);
+  assert.equal(r.testingMd, 'Steps.');
+});
+
+test('invalid path lines are dropped, valid ones kept in order', () => {
+  const text = [
+    'S.', '==== TESTING ====',
+    'path: /ok1', 'path: https://evil/x', 'path: /ok2',
+    'Steps.', '==== END TESTING ====',
+  ].join('\n');
+  const r = extract(text);
+  assert.deepEqual(r.testingPaths, ['/ok1', '/ok2']);
+  assert.equal(r.testingPath, '/ok1');
+});
+
+test('duplicate paths collapse preserving first-seen order', () => {
+  const text = 'S.\n==== TESTING ====\npath: /a\npath: /b\npath: /a\nSteps.\n==== END TESTING ====';
+  const r = extract(text);
+  assert.deepEqual(r.testingPaths, ['/a', '/b']);
+});
+
+test('path list is capped at CAPTURE_MAX_PATHS, extras dropped', () => {
+  const lines = ['S.', '==== TESTING ===='];
+  for (let i = 0; i < CAPTURE_MAX_PATHS + 2; i++) lines.push(`path: /p${i}`);
+  lines.push('Steps.', '==== END TESTING ====');
+  const r = extract(lines.join('\n'));
+  assert.equal(r.testingPaths.length, CAPTURE_MAX_PATHS);
+  assert.equal(r.testingPaths[0], '/p0');
+  assert.equal(r.testingPath, '/p0');
+});
+
+test('a non-path line stops path collection (later path: lines are md, not paths)', () => {
+  const text = 'S.\n==== TESTING ====\npath: /a\n1. step\npath: /b\n==== END TESTING ====';
+  const r = extract(text);
+  assert.deepEqual(r.testingPaths, ['/a']);
+  assert.equal(r.testingMd, '1. step\npath: /b');
+});
+
+test('absent block -> empty testingPaths list', () => {
+  assert.deepEqual(extract('just a summary').testingPaths, []);
 });
 
 test('validatePath accepts plain relative paths with queries', () => {

@@ -6,6 +6,7 @@
 //
 //   ==== TESTING ====
 //   path: /board?demo-pr=1
+//   path: /settings
 //   1. Open the board view.
 //   2. Drag a card — snap-to-grid should kick in.
 //   ==== END TESTING ====
@@ -13,11 +14,28 @@
 // `extract` pulls the block out of the agent's final text so the raw
 // markers never leak into chat history, the Mayor's tool_result, or the
 // PR-metadata LLM prompt. The parsed pieces land on
-// chat_sessions.testing_md / testing_path and drive the "Test this change"
-// button + "How to test" panel in the staging preview overlay.
+// chat_sessions.testing_md / testing_path / testing_paths and drive the
+// "Test this change" button + "How to test" panel in the staging preview
+// overlay, plus the multi-route before/after capture pipeline (#270).
+//
+// The block may carry MORE THAN ONE `path:` line (consecutive leading
+// lines of the block): the capture step shoots an ordered before/after
+// pair per path so a change spanning several views shows each one. The
+// list is validated per-line, deduped preserving order, and capped at
+// CAPTURE_MAX_PATHS. `testingPath` (the first path) is retained unchanged
+// for the single-valued consumers — the "Test this change" deep-link
+// button and buildTestingBlock's "Deep link:" line.
+
+const log = require('./logger');
 
 const TESTING_MD_MAX = 4000;
 const TESTING_PATH_MAX = 512;
+
+// Max before/after capture routes per proposal. RUN_TIMEOUT_MS (240s) in
+// services/visuals.js budgets ~35-40s per path (before+after, settle +
+// scroll pass + GIF transcode), so 3 paths (~120s worst case) stays well
+// inside it. Extras are dropped and logged — never silently truncated.
+const CAPTURE_MAX_PATHS = 3;
 
 // Marker lines are matched whole-line and tolerate variable `=` runs and
 // surrounding whitespace, but require the exact TESTING / END TESTING label.
@@ -48,11 +66,12 @@ function validatePath(p) {
 // Find the LAST "==== TESTING ====" block in `text`, remove it, and parse
 // its contents. Tolerates a missing END marker at end-of-text (everything
 // after the opening marker is the block). Returns:
-//   { cleanedText, testingMd, testingPath }
+//   { cleanedText, testingMd, testingPath, testingPaths }
 // with testingMd null when the block is absent or carries no instructions,
-// and testingPath null when absent or invalid.
+// testingPaths the ordered (deduped, capped) list of validated paths, and
+// testingPath = testingPaths[0] || null for the single-valued consumers.
 function extract(text) {
-  const none = (t) => ({ cleanedText: t, testingMd: null, testingPath: null });
+  const none = (t) => ({ cleanedText: t, testingMd: null, testingPath: null, testingPaths: [] });
   if (typeof text !== 'string' || !text) return none(typeof text === 'string' ? text : '');
 
   // Last opening marker wins — the agent is told the block must be the
@@ -75,26 +94,41 @@ function extract(text) {
 
   const blockLines = text.slice(blockStart, blockEnd).split('\n');
 
-  // Optional `path:` line — first non-empty line of the block.
-  let testingPath = null;
+  // Optional `path:` lines — the consecutive leading lines of the block
+  // (blank lines tolerated between them). Each is validated independently;
+  // invalid ones are dropped, duplicates collapse preserving first-seen
+  // order, and the list is capped at CAPTURE_MAX_PATHS (extras logged, not
+  // silently truncated). The first non-blank line that isn't a `path:`
+  // line begins the markdown instructions.
+  const testingPaths = [];
+  let droppedForCap = 0;
   let mdStart = 0;
   for (let i = 0; i < blockLines.length; i++) {
     const line = blockLines[i].trim();
     if (!line) { mdStart = i + 1; continue; }
     const pm = line.match(/^path:\s*(.+)$/i);
-    if (pm) {
-      testingPath = validatePath(pm[1]);
-      mdStart = i + 1;
-    } else {
-      mdStart = i;
-    }
-    break;
+    if (!pm) { mdStart = i; break; }
+    mdStart = i + 1;
+    const valid = validatePath(pm[1]);
+    if (!valid || testingPaths.includes(valid)) continue;
+    if (testingPaths.length < CAPTURE_MAX_PATHS) testingPaths.push(valid);
+    else droppedForCap++;
+  }
+  if (droppedForCap > 0) {
+    log.warn('testing-notes', 'Capture path list over cap — extras dropped', {
+      kept: testingPaths.length, dropped: droppedForCap, cap: CAPTURE_MAX_PATHS,
+    });
   }
 
   let testingMd = blockLines.slice(mdStart).join('\n').trim();
   if (testingMd.length > TESTING_MD_MAX) testingMd = testingMd.slice(0, TESTING_MD_MAX);
 
-  return { cleanedText, testingMd: testingMd || null, testingPath };
+  return {
+    cleanedText,
+    testingMd: testingMd || null,
+    testingPath: testingPaths[0] || null,
+    testingPaths,
+  };
 }
 
-module.exports = { extract, validatePath, TESTING_MD_MAX, TESTING_PATH_MAX };
+module.exports = { extract, validatePath, TESTING_MD_MAX, TESTING_PATH_MAX, CAPTURE_MAX_PATHS };

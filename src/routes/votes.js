@@ -131,7 +131,17 @@ function voteRoutes(config) {
       // branch — so the vote has something to merge. applyPrMetadata reads
       // the clone's copied history via gatherSessionContext, so the PR
       // title/body get the full auto-session context.
-      if (!session.pr_number) {
+      //
+      // Also runs when a PR exists but pr_title is missing: staging
+      // recovery (server.js rebuildSessionStaging) can mint a PR before
+      // promotion without a generated title, and a NULL pr_title would
+      // otherwise render as "Change by <user>" forever. Backfilling it
+      // here updates both GitHub and pr_title/session_title.
+      if (!session.pr_number || !session.pr_title) {
+        // Distinguish creating a PR (no pr_number → a failure must block
+        // promotion) from merely backfilling a missing title on an
+        // existing PR (best-effort — never block promotion on it).
+        const isBackfill = !!session.pr_number;
         const { rows: msgRows } = await pool.query(
           `SELECT content FROM chat_session_messages
            WHERE session_id = $1 AND role = 'user'
@@ -149,9 +159,9 @@ function voteRoutes(config) {
             userId: req.user.id,
           });
         } catch (err) {
-          log.warn('votes', 'Lazy PR creation threw', { sessionId: session.id, err: err.message });
+          log.warn('votes', 'Lazy PR creation/backfill threw', { sessionId: session.id, backfill: isBackfill, err: err.message });
         }
-        if (!prResult || !session.pr_number) {
+        if (!isBackfill && (!prResult || !session.pr_number)) {
           // Refuse to promote PR-less — a vote with nothing to merge is a
           // dead end. The user can retry; nothing was mutated yet.
           return res.status(502).json({ error: 'Could not create the pull request for this change — try again in a moment.' });
@@ -600,11 +610,14 @@ function voteRoutes(config) {
                AND cm.msg_type = 'message') as chat_count,
            (SELECT MAX(cm.created_at) FROM chat_messages cm
              WHERE cm.app_id = cs.app_id AND cm.thread_type = 'session' AND cm.thread_ref = cs.id) as last_message_at,
-           -- #195: before/after capture artifact ids, aggregated to one
-           -- jsonb per row ('before_png' -> id, 'after_webm' -> id, ...)
-           -- so the vote card can render media tiles without N extra
-           -- round-trips. Shaped client-friendly below via visuals.shapeAgg.
-           (SELECT jsonb_object_agg(sv.kind || '_' || sv.media, sv.id)
+           -- #195/#270: before/after capture artifact ids, aggregated to
+           -- one jsonb per row. Key is 'kind_index_media'
+           -- ('before_0_png' -> id, 'after_1_webm' -> id, ...) so multiple
+           -- captured routes (capture_index) don't collide. Shaped into the
+           -- grouped client form below via visuals.shapeAgg (which also
+           -- still accepts the legacy 'kind_media' key for pre-#270 rows).
+           (SELECT jsonb_object_agg(
+                     sv.kind || '_' || sv.capture_index || '_' || sv.media, sv.id)
               FROM session_visuals sv WHERE sv.session_id = cs.id) as visuals_agg
          FROM chat_sessions cs
          JOIN users u ON cs.user_id = u.id
