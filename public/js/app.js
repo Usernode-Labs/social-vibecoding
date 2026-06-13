@@ -1155,8 +1155,24 @@ const App = {
       panel.setAttribute('data-open', '');
       btn.setAttribute('aria-expanded', 'true');
       btn.setAttribute('aria-label', 'Close menu');
+      // Reflect the current theme mode every time the drawer opens (covers
+      // cross-tab changes and explicit values that happen to match the OS).
+      App.HeaderMenu._renderThemeButtons();
       const closeBtn = document.getElementById('header-menu-close');
       if (closeBtn) closeBtn.focus();
+    },
+    // Sync the active highlight on the Light/Dark/System segmented control
+    // from Theme.get(). Safe to call before Theme/DOM exist (guards both).
+    _renderThemeButtons() {
+      if (!window.Theme) return;
+      const current = Theme.get();
+      document.querySelectorAll('#drawer-row-theme [data-theme-mode]').forEach((b) => {
+        const active = b.dataset.themeMode === current;
+        b.classList.toggle('bg-violet-600', active);
+        b.classList.toggle('text-white', active);
+        b.classList.toggle('bg-zinc-200', !active);
+        b.classList.toggle('dark:bg-zinc-800', !active);
+      });
     },
     close() {
       const panel = document.getElementById('header-menu-panel');
@@ -1202,6 +1218,20 @@ const App = {
           App.HeaderMenu.close();
           if (window.Settings) Settings.open();
         });
+      // Theme segmented control — a live control, NOT a navigation row: it
+      // sets the mode and re-highlights WITHOUT closing the drawer, so the
+      // user can see the recolor and switch again.
+      if (window.Theme) {
+        document.querySelectorAll('#drawer-row-theme [data-theme-mode]').forEach((b) => {
+          b.addEventListener('click', () => {
+            Theme.set(b.dataset.themeMode);
+            App.HeaderMenu._renderThemeButtons();
+          });
+        });
+        // Storage/OS-driven changes (other tab, OS sunset switch) re-highlight too.
+        Theme.onChange(() => App.HeaderMenu._renderThemeButtons());
+        App.HeaderMenu._renderThemeButtons();
+      }
     },
   },
 
