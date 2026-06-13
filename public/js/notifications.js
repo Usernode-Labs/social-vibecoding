@@ -24,8 +24,6 @@ const EXPANDED_STORAGE_KEY = 'notif_expanded_groups_v1';
 // Beyond this the group renders an inline pagination button that reveals
 // the next page of already-loaded leaves in place (no navigation away).
 const GROUP_LEAF_CAP = 10;
-// How close to the bottom (px) before we prefetch the next page.
-const LOAD_MORE_THRESHOLD = 64;
 
 const Notifications = {
   items: [],   // newest-first; the single source of truth
@@ -35,7 +33,7 @@ const Notifications = {
   invites: [],
   unread: 0,
   open: false,
-  // Pagination cursor for scroll-to-load-more.
+  // Pagination cursor for the per-group "Show more →" pager.
   nextBefore: null,  // { createdAt, id } | null
   hasMore: false,
   loading: false,
@@ -45,7 +43,6 @@ const Notifications = {
   // that group. Ephemeral (not persisted): resets on reload so the
   // drawer opens compact. An absent key means the default GROUP_LEAF_CAP.
   revealed: new Map(),
-  _scrollWired: false,
 
   init() {
     Notifications._loadExpanded();
@@ -66,7 +63,6 @@ const Notifications = {
       Notifications.hide();
     });
 
-    Notifications._wireScroll();
     Notifications.refresh();
   },
 
@@ -135,7 +131,6 @@ const Notifications = {
   async loadMore() {
     if (Notifications.loading || !Notifications.hasMore || !Notifications.nextBefore) return;
     Notifications.loading = true;
-    Notifications._renderLoadingState();
     try {
       const { createdAt, id } = Notifications.nextBefore;
       const params = new URLSearchParams({
@@ -631,7 +626,7 @@ const Notifications = {
       entries.push(renderGroup(g, Notifications.expanded.has(g.key)));
     }
     const APP_DIVIDER = '<div role="separator" class="border-t-2 border-zinc-200 dark:border-zinc-700"></div>';
-    list.innerHTML = entries.join(APP_DIVIDER) + renderLoadMore();
+    list.innerHTML = entries.join(APP_DIVIDER);
 
     // Leaf-row clicks (standalone single-item rows + leaves inside an
     // expanded group). stopPropagation so the document-level outside-click
@@ -677,17 +672,6 @@ const Notifications = {
         Notifications._showMoreGroup(el.getAttribute('data-group-showmore'));
       });
     });
-    // Global "Show older notifications" footer button → reveal the next
-    // batch of older notifications (expanding collapsed backlog groups and
-    // fetching another page when needed). stopPropagation for the same
-    // re-render-detaches-the-node reason as the controls above.
-    const loadMoreBtn = list.querySelector('[data-loadmore]');
-    if (loadMoreBtn) {
-      loadMoreBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        Notifications.showOlder();
-      });
-    }
   },
 
   // Reveal one more page (GROUP_LEAF_CAP) of leaves for a group. If every
@@ -706,86 +690,6 @@ const Notifications = {
       Notifications.revealed.set(key, current + GROUP_LEAF_CAP);
       Notifications.loadMore();
     }
-  },
-
-  // True when any group still has older leaves the user hasn't been shown:
-  // a group whose loaded item count exceeds its current reveal cap hides
-  // older rows behind collapse (collapsed groups show zero leaves) or the
-  // per-group cap. Drives the footer's visibility (#279) so "Show older
-  // notifications" doesn't vanish while loaded-but-hidden content remains —
-  // and, by using GROUP_LEAF_CAP as the threshold, small groups collapsed
-  // by choice don't count as "older content" to reveal.
-  _hasHiddenOlder() {
-    return Notifications._groupByApp().some((g) => {
-      const cap = Notifications.revealed.get(g.key) || GROUP_LEAF_CAP;
-      return g.items.length > cap;
-    });
-  },
-
-  // Expand + grow the reveal cap by one page for every group that still
-  // has hidden older leaves, so the next batch of older notifications
-  // actually shows on screen. Returns whether anything was newly revealed.
-  _revealLoadedHidden() {
-    let revealedAny = false;
-    for (const g of Notifications._groupByApp()) {
-      const cap = Notifications.revealed.get(g.key) || GROUP_LEAF_CAP;
-      if (g.items.length > cap) {
-        Notifications.expanded.add(g.key);
-        Notifications.revealed.set(g.key, cap + GROUP_LEAF_CAP);
-        revealedAny = true;
-      }
-    }
-    if (revealedAny) Notifications._saveExpanded();
-    return revealedAny;
-  },
-
-  // Footer "Show older notifications" handler (#279). The footer must
-  // VISIBLY surface older notifications, not just prefetch them into the
-  // in-memory pool where collapse/per-group caps hide them. So: reveal the
-  // next page of already-loaded hidden leaves first; only when nothing
-  // loaded remains hidden do we fetch the next server page, then reveal
-  // those freshly-arrived rows too (no "dead" click that fetches but shows
-  // nothing). loadMore() guards on Notifications.loading, so a click mid-
-  // fetch is a no-op.
-  async showOlder() {
-    if (Notifications.loading) return;
-    if (Notifications._revealLoadedHidden()) {
-      Notifications._renderList();
-      return;
-    }
-    if (Notifications.hasMore) {
-      await Notifications.loadMore();
-      Notifications._revealLoadedHidden();
-      Notifications._renderList();
-    }
-  },
-
-  // Re-render just the load-more footer's spinner without rebuilding the
-  // whole list (called when a fetch starts).
-  _renderLoadingState() {
-    const footer = document.getElementById('notifications-loadmore');
-    if (footer) {
-      footer.textContent = 'Loading…';
-      // Non-interactive while a fetch is in flight. loadMore() already
-      // guards on Notifications.loading, so this is purely the visual
-      // cue + a belt-and-braces block on rapid re-clicks.
-      footer.disabled = true;
-      footer.classList.add('pointer-events-none', 'opacity-60');
-    }
-  },
-
-  _wireScroll() {
-    if (Notifications._scrollWired) return;
-    const list = document.getElementById('notifications-list');
-    if (!list) return;
-    list.addEventListener('scroll', () => {
-      if (Notifications.loading) return;
-      if (!Notifications.hasMore && !Notifications._hasHiddenOlder()) return;
-      const nearBottom =
-        list.scrollTop + list.clientHeight >= list.scrollHeight - LOAD_MORE_THRESHOLD;
-      if (nearBottom) Notifications.showOlder();
-    });
-    Notifications._scrollWired = true;
   },
 
 };
@@ -872,22 +776,6 @@ function renderGroup(g, isExpanded) {
     more = `<button data-group-showmore="${escapeHtml(g.key)}" class="${btnCls}">Show more →</button>`;
   }
   return `${header}<div class="pl-2 bg-zinc-50/50 dark:bg-zinc-950/30">${leaves}${more}</div>`;
-}
-
-// Footer control shown while older notifications remain unrevealed. An
-// explicit click target (not a passive "scroll" hint): the grouped/
-// collapsed list often doesn't overflow the drawer, so scrolling can't be
-// relied on to reveal older notifications (#279). Shown when the server
-// has more pages (hasMore) OR any group still has loaded-but-hidden older
-// leaves — so it doesn't vanish while a collapsed backlog is still hidden;
-// returns '' only once everything older is actually on screen. Scroll-to-
-// load (see _wireScroll) stays wired as a silent bonus when the list IS
-// tall enough to scroll. Keeps id="notifications-loadmore" so
-// _renderLoadingState's "Loading…" swap still finds it; mirrors the
-// in-group "Show more →" button styling.
-function renderLoadMore() {
-  if (!Notifications.hasMore && !Notifications._hasHiddenOlder()) return '';
-  return `<button id="notifications-loadmore" data-loadmore class="w-full text-left px-3 py-2.5 text-xs text-violet-500 hover:text-violet-400">Show older notifications</button>`;
 }
 
 // One-line summary used in a collapsed group header. Mirrors the per-kind
