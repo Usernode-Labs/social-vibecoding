@@ -185,13 +185,13 @@
          close the drawer. Wired in App.HeaderMenu (app.js); active state
          is driven from Theme.get() via _renderThemeButtons(). -->
     <div id="drawer-row-theme"
-         class="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300">
+         class="flex flex-wrap items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300">
       <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
       <span class="text-sm font-medium">Theme</span>
       <div class="ml-auto flex items-center gap-1 text-xs">
-        <button data-theme-mode="light" class="px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">Light</button>
-        <button data-theme-mode="dark" class="px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">Dark</button>
-        <button data-theme-mode="system" class="px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">System</button>
+        <button data-theme-mode="light" class="px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800 whitespace-nowrap shrink-0">Light</button>
+        <button data-theme-mode="dark" class="px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800 whitespace-nowrap shrink-0">Dark</button>
+        <button data-theme-mode="system" class="px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800 whitespace-nowrap shrink-0">System</button>
       </div>
     </div>
   </div>
