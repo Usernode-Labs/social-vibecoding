@@ -44,19 +44,17 @@ const AppView = {
     // thumbs-up: this is a drafted spec on an issue, not a PR up for a vote.
     issueProposal: ['bg-sky-500/15 text-sky-500', 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'],
     // "Mine" variants — distinguished from their base by BOTH glyph and tint:
-    // violet (the app's "yours/you" accent — General-chat chip, hover borders,
-    // PR# links) PLUS a pencil/edit mark = "your work-in-progress, jump back
-    // in." They mark the two feed rows where the viewer already has a session
-    // waiting: a ready issue they cloned (Go to session) and an open PR they
-    // authored (Open session). issueProposalMine reuses the pencil-square
-    // "edit document" glyph (same path as the rename button) — still reads as
-    // a document, so issue-vs-PR identity holds. proposalMine keeps the
-    // proposal/thumbs glyph and concatenates the small pencil-tip subpath
-    // (reused from the `issue` glyph, nudged to the top-right corner so it
-    // clears the thumb), the same compose-base+pencil pattern `issue` uses.
-    // Violet stays distinct from sky (others') and emerald (done).
-    issueProposalMine: ['bg-violet-600/15 text-violet-500', 'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z'],
-    proposalMine: ['bg-violet-600/15 text-violet-500', 'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-11h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5M20.35 1.95a1.2 1.2 0 111.7 1.7l-5.15 5.15H15.2v-1.7l5.15-5.15z'],
+    // a distinct blue (deeper than the sky base, so it stands out from
+    // others' rows) PLUS a pencil/edit mark = "your work-in-progress, jump
+    // back in." They mark the two feed rows where the viewer already has a
+    // session waiting: a ready issue they cloned (Go to session) and an open
+    // PR they authored (Open session). Each uses a self-contained pencil glyph
+    // (no manual coordinate compositing): issueProposalMine is a true
+    // document-with-pencil (page + folded corner + pencil) so it still reads
+    // as a document; proposalMine is a pencil-in-circle "edit" mark. Blue
+    // stays distinct from sky (others') and emerald (done).
+    issueProposalMine: ['bg-blue-600/15 text-blue-600', 'M14 3v4a1 1 0 0 0 1 1h4M17 21h-7a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v4M18.42 15.61a2.1 2.1 0 0 1 2.97 2.97l-3.39 3.42h-3v-3l3.42 -3.39z'],
+    proposalMine: ['bg-blue-600/15 text-blue-600', 'M12 15l8.385 -8.415a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3zM16 5l3 3M9 7.07a7.002 7.002 0 0 0 1 13.93a7.002 7.002 0 0 0 6.929 -6'],
   },
 
   _devCardIcon(type, opts) {
