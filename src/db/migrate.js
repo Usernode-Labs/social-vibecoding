@@ -819,10 +819,54 @@ async function seedStagingNotifications(pool, config) {
     }
   }
 
+  // Backlog fixtures (#279): the "Show older notifications" footer only
+  // appears when the first /api/notifications page returns a full 100
+  // rows (hasMore). The fixtures above total only ~20-25, so the footer
+  // — and the pagination it drives — would never render in a staging
+  // preview. Seed a deep backlog under the self-app so the target user
+  // comfortably clears the 100-row first page. All older than the
+  // fixtures above (so they sort to the bottom) and marked read so the
+  // unread badge stays realistic. Idempotent: each backlog row hangs off
+  // a fixture chat message whose content carries its index, and both
+  // inserts skip rows that already exist (NOT EXISTS), so reboots neither
+  // duplicate nor drift. Two set-based statements, not 200 round-trips.
+  const BACKLOG_COUNT = 110;
+  const backlogPrefix = '[staging fixture] backlog notification';
+  const backlogLike = `${backlogPrefix} #%`;
+
+  await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, created_at)
+     SELECT $1, $2, $3 || ' #' || g, 'message', NOW() - ((100 + g) * INTERVAL '1 minute')
+       FROM generate_series(1, $4) AS g
+      WHERE NOT EXISTS (
+        SELECT 1 FROM chat_messages m
+         WHERE m.app_id = $1 AND m.content = $3 || ' #' || g
+      )`,
+    [appId, source.id, backlogPrefix, BACKLOG_COUNT]
+  );
+
+  const { rowCount: backlogInserted } = await pool.query(
+    `INSERT INTO notifications
+       (user_id, app_id, chat_message_id, source_user_id, kind, read_at, created_at)
+     SELECT $1, $2, m.id, $3,
+            CASE WHEN m.id % 2 = 0 THEN 'mention' ELSE 'reply' END,
+            NOW() - INTERVAL '1 minute',
+            m.created_at
+       FROM chat_messages m
+      WHERE m.app_id = $2
+        AND m.content LIKE $4
+        AND NOT EXISTS (
+          SELECT 1 FROM notifications n
+           WHERE n.user_id = $1 AND n.chat_message_id = m.id
+        )`,
+    [target.id, appId, source.id, backlogLike]
+  );
+
   log.info('db', 'Staging notification fixtures seeded', {
     targetUser: target.username,
     inserted,
     multiAppInserted,
+    backlogInserted,
     otherApps: otherApps.length,
   });
 }

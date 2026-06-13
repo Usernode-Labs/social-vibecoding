@@ -677,6 +677,16 @@ const Notifications = {
         Notifications._showMoreGroup(el.getAttribute('data-group-showmore'));
       });
     });
+    // Global "Show older notifications" footer button → pull the next
+    // cross-app page via loadMore(). stopPropagation for the same
+    // re-render-detaches-the-node reason as the controls above.
+    const loadMoreBtn = list.querySelector('[data-loadmore]');
+    if (loadMoreBtn) {
+      loadMoreBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        Notifications.loadMore();
+      });
+    }
   },
 
   // Reveal one more page (GROUP_LEAF_CAP) of leaves for a group. If every
@@ -701,7 +711,14 @@ const Notifications = {
   // whole list (called when a fetch starts).
   _renderLoadingState() {
     const footer = document.getElementById('notifications-loadmore');
-    if (footer) footer.textContent = 'Loading…';
+    if (footer) {
+      footer.textContent = 'Loading…';
+      // Non-interactive while a fetch is in flight. loadMore() already
+      // guards on Notifications.loading, so this is purely the visual
+      // cue + a belt-and-braces block on rapid re-clicks.
+      footer.disabled = true;
+      footer.classList.add('pointer-events-none', 'opacity-60');
+    }
   },
 
   _wireScroll() {
@@ -803,10 +820,16 @@ function renderGroup(g, isExpanded) {
   return `${header}<div class="pl-2 bg-zinc-50/50 dark:bg-zinc-950/30">${leaves}${more}</div>`;
 }
 
-// Footer row used both as the scroll sentinel and the empty/has-more hint.
+// Footer control shown when older pages exist. An explicit click target
+// (not a passive "scroll" hint): the grouped/collapsed list often doesn't
+// overflow the drawer, so scrolling can't be relied on to reveal older
+// notifications (#279). Scroll-to-load (see _wireScroll) stays wired as a
+// silent bonus for the cases where the list IS tall enough to scroll.
+// Keeps id="notifications-loadmore" so _renderLoadingState's "Loading…"
+// swap still finds it. Mirrors the in-group "Show more →" button styling.
 function renderLoadMore() {
   if (!Notifications.hasMore) return '';
-  return `<div id="notifications-loadmore" class="px-3 py-2.5 text-center text-xs text-zinc-500 dark:text-zinc-400">Scroll for older…</div>`;
+  return `<button id="notifications-loadmore" data-loadmore class="w-full text-left px-3 py-2.5 text-xs text-violet-500 hover:text-violet-400">Show older notifications</button>`;
 }
 
 // One-line summary used in a collapsed group header. Mirrors the per-kind
