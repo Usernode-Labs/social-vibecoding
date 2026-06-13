@@ -3239,7 +3239,6 @@ const DevChat = {
         <select id="dc-spec-viewer-version" class="text-xs rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1" ${hasVersions ? '' : 'disabled'}>
           ${hasVersions ? versionOptions : '<option>No versions yet</option>'}
         </select>
-        <span class="flex-1"></span>
         ${shareUserBtnHtml}
         ${shareBtnHtml}
         <button id="dc-spec-viewer-close" class="dc-spec-viewer-close" aria-label="Close spec viewer">×</button>
