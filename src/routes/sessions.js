@@ -27,8 +27,12 @@ const appAccess = require('../services/app-access');
 const notifications = require('../services/notifications');
 // runSyncMain + persistBehindMain now live in services/sync-main.js so
 // the conflict-resolver can drive a sync turn without a route-requires-
-// route cycle. Re-exported below for backwards compatibility.
-const { runSyncMain, persistBehindMain } = require('../services/sync-main');
+// route cycle. Re-exported below for backwards compatibility. Route
+// handlers call through the module object (syncMainSvc.*) so tests can
+// monkey-patch individual functions, mirroring how worker.isInFlight
+// is stubbed in the route suites.
+const syncMainSvc = require('../services/sync-main');
+const { runSyncMain, persistBehindMain } = syncMainSvc;
 
 // Track sessions with active Claude Code workers. The Set lives in a
 // shared module so services/sync-main.js writes to the same instance
@@ -1087,7 +1091,20 @@ function sessionRoutes(config) {
         });
       }
 
-      const result = await runSyncMain(config, pool, sessionId, { sessionRow: session });
+      // #252: a regular chat turn holds the worker — dispatching a sync
+      // now would just trip execInWorker's "a turn is already in
+      // flight" guard with a raw 500. Surface it as a friendly 409
+      // instead. When the in-flight turn IS a sync, fall through:
+      // runSyncMain coalesces and this caller joins the running sync.
+      if (!syncMainSvc.getSyncState(sessionId)
+          && (activeWorkers.has(sessionId) || worker.isInFlight(sessionId))) {
+        return res.status(409).json({
+          error: 'Claude is still working in this session — wait for the turn to finish before syncing.',
+          busy: true,
+        });
+      }
+
+      const result = await syncMainSvc.runSyncMain(config, pool, sessionId, { sessionRow: session });
       res.json(result);
     } catch (err) {
       log.error('sessions', 'sync-main failed', { sessionId, err: err.message });
@@ -2169,7 +2186,17 @@ function sessionRoutes(config) {
     // missed-WS-event safety net.
     const { isResolving } = require('../services/conflict-resolver');
 
-    res.json({ busy, progress, phase, resolving: isResolving(sessionId) });
+    // #252: in-flight sync-with-main state ({ phase, startedAt } |
+    // null) — the dev-chat sync banner's reload recovery and poll
+    // fallback read this the same way the resolving banner reads
+    // `resolving`.
+    res.json({
+      busy,
+      progress,
+      phase,
+      resolving: isResolving(sessionId),
+      sync: syncMainSvc.getSyncState(sessionId),
+    });
   });
 
   // Stop an in-flight turn (#28). Aborts the Mayor's Anthropic stream

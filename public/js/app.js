@@ -882,6 +882,15 @@ const App = {
       }
       return;
     }
+    // #252: sync-with-main lifecycle events drive the dev-chat sync
+    // banner's spinner/phase text and terminal feedback. Scoped
+    // per-session like behind_main — no list refetch needed.
+    if (data.action === 'sync_status') {
+      if (typeof DevChat !== 'undefined' && DevChat.applySyncStatusUpdate) {
+        DevChat.applySyncStatusUpdate(data);
+      }
+      return;
+    }
     // Refresh session list if we're on the Sessions sub-tab for this app
     if (App.currentApp === data.appSlug && App.currentTab === 'dev'
         && App.currentSubTab === 'sessions') {
