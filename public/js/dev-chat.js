@@ -96,7 +96,6 @@ const DevChat = {
     'claude-haiku-4-5': { label: 'Haiku 4.5', outputCostPerMTok: 5 },
     'claude-sonnet-4-6': { label: 'Sonnet 4.6', outputCostPerMTok: 15 },
     'claude-opus-4-8': { label: 'Opus 4.8', outputCostPerMTok: 25 },
-    'claude-fable-5': { label: 'Fable 5', outputCostPerMTok: 50 },
   },
 
   // Default model id used when sanitization rejects a stale storage
