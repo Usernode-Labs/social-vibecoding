@@ -41,6 +41,10 @@ const EVENT_TYPES = Object.freeze({
   COLLAB_INVITED: 'collab_invited',
   COLLAB_JOINED: 'collab_joined',
   VISIBILITY_CHANGED: 'visibility_changed',
+  // Sync-with-main completed (issue: make sync emit session activity).
+  // Attributed to the session owner (sync bills the owner), recorded on
+  // the terminal path with { syncResult, behind, sha, pushOk, trigger }.
+  SYNC_MAIN: 'sync_main',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

@@ -1046,7 +1046,7 @@ function sessionRoutes(config) {
         // Fire-and-forget. Failures are logged but don't bubble up;
         // the user explicitly clicking "Sync with main" later will
         // re-attempt with full surface area for errors.
-        runSyncMain(config, pool, sessionId).catch((err) => {
+        runSyncMain(config, pool, sessionId, { trigger: 'resume_autosync' }).catch((err) => {
           log.warn('sessions', 'Background sync-on-resume failed', {
             sessionId, err: err.message,
           });

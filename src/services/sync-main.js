@@ -11,7 +11,20 @@
 const log = require('./logger');
 const worker = require('./worker');
 const limits = require('./limits');
+const events = require('./events');
 const { activeWorkers } = require('./active-workers');
+
+// Translate the worker's terse "[sync_*]" phase markers into the
+// human-readable lines that stream into the timeline's collapsible
+// progress log (mirroring how a build turn narrates its work). Anything
+// not in the map (other worker chatter forwarded by parseLine) is
+// passed through verbatim so nothing is silently dropped.
+const SYNC_PROGRESS_LABELS = {
+  sync_fetch_main: 'Fetching main…',
+  sync_merge: 'Merging origin/main…',
+  sync_conflict_cc: 'Resolving conflicts with Claude…',
+  sync_push: 'Pushing…',
+};
 
 // #8: persist the latest behind-origin/main count for a session and
 // broadcast a session_update so the dev-chat banner refreshes live.
@@ -109,7 +122,7 @@ async function runSyncMain(config, pool, sessionId, opts = {}) {
   return entry.promise;
 }
 
-async function runSyncMainInner(config, pool, sessionId, { sessionRow } = {}, entry) {
+async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger } = {}, entry) {
   let session = sessionRow;
   if (!session) {
     const { rows } = await pool.query(
@@ -133,13 +146,86 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow } = {}, en
   // every exit — phase change, done, failed — gets broadcast.
   broadcastSyncStatus(session, 'starting');
 
+  // --- Session-native activity primitives -----------------------------
+  // Mirror runHeadlessSession's send/sendStatus so a sync turn emits the
+  // SAME artifacts a build turn does: live session_event broadcasts plus
+  // persisted chat_session_messages rows. The banner broadcasts above are
+  // kept as-is and are complementary — this is purely additive.
+  const seqPrefix = `s${Date.now().toString(36)}`;
+  let eventSeq = 0;
+  const send = (type, data) => {
+    try {
+      const { broadcastGlobal } = require('./ws');
+      const sessionBus = require('./session-bus');
+      const event = { type, _seq: `${seqPrefix}-${++eventSeq}`, ...data };
+      broadcastGlobal({ type: 'session_event', sessionId: session.id, event: type, ...event });
+      sessionBus.publish(session.id, event);
+    } catch (_) { /* ws/bus failures are non-fatal */ }
+  };
+  const sendStatus = async (text, metadata) => {
+    send('status', { text, ...(metadata || {}) });
+    try {
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'system', $2, $3)`,
+        [session.id, text, JSON.stringify(metadata || {})]
+      );
+    } catch (_) { /* persistence failure is non-fatal */ }
+  };
+
+  // Confirmed decision: gate the visible activity on a non-zero `behind`
+  // pre-check. Auto/silent syncs (/resume auto-sync, conflict-resolver)
+  // run through here too; when nothing is behind, the worker
+  // short-circuits to already_synced and we must NOT leave a noisy
+  // self-resolving "Syncing with main…" entry in the timeline. The banner
+  // broadcasts still fire regardless. `behind_main` is the last persisted
+  // drift count (the same value the banner reads).
+  const behindPrecheck = Number(session.behind_main) || 0;
+  const emitActivity = behindPrecheck > 0;
+
+  // The collapsible progress row is created lazily on the first progress
+  // line so an already-synced run that never streams a marker leaves no
+  // orphan row behind. Captured id is reused for every subsequent append.
+  let progressMsgId = null;
+  const appendProgress = async (text) => {
+    if (!emitActivity) return;
+    send('cc_progress', { text });
+    try {
+      if (progressMsgId == null) {
+        const { rows } = await pool.query(
+          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+           VALUES ($1, 'system', 'Claude Code progress', $2) RETURNING id`,
+          [session.id, JSON.stringify({ progressLog: [] })]
+        );
+        progressMsgId = rows[0].id;
+      }
+      await pool.query(
+        `UPDATE chat_session_messages SET metadata = jsonb_set(
+          metadata, '{progressLog}',
+          (COALESCE(metadata->'progressLog', '[]'::jsonb) || $1::jsonb)
+        ) WHERE id = $2`,
+        [JSON.stringify([text]), progressMsgId]
+      );
+    } catch (_) { /* progress persistence is best-effort */ }
+  };
+
+  // The opening "action enqueued" entry — only when there's a real merge
+  // to do (see emitActivity above).
+  if (emitActivity) {
+    await sendStatus('Syncing with main…');
+  }
+
   // Forward the worker's "[sync_*]" phase lines into the registry +
-  // a sync_status broadcast. Everything before the first marker
-  // (image build, ensureWorker bootstrap) stays 'starting'.
+  // a sync_status broadcast (the banner). Everything before the first
+  // marker (image build, ensureWorker bootstrap) stays 'starting'.
+  // Additively, translate each marker into a human progress line that
+  // streams into the collapsible log so the timeline narrates the sync.
   const onProgress = (line) => {
     if (typeof line !== 'string') return;
     const pm = line.match(/^\[(sync_[a-z_]+)\]$/);
     if (!pm) return;
+    const label = SYNC_PROGRESS_LABELS[pm[1]];
+    if (label) appendProgress(label);
     const phase = SYNC_PHASE_MAP[pm[1]];
     if (!phase || entry.phase === phase) return;
     entry.phase = phase;
@@ -210,15 +296,38 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow } = {}, en
         break;
     }
 
-    // Drop a system note into the session chat so the user has a
-    // breadcrumb on refresh.
-    try {
-      await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-         VALUES ($1, 'system', $2, $3)`,
-        [session.id, message, JSON.stringify({ syncMain: { syncResult, behind: result.behind || 0, sha: result.sha || null } })]
-      );
-    } catch (_) { /* non-fatal */ }
+    // Close the activity with a terminal status. Routing through
+    // sendStatus both persists the breadcrumb row (so it survives reload)
+    // AND broadcasts a live status event (so open viewers see the outcome
+    // without re-fetching). The metadata carries the syncMain summary the
+    // timeline keys on. Only emitted when we opened an activity entry (a
+    // real merge); a behind==0 short-circuit leaves no row, matching the
+    // banner-only behaviour callers had before this change.
+    const syncMeta = { syncMain: { syncResult, behind: result.behind || 0, sha: result.sha || null, pushOk: !!result.pushOk } };
+    if (emitActivity) {
+      await sendStatus(message, syncMeta);
+    }
+
+    // Analytics: record the sync outcome on the terminal path. Attributed
+    // to session.user_id (the owner) to match the billing decision above —
+    // the clicking actor may be a collaborator. Fire-and-forget. Gated the
+    // same way as the visible activity so a silent already-synced resume
+    // doesn't flood the events table.
+    if (emitActivity) {
+      events.record(pool, {
+        type: events.EVENT_TYPES.SYNC_MAIN,
+        userId: session.user_id,
+        appId: session.app_id,
+        sessionId: session.id,
+        metadata: {
+          syncResult,
+          behind: result.behind || 0,
+          sha: result.sha || null,
+          pushOk: !!result.pushOk,
+          trigger: trigger || 'manual',
+        },
+      });
+    }
 
     // #252: terminal broadcast. 'failed' covers the unresolved-conflict
     // outcome (branch unchanged) so the banner shows the failure +
@@ -238,8 +347,15 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow } = {}, en
       message,
     };
   } catch (err) {
-    // Thrown infrastructure/budget errors are terminal too — tell the
-    // banner before rethrowing to the caller.
+    // Thrown infrastructure/budget errors are terminal too — close the
+    // activity entry (if we opened one) and tell the banner before
+    // rethrowing to the caller.
+    if (emitActivity) {
+      await sendStatus(
+        `Sync with main failed: ${err.message}`,
+        { syncMain: { syncResult: 'error', behind: behindPrecheck, sha: null, pushOk: false } }
+      ).catch(() => {});
+    }
     broadcastSyncStatus(session, 'failed', { message: err.message });
     throw err;
   }
