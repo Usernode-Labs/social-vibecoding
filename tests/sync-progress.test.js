@@ -82,13 +82,16 @@ function loadSyncMain({ execImpl }) {
     logger: require.resolve('../src/services/logger'),
     worker: require.resolve('../src/services/worker'),
     ws: require.resolve('../src/services/ws'),
+    sessionBus: require.resolve('../src/services/session-bus'),
     subject: require.resolve('../src/services/sync-main'),
   };
   const orig = {};
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
 
   const execCalls = [];
-  const updates = [];
+  const updates = [];   // pushSessionUpdate (banner channel)
+  const globals = [];   // broadcastGlobal (session_event channel)
+  const busEvents = []; // sessionBus.publish (per-session ring buffer)
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.worker, {
     ensureWorkerImage: async () => {},
@@ -98,7 +101,11 @@ function loadSyncMain({ execImpl }) {
       return execImpl(opts);
     },
   });
-  stub(ids.ws, { pushSessionUpdate(data) { updates.push(data); } });
+  stub(ids.ws, {
+    pushSessionUpdate(data) { updates.push(data); },
+    broadcastGlobal(data) { globals.push(data); },
+  });
+  stub(ids.sessionBus, { publish(sessionId, event) { busEvents.push({ sessionId, event }); } });
 
   delete require.cache[ids.subject];
   const subject = require(ids.subject);
@@ -108,7 +115,7 @@ function loadSyncMain({ execImpl }) {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { subject, execCalls, updates, restore };
+  return { subject, execCalls, updates, globals, busEvents, restore };
 }
 
 function syncPool() {
@@ -279,6 +286,170 @@ test('lifecycle: already_synced short-circuit still emits starting → done so a
     const events = syncEvents(updates);
     assert.deepEqual(events.map((e) => e.state), ['starting', 'done']);
     assert.match(events[1].message, /already up to date/i);
+  } finally {
+    restore();
+  }
+});
+
+// ── Session-native activity emission ────────────────────────────────
+// The core of the "make sync emit session activity" change: a real
+// merge drives the SAME primitives a build turn does — an opening
+// status row, a lazily-created "Claude Code progress" row whose
+// progressLog streams human lines, a terminal status row, and a
+// SYNC_MAIN analytics event — while STILL broadcasting the banner.
+
+function ownerRow(overrides = {}) {
+  return {
+    id: 7, user_id: 3, app_id: 5, app_slug: 'widget', branch_name: 'dev/x-1',
+    repo_url: 'https://github.com/acme/widget', behind_main: 2,
+    ...overrides,
+  };
+}
+
+// Pool that returns a fixed id for the progress-row INSERT (matched by
+// its 'Claude Code progress' literal) so the lazy-create path captures
+// an id; everything else returns no rows.
+function activityPool() {
+  return makePool([
+    [/SELECT anthropic_key_enc/, []],
+    [/UPDATE chat_sessions SET behind_main/, []],
+    [/Claude Code progress/, [{ id: 4242 }]],
+    [/INSERT INTO chat_session_messages/, []],
+    [/UPDATE chat_session_messages SET metadata/, []],
+    [/INSERT INTO events/, []],
+  ]);
+}
+
+// Status rows share the INSERT shape but are NOT the progress row; their
+// content is param $2.
+const statusContents = (pool) => pool.calls
+  .filter((c) => /INSERT INTO chat_session_messages/.test(c.sql) && !/Claude Code progress/.test(c.sql))
+  .map((c) => c.params[1]);
+const progressAppends = (pool) => pool.calls
+  .filter((c) => /UPDATE chat_session_messages SET metadata/.test(c.sql))
+  .map((c) => JSON.parse(c.params[0])[0]);
+const eventInserts = (pool) => pool.calls
+  .filter((c) => /INSERT INTO events/.test(c.sql));
+
+test('activity: a clean merge emits opening status, progress log, terminal status, SYNC_MAIN event, and still broadcasts the banner', async () => {
+  const { subject, updates, globals, restore } = loadSyncMain({
+    execImpl: async (opts) => {
+      opts.onProgress('[sync_fetch_main]');
+      opts.onProgress('[sync_merge]');
+      opts.onProgress('[sync_push]');
+      return { syncResult: 'clean', behind: 0, sha: 'abc1234ff', pushOk: true, exitCode: 0 };
+    },
+  });
+  try {
+    const pool = activityPool();
+    const res = await subject.runSyncMain({ jwtSecret: 's' }, pool, 7, { sessionRow: ownerRow(), trigger: 'manual' });
+    assert.equal(res.ok, true);
+
+    // (a) opening status row
+    const contents = statusContents(pool);
+    assert.equal(contents[0], 'Syncing with main…', 'opening status row inserted first');
+
+    // (b) progress row created lazily + appended with human-readable lines
+    assert.ok(pool.calls.some((c) => /Claude Code progress/.test(c.sql)), 'progress row created');
+    assert.deepEqual(progressAppends(pool), ['Fetching main…', 'Merging origin/main…', 'Pushing…']);
+
+    // (c) terminal status row (persisted) carries the syncMain summary
+    assert.ok(contents.some((c) => /Merged main cleanly\. Pushed abc1234/.test(c)), 'terminal status persisted');
+
+    // live broadcasts: opening + cc_progress + terminal all went out as session_events
+    const evTypes = globals.map((g) => g.event);
+    assert.ok(evTypes.includes('status'), 'status broadcast live');
+    assert.ok(evTypes.filter((e) => e === 'cc_progress').length === 3, 'each progress line broadcast live');
+
+    // (d) SYNC_MAIN event recorded, attributed to the owner
+    const ev = eventInserts(pool);
+    assert.equal(ev.length, 1, 'one analytics row on the terminal path');
+    // INSERT INTO events (user_id, app_id, session_id, event_type, metadata)
+    assert.equal(ev[0].params[0], 3, 'attributed to session.user_id (owner)');
+    assert.equal(ev[0].params[3], 'sync_main');
+    const meta = JSON.parse(ev[0].params[4]);
+    assert.equal(meta.syncResult, 'clean');
+    assert.equal(meta.pushOk, true);
+    assert.equal(meta.trigger, 'manual');
+
+    // (e) banner still broadcasts done
+    const banner = syncEvents(updates);
+    assert.equal(banner[banner.length - 1].state, 'done');
+  } finally {
+    restore();
+  }
+});
+
+test('activity: each syncResult outcome produces the right terminal row', async () => {
+  const cases = [
+    { syncResult: 'already_synced', pushOk: true, re: /already up to date/i, ok: true },
+    { syncResult: 'clean', pushOk: true, re: /Merged main cleanly/i, ok: true },
+    { syncResult: 'resolved', pushOk: true, re: /Claude resolved merge conflicts/i, ok: true },
+  ];
+  for (const tc of cases) {
+    const { subject, restore } = loadSyncMain({
+      execImpl: async () => ({ syncResult: tc.syncResult, behind: 0, sha: 'deadbee', pushOk: tc.pushOk, exitCode: 0 }),
+    });
+    try {
+      const pool = activityPool();
+      const res = await subject.runSyncMain({ jwtSecret: 's' }, pool, 7, { sessionRow: ownerRow() });
+      assert.equal(res.ok, tc.ok, `${tc.syncResult}: ok flag`);
+      const contents = statusContents(pool);
+      assert.ok(contents.some((c) => tc.re.test(c)), `${tc.syncResult}: terminal text`);
+      assert.equal(eventInserts(pool).length, 1, `${tc.syncResult}: one SYNC_MAIN event`);
+    } finally {
+      restore();
+    }
+  }
+});
+
+test('activity: an unresolved conflict closes as a failure, claims no push, and records the event', async () => {
+  const { subject, updates, restore } = loadSyncMain({
+    execImpl: async (opts) => {
+      opts.onProgress('[sync_merge]');
+      opts.onProgress('[sync_conflict_cc]');
+      return { syncResult: 'conflict', behind: 2, sha: '', pushOk: false, exitCode: 0 };
+    },
+  });
+  try {
+    const pool = activityPool();
+    const res = await subject.runSyncMain({ jwtSecret: 's' }, pool, 7, { sessionRow: ownerRow() });
+    assert.equal(res.ok, false, 'conflict is not ok');
+    assert.equal(res.pushOk, false, 'no push claimed');
+
+    const contents = statusContents(pool);
+    assert.ok(contents.some((c) => /couldn't resolve the conflicts/i.test(c)), 'terminal text marks the failure');
+    // the terminal row must not falsely claim a push
+    assert.ok(!contents.some((c) => /Pushed/.test(c)), 'failure row claims no push');
+
+    const ev = eventInserts(pool);
+    assert.equal(ev.length, 1);
+    assert.equal(JSON.parse(ev[0].params[4]).syncResult, 'conflict');
+
+    // banner shows failed
+    const banner = syncEvents(updates);
+    assert.equal(banner[banner.length - 1].state, 'failed');
+  } finally {
+    restore();
+  }
+});
+
+test('activity: a behind==0 pre-check stays silent — no activity rows, no event — but the banner still fires', async () => {
+  const { subject, updates, globals, restore } = loadSyncMain({
+    execImpl: async () => ({ syncResult: 'already_synced', behind: 0, sha: 'abc1234', pushOk: true, exitCode: 0 }),
+  });
+  try {
+    const pool = activityPool();
+    // behind_main: 0 → emitActivity gate is closed (auto/silent sync).
+    await subject.runSyncMain({ jwtSecret: 's' }, pool, 7, { sessionRow: ownerRow({ behind_main: 0 }), trigger: 'resume_autosync' });
+
+    assert.equal(statusContents(pool).length, 0, 'no status rows persisted');
+    assert.ok(!pool.calls.some((c) => /Claude Code progress/.test(c.sql)), 'no progress row');
+    assert.equal(eventInserts(pool).length, 0, 'no analytics row for a silent self-resolving sync');
+    assert.ok(!globals.some((g) => g.event === 'status'), 'no live status broadcast');
+
+    // banner channel is unaffected — starting → done still go out.
+    assert.deepEqual(syncEvents(updates).map((e) => e.state), ['starting', 'done']);
   } finally {
     restore();
   }

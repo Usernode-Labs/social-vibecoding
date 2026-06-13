@@ -300,7 +300,7 @@ async function resolveWithSession(config, pool, session) {
 
     let sync;
     try {
-      sync = await runSyncMain(config, pool, session.id, { sessionRow: session });
+      sync = await runSyncMain(config, pool, session.id, { sessionRow: session, trigger: 'conflict_resolver' });
     } catch (err) {
       log.error('conflict', 'runSyncMain threw', { sessionId: session.id, err: err.message });
       await postGroupMessage(pool, session,

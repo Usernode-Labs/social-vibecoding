@@ -1806,10 +1806,11 @@ const DevChat = {
     // Matches all status lines that wrap a worker exec: build mode
     // emits "Claude Code is running" (and the older "...is making
     // changes" wording for legacy DB rows); scout emits "Scout
-    // reading the codebase". Both are paired with a 'Claude Code
-    // progress' system row whose live log we want to attach.
+    // reading the codebase"; sync-with-main emits "Syncing with main".
+    // Each is paired with a 'Claude Code progress' system row whose
+    // live log we want to attach.
     const ACTIVE_CC_STATUS_RE
-      = /^(Claude Code is (running|making changes)|Scout reading the codebase)/i;
+      = /^(Claude Code is (running|making changes)|Scout reading the codebase|Syncing with main)/i;
     // Helper: is this a viable status candidate for pairing? Stop on
     // any non-system row (status/progress pairs always live inside a
     // single dispatch turn) and skip rows that already carry their

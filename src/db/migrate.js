@@ -34,6 +34,7 @@ async function migrate(config) {
   await seedStagingSpecViewerSessions(pool, config);
   await seedStagingSpecUserShareFixtures(pool, config);
   await seedStagingHeadlessFixtures(pool, config);
+  await seedStagingSyncActivity(pool, config);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
   // Must run BEFORE backfillOrphanedSpecDrafts: unwrapping spec_md after that
@@ -1114,6 +1115,108 @@ async function seedStagingActiveSessions(pool, config) {
     total: fixtures.length,
     inserted,
   });
+}
+
+// Sync-with-main activity fixture (issue: make sync emit session-native
+// activity). Triggering a real merge against cloned data isn't possible
+// in staging (there's no divergent git branch to merge), so we seed one
+// dev-chat session that (a) shows the "Sync with main" banner via
+// behind_main > 0 and (b) carries a representative *completed* sync
+// activity in its timeline: the opening status row, a "Claude Code
+// progress" row whose progressLog holds the illustrative fetch/merge/push
+// lines, and the terminal "Merged main cleanly" row — exactly the rows a
+// real clean sync emits. A matching SYNC_MAIN events row is recorded too.
+// All ids sit in the 900xxx synthetic range and the title carries the
+// "Staging demo" prefix so the row can't be mistaken for real work.
+// chat_sessions is staging:private, so this is invisible without seeding.
+// Strict no-op in production.
+async function seedStagingSyncActivity(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    const { rows: appRows } = await pool.query(
+      'SELECT id FROM apps WHERE slug = $1',
+      [config.selfAppSlug]
+    );
+    const appId = appRows[0]?.id;
+    if (!appId) {
+      log.warn('db', 'Staging sync-activity fixture skipped: self-app row missing', {
+        slug: config.selfAppSlug,
+      });
+      return;
+    }
+
+    const { rows: userRows } = await pool.query(
+      `SELECT id, username FROM users ORDER BY is_admin DESC, id ASC LIMIT 1`
+    );
+    if (!userRows.length) {
+      log.warn('db', 'Staging sync-activity fixture skipped: no users');
+      return;
+    }
+    const owner = userRows[0];
+
+    const SESSION_ID = 900050;
+    const sha = 'a1b2c3d';
+
+    // Idempotent: re-runs on every staging boot. The session row carries
+    // behind_main = 2 so the banner shows "behind main"; ON CONFLICT keeps
+    // the boot path a no-op after the first seed.
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_title, status, behind_main, created_at)
+       VALUES
+         ($1, $2, $3, 'staging-demo/sync-activity',
+          '[staging fixture] Sync-with-main activity demo', 'active', 2, NOW())
+       ON CONFLICT (id) DO UPDATE SET behind_main = 2`,
+      [SESSION_ID, appId, owner.id]
+    );
+
+    // Only seed the timeline rows once (keyed off whether the terminal
+    // row already exists) so re-runs don't pile up duplicate activity.
+    const { rows: existingMsgs } = await pool.query(
+      `SELECT 1 FROM chat_session_messages
+        WHERE session_id = $1 AND metadata->'syncMain' IS NOT NULL LIMIT 1`,
+      [SESSION_ID]
+    );
+    if (!existingMsgs.length) {
+      // Opening status — pairs with the progress row below via
+      // ACTIVE_CC_STATUS_RE on the frontend.
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'system', 'Syncing with main…', '{}'::jsonb)`,
+        [SESSION_ID]
+      );
+      // The collapsible progress log with a few illustrative lines.
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'system', 'Claude Code progress', $2)`,
+        [SESSION_ID, JSON.stringify({
+          progressLog: ['Fetching main…', 'Merging origin/main…', 'Pushing…'],
+        })]
+      );
+      // Terminal outcome row.
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'system', $2, $3)`,
+        [SESSION_ID,
+         `Merged main cleanly. Pushed ${sha}.`,
+         JSON.stringify({ syncMain: { syncResult: 'clean', behind: 2, sha, pushOk: true } })]
+      );
+      // Matching analytics row.
+      await pool.query(
+        `INSERT INTO events (user_id, app_id, session_id, event_type, metadata)
+         VALUES ($1, $2, $3, 'sync_main', $4::jsonb)`,
+        [owner.id, appId, SESSION_ID,
+         JSON.stringify({ syncResult: 'clean', behind: 2, sha, pushOk: true, trigger: 'manual' })]
+      );
+    }
+
+    log.info('db', 'Staging sync-activity fixture seeded', {
+      appId, owner: owner.username, sessionId: SESSION_ID,
+    });
+  } catch (err) {
+    log.warn('db', 'Staging sync-activity seeding failed', { message: err.message });
+  }
 }
 
 // Fixtures for the home-card activity chips (#57): one dedicated demo
