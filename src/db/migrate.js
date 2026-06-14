@@ -29,6 +29,7 @@ async function migrate(config) {
   await seedStagingMyOpenPr(pool, config);
   await seedStagingActiveSessions(pool, config);
   await seedStagingCcProgressRun(pool, config);
+  await seedStagingCcEstimateRun(pool, config);
   await seedStagingDemoAppCard(pool);
   await seedStagingVisuals(pool);
   await seedStagingLeaderboardProfile(pool);
@@ -1281,6 +1282,111 @@ async function seedStagingCcProgressRun(pool, config) {
   }
 
   log.info('db', 'Staging CC-progress fixture seeded', {
+    appId,
+    owner: owner.username,
+    sessionId,
+  });
+}
+
+// #286: AI-progress-estimate fixture. The '✦ AI guess' span only renders
+// on an *active* "Claude Code is running…" line that carries an estimate,
+// and real estimates are emitted live over SSE (never persisted), so the
+// finished-run fixture above can never show one. Seed one dev-chat session
+// whose newest system row is an active running line carrying persisted
+// estimate metadata ({ text, remainingSeconds }), paired with a progress
+// row so the merged disclosure summary (and its estimate span) renders.
+// dev-chat.js hydrates msg._estimate / _estimateRemaining from
+// metadata.estimate on load (mirroring the live cc_estimate path), so the
+// guess shows on reload without a worker running — which is exactly what
+// makes the mobile-visibility fix reviewable on a narrow viewport.
+// chat_sessions is staging:private, so this is invisible without seeding.
+// Idempotent on the fixture branch name; strict no-op in production.
+async function seedStagingCcEstimateRun(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging CC-estimate fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username, is_admin
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging CC-estimate fixture skipped: no users');
+    return;
+  }
+  const owner = userRows[0];
+
+  const fixtureBranch = 'staging-fixture/cc-progress-estimate';
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, fixtureBranch]
+  );
+  if (existing.length) return;
+
+  const { rows: sessionRows } = await pool.query(
+    `INSERT INTO chat_sessions
+       (app_id, user_id, branch_name, pr_title, status, created_at)
+     VALUES
+       ($1, $2, $3, '[staging fixture] AI progress estimate demo run', 'active',
+        NOW() - INTERVAL '3 minutes')
+     RETURNING id`,
+    [appId, owner.id, fixtureBranch]
+  );
+  const sessionId = sessionRows[0].id;
+
+  // A short in-flight progress log so the running line renders as the
+  // disclosure summary (the estimate span lives on that summary).
+  const progressLog = [
+    '[refresh]',
+    '[claude (mode build)]',
+    '… Planning the change before touching any files',
+    'Reading public/js/dev-chat.js',
+    '  ⎿ Read: 3160 lines',
+    'Reading public/css/app.css',
+    '  ⎿ Read: 1290 lines',
+    'Editing public/css/app.css',
+    '  ⎿ Edit: ok',
+  ];
+
+  // Timeline order matters: the dev-chat pairing pre-pass attaches the
+  // 'Claude Code progress' row to the nearest PRECEDING active running
+  // status, so insert status → progress with ascending timestamps and
+  // NO terminal row (so the running line stays `_active`). The estimate
+  // metadata rides on the running line — that's the row that becomes
+  // `_active` and whose `_estimate` the summary reads.
+  const messages = [
+    { role: 'user', content: '[staging fixture] Please add the new route handler.', metadata: {}, minutesAgo: 3 },
+    { role: 'system', content: 'Spinning up coding agent (Claude Sonnet 4.6)...', metadata: {}, minutesAgo: 2 },
+    {
+      role: 'system',
+      content: 'Claude Code is running...',
+      metadata: { estimate: { text: 'wiring up the new route', remainingSeconds: 120 } },
+      minutesAgo: 2,
+    },
+    { role: 'system', content: 'Claude Code progress', metadata: { progressLog }, minutesAgo: 2 },
+  ];
+
+  for (const m of messages) {
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+       VALUES ($1, $2, $3, $4, NOW() - ($5::int * INTERVAL '1 minute'))`,
+      [sessionId, m.role, m.content, JSON.stringify(m.metadata), m.minutesAgo]
+    );
+  }
+
+  log.info('db', 'Staging CC-estimate fixture seeded', {
     appId,
     owner: owner.username,
     sessionId,

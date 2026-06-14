@@ -596,10 +596,25 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 }
 
 /* Narrow viewports: drop the activity snippet (the log itself is one
-   tap away) but keep the elapsed timer at all widths. */
+   tap away) but keep the elapsed timer at all widths. The AI progress
+   estimate (#286) is kept visible — it can't sit inline next to the
+   timer on a phone, so the summary row is allowed to wrap and the
+   estimate drops onto its own full-width line beneath the status line
+   (full text, no ellipsis). */
 @media (max-width: 640px) {
   .dc-cc-current { display: none; }
-  .dc-cc-estimate { display: none; }
+  .dc-cc-attached-summary { flex-wrap: wrap; }
+  .dc-cc-estimate {
+    /* order:1 sorts the estimate after the (order:0) timer + timestamp
+       so the status line stays intact on row 1 and the estimate wraps
+       onto its own full-width row beneath it. */
+    order: 1;
+    flex-basis: 100%;
+    max-width: 100%;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+  }
 }
 
 /* Sibling of .dc-cc-attached-log for the post-turn ccOutput

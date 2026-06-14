@@ -681,6 +681,17 @@ const DevChat = {
           // #50: terminal statuses persist how long the run took so the
           // "(took 4m 12s)" suffix survives a reload.
           if (m.metadata.durationMs != null) m.durationMs = m.metadata.durationMs;
+          // #286: a persisted AI progress estimate ({ text, remainingSeconds })
+          // hydrates the running line's guess on load — mirrors the live
+          // cc_estimate path (_applyEstimate) so a seeded/recovered active
+          // run shows the same '✦ AI guess' span. Absent on real runs that
+          // never persist it, so this is a no-op there.
+          if (m.metadata.estimate && m.metadata.estimate.text) {
+            m._estimate = String(m.metadata.estimate.text).trim();
+            m._estimateRemaining = m.metadata.estimate.remainingSeconds == null
+              ? null
+              : m.metadata.estimate.remainingSeconds;
+          }
           // Spec preview cards: scout dispatches persist these on the
           // status row so a refresh re-renders the same inline card the
           // user saw mid-stream. See runScoutTool. Older recovered scout

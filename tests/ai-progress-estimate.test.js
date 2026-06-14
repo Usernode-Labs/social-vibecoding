@@ -233,3 +233,59 @@ test('/status response carries the estimate for the polling fallback', () => {
   const sessions = read('src/routes/sessions.js');
   assert.match(sessions, /busy, progress, phase, estimate/, '/status payload must include estimate');
 });
+
+// ── 3. Mobile visibility (#286) ─────────────────────────────────────────
+
+// Slice out the body of the first `@media (max-width: 640px)` block by
+// brace-matching, so we can assert what it does (and doesn't) hide.
+function narrowMediaBlock(css) {
+  const marker = '@media (max-width: 640px)';
+  const at = css.indexOf(marker);
+  assert.ok(at !== -1, 'a max-width:640px media query must exist');
+  const open = css.indexOf('{', at);
+  let depth = 0;
+  for (let i = open; i < css.length; i++) {
+    if (css[i] === '{') depth++;
+    else if (css[i] === '}') {
+      depth--;
+      if (depth === 0) return css.slice(open + 1, i);
+    }
+  }
+  throw new Error('unbalanced braces in 640px media query');
+}
+
+test('mobile (#286): the 640px block no longer hides .dc-cc-estimate', () => {
+  const block = narrowMediaBlock(read('public/css/app.css'));
+  // The activity snippet stays hidden on narrow screens...
+  assert.match(block, /\.dc-cc-current\s*\{\s*display:\s*none/,
+    '.dc-cc-current must remain hidden on narrow viewports');
+  // ...but the AI progress estimate must NOT be display:none anymore.
+  assert.doesNotMatch(block, /\.dc-cc-estimate\s*\{\s*display:\s*none/,
+    '.dc-cc-estimate must not be hidden in the 640px block');
+  // And it should wrap onto its own full-width row instead.
+  assert.match(block, /\.dc-cc-estimate\s*\{[^}]*flex-basis:\s*100%/,
+    '.dc-cc-estimate must span its own full-width row on mobile');
+});
+
+test('mobile (#286): dev-chat hydrates _estimate from persisted metadata', () => {
+  const devChat = read('public/js/dev-chat.js');
+  assert.match(devChat, /m\.metadata\.estimate/,
+    'load mapping must read metadata.estimate');
+  assert.match(devChat, /m\._estimate\s*=/,
+    'metadata.estimate must hydrate m._estimate');
+  assert.match(devChat, /m\._estimateRemaining\s*=/,
+    'metadata.estimate must hydrate m._estimateRemaining');
+});
+
+test('mobile (#286): staging seeds an active running line with an estimate', () => {
+  const migrate = read('src/db/migrate.js');
+  assert.match(migrate, /seedStagingCcEstimateRun/,
+    'a CC-estimate staging fixture must be defined and called');
+  const fnStart = migrate.indexOf('async function seedStagingCcEstimateRun');
+  assert.ok(fnStart !== -1, 'seedStagingCcEstimateRun must exist');
+  const fnBody = migrate.slice(fnStart, migrate.indexOf('async function', fnStart + 1));
+  assert.match(fnBody, /USERNODE_ENV !== 'staging'/, 'fixture must be staging-gated');
+  assert.match(fnBody, /\[staging fixture\]/, 'seeded rows must carry the staging prefix');
+  assert.match(fnBody, /estimate:\s*\{\s*text:/, 'fixture must persist estimate metadata');
+  assert.match(fnBody, /Claude Code is running/, 'fixture must seed an active running line');
+});
