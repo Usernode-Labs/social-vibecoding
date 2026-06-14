@@ -259,6 +259,125 @@ test('staging does not clobber a real headless row on a mock number', async () =
   }
 });
 
+// ── #287: per-viewer Create-PR session → "Open Session" swap ─────────────
+//
+// GET /github-issues exposes myPrSessionId — the viewer's own most recent
+// non-archived dev chat started from each issue's "Create PR" button
+// (created_from_issue_number). The row swaps "Create PR" → "Open Session"
+// when it's set. The lookup must be per-viewer (user_id-scoped) and exclude
+// archived rows so the button reverts after abandonment.
+
+test('myPrSessionId is populated from the viewer Create-PR session lookup', async () => {
+  let prSql = null;
+  let prParams = null;
+  poolQueryHandler = async (sql, params) => {
+    const s = String(sql);
+    if (/created_from_issue_number IS NOT NULL/.test(s)) {
+      prSql = s;
+      prParams = params;
+      // DISTINCT ON (created_from_issue_number) → one row per issue.
+      return { rows: [{ n: 2, id: 42 }] };
+    }
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    const byNumber = new Map(body.issues.map((i) => [i.number, i]));
+
+    // Issue #2 has a linked session; the rest are null.
+    assert.strictEqual(byNumber.get(2).myPrSessionId, 42);
+    for (const n of [1, 3, 4, 5]) {
+      assert.strictEqual(byNumber.get(n).myPrSessionId, null, `#${n} has no session`);
+    }
+
+    // The lookup is per-viewer (user_id) and excludes archived sessions.
+    assert.ok(prSql, 'Create-PR session query was issued');
+    assert.match(prSql, /user_id = \$2/);
+    assert.match(prSql, /status <> 'archived'/);
+    assert.deepStrictEqual(prParams, [1, 7]); // [app.id, req.user.id]
+  } finally {
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
+test('myPrSessionId is null for every issue when the viewer has no session', async () => {
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    for (const issue of body.issues) {
+      assert.strictEqual(issue.myPrSessionId, null);
+    }
+  } finally {
+    server.close();
+  }
+});
+
+test('staging synthesizes myPrSessionId on mock 900001 only', async () => {
+  const server = await startStagingServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues?demo=1`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    const byNumber = new Map(body.issues.map((i) => [i.number, i]));
+
+    // 900001 gets a synthetic session id so the "Open Session" state renders.
+    assert.strictEqual(byNumber.get(900001).myPrSessionId, 900001);
+    // Every other mock and live issue stays on "Create PR".
+    for (const n of [900002, 900003, 900004, 900005, 1, 2, 3, 4, 5]) {
+      assert.strictEqual(byNumber.get(n).myPrSessionId, null, `#${n} stays Create PR`);
+    }
+  } finally {
+    server.close();
+  }
+});
+
+test('staging does not clobber a real Create-PR session on mock 900001', async () => {
+  poolQueryHandler = async (sql) => {
+    const s = String(sql);
+    if (/created_from_issue_number IS NOT NULL/.test(s)) {
+      return { rows: [{ n: 900001, id: 777 }] };
+    }
+    return { rows: [] };
+  };
+  const server = await startStagingServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues?demo=1`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    const byNumber = new Map(body.issues.map((i) => [i.number, i]));
+    // The real session id wins over the synthetic one.
+    assert.strictEqual(byNumber.get(900001).myPrSessionId, 777);
+  } finally {
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
+test('production never synthesizes a Create-PR session', async () => {
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues?demo=1`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    for (const issue of body.issues) {
+      assert.strictEqual(issue.myPrSessionId, null);
+    }
+  } finally {
+    server.close();
+  }
+});
+
 test('production never synthesizes headless state', async () => {
   // The module-level routes were required with no USERNODE_ENV, i.e.
   // production-shaped: ?demo=1 is a no-op (no mocks appended) and no

@@ -556,6 +556,25 @@ function issueRoutes(config) {
         prNumber: r.pr_number || null,
       }]));
 
+      // #287: the viewer's own most recent non-archived dev chat started
+      // from each issue's "Create PR" button (created_from_issue_number),
+      // so the row can swap "Create PR" → "Open Session". Strictly
+      // per-viewer (sessions are owner-scoped — another user's session
+      // isn't navigable and must not hide the button) and 'archived' rows
+      // are excluded so the button reverts to "Create PR" after the viewer
+      // abandons their session. Independent of the headless lookup above.
+      const { rows: prSessionRows } = await pool.query(
+        `SELECT DISTINCT ON (created_from_issue_number)
+                created_from_issue_number AS n, id
+           FROM chat_sessions
+          WHERE app_id = $1 AND user_id = $2
+            AND created_from_issue_number IS NOT NULL
+            AND status <> 'archived'
+          ORDER BY created_from_issue_number, created_at DESC`,
+        [app.id, req.user.id]
+      );
+      const myPrSessionByNumber = new Map(prSessionRows.map((r) => [r.n, r.id]));
+
       const issues = (result.issues || []).map((issue) => {
         const b = byNumber.get(issue.number);
         const ghLogin = issue.user && !issue.user.endsWith('[bot]') && issue.user !== 'usernode-bot'
@@ -569,6 +588,9 @@ function issueRoutes(config) {
             || creatorFromSourceLine(issue.body)
             || ghLogin,
           headless: headlessByNumber.get(issue.number) || null,
+          // #287: per-viewer Create-PR session id, or null. Drives the
+          // "Create PR" → "Open Session" swap on the issue row.
+          myPrSessionId: myPrSessionByNumber.get(issue.number) || null,
           chatCount: chatByNumber.get(issue.number)?.cnt || 0,
           lastMessageAt: chatByNumber.get(issue.number)?.last_at || null,
         };
@@ -599,6 +621,19 @@ function issueRoutes(config) {
               stagingUrl: null,
               prNumber: null,
             };
+          }
+        }
+        // #287: the staging mocks have no chat_sessions rows, so the
+        // "Open Session" variant of the Create-PR button would never
+        // render in a preview. Attach a synthetic myPrSessionId to one
+        // [Mock] row (900001) so the swapped button is reviewable — only
+        // where no real session already claimed it. The id is synthetic
+        // (the mock issue number), so clicking through in staging lands on
+        // a harmless "session not found"; this is for visual review of the
+        // button state only. Request-time, read-only, no-op in production.
+        for (const issue of issues) {
+          if (issue.number === 900001 && !issue.myPrSessionId) {
+            issue.myPrSessionId = issue.number;
           }
         }
       }

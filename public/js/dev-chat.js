@@ -464,9 +464,22 @@ const DevChat = {
     }
   },
 
-  async createSession(appSlug) {
+  // #287: an optional issueNumber links the new session back to the issue
+  // row's "Create PR" button (created_from_issue_number) so the row can
+  // swap to "Open Session". Omitted on the generic "+ New chat" path, which
+  // sends no body and stores NULL.
+  async createSession(appSlug, issueNumber) {
     try {
-      const res = await fetch(`/api/apps/${appSlug}/sessions`, { method: 'POST' });
+      const hasIssue = Number.isInteger(issueNumber) && issueNumber > 0;
+      const res = await fetch(`/api/apps/${appSlug}/sessions`, {
+        method: 'POST',
+        ...(hasIssue
+          ? {
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ issueNumber }),
+            }
+          : {}),
+      });
       const data = await res.json();
       if (!res.ok) {
         alert(data.error || 'Failed to create session');

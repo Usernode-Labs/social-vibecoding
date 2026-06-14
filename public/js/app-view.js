@@ -1687,7 +1687,16 @@ const AppView = {
       ? 'You already placed a bounty on this issue'
       : (budgetSpent ? 'Weekly kudos allowance spent' : 'Pledge a kudos bounty — paid to whoever\'s merged PR closes this issue');
     const kudosBtn = `<button class="gc-vote-btn"${kudosDisabled ? ' disabled' : ''} title="${kudosTitle}" onclick="AppView.giveIssueBounty(${n})">${issue.my_bounty ? '&#9733; Bountied' : 'Pledge kudos'}</button>`;
-    const createBtn = `<button class="gc-vote-btn" title="Start a dev chat to solve this issue" onclick="AppView.createPrForIssue(${n})">Create PR</button>`;
+    // #287: once the viewer has started a Create-PR dev chat for this issue
+    // (myPrSessionId, from /github-issues), the "Create PR" button is
+    // replaced — for them — with "Open Session", which reopens that chat.
+    // Strictly per-viewer and reverts to "Create PR" once the session is
+    // archived (server filters archived rows out of myPrSessionId). This is
+    // independent of the headless Generate-proposal path below — both can
+    // show on the same row.
+    const createBtn = issue.myPrSessionId
+      ? `<button class="gc-vote-btn" title="Open the dev chat you started for this issue" onclick="AppView.openIssuePrSession(${issue.myPrSessionId})">Open Session</button>`
+      : `<button class="gc-vote-btn" title="Start a dev chat to solve this issue" onclick="AppView.createPrForIssue(${n})">Create PR</button>`;
     // #155: headless auto-session button. Four states driven by the
     // issue's `headless` field from /github-issues:
     //   none/failed → "Generate proposal" (opens the confirm + model popup)
@@ -1935,8 +1944,17 @@ const AppView = {
     if (!slug || typeof DevChat === 'undefined') return;
     const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
 
-    const session = await DevChat.createSession(slug);
+    // #287: pass the issue number so the session is persistently linked
+    // (created_from_issue_number) and the row can swap to "Open Session".
+    const session = await DevChat.createSession(slug, issueNumber);
     if (!session) return; // createSession already alerts (cap reached / error)
+
+    // #287: optimistically swap "Create PR" → "Open Session" right away,
+    // before the next /github-issues load confirms the link server-side.
+    if (issue) {
+      issue.myPrSessionId = session.id;
+      if (typeof AppView._rerenderFeed === 'function') AppView._rerenderFeed();
+    }
 
     // Land on the Dev Chat tab focused on the new session. switchTab
     // ('individual-chat') → renderDevChatTab(sessionId) opens the session,
@@ -2109,6 +2127,17 @@ const AppView = {
   // again. No DevChat.sessions.unshift needed: the switchTab path reloads
   // the session list itself before opening the session.
   async goToAutoSessionClone(sessionId) {
+    if (typeof DevChat === 'undefined') return;
+    if (typeof App !== 'undefined' && App.switchTab) {
+      await App.switchTab('dev', sessionId, 'sessions');
+    }
+  },
+
+  // #287: "Open Session" — the viewer already started a Create-PR dev chat
+  // for this issue, so reopen it instead of spinning up another. Same
+  // navigation as goToAutoSessionClone; the switchTab path reloads the
+  // session list before opening the session.
+  async openIssuePrSession(sessionId) {
     if (typeof DevChat === 'undefined') return;
     if (typeof App !== 'undefined' && App.switchTab) {
       await App.switchTab('dev', sessionId, 'sessions');
