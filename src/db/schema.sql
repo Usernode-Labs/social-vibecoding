@@ -283,15 +283,28 @@ CREATE INDEX IF NOT EXISTS chat_sessions_activity_idx ON chat_sessions(status, l
 --                            the run finishes.
 --   cloned_from_session_id = on ORDINARY sessions: the headless session this
 --                            dev chat was cloned from (many clones per source).
+--   created_from_issue_number = #287: on ORDINARY sessions, the GitHub issue
+--                            this dev chat was started for via the issue row's
+--                            "Create PR" button. Recorded at creation time (not
+--                            the async, Mayor-declared `linked_issues`) so the
+--                            row can deterministically swap "Create PR" →
+--                            "Open Session" for the owning viewer. NULL on the
+--                            generic "+ New chat" path and on headless rows.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS is_headless BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS headless_status VARCHAR(20);
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS headless_issue_number INTEGER;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS headless_outcome VARCHAR(20);
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS cloned_from_session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS created_from_issue_number INTEGER;
 -- Supports the per-issue "latest auto session" lookup on the issues panel.
 CREATE INDEX IF NOT EXISTS chat_sessions_headless_idx
   ON chat_sessions(app_id, headless_issue_number, created_at DESC)
   WHERE is_headless;
+-- #287: supports the per-viewer "latest Create-PR session for this issue"
+-- lookup on the issues panel (GET /github-issues → myPrSessionId).
+CREATE INDEX IF NOT EXISTS chat_sessions_created_from_issue_idx
+  ON chat_sessions(app_id, created_from_issue_number, user_id, created_at DESC)
+  WHERE created_from_issue_number IS NOT NULL;
 
 -- Restart-proof turns + resumable headless runs.
 --   active_turn   = durable record of an in-flight detached CC turn:

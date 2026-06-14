@@ -388,6 +388,14 @@ function sessionRoutes(config) {
         }
       }
 
+      // #287: an optional issue number links this dev chat back to the
+      // issue row's "Create PR" button so the row can swap to "Open
+      // Session" for this viewer. Validate to a positive integer; anything
+      // else (incl. the generic "+ New chat" path that sends no body)
+      // stores NULL.
+      const rawIssue = req.body && req.body.issueNumber;
+      const issueNumber = Number.isInteger(rawIssue) && rawIssue > 0 ? rawIssue : null;
+
       const branchName = `dev/${req.user.username}-${Date.now()}`;
 
       // Create branch on GitHub (PR created later after first commit)
@@ -403,10 +411,10 @@ function sessionRoutes(config) {
       }
 
       const { rows } = await pool.query(
-        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status)
-         VALUES ($1, $2, $3, 'active')
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, created_from_issue_number)
+         VALUES ($1, $2, $3, 'active', $4)
          RETURNING *`,
-        [app.id, req.user.id, branchName]
+        [app.id, req.user.id, branchName, issueNumber]
       );
 
       log.info('sessions', 'Session created', { sessionId: rows[0].id, branch: branchName });
