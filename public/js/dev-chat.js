@@ -694,6 +694,17 @@ const DevChat = {
           // #50: terminal statuses persist how long the run took so the
           // "(took 4m 12s)" suffix survives a reload.
           if (m.metadata.durationMs != null) m.durationMs = m.metadata.durationMs;
+          // #286: a persisted AI progress estimate ({ text, remainingSeconds })
+          // hydrates the running line's guess on load — mirrors the live
+          // cc_estimate path (_applyEstimate) so a seeded/recovered active
+          // run shows the same '✦ AI guess' span. Absent on real runs that
+          // never persist it, so this is a no-op there.
+          if (m.metadata.estimate && m.metadata.estimate.text) {
+            m._estimate = String(m.metadata.estimate.text).trim();
+            m._estimateRemaining = m.metadata.estimate.remainingSeconds == null
+              ? null
+              : m.metadata.estimate.remainingSeconds;
+          }
           // Spec preview cards: scout dispatches persist these on the
           // status row so a refresh re-renders the same inline card the
           // user saw mid-stream. See runScoutTool. Older recovered scout
@@ -709,6 +720,9 @@ const DevChat = {
           // Q/A mode (#32): suggested-answer chips for the Mayor's
           // clarifying questions survive refresh via metadata.
           if (m.metadata.suggestions) m.suggestions = m.metadata.suggestions;
+          // Quick-reply pills (#285): next-step suggestions survive refresh
+          // via metadata.quickReplies on the assistant row.
+          if (m.metadata.quickReplies) m.quickReplies = m.metadata.quickReplies;
         }
         return m;
       });
@@ -1062,6 +1076,19 @@ const DevChat = {
                   assistantMsg.suggestions = data.suggestions;
                   DevChat.renderMessages();
                   DevChat.scrollToBottom();
+                }
+                break;
+              }
+              case 'quick_replies': {
+                // Quick-reply pills (#285): flat next-step suggestions for
+                // the current bubble, rendered as tappable pills ABOVE the
+                // composer (prefill-on-tap, never auto-send). The pill bar
+                // reads from the latest assistant message's quickReplies, so
+                // attaching it here is enough — _renderQuickReplies redraws.
+                if (!Array.isArray(data.replies) || !data.replies.length) break;
+                if (assistantPushed) {
+                  assistantMsg.quickReplies = data.replies;
+                  DevChat._renderQuickReplies();
                 }
                 break;
               }
@@ -1562,6 +1589,10 @@ const DevChat = {
     // chat turn holds the worker — keep it in step with every
     // streaming transition. Cheap no-op when no banner is mounted.
     if (document.getElementById('dc-sync-banner')) DevChat._applySyncBanner();
+
+    // #285: hide the quick-reply pills while a turn is streaming (they're
+    // stale until the new reply lands), restore them when it settles.
+    DevChat._renderQuickReplies();
   },
 
   async _stopCurrentTurn() {
@@ -2273,6 +2304,9 @@ const DevChat = {
     // #50: start/stop the shared elapsed ticker based on whether this
     // render left any active status line in the DOM.
     DevChat._syncElapsedTicker();
+    // #285: keep the quick-reply pill bar in sync with the latest message
+    // (it clears once a sent user row becomes the last message).
+    DevChat._renderQuickReplies();
   },
 
   // ── Q/A mode: suggested-answer chips (#32) ─────────────────
@@ -2364,6 +2398,92 @@ const DevChat = {
     const groups = DevChat._qaCurrentGroups();
     if (!groups) return;
     DevChat.sendMessage(groups.map((g, gi) => `${gi + 1}. ${g.answers[0]}`).join('\n'));
+  },
+
+  // ── Quick-reply pills (#285) ───────────────────────────────
+  //
+  // A row of tappable pills ABOVE the composer suggesting the user's likely
+  // next message. The Mayor attaches 2-3 per turn (suggest_replies → SSE
+  // 'quick_replies' → metadata.quickReplies). Unlike the #32 answer chips
+  // (inline, send-on-tap), tapping a pill PREFILLS the text box — editable,
+  // never auto-send. The bar renders from the LATEST assistant message's
+  // quickReplies, so it clears the moment the user sends (a new user row
+  // becomes last) and refreshes when the next turn's pills arrive.
+
+  // Generic starter pills for a brand-new session that has no Mayor reply
+  // yet — keeps the affordance present from the first screen.
+  STARTER_QUICK_REPLIES: [
+    'Change the colors',
+    'Add a new feature',
+    'Fix something that\'s broken',
+  ],
+
+  // Resolve the pills to show: the latest non-system message's quickReplies
+  // when it's an interactive assistant turn, the starter set on a fresh
+  // session, or null (hide the bar) otherwise. Hidden entirely while a turn
+  // is streaming so the user never taps a stale suggestion.
+  _currentQuickReplies() {
+    const session = DevChat.currentSession;
+    if (!session) return null;
+    if (DevChat.isStreaming) return null;
+    const interactive = session.status === 'active' || session.status === 'promoted';
+    if (!interactive) return null;
+    // Latest non-system message.
+    let last = null;
+    for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+      if (DevChat.messages[i].role !== 'system') { last = DevChat.messages[i]; break; }
+    }
+    if (!last) return DevChat.STARTER_QUICK_REPLIES;
+    if (last.role === 'assistant' && Array.isArray(last.quickReplies) && last.quickReplies.length) {
+      return last.quickReplies;
+    }
+    return null;
+  },
+
+  _renderQuickReplies() {
+    const bar = document.getElementById('dc-quick-replies');
+    if (!bar) return;
+    const replies = DevChat._currentQuickReplies();
+    if (!replies || !replies.length) {
+      bar.innerHTML = '';
+      bar.classList.remove('dc-quick-replies-active');
+      return;
+    }
+    bar.innerHTML = replies.map((r, i) =>
+      `<button type="button" class="dc-quick-pill" data-quick-reply-idx="${i}">${escapeHtml(r)}</button>`
+    ).join('');
+    bar.classList.add('dc-quick-replies-active');
+  },
+
+  // Bind the pill-bar click delegation once per renderChatView (the bar
+  // element is recreated on every session re-render, like #dc-messages).
+  _wireQuickReplies() {
+    const bar = document.getElementById('dc-quick-replies');
+    if (!bar || bar._qrWired) return;
+    bar._qrWired = true;
+    bar.addEventListener('click', (e) => {
+      const pill = e.target.closest('[data-quick-reply-idx]');
+      if (!pill) return;
+      DevChat._onQuickReplyClick(pill);
+    });
+  },
+
+  // Tap = PREFILL the composer (never send). Overwrites the box since pills
+  // are complete messages, focuses, parks the cursor at the end, re-runs the
+  // auto-resize, and persists the draft so a tab switch keeps it.
+  _onQuickReplyClick(pill) {
+    const idx = parseInt(pill.dataset.quickReplyIdx, 10);
+    const replies = DevChat._currentQuickReplies();
+    const text = replies && replies[idx];
+    if (text == null) return;
+    const input = document.getElementById('dc-input');
+    if (!input) return;
+    input.value = text;
+    input.focus();
+    try { input.setSelectionRange(text.length, text.length); } catch {}
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+    if (DevChat.currentSession) DevChat._setDraft(DevChat.currentSession.id, text);
   },
 
   // ── <details> open/closed persistence ─────────────────────
@@ -3221,6 +3341,7 @@ const DevChat = {
               <span class="flex-1"></span>
               <span id="dc-budget" class="text-xs font-mono"></span>
             </div>
+            <div id="dc-quick-replies" class="dc-quick-replies"></div>
             <form id="dc-form" class="flex gap-2 items-end">
               <textarea
                 id="dc-input"
@@ -3243,6 +3364,8 @@ const DevChat = {
       </div>`;
 
     DevChat.renderMessages();
+    DevChat._renderQuickReplies();
+    DevChat._wireQuickReplies();
     DevChat.refreshBudget();
     // Attach tracker first so the scroll set below is observed, then
     // restore the session's last known position (or fall through to
