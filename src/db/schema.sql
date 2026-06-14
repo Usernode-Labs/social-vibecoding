@@ -950,3 +950,42 @@ COMMENT ON COLUMN apps.llm_proxy_token IS 'staging:private';
 -- pr_title then branch_name at every display site. Branch names stay
 -- machine-generated and immutable — this column never affects git.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS session_title VARCHAR(256);
+
+-- Experimental AI progress estimate accuracy dataset (#50 follow-up).
+-- Each row records one estimator tick: what the small model predicted
+-- (remaining-time number + hedged phrase) and how far into the run it
+-- was. When the turn ends, the actual outcome is backfilled (whole-turn
+-- wall clock, per-tick ground-truth remaining, and how the turn ended)
+-- so estimator accuracy can be evaluated later. Anchored on the per-turn
+-- progress-log message (progress_message_id) — the codebase has no
+-- first-class "turn" row, and a fresh progress message is created per
+-- build turn, which uniquely identifies it. Invisible in the product for
+-- now; reviewing accuracy is deferred follow-up work.
+CREATE TABLE IF NOT EXISTS progress_estimates (
+  id                          BIGSERIAL PRIMARY KEY,
+  session_id                  INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  progress_message_id         INTEGER REFERENCES chat_session_messages(id) ON DELETE CASCADE,
+  user_id                     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  model                       VARCHAR(64),
+  -- Inputs at estimate time.
+  elapsed_ms                  INTEGER NOT NULL,
+  step_count                  INTEGER NOT NULL DEFAULT 0,
+  progress_lines              INTEGER NOT NULL DEFAULT 0,
+  -- Prediction.
+  estimate_text               VARCHAR(120),
+  predicted_remaining_seconds INTEGER,
+  created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- Later-filled actuals (NULL until the turn reaches a terminal point).
+  actual_total_ms             INTEGER,
+  actual_remaining_ms         INTEGER,
+  outcome                     VARCHAR(16),
+  resolved_at                 TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_progress_estimates_message ON progress_estimates(progress_message_id);
+CREATE INDEX IF NOT EXISTS idx_progress_estimates_session ON progress_estimates(session_id, created_at);
+-- staging:private — forced, not a preference: this table FKs both
+-- chat_sessions and chat_session_messages, which are already
+-- staging:private, and the migration linter forbids a public table
+-- FK-ing a private one. The rows are also per-user run-timing data with
+-- no value in a staging clone, so it ships schema-only + empty there.
+COMMENT ON TABLE progress_estimates IS 'staging:private';

@@ -61,6 +61,49 @@ test('llm exports estimateRunProgress alongside sanitizeEstimate', () => {
   assert.equal(typeof llm.sanitizeEstimate, 'function');
 });
 
+// ── 1b. sanitizeRemainingSeconds unit tests (#50 follow-up) ──────────────
+
+test('llm exports sanitizeRemainingSeconds', () => {
+  assert.equal(typeof llm.sanitizeRemainingSeconds, 'function');
+});
+
+test('sanitizeRemainingSeconds: passes through an in-range integer', () => {
+  assert.equal(llm.sanitizeRemainingSeconds(180), 180);
+  assert.equal(llm.sanitizeRemainingSeconds(0), 0);
+});
+
+test('sanitizeRemainingSeconds: coerces a float to an integer', () => {
+  assert.equal(llm.sanitizeRemainingSeconds(180.9), 180);
+  assert.equal(llm.sanitizeRemainingSeconds('240'), 240);
+});
+
+test('sanitizeRemainingSeconds: negative / NaN / Infinity / null become null', () => {
+  assert.equal(llm.sanitizeRemainingSeconds(-1), null);
+  assert.equal(llm.sanitizeRemainingSeconds(NaN), null);
+  assert.equal(llm.sanitizeRemainingSeconds(Infinity), null);
+  assert.equal(llm.sanitizeRemainingSeconds(-Infinity), null);
+  assert.equal(llm.sanitizeRemainingSeconds(null), null);
+  assert.equal(llm.sanitizeRemainingSeconds(undefined), null);
+  assert.equal(llm.sanitizeRemainingSeconds('not a number'), null);
+});
+
+test('sanitizeRemainingSeconds: clamps above the 7200s ceiling', () => {
+  assert.equal(llm.sanitizeRemainingSeconds(10000), 7200);
+  assert.equal(llm.sanitizeRemainingSeconds(7200), 7200);
+  assert.equal(llm.sanitizeRemainingSeconds(7201), 7200);
+});
+
+test('estimateRunProgress requests a numeric remaining-time guess', () => {
+  const src = read('src/services/llm.js');
+  const fnStart = src.indexOf('async function estimateRunProgress');
+  const fnBody = src.slice(fnStart, src.indexOf('module.exports'));
+  // The system prompt now asks for remaining_seconds alongside the phrase,
+  // and the parsed result carries an additive remainingSeconds field.
+  assert.match(fnBody, /remaining_seconds/, 'system prompt must request a numeric remaining-time value');
+  assert.match(fnBody, /remainingSeconds/, 'estimateRunProgress must return a remainingSeconds field');
+  assert.match(fnBody, /sanitizeRemainingSeconds/, 'the numeric guess must pass through the sanitizer');
+});
+
 // ── 2. Source guards ────────────────────────────────────────────────────
 
 test('schema adds the ai_progress_estimate column (default FALSE)', () => {
@@ -113,6 +156,70 @@ test('dev-chat handles cc_estimate in both event switches', () => {
   );
   assert.match(devChat, /_applyEstimate/, 'handlers must funnel through _applyEstimate');
   assert.match(devChat, /dc-cc-estimate/, 'running summary must render the estimate span');
+});
+
+test('schema adds the progress_estimates accuracy table (private)', () => {
+  const schema = read('src/db/schema.sql');
+  assert.match(
+    schema,
+    /CREATE TABLE IF NOT EXISTS progress_estimates/,
+    'schema must create the progress_estimates table'
+  );
+  assert.match(
+    schema,
+    /progress_message_id\s+INTEGER REFERENCES chat_session_messages/,
+    'progress_estimates must anchor on progress_message_id'
+  );
+  assert.match(
+    schema,
+    /COMMENT ON TABLE progress_estimates IS 'staging:private'/,
+    'progress_estimates must be marked staging:private'
+  );
+});
+
+test('sessions route persists each estimate and backfills the actual outcome', () => {
+  const sessions = read('src/routes/sessions.js');
+  assert.match(
+    sessions,
+    /INSERT INTO progress_estimates/,
+    'estimator success path must INSERT into progress_estimates'
+  );
+  assert.match(
+    sessions,
+    /UPDATE progress_estimates/,
+    'terminal choke point must backfill the actual outcome'
+  );
+  assert.match(
+    sessions,
+    /actual_remaining_ms = \$1 - elapsed_ms/,
+    'backfill must store per-tick ground-truth remaining'
+  );
+  assert.match(
+    sessions,
+    /predicted_remaining_seconds/,
+    'the predicted numeric remaining-seconds must be persisted'
+  );
+});
+
+test('dev-chat renders the numeric ~X left suffix', () => {
+  const devChat = read('public/js/dev-chat.js');
+  assert.match(devChat, /_estimateSuffix/, 'a helper must build the numeric remaining-time suffix');
+  assert.match(devChat, /~\$\{formatElapsed/, 'suffix must use formatElapsed to render ~X left');
+  assert.match(devChat, /left/, 'suffix must read "~X left"');
+  assert.match(
+    devChat,
+    /_applyEstimate\(data\.text, data\.remainingSeconds\)/,
+    'cc_estimate handlers must pass remainingSeconds through'
+  );
+});
+
+test('cc_estimate SSE payload carries remainingSeconds', () => {
+  const sessions = read('src/routes/sessions.js');
+  assert.match(
+    sessions,
+    /send\('cc_estimate', \{ text, remainingSeconds/,
+    'SSE payload must include remainingSeconds'
+  );
 });
 
 test('settings modal has the experimental toggle wired to the endpoint', () => {
