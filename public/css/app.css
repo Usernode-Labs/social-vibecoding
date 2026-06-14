@@ -438,6 +438,44 @@ html, body {
 }
 .dc-qa-defaults:hover { background: var(--bg-tertiary); }
 
+/* ── Quick-reply pills above the composer (#285) ───────── */
+
+/* A single horizontally-scrollable row that never wraps, so it adds one
+   compact line of height and never pushes the text box down on mobile.
+   Empty by default (no quickReplies) — gains the -active modifier and its
+   bottom margin only when pills are present. */
+.dc-quick-replies {
+  display: none;
+}
+.dc-quick-replies.dc-quick-replies-active {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  margin-bottom: 6px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none; /* Firefox: hide the scrollbar but stay scrollable */
+}
+.dc-quick-replies.dc-quick-replies-active::-webkit-scrollbar {
+  display: none; /* WebKit: hide the scrollbar */
+}
+
+.dc-quick-pill {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  background: var(--bg-secondary);
+  color: var(--accent);
+  border: 1px solid var(--border);
+  transition: background 150ms, border-color 150ms;
+}
+.dc-quick-pill:hover { background: var(--bg-tertiary); border-color: var(--accent); }
+
 /* ── Claude Code log (collapsible) ─────────────────────── */
 
 .dc-cc-log {

@@ -1193,7 +1193,7 @@ function sessionRoutes(config) {
       // 'suggestions' (#32) follows mayor_reasoning's posture: SSE +
       // session bus only — a refresh restores chips from the assistant
       // row's metadata, so the global WS adds nothing but dedup risk.
-      const SSE_ONLY = new Set(['token', 'usage', 'error', 'mayor_reasoning', 'suggestions']);
+      const SSE_ONLY = new Set(['token', 'usage', 'error', 'mayor_reasoning', 'suggestions', 'quick_replies']);
       const send = (type, data) => {
         const seq = `${seqPrefix}-${++eventSeq}`;
         const event = { type, _seq: seq, ...data };
@@ -1391,8 +1391,8 @@ function sessionRoutes(config) {
         // dispatch, so asking clarifying questions with tappable answers
         // is fine even while a worker is busy.
         const tools = isWorkerBusy
-          ? [SUGGEST_ANSWERS_TOOL, LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL, WEB_FETCH_TOOL]
-          : [DISPATCH_TOOL, DISPATCH_SCOUT_TOOL, SUGGEST_ANSWERS_TOOL, LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL, WEB_FETCH_TOOL];
+          ? [SUGGEST_ANSWERS_TOOL, SUGGEST_REPLIES_TOOL, LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL, WEB_FETCH_TOOL]
+          : [DISPATCH_TOOL, DISPATCH_SCOUT_TOOL, SUGGEST_ANSWERS_TOOL, SUGGEST_REPLIES_TOOL, LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL, WEB_FETCH_TOOL];
 
         setPhase('mayor1');
         let mayor1;
@@ -1432,7 +1432,8 @@ function sessionRoutes(config) {
             const hasTerminalTool = mayor1.toolUses.some((t) =>
               t.name === 'dispatch_claude_code'
               || t.name === 'dispatch_scout'
-              || t.name === 'suggest_answers');
+              || t.name === 'suggest_answers'
+              || t.name === 'suggest_replies');
             if (!dataCalls.length || hasTerminalTool || dataIters >= MAYOR_DATA_TOOLS_MAX_ITERS) break;
             dataIters += 1;
 
@@ -1553,6 +1554,9 @@ function sessionRoutes(config) {
             sessionId: session.id,
           });
         }
+        // Quick-reply pills (#285): dropped when a dispatch (regenerated in
+        // phase-2 post-build) or suggest_answers (inline chips win) co-occurs.
+        const quickReplies = resolveQuickReplies(mayor1.toolUses);
 
         // Always debit the Mayor's phase-1 spend — even on tool-only
         // turns where mayorText1 is empty (the Anthropic call still
@@ -1566,9 +1570,10 @@ function sessionRoutes(config) {
             `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
              VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
             [session.id, mayorText1, selectedModel, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1,
-             JSON.stringify(suggestions ? { suggestions } : {})]
+             JSON.stringify({ ...(suggestions ? { suggestions } : {}), ...(quickReplies ? { quickReplies } : {}) })]
           );
           if (suggestions) send('suggestions', { suggestions });
+          if (quickReplies) send('quick_replies', { replies: quickReplies });
         }
         // BYOK users pay Anthropic directly, so their spend lands in
         // the display-only byok_cost_cents bucket (#119) — only
@@ -1782,11 +1787,20 @@ function sessionRoutes(config) {
           messages: followUpMessages,
           systemPrompt: mayorPrompt,
           model: selectedModel,
-          tools,
-          toolChoice: { type: 'none' },
+          // Expose ONLY the quick-reply pills tool (#285) so the wrap-up can
+          // suggest next steps but cannot dispatch again — the dispatch tools
+          // are simply absent from the list, preserving the original
+          // "wrap-up can't dispatch" invariant that toolChoice:none gave us.
+          tools: [SUGGEST_REPLIES_TOOL],
+          toolChoice: { type: 'auto' },
           onToken: (text) => send('token', { text }),
           apiKey: userApiKey,
         });
+
+        // Quick-reply pills (#285): the wrap-up reflects the final post-build
+        // state, so this is where dispatch turns get their pills. The
+        // tool_use is terminal (end of turn) — no tool_result round-trip.
+        const quickReplies2 = resolveQuickReplies(mayor2.toolUses);
 
         let mayorText2 = mayor2.text;
         log.info('sessions', 'Mayor phase-2 response', {
@@ -1815,10 +1829,12 @@ function sessionRoutes(config) {
 
         const costCents2 = llm.estimateCostCents(mayor2.usage, selectedModel);
         await pool.query(
-          `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
-           VALUES ($1, 'assistant', $2, $3, $4, $5)`,
-          [session.id, mayorText2, selectedModel, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2]
+          `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
+           VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
+          [session.id, mayorText2, selectedModel, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2,
+           JSON.stringify(quickReplies2 ? { quickReplies: quickReplies2 } : {})]
         );
+        if (quickReplies2) send('quick_replies', { replies: quickReplies2 });
         await limits.recordSpend(pool, req.user.id, costCents2, { byok: !!userApiKey });
         send('usage', { costCents: costCents2, model: selectedModel, byok: !!userApiKey });
       } catch (err) {
@@ -3635,6 +3651,78 @@ function resolveSuggestedAnswers(toolUses) {
   return { suggestions: sanitizeSuggestedAnswers(suggestCall.input), droppedForDispatch: false };
 }
 
+// Quick-reply pills (#285): flat next-step suggestions the Mayor attaches
+// to a normal reply or post-build wrap-up, rendered as tappable pills ABOVE
+// the dev-chat composer. Tapping a pill PREFILLS the text box (editable,
+// never auto-send) — distinct from the #32 answer chips, which send. The
+// input is sanitized server-side and persisted as metadata.quickReplies on
+// the assistant row so the client renders pills live (the 'quick_replies'
+// SSE event) and on refresh.
+const SUGGEST_REPLIES_TOOL = {
+  name: 'suggest_replies',
+  description:
+    'Attach 2-3 short suggested NEXT messages the user is likely to want to send next, shown as tappable pills above the message box. '
+    + 'Tapping a pill prefills the text box (the user can edit before sending), so each must read as a complete first-person message the user could send verbatim — e.g. "Preview the change", "Propose it to the group", "Make the button bigger". '
+    + 'Call this on normal replies and post-build wrap-ups to offer the likely next step (built → preview / propose / tweak; spec drafted → build / revise; build running → check status / stop). '
+    + 'Do NOT use this for formal clarifying questions — those use suggest_answers instead; never emit both in the same turn. '
+    + 'This does NOT count against the one-tool-per-message limit.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      replies: {
+        type: 'array',
+        description:
+          '2-3 short candidate next messages, most likely first. Each must be a complete reply the user could send verbatim (under 80 characters).',
+        items: { type: 'string' },
+      },
+    },
+    required: ['replies'],
+  },
+};
+
+// Sanitizer for suggest_replies tool input (#285). Coerce to trimmed
+// strings, drop empties, dedupe case-insensitively, cap count + length.
+// Returns a clean string[] or null when nothing usable survives — callers
+// skip persistence and the SSE event on null, so a malformed call degrades
+// to "no pills" instead of breaking the turn.
+const QR_MAX_REPLIES = 3;
+const QR_MAX_REPLY_LEN = 80;
+
+function sanitizeQuickReplies(input) {
+  const raw = input && Array.isArray(input.replies) ? input.replies : null;
+  if (!raw) return null;
+  const out = [];
+  const seen = new Set();
+  for (const r of raw) {
+    if (out.length >= QR_MAX_REPLIES) break;
+    const text = (typeof r === 'string' || typeof r === 'number' || typeof r === 'boolean')
+      ? String(r).trim().slice(0, QR_MAX_REPLY_LEN).trim()
+      : '';
+    if (!text) continue;
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+  }
+  return out.length ? out : null;
+}
+
+// Resolve a suggest_replies call against the same-turn tool set (#285).
+// Pills should reflect the FINAL state of the turn, so a phase-1 call is
+// dropped when a dispatch/scout tool co-occurs (phase-2 regenerates them
+// post-build) or when suggest_answers co-occurs (the inline answer chips
+// take precedence and the above-box row stays empty).
+function resolveQuickReplies(toolUses) {
+  const calls = Array.isArray(toolUses) ? toolUses : [];
+  const repliesCall = calls.find((t) => t && t.name === 'suggest_replies');
+  if (!repliesCall) return null;
+  const hasDispatch = calls.some((t) =>
+    t && (t.name === 'dispatch_claude_code' || t.name === 'dispatch_scout'));
+  const hasSuggestAnswers = calls.some((t) => t && t.name === 'suggest_answers');
+  if (hasDispatch || hasSuggestAnswers) return null;
+  return sanitizeQuickReplies(repliesCall.input);
+}
+
 // The Mayor's read-only DATA tools — resolved in-process and looped
 // back as tool_results (unlike the terminal dispatch tools).
 const DATA_TOOL_NAMES = new Set(['list_github_issues', 'get_github_issue', 'web_fetch']);
@@ -4923,6 +5011,14 @@ GENERAL RULES (apply to all tools):
 - At most ONE tool call per user message (suggest_answers accompanying your clarifying questions does not count toward this limit).
 - Never call dispatch_scout and dispatch_claude_code in the same turn. The user dispatches the build themselves.
 
+SUGGESTED QUICK REPLIES (suggest_replies):
+On a normal reply and on the post-build/post-spec wrap-up, ALSO call the suggest_replies tool with 2-3 short, first-person messages the user is likely to want to send next — they render as tappable pills above the message box and PREFILL the box when tapped (the user can edit before sending), so each must read as a complete message the user could send verbatim. Tailor them to the current state:
+- After a build (dispatch_claude_code): e.g. "Preview the change", "Propose it to the group", "Make another tweak".
+- After a spec (dispatch_scout): e.g. "Build it", "Revise the spec", "What will this change?".
+- A build is still running: e.g. "How's it going?", "Stop this build".
+- A normal chat reply: the couple of likeliest next things to ask for.
+suggest_replies is for NEXT-STEP shortcuts only — it is NOT for clarifying questions (those use suggest_answers). Never emit suggest_answers and suggest_replies in the same turn. Like suggest_answers, it does NOT count against the one-tool-per-message limit and may accompany a normal reply or wrap-up.
+
 AFTER A TOOL RETURNS:
 You'll get a short summary of what happened. Write a 1-3 sentence reply to the user in plain English, referencing the spec doc / staging URL / PR if present. For dispatch_scout: tell them the spec was drafted (or revised) and is available in the spec viewer. For dispatch_claude_code: summarize what was built. If anything failed, explain briefly and suggest next steps.
 - IMPORTANT — spec→build handoff: after dispatch_scout, the spec is only PLANNED, not built. End your reply with a one-line next step that makes this explicit, e.g. "When this looks right, just tell me to build it and I'll have the coding agent implement it." Nothing gets built until the user asks — don't let a finished spec read as a finished change. (After dispatch_claude_code the change IS built, so no handoff line is needed.)
@@ -5084,4 +5180,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDoneIfArmed, notifyAutoSolveDone, buildHeadlessSeed, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, describeMarkerlessExit, shouldRetryHeadlessTurn };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDoneIfArmed, notifyAutoSolveDone, buildHeadlessSeed, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, describeMarkerlessExit, shouldRetryHeadlessTurn };
