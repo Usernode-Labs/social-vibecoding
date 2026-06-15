@@ -31,6 +31,7 @@ async function migrate(config) {
   await seedStagingCcProgressRun(pool, config);
   await seedStagingCcEstimateRun(pool, config);
   await seedStagingDemoAppCard(pool);
+  await seedStagingAppQuotaUsers(pool);
   await seedStagingVisuals(pool);
   await seedStagingLeaderboardProfile(pool);
   await seedStagingQaSession(pool, config);
@@ -1539,6 +1540,46 @@ async function seedStagingDemoAppCard(pool) {
     log.info('db', 'Staging demo app-card fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging demo app-card seeding failed', { message: err.message });
+  }
+}
+
+// Per-user app-quota fixtures. The admin Users list is a data-dependent
+// rows UI, so staging needs users spanning the quota states to exercise
+// the inline quota edit, the "N used" indicator, and the bulk "Set all"
+// button. We guarantee three states:
+//   - AT quota   → reuse staging-demo-user (900001), who already owns the
+//                  demo app (900001) from seedStagingDemoAppCard above:
+//                  quota 1 with 1 live app = at the limit (create blocked,
+//                  affordance hidden).
+//   - CAN create → a fresh fixture user with quota 5 and 0 apps.
+//   - CANNOT     → a fresh fixture user with quota 0 and 0 apps.
+// Obviously-fake usernames + non-login passwords; fixed high ids + explicit
+// quota writes make it idempotent, and the whole thing is a strict no-op
+// outside staging.
+async function seedStagingAppQuotaUsers(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    // CAN-create and CANNOT-create fixture users. Sentinel passwords mean
+    // these accounts can never log in interactively.
+    await pool.query(
+      `INSERT INTO users (id, username, password, app_quota)
+       VALUES
+         (900020, 'staging-demo-quota-ok',   '!staging-fixture-no-login!', 5),
+         (900021, 'staging-demo-quota-zero', '!staging-fixture-no-login!', 0)
+       ON CONFLICT (id) DO NOTHING`
+    );
+
+    // Pin the three quotas explicitly so reboots keep the intended states
+    // even if a tester edited them, and so staging-demo-user lands "at
+    // limit" (quota 1, owns the 1 live demo app from seedStagingDemoAppCard).
+    await pool.query('UPDATE users SET app_quota = 1 WHERE id = 900001');
+    await pool.query('UPDATE users SET app_quota = 5 WHERE id = 900020');
+    await pool.query('UPDATE users SET app_quota = 0 WHERE id = 900021');
+
+    log.info('db', 'Staging app-quota fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Staging app-quota fixtures seeding failed', { message: err.message });
   }
 }
 

@@ -358,16 +358,6 @@ function appRoutes(config) {
   });
 
   router.post('/api/apps', drainGuard, appCreateLimiter, async (req, res) => {
-    // Per-user app-creation gate (admin-controlled, default off — see
-    // users.can_create_apps in schema.sql). The home-screen UI hides the
-    // create affordance for users who fail this check; the server-side
-    // enforcement here is the actual gate.
-    if (!req.user?.canCreateApps) {
-      return res.status(403).json({
-        error: 'You don\u2019t have permission to create apps. Ask an admin to enable app creation for your account.',
-      });
-    }
-
     const { name, repoUrl } = req.body;
 
     if (!name?.trim()) {
@@ -416,6 +406,33 @@ function appRoutes(config) {
     const slug = `${base}-${code}`;
 
     try {
+      // Per-user app-creation quota (admins bypass — parity with the
+      // global maxApps bypass below; see users.app_quota in schema.sql).
+      // Counts the user's LIVE (non-errored) apps so a deletion frees a
+      // slot. The home screen already hides the create affordance via the
+      // derived canCreateApps boolean (auth/me); this is the real gate.
+      // The count-then-insert race (two concurrent creates both passing)
+      // is acceptable — identical to the maxApps cap below, not worth a
+      // lock for a soft per-user limit.
+      if (!req.user?.isAdmin) {
+        const quota = req.user?.appQuota ?? 0;
+        const { rows: ownCountRows } = await pool.query(
+          `SELECT COUNT(*)::int AS n FROM apps WHERE created_by = $1 AND status <> 'error'`,
+          [req.user.id]
+        );
+        const liveCount = ownCountRows[0].n;
+        if (quota <= 0 || liveCount >= quota) {
+          log.warn('apps', 'App creation blocked by per-user quota', {
+            userId: req.user.id, liveCount, quota,
+          });
+          return res.status(403).json({
+            error: quota <= 0
+              ? 'You don’t have permission to create apps. Ask an admin to enable app creation for your account.'
+              : `You’ve reached your app limit (${quota}). Ask an admin to raise your quota.`,
+          });
+        }
+      }
+
       // Enforce global app cap (admins bypass). Errored apps don't count
       // toward the limit — they hold ~no resources and can be deleted to
       // free a slot.

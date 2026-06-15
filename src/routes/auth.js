@@ -152,6 +152,12 @@ function authRoutes(config) {
     let hasApiKey = false;
     let keyLast4 = null;
     let usernodePubkey = null;
+    // Derived app-creation affordance: admins always can; everyone else
+    // can iff their live (non-errored) app count is below their quota
+    // (see users.app_quota in schema.sql). Computing the count here keeps
+    // the client contract a single boolean — the home screen reads only
+    // `canCreateApps` and needs no change as the quota feature lands.
+    let canCreateApps = !!req.user.isAdmin;
     try {
       const { rows } = await pool.query(
         'SELECT anthropic_key_enc, anthropic_key_last4, usernode_pubkey FROM users WHERE id = $1',
@@ -163,16 +169,27 @@ function authRoutes(config) {
       }
       usernodePubkey = rows[0]?.usernode_pubkey || null;
     } catch {}
+    if (!canCreateApps) {
+      try {
+        const { rows: countRows } = await pool.query(
+          `SELECT COUNT(*)::int AS n FROM apps WHERE created_by = $1 AND status <> 'error'`,
+          [req.user.id]
+        );
+        const liveCount = countRows[0]?.n ?? 0;
+        canCreateApps = (req.user.appQuota ?? 0) > 0 && liveCount < (req.user.appQuota ?? 0);
+      } catch {}
+    }
     res.json({
       user: {
         id: req.user.id,
         username: req.user.username,
         isAdmin: req.user.isAdmin,
-        // Per-user app-creation gate (admin-controlled, default FALSE).
-        // The home screen hides the "Create new app" affordance for
-        // anyone who can't create — admins implicitly can, see the
-        // canCreate helper in public/js/home.js.
-        canCreateApps: !!req.user.canCreateApps,
+        // Derived per-user app-creation affordance: isAdmin || (live app
+        // count < app_quota). The home screen hides the "Create new app"
+        // affordance for anyone who can't create — see the canCreate
+        // helper in public/js/home.js. The numeric quota itself is only
+        // surfaced through the admin API.
+        canCreateApps,
         // Experimental: opt-in AI progress estimate for coding runs
         // (Settings → Experimental). Default OFF.
         aiProgressEstimate: !!req.user.aiProgressEstimate,

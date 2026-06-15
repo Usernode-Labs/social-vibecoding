@@ -21,6 +21,20 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS anthropic_key_last4  VARCHAR(8);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS can_create_apps BOOLEAN NOT NULL DEFAULT FALSE;
 UPDATE users SET can_create_apps = TRUE WHERE is_admin = TRUE AND can_create_apps = FALSE;
 
+-- Per-user app-creation quota: the maximum number of live (non-errored)
+-- apps a user may have created. This is the actual app-creation gate (see
+-- src/routes/apps.js) — a non-admin may create iff their live app count is
+-- below this number, so deleting an app frees a slot (mirrors the server-
+-- wide maxApps cap). Default 0 means "cannot create until an admin raises
+-- it", matching the old can_create_apps default-off behaviour. Admins
+-- bypass enforcement entirely — their quota is purely cosmetic. The client
+-- still sees a derived `canCreateApps` boolean (computed in auth/me as
+-- isAdmin || liveCount < app_quota) so the home screen needs no change; the
+-- numeric quota is surfaced only through the admin API. `can_create_apps`
+-- is KEPT for now purely as the one-shot backfill source below — dropping
+-- it (and the derived canCreateApps plumbing) is deferred work.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS app_quota INTEGER NOT NULL DEFAULT 0;
+
 -- is_admin is now mutable from the admin panel (grant/revoke toggle in
 -- public/admin.html → POST /api/admin/users/:id/is-admin). The column is
 -- nullable (DEFAULT FALSE, declared at the top of the table) so legacy
@@ -569,6 +583,34 @@ INSERT INTO platform_settings (key, value) VALUES
   ('user_daily_limit_cents',   '2500'),
   ('global_daily_limit_cents', '20000')
 ON CONFLICT (key) DO NOTHING;
+
+-- One-shot backfill of users.app_quota from the legacy can_create_apps
+-- boolean. Guarded by a marker row in platform_settings so it runs EXACTLY
+-- ONCE: a re-run-safe UPDATE keyed only on can_create_apps = TRUE would
+-- re-clobber any quota an admin later resets to 0 for a still-enabled user.
+-- Placed after both `apps` and `platform_settings` exist (this whole file
+-- runs as one ordered statement). Mapping for existing enabled users:
+--   can_create_apps = TRUE  → app_quota = GREATEST(5, <live app count>),
+--     where live count = COUNT(*) of their non-errored apps. The floor of
+--     5 guarantees no regression — nobody who could already create ends up
+--     below the apps they already have. Admins are included (their quota is
+--     cosmetic since they bypass enforcement) so the admin UI shows a
+--     sensible number.
+--   can_create_apps = FALSE → quota stays 0 (the column default).
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM platform_settings WHERE key = 'app_quota_migrated') THEN
+    UPDATE users u
+       SET app_quota = GREATEST(5, (
+             SELECT COUNT(*)::int FROM apps
+              WHERE created_by = u.id AND status <> 'error'
+           ))
+     WHERE u.can_create_apps = TRUE;
+    INSERT INTO platform_settings (key, value)
+      VALUES ('app_quota_migrated', 'true')
+      ON CONFLICT (key) DO NOTHING;
+  END IF;
+END $$;
 
 -- Notifications. Generic row format so we can add more `kind`s later
 -- (PR approvals, etc). Currently 'mention' (group-chat @mention parser
