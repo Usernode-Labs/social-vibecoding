@@ -1065,6 +1065,46 @@ async function finalizeRecoveredTurn({
     return;
   }
 
+  // The turn committed locally (ahead/sha set) but the worker's
+  // usernode-push callback never landed the branch on GitHub
+  // (push_ok=0 — e.g. the platform was mid-restart when the worker
+  // called POST /api/internal/sessions/:id/push). `result.ahead` is
+  // computed from the worker's LOCAL `origin/main..HEAD`, so it's >0
+  // even with the remote branch still empty. Heal it here, while the
+  // worker container still exists, before applyPrMetadata's createPR —
+  // otherwise createPR 422s ("No commits between main and <branch>")
+  // and, once the worker is evicted, the only copy of the commit is
+  // gone. (chat 510 / issue #295: a restart mid-push left the branch
+  // un-pushable and the work recoverable only from the CC transcript.)
+  if (!result.pushOk) {
+    try {
+      const pushed = await worker.execPushFromWorker(sessionId, session.branch_name);
+      result.pushOk = true;
+      log.info('server', 'Recovered turn: re-pushed un-pushed branch', {
+        sessionId, branch: session.branch_name,
+        sha: (pushed?.sha || result.sha || '').substring(0, 8),
+      });
+    } catch (err) {
+      log.warn('server', 'Recovered turn: re-push failed — skipping PR creation', {
+        sessionId, branch: session.branch_name, err: err.message,
+      });
+      emit('status', {
+        text: 'Recovered your changes but could not push them to GitHub — please retry your request.',
+      });
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'system', $2, $3)`,
+        [
+          sessionId,
+          'Your changes were committed but could not be pushed to GitHub after a restart — please retry your request to re-push and open the PR.',
+          JSON.stringify({}),
+        ]
+      ).catch(() => {});
+      if (!keepWorker) await worker.destroyWorker(containerName);
+      return;
+    }
+  }
+
   try {
     // Pull the user's most recent message so the PR title helper has
     // the same "what did you ask for?" signal that the normal dev-turn

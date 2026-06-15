@@ -14,7 +14,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 // Install module stubs before requiring the unit under test.
-function loadWithStubs({ onGenerate, githubCalls }) {
+function loadWithStubs({ onGenerate, githubCalls, createPR }) {
   const llmPath = require.resolve('../src/services/llm');
   const ghPath = require.resolve('../src/services/github');
   const subjectPath = require.resolve('../src/services/pr-metadata');
@@ -37,7 +37,11 @@ function loadWithStubs({ onGenerate, githubCalls }) {
   };
   require.cache[ghPath] = {
     exports: {
-      createPR: async (owner, repo, opts) => { githubCalls.push({ type: 'create', owner, repo, opts }); return { number: 42, html_url: 'https://example/pr/42' }; },
+      createPR: async (owner, repo, opts) => {
+        githubCalls.push({ type: 'create', owner, repo, opts });
+        if (createPR) return createPR(owner, repo, opts);
+        return { number: 42, html_url: 'https://example/pr/42' };
+      },
       updatePR: async (owner, repo, num, opts) => { githubCalls.push({ type: 'update', owner, repo, num, opts }); },
     },
     loaded: true, id: ghPath, filename: ghPath, paths: orig.gh ? orig.gh.paths : [],
@@ -397,6 +401,59 @@ test('no testing guidance -> body has no How to test section (legacy bytes)', as
     });
     assert.ok(!/How to test/.test(githubCalls[0].opts.body));
     assert.match(githubCalls[0].opts.body, /^Cumulative body\n\n---\n_Dev session by evan via Usernode_$/);
+  } finally {
+    restore();
+  }
+});
+
+// fix #2: a "branch has no pushed commits" createPR failure (GitHub 422
+// "No commits between …", surfaced by github.createPR as err.code
+// 'no_commits') must be RE-THROWN from applyPrMetadata so the caller can
+// give the user an honest, non-transient message — rather than being
+// swallowed into the generic null/"try again in a moment" path.
+test('applyPrMetadata rethrows a no_commits createPR failure (new PR path)', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => {},
+    githubCalls,
+    createPR: () => {
+      const e = new Error('No commits between main and feat/x — the branch has no pushed commits.');
+      e.code = 'no_commits';
+      throw e;
+    },
+  });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }]);
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    await assert.rejects(
+      () => subject.applyPrMetadata({
+        pool, session, repoOwner: 'acme', repoName: 'app',
+        userMessage: 'x', ccSummary: 'y', username: 'evan',
+      }),
+      (err) => err && err.code === 'no_commits'
+    );
+  } finally {
+    restore();
+  }
+});
+
+// Other createPR failures stay best-effort: applyPrMetadata swallows them
+// and returns null (the pre-existing contract for transient GitHub errors).
+test('applyPrMetadata returns null for non-no_commits createPR failures (new PR path)', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => {},
+    githubCalls,
+    createPR: () => { throw new Error('502 Bad Gateway'); },
+  });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }]);
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    const res = await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.equal(res, null);
   } finally {
     restore();
   }
