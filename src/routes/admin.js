@@ -73,14 +73,20 @@ function adminRoutes(config) {
   router.get('/api/admin/users', async (req, res) => {
     try {
       const { rows } = await pool.query(
-        `SELECT u.id, u.username, u.is_admin, u.can_create_apps, u.created_at,
+        `SELECT u.id, u.username, u.is_admin, u.app_quota, u.created_at,
                 u.daily_limit_cents,
                 (u.id = $1) AS is_self,
                 ac.code as activation_code,
-                COALESCE(lu.total_cost_cents, 0) as cost_today_cents
+                COALESCE(lu.total_cost_cents, 0) as cost_today_cents,
+                COALESCE(ac2.n, 0) AS apps_created
          FROM users u
          LEFT JOIN activation_codes ac ON ac.used_by = u.id
          LEFT JOIN llm_usage lu ON lu.user_id = u.id AND lu.date = CURRENT_DATE
+         LEFT JOIN (
+           SELECT created_by, COUNT(*) FILTER (WHERE status <> 'error') AS n
+           FROM apps
+           GROUP BY created_by
+         ) ac2 ON ac2.created_by = u.id
          ORDER BY u.created_at ASC`,
         [req.user.id]
       );
@@ -91,32 +97,57 @@ function adminRoutes(config) {
     }
   });
 
-  // Toggle the per-user app-creation permission (see users.can_create_apps
-  // in schema.sql). Default for every user is FALSE — set TRUE here to
-  // allow them to create apps. Admins are included; there is no bypass.
-  router.post('/api/admin/users/:id/can-create-apps', async (req, res) => {
+  // Bulk set every user's app-creation quota (see users.app_quota in
+  // schema.sql). Body `{ quota }` — a non-negative integer applied to ALL
+  // users. Admins are included; since they bypass enforcement this is
+  // harmless and keeps the operation simple ("set all to 0", "set all to
+  // 3"). Declared BEFORE the per-user `:id` route below: Express matches
+  // this distinctly (different segment count), but ordering keeps intent
+  // obvious.
+  router.put('/api/admin/users/app-quota', async (req, res) => {
+    const { quota } = req.body || {};
+    const n = Number(quota);
+    if (!Number.isInteger(n) || n < 0) {
+      return res.status(400).json({ error: 'quota must be a non-negative integer' });
+    }
+    try {
+      await pool.query('UPDATE users SET app_quota = $1', [n]);
+      log.info('admin', 'App quota set for all users', { quota: n, by: req.user.username });
+      res.json({ ok: true, quota: n });
+    } catch (err) {
+      log.error('admin', 'Bulk app-quota update failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Set one user's app-creation quota (see users.app_quota in schema.sql).
+  // Body `{ quota }` — a non-negative integer. Modeled on the per-user
+  // daily-limit handler below. Quota 0 means the user cannot create apps;
+  // admins bypass enforcement regardless (their quota is cosmetic).
+  router.put('/api/admin/users/:id/app-quota', async (req, res) => {
     const userId = parseInt(req.params.id, 10);
-    const { canCreateApps } = req.body || {};
     if (!Number.isFinite(userId)) {
       return res.status(400).json({ error: 'Invalid user id' });
     }
-    if (typeof canCreateApps !== 'boolean') {
-      return res.status(400).json({ error: 'canCreateApps (boolean) required in body' });
+    const { quota } = req.body || {};
+    const n = Number(quota);
+    if (!Number.isInteger(n) || n < 0) {
+      return res.status(400).json({ error: 'quota must be a non-negative integer' });
     }
     try {
       const { rows } = await pool.query(
-        `UPDATE users SET can_create_apps = $1 WHERE id = $2
-         RETURNING id, username, can_create_apps`,
-        [canCreateApps, userId]
+        `UPDATE users SET app_quota = $1 WHERE id = $2
+         RETURNING id, username, app_quota`,
+        [n, userId]
       );
       if (!rows.length) return res.status(404).json({ error: 'User not found' });
-      log.info('admin', 'App-creation permission toggled', {
+      log.info('admin', 'App quota updated', {
         id: rows[0].id, username: rows[0].username,
-        canCreateApps: rows[0].can_create_apps, by: req.user.username,
+        appQuota: rows[0].app_quota, by: req.user.username,
       });
-      res.json({ ok: true, canCreateApps: rows[0].can_create_apps });
+      res.json({ ok: true, app_quota: rows[0].app_quota });
     } catch (err) {
-      log.error('admin', 'App-creation toggle failed', { message: err.message });
+      log.error('admin', 'App quota update failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
