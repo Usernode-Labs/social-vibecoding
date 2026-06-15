@@ -12,6 +12,22 @@ const { validatePassword } = require('../services/password-policy');
 
 const SESSION_DAYS = 7;
 
+// View-only admin role (issue #311). Builds the role-related fields every
+// auth response returns to the client from the raw `is_admin` /
+// `admin_readonly` columns: `isAdmin` (the visibility tier, unchanged),
+// `canAdminWrite` (the single privileged-mutation gate — full admin only),
+// and a display `role` string the UI renders. Normal-login/register users
+// pass nothing and get the user defaults.
+function roleFields(isAdmin, adminReadonly) {
+  const admin = !!isAdmin;
+  const readonly = admin && !!adminReadonly;
+  return {
+    isAdmin: admin,
+    canAdminWrite: admin && !readonly,
+    role: !admin ? 'user' : (readonly ? 'view_admin' : 'admin'),
+  };
+}
+
 // Default-off: only set `Secure` when we explicitly know we're in production.
 // Previously this was `NODE_ENV !== 'development'`, which silently dropped the
 // cookie on any dev box reached over LAN HTTP (mobile testing) because
@@ -31,7 +47,7 @@ function authRoutes(config) {
 
     try {
       const { rows } = await pool.query(
-        'SELECT id, password, is_admin FROM users WHERE username = $1',
+        'SELECT id, password, is_admin, admin_readonly FROM users WHERE username = $1',
         [username]
       );
 
@@ -68,7 +84,7 @@ function authRoutes(config) {
       log.info('auth', 'Login successful', { userId: user.id, username });
 
       res.json({
-        user: { id: user.id, username, isAdmin: user.is_admin },
+        user: { id: user.id, username, ...roleFields(user.is_admin, user.admin_readonly) },
       });
     } catch (err) {
       log.error('auth', 'Login error', { message: err.message });
@@ -122,7 +138,7 @@ function authRoutes(config) {
 
       log.info('auth', 'User registered', { userId, username: username.trim(), codeId });
       events.record(pool, { type: events.EVENT_TYPES.USER_SIGNED_UP, userId, metadata: { via: 'activation_code' } });
-      res.json({ user: { id: userId, username: username.trim(), isAdmin: false } });
+      res.json({ user: { id: userId, username: username.trim(), ...roleFields(false, false) } });
     } catch (err) {
       if (err.code === '23505') {
         return res.status(409).json({ error: 'Username already taken' });
@@ -184,6 +200,12 @@ function authRoutes(config) {
         id: req.user.id,
         username: req.user.username,
         isAdmin: req.user.isAdmin,
+        // View-only admin role (issue #311). `isAdmin` still drives every
+        // client read/visibility gate; `canAdminWrite` drives mutating
+        // controls (hidden for view-only admins). `role` is the display
+        // string the admin panel / banners render.
+        canAdminWrite: !!req.user.canAdminWrite,
+        role: !req.user.isAdmin ? 'user' : (req.user.adminReadonly ? 'view_admin' : 'admin'),
         // Derived per-user app-creation affordance: isAdmin || (live app
         // count < app_quota). The home screen hides the "Create new app"
         // affordance for anyone who can't create — see the canCreate
@@ -522,7 +544,7 @@ function authRoutes(config) {
       }
 
       const { rows } = await pool.query(
-        'SELECT id, username, is_admin FROM users WHERE usernode_pubkey = $1',
+        'SELECT id, username, is_admin, admin_readonly FROM users WHERE usernode_pubkey = $1',
         [pubkey.trim()]
       );
       if (rows.length === 0) {
@@ -534,7 +556,7 @@ function authRoutes(config) {
       createSessionCookie(res, token, expiresAt);
 
       log.info('wallet-auth', 'Signature login successful', { userId: user.id, username: user.username });
-      res.json({ user: { id: user.id, username: user.username, isAdmin: user.is_admin } });
+      res.json({ user: { id: user.id, username: user.username, ...roleFields(user.is_admin, user.admin_readonly) } });
     } catch (err) {
       log.error('wallet-auth', 'wallet-verify failed', { url: verifyUrl, err: err.message, code: err.code, stack: err.stack?.split('\n')[0] });
       res.status(500).json({ error: 'Signature verification service unavailable' });
@@ -583,7 +605,7 @@ function authRoutes(config) {
       }
 
       const { rows } = await pool.query(
-        'SELECT id, username, is_admin FROM users WHERE usernode_pubkey = $1',
+        'SELECT id, username, is_admin, admin_readonly FROM users WHERE usernode_pubkey = $1',
         [pubkey.trim()]
       );
       if (rows.length === 0) {
@@ -601,7 +623,7 @@ function authRoutes(config) {
       createSessionCookie(res, token, expiresAt);
 
       log.info('wallet-auth', 'Wallet password reset successful', { userId: user.id, username: user.username });
-      res.json({ user: { id: user.id, username: user.username, isAdmin: user.is_admin } });
+      res.json({ user: { id: user.id, username: user.username, ...roleFields(user.is_admin, user.admin_readonly) } });
     } catch (err) {
       log.error('wallet-auth', 'wallet-reset-verify failed', { url: verifyUrl, err: err.message, code: err.code });
       res.status(500).json({ error: 'Signature verification service unavailable' });
@@ -716,7 +738,7 @@ function authRoutes(config) {
       log.info('wallet-auth', 'Wallet-gated registration', { userId, username: username.trim() });
       events.record(pool, { type: events.EVENT_TYPES.USER_SIGNED_UP, userId, metadata: { via: 'wallet' } });
       res.json({
-        user: { id: userId, username: username.trim(), isAdmin: false },
+        user: { id: userId, username: username.trim(), ...roleFields(false, false) },
         walletLink: {
           to: config.usernodeAppPubkey,
           amount: 1,
@@ -745,7 +767,7 @@ function authRoutes(config) {
 
     try {
       const { rows } = await pool.query(
-        'SELECT id, password, is_admin, usernode_pubkey FROM users WHERE username = $1',
+        'SELECT id, username, password, is_admin, admin_readonly, usernode_pubkey FROM users WHERE username = $1',
         [username.trim()]
       );
 
@@ -769,7 +791,7 @@ function authRoutes(config) {
       if (user.usernode_pubkey === pubkey.trim()) {
         log.info('wallet-auth', 'Wallet link-login (already linked)', { userId: user.id });
         return res.json({
-          user: { id: user.id, username: user.username, isAdmin: user.is_admin },
+          user: { id: user.id, username: user.username, ...roleFields(user.is_admin, user.admin_readonly) },
         });
       }
 
@@ -789,7 +811,7 @@ function authRoutes(config) {
 
       log.info('wallet-auth', 'Wallet link-login initiated', { userId: user.id, username: user.username });
       res.json({
-        user: { id: user.id, username: user.username, isAdmin: user.is_admin },
+        user: { id: user.id, username: user.username, ...roleFields(user.is_admin, user.admin_readonly) },
         walletLink: {
           to: config.usernodeAppPubkey,
           amount: 1,

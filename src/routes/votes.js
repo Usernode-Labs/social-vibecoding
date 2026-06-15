@@ -907,8 +907,8 @@ function voteRoutes(config) {
   // distinguishes the override so users see who did it and why a PR
   // landed without the usual tally.
   router.post('/api/sessions/:id/admin-merge', async (req, res) => {
-    if (!req.user?.isAdmin) {
-      return res.status(403).json({ error: 'Admin access required' });
+    if (!req.user?.canAdminWrite) {
+      return res.status(403).json({ error: 'Full admin access required' });
     }
     try {
       const { rows } = await pool.query(

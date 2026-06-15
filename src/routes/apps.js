@@ -34,10 +34,14 @@ function validateVisibilityCombo(collabVisibility, viewVisibility) {
 // gate tabs / render badges without extra round-trips.
 function accessFlags(app, user, isCollaborator) {
   const isAdmin = !!user?.isAdmin;
+  // `can_collaborate` is a visibility/read affordance → stays on isAdmin
+  // (view-only admins keep it). `can_manage` gates mutating management
+  // controls → full-admin-or-creator (issue #311).
+  const canAdminWrite = !!user?.canAdminWrite;
   return {
     is_collaborator: !!isCollaborator,
     can_collaborate: isAdmin || app.collab_visibility !== 'private' || !!isCollaborator,
-    can_manage: isAdmin || (user?.id != null && app.created_by === user.id),
+    can_manage: canAdminWrite || (user?.id != null && app.created_by === user.id),
   };
 }
 
@@ -406,15 +410,18 @@ function appRoutes(config) {
     const slug = `${base}-${code}`;
 
     try {
-      // Per-user app-creation quota (admins bypass — parity with the
+      // Per-user app-creation quota (FULL admins bypass — parity with the
       // global maxApps bypass below; see users.app_quota in schema.sql).
+      // View-only admins do NOT bypass (issue #311): creating unlimited
+      // apps is an elevated capability, so they create within their own
+      // app_quota like any normal user.
       // Counts the user's LIVE (non-errored) apps so a deletion frees a
       // slot. The home screen already hides the create affordance via the
       // derived canCreateApps boolean (auth/me); this is the real gate.
       // The count-then-insert race (two concurrent creates both passing)
       // is acceptable — identical to the maxApps cap below, not worth a
       // lock for a soft per-user limit.
-      if (!req.user?.isAdmin) {
+      if (!req.user?.canAdminWrite) {
         const quota = req.user?.appQuota ?? 0;
         const { rows: ownCountRows } = await pool.query(
           `SELECT COUNT(*)::int AS n FROM apps WHERE created_by = $1 AND status <> 'error'`,
@@ -433,10 +440,11 @@ function appRoutes(config) {
         }
       }
 
-      // Enforce global app cap (admins bypass). Errored apps don't count
+      // Enforce global app cap (full admins bypass; view-only admins
+      // don't — issue #311). Errored apps don't count
       // toward the limit — they hold ~no resources and can be deleted to
       // free a slot.
-      if (!req.user?.isAdmin && config.maxApps > 0) {
+      if (!req.user?.canAdminWrite && config.maxApps > 0) {
         const { rows: countRows } = await pool.query(
           `SELECT COUNT(*)::int AS n FROM apps WHERE status <> 'error'`
         );
@@ -689,7 +697,7 @@ function appRoutes(config) {
   });
 
   router.put('/api/apps/:slug/secrets/:key', drainGuard, async (req, res) => {
-    if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin access required' });
+    if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
     const value = req.body && typeof req.body.value === 'string' ? req.body.value : '';
     if (!value.length) return res.status(400).json({ error: 'value is required' });
 
@@ -735,7 +743,7 @@ function appRoutes(config) {
   });
 
   router.delete('/api/apps/:slug/secrets/:key', drainGuard, async (req, res) => {
-    if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin access required' });
+    if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
     try {
       const { rows } = await pool.query('SELECT id, self_hosted FROM apps WHERE slug = $1', [req.params.slug]);
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
@@ -759,7 +767,7 @@ function appRoutes(config) {
   // rebuild streams progress via the existing `app_redeploy_status` WS
   // event so the UI's version pill flips to its yellow spinning state.
   router.post('/api/apps/:slug/redeploy', drainGuard, async (req, res) => {
-    if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin access required' });
+    if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
     try {
       const { rows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
@@ -795,7 +803,7 @@ function appRoutes(config) {
   // rebuild_failed / fetch_failed). Only meaningful for repo-backed
   // apps; rejects with 400 otherwise.
   router.post('/api/apps/:slug/check-updates', drainGuard, async (req, res) => {
-    if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin access required' });
+    if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
     try {
       const { rows } = await pool.query(
         'SELECT id, slug, repo_url, main_sha, self_hosted FROM apps WHERE slug = $1',
@@ -887,7 +895,7 @@ function appRoutes(config) {
   // system chat message + broadcast `app_update` so every viewer's card
   // and group-chat history reflects the change without a reload.
   router.post('/api/apps/:slug/lock', drainGuard, async (req, res) => {
-    if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin access required' });
+    if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
     const { locked } = req.body || {};
     if (typeof locked !== 'boolean') {
       return res.status(400).json({ error: 'locked (boolean) required in body' });
@@ -951,7 +959,7 @@ function appRoutes(config) {
       if (!(await appAccess.checkAppAccess(pool, app, req.user, 'view'))) {
         return res.status(404).json({ error: 'App not found' });
       }
-      if (!req.user?.isAdmin && app.created_by !== req.user?.id) {
+      if (!req.user?.canAdminWrite && app.created_by !== req.user?.id) {
         return res.status(403).json({ error: 'Only the app creator or an admin can propose a visibility change' });
       }
       if (refuseIfSelfHosted(app, res, 'visibility')) return;
@@ -1046,7 +1054,7 @@ function appRoutes(config) {
 
   // Delete an app (admin only)
   router.delete('/api/apps/:slug', async (req, res) => {
-    if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin access required' });
+    if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
     try {
       const { rows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
@@ -1092,12 +1100,12 @@ function appRoutes(config) {
 
       const appRow = rows[0];
 
-      const allowed = req.user?.isAdmin || appRow.created_by === req.user?.id;
+      const allowed = req.user?.canAdminWrite || appRow.created_by === req.user?.id;
       if (!allowed) {
         return res.status(403).json({ error: 'Only the app creator or an admin can retry' });
       }
 
-      if (appRow.retry_count >= MAX_RETRY_COUNT && !req.user.isAdmin) {
+      if (appRow.retry_count >= MAX_RETRY_COUNT && !req.user.canAdminWrite) {
         return res.status(429).json({
           error: `Retry limit reached (${MAX_RETRY_COUNT}). Ask an admin to investigate.`,
         });

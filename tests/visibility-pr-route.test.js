@@ -169,7 +169,9 @@ test('success: opens a visibility/ branch PR editing dapp.json and promotes a se
 });
 
 test('admins can propose on apps they did not create', async () => {
-  currentUser = { id: 50, username: 'boss', isAdmin: true };
+  // Full admin (canAdminWrite) — the visibility-pr gate is full-admin-or-
+  // creator since issue #311; a view-only admin would not pass it.
+  currentUser = { id: 50, username: 'boss', isAdmin: true, canAdminWrite: true };
   const res = await propose({ collabVisibility: 'private', viewVisibility: 'private' });
   assert.equal(res.status, 201);
   const pr = ghCalls.find((c) => c.op === 'pr');

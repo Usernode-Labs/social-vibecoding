@@ -788,8 +788,8 @@ function issueRoutes(config) {
   // the chat message + GitHub comment name the admin so the override
   // is never silent.
   router.post('/api/issues/:id/admin-apply', async (req, res) => {
-    if (!req.user?.isAdmin) {
-      return res.status(403).json({ error: 'Admin access required' });
+    if (!req.user?.canAdminWrite) {
+      return res.status(403).json({ error: 'Full admin access required' });
     }
     try {
       const { rows: issueRows } = await pool.query(

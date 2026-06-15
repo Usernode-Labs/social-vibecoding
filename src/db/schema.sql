@@ -43,6 +43,21 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS app_quota INTEGER NOT NULL DEFAULT 0;
 -- NULL and FALSE identically. Idempotent — safe to run every boot.
 UPDATE users SET is_admin = FALSE WHERE is_admin IS NULL;
 
+-- View-only admin role (issue #311). `is_admin` remains the visibility
+-- tier ("can see every admin surface"); `admin_readonly` marks an admin
+-- whose access is read-only — they see everything a full admin sees but
+-- cannot perform any mutating/privileged action. The canonical role is
+-- derived, no enum needed:
+--   is_admin = FALSE                          → normal user (this column ignored)
+--   is_admin = TRUE  AND admin_readonly = FALSE → full admin
+--   is_admin = TRUE  AND admin_readonly = TRUE  → view-only admin
+-- Auth derives `canAdminWrite = is_admin AND NOT admin_readonly` (the single
+-- write gate) in src/middleware/auth.js; every read/visibility gate keeps
+-- keying off is_admin unchanged. Backfill is automatic — existing admin rows
+-- default to FALSE (stay full admins). NOT tagged staging:private below
+-- (non-sensitive, like is_admin) so staging shows correct roles. Idempotent.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_readonly BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- Usernode wallet linking: pubkey is the on-chain identity once linked;
 -- token + expiry gate the QR-based linking flow.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS usernode_pubkey          VARCHAR(255);
