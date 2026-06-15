@@ -86,6 +86,28 @@ test('my merging proposal does NOT render Archive', () => {
   assert.doesNotMatch(html, /archiveProposal/, 'merging card has no Archive');
 });
 
+// #313: the card-level "Ask AI" advisor button renders on proposals the
+// viewer does NOT own (where there's no "Open session"), and is omitted
+// on the viewer's own cards.
+test("someone else's proposal renders the Ask AI card button", () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._renderProposalCard(baseProposal({ user_id: 999 }));
+  assert.match(html, /gc-ask-ai-btn/, 'Ask AI button present on a foreign proposal');
+  assert.match(html, /data-proposal-id="7"/, 'wired to the proposal id');
+});
+
+test('my own proposal does NOT render the Ask AI card button', () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._renderProposalCard(baseProposal());
+  assert.doesNotMatch(html, /gc-ask-ai-btn/, 'own card has no Ask AI (Open session covers it)');
+});
+
+test("someone else's merged proposal renders the Ask AI card button", () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._renderProposalCard(baseProposal({ user_id: 999, status: 'merged' }));
+  assert.match(html, /gc-ask-ai-btn/, 'Ask AI present on a foreign merged card');
+});
+
 test('archiveProposal POSTs to the archive endpoint and reloads the feed', async () => {
   const AppView = makeAppView(ME);
   let posted = null;

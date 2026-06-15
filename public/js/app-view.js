@@ -547,6 +547,10 @@ const AppView = {
     // survives until the next renderDevView).
     const feedEl = document.getElementById('dev-feed');
     feedEl.addEventListener('click', (e) => {
+      // #313: the card-level "Ask AI" button is a <button>, so the guard
+      // below would swallow it — handle it first, then bail.
+      const askBtn = e.target.closest('.gc-ask-ai-btn');
+      if (askBtn) { AppView._openAskAiFromCard(askBtn.dataset.proposalId); return; }
       if (e.target.closest('a, button, input, form')) return;
       const issueRow = e.target.closest('[data-issue-row]');
       if (issueRow) {
@@ -569,6 +573,8 @@ const AppView = {
     const mergedEl = document.getElementById('gc-merged');
     if (mergedEl) {
       mergedEl.addEventListener('click', (e) => {
+        const askBtn = e.target.closest('.gc-ask-ai-btn');
+        if (askBtn) { AppView._openAskAiFromCard(askBtn.dataset.proposalId); return; }
         if (e.target.closest('a, button, input, form')) return;
         const prRow = e.target.closest('[data-proposal-row]');
         if (prRow) AppView.openTopic('proposal', parseInt(prRow.dataset.proposalRow, 10));
@@ -731,6 +737,52 @@ const AppView = {
           <span aria-hidden="true">✨</span> Ask AI
         </button>
       </div>`;
+  },
+
+  // #313: a compact "Ask AI" action for the proposal CARD action row
+  // (the Dev feed + the Completed list), as opposed to the full-screen
+  // topic-head button above. Cards render many at once, so this uses a
+  // class + data-proposal-id hook instead of the id="proposal-ask-ai"
+  // the head uses (ids must stay unique). Only rendered on proposals the
+  // viewer does NOT own — owners reach AI through "Open session" and the
+  // in-discussion advisor, so a card button would be redundant clutter.
+  // Click is dispatched by the delegated feed/merged handlers.
+  _askAiCardBtnHtml(pr) {
+    return `<button type="button" class="gc-vote-btn gc-ask-ai-btn" data-proposal-id="${pr.id}"
+      title="Ask AI about this proposal (private to you)"><span aria-hidden="true">✨</span> Ask AI</button>`;
+  },
+
+  // Open the private read-only advisor for a card's proposal, resolving
+  // the row from the in-memory promoted/merged lists (same shape the
+  // topic head passes to ProposalDiscuss.open).
+  _openAskAiFromCard(id) {
+    const pid = parseInt(id, 10);
+    if (!pid || typeof ProposalDiscuss === 'undefined') return;
+    const pr = (AppView._proposals || []).find((p) => p.id === pid)
+      || (AppView._merged || []).find((p) => p.id === pid);
+    if (pr) ProposalDiscuss.open('proposal', pid, pr);
+  },
+
+  // Resolve AI availability once (memoized) and disable every card-level
+  // Ask AI button under `root` with a tooltip when no LLM is configured —
+  // mirrors the topic-head pass at _renderTopicHead. Must be re-run after
+  // each feed/merged re-render, since innerHTML replacement paints fresh,
+  // enabled buttons every time.
+  _applyAskAiCardAvailability(root) {
+    const scope = root || document;
+    if (!scope.querySelector('.gc-ask-ai-btn')) return;
+    AppView._ensureAiAvailability().then((enabled) => {
+      scope.querySelectorAll('.gc-ask-ai-btn').forEach((b) => {
+        b.disabled = !enabled;
+        if (!enabled) {
+          b.title = "AI chat isn't configured on this deployment.";
+          b.classList.add('opacity-50', 'cursor-not-allowed');
+        } else {
+          b.title = 'Ask AI about this proposal (private to you)';
+          b.classList.remove('opacity-50', 'cursor-not-allowed');
+        }
+      });
+    });
   },
 
   // Cached check of whether any LLM path is usable (platform key or the
@@ -1209,6 +1261,7 @@ const AppView = {
     if (mergedEl) {
       mergedEl.innerHTML = (AppView._merged || []).length ? AppView._renderMergedInner() : '';
       if (window.Kudos) Kudos.attach(mergedEl);
+      AppView._applyAskAiCardAvailability(mergedEl);
     }
   },
 
@@ -1316,6 +1369,7 @@ const AppView = {
     if (!el) return;
     el.innerHTML = AppView._renderFeedInner();
     if (window.Kudos) Kudos.attach(el);
+    AppView._applyAskAiCardAvailability(el);
   },
 
   showMoreFeed() {
@@ -1463,6 +1517,10 @@ const AppView = {
     const archiveBtn = (mine && !isMerged && !isMerging && pr.status === 'promoted')
       ? `<button class="gc-vote-btn" title="Archive this proposal (closes the PR, frees the slot)" onclick="AppView.archiveProposal(${pr.id})">Archive</button>`
       : '';
+    // #313: the per-proposal "Ask AI" advisor, surfaced on the card for
+    // proposals the viewer does NOT own. Owners reach AI via "Open
+    // session" + the in-discussion advisor, so it's omitted on own cards.
+    const askAiBtn = !mine ? AppView._askAiCardBtnHtml(pr) : '';
     // #195/#211: before/after capture tiles, collapsed by default behind a
     // "Show before/after" pill that sits with the other action buttons. The
     // tiles wait in an inert <template> (no bandwidth, no autoplay loops)
@@ -1480,8 +1538,8 @@ const AppView = {
     // Merged proposals (topic-view fallback) drop the live vote buttons —
     // the vote is settled; kudos stays open.
     const actions = (isMerged
-      ? [kudosBtn, sessionBtn, visualsBtn]
-      : [AppView.voteButtonsHtml(pr), kudosBtn, sessionBtn, archiveBtn, visualsBtn]
+      ? [kudosBtn, sessionBtn, askAiBtn, visualsBtn]
+      : [AppView.voteButtonsHtml(pr), kudosBtn, sessionBtn, archiveBtn, askAiBtn, visualsBtn]
     ).filter(Boolean).join('');
 
     return `
@@ -1997,6 +2055,10 @@ const AppView = {
       const kudosBtn = window.Kudos
         ? Kudos.renderButton(pr, { compact: true })
         : '';
+      // #313: Ask AI on the Completed list too, for proposals the viewer
+      // does not own (parallel to the live feed cards).
+      const mine = !!(App.user && pr.user_id === App.user.id);
+      const askAiBtn = !mine ? AppView._askAiCardBtnHtml(pr) : '';
 
       // #16: undo is a single direct action — clicking Undo opens a
       // revert PR (like proposing a change) which then needs the
@@ -2049,6 +2111,7 @@ const AppView = {
               ${AppView.voteButtonsHtml(pr, { collapseVoted: true })}
               ${undoUI}
               ${kudosBtn}
+              ${askAiBtn}
             </div>
           </div>
           ${AppView.DEV_CARD_CHEVRON}
@@ -2070,7 +2133,10 @@ const AppView = {
   toggleMergedPrs() {
     AppView._mergedExpanded = !AppView._mergedExpanded;
     const el = document.getElementById('gc-merged');
-    if (el) el.innerHTML = AppView._renderMergedInner();
+    if (el) {
+      el.innerHTML = AppView._renderMergedInner();
+      AppView._applyAskAiCardAvailability(el);
+    }
   },
 
   // "Give kudos" — pledge a bounty on a GitHub issue. Debits the shared

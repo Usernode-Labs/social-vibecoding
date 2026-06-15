@@ -28,6 +28,7 @@ async function migrate(config) {
   await seedStagingMergedPrs(pool, config);
   await seedStagingMyOpenPr(pool, config);
   await seedStagingProposalDiscussion(pool, config);
+  await seedStagingOtherUserProposal(pool, config);
   await seedStagingArchiveProposalFixtures(pool, config);
   await seedStagingActiveSessions(pool, config);
   await seedStagingCcProgressRun(pool, config);
@@ -2599,6 +2600,103 @@ async function seedStagingProposalDiscussion(pool, config) {
   }
 
   log.info('db', 'Staging proposal-discuss fixture seeded', { appId, proposalRef, userId });
+}
+
+// #313: a PROMOTED proposal owned by a user OTHER than the tester, so the
+// new card-level "Ask AI" button (rendered only on proposals you do NOT
+// own) is exercisable in staging. seedStagingMyOpenPr covers the owned
+// case; this covers the non-owned case the issue is about. Also seeds a
+// short advisor history keyed to the TESTER's user_id (proposal_ai_messages
+// is staging:private, so it ships empty) so opening the panel from the
+// foreign card shows a back-and-forth rather than the empty state.
+// Idempotent via branch name + fixed high message IDs; a no-op outside
+// staging.
+async function seedStagingOtherUserProposal(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging other-user-proposal fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: users } = await pool.query(
+    `SELECT id, username
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 5`
+  );
+  if (!users.length) {
+    log.warn('db', 'Staging other-user-proposal fixture skipped: no users');
+    return;
+  }
+  // The tester logs in as the first admin (same selection as the other
+  // fixtures). The proposal must be owned by SOMEONE ELSE so the card has
+  // no "Open session" button and the new Ask AI button renders.
+  const tester = users[0];
+  const owner = users.find((u) => u.id !== tester.id);
+  if (!owner) {
+    log.warn('db', 'Staging other-user-proposal fixture skipped: need a second user');
+    return;
+  }
+
+  const branch = 'staging-fixture/other-user-open-pr';
+  let sessionId;
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, branch]
+  );
+  if (existing.length) {
+    sessionId = existing[0].id;
+  } else {
+    const { rows } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_number, pr_title, status,
+          votes_required, created_at)
+       VALUES
+         ($1, $2, $3, 9300,
+          '[staging fixture] Another user''s proposal — Ask AI about it',
+          'promoted', $4, NOW() - INTERVAL '20 minutes')
+       RETURNING id`,
+      [appId, owner.id, branch, Math.max(1, Math.ceil(users.length / 2))]
+    );
+    sessionId = rows[0].id;
+  }
+
+  // The owner's own yes-vote so the tally pill renders a realistic fill.
+  await pool.query(
+    `INSERT INTO pr_votes (session_id, user_id, vote, created_at)
+     VALUES ($1, $2, 'yes', NOW() - INTERVAL '19 minutes')
+     ON CONFLICT (session_id, user_id) DO NOTHING`,
+    [sessionId, owner.id]
+  );
+
+  // Advisor history keyed to the TESTER (the per-user, private
+  // conversation they'd see), pointed at this PR session.
+  const turns = [
+    [990101, 'user', 'Staging demo: explain this proposal in plain terms.'],
+    [990102, 'assistant', 'Staging demo: This is another user\'s proposal, opened for the group to review and vote on. You can ask me anything about it here — privately. I can only advise; I can\'t vote or change the proposal. (Seeded demo content — no live AI ran.)'],
+    [990103, 'user', 'Staging demo: what should I watch for before voting yes?'],
+    [990104, 'assistant', 'Staging demo: Check that the change matches any linked issue, that its blast radius is small, and that it degrades gracefully. If all that holds, voting yes is reasonable. Remember this advisor is read-only.'],
+  ];
+  for (const [id, role, content] of turns) {
+    await pool.query(
+      `INSERT INTO proposal_ai_messages (id, app_id, proposal_kind, proposal_ref, user_id, role, content, model)
+       VALUES ($1, $2, 'pr', $3, $4, $5, $6, $7)
+       ON CONFLICT (id) DO NOTHING`,
+      [id, appId, sessionId, tester.id, role, content, role === 'assistant' ? 'claude-sonnet-4-6' : null]
+    );
+  }
+
+  log.info('db', 'Staging other-user-proposal fixture seeded', {
+    appId, ownerUser: owner.username, testerUser: tester.username, sessionId,
+  });
 }
 
 // Archive-restore fixtures (#287-style regression): seed the two states
