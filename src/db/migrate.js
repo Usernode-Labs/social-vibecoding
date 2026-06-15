@@ -2700,6 +2700,45 @@ async function seedStagingArchiveProposalFixtures(pool, config) {
     );
   }
 
+  // Active, non-promoted session — surfaces as a chip in the viewer's
+  // "Your dev session" strip with the new inline Archive button. No
+  // promoted_at so it stays a live in-progress session (not a proposal
+  // card). /api/me/active-sessions (status IN active/promoted/paused)
+  // returns it and the strip filters to active/paused for this app.
+  const activeBranch = 'staging-fixture/archive-active';
+  const { rows: activeExisting } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, activeBranch]
+  );
+  if (!activeExisting.length) {
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_title, status, created_at)
+       VALUES
+         ($1, $2, $3, '[Mock] Active session — archivable from the strip',
+          'active', NOW() - INTERVAL '2 hours')`,
+      [appId, owner.id, activeBranch]
+    );
+  }
+
+  // Paused, non-promoted session — exercises the paused-row variant of
+  // the strip chip (status tag + Archive button).
+  const pausedBranch = 'staging-fixture/archive-paused';
+  const { rows: pausedExisting } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, pausedBranch]
+  );
+  if (!pausedExisting.length) {
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_title, status, created_at)
+       VALUES
+         ($1, $2, $3, '[Mock] Paused session — archivable from the strip',
+          'paused', NOW() - INTERVAL '1 day')`,
+      [appId, owner.id, pausedBranch]
+    );
+  }
+
   log.info('db', 'Staging archive-proposal fixtures seeded', {
     appId,
     owner: owner.username,

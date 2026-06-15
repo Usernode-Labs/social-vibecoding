@@ -1333,9 +1333,16 @@ const AppView = {
     if (!el || !AppView.appData) return;
     const slug = AppView.appData.slug;
     try {
-      const res = await fetch('/api/me/active-sessions');
-      if (!res.ok) { el.innerHTML = ''; return; }
-      const data = await res.json();
+      // Two sources: /api/me/active-sessions carries the live `busy`
+      // annotation for active/paused chips; /api/apps/:slug/sessions is
+      // the only endpoint that returns the viewer's *archived* rows
+      // (owner-scoped, includes every status). Fetch both in parallel.
+      const [activeRes, allRes] = await Promise.all([
+        fetch('/api/me/active-sessions'),
+        fetch(`/api/apps/${encodeURIComponent(slug)}/sessions`).catch(() => null),
+      ]);
+      if (!activeRes.ok) { el.innerHTML = ''; return; }
+      const data = await activeRes.json();
       // Most-recent-activity-first, matching the feed's within-group
       // order. last_activity_at folds in the latest session message;
       // older servers without it fall back to created_at.
@@ -1346,39 +1353,159 @@ const AppView = {
       const mine = (data.sessions || [])
         .filter((s) => s.app_slug === slug && (s.status === 'active' || s.status === 'paused'))
         .sort((a, b) => actTs(b) - actTs(a));
+      // Archived rows for this app (owner-scoped via the per-app
+      // endpoint). Tolerate a failed/older fetch by treating it as none.
+      let archived = [];
+      if (allRes && allRes.ok) {
+        const allData = await allRes.json().catch(() => ({}));
+        archived = (allData.sessions || [])
+          .filter((s) => s.status === 'archived')
+          .sort((a, b) => actTs(b) - actTs(a));
+      }
       // The container may have been replaced while the fetch was in
       // flight (tab switch) — re-resolve before painting.
       const live = document.getElementById('dev-sessions-strip');
       if (!live) return;
-      if (!mine.length) { live.innerHTML = ''; return; }
+      if (!mine.length && !archived.length) { live.innerHTML = ''; return; }
+
+      const chipsHtml = mine.map((s) => {
+        const label = escapeHtml(s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`);
+        const statusTag = s.busy
+          ? '<span class="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
+          : (s.status === 'paused' ? '<span class="text-xs text-zinc-500 shrink-0">paused</span>' : '');
+        // A clickable <div> (not <button>) so the inner Archive button is
+        // valid HTML. The row navigates on click; Archive stops propagation.
+        return `<div data-session-chip="${s.id}" role="button" tabindex="0"
+          class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}"
+          title="${s.busy ? 'AI is working — ' : ''}${label}">
+          ${AppView._devCardIcon('session')}
+          <span class="flex-1 min-w-0">
+            <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200 break-words">${label}</span>
+            <span class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">Your dev session</span>
+          </span>
+          ${statusTag}
+          <button type="button" class="dc-active-archive" data-archive-chip="${s.id}" data-name="${label}" title="Archive this session (closes the PR, frees the slot)">Archive</button>
+          <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+        </div>`;
+      }).join('');
+
+      // Archived toggle — collapsed by default on every render (no
+      // persistence). Hidden entirely when the viewer has no archived
+      // sessions for this app.
+      const archivedHtml = archived.length ? `
+        <div class="pt-1">
+          <button type="button" data-archived-toggle aria-expanded="false"
+            class="text-xs text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 inline-flex items-center gap-1">
+            <svg data-archived-caret class="w-3 h-3 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+            Show archived (${archived.length})
+          </button>
+          <div data-archived-list class="hidden space-y-2 pt-2">
+            ${archived.map((s) => {
+              const label = escapeHtml(s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`);
+              return `<div class="${AppView.DEV_CARD_CLS}">
+                ${AppView._devCardIcon('session')}
+                <span class="flex-1 min-w-0">
+                  <span class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 break-words">${label}</span>
+                  <span class="block text-xs text-zinc-400 dark:text-zinc-500 truncate">Archived</span>
+                </span>
+                <button type="button" class="gc-vote-btn" data-unarchive-chip="${s.id}" title="Restore this session (reopens its PR)">Unarchive</button>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>` : '';
+
       live.innerHTML = `
         <div class="space-y-2">
-          ${mine.map((s) => {
-            const label = escapeHtml(s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`);
-            const statusTag = s.busy
-              ? '<span class="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
-              : (s.status === 'paused' ? '<span class="text-xs text-zinc-500 shrink-0">paused</span>' : '');
-            return `<button data-session-chip="${s.id}"
-              class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}"
-              title="${s.busy ? 'AI is working — ' : ''}${label}">
-              ${AppView._devCardIcon('session')}
-              <span class="flex-1 min-w-0">
-                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200 break-words">${label}</span>
-                <span class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">Your dev session</span>
-              </span>
-              ${statusTag}
-              <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-            </button>`;
-          }).join('')}
+          ${chipsHtml}
+          ${archivedHtml}
         </div>`;
-      live.querySelectorAll('[data-session-chip]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-          App.switchTab('dev', parseInt(btn.dataset.sessionChip, 10), 'sessions');
+
+      live.querySelectorAll('[data-session-chip]').forEach((row) => {
+        const go = () => App.switchTab('dev', parseInt(row.dataset.sessionChip, 10), 'sessions');
+        row.addEventListener('click', go);
+        row.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); go(); }
+        });
+      });
+      live.querySelectorAll('[data-archive-chip]').forEach((btn) => {
+        btn.addEventListener('click', async (ev) => {
+          ev.stopPropagation();
+          const id = parseInt(btn.dataset.archiveChip, 10);
+          const ok = await AppView._archiveSession(id, btn.dataset.name || 'this session');
+          if (!ok) return;
+          await AppView._renderSessionsStrip();
+          await AppView._loadDevFeed();
+        });
+      });
+      const toggle = live.querySelector('[data-archived-toggle]');
+      if (toggle) {
+        toggle.addEventListener('click', () => {
+          const listEl = live.querySelector('[data-archived-list]');
+          const caret = live.querySelector('[data-archived-caret]');
+          const open = listEl.classList.toggle('hidden') === false;
+          toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+          if (caret) caret.style.transform = open ? 'rotate(90deg)' : '';
+        });
+      }
+      live.querySelectorAll('[data-unarchive-chip]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const id = parseInt(btn.dataset.unarchiveChip, 10);
+          const original = btn.textContent;
+          btn.textContent = '...';
+          btn.disabled = true;
+          try {
+            const resp = await fetch(`/api/sessions/${id}/unarchive`, { method: 'POST' });
+            const body = await resp.json().catch(() => ({}));
+            if (!resp.ok) {
+              alert(body.error || 'Failed to unarchive session');
+              btn.textContent = original;
+              btn.disabled = false;
+              return;
+            }
+            if (body.ccPurged) {
+              alert("Session restored. Note: Claude's memory had already been cleared, so this picks up as a fresh chat on the same branch.");
+            }
+          } catch (err) {
+            alert(`Unarchive failed: ${err.message}`);
+            btn.textContent = original;
+            btn.disabled = false;
+            return;
+          }
+          await AppView._renderSessionsStrip();
+          await AppView._loadDevFeed();
         });
       });
     } catch {
       el.innerHTML = '';
     }
+  },
+
+  // Shared archive flow for a dev session: confirm (proposal-card copy,
+  // since restore now lives in the strip's archived toggle, not a
+  // removed session-list screen) then POST /api/sessions/:id/archive.
+  // Owner-scoped server-side. Returns true on success so callers can
+  // re-render. Used by both the sessions strip and archiveProposal.
+  async _archiveSession(sessionId, name) {
+    if (!sessionId) return false;
+    const ok = await ConfirmModal.show({
+      title: `Archive "${name}"?`,
+      message: "This closes the PR and frees the slot. You can Unarchive it later to restore it (chat memory is kept for 30 days).",
+      confirmLabel: 'Archive',
+      danger: true,
+    });
+    if (!ok) return false;
+    try {
+      const resp = await fetch(`/api/sessions/${sessionId}/archive`, { method: 'POST' });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        alert(data.error || `Archive failed (HTTP ${resp.status}).`);
+        return false;
+      }
+    } catch (err) {
+      alert(`Archive failed: ${err.message}`);
+      return false;
+    }
+    return true;
   },
 
   // Refresh the strip's busy indicators on a slow tick while the forum
@@ -1626,24 +1753,8 @@ const AppView = {
     if (!sessionId) return;
     const pr = (AppView._proposals || []).find((p) => p.id === sessionId);
     const name = pr ? (pr.title || pr.pr_title || `PR#${pr.pr_number || pr.id}`) : 'this proposal';
-    const ok = await ConfirmModal.show({
-      title: `Archive "${name}"?`,
-      message: "This closes the PR and frees the slot. You can Unarchive it later to restore it (chat memory is kept for 30 days).",
-      confirmLabel: 'Archive',
-      danger: true,
-    });
+    const ok = await AppView._archiveSession(sessionId, name);
     if (!ok) return;
-    try {
-      const resp = await fetch(`/api/sessions/${sessionId}/archive`, { method: 'POST' });
-      if (!resp.ok) {
-        const data = await resp.json().catch(() => ({}));
-        alert(data.error || `Archive failed (HTTP ${resp.status}).`);
-        return;
-      }
-    } catch (err) {
-      alert(`Archive failed: ${err.message}`);
-      return;
-    }
     await AppView._loadDevFeed();
   },
 
