@@ -27,6 +27,7 @@ async function migrate(config) {
   await seedStagingEnvProposal(pool, config);
   await seedStagingMergedPrs(pool, config);
   await seedStagingMyOpenPr(pool, config);
+  await seedStagingArchiveProposalFixtures(pool, config);
   await seedStagingActiveSessions(pool, config);
   await seedStagingCcProgressRun(pool, config);
   await seedStagingCcEstimateRun(pool, config);
@@ -2255,6 +2256,112 @@ async function seedStagingMyOpenPr(pool, config) {
     appId,
     targetUser: target.username,
     sessionId,
+  });
+}
+
+// Archive-restore fixtures (#287-style regression): seed the two states
+// that exercise the restored Archive action but are hard to reach by
+// clicking around in a fresh staging container.
+//
+//  1. A viewer-owned PROMOTED session with NO warm worker. Because it's
+//     never registered in worker.warmRegistrySnapshot(), GET
+//     /api/apps/:slug/sessions reports `warm: false`, exactly the
+//     cold-promoted case that used to lose its Archive button in the
+//     dev-chat session list — and the same proposer-owned promoted state
+//     the proposal card now shows an Archive button for on the Dev feed.
+//  2. A viewer-owned ARCHIVED session so the Unarchive control and the
+//     archived-inline listing are visible without first archiving one.
+//
+// Owned by the user the tester logs in as (first admin, same selection
+// as the other session fixtures) so both appear in that user's own
+// owner-scoped sessions list. chat_sessions is staging:private (copied
+// schema-only into staging), hence the seed. Idempotent via the
+// branch-name existence check; strictly a no-op outside staging.
+async function seedStagingArchiveProposalFixtures(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging archive-proposal fixtures skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: users } = await pool.query(
+    `SELECT id, username
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 3`
+  );
+  if (!users.length) {
+    log.warn('db', 'Staging archive-proposal fixtures skipped: no users');
+    return;
+  }
+  const owner = users[0];
+  const votesRequired = Math.max(1, Math.ceil(users.length / 2));
+
+  // Cold promoted proposal — PR up for vote, worker spun down.
+  const coldBranch = 'staging-fixture/archive-cold-promoted';
+  const { rows: coldExisting } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, coldBranch]
+  );
+  let coldSessionId = coldExisting[0]?.id;
+  if (!coldSessionId) {
+    const { rows } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_number, pr_title, pr_url, status,
+          votes_required, created_at, promoted_at)
+       VALUES
+         ($1, $2, $3, 9300,
+          '[Mock] Cold promoted proposal — worker spun down, still archivable',
+          'https://github.com/usernode-staging/demo/pull/9300',
+          'promoted', $4,
+          NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days')
+       RETURNING id`,
+      [appId, owner.id, coldBranch, votesRequired]
+    );
+    coldSessionId = rows[0].id;
+  }
+  // The author's own yes-vote so the tally pill renders a realistic fill.
+  await pool.query(
+    `INSERT INTO pr_votes (session_id, user_id, vote, created_at)
+     VALUES ($1, $2, 'yes', NOW() - INTERVAL '3 days')
+     ON CONFLICT (session_id, user_id) DO NOTHING`,
+    [coldSessionId, owner.id]
+  );
+
+  // Already-archived session — shows the Unarchive control + archived
+  // row in the inline session list.
+  const archivedBranch = 'staging-fixture/archive-already-archived';
+  const { rows: archivedExisting } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, archivedBranch]
+  );
+  if (!archivedExisting.length) {
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_number, pr_title, status,
+          created_at, promoted_at, archived_at)
+       VALUES
+         ($1, $2, $3, 9301,
+          '[Mock] Archived proposal — restorable via Unarchive',
+          'archived',
+          NOW() - INTERVAL '5 days', NOW() - INTERVAL '5 days',
+          NOW() - INTERVAL '1 day')`,
+      [appId, owner.id, archivedBranch]
+    );
+  }
+
+  log.info('db', 'Staging archive-proposal fixtures seeded', {
+    appId,
+    owner: owner.username,
+    coldSessionId,
   });
 }
 
