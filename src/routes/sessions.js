@@ -701,10 +701,31 @@ function sessionRoutes(config) {
 
       // The promised follow-up (#155): an assistant message telling the new
       // owner where the auto session left off and what to do next.
+      //
+      // #32: chips render only under the LAST non-system message, which is
+      // this follow-up. When the auto session ended in a question, look up
+      // the suggestions persisted on its question turn (the source's most
+      // recent assistant message with a non-empty metadata.suggestions) and
+      // forward them onto the follow-up so the answer chips render under it.
+      // spec/code/spec_code outcomes have no questions — they stay chip-free.
+      let followUpSuggestions = null;
+      if (src.headless_outcome === 'question') {
+        const { rows: suggRows } = await pool.query(
+          `SELECT metadata FROM chat_session_messages
+           WHERE session_id = $1 AND role = 'assistant'
+             AND jsonb_array_length(COALESCE(metadata->'suggestions', '[]'::jsonb)) > 0
+           ORDER BY id DESC LIMIT 1`,
+          [src.id]
+        );
+        if (suggRows.length) {
+          const s = suggRows[0].metadata && suggRows[0].metadata.suggestions;
+          if (Array.isArray(s) && s.length) followUpSuggestions = s;
+        }
+      }
       const followUp = buildHeadlessFollowUpMessage(src);
       await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content) VALUES ($1, 'assistant', $2)`,
-        [session.id, followUp]
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'assistant', $2, $3)`,
+        [session.id, followUp, JSON.stringify(followUpSuggestions ? { suggestions: followUpSuggestions } : {})]
       );
 
       events.record(pool, {
@@ -2512,7 +2533,7 @@ HEADLESS AUTO-SESSION MODE: you are running unattended on GitHub issue #${issueN
 1. FIRST apply the CLARITY GATE (above) to the issue, including any ISSUE COMMENTS included in the message — treat the reporter's comments as their input, and comments marked as earlier proposal questions as your own previous turn (answers to them may make the issue clear now). If the issue FAILS the gate, classify each blocking question you would ask:
    - REPO-ANSWERABLE: what exists in the app, where the relevant code lives, how a feature currently behaves, whether the report matches reality. Asking the reporter is a last resort — investigation comes first: these questions go to dispatch_scout (step 2), NOT to the reporter. In the scout prompt, enumerate the unresolved points and instruct it to settle them from the code, choose stated defaults where reasonable, and keep only the genuinely human-only blockers in a "Questions" section.
    - HUMAN-ONLY: what the reporter wants, product/priority choices, reproduction details only the reporter has — things no codebase can answer.
-   ONLY if EVERY blocking question is human-only: reply in plain text containing ONLY the numbered clarifying questions with your suggested defaults, and call no tool. Your reply will be posted verbatim as a comment on GitHub issue #${issueNumber} for the reporter to answer — write it for them (no greetings, no meta-talk about sessions or tools). Otherwise dispatch_scout per step 2.
+   ONLY if EVERY blocking question is human-only: reply in plain text containing ONLY the numbered clarifying questions with your suggested defaults, AND ALSO call suggest_answers for those questions. The suggest_answers call is metadata-only — it does NOT change the verbatim text posted to GitHub issue #${issueNumber}; it exists so the human who later starts a session from this proposal can tap the suggested answers. The visible text must still be ONLY the numbered questions with defaults. Your text reply will be posted verbatim as a comment on GitHub issue #${issueNumber} for the reporter to answer — write it for them (no greetings, no meta-talk about sessions or tools). Otherwise dispatch_scout per step 2.
 2. dispatch_scout when the issue passes the gate and needs investigation or design — OR when the gate failed for repo-answerable reasons (scouting is also the way to resolve ambiguity): produce a grounded spec a human will review later. Prefer this for anything non-trivial. After the scout returns you will get ONE follow-up decision turn where you may implement the spec immediately if it turned out straightforward — so scouting first never costs you the chance to ship; any questions surviving the scout's investigation will be posted to the issue from that decision turn, so failing the gate is not a reason to avoid scouting.
 3. dispatch_claude_code ONLY for small, unambiguous fixes the issue text fully specifies. The agent may commit and push its branch, and a staging preview is built from the pushed commit — but NO pull request is created in this mode; a human will start a session from this auto session later and propose the change (which opens the PR on their branch).
 Never promise future work and never ask for confirmation — state what you did and what the human reviewer should do next.`;
@@ -2528,9 +2549,9 @@ function buildHeadlessDecisionAddendum(issueNumber) {
   return `
 
 DECISION TURN: the scout's spec is now in your system prompt (CURRENT SPEC DOC). You get exactly ONE more action.
-If the spec contains a Questions section with decisions a human must make: do NOT dispatch. Reply in plain text containing ONLY those numbered questions with your suggested defaults, written for the issue reporter — your reply will be posted verbatim as a comment on GitHub issue #${issueNumber} (no greetings, no meta-talk about sessions or specs).
+If the spec contains a Questions section with decisions a human must make: do NOT dispatch. Reply in plain text containing ONLY those numbered questions with your suggested defaults, written for the issue reporter, AND ALSO call suggest_answers for those questions. The suggest_answers call is metadata-only — it does NOT change the verbatim text posted to GitHub issue #${issueNumber}; it exists so the human who later starts a session from this proposal can tap the suggested answers. The visible text must still be ONLY the numbered questions with defaults. Your text reply will be posted verbatim as a comment on GitHub issue #${issueNumber} (no greetings, no meta-talk about sessions or specs).
 Otherwise, dispatch dispatch_claude_code to implement the spec NOW only if ALL of these hold:
-- The spec has no "Questions" section, no open decisions, and no choices deferred to a human.
+- The spec has no **unresolved/blocking** questions — a "Questions" section that says "None" (or is empty) is NOT a blocker; proceed to build it. Only an open question that genuinely requires a human decision blocks the build.
 - It describes a small, bounded change with concrete file paths — roughly a handful of files, no broad refactor.
 - No database schema migrations, no destructive or irreversible operations, no changes to auth, billing, permissions, or security-sensitive code.
 - No new external services, dependencies, or credentials.
@@ -2585,14 +2606,63 @@ function shouldPostHeadlessQuestionComment({ outcome, dispatchedTool, mayorText 
   return outcome === 'question' && !dispatchedTool && !!(mayorText || '').trim();
 }
 
-// #178: does the spec still carry a blocking "Questions" section after the
-// scout's investigation? Keys on ATX headings whose text begins with
+// #178/#196: does the spec still carry a blocking "Questions" section after
+// the scout's investigation? Keys on ATX headings whose text begins with
 // "Question(s)" / "Open question(s)" — the exact section name the base
-// prompt and scout prompt mandate for blockers. A false positive merely
-// downgrades a buildable spec to a posted-questions round-trip; a false
-// negative reproduces the old park-for-human behavior. Exported for tests.
+// prompt and scout prompt mandate for blockers — then INSPECTS the section
+// body: a heading whose body is empty or only a "nothing here" marker
+// ("None", "N/A", …) is NOT a blocker, so a scout's habitual
+// "### Questions\nNone" no longer parks the run for a human. Only a section
+// with real residual content (a list item or sentence) blocks. A false
+// positive merely downgrades a buildable spec to a posted-questions
+// round-trip; a false negative reproduces the old park-for-human behavior.
+// Exported for tests.
+//
+// Recognized "nothing here" markers (case-insensitive, tolerating trailing
+// punctuation and a short trailing clause like "None — resolved from code.").
+const QUESTIONS_EMPTY_MARKER_RE = /^(?:none|n\/a|na|no\s+open\s+questions|no\s+questions|no\s+blocking\s+questions|none\s+blocking|nothing\s+blocking)\b/i;
+
 function specHasBlockingQuestions(specMd) {
-  return /^#{1,6}\s*(?:open\s+)?questions?\b/im.test(specMd || '');
+  const text = specMd || '';
+  // Match a Questions-style ATX heading, capturing its level (# count) so we
+  // can find where its section ends (next same-or-higher-level heading).
+  const headingRe = /^(#{1,6})\s*(?:open\s+)?questions?\b[^\n]*$/gim;
+  let m;
+  while ((m = headingRe.exec(text)) !== null) {
+    const level = m[1].length;
+    const bodyStart = m.index + m[0].length;
+    // Find the next heading whose level is <= this section's level (a sibling
+    // or higher heading); deeper sub-headings stay part of the section.
+    const rest = text.slice(bodyStart);
+    const stopRe = /^(#{1,6})\s/gm;
+    let stop;
+    let bodyEnd = rest.length;
+    while ((stop = stopRe.exec(rest)) !== null) {
+      if (stop[1].length <= level) { bodyEnd = stop.index; break; }
+    }
+    const body = rest.slice(0, bodyEnd);
+    if (questionsBodyHasContent(body)) return true;
+  }
+  return false;
+}
+
+// Strip markdown noise from a Questions section body and decide whether it
+// carries a real question (vs. empty or a "None"-style marker).
+function questionsBodyHasContent(body) {
+  const cleaned = (body || '')
+    .split('\n')
+    .map((line) => line
+      // drop leading list/quote markers
+      .replace(/^\s*(?:[-*>]\s*)+/, '')
+      // drop emphasis underscores/asterisks anywhere
+      .replace(/[_*]/g, '')
+      .trim())
+    .filter((line) => line.length > 0)
+    .join(' ')
+    .trim();
+  if (!cleaned) return false;
+  if (QUESTIONS_EMPTY_MARKER_RE.test(cleaned)) return false;
+  return true;
 }
 
 const HEADLESS_QUESTION_FOOTER = '\n\n— Posted by this issue\'s proposal session. '
@@ -2995,9 +3065,20 @@ async function runHeadlessSession({
             ],
             systemPrompt: wrapPrompt,
             model: selectedModel,
+            // #32: on the rejected-build (question) path the wrap-up
+            // re-asks the human-only questions — expose suggest_answers so
+            // it can attach answer chips, mirroring the phase-1 question
+            // turn. Other wrap-up outcomes ignore the tool.
+            tools: [SUGGEST_ANSWERS_TOOL],
             apiKey: userApiKey,
           });
           let mayorText3 = mayor3.text;
+          // #32: persist suggestions only on the question outcome — that's
+          // the row a cloned session forwards onto its follow-up to render
+          // the answer chips. Non-question wrap-ups carry no metadata.
+          const { suggestions: decisionSuggestions } = outcome === 'question'
+            ? resolveSuggestedAnswers(mayor3.toolUses)
+            : { suggestions: null };
           // #178: on the rejected-build path the wrap-up text IS the
           // reporter-facing questions; blank text posts nothing (the spec
           // carries the questions for the human reviewer).
@@ -3012,9 +3093,10 @@ async function runHeadlessSession({
           send('mayor_reasoning', { text: mayorText3 });
           const costCents3 = llm.estimateCostCents(mayor3.usage, selectedModel);
           await pool.query(
-            `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
-             VALUES ($1, 'assistant', $2, $3, $4, $5)`,
-            [session.id, mayorText3, selectedModel, mayor3.usage.input_tokens + mayor3.usage.output_tokens, costCents3]
+            `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
+             VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
+            [session.id, mayorText3, selectedModel, mayor3.usage.input_tokens + mayor3.usage.output_tokens, costCents3,
+             JSON.stringify(decisionSuggestions ? { suggestions: decisionSuggestions } : {})]
           );
           await debitMayorUsage(mayor3.usage);
         }
@@ -3914,7 +3996,7 @@ Your job is to investigate this repo and produce a MARKDOWN SPEC for the change.
 
 The spec is rendered as markdown in a viewer that follows standard CommonMark fencing. If you include a fenced code block that ITSELF contains a triple-backtick fence (common when quoting markdown examples or the platform's \`\`\`filepath:...\`\`\` output convention), wrap the OUTER block in a four-backtick fence (\`\`\`\`) — a longer fence can safely contain shorter ones. Otherwise the inner \`\`\` closes the block early and the rest of the spec renders broken. When in doubt, prefer fewer/inline code samples over deeply nested fences.
 
-Do NOT pad the spec with open questions. Only include a "### Questions" subsection — placed at the END of the "User-facing changes" half, since questions are for the (possibly non-technical) requester — for things that genuinely BLOCK implementation: decisions the coding agent cannot reasonably make on its own and that would change what gets built. Make a sensible default choice wherever you can and state it, rather than asking. Non-blocking items — things worth noting but not required to answer before building — belong in the "Technical implementation" half under "### Considerations" (trade-offs, assumptions, things to keep in mind) or "### Deferred work" (out-of-scope or follow-up items), NOT as questions.
+Do NOT pad the spec with open questions. Only include a "### Questions" subsection — placed at the END of the "User-facing changes" half, since questions are for the (possibly non-technical) requester — for things that genuinely BLOCK implementation: decisions the coding agent cannot reasonably make on its own and that would change what gets built. Make a sensible default choice wherever you can and state it, rather than asking. Non-blocking items — things worth noting but not required to answer before building — belong in the "Technical implementation" half under "### Considerations" (trade-offs, assumptions, things to keep in mind) or "### Deferred work" (out-of-scope or follow-up items), NOT as questions. When there are no blockers, OMIT the "### Questions" subsection entirely — do NOT write "### Questions\nNone" or an empty section.
 
 Your final assistant message must be ONLY the markdown spec — no preamble, no "I'll investigate...", no "Here's the spec:". The host captures that final message verbatim and stores it as the session's spec doc.
 
@@ -4988,7 +5070,7 @@ THE SPEC DOC:
 Every session has a markdown SPEC DOC that the user can read in the dev-chat spec viewer (a side-panel they open via the spec preview cards in the chat). It is your collaborative working surface for planning before code is written. The current spec is included verbatim below in the CURRENT SPEC DOC block — refer to it whenever you discuss or summarize the spec. The viewer is read-only: the user cannot hand-edit the spec, so all revisions go through you — and YOU never edit the spec in-process either. ALL spec writing and revising, however small, is done by dispatching the scout (dispatch_scout), which reads the repo and rewrites the doc; you only relay what the user wants changed. When they're happy with the spec they'll ask you to dispatch the coding agent in chat — you don't need to call dispatch_claude_code just because the spec is done; the user owns that decision.
 
 SPEC QUESTIONS — KEEP THEM RARE:
-Do not pad the spec with open questions. Only include a "Questions" section for things that genuinely BLOCK implementation — decisions the coding agent cannot reasonably make on its own and that would change what gets built. Wherever you can, make a sensible default choice and state it instead of asking. Non-blocking items belong under "Considerations" (trade-offs, assumptions, things to keep in mind) or "Deferred work" (out-of-scope or follow-up items) — never phrase those as questions. When you instruct the scout to write or revise the spec, tell it to prefer decisions over questions.
+Do not pad the spec with open questions. Only include a "Questions" section for things that genuinely BLOCK implementation — decisions the coding agent cannot reasonably make on its own and that would change what gets built. Wherever you can, make a sensible default choice and state it instead of asking. Non-blocking items belong under "Considerations" (trade-offs, assumptions, things to keep in mind) or "Deferred work" (out-of-scope or follow-up items) — never phrase those as questions. When there are no blockers, OMIT the "Questions" section entirely rather than writing "None" or an empty section. When you instruct the scout to write or revise the spec, tell it to prefer decisions over questions.
 
 CLARITY GATE — ask before acting on unclear requests:
 Before dispatching any tool on a request or issue, check whether it is clear enough to act on. A request/issue is UNCLEAR when any of these hold:

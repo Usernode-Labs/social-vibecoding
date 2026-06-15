@@ -13,6 +13,43 @@ const AppView = {
   _ghIssuesMeta: { truncatedList: false, note: null, repoUrl: null, myRemaining: null },
   _bountyInFlight: new Set(),
 
+  // Scroll-position memory for the Dev card list, keyed by app slug
+  // (`App.currentApp`). In-memory only — reset on a full page reload by
+  // design, so a hard refresh starts at the top. Mirrors the
+  // per-session chat scroll memory in dev-chat.js
+  // (`_savedScrollBySession`): we capture the list's scrollTop when
+  // leaving it (any route that re-enters renderDevView) and restore it
+  // after the feed repaints, so tapping into an item and coming Back
+  // lands the user where they left off instead of at the top.
+  _savedFeedScroll: {},
+
+  // Store the Dev list's scroll offset under an app slug. A missing
+  // slug or a non-positive offset clears any saved value (top is the
+  // default, so there's nothing to remember). Pure besides the map
+  // write — DOM-free for unit testing.
+  _saveFeedScroll(slug, scrollTop) {
+    if (!slug) return;
+    const n = Number(scrollTop);
+    if (!Number.isFinite(n) || n <= 0) { delete AppView._savedFeedScroll[slug]; return; }
+    AppView._savedFeedScroll[slug] = n;
+  },
+
+  // Read back a saved offset for a slug, or 0 (top) when none is
+  // stored. Positions stay isolated per slug.
+  _getFeedScroll(slug) {
+    const v = AppView._savedFeedScroll[slug];
+    return Number.isFinite(v) && v > 0 ? v : 0;
+  },
+
+  // Clamp a saved offset to the maximum scrollable offset of the
+  // (possibly shorter) rebuilt list — the same clamp the browser's own
+  // scrollTo applies — so a collapsed "Show more" list lands at the
+  // bottom of its available content rather than overshooting.
+  _clampScrollTop(saved, scrollHeight, clientHeight) {
+    const max = Math.max(0, Number(scrollHeight) - Number(clientHeight));
+    return Math.max(0, Math.min(Number(saved) || 0, max));
+  },
+
   // Shared list-item shell for every card on the Dev page — the General
   // chat card, issue/proposal/governance cards, Your-sessions rows, and
   // Recently-merged rows — so the whole page reads as one uniform list
@@ -402,6 +439,15 @@ const AppView = {
     const content = document.getElementById('app-content');
     if (!content) return;
 
+    // Capture the Dev list's scroll position before any branch below
+    // overwrites #app-content. #dev-forum-scroll only exists when the
+    // outgoing view was the card list, so this is a no-op for
+    // topic/session/chat sub-views. Every back-navigation re-enters
+    // renderDevView, so this single point covers the Back buttons,
+    // browser back/forward, and programmatic navigation alike.
+    const outgoingScroll = document.getElementById('dev-forum-scroll');
+    if (outgoingScroll) AppView._saveFeedScroll(App.currentApp, outgoingScroll.scrollTop);
+
     // Leaving whatever thread surface was open: drop the live render
     // target so incoming thread messages turn into badge bumps.
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
@@ -516,9 +562,40 @@ const AppView = {
       if (govRow) AppView.openTopic('gov', parseInt(govRow.dataset.govRow, 10));
     });
 
+    // Completed (merged) proposals live in a sibling container with its own
+    // bespoke layout; bind the same tap-to-open behaviour here so merged
+    // rows open their (still-live) discussion thread full-screen. The node
+    // is stable across toggleMergedPrs()/_loadDevFeed() innerHTML rewrites.
+    const mergedEl = document.getElementById('gc-merged');
+    if (mergedEl) {
+      mergedEl.addEventListener('click', (e) => {
+        if (e.target.closest('a, button, input, form')) return;
+        const prRow = e.target.closest('[data-proposal-row]');
+        if (prRow) AppView.openTopic('proposal', parseInt(prRow.dataset.proposalRow, 10));
+      });
+    }
+
     AppView._renderSessionsStrip();
     AppView._syncStripPolling();
     await AppView._loadDevFeed();
+
+    // Restore the saved scroll position now that the feed has painted.
+    // requestAnimationFrame waits for layout so scrollHeight is final;
+    // scrollTo({ behavior: 'instant' }) overrides any CSS smooth-scroll
+    // (matching dev-chat.js's restoreSessionScroll) so this is an
+    // instant jump, not a visible animation. We clamp to the rebuilt
+    // list's max offset — a shorter list (collapsed "Show more") lands
+    // near the old spot rather than overshooting. No saved value (or 0)
+    // → top, as before.
+    const savedScroll = AppView._getFeedScroll(App.currentApp);
+    if (savedScroll > 0) {
+      requestAnimationFrame(() => {
+        const container = document.getElementById('dev-forum-scroll');
+        if (!container) return;
+        const top = AppView._clampScrollTop(savedScroll, container.scrollHeight, container.clientHeight);
+        container.scrollTo({ top, behavior: 'instant' });
+      });
+    }
   },
 
   // ── Full-screen topic sub-view ──────────────────────────────────────
@@ -572,7 +649,8 @@ const AppView = {
       return (AppView._ghIssues || []).find((i) => i.number === t.id) || null;
     }
     if (t.kind === 'proposal') {
-      // Open proposals first; merged ones stay viewable (read-only thread).
+      // Open proposals first; merged ones stay viewable with a still-live,
+      // postable discussion thread (voting is settled, talking isn't).
       return (AppView._proposals || []).find((p) => p.id === t.id)
         || (AppView._merged || []).find((p) => p.id === t.id) || null;
     }
@@ -678,23 +756,16 @@ const AppView = {
     const slot = document.getElementById('dev-topic-thread');
     if (!t || !slot || typeof GroupChat === 'undefined' || !GroupChat.mountThread) return;
     const typeMap = { issue: 'issue', proposal: 'session', gov: 'governance' };
-    // A proposal that has left voting gets a read-only thread.
-    let readOnly = false;
-    let notice = '';
-    if (t.kind === 'proposal') {
-      const item = AppView._findTopicItem();
-      if (item && item.status === 'merged') {
-        readOnly = true;
-        notice = 'Voting closed — this proposal was merged. The discussion is read-only.';
-      }
-    }
+    // Every topic thread — including merged proposals — mounts with a live,
+    // editable composer. Merging settles the vote, not the conversation:
+    // people keep posting follow-ups after a proposal lands. The WS handler
+    // accepts session-thread posts on merged sessions (existence-only gate),
+    // so there is no read-only lock or "voting closed" notice here.
     GroupChat.mountThread({
       type: typeMap[t.kind],
       ref: t.id,
       container: slot,
       fullHeight: true,
-      readOnly,
-      notice,
     });
   },
 
@@ -1386,6 +1457,12 @@ const AppView = {
     const sessionBtn = mine
       ? `<button class="gc-vote-btn" title="Open the dev session behind this proposal" onclick="AppView.openProposalSession(${pr.id})">Open session</button>`
       : '';
+    // Archive sits beside "Open session" on your own live proposals only.
+    // Not shown on merged/merging cards (their PR is settled). A proposal's
+    // id is its session id, so it reuses POST /api/sessions/:id/archive.
+    const archiveBtn = (mine && !isMerged && !isMerging && pr.status === 'promoted')
+      ? `<button class="gc-vote-btn" title="Archive this proposal (closes the PR, frees the slot)" onclick="AppView.archiveProposal(${pr.id})">Archive</button>`
+      : '';
     // #195/#211: before/after capture tiles, collapsed by default behind a
     // "Show before/after" pill that sits with the other action buttons. The
     // tiles wait in an inert <template> (no bandwidth, no autoplay loops)
@@ -1404,7 +1481,7 @@ const AppView = {
     // the vote is settled; kudos stays open.
     const actions = (isMerged
       ? [kudosBtn, sessionBtn, visualsBtn]
-      : [AppView.voteButtonsHtml(pr), kudosBtn, sessionBtn, visualsBtn]
+      : [AppView.voteButtonsHtml(pr), kudosBtn, sessionBtn, archiveBtn, visualsBtn]
     ).filter(Boolean).join('');
 
     return `
@@ -1537,6 +1614,37 @@ const AppView = {
     if (typeof App !== 'undefined' && App.switchTab) {
       App.switchTab('dev', sessionId, 'sessions');
     }
+  },
+
+  // Archive a live proposal straight from its card (proposer-only; the
+  // button only renders on your own promoted proposals). A proposal's id
+  // is its session id, so this reuses POST /api/sessions/:id/archive — the
+  // same endpoint and confirm copy the dev-chat session list uses. On
+  // success the feed reloads; GET /api/apps/:slug/promoted only returns
+  // status IN ('promoted','merging'), so the archived card drops out.
+  async archiveProposal(sessionId) {
+    if (!sessionId) return;
+    const pr = (AppView._proposals || []).find((p) => p.id === sessionId);
+    const name = pr ? (pr.title || pr.pr_title || `PR#${pr.pr_number || pr.id}`) : 'this proposal';
+    const ok = await ConfirmModal.show({
+      title: `Archive "${name}"?`,
+      message: "This closes the PR and frees the slot. You can Unarchive it later to restore it (chat memory is kept for 30 days).",
+      confirmLabel: 'Archive',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      const resp = await fetch(`/api/sessions/${sessionId}/archive`, { method: 'POST' });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        alert(data.error || `Archive failed (HTTP ${resp.status}).`);
+        return;
+      }
+    } catch (err) {
+      alert(`Archive failed: ${err.message}`);
+      return;
+    }
+    await AppView._loadDevFeed();
   },
 
   async createProposal() {
@@ -1926,7 +2034,7 @@ const AppView = {
       }
 
       html += `
-        <div class="gc-vote-item ${AppView.DEV_CARD_CLS}" data-ref-pr="${pr.pr_number || pr.id}">
+        <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-ref-pr="${pr.pr_number || pr.id}" data-proposal-row="${pr.id}" title="Open this proposal's discussion">
           ${AppView._devCardIcon('done')}
           <div class="flex-1 min-w-0">
             <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -1935,6 +2043,7 @@ const AppView = {
                 <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta"><a href="${pr.pr_url || '#'}" target="_blank" rel="noopener" class="font-mono text-emerald-400 hover:underline">PR#${pr.pr_number || pr.id}</a> · ${date}${AppView.closesPillHtml(pr) ? ` ${AppView.closesPillHtml(pr)}` : ''}</div>
               </div>
               ${AppView.voteCountPill(pr, majority)}
+              ${AppView._devChatBadge(parseInt(pr.chat_count) || 0)}
             </div>
             <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
               ${AppView.voteButtonsHtml(pr, { collapseVoted: true })}
@@ -1942,6 +2051,7 @@ const AppView = {
               ${kudosBtn}
             </div>
           </div>
+          ${AppView.DEV_CARD_CHEVRON}
         </div>`;
     }
     html += '</div>';
@@ -3611,9 +3721,11 @@ const AppView = {
 // Bridge → shell consent relay for app LLM access (issue #34). One
 // top-level listener; handleLlmBridgeMessage verifies the source is an
 // iframe this shell owns and ignores everything else.
-window.addEventListener('message', (e) => {
-  try { AppView.handleLlmBridgeMessage(e); } catch {}
-});
+if (typeof window !== 'undefined') {
+  window.addEventListener('message', (e) => {
+    try { AppView.handleLlmBridgeMessage(e); } catch {}
+  });
+}
 
 // Small helpers used by the #21 version pill. Kept local so app-view
 // stays self-contained — the dev-console has its own copy of these.
@@ -3623,6 +3735,15 @@ function escapeHtml(s) {
   }[c]));
 }
 function escapeAttr(s) { return escapeHtml(s).replace(/\n/g, ' '); }
+
+// Browser script first, but expose AppView to node so the pure
+// scroll-memory helpers (_saveFeedScroll / _getFeedScroll /
+// _clampScrollTop) can be unit-tested without a DOM. No-op in the
+// browser, where `module` is undefined.
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = AppView;
+}
+
 function relTime(iso) {
   const then = new Date(iso).getTime();
   if (!Number.isFinite(then)) return '';

@@ -777,4 +777,4 @@ function pushNotificationToUser(userId, payload) {
   return sent;
 }
 
-module.exports = { attach, broadcast, broadcastGlobal, broadcastGlobalScoped, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushSessionUpdate, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushNotificationToUser, getReactionsForMessages };
+module.exports = { attach, broadcast, broadcastGlobal, broadcastGlobalScoped, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushSessionUpdate, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushNotificationToUser, getReactionsForMessages, validateThread };
