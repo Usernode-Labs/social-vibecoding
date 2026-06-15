@@ -701,10 +701,31 @@ function sessionRoutes(config) {
 
       // The promised follow-up (#155): an assistant message telling the new
       // owner where the auto session left off and what to do next.
+      //
+      // #32: chips render only under the LAST non-system message, which is
+      // this follow-up. When the auto session ended in a question, look up
+      // the suggestions persisted on its question turn (the source's most
+      // recent assistant message with a non-empty metadata.suggestions) and
+      // forward them onto the follow-up so the answer chips render under it.
+      // spec/code/spec_code outcomes have no questions — they stay chip-free.
+      let followUpSuggestions = null;
+      if (src.headless_outcome === 'question') {
+        const { rows: suggRows } = await pool.query(
+          `SELECT metadata FROM chat_session_messages
+           WHERE session_id = $1 AND role = 'assistant'
+             AND jsonb_array_length(COALESCE(metadata->'suggestions', '[]'::jsonb)) > 0
+           ORDER BY id DESC LIMIT 1`,
+          [src.id]
+        );
+        if (suggRows.length) {
+          const s = suggRows[0].metadata && suggRows[0].metadata.suggestions;
+          if (Array.isArray(s) && s.length) followUpSuggestions = s;
+        }
+      }
       const followUp = buildHeadlessFollowUpMessage(src);
       await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content) VALUES ($1, 'assistant', $2)`,
-        [session.id, followUp]
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'assistant', $2, $3)`,
+        [session.id, followUp, JSON.stringify(followUpSuggestions ? { suggestions: followUpSuggestions } : {})]
       );
 
       events.record(pool, {
@@ -2506,7 +2527,7 @@ HEADLESS AUTO-SESSION MODE: you are running unattended on GitHub issue #${issueN
 1. FIRST apply the CLARITY GATE (above) to the issue, including any ISSUE COMMENTS included in the message — treat the reporter's comments as their input, and comments marked as earlier proposal questions as your own previous turn (answers to them may make the issue clear now). If the issue FAILS the gate, classify each blocking question you would ask:
    - REPO-ANSWERABLE: what exists in the app, where the relevant code lives, how a feature currently behaves, whether the report matches reality. Asking the reporter is a last resort — investigation comes first: these questions go to dispatch_scout (step 2), NOT to the reporter. In the scout prompt, enumerate the unresolved points and instruct it to settle them from the code, choose stated defaults where reasonable, and keep only the genuinely human-only blockers in a "Questions" section.
    - HUMAN-ONLY: what the reporter wants, product/priority choices, reproduction details only the reporter has — things no codebase can answer.
-   ONLY if EVERY blocking question is human-only: reply in plain text containing ONLY the numbered clarifying questions with your suggested defaults, and call no tool. Your reply will be posted verbatim as a comment on GitHub issue #${issueNumber} for the reporter to answer — write it for them (no greetings, no meta-talk about sessions or tools). Otherwise dispatch_scout per step 2.
+   ONLY if EVERY blocking question is human-only: reply in plain text containing ONLY the numbered clarifying questions with your suggested defaults, AND ALSO call suggest_answers for those questions. The suggest_answers call is metadata-only — it does NOT change the verbatim text posted to GitHub issue #${issueNumber}; it exists so the human who later starts a session from this proposal can tap the suggested answers. The visible text must still be ONLY the numbered questions with defaults. Your text reply will be posted verbatim as a comment on GitHub issue #${issueNumber} for the reporter to answer — write it for them (no greetings, no meta-talk about sessions or tools). Otherwise dispatch_scout per step 2.
 2. dispatch_scout when the issue passes the gate and needs investigation or design — OR when the gate failed for repo-answerable reasons (scouting is also the way to resolve ambiguity): produce a grounded spec a human will review later. Prefer this for anything non-trivial. After the scout returns you will get ONE follow-up decision turn where you may implement the spec immediately if it turned out straightforward — so scouting first never costs you the chance to ship; any questions surviving the scout's investigation will be posted to the issue from that decision turn, so failing the gate is not a reason to avoid scouting.
 3. dispatch_claude_code ONLY for small, unambiguous fixes the issue text fully specifies. The agent may commit and push its branch, and a staging preview is built from the pushed commit — but NO pull request is created in this mode; a human will start a session from this auto session later and propose the change (which opens the PR on their branch).
 Never promise future work and never ask for confirmation — state what you did and what the human reviewer should do next.`;
@@ -2522,7 +2543,7 @@ function buildHeadlessDecisionAddendum(issueNumber) {
   return `
 
 DECISION TURN: the scout's spec is now in your system prompt (CURRENT SPEC DOC). You get exactly ONE more action.
-If the spec contains a Questions section with decisions a human must make: do NOT dispatch. Reply in plain text containing ONLY those numbered questions with your suggested defaults, written for the issue reporter — your reply will be posted verbatim as a comment on GitHub issue #${issueNumber} (no greetings, no meta-talk about sessions or specs).
+If the spec contains a Questions section with decisions a human must make: do NOT dispatch. Reply in plain text containing ONLY those numbered questions with your suggested defaults, written for the issue reporter, AND ALSO call suggest_answers for those questions. The suggest_answers call is metadata-only — it does NOT change the verbatim text posted to GitHub issue #${issueNumber}; it exists so the human who later starts a session from this proposal can tap the suggested answers. The visible text must still be ONLY the numbered questions with defaults. Your text reply will be posted verbatim as a comment on GitHub issue #${issueNumber} (no greetings, no meta-talk about sessions or specs).
 Otherwise, dispatch dispatch_claude_code to implement the spec NOW only if ALL of these hold:
 - The spec has no "Questions" section, no open decisions, and no choices deferred to a human.
 - It describes a small, bounded change with concrete file paths — roughly a handful of files, no broad refactor.
@@ -2989,9 +3010,20 @@ async function runHeadlessSession({
             ],
             systemPrompt: wrapPrompt,
             model: selectedModel,
+            // #32: on the rejected-build (question) path the wrap-up
+            // re-asks the human-only questions — expose suggest_answers so
+            // it can attach answer chips, mirroring the phase-1 question
+            // turn. Other wrap-up outcomes ignore the tool.
+            tools: [SUGGEST_ANSWERS_TOOL],
             apiKey: userApiKey,
           });
           let mayorText3 = mayor3.text;
+          // #32: persist suggestions only on the question outcome — that's
+          // the row a cloned session forwards onto its follow-up to render
+          // the answer chips. Non-question wrap-ups carry no metadata.
+          const { suggestions: decisionSuggestions } = outcome === 'question'
+            ? resolveSuggestedAnswers(mayor3.toolUses)
+            : { suggestions: null };
           // #178: on the rejected-build path the wrap-up text IS the
           // reporter-facing questions; blank text posts nothing (the spec
           // carries the questions for the human reviewer).
@@ -3006,9 +3038,10 @@ async function runHeadlessSession({
           send('mayor_reasoning', { text: mayorText3 });
           const costCents3 = llm.estimateCostCents(mayor3.usage, selectedModel);
           await pool.query(
-            `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
-             VALUES ($1, 'assistant', $2, $3, $4, $5)`,
-            [session.id, mayorText3, selectedModel, mayor3.usage.input_tokens + mayor3.usage.output_tokens, costCents3]
+            `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
+             VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
+            [session.id, mayorText3, selectedModel, mayor3.usage.input_tokens + mayor3.usage.output_tokens, costCents3,
+             JSON.stringify(decisionSuggestions ? { suggestions: decisionSuggestions } : {})]
           );
           await debitMayorUsage(mayor3.usage);
         }
