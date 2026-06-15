@@ -1182,17 +1182,12 @@ const DevChat = {
     DevChat._setStreamingUI(false);
     DevChat.renderMessages();
     DevChat.refreshBudget();
-    // #138: the turn genuinely finished (this is the real turn-end hook,
-    // unlike _setStreamingUI(false) which also fires on session-switch
-    // teardown / reconnect drops). Chime when the user is looking at the
-    // app — this covers "watching the same dev chat", where notify_on_done
-    // was disarmed so no notification_new (and thus no other tone) arrives.
-    // Hidden = backgrounded: stay silent here; the armed session_done
-    // notification drives the OS notification via Notifications.handleIncoming.
-    // playDoneTone's own dedup guard collapses any incidental overlap.
-    if (window.DevAlerts && document.visibilityState === 'visible') {
-      DevAlerts.playDoneTone();
-    }
+    // #138: the chime/notification is no longer fired from here. Every
+    // interactive turn completion now creates a session_done notification
+    // server-side (see notifySessionDone), so the WS `notification_new`
+    // arrival in Notifications.handleIncoming → DevAlerts.onCompletion is
+    // the single source of the chime (foreground) / OS notification
+    // (backgrounded), even when the user is watching this same dev chat.
   },
 
   // Open (or reopen) the resumable GET /events SSE for the active session.

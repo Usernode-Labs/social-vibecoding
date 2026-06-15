@@ -71,9 +71,12 @@
       } catch { /* no audio support; non-fatal */ }
     },
 
-    // Short, soft two-note chime via OscillatorNodes — no bundled audio
-    // asset. No-op when the pref is off, audio is unsupported / still
-    // locked, or another tone played within TONE_DEDUP_MS.
+    // Soft, bell-like "ding" via OscillatorNodes — a single struck-bell
+    // strike, no bundled audio asset. A fundamental sine plus two quieter
+    // inharmonic partials, each with a fast attack and a long exponential
+    // decay (the ring-out that makes it read as a bell rather than a beep).
+    // No-op when the pref is off, audio is unsupported / still locked, or
+    // another tone played within TONE_DEDUP_MS.
     playDoneTone() {
       if (!DevAlerts.enabled()) return;
       const ctx = DevAlerts._audioCtx;
@@ -83,24 +86,27 @@
       DevAlerts._lastToneAt = now;
       try {
         const t0 = ctx.currentTime;
-        // Two rising notes (G5 → C6), each a fast attack then exponential
-        // decay — pleasant and brief, not a harsh beep.
-        const notes = [
-          { freq: 783.99, start: 0.0, dur: 0.14 },
-          { freq: 1046.5, start: 0.13, dur: 0.20 },
+        const fundamental = 740; // ~F#5 — gentle, mid-bright
+        // ratio = inharmonic partial multiplier; peak = its peak gain;
+        // decay = seconds to ring out. Higher partials are quieter and
+        // decay faster, which is what gives a metallic bell timbre.
+        const partials = [
+          { ratio: 1.0, peak: 0.12, decay: 1.1 },
+          { ratio: 2.0, peak: 0.05, decay: 0.7 },
+          { ratio: 3.01, peak: 0.03, decay: 0.5 },
         ];
-        for (const n of notes) {
+        const attack = 0.005;
+        for (const p of partials) {
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
           osc.type = 'sine';
-          osc.frequency.value = n.freq;
-          const s = t0 + n.start;
-          gain.gain.setValueAtTime(0.0001, s);
-          gain.gain.linearRampToValueAtTime(0.18, s + 0.02);
-          gain.gain.exponentialRampToValueAtTime(0.0001, s + n.dur);
+          osc.frequency.value = fundamental * p.ratio;
+          gain.gain.setValueAtTime(0.0001, t0);
+          gain.gain.exponentialRampToValueAtTime(p.peak, t0 + attack);
+          gain.gain.exponentialRampToValueAtTime(0.0001, t0 + p.decay);
           osc.connect(gain).connect(ctx.destination);
-          osc.start(s);
-          osc.stop(s + n.dur + 0.02);
+          osc.start(t0);
+          osc.stop(t0 + p.decay + 0.02);
         }
       } catch { /* best-effort */ }
     },
@@ -208,7 +214,7 @@
     // tester can choose to stay (hear the chime) or switch away (see the
     // background notification). Returns the delay in ms so the caller can
     // show a matching hint/countdown.
-    TEST_DELAY_MS: 3500,
+    TEST_DELAY_MS: 3000,
     testAlert() {
       DevAlerts._unlockAudio();
       DevAlerts.requestNotifyPermission();

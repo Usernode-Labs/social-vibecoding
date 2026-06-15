@@ -442,16 +442,43 @@ const Notifications = {
     return Notifications.unread + Notifications.invites.length;
   },
 
+  // #138: count of unread AI-completion items (session_done /
+  // auto_solve_done) currently loaded — the green "AI is waiting on you"
+  // badge. Counted from the loaded items page; the unread-dedup keeps these
+  // to one-per-session and they're recent, so they sit within the first
+  // page in practice (see spec Considerations for the server-count fallback).
+  _aiUnread() {
+    return Notifications.items.filter(isPriorityNotif).length;
+  },
+
   _renderBadge() {
+    // #138: two badges. Green = pending AI-agent dev-chat completions; red =
+    // everything else (mentions/replies/reactions/kudos/votes) + pending
+    // invites. The green count is split OUT of the red one so the two never
+    // double-count, and each hides at zero.
+    const aiUnread = Notifications._aiUnread();
+    const redCount = Math.max(0, Notifications.unread - aiUnread) + Notifications.invites.length;
+
     const badge = document.getElementById('notifications-badge');
-    if (!badge) return;
-    const total = Notifications._badgeTotal();
-    if (total > 0) {
-      badge.textContent = total > 99 ? '99+' : String(total);
-      badge.classList.remove('hidden');
-    } else {
-      badge.classList.add('hidden');
+    if (badge) {
+      if (redCount > 0) {
+        badge.textContent = redCount > 99 ? '99+' : String(redCount);
+        badge.classList.remove('hidden');
+      } else {
+        badge.classList.add('hidden');
+      }
     }
+
+    const aiBadge = document.getElementById('notifications-badge-ai');
+    if (aiBadge) {
+      if (aiUnread > 0) {
+        aiBadge.textContent = aiUnread > 99 ? '99+' : String(aiUnread);
+        aiBadge.classList.remove('hidden');
+      } else {
+        aiBadge.classList.add('hidden');
+      }
+    }
+
     const markAll = document.getElementById('notifications-mark-all');
     if (markAll) markAll.disabled = Notifications.unread === 0;
     Notifications._updateTitle();
