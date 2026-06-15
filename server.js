@@ -167,9 +167,6 @@ const deployStatus = require('./src/services/deploy-status');
 app.get('/api/version', (_req, res) => {
   res.json({
     sha: process.env.GIT_SHA || 'dev',
-    // Platform's own runtime env (staging|production). The shell uses this
-    // to gate staging-only on-screen diagnostics (see public/js/staging-debug.js).
-    env: process.env.USERNODE_ENV || 'production',
     name: process.env.USERNODE_PROJECT_NAME || 'usernode',
     repoUrl: process.env.USERNODE_REPO_URL || 'https://github.com/Usernode-Labs/social-vibecoding',
     deployProgress: deployStatus.read(),

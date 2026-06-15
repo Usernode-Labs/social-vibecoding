@@ -206,10 +206,8 @@
       // Reveal via the shared gesture-safe path (see AppView.revealModal) so
       // the opening tap from the drawer row can't ghost-click the backdrop
       // closed. Falls back to a plain reveal if AppView isn't loaded.
-      window.StagingDebug?.log('Settings.open() — #settings-modal in DOM? ' + !!this.modal);
       if (window.AppView && AppView.revealModal) AppView.revealModal(this.modal);
       else this.modal.classList.remove('hidden');
-      window.StagingDebug?.snapshot(this.modal, 'settings after reveal');
       // Intentionally do NOT auto-focus the API key field here. On mobile,
       // focusing an input on open immediately pops the on-screen keyboard,
       // which is jarring when the user just wanted to view settings. Let the

@@ -2953,9 +2953,7 @@ const AppView = {
     if (copyBtn) copyBtn.textContent = 'Copy';
     // Reveal now (see revealModal); the dismiss guard stops the opening tap
     // from ghost-clicking the backdrop closed.
-    window.StagingDebug?.log('openShareModal() — #share-modal in DOM? ' + !!modal);
     AppView.revealModal(modal);
-    window.StagingDebug?.snapshot(modal, 'share after revealModal');
     setTimeout(() => { if (input) { input.focus(); input.select(); } }, 0);
   },
 
@@ -3470,15 +3468,9 @@ const AppView = {
   _inviteDebounce: null,
 
   async openMembersModal() {
-    window.StagingDebug?.log('openMembersModal() ENTERED');
     const appData = AppView.appData;
-    window.StagingDebug?.log('appData = ' + (appData
-      ? `{slug:${appData.slug}, self_hosted:${appData.self_hosted}, can_manage:${appData.can_manage}, can_collaborate:${appData.can_collaborate}, collab_vis:${appData.collab_visibility}}`
-      : String(appData)));
     const modal = document.getElementById('members-modal');
-    window.StagingDebug?.log('#members-modal in DOM? ' + !!modal);
-    if (!modal) { window.StagingDebug?.log('ABORT: #members-modal element missing'); return; }
-    window.StagingDebug?.snapshot(modal, 'before reveal');
+    if (!modal) return;
     // No app loaded: don't fail silently (that's the "button does nothing"
     // symptom). Surface a one-line message and still open the dialog so the
     // tap visibly does something. The row only renders when appData is set,
@@ -3491,20 +3483,12 @@ const AppView = {
         visStatus.className = 'text-sm text-red-400';
       }
       AppView.revealModal(modal);
-      window.StagingDebug?.snapshot(modal, 'after reveal (no-app branch)');
       return;
     }
     // Reveal now (see revealModal); the dismiss guard stops the opening tap
     // from ghost-clicking the backdrop closed. Sections are configured below
     // (the modal is already visible, but they only paint after this frame).
     AppView.revealModal(modal);
-    window.StagingDebug?.snapshot(modal, 'after revealModal');
-    // Re-snapshot on the next frame to catch anything that re-hides it
-    // (a trailing ghost click, a transition, the drawer overlay teardown).
-    if (window.StagingDebug?.active && typeof requestAnimationFrame === 'function') {
-      requestAnimationFrame(() => window.StagingDebug.snapshot(modal, 'next frame'));
-      setTimeout(() => window.StagingDebug.snapshot(modal, '+250ms'), 250);
-    }
 
     AppView._membersVis = {
       collab: appData.collab_visibility || 'public',
@@ -4001,3 +3985,13 @@ function relTime(iso) {
   if (diffDay < 30) return `${diffDay}d ago`;
   return new Date(iso).toLocaleDateString();
 }
+
+// Expose AppView on the global object. `const AppView = {…}` above is a
+// top-level lexical binding: in a classic (non-module) script it's reachable
+// as a bareword from other scripts, but it is NOT a property of `window`.
+// The header-drawer row handlers in app.js gate on `window.AppView` (mirroring
+// `window.App`/`window.Settings`), so without this assignment those handlers
+// see `window.AppView === undefined` and never call openMembersModal /
+// openShareModal — the drawer closed but no panel ever opened. (Found via the
+// staging debug overlay: "drawer-row-members CLICK fired → window.AppView MISSING".)
+window.AppView = AppView;

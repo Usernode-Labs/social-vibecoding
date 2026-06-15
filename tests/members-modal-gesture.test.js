@@ -105,10 +105,54 @@ function makeHarness(elements) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  vm.runInContext(`${VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
+  // Run the file AS-IS — do NOT grab `AppView` via the bareword binding.
+  // We deliberately read it back off `window`, so these tests only pass if
+  // app-view.js actually exposes `window.AppView = AppView` (the bug that
+  // made the drawer handlers' `if (window.AppView)` check fail on device).
+  vm.runInContext(VIEW_SRC, sandbox);
 
-  return { AppView: sandbox.__AppView, clock, warnings };
+  return { AppView: sandbox.window.AppView, clock, warnings };
 }
+
+// ── the global the drawer handlers depend on is actually exposed ─────────
+//
+// The drawer-row handlers in app.js gate on `window.AppView` (and call
+// AppView.openMembersModal/openShareModal). app-view.js declares
+// `const AppView = {…}`, which in a classic script is NOT a window property,
+// so the handlers saw `window.AppView === undefined` and the panels never
+// opened ("drawer-row-members CLICK fired → window.AppView MISSING"). These
+// tests fail if app-view.js stops assigning window.AppView.
+
+test('app-view.js exposes AppView on window (drawer handlers can reach it)', () => {
+  const sandbox = {
+    console, Date, setTimeout, clearTimeout, setInterval, clearInterval,
+    relTime: () => '', escapeHtml: (s) => s, escapeAttr: (s) => s, resolveDevHost: (u) => u,
+    App: { user: { id: 1 } }, Kudos: { renderButton: () => '' }, ConfirmModal: {},
+    document: { getElementById: () => null, querySelector: () => null, querySelectorAll: () => ({ forEach() {} }), addEventListener() {}, createElement: () => ({ style: {}, classList: { add() {}, remove() {} } }), body: { appendChild() {} } },
+    fetch: async () => ({ ok: true, json: async () => ({}) }), alert() {}, addEventListener() {}, localStorage: { getItem: () => null, setItem() {} },
+  };
+  sandbox.window = sandbox; sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(VIEW_SRC, sandbox);
+  assert.equal(typeof sandbox.window.AppView, 'object', 'window.AppView is set');
+  assert.equal(typeof sandbox.window.AppView.openMembersModal, 'function', 'openMembersModal reachable via window.AppView');
+  assert.equal(typeof sandbox.window.AppView.openShareModal, 'function', 'openShareModal reachable via window.AppView');
+});
+
+test('drawer-row-members handler reaches openMembersModal through the window gate', () => {
+  // Reproduce the exact guard the app.js handler uses and prove it now fires.
+  const modal = makeEl(['hidden']);
+  const h = makeHarness({ 'members-modal': modal });
+  // `h.AppView` is read off window (see makeHarness) — i.e. what the handler sees.
+  let opened = false;
+  const realOpen = h.AppView.openMembersModal.bind(h.AppView);
+  h.AppView.openMembersModal = () => { opened = true; return realOpen(); };
+  // The handler body: `if (window.AppView) AppView.openMembersModal();`
+  const win = { AppView: h.AppView };
+  if (win.AppView) win.AppView.openMembersModal();
+  assert.equal(opened, true, 'handler invoked openMembersModal (window.AppView was truthy)');
+  assert.equal(modal.classList.contains('hidden'), false, 'and the panel was revealed');
+});
 
 // ── revealModal: synchronous reveal + open-time stamp ────────────────────
 

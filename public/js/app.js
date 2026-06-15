@@ -1221,24 +1221,18 @@ const App = {
         .addEventListener('click', () => App.HeaderMenu.close());
       document.getElementById('drawer-row-share')
         .addEventListener('click', () => {
-          window.StagingDebug?.log('drawer-row-share CLICK fired');
           App.HeaderMenu.close();
-          if (window.AppView) { window.StagingDebug?.log('-> AppView.openShareModal()'); AppView.openShareModal(); }
-          else window.StagingDebug?.log('-> window.AppView MISSING');
+          if (window.AppView) AppView.openShareModal();
         });
       document.getElementById('drawer-row-members')
         .addEventListener('click', () => {
-          window.StagingDebug?.log('drawer-row-members CLICK fired');
           App.HeaderMenu.close();
-          if (window.AppView) { window.StagingDebug?.log('-> AppView.openMembersModal()'); AppView.openMembersModal(); }
-          else window.StagingDebug?.log('-> window.AppView MISSING');
+          if (window.AppView) AppView.openMembersModal();
         });
       document.getElementById('drawer-row-settings')
         .addEventListener('click', () => {
-          window.StagingDebug?.log('drawer-row-settings CLICK fired');
           App.HeaderMenu.close();
-          if (window.Settings) { window.StagingDebug?.log('-> Settings.open()'); Settings.open(); }
-          else window.StagingDebug?.log('-> window.Settings MISSING');
+          if (window.Settings) Settings.open();
         });
       // Theme segmented control — a live control, NOT a navigation row: it
       // sets the mode and re-highlights WITHOUT closing the drawer, so the
