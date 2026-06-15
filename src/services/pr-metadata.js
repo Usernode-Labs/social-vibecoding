@@ -444,7 +444,14 @@ async function applyPrMetadata({
       if (broadcast) broadcast('pr_created', { prNumber: pr.number, prUrl: pr.html_url, prTitle });
       return { prNumber: pr.number, prUrl: pr.html_url, prTitle };
     } catch (err) {
-      log.warn('pr-metadata', 'PR creation failed', { err: err.message, sessionId: session.id });
+      log.warn('pr-metadata', 'PR creation failed', {
+        err: err.message, sessionId: session.id, code: err.code || null,
+      });
+      // Re-throw the typed "branch has no pushed commits" failure so the
+      // caller can give the user an honest, non-transient message
+      // instead of the generic "try again in a moment". Other failures
+      // stay best-effort (return null) as before.
+      if (err && err.code === 'no_commits') throw err;
       return null;
     }
   }
