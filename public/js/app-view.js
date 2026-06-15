@@ -562,6 +562,19 @@ const AppView = {
       if (govRow) AppView.openTopic('gov', parseInt(govRow.dataset.govRow, 10));
     });
 
+    // Completed (merged) proposals live in a sibling container with its own
+    // bespoke layout; bind the same tap-to-open behaviour here so merged
+    // rows open their (still-live) discussion thread full-screen. The node
+    // is stable across toggleMergedPrs()/_loadDevFeed() innerHTML rewrites.
+    const mergedEl = document.getElementById('gc-merged');
+    if (mergedEl) {
+      mergedEl.addEventListener('click', (e) => {
+        if (e.target.closest('a, button, input, form')) return;
+        const prRow = e.target.closest('[data-proposal-row]');
+        if (prRow) AppView.openTopic('proposal', parseInt(prRow.dataset.proposalRow, 10));
+      });
+    }
+
     AppView._renderSessionsStrip();
     AppView._syncStripPolling();
     await AppView._loadDevFeed();
@@ -636,7 +649,8 @@ const AppView = {
       return (AppView._ghIssues || []).find((i) => i.number === t.id) || null;
     }
     if (t.kind === 'proposal') {
-      // Open proposals first; merged ones stay viewable (read-only thread).
+      // Open proposals first; merged ones stay viewable with a still-live,
+      // postable discussion thread (voting is settled, talking isn't).
       return (AppView._proposals || []).find((p) => p.id === t.id)
         || (AppView._merged || []).find((p) => p.id === t.id) || null;
     }
@@ -679,23 +693,16 @@ const AppView = {
     const slot = document.getElementById('dev-topic-thread');
     if (!t || !slot || typeof GroupChat === 'undefined' || !GroupChat.mountThread) return;
     const typeMap = { issue: 'issue', proposal: 'session', gov: 'governance' };
-    // A proposal that has left voting gets a read-only thread.
-    let readOnly = false;
-    let notice = '';
-    if (t.kind === 'proposal') {
-      const item = AppView._findTopicItem();
-      if (item && item.status === 'merged') {
-        readOnly = true;
-        notice = 'Voting closed — this proposal was merged. The discussion is read-only.';
-      }
-    }
+    // Every topic thread — including merged proposals — mounts with a live,
+    // editable composer. Merging settles the vote, not the conversation:
+    // people keep posting follow-ups after a proposal lands. The WS handler
+    // accepts session-thread posts on merged sessions (existence-only gate),
+    // so there is no read-only lock or "voting closed" notice here.
     GroupChat.mountThread({
       type: typeMap[t.kind],
       ref: t.id,
       container: slot,
       fullHeight: true,
-      readOnly,
-      notice,
     });
   },
 
@@ -1964,7 +1971,7 @@ const AppView = {
       }
 
       html += `
-        <div class="gc-vote-item ${AppView.DEV_CARD_CLS}" data-ref-pr="${pr.pr_number || pr.id}">
+        <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-ref-pr="${pr.pr_number || pr.id}" data-proposal-row="${pr.id}" title="Open this proposal's discussion">
           ${AppView._devCardIcon('done')}
           <div class="flex-1 min-w-0">
             <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -1973,6 +1980,7 @@ const AppView = {
                 <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta"><a href="${pr.pr_url || '#'}" target="_blank" rel="noopener" class="font-mono text-emerald-400 hover:underline">PR#${pr.pr_number || pr.id}</a> · ${date}${AppView.closesPillHtml(pr) ? ` ${AppView.closesPillHtml(pr)}` : ''}</div>
               </div>
               ${AppView.voteCountPill(pr, majority)}
+              ${AppView._devChatBadge(parseInt(pr.chat_count) || 0)}
             </div>
             <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
               ${AppView.voteButtonsHtml(pr, { collapseVoted: true })}
@@ -1980,6 +1988,7 @@ const AppView = {
               ${kudosBtn}
             </div>
           </div>
+          ${AppView.DEV_CARD_CHEVRON}
         </div>`;
     }
     html += '</div>';
