@@ -1565,7 +1565,7 @@ const AppView = {
   // since restore now lives in the strip's archived toggle, not a
   // removed session-list screen) then POST /api/sessions/:id/archive.
   // Owner-scoped server-side. Returns true on success so callers can
-  // re-render. Used by both the sessions strip and archiveProposal.
+  // re-render. Used by the dev-sessions strip's Archive button.
   async _archiveSession(sessionId, name) {
     if (!sessionId) return false;
     const ok = await ConfirmModal.show({
@@ -1665,11 +1665,12 @@ const AppView = {
     const sessionBtn = mine
       ? `<button class="gc-vote-btn" title="Open the dev session behind this proposal" onclick="AppView.openProposalSession(${pr.id})">Open session</button>`
       : '';
-    // Archive sits beside "Open session" on your own live proposals only.
+    // Withdraw sits beside "Open session" on your own live proposals only.
     // Not shown on merged/merging cards (their PR is settled). A proposal's
-    // id is its session id, so it reuses POST /api/sessions/:id/archive.
+    // id is its session id, so it reuses POST /api/sessions/:id/archive
+    // (owner-scoped) — closing the PR and dropping the card from the panel.
     const archiveBtn = (mine && !isMerged && !isMerging && pr.status === 'promoted')
-      ? `<button class="gc-vote-btn" title="Archive this proposal (closes the PR, frees the slot)" onclick="AppView.archiveProposal(${pr.id})">Archive</button>`
+      ? `<button class="gc-vote-btn" title="Withdraw this proposal (closes the PR, removes it from the vote panel)" onclick="AppView.withdrawProposal(${pr.id})">Withdraw</button>`
       : '';
     // #313: the per-proposal "Ask AI" advisor, surfaced on the card for
     // proposals the viewer does NOT own. Owners reach AI via "Open
@@ -1771,6 +1772,12 @@ const AppView = {
     const adminBtn = (!isRename && App.user?.canAdminWrite)
       ? `<button class="gc-vote-btn gc-vote-btn-admin" title="Admin: apply this change right now, bypassing the vote majority" onclick="AppView.castIssueAdminApply(${issue.id})">Admin merge</button>`
       : '';
+    // mine: the viewer created this governance proposal, so they may
+    // withdraw it (creator-scoped POST /api/issues/:id/close).
+    const mine = !!(App.user && issue.created_by === App.user.id);
+    const withdrawBtn = mine
+      ? `<button class="gc-vote-btn" title="Withdraw this proposal (removes it from the vote panel)" onclick="AppView.withdrawGovProposal(${issue.id})">Withdraw</button>`
+      : '';
     const govChatN = parseInt(issue.chat_count) || 0;
 
     return `
@@ -1789,6 +1796,7 @@ const AppView = {
             ${yesBtn}
             ${noBtn}
             ${adminBtn}
+            ${withdrawBtn}
           </div>
         </div>
         ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
@@ -1828,18 +1836,65 @@ const AppView = {
     }
   },
 
-  // Archive a live proposal straight from its card (proposer-only; the
-  // button only renders on your own promoted proposals). A proposal's id
-  // is its session id, so this reuses POST /api/sessions/:id/archive — the
-  // same endpoint and confirm copy the dev-chat session list uses. On
-  // success the feed reloads; GET /api/apps/:slug/promoted only returns
-  // status IN ('promoted','merging'), so the archived card drops out.
-  async archiveProposal(sessionId) {
+  // Withdraw a live PR proposal straight from its card (proposer-only; the
+  // button only renders on your own promoted proposals). A proposal's id is
+  // its session id, so this reuses the owner-scoped POST
+  // /api/sessions/:id/archive — but with withdraw-flavoured confirm copy,
+  // distinct from the dev-sessions strip's "Archive" wording (that surface
+  // is about freeing slots, not withdrawing proposals). On success the feed
+  // reloads; GET /api/apps/:slug/promoted only returns status IN
+  // ('promoted','merging'), so the withdrawn card drops out.
+  async withdrawProposal(sessionId) {
     if (!sessionId) return;
     const pr = (AppView._proposals || []).find((p) => p.id === sessionId);
-    const name = pr ? (pr.title || pr.pr_title || `PR#${pr.pr_number || pr.id}`) : 'this proposal';
-    const ok = await AppView._archiveSession(sessionId, name);
+    const prNum = pr ? (pr.pr_number || pr.id) : sessionId;
+    const ok = await ConfirmModal.show({
+      title: 'Withdraw this proposal?',
+      message: `This closes PR #${prNum} and removes it from the vote panel. You can propose it again later.`,
+      confirmLabel: 'Withdraw',
+      danger: true,
+    });
     if (!ok) return;
+    try {
+      const resp = await fetch(`/api/sessions/${sessionId}/archive`, { method: 'POST' });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        alert(data.error || `Withdraw failed (HTTP ${resp.status}).`);
+        return;
+      }
+    } catch (err) {
+      alert(`Withdraw failed: ${err.message}`);
+      return;
+    }
+    await AppView._loadDevFeed();
+  },
+
+  // Withdraw a governance proposal (secret_change / legacy rename) from its
+  // card (creator-only; the button only renders when issue.created_by is the
+  // viewer). Posts to the creator-gated POST /api/issues/:id/close, which
+  // marks the issue closed, posts a withdrawal chat line, and pushes an
+  // issue update so open clients drop the card. Gov-worded confirm (no PR
+  // mention — governance proposals have no pull request).
+  async withdrawGovProposal(issueId) {
+    if (!issueId) return;
+    const ok = await ConfirmModal.show({
+      title: 'Withdraw this proposal?',
+      message: 'This removes it from the vote panel and stops the vote. You can propose it again later.',
+      confirmLabel: 'Withdraw',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      const resp = await fetch(`/api/issues/${issueId}/close`, { method: 'POST' });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        alert(data.error || `Withdraw failed (HTTP ${resp.status}).`);
+        return;
+      }
+    } catch (err) {
+      alert(`Withdraw failed: ${err.message}`);
+      return;
+    }
     await AppView._loadDevFeed();
   },
 

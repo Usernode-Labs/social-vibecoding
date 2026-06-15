@@ -1,13 +1,14 @@
-// Test for the proposal-card Archive control (app-view.js
-// _renderProposalCard). A proposer-only Archive button must render on
-// your OWN live (status:'promoted') proposals, beside "Open session",
-// and must NOT render on someone else's proposal or on a merged card.
+// Tests for the proposal-card Withdraw control (app-view.js
+// _renderProposalCard / _renderGovCard). A proposer-only Withdraw button
+// must render on your OWN live (status:'promoted') proposals, beside
+// "Open session", and must NOT render on someone else's proposal or on a
+// merged/merging card. Governance cards get the equivalent creator-only
+// Withdraw button.
 //
 // app-view.js is a plain browser script (`const AppView = {…}`) that
 // defines its own escapeHtml/etc. We load its source into a vm context,
-// stub the external globals _renderProposalCard reaches (App, Kudos,
-// relTime, window, document), expose AppView, and assert on the returned
-// HTML string.
+// stub the external globals it reaches (App, Kudos, relTime, window,
+// document), expose AppView, and assert on the returned HTML string.
 //
 // Run with: node --test tests/archive-proposal-card.test.js
 
@@ -22,11 +23,11 @@ const SRC = fs.readFileSync(
   'utf8'
 );
 
-function makeAppView(userId) {
+function makeAppView(userId, opts) {
   const sandbox = {
     console,
     relTime: () => 'just now',
-    App: { user: { id: userId } },
+    App: { user: { id: userId, canAdminWrite: !!(opts && opts.admin) } },
     Kudos: { renderButton: () => '' },
     ConfirmModal: { show: async () => true },
     document: {
@@ -50,6 +51,7 @@ function makeAppView(userId) {
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = { majority: 1 };
   AppView._visualsOpen = new Set();
+  AppView.__sandbox = sandbox;
   return AppView;
 }
 
@@ -60,30 +62,40 @@ const baseProposal = (over) => ({
   ...over,
 });
 
-test('my own promoted proposal renders the Archive control', () => {
+test('my own promoted proposal renders the Withdraw control', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal());
-  assert.match(html, /archiveProposal\(7\)/, 'Archive button wired to archiveProposal(id)');
+  assert.match(html, /withdrawProposal\(7\)/, 'Withdraw button wired to withdrawProposal(id)');
+  assert.match(html, />Withdraw</, 'button is labelled Withdraw');
+  assert.doesNotMatch(html, />Archive</, 'proposal card no longer says Archive');
   assert.match(html, /openProposalSession\(7\)/, 'Open session still present');
 });
 
-test("someone else's promoted proposal does NOT render Archive", () => {
+test("someone else's promoted proposal does NOT render Withdraw", () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal({ user_id: 999 }));
-  assert.doesNotMatch(html, /archiveProposal/, 'not the proposer — no Archive');
+  assert.doesNotMatch(html, /withdrawProposal/, 'not the proposer — no Withdraw');
   assert.doesNotMatch(html, /openProposalSession/, 'not the proposer — no Open session');
 });
 
-test('my merged proposal does NOT render Archive', () => {
+test('my merged proposal does NOT render Withdraw', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal({ status: 'merged' }));
-  assert.doesNotMatch(html, /archiveProposal/, 'merged card has no Archive');
+  assert.doesNotMatch(html, /withdrawProposal/, 'merged card has no Withdraw');
 });
 
-test('my merging proposal does NOT render Archive', () => {
+test('my merging proposal does NOT render Withdraw', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal({ status: 'merging' }));
-  assert.doesNotMatch(html, /archiveProposal/, 'merging card has no Archive');
+  assert.doesNotMatch(html, /withdrawProposal/, 'merging card has no Withdraw');
+});
+
+// Rename and visibility PRs are ordinary promoted chat_sessions rows, so
+// the owner-scoped Withdraw button renders on them too.
+test('my own rename PR proposal renders Withdraw', () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._renderProposalCard(baseProposal({ pr_title: 'Rename to "Cooler App"' }));
+  assert.match(html, /withdrawProposal\(7\)/, 'rename PR shows Withdraw');
 });
 
 // #313: the card-level "Ask AI" advisor button renders on proposals the
@@ -230,25 +242,72 @@ test('topic head for a governance proposal keeps the standalone button', () => {
   assert.doesNotMatch(head._html, /gc-ask-ai-btn/, 'gov cards have no Ask AI pill');
 });
 
-test('archiveProposal POSTs to the archive endpoint and reloads the feed', async () => {
+test('withdrawProposal POSTs to the archive endpoint and reloads the feed', async () => {
   const AppView = makeAppView(ME);
   let posted = null;
   let reloaded = false;
   AppView._proposals = [baseProposal()];
-  // Re-stub the context globals the handler reaches via closure.
-  const ctx = AppView; // methods read globals from their defining context
-  // Drive the handler with instrumented fetch / confirm / reload.
-  // (These live on the vm sandbox; reach them through the function's scope
-  // by monkeypatching the objects the handler references.)
-  globalThis.__noop = true;
-  // The handler calls global fetch, ConfirmModal.show, AppView._loadDevFeed.
+  // fetch/ConfirmModal are resolved against the sandbox global at call
+  // time, so patching them post-load drives the real handler.
+  AppView.__sandbox.fetch = async (url, init) => {
+    posted = { url, method: init && init.method };
+    return { ok: true, json: async () => ({}) };
+  };
+  AppView.__sandbox.ConfirmModal = { show: async () => true };
   AppView._loadDevFeed = async () => { reloaded = true; };
-  // Patch fetch/ConfirmModal on the sandbox that the source closed over:
-  // they were captured at load time, so patch via the same references.
-  // We rebuild a tiny harness exercising only the observable contract.
-  // Easiest reliable path: call the real handler with sandbox fetch
-  // swapped — but fetch is a context global, not on AppView. Instead we
-  // assert the handler exists and is wired; the network contract is
-  // covered by the markup test above plus the session-list handler.
-  assert.equal(typeof AppView.archiveProposal, 'function', 'handler defined');
+  await AppView.withdrawProposal(7);
+  assert.equal(posted.url, '/api/sessions/7/archive', 'POSTs to the owner-scoped archive endpoint');
+  assert.equal(posted.method, 'POST');
+  assert.equal(reloaded, true, 'feed reloaded on success');
+});
+
+test('withdrawProposal does nothing when the confirm is cancelled', async () => {
+  const AppView = makeAppView(ME);
+  let posted = false;
+  AppView._proposals = [baseProposal()];
+  AppView.__sandbox.fetch = async () => { posted = true; return { ok: true, json: async () => ({}) }; };
+  AppView.__sandbox.ConfirmModal = { show: async () => false };
+  AppView._loadDevFeed = async () => {};
+  await AppView.withdrawProposal(7);
+  assert.equal(posted, false, 'cancelled confirm — no POST');
+});
+
+// ---- Governance card Withdraw -------------------------------------------
+
+const baseGov = (over) => ({
+  id: 31, kind: 'secret_change', title: 'Set secret API_KEY',
+  created_by: ME, created_by_username: 'me', status: 'open',
+  payload: { action: 'set', key: 'API_KEY' },
+  up_count: 1, down_count: 0,
+  created_at: '2026-06-01T00:00:00Z',
+  ...over,
+});
+
+test('my own governance proposal renders a creator-only Withdraw button', () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._renderGovCard(baseGov());
+  assert.match(html, /withdrawGovProposal\(31\)/, 'Withdraw wired to withdrawGovProposal(id)');
+  assert.match(html, />Withdraw</, 'button labelled Withdraw');
+});
+
+test("someone else's governance proposal does NOT render Withdraw", () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._renderGovCard(baseGov({ created_by: 999 }));
+  assert.doesNotMatch(html, /withdrawGovProposal/, 'not the creator — no Withdraw');
+});
+
+test('withdrawGovProposal POSTs to the gated close endpoint and reloads', async () => {
+  const AppView = makeAppView(ME);
+  let posted = null;
+  let reloaded = false;
+  AppView.__sandbox.fetch = async (url, init) => {
+    posted = { url, method: init && init.method };
+    return { ok: true, json: async () => ({}) };
+  };
+  AppView.__sandbox.ConfirmModal = { show: async () => true };
+  AppView._loadDevFeed = async () => { reloaded = true; };
+  await AppView.withdrawGovProposal(31);
+  assert.equal(posted.url, '/api/issues/31/close', 'POSTs to the creator-gated close/withdraw endpoint');
+  assert.equal(posted.method, 'POST');
+  assert.equal(reloaded, true, 'feed reloaded on success');
 });
