@@ -14,7 +14,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 // Install module stubs before requiring the unit under test.
-function loadWithStubs({ onGenerate, githubCalls }) {
+function loadWithStubs({ onGenerate, githubCalls, createPR }) {
   const llmPath = require.resolve('../src/services/llm');
   const ghPath = require.resolve('../src/services/github');
   const subjectPath = require.resolve('../src/services/pr-metadata');
@@ -37,7 +37,7 @@ function loadWithStubs({ onGenerate, githubCalls }) {
   };
   require.cache[ghPath] = {
     exports: {
-      createPR: async (owner, repo, opts) => { githubCalls.push({ type: 'create', owner, repo, opts }); return { number: 42, html_url: 'https://example/pr/42' }; },
+      createPR: createPR || (async (owner, repo, opts) => { githubCalls.push({ type: 'create', owner, repo, opts }); return { number: 42, html_url: 'https://example/pr/42' }; }),
       updatePR: async (owner, repo, num, opts) => { githubCalls.push({ type: 'update', owner, repo, num, opts }); },
     },
     loaded: true, id: ghPath, filename: ghPath, paths: orig.gh ? orig.gh.paths : [],
@@ -380,6 +380,49 @@ test('existing PR makes no GitHub call when title, issues and testing are all un
       userMessage: 'x', ccSummary: 'y', username: 'evan',
     });
     assert.equal(githubCalls.length, 0, 'no GitHub call when nothing changed');
+  } finally {
+    restore();
+  }
+});
+
+// ---- #295 / chat 510: honest error when the branch has no pushed commits ----
+
+test('applyPrMetadata re-throws createPR "no_commits" so the caller can be honest', async () => {
+  const githubCalls = [];
+  const noCommits = async () => {
+    const e = new Error('No commits between main and feat/x — the branch has no pushed commits.');
+    e.code = 'no_commits';
+    throw e;
+  };
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls, createPR: noCommits });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }]);
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    await assert.rejects(
+      () => subject.applyPrMetadata({
+        pool, session, repoOwner: 'acme', repoName: 'app',
+        userMessage: 'x', ccSummary: 'y', username: 'evan',
+      }),
+      (err) => err && err.code === 'no_commits',
+      'the typed no_commits error propagates to the caller'
+    );
+  } finally {
+    restore();
+  }
+});
+
+test('applyPrMetadata stays best-effort (returns null) on other createPR failures', async () => {
+  const githubCalls = [];
+  const boom = async () => { throw new Error('GitHub 500 — transient'); };
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls, createPR: boom });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }]);
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    const res = await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.equal(res, null, 'non-no_commits failures are swallowed as before');
   } finally {
     restore();
   }
