@@ -2911,26 +2911,31 @@ const AppView = {
   // so the link is reachable from a phone on the same LAN as the dev box.
   // ── Gesture-safe modal reveal/dismiss (shared by every header modal) ──
   //
-  // The bug this guards against: a drawer row's click handler used to
-  // reveal a full-screen modal SYNCHRONOUSLY, so the very tap that opened
-  // it — on a touch device / WebView the browser synthesizes a `click`
-  // ~300ms after `touchend` — landed on the freshly-shown
-  // [data-modal-backdrop] and dismissed the modal in the same gesture. The
-  // user saw nothing happen ("Members & visibility does nothing"). Two
-  // coordinated guards fix it:
-  //   1. revealModalDeferred() shows the modal one frame later, off the
-  //      originating gesture, and stamps the open time on the element.
-  //   2. modalDismissGuarded() lets the backdrop-dismiss handler ignore any
-  //      dismiss click that arrives within MODAL_GESTURE_GUARD_MS of the
-  //      open — i.e. the trailing ghost click from the opening tap.
-  // Done centrally so every caller (members, share, settings) inherits it.
+  // The bug this guards against: a drawer row's click handler reveals a
+  // full-screen modal, and on a touch device / WebView the very tap that
+  // opened it — the browser can synthesize a trailing `click` ~300ms after
+  // `touchend` — lands on the freshly-shown [data-modal-backdrop] and
+  // dismisses the modal in the same gesture. The user saw nothing happen
+  // ("Members & visibility does nothing").
+  //
+  // The fix is the DISMISS GUARD, not a deferral. revealModal() shows the
+  // modal SYNCHRONOUSLY (deferring the reveal to requestAnimationFrame
+  // proved unreliable in the platform WebView — the frame callback could be
+  // throttled or dropped, leaving the drawer closed with no panel at all)
+  // and stamps the open time on the element. modalDismissGuarded() then lets
+  // each backdrop-dismiss handler ignore any dismiss click that arrives
+  // within MODAL_GESTURE_GUARD_MS of the open — i.e. the trailing ghost
+  // click. Revealing now guarantees the panel appears; the guard keeps it
+  // from being closed by its own opening gesture. Done centrally so every
+  // caller (members, share, settings) inherits it.
   MODAL_GESTURE_GUARD_MS: 450,
-  revealModalDeferred(modal) {
+  revealModal(modal) {
     if (!modal) return;
     modal.dataset.openedAt = String(Date.now());
-    const show = () => modal.classList.remove('hidden');
-    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(show);
-    else setTimeout(show, 0);
+    modal.classList.remove('hidden');
+    // Diagnostic breadcrumb (surfaces in the platform dev console) so a
+    // future "panel didn't open" report is debuggable at a glance.
+    try { console.debug('[modal] revealed', modal.id || '(no id)'); } catch {}
   },
   modalDismissGuarded(modal) {
     const at = modal && modal.dataset ? Number(modal.dataset.openedAt) : 0;
@@ -2946,9 +2951,9 @@ const AppView = {
     if (input) input.value = url;
     if (link) link.href = url || '#';
     if (copyBtn) copyBtn.textContent = 'Copy';
-    // Deferred reveal (see revealModalDeferred) so the opening tap can't
-    // ghost-click the backdrop closed.
-    AppView.revealModalDeferred(modal);
+    // Reveal now (see revealModal); the dismiss guard stops the opening tap
+    // from ghost-clicking the backdrop closed.
+    AppView.revealModal(modal);
     setTimeout(() => { if (input) { input.focus(); input.select(); } }, 0);
   },
 
@@ -3477,13 +3482,13 @@ const AppView = {
         visStatus.textContent = 'This app is still loading — open Members & visibility again in a moment.';
         visStatus.className = 'text-sm text-red-400';
       }
-      AppView.revealModalDeferred(modal);
+      AppView.revealModal(modal);
       return;
     }
-    // Configure the sections below while the modal is still hidden, then
-    // reveal one frame later (see revealModalDeferred) so the opening tap
-    // can't ghost-click the backdrop closed.
-    AppView.revealModalDeferred(modal);
+    // Reveal now (see revealModal); the dismiss guard stops the opening tap
+    // from ghost-clicking the backdrop closed. Sections are configured below
+    // (the modal is already visible, but they only paint after this frame).
+    AppView.revealModal(modal);
 
     AppView._membersVis = {
       collab: appData.collab_visibility || 'public',

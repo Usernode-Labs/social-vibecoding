@@ -157,7 +157,7 @@
       // modal for the rationale.)
       this.modal.addEventListener('click', (e) => {
         // Ignore the trailing ghost click from the tap that opened the modal
-        // (see AppView.revealModalDeferred) so it can't close it instantly.
+        // (see AppView.revealModal) so it can't close it instantly.
         if (window.AppView && AppView.modalDismissGuarded && AppView.modalDismissGuarded(this.modal)) return;
         if (e.target === this.modal || e.target.dataset.modalBackdrop !== undefined) this.close();
       });
@@ -203,9 +203,10 @@
       this._renderExperimentalSection();
       this._renderAdminSection();
       this._clearStatus();
-      // Deferred reveal (see AppView.revealModalDeferred) so the opening tap
-      // from the drawer row can't ghost-click the backdrop closed.
-      if (window.AppView && AppView.revealModalDeferred) AppView.revealModalDeferred(this.modal);
+      // Reveal via the shared gesture-safe path (see AppView.revealModal) so
+      // the opening tap from the drawer row can't ghost-click the backdrop
+      // closed. Falls back to a plain reveal if AppView isn't loaded.
+      if (window.AppView && AppView.revealModal) AppView.revealModal(this.modal);
       else this.modal.classList.remove('hidden');
       // Intentionally do NOT auto-focus the API key field here. On mobile,
       // focusing an input on open immediately pops the on-screen keyboard,
