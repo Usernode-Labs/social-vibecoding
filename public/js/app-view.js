@@ -689,15 +689,42 @@ const AppView = {
         : '';
     }
 
-    // #297: the "Ask AI" advisor button — only for proposals (PR) and
+    // #297/#321: the "Ask AI" advisor button — only for proposals (PR) and
     // governance proposals, not plain GitHub issues. Opens a private,
     // read-only conversation scoped to THIS proposal (see proposal-discuss.js).
-    const askAiHtml = (t.kind === 'proposal' || t.kind === 'gov')
+    //
+    // #321: another user's proposal card already carries an Ask AI PILL in
+    // its action row (_askAiCardBtnHtml, rendered when !mine), so emitting
+    // this standalone button too would duplicate it. Only render the
+    // standalone where the card has NO pill: governance proposals (gov cards
+    // never show one) and the viewer's OWN proposal (the pill is omitted on
+    // own cards). For another user's proposal the pill below is the keeper.
+    const mine = !!(App.user && item.user_id === App.user.id);
+    const cardHasAskAiPill = (t.kind === 'proposal' && !mine);
+    const askAiHtml = ((t.kind === 'proposal' || t.kind === 'gov') && !cardHasAskAiPill)
       ? AppView._askAiButtonHtml() : '';
 
     head.innerHTML = cardHtml + bodyHtml + askAiHtml;
     if (window.Kudos) Kudos.attach(head);
     if (t.kind === 'proposal' && item.status !== 'merged') AppView._loadVoteRoster(item.id);
+
+    // #321: wire the kept card pill in the topic head. Unlike the feed and
+    // Completed list, #dev-topic-head has no delegated .gc-ask-ai-btn handler,
+    // so without this the pill would be inert (no click, no availability
+    // dimming). Bind the click to the same advisor opener the standalone used
+    // and run the shared availability pass over this container.
+    if (cardHasAskAiPill) {
+      const pill = head.querySelector('.gc-ask-ai-btn');
+      if (pill) {
+        pill.addEventListener('click', () => {
+          if (pill.disabled) return;
+          if (typeof ProposalDiscuss !== 'undefined') {
+            ProposalDiscuss.open(t.kind, t.id, AppView._findTopicItem());
+          }
+        });
+      }
+      AppView._applyAskAiCardAvailability(head);
+    }
 
     if (askAiHtml) {
       const btn = head.querySelector('#proposal-ask-ai');

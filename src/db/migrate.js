@@ -2686,15 +2686,17 @@ async function seedStagingProposalDiscussion(pool, config) {
   log.info('db', 'Staging proposal-discuss fixture seeded', { appId, proposalRef, userId });
 }
 
-// #313: a PROMOTED proposal owned by a user OTHER than the tester, so the
-// new card-level "Ask AI" button (rendered only on proposals you do NOT
-// own) is exercisable in staging. seedStagingMyOpenPr covers the owned
-// case; this covers the non-owned case the issue is about. Also seeds a
-// short advisor history keyed to the TESTER's user_id (proposal_ai_messages
-// is staging:private, so it ships empty) so opening the panel from the
-// foreign card shows a back-and-forth rather than the empty state.
-// Idempotent via branch name + fixed high message IDs; a no-op outside
-// staging.
+// #313/#321: a PROMOTED proposal owned by a user OTHER than the tester, so
+// the card-level "Ask AI" pill (rendered only on proposals you do NOT own)
+// is exercisable in staging. seedStagingMyOpenPr covers the owned case;
+// this covers the non-owned case both issues are about. #321 reuses this
+// same fixture: opening this proposal FULL-SCREEN is how a tester confirms
+// the duplicate standalone "Ask AI" button is gone and only the pill-row
+// control remains. Also seeds a short advisor history keyed to the TESTER's
+// user_id (proposal_ai_messages is staging:private, so it ships empty) so
+// opening the panel from the foreign card shows a back-and-forth rather
+// than the empty state. Idempotent via branch name + fixed high message
+// IDs; a no-op outside staging.
 async function seedStagingOtherUserProposal(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
