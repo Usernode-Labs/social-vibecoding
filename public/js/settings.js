@@ -156,6 +156,9 @@
       // modal in the app — see comment in index.html on the settings
       // modal for the rationale.)
       this.modal.addEventListener('click', (e) => {
+        // Ignore the trailing ghost click from the tap that opened the modal
+        // (see AppView.revealModalDeferred) so it can't close it instantly.
+        if (window.AppView && AppView.modalDismissGuarded && AppView.modalDismissGuarded(this.modal)) return;
         if (e.target === this.modal || e.target.dataset.modalBackdrop !== undefined) this.close();
       });
 
@@ -200,7 +203,10 @@
       this._renderExperimentalSection();
       this._renderAdminSection();
       this._clearStatus();
-      this.modal.classList.remove('hidden');
+      // Deferred reveal (see AppView.revealModalDeferred) so the opening tap
+      // from the drawer row can't ghost-click the backdrop closed.
+      if (window.AppView && AppView.revealModalDeferred) AppView.revealModalDeferred(this.modal);
+      else this.modal.classList.remove('hidden');
       // Intentionally do NOT auto-focus the API key field here. On mobile,
       // focusing an input on open immediately pops the on-screen keyboard,
       // which is jarring when the user just wanted to view settings. Let the

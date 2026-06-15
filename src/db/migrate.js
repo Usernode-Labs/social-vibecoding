@@ -34,6 +34,7 @@ async function migrate(config) {
   await seedStagingCcProgressRun(pool, config);
   await seedStagingCcEstimateRun(pool, config);
   await seedStagingDemoAppCard(pool);
+  await seedStagingMembersPanel(pool);
   await seedStagingAppQuotaUsers(pool);
   await seedStagingViewOnlyAdmin(pool);
   await seedStagingVisuals(pool);
@@ -1562,6 +1563,56 @@ async function seedStagingDemoAppCard(pool) {
     log.info('db', 'Staging demo app-card fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging demo app-card seeding failed', { message: err.message });
+  }
+}
+
+// Fixtures for the Members & visibility panel. The public demo app above
+// renders the visibility toggles but NOT the collaborator list (that
+// section only shows for an invite-only app). To demonstrate the member
+// list + invite typeahead — and so the panel-opens fix has data behind it —
+// seed a private (collab_visibility='private') app owned by the demo user
+// with two collaborators: one accepted member and one pending invite.
+// app_collaborators is NOT staging:private (membership must survive into
+// clones), but a freshly seeded private app has no extra members until we
+// add them here. IDs sit in the 900xxx range, rows carry the "Staging demo"
+// prefix, and ON CONFLICT DO NOTHING keeps the every-boot re-run idempotent.
+// Sentinel passwords mean the fixture accounts can never log in.
+async function seedStagingMembersPanel(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    // Demo collaborator accounts (alongside staging-demo-user/900001, which
+    // owns the private app below and is its creator-member).
+    await pool.query(
+      `INSERT INTO users (id, username, password)
+       VALUES
+         (900020, 'staging-demo-collab',   'staging-demo-not-a-login'),
+         (900021, 'staging-demo-invitee',  'staging-demo-not-a-login')
+       ON CONFLICT DO NOTHING`
+    );
+    // Invite-only app: both build + view private (collab-private may keep a
+    // public view, but private/private is the clearest demo and satisfies
+    // the collab-public⇒view-public invariant).
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by)
+       VALUES (900010, 'Staging demo private app', 'staging-demo-private-app', 'running',
+               'private', 'private', 900001)
+       ON CONFLICT DO NOTHING`
+    );
+    // Membership rows: creator as accepted member, one extra accepted
+    // member (removable), and one pending invite (renders the "invited"
+    // tag + a "Revoke" control).
+    await pool.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, invited_by, accepted_at)
+       VALUES
+         (900010, 900001, 'member',  900001, NOW()),
+         (900010, 900020, 'member',  900001, NOW()),
+         (900010, 900021, 'invited', 900001, NULL)
+       ON CONFLICT (app_id, user_id) DO NOTHING`
+    );
+    log.info('db', 'Staging members-panel fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Staging members-panel seeding failed', { message: err.message });
   }
 }
 

@@ -2909,6 +2909,34 @@ const AppView = {
   // public apps (e.g. echo) render directly. resolveDevHost rewrites
   // localhost-shaped URLs to whatever hostname the browser is actually on,
   // so the link is reachable from a phone on the same LAN as the dev box.
+  // ── Gesture-safe modal reveal/dismiss (shared by every header modal) ──
+  //
+  // The bug this guards against: a drawer row's click handler used to
+  // reveal a full-screen modal SYNCHRONOUSLY, so the very tap that opened
+  // it — on a touch device / WebView the browser synthesizes a `click`
+  // ~300ms after `touchend` — landed on the freshly-shown
+  // [data-modal-backdrop] and dismissed the modal in the same gesture. The
+  // user saw nothing happen ("Members & visibility does nothing"). Two
+  // coordinated guards fix it:
+  //   1. revealModalDeferred() shows the modal one frame later, off the
+  //      originating gesture, and stamps the open time on the element.
+  //   2. modalDismissGuarded() lets the backdrop-dismiss handler ignore any
+  //      dismiss click that arrives within MODAL_GESTURE_GUARD_MS of the
+  //      open — i.e. the trailing ghost click from the opening tap.
+  // Done centrally so every caller (members, share, settings) inherits it.
+  MODAL_GESTURE_GUARD_MS: 450,
+  revealModalDeferred(modal) {
+    if (!modal) return;
+    modal.dataset.openedAt = String(Date.now());
+    const show = () => modal.classList.remove('hidden');
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(show);
+    else setTimeout(show, 0);
+  },
+  modalDismissGuarded(modal) {
+    const at = modal && modal.dataset ? Number(modal.dataset.openedAt) : 0;
+    return at > 0 && (Date.now() - at) < AppView.MODAL_GESTURE_GUARD_MS;
+  },
+
   openShareModal() {
     const url = AppView.appData?.url ? resolveDevHost(AppView.appData.url) : '';
     const modal = document.getElementById('share-modal');
@@ -2918,7 +2946,9 @@ const AppView = {
     if (input) input.value = url;
     if (link) link.href = url || '#';
     if (copyBtn) copyBtn.textContent = 'Copy';
-    if (modal) modal.classList.remove('hidden');
+    // Deferred reveal (see revealModalDeferred) so the opening tap can't
+    // ghost-click the backdrop closed.
+    AppView.revealModalDeferred(modal);
     setTimeout(() => { if (input) { input.focus(); input.select(); } }, 0);
   },
 
@@ -3434,10 +3464,26 @@ const AppView = {
 
   async openMembersModal() {
     const appData = AppView.appData;
-    if (!appData) return;
     const modal = document.getElementById('members-modal');
     if (!modal) return;
-    modal.classList.remove('hidden');
+    // No app loaded: don't fail silently (that's the "button does nothing"
+    // symptom). Surface a one-line message and still open the dialog so the
+    // tap visibly does something. The row only renders when appData is set,
+    // so this is a defensive/diagnostic path, not the normal one.
+    if (!appData) {
+      console.warn('[members] openMembersModal called with no app loaded');
+      const visStatus = document.getElementById('members-vis-error');
+      if (visStatus) {
+        visStatus.textContent = 'This app is still loading — open Members & visibility again in a moment.';
+        visStatus.className = 'text-sm text-red-400';
+      }
+      AppView.revealModalDeferred(modal);
+      return;
+    }
+    // Configure the sections below while the modal is still hidden, then
+    // reveal one frame later (see revealModalDeferred) so the opening tap
+    // can't ghost-click the backdrop closed.
+    AppView.revealModalDeferred(modal);
 
     AppView._membersVis = {
       collab: appData.collab_visibility || 'public',

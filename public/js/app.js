@@ -1286,6 +1286,9 @@ const App = {
     if (membersClose) membersClose.addEventListener('click', () => AppView.hideMembersModal());
     const membersModal = document.getElementById('members-modal');
     if (membersModal) membersModal.addEventListener('click', (e) => {
+      // Ignore the trailing ghost click from the tap that opened the modal
+      // (see AppView.revealModalDeferred) so it can't close it instantly.
+      if (window.AppView && AppView.modalDismissGuarded && AppView.modalDismissGuarded(membersModal)) return;
       if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) {
         AppView.hideMembersModal();
       }
@@ -1526,6 +1529,9 @@ const App = {
     if (shareClose) shareClose.addEventListener('click', () => AppView.closeShareModal());
     const shareModal = document.getElementById('share-modal');
     if (shareModal) shareModal.addEventListener('click', (e) => {
+      // Ignore the trailing ghost click from the opening tap (see
+      // AppView.revealModalDeferred) so it can't close the modal instantly.
+      if (window.AppView && AppView.modalDismissGuarded && AppView.modalDismissGuarded(shareModal)) return;
       if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) AppView.closeShareModal();
     });
     const shareCopy = document.getElementById('share-copy-btn');
