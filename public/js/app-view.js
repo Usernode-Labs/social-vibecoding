@@ -2953,7 +2953,9 @@ const AppView = {
     if (copyBtn) copyBtn.textContent = 'Copy';
     // Reveal now (see revealModal); the dismiss guard stops the opening tap
     // from ghost-clicking the backdrop closed.
+    window.StagingDebug?.log('openShareModal() — #share-modal in DOM? ' + !!modal);
     AppView.revealModal(modal);
+    window.StagingDebug?.snapshot(modal, 'share after revealModal');
     setTimeout(() => { if (input) { input.focus(); input.select(); } }, 0);
   },
 
@@ -3468,9 +3470,15 @@ const AppView = {
   _inviteDebounce: null,
 
   async openMembersModal() {
+    window.StagingDebug?.log('openMembersModal() ENTERED');
     const appData = AppView.appData;
+    window.StagingDebug?.log('appData = ' + (appData
+      ? `{slug:${appData.slug}, self_hosted:${appData.self_hosted}, can_manage:${appData.can_manage}, can_collaborate:${appData.can_collaborate}, collab_vis:${appData.collab_visibility}}`
+      : String(appData)));
     const modal = document.getElementById('members-modal');
-    if (!modal) return;
+    window.StagingDebug?.log('#members-modal in DOM? ' + !!modal);
+    if (!modal) { window.StagingDebug?.log('ABORT: #members-modal element missing'); return; }
+    window.StagingDebug?.snapshot(modal, 'before reveal');
     // No app loaded: don't fail silently (that's the "button does nothing"
     // symptom). Surface a one-line message and still open the dialog so the
     // tap visibly does something. The row only renders when appData is set,
@@ -3483,12 +3491,20 @@ const AppView = {
         visStatus.className = 'text-sm text-red-400';
       }
       AppView.revealModal(modal);
+      window.StagingDebug?.snapshot(modal, 'after reveal (no-app branch)');
       return;
     }
     // Reveal now (see revealModal); the dismiss guard stops the opening tap
     // from ghost-clicking the backdrop closed. Sections are configured below
     // (the modal is already visible, but they only paint after this frame).
     AppView.revealModal(modal);
+    window.StagingDebug?.snapshot(modal, 'after revealModal');
+    // Re-snapshot on the next frame to catch anything that re-hides it
+    // (a trailing ghost click, a transition, the drawer overlay teardown).
+    if (window.StagingDebug?.active && typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => window.StagingDebug.snapshot(modal, 'next frame'));
+      setTimeout(() => window.StagingDebug.snapshot(modal, '+250ms'), 250);
+    }
 
     AppView._membersVis = {
       collab: appData.collab_visibility || 'public',
