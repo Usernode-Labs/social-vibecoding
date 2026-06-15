@@ -2817,6 +2817,12 @@ const DevChat = {
       const isPaused = s.status === 'paused';
       const isArchived = s.status === 'archived';
       const isActionable = isPausable || isFreeable || isPaused;
+      // Archive is gated independently of isActionable: the backend
+      // archives any open session (active/promoted/paused) regardless of
+      // warm state, so a cold promoted proposal must keep its Archive
+      // button even though it has nothing left to Free. (Re-coupling this
+      // to isActionable is the regression this restores.)
+      const isArchivable = s.status === 'active' || s.status === 'promoted' || s.status === 'paused';
       const date = new Date(s.created_at).toLocaleDateString();
       return `
         <div class="dc-session-item px-3 py-2 cursor-pointer hover:bg-zinc-800/50 flex items-center gap-2" data-id="${s.id}">
@@ -2827,7 +2833,7 @@ const DevChat = {
           ${isFreeable ? `<button class="dc-pause-btn text-xs text-zinc-400 hover:text-emerald-400" data-id="${s.id}" data-action="pause" data-freeing="1" title="Frees the AI worker. The PR stays up for voting." onclick="event.stopPropagation()">Free worker</button>` : ''}
           ${isPaused ? `<button class="dc-pause-btn text-xs text-emerald-400 hover:text-emerald-300" data-id="${s.id}" data-action="resume" onclick="event.stopPropagation()">Resume</button>` : ''}
           ${isArchived ? `<button class="dc-unarchive-btn text-xs text-emerald-400 hover:text-emerald-300" data-id="${s.id}" onclick="event.stopPropagation()" title="Restore this session (reopens the PR)">Unarchive</button>` : ''}
-          ${isActionable ? `<button class="dc-archive-btn text-xs text-zinc-500 hover:text-red-400" data-id="${s.id}" data-name="${escapeHtml(s.session_title || s.pr_title || s.branch_name || 'Session')}" title="Archive (frees the slot; restorable for a while)" onclick="event.stopPropagation()">Archive</button>` : ''}
+          ${isArchivable ? `<button class="dc-archive-btn text-xs text-zinc-500 hover:text-red-400" data-id="${s.id}" data-name="${escapeHtml(s.session_title || s.pr_title || s.branch_name || 'Session')}" title="Archive (frees the slot; restorable for a while)" onclick="event.stopPropagation()">Archive</button>` : ''}
           <span class="text-xs text-zinc-600">${date}</span>
         </div>`;
     }).join('');

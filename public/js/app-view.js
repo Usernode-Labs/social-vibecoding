@@ -1323,6 +1323,12 @@ const AppView = {
     const sessionBtn = mine
       ? `<button class="gc-vote-btn" title="Open the dev session behind this proposal" onclick="AppView.openProposalSession(${pr.id})">Open session</button>`
       : '';
+    // Archive sits beside "Open session" on your own live proposals only.
+    // Not shown on merged/merging cards (their PR is settled). A proposal's
+    // id is its session id, so it reuses POST /api/sessions/:id/archive.
+    const archiveBtn = (mine && !isMerged && !isMerging && pr.status === 'promoted')
+      ? `<button class="gc-vote-btn" title="Archive this proposal (closes the PR, frees the slot)" onclick="AppView.archiveProposal(${pr.id})">Archive</button>`
+      : '';
     // #195/#211: before/after capture tiles, collapsed by default behind a
     // "Show before/after" pill that sits with the other action buttons. The
     // tiles wait in an inert <template> (no bandwidth, no autoplay loops)
@@ -1341,7 +1347,7 @@ const AppView = {
     // the vote is settled; kudos stays open.
     const actions = (isMerged
       ? [kudosBtn, sessionBtn, visualsBtn]
-      : [AppView.voteButtonsHtml(pr), kudosBtn, sessionBtn, visualsBtn]
+      : [AppView.voteButtonsHtml(pr), kudosBtn, sessionBtn, archiveBtn, visualsBtn]
     ).filter(Boolean).join('');
 
     return `
@@ -1474,6 +1480,37 @@ const AppView = {
     if (typeof App !== 'undefined' && App.switchTab) {
       App.switchTab('dev', sessionId, 'sessions');
     }
+  },
+
+  // Archive a live proposal straight from its card (proposer-only; the
+  // button only renders on your own promoted proposals). A proposal's id
+  // is its session id, so this reuses POST /api/sessions/:id/archive — the
+  // same endpoint and confirm copy the dev-chat session list uses. On
+  // success the feed reloads; GET /api/apps/:slug/promoted only returns
+  // status IN ('promoted','merging'), so the archived card drops out.
+  async archiveProposal(sessionId) {
+    if (!sessionId) return;
+    const pr = (AppView._proposals || []).find((p) => p.id === sessionId);
+    const name = pr ? (pr.title || pr.pr_title || `PR#${pr.pr_number || pr.id}`) : 'this proposal';
+    const ok = await ConfirmModal.show({
+      title: `Archive "${name}"?`,
+      message: "This closes the PR and frees the slot. You can Unarchive it later to restore it (chat memory is kept for 30 days).",
+      confirmLabel: 'Archive',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      const resp = await fetch(`/api/sessions/${sessionId}/archive`, { method: 'POST' });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        alert(data.error || `Archive failed (HTTP ${resp.status}).`);
+        return;
+      }
+    } catch (err) {
+      alert(`Archive failed: ${err.message}`);
+      return;
+    }
+    await AppView._loadDevFeed();
   },
 
   async createProposal() {
