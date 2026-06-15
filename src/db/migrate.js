@@ -36,6 +36,7 @@ async function migrate(config) {
   await seedStagingLeaderboardProfile(pool);
   await seedStagingQaSession(pool, config);
   await seedStagingSpecViewerSessions(pool, config);
+  await seedStagingDemoProposal(pool, config);
   await seedStagingSpecUserShareFixtures(pool, config);
   await seedStagingHeadlessFixtures(pool, config);
   await seedStagingSyncActivity(pool, config);
@@ -1911,6 +1912,146 @@ async function seedStagingSpecViewerSessions(pool, config) {
     owner: owner.username,
     total: fixtures.length,
     inserted,
+  });
+}
+
+// Checkbox-flicker fix fixture. The fix is a client-rendering change, but
+// every checkbox surface is data-driven, so seed a scout/proposal session
+// named "Staging demo proposal" carrying GFM task lists across all three
+// rendered surfaces: the spec viewer body (spec_md + frozen v1), the inline
+// spec-preview snippet (a system message with specPreview whose checklist
+// straddles the ~200-char clip boundary, exercising the whole-line clip),
+// and the post-turn ccOutput markdown (the dc-cc-attached-md surface). With
+// these present a tester can open the session and confirm the ☐ / ✓ rows
+// render once and stay put. chat_sessions / chat_session_specs are
+// staging:private (schema-only in clones), so without this the session is
+// unreachable in a preview. Idempotent on the fixture branch; strict no-op
+// in production. Live-streaming flicker itself can't be reproduced from
+// seed data alone — start a real turn here to watch it.
+async function seedStagingDemoProposal(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging demo-proposal fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username, is_admin
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging demo-proposal fixture skipped: no users');
+    return;
+  }
+  const owner = userRows[0];
+
+  const fixtureBranch = 'staging-fixture/demo-proposal';
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, fixtureBranch]
+  );
+  if (existing.length) return;
+
+  // Spec body with a GFM task list mixing unchecked / checked items, so the
+  // spec viewer and the inline preview snippet both render ☐ and ✓ rows.
+  const specMd = [
+    '# Staging demo proposal',
+    '',
+    '## User-facing changes',
+    '',
+    'A small demo widget lands on the home screen so we can exercise the',
+    'task-checkbox rendering across every surface.',
+    '',
+    '### Checklist',
+    '',
+    '- [ ] Add the widget to the home view',
+    '- [x] Wire the route on the server',
+    '- [ ] Style the widget to match the theme',
+    '- [x] Add a unit test for the helper',
+    '- [ ] Document the widget in the README',
+    '',
+    '## Technical implementation',
+    '',
+    '- Render the widget client-side; persist its state in `localStorage`.',
+    '- [ ] Confirm the ☐ / ✓ rows render once and stay put while streaming.',
+  ].join('\n');
+
+  // Preview snippet whose checklist sits right around the ~200-char clip
+  // boundary, so the whole-line clip (change #3) is exercised: the leading
+  // prose pushes the first task lines toward 200 chars, and later items
+  // must be dropped on a line boundary rather than half-included.
+  const specPreview = [
+    '# Staging demo proposal',
+    '',
+    'This preview snippet deliberately runs long so its checklist sits near',
+    'the 200-character clip boundary, exercising the whole-line clip.',
+    '',
+    '- [ ] Add the widget to the home view',
+    '- [x] Wire the route on the server',
+    '- [ ] Style the widget to match the theme',
+    '- [x] Add a unit test for the helper',
+  ].join('\n');
+  const specLines = specMd.split('\n').length;
+
+  // Post-turn ccOutput markdown (the dc-cc-attached-md surface) — its own
+  // checklist so the finished-status disclosure renders checkboxes too.
+  const ccOutput = [
+    '[staging fixture] Added the demo widget:',
+    '',
+    '- [x] Wired the route on the server',
+    '- [x] Added a unit test for the helper',
+    '- [ ] Styling + README still to do',
+  ].join('\n');
+
+  const { rows: sessionRows } = await pool.query(
+    `INSERT INTO chat_sessions
+       (app_id, user_id, branch_name, pr_title, status, spec_md, created_at)
+     VALUES
+       ($1, $2, $3, '[staging fixture] Staging demo proposal', 'active', $4,
+        NOW() - INTERVAL '45 minutes')
+     RETURNING id`,
+    [appId, owner.id, fixtureBranch, specMd]
+  );
+  const sessionId = sessionRows[0].id;
+
+  // Freeze v1 (spec_md stays byte-identical to the latest version), mirroring
+  // the real scout flow so the spec viewer opens a numbered version.
+  await pool.query(
+    `INSERT INTO chat_session_specs (session_id, version, content, built_at)
+     VALUES ($1, 1, $2, NOW() - INTERVAL '44 minutes')
+     ON CONFLICT (session_id, version) DO NOTHING`,
+    [sessionId, specMd]
+  );
+
+  const messages = [
+    { role: 'user', content: '[staging fixture] Please draft a proposal for a demo widget.', metadata: {}, minutesAgo: 45 },
+    { role: 'system', content: `Scout drafted a ${specLines}-line spec from the codebase.`,
+      metadata: { specPreview, specLines, specVersion: 1 }, minutesAgo: 44 },
+    { role: 'system', content: 'Claude Code finished', metadata: { ccOutput, durationMs: 198000 }, minutesAgo: 40 },
+  ];
+
+  for (const m of messages) {
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+       VALUES ($1, $2, $3, $4, NOW() - ($5::int * INTERVAL '1 minute'))`,
+      [sessionId, m.role, m.content, JSON.stringify(m.metadata), m.minutesAgo]
+    );
+  }
+
+  log.info('db', 'Staging demo-proposal fixture seeded', {
+    appId,
+    owner: owner.username,
+    sessionId,
   });
 }
 
