@@ -14,6 +14,7 @@
     modal: null,
     state: { hasApiKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false },
     _walletPollTimer: null,
+    _alertsTestTimer: null,
     _walletExpiresAt: null,
     _walletCountdownTimer: null,
 
@@ -69,6 +70,56 @@
       const estimateToggle = document.getElementById('ai-progress-estimate');
       if (estimateToggle) {
         estimateToggle.addEventListener('change', (e) => this._saveAiProgressEstimate(e.target.checked));
+      }
+
+      // #138 "Dev-chat sound & alerts" toggle. Client-only preference
+      // (localStorage, default ON) owned by DevAlerts — we just mirror its
+      // checked state and flip the stored flag. Turning it ON is a user
+      // gesture, so unlock audio + request notification permission then.
+      const alertsToggle = document.getElementById('devchat-alerts-toggle');
+      if (alertsToggle) {
+        alertsToggle.checked = window.DevAlerts ? DevAlerts.enabled() : true;
+        alertsToggle.addEventListener('change', (e) => {
+          if (!window.DevAlerts) return;
+          DevAlerts.setEnabled(e.target.checked);
+          if (e.target.checked) {
+            DevAlerts._unlockAudio();
+            DevAlerts.requestNotifyPermission();
+          }
+        });
+      }
+
+      // #138 "Send a test alert" — exercises the user's own setup. Fires a
+      // demo completion after a short delay so they can stay (hear the
+      // chime) or switch away (see the background notification).
+      const alertsTest = document.getElementById('devchat-alerts-test');
+      if (alertsTest) {
+        alertsTest.addEventListener('click', () => {
+          if (!window.DevAlerts) return;
+          const status = document.getElementById('devchat-alerts-test-status');
+          const ms = DevAlerts.testAlert();
+          if (!status) return;
+          // Visible countdown that ticks down each second (the previous
+          // version set the text once and it looked frozen). Guard against
+          // rapid re-clicks by clearing any in-flight countdown first; the
+          // same id is cleared on close().
+          this._clearAlertsTestCountdown();
+          status.classList.remove('hidden');
+          let remaining = Math.ceil(ms / 1000);
+          const render = () => {
+            status.textContent = `Alert in ${remaining}s — stay here for the chime, or switch away / background the app for a notification.`;
+          };
+          render();
+          this._alertsTestTimer = setInterval(() => {
+            remaining -= 1;
+            if (remaining > 0) {
+              render();
+              return;
+            }
+            this._clearAlertsTestCountdown();
+            status.textContent = 'Sent — you should hear a chime now (or get a notification if you switched away).';
+          }, 1000);
+        });
       }
 
       // "View as non-admin" admin tool. Mirror state to localStorage
@@ -240,6 +291,16 @@
       this.modal.classList.add('hidden');
       document.getElementById('settings-api-key').value = '';
       this._stopWalletPolling();
+      this._clearAlertsTestCountdown();
+    },
+
+    // Clear the "Send a test alert" countdown interval (#138). Idempotent —
+    // safe to call when none is running (rapid re-clicks, modal close).
+    _clearAlertsTestCountdown() {
+      if (this._alertsTestTimer) {
+        clearInterval(this._alertsTestTimer);
+        this._alertsTestTimer = null;
+      }
     },
 
     _renderBody() {

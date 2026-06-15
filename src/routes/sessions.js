@@ -99,17 +99,20 @@ function extractSpecSnippet(content, title) {
 // the require at the top of this file). They're re-exported below so
 // any external importer keeps working.
 
-// #161: if the session owner armed notify_on_done (they left while the
-// turn was running), atomically clear the flag and create + push a
-// session_done notification. Called fire-and-forget from the chat
-// handler's done hook — never throws into the SSE path. The UPDATE …
-// RETURNING makes the check-and-clear atomic, so concurrent done sites
-// (or a done racing the arm beacon) can't double-notify.
-async function notifySessionDoneIfArmed(pool, sessionId) {
+// #138: every interactive turn completion now creates + pushes a
+// session_done notification UNCONDITIONALLY (the persistent green bell
+// item the user can return to any time), not just when notify_on_done was
+// armed. createSessionDoneNotification's own unread-dedup (at most one
+// unread session_done per (user, session) via INSERT … WHERE NOT EXISTS)
+// collapses a back-and-forth conversation into a single pending item, so
+// this doesn't spam. We still clear notify_on_done for tidiness, but it no
+// longer gates creation. Called fire-and-forget from the chat handler's
+// done hook — never throws into the SSE path.
+async function notifySessionDone(pool, sessionId) {
   try {
     const { rows } = await pool.query(
       `UPDATE chat_sessions SET notify_on_done = FALSE
-       WHERE id = $1 AND notify_on_done = TRUE
+       WHERE id = $1
        RETURNING user_id, app_id`,
       [sessionId]
     );
@@ -1221,7 +1224,7 @@ function sessionRoutes(config) {
         // — the main exit, the early returns, and the catch fallthrough —
         // so this is the one hook needed for the left-mid-turn completion
         // notification. Fire-and-forget; the helper swallows its errors.
-        if (type === 'done') notifySessionDoneIfArmed(pool, session.id);
+        if (type === 'done') notifySessionDone(pool, session.id);
       };
 
       // Locals used across multiple branches of the CC flow. Previously these
@@ -5188,4 +5191,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDoneIfArmed, notifyAutoSolveDone, buildHeadlessSeed, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, describeMarkerlessExit, shouldRetryHeadlessTurn };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, describeMarkerlessExit, shouldRetryHeadlessTurn };

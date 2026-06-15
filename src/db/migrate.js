@@ -674,6 +674,16 @@ async function seedStagingNotifications(pool, config) {
     sessionId = rows[0].id;
   }
 
+  // #138: give the fixture session a headless issue number so the
+  // auto_solve_done row below renders "issue #9042" and deep-links to the
+  // Issues tab. Idempotent (only fills when unset).
+  await pool.query(
+    `UPDATE chat_sessions
+        SET headless_issue_number = COALESCE(headless_issue_number, 9042)
+      WHERE id = $1`,
+    [sessionId]
+  );
+
   const fixtures = [
     { kind: 'mention', chatMessageId: messageIds.mention, sourceUserId: source.id, minutesAgo: 11 },
     { kind: 'reply', chatMessageId: messageIds.reply, sourceUserId: source.id, minutesAgo: 10 },
@@ -693,6 +703,12 @@ async function seedStagingNotifications(pool, config) {
       readAt: true,
       minutesAgo: 6,
     },
+    // #138: two UNREAD AI-completion fixtures so the bell's distinct green
+    // badge shows "2" on staging load — one interactive dev-session
+    // completion and one headless proposal run. Both are system-generated
+    // (no source user) and deep-link into the dev tab when clicked.
+    { kind: 'session_done', sessionId, sourceUserId: null, minutesAgo: 5 },
+    { kind: 'auto_solve_done', sessionId, sourceUserId: null, detail: 'code', minutesAgo: 4 },
   ];
 
   let inserted = 0;

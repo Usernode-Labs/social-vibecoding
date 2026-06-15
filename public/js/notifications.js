@@ -183,6 +183,17 @@ const Notifications = {
         ? 'sessionDone'
         : (notif.detail === 'failed' ? 'autoSolveFailed' : 'autoSolveDone'));
     }
+    // #138: route an arriving completion through the alert channels — a
+    // chime when the app is visible, an OS notification when it's hidden.
+    // The visible/hidden split lives in DevAlerts.onCompletion. This is the
+    // "user is elsewhere in the app, or backgrounded" path (notify_on_done
+    // was armed, so a notification_new arrives); the "watching the same dev
+    // chat" path is handled by DevChat._finishStreaming's direct tone.
+    if ((notif.kind === 'session_done' || notif.kind === 'auto_solve_done')
+        && !notif.readAt
+        && window.DevAlerts && typeof DevAlerts.onCompletion === 'function') {
+      DevAlerts.onCompletion(completionAlertInfo(notif));
+    }
     // A live collab invite needs the authoritative pendingInvites list
     // (the notification row alone can't drive the actionable section) —
     // refresh re-pulls it along with the first page.
@@ -431,16 +442,43 @@ const Notifications = {
     return Notifications.unread + Notifications.invites.length;
   },
 
+  // #138: count of unread AI-completion items (session_done /
+  // auto_solve_done) currently loaded — the green "AI is waiting on you"
+  // badge. Counted from the loaded items page; the unread-dedup keeps these
+  // to one-per-session and they're recent, so they sit within the first
+  // page in practice (see spec Considerations for the server-count fallback).
+  _aiUnread() {
+    return Notifications.items.filter(isPriorityNotif).length;
+  },
+
   _renderBadge() {
+    // #138: two badges. Green = pending AI-agent dev-chat completions; red =
+    // everything else (mentions/replies/reactions/kudos/votes) + pending
+    // invites. The green count is split OUT of the red one so the two never
+    // double-count, and each hides at zero.
+    const aiUnread = Notifications._aiUnread();
+    const redCount = Math.max(0, Notifications.unread - aiUnread) + Notifications.invites.length;
+
     const badge = document.getElementById('notifications-badge');
-    if (!badge) return;
-    const total = Notifications._badgeTotal();
-    if (total > 0) {
-      badge.textContent = total > 99 ? '99+' : String(total);
-      badge.classList.remove('hidden');
-    } else {
-      badge.classList.add('hidden');
+    if (badge) {
+      if (redCount > 0) {
+        badge.textContent = redCount > 99 ? '99+' : String(redCount);
+        badge.classList.remove('hidden');
+      } else {
+        badge.classList.add('hidden');
+      }
     }
+
+    const aiBadge = document.getElementById('notifications-badge-ai');
+    if (aiBadge) {
+      if (aiUnread > 0) {
+        aiBadge.textContent = aiUnread > 99 ? '99+' : String(aiUnread);
+        aiBadge.classList.remove('hidden');
+      } else {
+        aiBadge.classList.add('hidden');
+      }
+    }
+
     const markAll = document.getElementById('notifications-mark-all');
     if (markAll) markAll.disabled = Notifications.unread === 0;
     Notifications._updateTitle();
@@ -776,6 +814,47 @@ function renderGroup(g, isExpanded) {
     more = `<button data-group-showmore="${escapeHtml(g.key)}" class="${btnCls}">Show more →</button>`;
   }
   return `${header}<div class="pl-2 bg-zinc-50/50 dark:bg-zinc-950/30">${leaves}${more}</div>`;
+}
+
+// #138: derive the title/body + deep-link fields for a completion alert
+// (chime/OS notification) from a notification row. Mirrors the per-kind
+// copy in previewText / the row renderers so the OS notification reads the
+// same as the bell-menu entry.
+function completionAlertInfo(n) {
+  const appName = n.appName || 'your app';
+  if (n.kind === 'auto_solve_done') {
+    const issue = n.headlessIssueNumber ? `issue #${n.headlessIssueNumber}` : 'an issue';
+    let title;
+    let body;
+    if (n.detail === 'failed') {
+      title = 'Proposal failed';
+      body = `Proposal for ${issue} in ${appName} failed — you can retry`;
+    } else if (n.detail === 'question') {
+      title = 'Proposal has a question';
+      body = `Proposal for ${issue} in ${appName} is waiting for your input`;
+    } else {
+      title = 'Proposal ready';
+      body = `Proposal for ${issue} in ${appName} is ready`;
+    }
+    return {
+      kind: n.kind,
+      appSlug: n.appSlug || null,
+      sessionId: n.sessionId || null,
+      headlessIssueNumber: n.headlessIssueNumber || null,
+      title,
+      body,
+    };
+  }
+  // session_done
+  const label = n.prTitle || n.branchName || 'your session';
+  return {
+    kind: 'session_done',
+    appSlug: n.appSlug || null,
+    sessionId: n.sessionId || null,
+    headlessIssueNumber: null,
+    title: 'Dev session finished',
+    body: `Your dev session in ${appName} finished — ${label}`,
+  };
 }
 
 // One-line summary used in a collapsed group header. Mirrors the per-kind

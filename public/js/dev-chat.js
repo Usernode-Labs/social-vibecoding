@@ -803,6 +803,14 @@ const DevChat = {
 
   async sendMessage(message) {
     if (!DevChat.currentSession || DevChat.isStreaming) return;
+    // #138: a send is a user gesture — unlock the AudioContext and lazily
+    // request OS-notification permission now, so the completion chime /
+    // notification can fire when this turn finishes (browsers only allow
+    // audio + permission prompts from inside a gesture).
+    if (window.DevAlerts) {
+      DevAlerts._unlockAudio();
+      DevAlerts.requestNotifyPermission();
+    }
     const model = DevChat.selectedModel;
     DevChat.isStreaming = true;
     DevChat._setStreamingUI(true);
@@ -1174,6 +1182,12 @@ const DevChat = {
     DevChat._setStreamingUI(false);
     DevChat.renderMessages();
     DevChat.refreshBudget();
+    // #138: the chime/notification is no longer fired from here. Every
+    // interactive turn completion now creates a session_done notification
+    // server-side (see notifySessionDone), so the WS `notification_new`
+    // arrival in Notifications.handleIncoming → DevAlerts.onCompletion is
+    // the single source of the chime (foreground) / OS notification
+    // (backgrounded), even when the user is watching this same dev chat.
   },
 
   // Open (or reopen) the resumable GET /events SSE for the active session.
