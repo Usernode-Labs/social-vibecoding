@@ -825,21 +825,76 @@ function issueRoutes(config) {
     }
   });
 
-  // Close an issue
+  // Withdraw a governance proposal (secret_change / legacy rename). This was
+  // originally an unguarded "close any issue" route with no caller; it is now
+  // the creator-gated self-service withdraw for governance proposals (the
+  // PR-proposal equivalent is POST /api/sessions/:id/archive). Only the
+  // proposal's creator may withdraw, and only while it is still open, so a
+  // stale double-tap or a race against a passing vote is a harmless no-op.
   router.post('/api/issues/:id/close', async (req, res) => {
     try {
-      const { rows } = await pool.query(
-        `UPDATE issues SET status = 'closed'
-         WHERE id = $1
-         RETURNING id, app_id,
-           (SELECT slug FROM apps WHERE apps.id = issues.app_id) AS app_slug`,
+      const { rows: issueRows } = await pool.query(
+        `SELECT i.*, a.slug AS app_slug, a.repo_url AS repo_url
+           FROM issues i JOIN apps a ON a.id = i.app_id
+          WHERE i.id = $1`,
         [req.params.id]
       );
-      if (!rows.length) return res.status(404).json({ error: 'Issue not found' });
-      pushIssueUpdate({ action: 'closed', appSlug: rows[0].app_slug, appId: rows[0].app_id, issueId: rows[0].id });
+      if (!issueRows.length) return res.status(404).json({ error: 'Issue not found' });
+      const issue = issueRows[0];
+
+      // Creator-only. (Admins already have other paths — admin merge / direct
+      // GitHub close — so the gate stays creator-scoped per the spec.)
+      if (!issue.created_by || issue.created_by !== req.user.id) {
+        return res.status(403).json({ error: 'Only the proposer can withdraw this proposal' });
+      }
+
+      // Restrict to open proposals: a withdraw that loses the race against a
+      // passing vote (which flips status to 'closed') simply no-ops here.
+      const auditPayload = {
+        ...(issue.payload || {}),
+        withdrawnAt: new Date().toISOString(),
+        withdrawnBy: req.user.username,
+      };
+      const { rows } = await pool.query(
+        `UPDATE issues SET status = 'closed', payload = $2
+          WHERE id = $1 AND status = 'open'
+          RETURNING id, app_id`,
+        [issue.id, JSON.stringify(auditPayload)]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Proposal not open' });
+
+      // Announce the withdrawal in group chat, and dual-post into the
+      // proposal's governance thread (mirrors the create path).
+      const withdrewMsg = `${req.user.username} withdrew their proposal: "${issue.title}"`;
+      await sendSystemMessage(pool, issue.app_id, withdrewMsg, 'system')
+        .catch((err) => log.warn('issues', 'Withdraw chat message failed', { err: err.message }));
+      await sendSystemMessage(pool, issue.app_id, withdrewMsg, 'system',
+        null, { type: 'governance', ref: issue.id }).catch(() => {});
+
+      // Best-effort close the GitHub twin (legacy renames carry one;
+      // secret_change proposals have no twin, so this is skipped silently).
+      if (issue.github_issue_number) {
+        const [, owner, repo] = (issue.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+        const pat = process.env.GITHUB_BOT_TOKEN;
+        if (owner && repo && pat) {
+          try {
+            const { Octokit } = await import('@octokit/rest');
+            const ok = new Octokit({ auth: pat });
+            await ok.rest.issues.update({
+              owner, repo, issue_number: issue.github_issue_number, state: 'closed',
+            });
+          } catch (err) {
+            log.warn('issues', 'GitHub issue close on withdraw failed', {
+              issue: issue.github_issue_number, status: err.status, err: err.message || '(empty)',
+            });
+          }
+        }
+      }
+
+      pushIssueUpdate({ action: 'closed', appSlug: issue.app_slug, appId: issue.app_id, issueId: issue.id });
       res.json({ ok: true });
     } catch (err) {
-      log.error('issues', 'Close failed', { message: err.message });
+      log.error('issues', 'Withdraw failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
