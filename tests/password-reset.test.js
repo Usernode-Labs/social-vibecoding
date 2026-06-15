@@ -429,7 +429,7 @@ test('admin reset: a non-admin never reaches the handler', async () => {
 
 test('admin reset: unknown user is 404', async () => {
   reset();
-  currentUser = { id: 1, username: 'admin', isAdmin: true };
+  currentUser = { id: 1, username: 'admin', isAdmin: true, canAdminWrite: true };
   updateReturns = []; // UPDATE ... RETURNING yields no rows → user not found
   const server = await startApp(adminRoutes, {});
   try {
@@ -444,7 +444,7 @@ test('admin reset: unknown user is 404', async () => {
 
 test('admin reset: success returns a one-time temp password, wipes sessions, never logs plaintext', async () => {
   reset();
-  currentUser = { id: 1, username: 'admin', isAdmin: true };
+  currentUser = { id: 1, username: 'admin', isAdmin: true, canAdminWrite: true };
   updateReturns = [{ id: 9, username: 'bob' }];
   const server = await startApp(adminRoutes, {});
   try {
@@ -473,7 +473,7 @@ test('admin reset: success returns a one-time temp password, wipes sessions, nev
 
 test('admin reset: invalid id is 400', async () => {
   reset();
-  currentUser = { id: 1, username: 'admin', isAdmin: true };
+  currentUser = { id: 1, username: 'admin', isAdmin: true, canAdminWrite: true };
   const server = await startApp(adminRoutes, {});
   try {
     const r = await post(server, '/api/admin/users/not-a-number/reset-password', {});

@@ -547,6 +547,10 @@ const AppView = {
     // survives until the next renderDevView).
     const feedEl = document.getElementById('dev-feed');
     feedEl.addEventListener('click', (e) => {
+      // #313: the card-level "Ask AI" button is a <button>, so the guard
+      // below would swallow it — handle it first, then bail.
+      const askBtn = e.target.closest('.gc-ask-ai-btn');
+      if (askBtn) { AppView._openAskAiFromCard(askBtn.dataset.proposalId); return; }
       if (e.target.closest('a, button, input, form')) return;
       const issueRow = e.target.closest('[data-issue-row]');
       if (issueRow) {
@@ -561,6 +565,21 @@ const AppView = {
       const govRow = e.target.closest('[data-gov-row]');
       if (govRow) AppView.openTopic('gov', parseInt(govRow.dataset.govRow, 10));
     });
+
+    // Completed (merged) proposals live in a sibling container with its own
+    // bespoke layout; bind the same tap-to-open behaviour here so merged
+    // rows open their (still-live) discussion thread full-screen. The node
+    // is stable across toggleMergedPrs()/_loadDevFeed() innerHTML rewrites.
+    const mergedEl = document.getElementById('gc-merged');
+    if (mergedEl) {
+      mergedEl.addEventListener('click', (e) => {
+        const askBtn = e.target.closest('.gc-ask-ai-btn');
+        if (askBtn) { AppView._openAskAiFromCard(askBtn.dataset.proposalId); return; }
+        if (e.target.closest('a, button, input, form')) return;
+        const prRow = e.target.closest('[data-proposal-row]');
+        if (prRow) AppView.openTopic('proposal', parseInt(prRow.dataset.proposalRow, 10));
+      });
+    }
 
     AppView._renderSessionsStrip();
     AppView._syncStripPolling();
@@ -636,7 +655,8 @@ const AppView = {
       return (AppView._ghIssues || []).find((i) => i.number === t.id) || null;
     }
     if (t.kind === 'proposal') {
-      // Open proposals first; merged ones stay viewable (read-only thread).
+      // Open proposals first; merged ones stay viewable with a still-live,
+      // postable discussion thread (voting is settled, talking isn't).
       return (AppView._proposals || []).find((p) => p.id === t.id)
         || (AppView._merged || []).find((p) => p.id === t.id) || null;
     }
@@ -669,9 +689,118 @@ const AppView = {
         : '';
     }
 
-    head.innerHTML = cardHtml + bodyHtml;
+    // #297: the "Ask AI" advisor button — only for proposals (PR) and
+    // governance proposals, not plain GitHub issues. Opens a private,
+    // read-only conversation scoped to THIS proposal (see proposal-discuss.js).
+    const askAiHtml = (t.kind === 'proposal' || t.kind === 'gov')
+      ? AppView._askAiButtonHtml() : '';
+
+    head.innerHTML = cardHtml + bodyHtml + askAiHtml;
     if (window.Kudos) Kudos.attach(head);
     if (t.kind === 'proposal' && item.status !== 'merged') AppView._loadVoteRoster(item.id);
+
+    if (askAiHtml) {
+      const btn = head.querySelector('#proposal-ask-ai');
+      if (btn) {
+        btn.addEventListener('click', () => {
+          if (btn.disabled) return;
+          if (typeof ProposalDiscuss !== 'undefined') {
+            ProposalDiscuss.open(t.kind, t.id, AppView._findTopicItem());
+          }
+        });
+      }
+      // Resolve AI availability and disable the button (with tooltip) when
+      // no LLM is configured — matches the dev chat's posture.
+      AppView._ensureAiAvailability().then((enabled) => {
+        const b = document.getElementById('proposal-ask-ai');
+        if (!b) return;
+        b.disabled = !enabled;
+        if (!enabled) {
+          b.title = "AI chat isn't configured on this deployment.";
+          b.classList.add('opacity-50', 'cursor-not-allowed');
+        } else {
+          b.title = 'Ask AI about this proposal (private to you)';
+          b.classList.remove('opacity-50', 'cursor-not-allowed');
+        }
+      });
+    }
+  },
+
+  _askAiButtonHtml() {
+    return `
+      <div class="mt-3 px-1">
+        <button id="proposal-ask-ai" type="button"
+          class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium
+                 bg-violet-500/10 text-violet-600 dark:text-violet-300 border border-violet-500/30
+                 hover:bg-violet-500/20 transition-colors"
+          title="Ask AI about this proposal (private to you)">
+          <span aria-hidden="true">✨</span> Ask AI
+        </button>
+      </div>`;
+  },
+
+  // #313: a compact "Ask AI" action for the proposal CARD action row
+  // (the Dev feed + the Completed list), as opposed to the full-screen
+  // topic-head button above. Cards render many at once, so this uses a
+  // class + data-proposal-id hook instead of the id="proposal-ask-ai"
+  // the head uses (ids must stay unique). Only rendered on proposals the
+  // viewer does NOT own — owners reach AI through "Open session" and the
+  // in-discussion advisor, so a card button would be redundant clutter.
+  // Click is dispatched by the delegated feed/merged handlers.
+  _askAiCardBtnHtml(pr) {
+    return `<button type="button" class="gc-vote-btn gc-ask-ai-btn" data-proposal-id="${pr.id}"
+      title="Ask AI about this proposal (private to you)"><span aria-hidden="true">✨</span> Ask AI</button>`;
+  },
+
+  // Open the private read-only advisor for a card's proposal, resolving
+  // the row from the in-memory promoted/merged lists (same shape the
+  // topic head passes to ProposalDiscuss.open).
+  _openAskAiFromCard(id) {
+    const pid = parseInt(id, 10);
+    if (!pid || typeof ProposalDiscuss === 'undefined') return;
+    const pr = (AppView._proposals || []).find((p) => p.id === pid)
+      || (AppView._merged || []).find((p) => p.id === pid);
+    if (pr) ProposalDiscuss.open('proposal', pid, pr);
+  },
+
+  // Resolve AI availability once (memoized) and disable every card-level
+  // Ask AI button under `root` with a tooltip when no LLM is configured —
+  // mirrors the topic-head pass at _renderTopicHead. Must be re-run after
+  // each feed/merged re-render, since innerHTML replacement paints fresh,
+  // enabled buttons every time.
+  _applyAskAiCardAvailability(root) {
+    const scope = root || document;
+    if (!scope.querySelector('.gc-ask-ai-btn')) return;
+    AppView._ensureAiAvailability().then((enabled) => {
+      scope.querySelectorAll('.gc-ask-ai-btn').forEach((b) => {
+        b.disabled = !enabled;
+        if (!enabled) {
+          b.title = "AI chat isn't configured on this deployment.";
+          b.classList.add('opacity-50', 'cursor-not-allowed');
+        } else {
+          b.title = 'Ask AI about this proposal (private to you)';
+          b.classList.remove('opacity-50', 'cursor-not-allowed');
+        }
+      });
+    });
+  },
+
+  // Cached check of whether any LLM path is usable (platform key or the
+  // user's BYOK key). Resolves to a boolean; the promise is memoized so
+  // repeated topic renders don't refetch /api/budget every time.
+  _ensureAiAvailability() {
+    if (AppView._aiAvailabilityPromise) return AppView._aiAvailabilityPromise;
+    AppView._aiAvailabilityPromise = (async () => {
+      try {
+        const res = await fetch('/api/budget');
+        if (!res.ok) return true; // optimistic — the endpoint itself 503s if truly off
+        const data = await res.json();
+        return data.aiEnabled !== false;
+      } catch {
+        return true;
+      }
+    })();
+    return AppView._aiAvailabilityPromise;
   },
 
   _mountTopicThread() {
@@ -679,23 +808,16 @@ const AppView = {
     const slot = document.getElementById('dev-topic-thread');
     if (!t || !slot || typeof GroupChat === 'undefined' || !GroupChat.mountThread) return;
     const typeMap = { issue: 'issue', proposal: 'session', gov: 'governance' };
-    // A proposal that has left voting gets a read-only thread.
-    let readOnly = false;
-    let notice = '';
-    if (t.kind === 'proposal') {
-      const item = AppView._findTopicItem();
-      if (item && item.status === 'merged') {
-        readOnly = true;
-        notice = 'Voting closed — this proposal was merged. The discussion is read-only.';
-      }
-    }
+    // Every topic thread — including merged proposals — mounts with a live,
+    // editable composer. Merging settles the vote, not the conversation:
+    // people keep posting follow-ups after a proposal lands. The WS handler
+    // accepts session-thread posts on merged sessions (existence-only gate),
+    // so there is no read-only lock or "voting closed" notice here.
     GroupChat.mountThread({
       type: typeMap[t.kind],
       ref: t.id,
       container: slot,
       fullHeight: true,
-      readOnly,
-      notice,
     });
   },
 
@@ -1139,6 +1261,7 @@ const AppView = {
     if (mergedEl) {
       mergedEl.innerHTML = (AppView._merged || []).length ? AppView._renderMergedInner() : '';
       if (window.Kudos) Kudos.attach(mergedEl);
+      AppView._applyAskAiCardAvailability(mergedEl);
     }
   },
 
@@ -1246,6 +1369,7 @@ const AppView = {
     if (!el) return;
     el.innerHTML = AppView._renderFeedInner();
     if (window.Kudos) Kudos.attach(el);
+    AppView._applyAskAiCardAvailability(el);
   },
 
   showMoreFeed() {
@@ -1263,9 +1387,16 @@ const AppView = {
     if (!el || !AppView.appData) return;
     const slug = AppView.appData.slug;
     try {
-      const res = await fetch('/api/me/active-sessions');
-      if (!res.ok) { el.innerHTML = ''; return; }
-      const data = await res.json();
+      // Two sources: /api/me/active-sessions carries the live `busy`
+      // annotation for active/paused chips; /api/apps/:slug/sessions is
+      // the only endpoint that returns the viewer's *archived* rows
+      // (owner-scoped, includes every status). Fetch both in parallel.
+      const [activeRes, allRes] = await Promise.all([
+        fetch('/api/me/active-sessions'),
+        fetch(`/api/apps/${encodeURIComponent(slug)}/sessions`).catch(() => null),
+      ]);
+      if (!activeRes.ok) { el.innerHTML = ''; return; }
+      const data = await activeRes.json();
       // Most-recent-activity-first, matching the feed's within-group
       // order. last_activity_at folds in the latest session message;
       // older servers without it fall back to created_at.
@@ -1276,39 +1407,159 @@ const AppView = {
       const mine = (data.sessions || [])
         .filter((s) => s.app_slug === slug && (s.status === 'active' || s.status === 'paused'))
         .sort((a, b) => actTs(b) - actTs(a));
+      // Archived rows for this app (owner-scoped via the per-app
+      // endpoint). Tolerate a failed/older fetch by treating it as none.
+      let archived = [];
+      if (allRes && allRes.ok) {
+        const allData = await allRes.json().catch(() => ({}));
+        archived = (allData.sessions || [])
+          .filter((s) => s.status === 'archived')
+          .sort((a, b) => actTs(b) - actTs(a));
+      }
       // The container may have been replaced while the fetch was in
       // flight (tab switch) — re-resolve before painting.
       const live = document.getElementById('dev-sessions-strip');
       if (!live) return;
-      if (!mine.length) { live.innerHTML = ''; return; }
+      if (!mine.length && !archived.length) { live.innerHTML = ''; return; }
+
+      const chipsHtml = mine.map((s) => {
+        const label = escapeHtml(s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`);
+        const statusTag = s.busy
+          ? '<span class="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
+          : (s.status === 'paused' ? '<span class="text-xs text-zinc-500 shrink-0">paused</span>' : '');
+        // A clickable <div> (not <button>) so the inner Archive button is
+        // valid HTML. The row navigates on click; Archive stops propagation.
+        return `<div data-session-chip="${s.id}" role="button" tabindex="0"
+          class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}"
+          title="${s.busy ? 'AI is working — ' : ''}${label}">
+          ${AppView._devCardIcon('session')}
+          <span class="flex-1 min-w-0">
+            <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200 break-words">${label}</span>
+            <span class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">Your dev session</span>
+          </span>
+          ${statusTag}
+          <button type="button" class="dc-active-archive" data-archive-chip="${s.id}" data-name="${label}" title="Archive this session (closes the PR, frees the slot)">Archive</button>
+          <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+        </div>`;
+      }).join('');
+
+      // Archived toggle — collapsed by default on every render (no
+      // persistence). Hidden entirely when the viewer has no archived
+      // sessions for this app.
+      const archivedHtml = archived.length ? `
+        <div class="pt-1">
+          <button type="button" data-archived-toggle aria-expanded="false"
+            class="text-xs text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 inline-flex items-center gap-1">
+            <svg data-archived-caret class="w-3 h-3 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+            Show archived (${archived.length})
+          </button>
+          <div data-archived-list class="hidden space-y-2 pt-2">
+            ${archived.map((s) => {
+              const label = escapeHtml(s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`);
+              return `<div class="${AppView.DEV_CARD_CLS}">
+                ${AppView._devCardIcon('session')}
+                <span class="flex-1 min-w-0">
+                  <span class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 break-words">${label}</span>
+                  <span class="block text-xs text-zinc-400 dark:text-zinc-500 truncate">Archived</span>
+                </span>
+                <button type="button" class="gc-vote-btn" data-unarchive-chip="${s.id}" title="Restore this session (reopens its PR)">Unarchive</button>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>` : '';
+
       live.innerHTML = `
         <div class="space-y-2">
-          ${mine.map((s) => {
-            const label = escapeHtml(s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`);
-            const statusTag = s.busy
-              ? '<span class="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
-              : (s.status === 'paused' ? '<span class="text-xs text-zinc-500 shrink-0">paused</span>' : '');
-            return `<button data-session-chip="${s.id}"
-              class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}"
-              title="${s.busy ? 'AI is working — ' : ''}${label}">
-              ${AppView._devCardIcon('session')}
-              <span class="flex-1 min-w-0">
-                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200 break-words">${label}</span>
-                <span class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">Your dev session</span>
-              </span>
-              ${statusTag}
-              <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-            </button>`;
-          }).join('')}
+          ${chipsHtml}
+          ${archivedHtml}
         </div>`;
-      live.querySelectorAll('[data-session-chip]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-          App.switchTab('dev', parseInt(btn.dataset.sessionChip, 10), 'sessions');
+
+      live.querySelectorAll('[data-session-chip]').forEach((row) => {
+        const go = () => App.switchTab('dev', parseInt(row.dataset.sessionChip, 10), 'sessions');
+        row.addEventListener('click', go);
+        row.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); go(); }
+        });
+      });
+      live.querySelectorAll('[data-archive-chip]').forEach((btn) => {
+        btn.addEventListener('click', async (ev) => {
+          ev.stopPropagation();
+          const id = parseInt(btn.dataset.archiveChip, 10);
+          const ok = await AppView._archiveSession(id, btn.dataset.name || 'this session');
+          if (!ok) return;
+          await AppView._renderSessionsStrip();
+          await AppView._loadDevFeed();
+        });
+      });
+      const toggle = live.querySelector('[data-archived-toggle]');
+      if (toggle) {
+        toggle.addEventListener('click', () => {
+          const listEl = live.querySelector('[data-archived-list]');
+          const caret = live.querySelector('[data-archived-caret]');
+          const open = listEl.classList.toggle('hidden') === false;
+          toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+          if (caret) caret.style.transform = open ? 'rotate(90deg)' : '';
+        });
+      }
+      live.querySelectorAll('[data-unarchive-chip]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const id = parseInt(btn.dataset.unarchiveChip, 10);
+          const original = btn.textContent;
+          btn.textContent = '...';
+          btn.disabled = true;
+          try {
+            const resp = await fetch(`/api/sessions/${id}/unarchive`, { method: 'POST' });
+            const body = await resp.json().catch(() => ({}));
+            if (!resp.ok) {
+              alert(body.error || 'Failed to unarchive session');
+              btn.textContent = original;
+              btn.disabled = false;
+              return;
+            }
+            if (body.ccPurged) {
+              alert("Session restored. Note: Claude's memory had already been cleared, so this picks up as a fresh chat on the same branch.");
+            }
+          } catch (err) {
+            alert(`Unarchive failed: ${err.message}`);
+            btn.textContent = original;
+            btn.disabled = false;
+            return;
+          }
+          await AppView._renderSessionsStrip();
+          await AppView._loadDevFeed();
         });
       });
     } catch {
       el.innerHTML = '';
     }
+  },
+
+  // Shared archive flow for a dev session: confirm (proposal-card copy,
+  // since restore now lives in the strip's archived toggle, not a
+  // removed session-list screen) then POST /api/sessions/:id/archive.
+  // Owner-scoped server-side. Returns true on success so callers can
+  // re-render. Used by both the sessions strip and archiveProposal.
+  async _archiveSession(sessionId, name) {
+    if (!sessionId) return false;
+    const ok = await ConfirmModal.show({
+      title: `Archive "${name}"?`,
+      message: "This closes the PR and frees the slot. You can Unarchive it later to restore it (chat memory is kept for 30 days).",
+      confirmLabel: 'Archive',
+      danger: true,
+    });
+    if (!ok) return false;
+    try {
+      const resp = await fetch(`/api/sessions/${sessionId}/archive`, { method: 'POST' });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        alert(data.error || `Archive failed (HTTP ${resp.status}).`);
+        return false;
+      }
+    } catch (err) {
+      alert(`Archive failed: ${err.message}`);
+      return false;
+    }
+    return true;
   },
 
   // Refresh the strip's busy indicators on a slow tick while the forum
@@ -1393,6 +1644,10 @@ const AppView = {
     const archiveBtn = (mine && !isMerged && !isMerging && pr.status === 'promoted')
       ? `<button class="gc-vote-btn" title="Archive this proposal (closes the PR, frees the slot)" onclick="AppView.archiveProposal(${pr.id})">Archive</button>`
       : '';
+    // #313: the per-proposal "Ask AI" advisor, surfaced on the card for
+    // proposals the viewer does NOT own. Owners reach AI via "Open
+    // session" + the in-discussion advisor, so it's omitted on own cards.
+    const askAiBtn = !mine ? AppView._askAiCardBtnHtml(pr) : '';
     // #195/#211: before/after capture tiles, collapsed by default behind a
     // "Show before/after" pill that sits with the other action buttons. The
     // tiles wait in an inert <template> (no bandwidth, no autoplay loops)
@@ -1410,8 +1665,8 @@ const AppView = {
     // Merged proposals (topic-view fallback) drop the live vote buttons —
     // the vote is settled; kudos stays open.
     const actions = (isMerged
-      ? [kudosBtn, sessionBtn, visualsBtn]
-      : [AppView.voteButtonsHtml(pr), kudosBtn, sessionBtn, archiveBtn, visualsBtn]
+      ? [kudosBtn, sessionBtn, askAiBtn, visualsBtn]
+      : [AppView.voteButtonsHtml(pr), kudosBtn, sessionBtn, archiveBtn, askAiBtn, visualsBtn]
     ).filter(Boolean).join('');
 
     return `
@@ -1486,7 +1741,7 @@ const AppView = {
     const tallyPill = AppView.voteCountPill({ yes_count: upCount, no_count: downCount }, majority);
     const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${myVote === 'up' ? ' gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'up')">Yes (${upCount})</button>`;
     const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${myVote === 'down' ? ' gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'down')">No (${downCount})</button>`;
-    const adminBtn = (!isRename && App.user?.isAdmin)
+    const adminBtn = (!isRename && App.user?.canAdminWrite)
       ? `<button class="gc-vote-btn gc-vote-btn-admin" title="Admin: apply this change right now, bypassing the vote majority" onclick="AppView.castIssueAdminApply(${issue.id})">Admin merge</button>`
       : '';
     const govChatN = parseInt(issue.chat_count) || 0;
@@ -1556,24 +1811,8 @@ const AppView = {
     if (!sessionId) return;
     const pr = (AppView._proposals || []).find((p) => p.id === sessionId);
     const name = pr ? (pr.title || pr.pr_title || `PR#${pr.pr_number || pr.id}`) : 'this proposal';
-    const ok = await ConfirmModal.show({
-      title: `Archive "${name}"?`,
-      message: "This closes the PR and frees the slot. You can Unarchive it later to restore it (chat memory is kept for 30 days).",
-      confirmLabel: 'Archive',
-      danger: true,
-    });
+    const ok = await AppView._archiveSession(sessionId, name);
     if (!ok) return;
-    try {
-      const resp = await fetch(`/api/sessions/${sessionId}/archive`, { method: 'POST' });
-      if (!resp.ok) {
-        const data = await resp.json().catch(() => ({}));
-        alert(data.error || `Archive failed (HTTP ${resp.status}).`);
-        return;
-      }
-    } catch (err) {
-      alert(`Archive failed: ${err.message}`);
-      return;
-    }
     await AppView._loadDevFeed();
   },
 
@@ -1927,6 +2166,10 @@ const AppView = {
       const kudosBtn = window.Kudos
         ? Kudos.renderButton(pr, { compact: true })
         : '';
+      // #313: Ask AI on the Completed list too, for proposals the viewer
+      // does not own (parallel to the live feed cards).
+      const mine = !!(App.user && pr.user_id === App.user.id);
+      const askAiBtn = !mine ? AppView._askAiCardBtnHtml(pr) : '';
 
       // #16: undo is a single direct action — clicking Undo opens a
       // revert PR (like proposing a change) which then needs the
@@ -1964,7 +2207,7 @@ const AppView = {
       }
 
       html += `
-        <div class="gc-vote-item ${AppView.DEV_CARD_CLS}" data-ref-pr="${pr.pr_number || pr.id}">
+        <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-ref-pr="${pr.pr_number || pr.id}" data-proposal-row="${pr.id}" title="Open this proposal's discussion">
           ${AppView._devCardIcon('done')}
           <div class="flex-1 min-w-0">
             <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -1973,13 +2216,16 @@ const AppView = {
                 <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta"><a href="${pr.pr_url || '#'}" target="_blank" rel="noopener" class="font-mono text-emerald-400 hover:underline">PR#${pr.pr_number || pr.id}</a> · ${date}${AppView.closesPillHtml(pr) ? ` ${AppView.closesPillHtml(pr)}` : ''}</div>
               </div>
               ${AppView.voteCountPill(pr, majority)}
+              ${AppView._devChatBadge(parseInt(pr.chat_count) || 0)}
             </div>
             <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
               ${AppView.voteButtonsHtml(pr, { collapseVoted: true })}
               ${undoUI}
               ${kudosBtn}
+              ${askAiBtn}
             </div>
           </div>
+          ${AppView.DEV_CARD_CHEVRON}
         </div>`;
     }
     html += '</div>';
@@ -1998,7 +2244,10 @@ const AppView = {
   toggleMergedPrs() {
     AppView._mergedExpanded = !AppView._mergedExpanded;
     const el = document.getElementById('gc-merged');
-    if (el) el.innerHTML = AppView._renderMergedInner();
+    if (el) {
+      el.innerHTML = AppView._renderMergedInner();
+      AppView._applyAskAiCardAvailability(el);
+    }
   },
 
   // "Give kudos" — pledge a bounty on a GitHub issue. Debits the shared
@@ -2538,7 +2787,7 @@ const AppView = {
     const preview = pr.staging_url
       ? `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStagingForSession(${pr.id}, '${pr.staging_url}')">Preview</button>`
       : '';
-    const adminMerge = App.user?.isAdmin
+    const adminMerge = App.user?.canAdminWrite
       ? `<button class="gc-vote-btn gc-vote-btn-admin" title="Admin: merge this PR right now, bypassing the vote majority" onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
       : '';
     const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}" onclick="AppView.castVote(${pr.id}, 'yes')">Yes (${pr.yes_count})</button>`;

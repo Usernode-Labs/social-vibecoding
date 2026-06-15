@@ -27,15 +27,21 @@ async function migrate(config) {
   await seedStagingEnvProposal(pool, config);
   await seedStagingMergedPrs(pool, config);
   await seedStagingMyOpenPr(pool, config);
+  await seedStagingProposalDiscussion(pool, config);
+  await seedStagingOtherUserProposal(pool, config);
   await seedStagingArchiveProposalFixtures(pool, config);
   await seedStagingActiveSessions(pool, config);
   await seedStagingCcProgressRun(pool, config);
   await seedStagingCcEstimateRun(pool, config);
   await seedStagingDemoAppCard(pool);
+  await seedStagingAppQuotaUsers(pool);
+  await seedStagingViewOnlyAdmin(pool);
   await seedStagingVisuals(pool);
   await seedStagingLeaderboardProfile(pool);
   await seedStagingQaSession(pool, config);
+  await seedStagingCloneQuestionSuggestions(pool, config);
   await seedStagingSpecViewerSessions(pool, config);
+  await seedStagingDemoProposal(pool, config);
   await seedStagingSpecUserShareFixtures(pool, config);
   await seedStagingHeadlessFixtures(pool, config);
   await seedStagingSyncActivity(pool, config);
@@ -1559,6 +1565,78 @@ async function seedStagingDemoAppCard(pool) {
   }
 }
 
+// Per-user app-quota fixtures. The admin Users list is a data-dependent
+// rows UI, so staging needs users spanning the quota states to exercise
+// the inline quota edit, the "N used" indicator, and the bulk "Set all"
+// button. We guarantee three states:
+//   - AT quota   → reuse staging-demo-user (900001), who already owns the
+//                  demo app (900001) from seedStagingDemoAppCard above:
+//                  quota 1 with 1 live app = at the limit (create blocked,
+//                  affordance hidden).
+//   - CAN create → a fresh fixture user with quota 5 and 0 apps.
+//   - CANNOT     → a fresh fixture user with quota 0 and 0 apps.
+// Obviously-fake usernames + non-login passwords; fixed high ids + explicit
+// quota writes make it idempotent, and the whole thing is a strict no-op
+// outside staging.
+async function seedStagingAppQuotaUsers(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    // CAN-create and CANNOT-create fixture users. Sentinel passwords mean
+    // these accounts can never log in interactively.
+    await pool.query(
+      `INSERT INTO users (id, username, password, app_quota)
+       VALUES
+         (900020, 'staging-demo-quota-ok',   '!staging-fixture-no-login!', 5),
+         (900021, 'staging-demo-quota-zero', '!staging-fixture-no-login!', 0)
+       ON CONFLICT (id) DO NOTHING`
+    );
+
+    // Pin the three quotas explicitly so reboots keep the intended states
+    // even if a tester edited them, and so staging-demo-user lands "at
+    // limit" (quota 1, owns the 1 live demo app from seedStagingDemoAppCard).
+    await pool.query('UPDATE users SET app_quota = 1 WHERE id = 900001');
+    await pool.query('UPDATE users SET app_quota = 5 WHERE id = 900020');
+    await pool.query('UPDATE users SET app_quota = 0 WHERE id = 900021');
+
+    log.info('db', 'Staging app-quota fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Staging app-quota fixtures seeding failed', { message: err.message });
+  }
+}
+
+// View-only admin role fixtures (issue #311). The admin user list and its
+// three-way role selector are row-rendering, data-dependent UI. Staging
+// clones preserve prod `users` rows, but prod may contain NO view-only
+// admin, so the new read-only treatment and the third selector option
+// wouldn't be demonstrable. Seed one obviously-fake account as a view-only
+// admin (is_admin = TRUE, admin_readonly = TRUE) so a staging reviewer sees
+// the three roles side-by-side in /admin. The existing seeded admin stays a
+// FULL admin (untouched), preserving the last-full-admin invariant. Strict
+// no-op outside staging; idempotent via fixed id + ON CONFLICT and a pinned
+// UPDATE on reboot.
+async function seedStagingViewOnlyAdmin(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    // Sentinel password means this account can never log in interactively.
+    await pool.query(
+      `INSERT INTO users (id, username, password, is_admin, admin_readonly)
+       VALUES (900030, 'staging-demo-view-admin', '!staging-fixture-no-login!', TRUE, TRUE)
+       ON CONFLICT (id) DO NOTHING`
+    );
+    // Pin the role explicitly so a reboot (or a tester flipping it) restores
+    // the intended view-only state.
+    await pool.query(
+      'UPDATE users SET is_admin = TRUE, admin_readonly = TRUE WHERE id = 900030'
+    );
+
+    log.info('db', 'Staging view-only admin fixture seeded');
+  } catch (err) {
+    log.warn('db', 'Staging view-only admin fixture seeding failed', { message: err.message });
+  }
+}
+
 // (#270) Fixtures for the multi-route before/after gallery. The grouped
 // gallery renders one labelled before/after row per captured route, but
 // session_visuals is staging:private (schema-only in staging, always
@@ -1783,6 +1861,114 @@ async function seedStagingQaSession(pool, config) {
   });
 }
 
+// #32: reproduces the "session cloned from an auto run that ended in
+// questions" shape so a tester can verify the suggested-answer chips
+// render under the FOLLOW-UP message (the last row) without a live LLM
+// run. An ordinary active, non-headless session with, in order:
+//   1. a user seed message (the issue text),
+//   2. an assistant message holding the clarifying questions WITH
+//      metadata.suggestions (the cloned question turn), and
+//   3. an assistant follow-up message — text in the spirit of
+//      buildHeadlessFollowUpMessage's question branch — ALSO carrying the
+//      same metadata.suggestions.
+// The chips must appear under the follow-up (row 3), confirming Defect 2
+// (Part B's forwarding) is fixed. chat_sessions / chat_session_messages
+// are staging:private, hence the seed. Owner is the first-admin selection
+// shared with the other session fixtures; idempotent via branch name.
+async function seedStagingCloneQuestionSuggestions(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging clone-question fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging clone-question fixture skipped: no users');
+    return;
+  }
+  const owner = userRows[0];
+
+  const branch = 'staging-fixture/clone-question-suggestions';
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, branch]
+  );
+  if (existing.length) return;
+
+  const { rows: sessionRows } = await pool.query(
+    `INSERT INTO chat_sessions
+       (app_id, user_id, branch_name, pr_title, status, created_at)
+     VALUES
+       ($1, $2, $3, $4, 'active', NOW() - INTERVAL '20 minutes')
+     RETURNING id`,
+    [appId, owner.id, branch, '[staging fixture] Staging demo: chips on a cloned auto-question session']
+  );
+  const sessionId = sessionRows[0].id;
+
+  // Reuse the two-question shape from seedStagingQaSession.
+  const suggestions = [
+    {
+      question: 'Which header?',
+      answers: ['The platform-wide top bar', 'The app view header'],
+    },
+    {
+      question: 'What does "nicer" mean?',
+      answers: ['Tidier spacing', 'A bolder visual refresh'],
+    },
+  ];
+
+  // 1. The issue text the auto session worked from.
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, created_at)
+     VALUES ($1, 'user', $2, NOW() - INTERVAL '19 minutes')`,
+    [sessionId, 'Please work on GitHub issue #42: "Make the header nicer".']
+  );
+
+  // 2. The cloned question turn — clarifying questions WITH suggestions.
+  const questionContent = 'Two quick questions before I can proceed:\n\n'
+    + '1. Which header — the platform-wide top bar, or the app view header? (suggested: the platform-wide top bar)\n'
+    + '2. What does "nicer" mean here — tidier spacing, or a bolder visual refresh? (suggested: tidier spacing)';
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+     VALUES ($1, 'assistant', $2, $3, NOW() - INTERVAL '18 minutes')`,
+    [sessionId, questionContent, JSON.stringify({ suggestions })]
+  );
+
+  // 3. The appended follow-up — last row, carrying the SAME suggestions so
+  // the chips render under it (the thing Part B fixes).
+  const followUpContent =
+    'This session was cloned from an auto session that ran unattended on GitHub issue #42. '
+    + "You're on your own branch (forked from the auto session's, so its commits carry over).\n\n"
+    + 'Where things stand: the auto session ran into something that needs a human decision — '
+    + 'see its questions above (the same questions were also posted as a comment on the GitHub '
+    + "issue). Answer here and we'll continue from where it left off.";
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+     VALUES ($1, 'assistant', $2, $3, NOW() - INTERVAL '17 minutes')`,
+    [sessionId, followUpContent, JSON.stringify({ suggestions })]
+  );
+
+  log.info('db', 'Staging clone-question fixture seeded', {
+    appId,
+    owner: owner.username,
+    sessionId,
+  });
+}
+
 
 // Spec-viewer fixtures (#233): three dev-chat sessions in differing
 // spec states so a tester can verify that switching sessions never
@@ -1911,6 +2097,146 @@ async function seedStagingSpecViewerSessions(pool, config) {
     owner: owner.username,
     total: fixtures.length,
     inserted,
+  });
+}
+
+// Checkbox-flicker fix fixture. The fix is a client-rendering change, but
+// every checkbox surface is data-driven, so seed a scout/proposal session
+// named "Staging demo proposal" carrying GFM task lists across all three
+// rendered surfaces: the spec viewer body (spec_md + frozen v1), the inline
+// spec-preview snippet (a system message with specPreview whose checklist
+// straddles the ~200-char clip boundary, exercising the whole-line clip),
+// and the post-turn ccOutput markdown (the dc-cc-attached-md surface). With
+// these present a tester can open the session and confirm the ☐ / ✓ rows
+// render once and stay put. chat_sessions / chat_session_specs are
+// staging:private (schema-only in clones), so without this the session is
+// unreachable in a preview. Idempotent on the fixture branch; strict no-op
+// in production. Live-streaming flicker itself can't be reproduced from
+// seed data alone — start a real turn here to watch it.
+async function seedStagingDemoProposal(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging demo-proposal fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username, is_admin
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging demo-proposal fixture skipped: no users');
+    return;
+  }
+  const owner = userRows[0];
+
+  const fixtureBranch = 'staging-fixture/demo-proposal';
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, fixtureBranch]
+  );
+  if (existing.length) return;
+
+  // Spec body with a GFM task list mixing unchecked / checked items, so the
+  // spec viewer and the inline preview snippet both render ☐ and ✓ rows.
+  const specMd = [
+    '# Staging demo proposal',
+    '',
+    '## User-facing changes',
+    '',
+    'A small demo widget lands on the home screen so we can exercise the',
+    'task-checkbox rendering across every surface.',
+    '',
+    '### Checklist',
+    '',
+    '- [ ] Add the widget to the home view',
+    '- [x] Wire the route on the server',
+    '- [ ] Style the widget to match the theme',
+    '- [x] Add a unit test for the helper',
+    '- [ ] Document the widget in the README',
+    '',
+    '## Technical implementation',
+    '',
+    '- Render the widget client-side; persist its state in `localStorage`.',
+    '- [ ] Confirm the ☐ / ✓ rows render once and stay put while streaming.',
+  ].join('\n');
+
+  // Preview snippet whose checklist sits right around the ~200-char clip
+  // boundary, so the whole-line clip (change #3) is exercised: the leading
+  // prose pushes the first task lines toward 200 chars, and later items
+  // must be dropped on a line boundary rather than half-included.
+  const specPreview = [
+    '# Staging demo proposal',
+    '',
+    'This preview snippet deliberately runs long so its checklist sits near',
+    'the 200-character clip boundary, exercising the whole-line clip.',
+    '',
+    '- [ ] Add the widget to the home view',
+    '- [x] Wire the route on the server',
+    '- [ ] Style the widget to match the theme',
+    '- [x] Add a unit test for the helper',
+  ].join('\n');
+  const specLines = specMd.split('\n').length;
+
+  // Post-turn ccOutput markdown (the dc-cc-attached-md surface) — its own
+  // checklist so the finished-status disclosure renders checkboxes too.
+  const ccOutput = [
+    '[staging fixture] Added the demo widget:',
+    '',
+    '- [x] Wired the route on the server',
+    '- [x] Added a unit test for the helper',
+    '- [ ] Styling + README still to do',
+  ].join('\n');
+
+  const { rows: sessionRows } = await pool.query(
+    `INSERT INTO chat_sessions
+       (app_id, user_id, branch_name, pr_title, status, spec_md, created_at)
+     VALUES
+       ($1, $2, $3, '[staging fixture] Staging demo proposal', 'active', $4,
+        NOW() - INTERVAL '45 minutes')
+     RETURNING id`,
+    [appId, owner.id, fixtureBranch, specMd]
+  );
+  const sessionId = sessionRows[0].id;
+
+  // Freeze v1 (spec_md stays byte-identical to the latest version), mirroring
+  // the real scout flow so the spec viewer opens a numbered version.
+  await pool.query(
+    `INSERT INTO chat_session_specs (session_id, version, content, built_at)
+     VALUES ($1, 1, $2, NOW() - INTERVAL '44 minutes')
+     ON CONFLICT (session_id, version) DO NOTHING`,
+    [sessionId, specMd]
+  );
+
+  const messages = [
+    { role: 'user', content: '[staging fixture] Please draft a proposal for a demo widget.', metadata: {}, minutesAgo: 45 },
+    { role: 'system', content: `Scout drafted a ${specLines}-line spec from the codebase.`,
+      metadata: { specPreview, specLines, specVersion: 1 }, minutesAgo: 44 },
+    { role: 'system', content: 'Claude Code finished', metadata: { ccOutput, durationMs: 198000 }, minutesAgo: 40 },
+  ];
+
+  for (const m of messages) {
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+       VALUES ($1, $2, $3, $4, NOW() - ($5::int * INTERVAL '1 minute'))`,
+      [sessionId, m.role, m.content, JSON.stringify(m.metadata), m.minutesAgo]
+    );
+  }
+
+  log.info('db', 'Staging demo-proposal fixture seeded', {
+    appId,
+    owner: owner.username,
+    sessionId,
   });
 }
 
@@ -2259,6 +2585,153 @@ async function seedStagingMyOpenPr(pool, config) {
   });
 }
 
+// #297: seed a short "Ask AI" advisor conversation on the staging
+// my-open-PR fixture so a tester on a prod-cloned staging DB (where
+// proposal_ai_messages ships empty — it's staging:private) sees a
+// populated panel without needing a live LLM. Idempotent: fixed high IDs
+// + ON CONFLICT DO NOTHING. Owned by the same demo author the fixture PR
+// belongs to, pointed at that PR session (proposal_kind='pr').
+async function seedStagingProposalDiscussion(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) return;
+
+  // Anchor on the open-PR fixture seeded just above (same branch name).
+  const { rows: sessRows } = await pool.query(
+    `SELECT id, user_id FROM chat_sessions
+      WHERE app_id = $1 AND branch_name = $2 LIMIT 1`,
+    [appId, 'staging-fixture/my-open-pr']
+  );
+  if (!sessRows.length) {
+    log.warn('db', 'Staging proposal-discuss fixture skipped: open-PR fixture missing');
+    return;
+  }
+  const proposalRef = sessRows[0].id;
+  const userId = sessRows[0].user_id;
+
+  // 4 alternating turns — a tiny multi-turn Q&A so the panel shows the
+  // back-and-forth feel. Fixed high IDs keep the seed idempotent.
+  const turns = [
+    [990001, 'user', 'Staging demo: explain this proposal in plain terms.'],
+    [990002, 'assistant', 'Staging demo: This proposal adds a small, self-contained change to the app. In plain terms, it introduces a new feature without touching the existing data model, so it should be low-risk to merge. (This is seeded demo content — no live AI ran.)'],
+    [990003, 'user', 'Staging demo: what could break, and should I vote yes?'],
+    [990004, 'assistant', 'Staging demo: The main thing to watch is the new UI surface, but it degrades gracefully and is private per-user, so the blast radius is small. If it matches the linked issue, voting yes is reasonable. Remember I can only advise here — to actually build something, use "Propose a change" in your own dev chat.'],
+  ];
+
+  for (const [id, role, content] of turns) {
+    await pool.query(
+      `INSERT INTO proposal_ai_messages (id, app_id, proposal_kind, proposal_ref, user_id, role, content, model)
+       VALUES ($1, $2, 'pr', $3, $4, $5, $6, $7)
+       ON CONFLICT (id) DO NOTHING`,
+      [id, appId, proposalRef, userId, role, content, role === 'assistant' ? 'claude-sonnet-4-6' : null]
+    );
+  }
+
+  log.info('db', 'Staging proposal-discuss fixture seeded', { appId, proposalRef, userId });
+}
+
+// #313: a PROMOTED proposal owned by a user OTHER than the tester, so the
+// new card-level "Ask AI" button (rendered only on proposals you do NOT
+// own) is exercisable in staging. seedStagingMyOpenPr covers the owned
+// case; this covers the non-owned case the issue is about. Also seeds a
+// short advisor history keyed to the TESTER's user_id (proposal_ai_messages
+// is staging:private, so it ships empty) so opening the panel from the
+// foreign card shows a back-and-forth rather than the empty state.
+// Idempotent via branch name + fixed high message IDs; a no-op outside
+// staging.
+async function seedStagingOtherUserProposal(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging other-user-proposal fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: users } = await pool.query(
+    `SELECT id, username
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 5`
+  );
+  if (!users.length) {
+    log.warn('db', 'Staging other-user-proposal fixture skipped: no users');
+    return;
+  }
+  // The tester logs in as the first admin (same selection as the other
+  // fixtures). The proposal must be owned by SOMEONE ELSE so the card has
+  // no "Open session" button and the new Ask AI button renders.
+  const tester = users[0];
+  const owner = users.find((u) => u.id !== tester.id);
+  if (!owner) {
+    log.warn('db', 'Staging other-user-proposal fixture skipped: need a second user');
+    return;
+  }
+
+  const branch = 'staging-fixture/other-user-open-pr';
+  let sessionId;
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, branch]
+  );
+  if (existing.length) {
+    sessionId = existing[0].id;
+  } else {
+    const { rows } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_number, pr_title, status,
+          votes_required, created_at)
+       VALUES
+         ($1, $2, $3, 9300,
+          '[staging fixture] Another user''s proposal — Ask AI about it',
+          'promoted', $4, NOW() - INTERVAL '20 minutes')
+       RETURNING id`,
+      [appId, owner.id, branch, Math.max(1, Math.ceil(users.length / 2))]
+    );
+    sessionId = rows[0].id;
+  }
+
+  // The owner's own yes-vote so the tally pill renders a realistic fill.
+  await pool.query(
+    `INSERT INTO pr_votes (session_id, user_id, vote, created_at)
+     VALUES ($1, $2, 'yes', NOW() - INTERVAL '19 minutes')
+     ON CONFLICT (session_id, user_id) DO NOTHING`,
+    [sessionId, owner.id]
+  );
+
+  // Advisor history keyed to the TESTER (the per-user, private
+  // conversation they'd see), pointed at this PR session.
+  const turns = [
+    [990101, 'user', 'Staging demo: explain this proposal in plain terms.'],
+    [990102, 'assistant', 'Staging demo: This is another user\'s proposal, opened for the group to review and vote on. You can ask me anything about it here — privately. I can only advise; I can\'t vote or change the proposal. (Seeded demo content — no live AI ran.)'],
+    [990103, 'user', 'Staging demo: what should I watch for before voting yes?'],
+    [990104, 'assistant', 'Staging demo: Check that the change matches any linked issue, that its blast radius is small, and that it degrades gracefully. If all that holds, voting yes is reasonable. Remember this advisor is read-only.'],
+  ];
+  for (const [id, role, content] of turns) {
+    await pool.query(
+      `INSERT INTO proposal_ai_messages (id, app_id, proposal_kind, proposal_ref, user_id, role, content, model)
+       VALUES ($1, $2, 'pr', $3, $4, $5, $6, $7)
+       ON CONFLICT (id) DO NOTHING`,
+      [id, appId, sessionId, tester.id, role, content, role === 'assistant' ? 'claude-sonnet-4-6' : null]
+    );
+  }
+
+  log.info('db', 'Staging other-user-proposal fixture seeded', {
+    appId, ownerUser: owner.username, testerUser: tester.username, sessionId,
+  });
+}
+
 // Archive-restore fixtures (#287-style regression): seed the two states
 // that exercise the restored Archive action but are hard to reach by
 // clicking around in a fresh staging container.
@@ -2355,6 +2828,45 @@ async function seedStagingArchiveProposalFixtures(pool, config) {
           NOW() - INTERVAL '5 days', NOW() - INTERVAL '5 days',
           NOW() - INTERVAL '1 day')`,
       [appId, owner.id, archivedBranch]
+    );
+  }
+
+  // Active, non-promoted session — surfaces as a chip in the viewer's
+  // "Your dev session" strip with the new inline Archive button. No
+  // promoted_at so it stays a live in-progress session (not a proposal
+  // card). /api/me/active-sessions (status IN active/promoted/paused)
+  // returns it and the strip filters to active/paused for this app.
+  const activeBranch = 'staging-fixture/archive-active';
+  const { rows: activeExisting } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, activeBranch]
+  );
+  if (!activeExisting.length) {
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_title, status, created_at)
+       VALUES
+         ($1, $2, $3, '[Mock] Active session — archivable from the strip',
+          'active', NOW() - INTERVAL '2 hours')`,
+      [appId, owner.id, activeBranch]
+    );
+  }
+
+  // Paused, non-promoted session — exercises the paused-row variant of
+  // the strip chip (status tag + Archive button).
+  const pausedBranch = 'staging-fixture/archive-paused';
+  const { rows: pausedExisting } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, pausedBranch]
+  );
+  if (!pausedExisting.length) {
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_title, status, created_at)
+       VALUES
+         ($1, $2, $3, '[Mock] Paused session — archivable from the strip',
+          'paused', NOW() - INTERVAL '1 day')`,
+      [appId, owner.id, pausedBranch]
     );
   }
 

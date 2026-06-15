@@ -893,12 +893,18 @@
        whose elapsed ticker / live-activity summary call formatElapsed and
        summarizeCcProgress. -->
   <script src="/js/cc-progress-summary.js"></script>
+  <!-- Pure streaming/holdback helpers. Must load BEFORE dev-chat.js, whose
+       live assistant bubble and spec-preview snippet call
+       renderStreamingHtml / clipSpecSnippet to stop the task-checkbox
+       flicker while output streams. -->
+  <script src="/js/streaming-markdown.js"></script>
   <script src="/js/dev-chat.js"></script>
   <!-- Kudos widget (button + budget badge) and leaderboard screen.
        Loaded BEFORE app-view.js so the panel renderer can use
        Kudos.renderButton directly. -->
   <script src="/js/kudos.js"></script>
   <script src="/js/leaderboard.js"></script>
+  <script src="/js/proposal-discuss.js"></script>
   <script src="/js/app-view.js"></script>
   <script src="/js/app-secrets.js"></script>
   <script src="/js/home.js"></script>

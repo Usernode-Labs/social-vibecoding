@@ -57,10 +57,17 @@ const App = {
       // the masked state at all times so the admin doesn't forget
       // they're in preview mode.
       App._realIsAdmin = !!App.user?.isAdmin;
+      // View-only admin role (issue #311): mutating controls gate on
+      // `canAdminWrite`, view affordances on `isAdmin`. Mask BOTH under the
+      // "View as non-admin" preview so the admin sees the true non-admin
+      // experience. Server-side gates are unaffected — purely visual.
+      App._realCanAdminWrite = !!App.user?.canAdminWrite;
       App._viewAsNonAdmin = App._realIsAdmin
         && localStorage.getItem('viewAsNonAdmin') === '1';
       if (App._viewAsNonAdmin && App.user) {
         App.user.isAdmin = false;
+        App.user.canAdminWrite = false;
+        App.user.role = 'user';
         document.body.classList.add('is-view-as-non-admin');
       }
     } catch {

@@ -81,6 +81,49 @@ function stagingMockProposals() {
   ];
 }
 
+// #194: staging demo rows for the Completed (merged) list, mirroring
+// stagingMockProposals. Lets ?demo=1 verify the new clickable Completed
+// rows, the chevron/hover affordance, and the 💬 badge against a
+// prod-cloned DB. Caveat: these mock rows have NO backing chat_messages,
+// so opening one shows an empty (but still postable) thread — useful for
+// the card affordance + badge, not for existing-comment display.
+function stagingMockMerged() {
+  const daysAgo = (d) => new Date(Date.now() - d * 86400 * 1000).toISOString();
+  const mk = (id, prNumber, title, days, chat) => ({
+    id,
+    pr_number: prNumber,
+    pr_url: null,
+    pr_title: title,
+    user_id: 0,
+    status: 'merged',
+    linked_issues: null,
+    username: 'staging-tester',
+    created_at: daysAgo(days),
+    revert_of_session_id: null,
+    votes_required: 2,
+    active_users_at_merge: 3,
+    yes_count: 2,
+    no_count: 0,
+    my_vote: null,
+    kudos_count: 0,
+    my_kudos: false,
+    my_kudos_direct: false,
+    chat_count: chat,
+    revert_session_id: null,
+    revert_pr_number: null,
+    revert_pr_url: null,
+    revert_status: null,
+  });
+  return [
+    mk(9100001, 910101,
+      '[Mock] Completed: tighten the empty-state copy on the dev forum',
+      1, 5),
+    mk(9100002, 910102,
+      '[Mock] Completed: bump the chat composer hit area on mobile',
+      4, 0),
+  ];
+}
+
 function voteRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -733,6 +776,14 @@ function voteRoutes(config) {
            (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)
                  OR EXISTS(SELECT 1 FROM issue_bounties WHERE awarded_session_id = cs.id AND status = 'awarded' AND giver_user_id = $2)) as my_kudos,
            (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)) as my_kudos_direct,
+           -- #194: per-proposal human-message count so the Completed list
+           -- renders the same 💬 badge as the active proposals (and signals
+           -- which merged proposals have a discussion worth opening). Counts
+           -- msg_type='message' only — matching the /promoted subquery — so
+           -- dual-posted lifecycle/vote system rows don't inflate the badge.
+           (SELECT COUNT(*)::int FROM chat_messages cm
+             WHERE cm.app_id = cs.app_id AND cm.thread_type = 'session' AND cm.thread_ref = cs.id
+               AND cm.msg_type = 'message') as chat_count,
            rv.id        as revert_session_id,
            rv.pr_number as revert_pr_number,
            rv.pr_url    as revert_pr_url,
@@ -746,6 +797,14 @@ function voteRoutes(config) {
          LIMIT 20`,
         [appRows[0].id, userId]
       );
+
+      // Staging-only demo mode (?demo=1): append mock merged rows so the
+      // clickable Completed list + 💬 badge are verifiable against a
+      // prod-cloned DB. Idempotent by id. See stagingMockMerged above.
+      if (IS_STAGING && req.query.demo === '1') {
+        const have = new Set(rows.map((r) => r.id));
+        rows.unshift(...stagingMockMerged().filter((m) => !have.has(m.id)));
+      }
 
       res.json({ merged: rows });
     } catch (err) {
@@ -848,8 +907,8 @@ function voteRoutes(config) {
   // distinguishes the override so users see who did it and why a PR
   // landed without the usual tally.
   router.post('/api/sessions/:id/admin-merge', async (req, res) => {
-    if (!req.user?.isAdmin) {
-      return res.status(403).json({ error: 'Admin access required' });
+    if (!req.user?.canAdminWrite) {
+      return res.status(403).json({ error: 'Full admin access required' });
     }
     try {
       const { rows } = await pool.query(

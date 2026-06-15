@@ -21,6 +21,20 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS anthropic_key_last4  VARCHAR(8);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS can_create_apps BOOLEAN NOT NULL DEFAULT FALSE;
 UPDATE users SET can_create_apps = TRUE WHERE is_admin = TRUE AND can_create_apps = FALSE;
 
+-- Per-user app-creation quota: the maximum number of live (non-errored)
+-- apps a user may have created. This is the actual app-creation gate (see
+-- src/routes/apps.js) — a non-admin may create iff their live app count is
+-- below this number, so deleting an app frees a slot (mirrors the server-
+-- wide maxApps cap). Default 0 means "cannot create until an admin raises
+-- it", matching the old can_create_apps default-off behaviour. Admins
+-- bypass enforcement entirely — their quota is purely cosmetic. The client
+-- still sees a derived `canCreateApps` boolean (computed in auth/me as
+-- isAdmin || liveCount < app_quota) so the home screen needs no change; the
+-- numeric quota is surfaced only through the admin API. `can_create_apps`
+-- is KEPT for now purely as the one-shot backfill source below — dropping
+-- it (and the derived canCreateApps plumbing) is deferred work.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS app_quota INTEGER NOT NULL DEFAULT 0;
+
 -- is_admin is now mutable from the admin panel (grant/revoke toggle in
 -- public/admin.html → POST /api/admin/users/:id/is-admin). The column is
 -- nullable (DEFAULT FALSE, declared at the top of the table) so legacy
@@ -28,6 +42,21 @@ UPDATE users SET can_create_apps = TRUE WHERE is_admin = TRUE AND can_create_app
 -- `COUNT(*) WHERE is_admin = TRUE` and every `is_admin = TRUE` read treat
 -- NULL and FALSE identically. Idempotent — safe to run every boot.
 UPDATE users SET is_admin = FALSE WHERE is_admin IS NULL;
+
+-- View-only admin role (issue #311). `is_admin` remains the visibility
+-- tier ("can see every admin surface"); `admin_readonly` marks an admin
+-- whose access is read-only — they see everything a full admin sees but
+-- cannot perform any mutating/privileged action. The canonical role is
+-- derived, no enum needed:
+--   is_admin = FALSE                          → normal user (this column ignored)
+--   is_admin = TRUE  AND admin_readonly = FALSE → full admin
+--   is_admin = TRUE  AND admin_readonly = TRUE  → view-only admin
+-- Auth derives `canAdminWrite = is_admin AND NOT admin_readonly` (the single
+-- write gate) in src/middleware/auth.js; every read/visibility gate keeps
+-- keying off is_admin unchanged. Backfill is automatic — existing admin rows
+-- default to FALSE (stay full admins). NOT tagged staging:private below
+-- (non-sensitive, like is_admin) so staging shows correct roles. Idempotent.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_readonly BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Usernode wallet linking: pubkey is the on-chain identity once linked;
 -- token + expiry gate the QR-based linking flow.
@@ -570,6 +599,34 @@ INSERT INTO platform_settings (key, value) VALUES
   ('global_daily_limit_cents', '20000')
 ON CONFLICT (key) DO NOTHING;
 
+-- One-shot backfill of users.app_quota from the legacy can_create_apps
+-- boolean. Guarded by a marker row in platform_settings so it runs EXACTLY
+-- ONCE: a re-run-safe UPDATE keyed only on can_create_apps = TRUE would
+-- re-clobber any quota an admin later resets to 0 for a still-enabled user.
+-- Placed after both `apps` and `platform_settings` exist (this whole file
+-- runs as one ordered statement). Mapping for existing enabled users:
+--   can_create_apps = TRUE  → app_quota = GREATEST(5, <live app count>),
+--     where live count = COUNT(*) of their non-errored apps. The floor of
+--     5 guarantees no regression — nobody who could already create ends up
+--     below the apps they already have. Admins are included (their quota is
+--     cosmetic since they bypass enforcement) so the admin UI shows a
+--     sensible number.
+--   can_create_apps = FALSE → quota stays 0 (the column default).
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM platform_settings WHERE key = 'app_quota_migrated') THEN
+    UPDATE users u
+       SET app_quota = GREATEST(5, (
+             SELECT COUNT(*)::int FROM apps
+              WHERE created_by = u.id AND status <> 'error'
+           ))
+     WHERE u.can_create_apps = TRUE;
+    INSERT INTO platform_settings (key, value)
+      VALUES ('app_quota_migrated', 'true')
+      ON CONFLICT (key) DO NOTHING;
+  END IF;
+END $$;
+
 -- Notifications. Generic row format so we can add more `kind`s later
 -- (PR approvals, etc). Currently 'mention' (group-chat @mention parser
 -- in src/services/ws.js), 'kudos' (PR kudos give in src/routes/kudos.js),
@@ -1002,3 +1059,33 @@ CREATE INDEX IF NOT EXISTS idx_progress_estimates_session ON progress_estimates(
 -- FK-ing a private one. The rows are also per-user run-timing data with
 -- no value in a staging clone, so it ships schema-only + empty there.
 COMMENT ON TABLE progress_estimates IS 'staging:private';
+
+-- #297: per-user, read-only "Ask AI" advisor conversations scoped to a
+-- single proposal — the "Mayor in advisor mode" surface. Each row is one
+-- turn the conversation OWNER (user_id) sent or the advisor replied with,
+-- keyed to either a promoted/merging/merged PR (proposal_kind='pr',
+-- proposal_ref=chat_sessions.id) or a governance issue
+-- (proposal_kind='gov', proposal_ref=issues.id). proposal_ref is a
+-- polymorphic reference with no FK — same precedent as chat_messages
+-- thread_ref (a PR session id and a governance issue id can't share one
+-- FK target). The conversation is private scratch data: never posted into
+-- the shared group thread, and never copied into staging clones
+-- (staging:private), so a prod-cloned staging DB ships this table empty
+-- and seeds its own "Staging demo …" rows. A private table may FK public
+-- tables (apps, users); only the reverse is barred by the linter.
+CREATE TABLE IF NOT EXISTS proposal_ai_messages (
+  id            SERIAL PRIMARY KEY,
+  app_id        INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  proposal_kind VARCHAR(8) NOT NULL,
+  proposal_ref  INTEGER NOT NULL,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role          VARCHAR(16) NOT NULL,
+  content       TEXT NOT NULL,
+  model         VARCHAR(64),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- Per-conversation, per-user history load: WHERE app_id + kind + ref +
+-- user_id, ORDER BY id. The composite index makes that an index range scan.
+CREATE INDEX IF NOT EXISTS idx_proposal_ai_messages_convo
+  ON proposal_ai_messages (app_id, proposal_kind, proposal_ref, user_id, id);
+COMMENT ON TABLE proposal_ai_messages IS 'staging:private';
