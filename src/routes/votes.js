@@ -4,28 +4,224 @@ const log = require('../services/logger');
 const github = require('../services/github');
 const staging = require('../services/staging');
 const docker = require('../services/docker');
-const { checkAndResolveConflicts, resolveAndMaybeRetry } = require('../services/conflict-resolver');
+const { checkAndResolveConflicts, resolveAndMaybeRetry, isResolving } = require('../services/conflict-resolver');
 const { sendSystemMessage, pushNotificationToUser } = require('../services/ws');
 const { getActiveUserStats, isUserActive } = require('../services/active-users');
 const notifications = require('../services/notifications');
 const { isAppLocked, hasAdminYesVote } = require('../services/admin-approval');
 const events = require('../services/events');
+const appAccess = require('../services/app-access');
+
+// Staging-only mock PR proposals for GET /api/apps/:slug/promoted,
+// appended only when the request carries ?demo=1 (forwarded from the
+// page URL by _demoQS in app-view.js). Sibling of stagingMockIssues in
+// routes/issues.js: deliberately long titles (~90-120 chars) so the dev
+// card list's progressive title wrapping can be verified on narrow
+// screens against a prod-cloned DB. Rows are "[Mock]"-prefixed and use
+// ids/PR numbers far above anything real so they can't collide with
+// (or be mistaken for) live sessions; user_id 0 matches no viewer, so
+// owner-only affordances ("Open session") never render on them. Casting
+// a vote on one 404s harmlessly. Strictly a no-op in production.
+const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+
+function stagingMockProposals() {
+  const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
+  const mk = (id, prNumber, title, hours, yes, no, chat) => ({
+    id,
+    pr_number: prNumber,
+    pr_url: null,
+    pr_title: title,
+    staging_url: null,
+    testing_md: null,
+    testing_path: null,
+    user_id: 0,
+    status: 'promoted',
+    linked_issues: null,
+    username: 'staging-tester',
+    created_at: hoursAgo(hours),
+    promoted_at: hoursAgo(hours),
+    yes_count: yes,
+    no_count: no,
+    my_vote: null,
+    kudos_count: 0,
+    my_kudos: false,
+    my_kudos_direct: false,
+    revert_of_session_id: null,
+    original_pr_number: null,
+    original_pr_title: null,
+    chat_count: chat,
+    last_message_at: chat ? hoursAgo(Math.max(0, hours - 1)) : null,
+    visuals: null,
+    resolving: false,
+  });
+  return [
+    mk(9000001, 900101,
+      '[Mock] Long-title test: rework the proposal card header so the '
+      + 'discussion badge and vote tally wrap gracefully on narrow phones',
+      3, 1, 0, 4),
+    mk(9000002, 900102,
+      '[Mock] Long-title test: walk brand-new collaborators through '
+      + 'voting, kudos and dev sessions step by step',
+      11, 0, 1, 0),
+    // #239: a row mid-auto-conflict-resolution so the "Resolving
+    // conflicts…" badge is verifiable on staging via ?demo=1 without
+    // manufacturing a real merge conflict.
+    {
+      ...mk(9000003, 900103,
+        '[Mock] Resolving-state test: add a dark-mode toggle to the settings drawer',
+        1, 2, 0, 2),
+      resolving: true,
+    },
+    // #124: a visibility-change proposal (a dapp.json PR opened by the
+    // Members & visibility modal) so its self-describing card is
+    // reviewable on staging via ?demo=1.
+    mk(9000004, 900104,
+      '[Mock] Make this app invite-only build, public to view',
+      2, 1, 0, 1),
+  ];
+}
+
+// #194: staging demo rows for the Completed (merged) list, mirroring
+// stagingMockProposals. Lets ?demo=1 verify the new clickable Completed
+// rows, the chevron/hover affordance, and the 💬 badge against a
+// prod-cloned DB. Caveat: these mock rows have NO backing chat_messages,
+// so opening one shows an empty (but still postable) thread — useful for
+// the card affordance + badge, not for existing-comment display.
+function stagingMockMerged() {
+  const daysAgo = (d) => new Date(Date.now() - d * 86400 * 1000).toISOString();
+  const mk = (id, prNumber, title, days, chat) => ({
+    id,
+    pr_number: prNumber,
+    pr_url: null,
+    pr_title: title,
+    user_id: 0,
+    status: 'merged',
+    linked_issues: null,
+    username: 'staging-tester',
+    created_at: daysAgo(days),
+    revert_of_session_id: null,
+    votes_required: 2,
+    active_users_at_merge: 3,
+    yes_count: 2,
+    no_count: 0,
+    my_vote: null,
+    kudos_count: 0,
+    my_kudos: false,
+    my_kudos_direct: false,
+    chat_count: chat,
+    revert_session_id: null,
+    revert_pr_number: null,
+    revert_pr_url: null,
+    revert_status: null,
+  });
+  return [
+    mk(9100001, 910101,
+      '[Mock] Completed: tighten the empty-state copy on the dev forum',
+      1, 5),
+    mk(9100002, 910102,
+      '[Mock] Completed: bump the chat composer hit area on mobile',
+      4, 0),
+  ];
+}
 
 function voteRoutes(config) {
   const router = Router();
   const pool = getPool(config);
 
+  // Per-app visibility gate for the session-id-addressed vote routes
+  // (promote / vote / votes / undo / admin-merge): collab-level access,
+  // 404 on deny. Admins always pass inside the guard.
+  router.use('/api/sessions/:id', appAccess.sessionCollabGuard(pool));
+
   // Promote a session's PR for voting
   router.post('/api/sessions/:id/promote', async (req, res) => {
     try {
+      // #183: headless rows are excluded — auto sessions are never
+      // promotable themselves; users clone them and propose the clone.
       const { rows } = await pool.query(
         `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
          FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
-         WHERE cs.id = $1 AND cs.user_id = $2 AND cs.status = 'active'`,
+         WHERE cs.id = $1 AND cs.user_id = $2 AND cs.status = 'active'
+           AND cs.is_headless = FALSE`,
         [req.params.id, req.user.id]
       );
       if (!rows.length) return res.status(404).json({ error: 'Active session not found' });
       const session = rows[0];
+
+      // Promoted-PR cap: worker-less promoted sessions don't count
+      // against maxUserSessions (see the create-session cap in
+      // routes/sessions.js), so this is the bound that keeps one user
+      // from accumulating unlimited open-for-vote PRs (each holding a
+      // staging preview and vote-panel attention). Checked before the
+      // lazy PR creation below so an over-cap promote doesn't open a
+      // PR it then refuses to put up for vote.
+      const { rows: promotedRows } = await pool.query(
+        `SELECT COUNT(*) AS cnt FROM chat_sessions
+         WHERE user_id = $1 AND status IN ('promoted', 'merging') AND is_headless = FALSE`,
+        [req.user.id]
+      );
+      if (parseInt(promotedRows[0].cnt) >= config.maxUserPromotedSessions) {
+        return res.status(429).json({
+          error: `You already have ${config.maxUserPromotedSessions} PRs up for vote. Wait for one to merge, or archive one first.`,
+        });
+      }
+
+      const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+
+      // #183 lazy PR creation: sessions cloned from a headless auto run
+      // arrive here without a PR (the headless contract defers it). Create
+      // it now on THIS session's branch — the clone's, never the auto
+      // branch — so the vote has something to merge. applyPrMetadata reads
+      // the clone's copied history via gatherSessionContext, so the PR
+      // title/body get the full auto-session context.
+      //
+      // Also runs when a PR exists but pr_title is missing: staging
+      // recovery (server.js rebuildSessionStaging) can mint a PR before
+      // promotion without a generated title, and a NULL pr_title would
+      // otherwise render as "Change by <user>" forever. Backfilling it
+      // here updates both GitHub and pr_title/session_title.
+      if (!session.pr_number || !session.pr_title) {
+        // Distinguish creating a PR (no pr_number → a failure must block
+        // promotion) from merely backfilling a missing title on an
+        // existing PR (best-effort — never block promotion on it).
+        const isBackfill = !!session.pr_number;
+        const { rows: msgRows } = await pool.query(
+          `SELECT content FROM chat_session_messages
+           WHERE session_id = $1 AND role = 'user'
+           ORDER BY id DESC LIMIT 1`,
+          [session.id]
+        );
+        const prMetadata = require('../services/pr-metadata');
+        let prResult = null;
+        let prError = null;
+        try {
+          prResult = await prMetadata.applyPrMetadata({
+            pool, session, repoOwner, repoName,
+            userMessage: msgRows[0]?.content || '',
+            ccSummary: '',
+            username: req.user.username,
+            userId: req.user.id,
+          });
+        } catch (err) {
+          prError = err;
+          log.warn('votes', 'Lazy PR creation/backfill threw', { sessionId: session.id, backfill: isBackfill, err: err.message, code: err.code || null });
+        }
+        if (!isBackfill && (!prResult || !session.pr_number)) {
+          // Refuse to promote PR-less — a vote with nothing to merge is a
+          // dead end. Nothing was mutated yet.
+          if (prError && prError.code === 'no_commits') {
+            // Permanent condition: the branch has no commits on GitHub
+            // (typically committed locally but never pushed). "Try again
+            // in a moment" would loop forever — tell the truth instead.
+            return res.status(409).json({
+              error: 'This change has no committed code on its branch yet, so there is nothing to open a pull request for. Re-run your request in the session so it produces and pushes a commit, then propose again.',
+            });
+          }
+          return res.status(502).json({
+            error: 'Could not create the pull request for this change. Please retry; if it keeps failing, re-run your request in the session.',
+          });
+        }
+      }
 
       // Mark PR as ready for review on GitHub. We deliberately DO NOT
       // touch the title here — previously this overwrote the LLM-
@@ -72,6 +268,15 @@ function voteRoutes(config) {
         // this activity row (see group-chat.js renderMessageHtml).
         { vote: { sessionId: session.id, prNumber: session.pr_number || null } }
       );
+      // Dual-post into the proposal's own thread so the topic discussion
+      // carries its lifecycle in context (general chat stays the
+      // app-wide entry point).
+      await sendSystemMessage(pool, session.app_id,
+        `${req.user.username} promoted ${promoLabel} for voting`,
+        'vote',
+        { vote: { sessionId: session.id, prNumber: session.pr_number || null } },
+        { type: 'session', ref: session.id }
+      ).catch(() => {});
 
       const { pushSessionUpdate } = require('../services/ws');
       pushSessionUpdate({ action: 'promoted', sessionId: session.id, appSlug: session.app_slug });
@@ -83,7 +288,56 @@ function voteRoutes(config) {
         sessionId: session.id,
         metadata: { prNumber: session.pr_number || null },
       });
-      res.json({ ok: true });
+      // #183: return the PR info so the dev-chat staging card can flip
+      // its "Changes ready" header to the PR link without a refetch —
+      // the promote may have just created the PR lazily.
+      res.json({
+        ok: true,
+        prNumber: session.pr_number || null,
+        prUrl: session.pr_url || null,
+        prTitle: session.pr_title || null,
+      });
+
+      // #183: a clone promoted straight off a headless auto run's pre-built
+      // preview may not have its own staging yet (the copied card points at
+      // the auto session's URL — same content, since the clone branch was
+      // forked from it). Build the clone's own staging from its branch head,
+      // fire-and-forget; the Pass-3 heal sweeper in server.js is the backstop.
+      if (!session.staging_url) {
+        (async () => {
+          let commitHash = 'latest';
+          if (github.isEnabled() && repoOwner && repoName) {
+            try {
+              const octokit = await github.getInstallationOctokit(repoOwner);
+              const { data: ref } = await octokit.request(
+                'GET /repos/{owner}/{repo}/git/ref/{+ref}',
+                { owner: repoOwner, repo: repoName, ref: `heads/${session.branch_name}` }
+              );
+              commitHash = ref.object.sha;
+            } catch {}
+          }
+          const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
+          const result = await staging.buildAndDeployStaging(config, session, app, commitHash);
+          await pool.query(
+            `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
+            [result.containerId, result.stagingUrl, session.id]
+          );
+          await staging.warmStagingCert(session, result.hostname, result.stagingUrl);
+          // #195: capture before/after visuals off the fresh preview so
+          // headless proposals promoted from clones get media on the vote
+          // card + PR body even though the auto session's own staging (and
+          // its capture window) may be long gone. Fire-and-forget; the
+          // heuristic + all failure handling live inside the service.
+          const visualsService = require('../services/visuals');
+          visualsService.captureForSession(
+            config, session, app, commitHash === 'latest' ? null : commitHash, result
+          ).catch((err) => {
+            log.warn('votes', 'Post-promote visuals capture failed', { sessionId: session.id, err: err.message });
+          });
+        })().catch((err) => {
+          log.warn('votes', 'Post-promote staging build failed', { sessionId: session.id, err: err.message });
+        });
+      }
 
       // Vote-request fan-out. Non-fatal + post-response: the promote
       // itself has already succeeded, so a notification hiccup must not
@@ -175,6 +429,24 @@ function voteRoutes(config) {
         );
       }
 
+      // Auto-dismiss this voter's PR notifications for this session now that
+      // the vote is recorded in the DB (i.e. confirmed, not optimistic). Runs
+      // before the `unchanged` early-return below so a re-vote still ensures
+      // the nudge is cleared, and it's idempotent (clears only unread rows).
+      // Non-fatal: a notification hiccup must never 500 a successful vote.
+      try {
+        const cleared = await notifications.markReadForSession(pool, req.user.id, session.id);
+        if (cleared > 0) {
+          // Fan out to the voter's OTHER tabs/devices so their unread badge
+          // syncs without a manual refresh; the acting tab refreshes itself.
+          pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
+        }
+      } catch (err) {
+        log.warn('votes', 'notification auto-dismiss failed', {
+          sessionId: session.id, userId: req.user.id, err: err.message,
+        });
+      }
+
       if (unchanged) {
         log.debug('votes', 'Vote unchanged, skipping broadcast+merge', {
           sessionId: session.id, userId: req.user.id, vote,
@@ -190,7 +462,11 @@ function voteRoutes(config) {
         'vote',
         // Lets the group-chat client render live vote buttons inline on
         // this activity row (see group-chat.js renderMessageHtml).
-        { vote: { sessionId: session.id, prNumber: session.pr_number || null } }
+        { vote: { sessionId: session.id, prNumber: session.pr_number || null } },
+        // #194: per-vote activity lands in the proposal's own thread, not
+        // general chat — the promote/merge announcements remain the
+        // general-chat entry points.
+        { type: 'session', ref: session.id }
       );
 
       // Broadcast the new tally *before* we try to merge, and respond
@@ -268,11 +544,73 @@ function voteRoutes(config) {
     }
   });
 
+  // #194: the viewer's own proposals currently open for voting, across
+  // all apps — PR proposals (their promoted/merging sessions) plus their
+  // open governance (secret_change) proposals. Backs the home screen's
+  // "Your proposals" section. Like /api/me/active-sessions, no extra
+  // visibility filter is needed: these are the viewer's own rows, so the
+  // apps are by construction ones they can collaborate on.
+  router.get('/api/me/proposals', async (req, res) => {
+    try {
+      const { rows: sessions } = await pool.query(
+        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status,
+                cs.created_at, cs.promoted_at,
+                a.id AS app_id, a.slug AS app_slug, a.name AS app_name,
+                (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count,
+                (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'no') AS no_count
+         FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+         WHERE cs.user_id = $1 AND cs.status IN ('promoted', 'merging')
+           AND cs.is_headless = FALSE
+         ORDER BY cs.promoted_at DESC NULLS LAST, cs.created_at DESC`,
+        [req.user.id]
+      );
+
+      const { rows: governance } = await pool.query(
+        `SELECT i.id, i.title, i.kind, i.created_at,
+                a.id AS app_id, a.slug AS app_slug, a.name AS app_name,
+                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'up') AS up_count,
+                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'down') AS down_count
+         FROM issues i JOIN apps a ON a.id = i.app_id
+         WHERE i.created_by = $1 AND i.kind = 'secret_change' AND i.status = 'open'
+         ORDER BY i.created_at DESC`,
+        [req.user.id]
+      );
+
+      // Per-app active-user majority (the denominator for the tally
+      // pill). One getActiveUserStats call per distinct app, cached in
+      // a map — most users have proposals on a handful of apps at most.
+      const appIds = [...new Set([...sessions, ...governance].map((r) => r.app_id))];
+      const statsByApp = {};
+      for (const appId of appIds) {
+        statsByApp[appId] = await getActiveUserStats(pool, appId);
+      }
+
+      res.json({
+        proposals: sessions.map((s) => ({
+          ...s,
+          majority: statsByApp[s.app_id]?.majority || 1,
+          activeUsers: statsByApp[s.app_id]?.active || 1,
+        })),
+        governance: governance.map((g) => ({
+          ...g,
+          majority: statsByApp[g.app_id]?.majority || 1,
+          activeUsers: statsByApp[g.app_id]?.active || 1,
+        })),
+      });
+    } catch (err) {
+      log.error('votes', 'Failed to list my proposals', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // List promoted sessions (for the vote panel in group chat)
   router.get('/api/apps/:slug/promoted', async (req, res) => {
     try {
-      const { rows: appRows } = await pool.query('SELECT id, locked FROM apps WHERE slug = $1', [req.params.slug]);
-      if (!appRows.length) return res.status(404).json({ error: 'App not found' });
+      const gatedApp = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab', `${appAccess.ACCESS_COLUMNS}, locked`
+      );
+      if (!gatedApp) return res.status(404).json({ error: 'App not found' });
+      const appRows = [gatedApp];
 
       const userId = req.user?.id || null;
       // Include 'merging' alongside 'promoted' so the PR stays visible
@@ -281,7 +619,7 @@ function voteRoutes(config) {
       // majority threshold is crossed and only reappears in the "merged"
       // list at the very end, making it look like the vote was lost.
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.staging_url, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
+        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') as yes_count,
            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'no') as no_count,
            (SELECT vote FROM pr_votes WHERE session_id = cs.id AND user_id = $2) as my_vote,
@@ -290,8 +628,19 @@ function voteRoutes(config) {
            -- (session_id, giver_user_id) UNIQUE constraint makes EXISTS
            -- a single-index probe; COUNT runs against the per-session
            -- index added in schema.sql.
-           (SELECT COUNT(*)::int FROM pr_kudos WHERE session_id = cs.id) as kudos_count,
-           (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)) as my_kudos,
+           -- kudos_count folds in any issue bounties AWARDED to this PR on
+           -- merge (a bounty resolves into kudos credit for the closing PR's
+           -- author), so the count matches the leaderboards. my_kudos is
+           -- likewise true if the viewer either gave a PR kudos OR pledged a
+           -- bounty that was awarded to this PR. my_kudos_direct isolates
+           -- the first source — only a direct pr_kudos row is retractable
+           -- (DELETE /api/sessions/:id/kudos), so the FE needs to know
+           -- which kind of credit it's rendering.
+           ((SELECT COUNT(*)::int FROM pr_kudos WHERE session_id = cs.id)
+             + (SELECT COUNT(*)::int FROM issue_bounties WHERE awarded_session_id = cs.id AND status = 'awarded')) as kudos_count,
+           (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)
+                 OR EXISTS(SELECT 1 FROM issue_bounties WHERE awarded_session_id = cs.id AND status = 'awarded' AND giver_user_id = $2)) as my_kudos,
+           (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)) as my_kudos_direct,
            -- #11: revert_of_session_id is non-null on PRs that are
            -- themselves a git-revert of an earlier merged PR. The
            -- vote panel uses this to render a Revert label
@@ -299,7 +648,30 @@ function voteRoutes(config) {
            -- are voting on.
            cs.revert_of_session_id,
            orig.pr_number as original_pr_number,
-           orig.pr_title  as original_pr_title
+           orig.pr_title  as original_pr_title,
+           -- #194: per-proposal thread message count for the chat badge,
+           -- plus the latest thread-message timestamp for the forum
+           -- feed's activity sort. The partial thread index makes these
+           -- index-only probes per row. promoted_at is the proposal's own
+           -- activity anchor (falls back to created_at client-side).
+           -- chat_count counts human messages only (msg_type='message')
+           -- so dual-posted lifecycle/vote system rows don't make the 💬
+           -- badge claim a discussion that hasn't happened.
+           cs.promoted_at,
+           (SELECT COUNT(*)::int FROM chat_messages cm
+             WHERE cm.app_id = cs.app_id AND cm.thread_type = 'session' AND cm.thread_ref = cs.id
+               AND cm.msg_type = 'message') as chat_count,
+           (SELECT MAX(cm.created_at) FROM chat_messages cm
+             WHERE cm.app_id = cs.app_id AND cm.thread_type = 'session' AND cm.thread_ref = cs.id) as last_message_at,
+           -- #195/#270: before/after capture artifact ids, aggregated to
+           -- one jsonb per row. Key is 'kind_index_media'
+           -- ('before_0_png' -> id, 'after_1_webm' -> id, ...) so multiple
+           -- captured routes (capture_index) don't collide. Shaped into the
+           -- grouped client form below via visuals.shapeAgg (which also
+           -- still accepts the legacy 'kind_media' key for pre-#270 rows).
+           (SELECT jsonb_object_agg(
+                     sv.kind || '_' || sv.capture_index || '_' || sv.media, sv.id)
+              FROM session_visuals sv WHERE sv.session_id = cs.id) as visuals_agg
          FROM chat_sessions cs
          JOIN users u ON cs.user_id = u.id
          LEFT JOIN chat_sessions orig ON orig.id = cs.revert_of_session_id
@@ -307,6 +679,26 @@ function voteRoutes(config) {
          ORDER BY cs.created_at DESC`,
         [appRows[0].id, userId]
       );
+
+      const visualsService = require('../services/visuals');
+      for (const row of rows) {
+        row.visuals = visualsService.shapeAgg(row.visuals_agg);
+        delete row.visuals_agg;
+        // #239: surface in-flight auto-conflict-resolution so the vote
+        // panel can render a "Resolving conflicts…" badge. Process-local
+        // map lookup (no SQL) — authoritative in the single-process
+        // platform, and self-healing on every panel refresh.
+        row.resolving = isResolving(row.id);
+      }
+
+      // Staging-only demo mode (?demo=1): append long-title mock
+      // proposals for layout verification. The id check keeps the
+      // append idempotent should a mock id ever materialize in the
+      // result. See stagingMockProposals above.
+      if (IS_STAGING && req.query.demo === '1') {
+        const have = new Set(rows.map((r) => r.id));
+        rows.push(...stagingMockProposals().filter((m) => !have.has(m.id)));
+      }
 
       const { active: activeUsers, majority } = await getActiveUserStats(pool, appRows[0].id);
       // Whether the viewer themself counts as active for this app —
@@ -336,8 +728,11 @@ function voteRoutes(config) {
   // List merged sessions
   router.get('/api/apps/:slug/merged', async (req, res) => {
     try {
-      const { rows: appRows } = await pool.query('SELECT id FROM apps WHERE slug = $1', [req.params.slug]);
-      if (!appRows.length) return res.status(404).json({ error: 'App not found' });
+      const gatedApp = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS
+      );
+      if (!gatedApp) return res.status(404).json({ error: 'App not found' });
+      const appRows = [gatedApp];
 
       const userId = req.user?.id || null;
       // Same kudos subqueries as /promoted so the merged card can show
@@ -368,8 +763,27 @@ function voteRoutes(config) {
            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') as yes_count,
            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'no') as no_count,
            (SELECT vote FROM pr_votes WHERE session_id = cs.id AND user_id = $2) as my_vote,
-           (SELECT COUNT(*)::int FROM pr_kudos WHERE session_id = cs.id) as kudos_count,
-           (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)) as my_kudos,
+           -- kudos_count folds in any issue bounties AWARDED to this PR on
+           -- merge (a bounty resolves into kudos credit for the closing PR's
+           -- author), so the count matches the leaderboards. my_kudos is
+           -- likewise true if the viewer either gave a PR kudos OR pledged a
+           -- bounty that was awarded to this PR. my_kudos_direct isolates
+           -- the first source — only a direct pr_kudos row is retractable
+           -- (DELETE /api/sessions/:id/kudos), so the FE needs to know
+           -- which kind of credit it's rendering.
+           ((SELECT COUNT(*)::int FROM pr_kudos WHERE session_id = cs.id)
+             + (SELECT COUNT(*)::int FROM issue_bounties WHERE awarded_session_id = cs.id AND status = 'awarded')) as kudos_count,
+           (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)
+                 OR EXISTS(SELECT 1 FROM issue_bounties WHERE awarded_session_id = cs.id AND status = 'awarded' AND giver_user_id = $2)) as my_kudos,
+           (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)) as my_kudos_direct,
+           -- #194: per-proposal human-message count so the Completed list
+           -- renders the same 💬 badge as the active proposals (and signals
+           -- which merged proposals have a discussion worth opening). Counts
+           -- msg_type='message' only — matching the /promoted subquery — so
+           -- dual-posted lifecycle/vote system rows don't inflate the badge.
+           (SELECT COUNT(*)::int FROM chat_messages cm
+             WHERE cm.app_id = cs.app_id AND cm.thread_type = 'session' AND cm.thread_ref = cs.id
+               AND cm.msg_type = 'message') as chat_count,
            rv.id        as revert_session_id,
            rv.pr_number as revert_pr_number,
            rv.pr_url    as revert_pr_url,
@@ -383,6 +797,14 @@ function voteRoutes(config) {
          LIMIT 20`,
         [appRows[0].id, userId]
       );
+
+      // Staging-only demo mode (?demo=1): append mock merged rows so the
+      // clickable Completed list + 💬 badge are verifiable against a
+      // prod-cloned DB. Idempotent by id. See stagingMockMerged above.
+      if (IS_STAGING && req.query.demo === '1') {
+        const have = new Set(rows.map((r) => r.id));
+        rows.unshift(...stagingMockMerged().filter((m) => !have.has(m.id)));
+      }
 
       res.json({ merged: rows });
     } catch (err) {
@@ -536,6 +958,56 @@ function voteRoutes(config) {
 // races against any concurrent vote-driven merge, so we won't double-
 // merge. `options.forceBy` is the admin user object (id, username) used
 // for the "merged by <admin> overriding vote" chat message.
+// Resolve open issue bounties for a single closed issue when a PR merges.
+//
+// A bounty pledged via the Open Issues panel ("Give kudos") flips 'open' →
+// 'awarded' and credits the merged PR's author — EXCEPT a bounty whose
+// pledger IS that author, which would be self-kudos (the same thing the
+// direct PR-kudos give path refuses with a 403; see routes/kudos.js). The
+// awardee isn't known until merge, so the self-check lives here: self-pledged
+// rows are 'voided' instead — not left 'open', because the issue is now
+// closed on GitHub and no later PR will close it again, so an open row would
+// linger forever and keep inflating the issue's open-bounty count. Voided
+// rows keep awarded_session_id/awarded_at for audit but no awarded_user_id,
+// so they earn no leaderboard credit. The pledger's weekly allowance slot is
+// still forfeited (no refund) — every pledged bounty consumes a slot.
+//
+// `IS DISTINCT FROM` keeps a NULL giver (deleted pledger) and a NULL awardee
+// (deleted PR author) on the award path. Self-voiding only runs when the PR
+// has an author. Returns { awarded, voided } id arrays. Extracted from
+// checkAndMerge so the self-bounty guard is unit-testable without driving the
+// whole merge pipeline.
+async function resolveIssueBounty(pool, { appId, sessionId, awardeeUserId, issueNumber }) {
+  const { rows: awarded } = await pool.query(
+    `UPDATE issue_bounties
+        SET status = 'awarded',
+            awarded_session_id = $1,
+            awarded_user_id = $2,
+            awarded_at = NOW()
+      WHERE app_id = $3 AND github_issue_number = $4 AND status = 'open'
+        AND giver_user_id IS DISTINCT FROM $2
+      RETURNING id`,
+    [sessionId, awardeeUserId || null, appId, issueNumber]
+  );
+
+  let voided = [];
+  if (awardeeUserId) {
+    const { rows } = await pool.query(
+      `UPDATE issue_bounties
+          SET status = 'voided',
+              awarded_session_id = $1,
+              awarded_at = NOW()
+        WHERE app_id = $2 AND github_issue_number = $3 AND status = 'open'
+          AND giver_user_id = $4
+        RETURNING id`,
+      [sessionId, appId, issueNumber, awardeeUserId]
+    );
+    voided = rows;
+  }
+
+  return { awarded, voided };
+}
+
 async function checkAndMerge(config, pool, session, options = {}) {
   // `options.autoResolve` (default true): when a merge is blocked by a
   // conflict / behind-main, kick off the worker-based auto-resolver
@@ -586,10 +1058,11 @@ async function checkAndMerge(config, pool, session, options = {}) {
       const label = session.pr_title
         ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
-      await sendSystemMessage(pool, session.app_id,
-        `${label} is ${session.behind_main} commit${session.behind_main === 1 ? '' : 's'} behind main — syncing automatically and will retry the merge. ${owner}: you can also resolve it from the session's dev-chat.`,
-        'system'
-      );
+      const behindMsg = `${label} is ${session.behind_main} commit${session.behind_main === 1 ? '' : 's'} behind main — syncing automatically and will retry the merge. ${owner}: you can also resolve it from the session's dev-chat.`;
+      await sendSystemMessage(pool, session.app_id, behindMsg, 'system');
+      // Dual-post into the proposal's thread (lifecycle in context).
+      await sendSystemMessage(pool, session.app_id, behindMsg, 'system',
+        null, { type: 'session', ref: session.id }).catch(() => {});
       log.info('votes', 'Merge blocked: branch behind main', {
         sessionId: session.id, behind: session.behind_main,
       });
@@ -716,13 +1189,13 @@ async function checkAndMerge(config, pool, session, options = {}) {
       // self-hosted too (sha=null) so the future banner can detect
       // "platform updating" without a sha to anchor to.
       try {
-        const { broadcastGlobal } = require('../services/ws');
-        broadcastGlobal({
+        const { broadcastGlobalScoped } = require('../services/ws');
+        broadcastGlobalScoped({
           type: 'app_version_changed',
           appSlug: session.app_slug,
           sha: sha || null,
           prNumber: session.pr_number || null,
-        });
+        }, { appId: session.app_id, appSlug: session.app_slug });
       } catch {}
     }
 
@@ -760,6 +1233,125 @@ async function checkAndMerge(config, pool, session, options = {}) {
       },
     });
 
+    // Resolve any open issue bounties for the issues this PR closes (declared
+    // through the session's linked_issues → `Closes #N` in the PR body).
+    // Bounties pledged by OTHER users flip 'open' → 'awarded' and credit this
+    // PR's author; a bounty the author pledged on their own resolved issue is
+    // 'voided' instead (self-kudos guard — see resolveIssueBounty). Idempotent
+    // (only status='open' rows transition, so a later PR closing the same
+    // issue finds none) and best-effort — a failure here must never roll back
+    // or fail the merge, same as the CC volume teardown below.
+    try {
+      const linked = Array.isArray(session.linked_issues) ? session.linked_issues : [];
+      const seen = new Set();
+      for (const raw of linked) {
+        const n = Number(raw);
+        if (!Number.isInteger(n) || n <= 0 || seen.has(n)) continue;
+        seen.add(n);
+        const { awarded, voided } = await resolveIssueBounty(pool, {
+          appId: session.app_id,
+          sessionId: session.id,
+          awardeeUserId: session.user_id || null,
+          issueNumber: n,
+        });
+        if (voided.length) {
+          log.info('votes', 'Self-bounty voided on merge', {
+            sessionId: session.id, issueNumber: n, count: voided.length,
+          });
+        }
+        // Only announce / record genuine awards; a purely self-voided issue
+        // produces no "awarded" chat noise or event.
+        if (!awarded.length) continue;
+        events.record(pool, {
+          type: events.EVENT_TYPES.BOUNTY_AWARDED,
+          userId: session.user_id || null,
+          appId: session.app_id,
+          sessionId: session.id,
+          metadata: { issueNumber: n, prNumber: session.pr_number || null, count: awarded.length },
+        });
+        const recipient = session.user_id ? `<@${session.user_id}>` : 'the author';
+        const bountyMsg = `Bounty on issue #${n} (${awarded.length} kudos) awarded to ${recipient} — PR #${session.pr_number || session.id} merged`;
+        await sendSystemMessage(pool, session.app_id, bountyMsg, 'system').catch(() => {});
+        // Dual-post into the proposal's thread (lifecycle in context).
+        await sendSystemMessage(pool, session.app_id, bountyMsg, 'system',
+          null, { type: 'session', ref: session.id }).catch(() => {});
+      }
+    } catch (err) {
+      log.warn('votes', 'Bounty payout failed', { sessionId: session.id, err: err.message });
+    }
+
+    // Keep the "Open Issues" panel honest. A merged PR carrying `Closes #N`
+    // has just closed those issues on GitHub, but the panel reads
+    // github.fetchPublicIssues (cached, state=open) and nothing else learns
+    // the issue closed — so without this the closed issue lingers until the
+    // cache TTL expires AND something separately triggers a panel reload.
+    // Bust this repo's open-issues cache and broadcast a refresh so every
+    // client viewing the app's group chat refetches (App.handleIssueUpdate →
+    // AppView.loadVotePanel). Use the same repo_url regex as parseOwnerRepo
+    // (routes/issues.js) so the invalidated key matches the cached one.
+    // Best-effort and post-merge — a failure here must never fail the merge.
+    try {
+      const [, ghOwner, ghRepo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+      if (ghOwner && ghRepo) {
+        // #144: record the linked issues as closed BEFORE busting the
+        // cache + broadcasting. GitHub's auto-close is async and its
+        // anonymous list endpoint lags even further, so the refetch this
+        // broadcast triggers can read the issues as still open and
+        // re-cache them — the suppression list makes fetchPublicIssues
+        // drop them no matter what the list says. Optimistic on purpose:
+        // GitHub closes `Closes #N` reliably (just late), and the
+        // suppression TTL self-heals the rare case where it doesn't.
+        const { sanitizeIssueNumbers } = require('../services/pr-metadata');
+        const closedNumbers = sanitizeIssueNumbers(session.linked_issues);
+        if (closedNumbers.length) github.noteIssuesClosed(ghOwner, ghRepo, closedNumbers);
+        github.invalidateIssuesCache(ghOwner, ghRepo);
+        const { pushIssueUpdate } = require('../services/ws');
+        pushIssueUpdate({
+          action: 'github_synced',
+          appSlug: session.app_slug,
+          appId: session.app_id,
+          source: 'pr_merged',
+        });
+      }
+    } catch (err) {
+      log.warn('votes', 'Open-issues refresh after merge failed', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+
+    // #135: GitHub closes `Closes #N`-referenced issues itself, but a few
+    // seconds AFTER the merge — so the cache bust + refetch above can race
+    // it, re-caching the issue as open and leaving the group-chat panel
+    // stale for the cache TTL. Watch the referenced issues (PR-body closing
+    // keywords ∪ linked_issues) with retry/backoff until GitHub reports
+    // them closed, then bust the cache and broadcast the refresh again.
+    // Fired-and-forgotten — the polling must never slow down or fail the
+    // merge flow, and nothing is ever written to GitHub.
+    try {
+      if (github.isEnabled() && session.pr_number) {
+        const [, wOwner, wRepo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+        if (wOwner && wRepo) {
+          const { watchIssuesClosedAfterMerge } = require('../services/issue-close-watcher');
+          watchIssuesClosedAfterMerge({
+            owner: wOwner,
+            repo: wRepo,
+            prNumber: session.pr_number,
+            linkedIssues: session.linked_issues,
+            appSlug: session.app_slug,
+            appId: session.app_id,
+          }).catch((err) => {
+            log.warn('votes', 'Post-merge issue-close watch failed', {
+              sessionId: session.id, err: err.message,
+            });
+          });
+        }
+      }
+    } catch (err) {
+      log.warn('votes', 'Post-merge issue-close watch setup failed', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+
     // Chat session is done — no further turns will reference CC memory,
     // so drop the persistent `.claude` volume.
     try {
@@ -769,7 +1361,8 @@ async function checkAndMerge(config, pool, session, options = {}) {
       log.warn('votes', 'Failed to destroy CC volume', { sessionId: session.id, err: err.message });
     }
 
-    // Announce in group chat
+    // Announce in group chat, and dual-post into the proposal's own
+    // thread so its discussion carries the outcome in context.
     const mergedLabel = session.pr_title
       ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
       : `PR #${session.pr_number || session.id}`;
@@ -780,6 +1373,10 @@ async function checkAndMerge(config, pool, session, options = {}) {
       `${mergedLabel} ${mergedSuffix}`,
       'system'
     );
+    await sendSystemMessage(pool, session.app_id,
+      `${mergedLabel} ${mergedSuffix}`,
+      'system', null, { type: 'session', ref: session.id }
+    ).catch(() => {});
 
     // Check for conflicts on other promoted PRs and resolve them
     checkAndResolveConflicts(config, session).catch((err) => {
@@ -801,7 +1398,45 @@ async function checkAndMerge(config, pool, session, options = {}) {
     // #9: detect GitHub's "merge conflict" rejection specifically.
     // Octokit returns status 405 with a message containing "merge
     // conflict" or "not mergeable" when `pulls.merge` is called on
-    // an unmergeable PR. The pre-merge gate in checkAndMerge catches
+    // an unmergeable PR. Computed before the mergeFailed broadcast
+    // below so the broadcast can flag whether the auto-resolver is
+    // about to kick in (#239).
+    const msg = String(err.message || '').toLowerCase();
+    const isConflict =
+      err.status === 405 ||
+      msg.includes('merge conflict') ||
+      msg.includes('not mergeable') ||
+      msg.includes('pull request is not mergeable');
+
+    // Un-latch clients. The `merging:true` broadcast above armed the
+    // Phase 3 "Platform updating…" banner on every tab for self-hosted
+    // apps — and that banner only dismisses on a /api/version SHA flip,
+    // which will never come if the GitHub merge itself failed (no
+    // deploy happens). Without this counter-event, a failed self-app
+    // merge leaves the whole platform read-only for everyone until the
+    // 5-minute stuck timer. mergeFailed:false-positives are harmless:
+    // the client just clears a banner that wasn't armed.
+    //
+    // #239: `resolving` rides along when the failure is a conflict AND
+    // the auto-resolver is about to be fired below — clients transition
+    // the banner in place (updating → resolving) instead of silently
+    // dismissing it while the resolver spends 1–2 minutes fixing the
+    // branch. The resolver's own start broadcast can lag by a few
+    // seconds (pollMergeable runs first), so this flag closes the gap.
+    try {
+      const { pushVoteUpdate } = require('../services/ws');
+      pushVoteUpdate({
+        sessionId: session.id,
+        appSlug: session.app_slug,
+        merged: false,
+        merging: false,
+        mergeFailed: true,
+        resolving: isConflict && autoResolve,
+        selfHosted: !!session.app_self_hosted,
+      });
+    } catch (_) { /* ws failures non-fatal */ }
+
+    // The pre-merge gate in checkAndMerge catches
     // the common case (our recorded behind_main > 0), but races
     // (another PR merging in the window between our last sync and
     // the vote crossing threshold) can slip past it. When that
@@ -816,13 +1451,6 @@ async function checkAndMerge(config, pool, session, options = {}) {
     //      pre-merge gate's wording, so the user knows it's a
     //      "owner needs to click Sync" situation rather than a
     //      mysterious GitHub blowup.
-    const msg = String(err.message || '').toLowerCase();
-    const isConflict =
-      err.status === 405 ||
-      msg.includes('merge conflict') ||
-      msg.includes('not mergeable') ||
-      msg.includes('pull request is not mergeable');
-
     if (isConflict) {
       try {
         const { rows: bumpRows } = await pool.query(
@@ -1154,4 +1782,4 @@ async function createRevertPR({ session, mergeSha, repoOwner, repoName, deciderU
 // PR after it syncs cleanly with main. Consumers should lazy-require
 // this module from inside a function to avoid the votes <-> conflict-
 // resolver circular-require load-order trap.
-module.exports = { voteRoutes, checkAndMerge };
+module.exports = { voteRoutes, checkAndMerge, resolveIssueBounty };

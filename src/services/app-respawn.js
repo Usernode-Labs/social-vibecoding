@@ -16,6 +16,7 @@ const log = require('./logger');
 const docker = require('./docker');
 const dbManager = require('./db-manager');
 const appSecrets = require('./app-secrets');
+const appLlmEnv = require('./app-llm-env');
 const { getPool } = require('../db/pool');
 
 async function respawnAppContainer(config, app) {
@@ -63,6 +64,9 @@ async function respawnAppContainer(config, app) {
 
   await docker.stopAndRemove(containerName).catch(() => {});
 
+  // Same production env contract as app-creator / rebuildProduction —
+  // a respawn must not silently drop the LLM-proxy pair (issue #34).
+  const llmEnv = await appLlmEnv.productionLlmEnv(pool, app.id);
   const containerId = await docker.runContainer(containerName, {
     image: imageName,
     env: {
@@ -70,6 +74,7 @@ async function respawnAppContainer(config, app) {
       JWT_SECRET: config.jwtSecret,
       PORT: '3000',
       USERNODE_ENV: 'production',
+      ...llmEnv,
       ...merge.env,
     },
     port: 3000,

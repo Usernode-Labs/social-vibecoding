@@ -125,6 +125,56 @@ Canonical helper:
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 ```
 
+## Staging mock data
+
+Testing instructions for a staging preview are only useful if the data
+they reference actually exists there. Staging starts from a copy of the
+production database (see "Public vs private tables"), so three kinds of
+data are MISSING and need seeding when a testing step depends on them:
+
+1. **Tables newly created by this change** — they don't exist in prod
+   yet, so the boot migration creates them empty in staging.
+2. **`staging:private` tables** — copied schema-only, always empty.
+3. **States hard to reach by clicking around** — a populated
+   leaderboard, a multi-user interaction, a half-finished game.
+
+Two sanctioned mechanisms, both guarded by the `IS_STAGING` helper
+above:
+
+- **Boot-time seed block**, run right after the idempotent migration:
+
+  ```js
+  if (IS_STAGING) {
+    await pool.query(
+      `INSERT INTO posts (id, username, title)
+       VALUES (900001, 'staging-demo-user', 'Staging demo post #1')
+       ON CONFLICT (id) DO NOTHING`
+    );
+  }
+  ```
+
+- **Request-time demo injection** behind
+  `IS_STAGING && req.query.demo === '1'` — for read-only demo state
+  that shouldn't persist in the DB. Point the testing block's `path:`
+  at the `?demo=1` URL.
+
+Seed rules:
+
+- **Idempotent.** Staging containers rebuild on every push, so seeds
+  re-run on each boot — use an existence check or
+  `ON CONFLICT DO NOTHING`.
+- **Obviously fake.** Give seeded rows a consistent "Staging demo …"
+  prefix so they can't be mistaken for real user content.
+- **Small.** A handful of rows — just enough for the testing steps.
+- **Never reference real users.** Use fake usernames/IDs
+  (e.g. `staging-demo-user`), never rows cloned from prod.
+- **Strictly a no-op outside staging.** The whole block is gated on
+  `USERNODE_ENV === 'staging'`; production data is never touched.
+
+Tie-in with testing instructions: the testing steps you emit must
+reference the seeded entities by name ("Open the thread 'Staging demo
+thread' and …"), so a tester knows exactly what they should be seeing.
+
 ## Public vs private tables — **IMPORTANT**
 
 Staging containers get a **copy of the production database** so PRs
@@ -216,6 +266,7 @@ Manifest shape:
 
 ```json
 {
+  "name": "My Cool App",
   "secrets": [
     {
       "key": "STRIPE_SECRET_KEY",
@@ -232,6 +283,62 @@ Manifest shape:
   ]
 }
 ```
+
+### Top-level `name` — the app's display name
+
+`dapp.json` may carry an optional top-level `"name"` string (1–64
+characters). It is the **source of truth for the app's display name**
+and takes precedence over the platform-stored name. On every
+production deploy the platform reads it and reconciles the app's
+display name to it; when `name` is absent, the existing platform name
+is left untouched (a clean no-op for legacy apps).
+
+Because the name lives in the repo, **renaming an app is just a PR
+that edits this field**. The platform's "Rename" button opens exactly
+such a PR (creating `dapp.json` if the repo doesn't have one yet); the
+rename takes effect when that PR is voted in, merged, and redeployed —
+not before. Don't add code that mutates the display name through any
+other channel; edit `dapp.json`'s `name` and let the deploy apply it.
+
+### Top-level `visibility` — who can build / see & use the app
+
+`dapp.json` may carry an optional top-level `visibility` block — the
+**source of truth for the app's two visibility statuses**:
+
+```json
+{
+  "visibility": {
+    "build": "private",
+    "view": "public"
+  }
+}
+```
+
+- `build` — who can participate in building the app (group chat, dev
+  sessions, voting). `"public"` = anyone; `"private"` = invited
+  collaborators only.
+- `view` — who can see the app exists and use it (home list, the
+  app's subdomain). `"public"` = anyone; `"private"` = collaborators
+  only.
+
+Rules, mirroring the top-level `name`:
+
+- On every production deploy the platform reads the block and
+  reconciles the app's stored statuses to it. An **absent block or
+  absent key leaves the platform value untouched** — a clean no-op
+  for apps that never declare it.
+- Values other than `"public"` / `"private"` are ignored (treated as
+  absent) with a warning.
+- The combination `build: "public"` + `view: "private"` is invalid
+  (an app anyone can build can't be hidden) — the platform skips the
+  reconcile and keeps the current statuses.
+- **Changing visibility is just a PR that edits this block.** The
+  platform's Members & visibility panel opens exactly such a PR; the
+  change takes effect when the PR is voted in, merged, and
+  redeployed — not before. Don't mutate visibility through any other
+  channel.
+- Inviting individual users to a private app is a separate, in-app
+  flow — it is NOT represented in `dapp.json`.
 
 Per-field rules:
 
@@ -424,6 +531,109 @@ Leave **non-private** (the default) for:
    `STRIPE_SECRET_KEY` private (encrypted at rest, isolated from
    staging) — added `staging_default: 'sk_test_publishable_dummy'`
    so staging gets a no-op test key."
+
+## App LLM access — the platform Claude proxy
+
+Apps that want AI features call Claude **through the platform's
+LLM proxy**, billed to the signed-in user's existing daily AI budget
+under an explicit per-app, per-user permission grant. **Never ask
+users for Anthropic API keys, and never store an API key as an app
+secret** — the proxy exists precisely so apps don't handle keys.
+
+Production containers receive two extra env vars (platform-injected;
+both are reserved manifest keys you must not declare):
+
+- `USERNODE_LLM_PROXY_URL` — base URL of the proxy
+  (`http://usernode:3000/api/app-llm` in-network).
+- `USERNODE_LLM_PROXY_TOKEN` — this app's opaque credential.
+
+**Staging containers receive NEITHER** (unreviewed PR code must not be
+able to spend users' budgets), and standalone deploys have no platform
+to call. Always detect absence and degrade gracefully:
+
+```js
+const LLM_ENABLED = !!process.env.USERNODE_LLM_PROXY_TOKEN;
+// When false: hide/disable AI features in the UI, or return a clear
+// "AI features are unavailable in this environment" from the API.
+```
+
+### Calling the proxy (server-side)
+
+The app's **server** calls the proxy, forwarding the user's iframe
+token (the same `x-usernode-token` value the frontend already sends —
+see "Auth"). Two endpoints are available, both POST, mirroring the
+Anthropic Messages API:
+
+- `POST ${USERNODE_LLM_PROXY_URL}/v1/messages`
+- `POST ${USERNODE_LLM_PROXY_URL}/v1/messages/count_tokens`
+
+```js
+const resp = await fetch(`${process.env.USERNODE_LLM_PROXY_URL}/v1/messages`, {
+  method: 'POST',
+  headers: {
+    'content-type': 'application/json',
+    'anthropic-version': '2023-06-01',
+    'x-usernode-app-token': process.env.USERNODE_LLM_PROXY_TOKEN,
+    'x-usernode-user-token': req.headers['x-usernode-token'],
+  },
+  body: JSON.stringify({ model, max_tokens, messages }),
+});
+```
+
+The body/response are standard Anthropic Messages API shapes
+(streaming SSE included). Error codes the app must handle:
+
+- `403 { code: 'grant_required' }` — the user hasn't granted this app
+  access (or revoked it). Surface this to the frontend, have it call
+  `usernode.requestLlmAccess()` (below), then retry.
+- `429 { code: 'app_cap_exceeded' }` — the user's per-app daily cap is
+  spent. Show "daily AI cap for this app reached — resets at midnight
+  UTC"; do not retry until tomorrow.
+- `429 { code: 'budget_exceeded' }` — the user's overall daily budget
+  is exhausted.
+
+### Requesting consent (frontend, via the bridge)
+
+The hosted bridge (see "Bridge") provides:
+
+- `usernode.requestLlmAccess()` — asks the **platform shell** to show
+  its consent dialog (app name, your declared purpose, an editable
+  daily cap). Resolves `{ granted, dailyCapCents, allowByok }` or
+  `{ granted: false, declined: true }`. The dialog is platform-owned;
+  an app cannot approve itself.
+- `usernode.getLlmAccess()` — read-only grant state, same shape.
+
+Both reject when there's no platform shell (standalone/dev) — treat a
+rejection like `LLM_ENABLED === false`.
+
+Recommended pattern: call the proxy; on `grant_required`, have the
+frontend `await usernode.requestLlmAccess()` and retry once granted.
+
+### Declaring consent metadata in `dapp.json`
+
+An optional top-level `llm` block shapes the consent dialog:
+
+```json
+{
+  "llm": {
+    "purpose": "Summarizes long threads for you",
+    "suggested_daily_cap_cents": 300
+  }
+}
+```
+
+- `purpose` — one short line (≤140 chars) shown in the dialog so the
+  user knows why the app wants AI. Always declare it for AI features.
+- `suggested_daily_cap_cents` — pre-fills the dialog's editable cap
+  field instead of the $1.00 default. Suggest a **modest** value that
+  matches the feature's real cost; the user sees and can change the
+  number, and the platform clamps it to the user's own daily limit.
+  Omit it unless the default is genuinely too small.
+
+Users manage grants (cap, revocation, BYOK spillover) in the
+platform's Settings → "App AI permissions"; revocation is immediate,
+so treat `grant_required` as a state that can appear at any time, not
+just on first use.
 
 ## Don't `git push` yourself
 

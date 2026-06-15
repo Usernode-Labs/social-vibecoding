@@ -1,18 +1,78 @@
 # Standalone Caddy config for Usernode Social Vibecoding.
 #
 # Domain is injected via {$USERNODE_DOMAIN} substitution — set in `.env`
-# and passed through by docker-compose. Per-app routes for child apps
-# (myapp.<USERNODE_DOMAIN>) are managed at runtime by the platform:
-# src/services/caddy.js writes route blocks into
-# /etc/caddy/runtime/usernode.conf and runs `caddy reload`. The glob
-# import below is tolerant of that file not existing yet.
+# and passed through by docker-compose.
 #
-# TLS: Caddy auto-issues Let's Encrypt certs for every hostname it
-# sees, including the per-app subdomains. For this to work, DNS for
-# *.<USERNODE_DOMAIN> must resolve to this VPS.
+# Routing model (no per-host config, no reload):
+#   Every child app + per-PR staging preview is a subdomain of
+#   USERNODE_DOMAIN. A single wildcard site maps the hostname to the target
+#   container *name* deterministically:
+#
+#     myapp.<domain>              -> usernode-app-myapp        (prod app)
+#     myapp--s42.<domain>         -> usernode-staging-myapp--42 (PR preview)
+#
+#   Those are exactly the container names the platform already gives its
+#   containers (services/staging.js + app-creator.js), and Caddy reaches
+#   them by name on the shared `usernode-net` Docker network. Adding or
+#   removing a preview is just starting/stopping a container — there is no
+#   Caddy state to mutate. (Older previews used a trailing `--<commitHash>`
+#   segment; the map below still accepts it so in-flight URLs keep routing.)
+#
+# TLS: ONE wildcard cert for *.<domain> (plus the apex), issued via the
+# ACME DNS-01 challenge. This replaces the previous on-demand, per-hostname
+# HTTP-01 issuance. Why the switch:
+#   - On-demand issued a fresh cert the first time each preview host was hit.
+#     ZeroSSL's ACME backend routinely took 3-8 minutes to *finalize* the
+#     authorization (its validators fetched our token in seconds, but the
+#     authz stayed "pending" well past Caddy's 180s deadline), so the first
+#     load of a preview was a black screen for minutes.
+#   - A wildcard is a SINGLE cert regardless of how many previews exist, so
+#     there is no per-host issuance at all: previews are served instantly by
+#     an already-present cert. It also makes Let's Encrypt's 50-cert/week cap
+#     irrelevant (one cert), so LE — fast and reliable for DNS-01 — is the
+#     issuer again; the cap is what had forced the ZeroSSL detour.
+#
+# DNS-01 + acme-dns (why we don't write to the real zone):
+#   DNS-01 means Caddy must publish a `_acme-challenge` TXT record. Our zone
+#   is Namecheap-hosted `usernodelabs.org` (production), and Namecheap's only
+#   DNS write API REPLACES the entire host-record set per call — a prod-zone
+#   wipe risk on every renewal. Instead we delegate just
+#   `_acme-challenge.social-vibecoding...` (one static CNAME, added by hand)
+#   to a self-hosted acme-dns server. Caddy sets the challenge TXT there via
+#   acme-dns's internal HTTP API; the production Namecheap records are never
+#   touched. See acme-dns/config.cfg + caddy.Dockerfile (caddy-dns/acmedns).
+#
+# NOTE on `propagation_timeout -1` (in each tls block below): certmagic
+# normally pre-checks that the challenge TXT is live by querying the zone's
+# AUTHORITATIVE nameserver directly — i.e. our acme-dns at 144.76.85.53:53.
+# That dial runs from INSIDE the Caddy container, and Docker's bridge has no
+# hairpin NAT, so a container cannot reach the host's own public IP:published
+# port → the check times out and issuance never even asks LE to validate.
+# Disabling the self-check sidesteps that: acme-dns is authoritative and sets
+# the TXT instantly (zero propagation lag), and LE's real validation runs
+# from the public internet where 144.76.85.53:53 IS reachable. (We use the
+# site-level `tls { dns ... }` form rather than the global `acme_dns` option
+# specifically so we can set propagation_timeout per the challenge.)
+
+# Reusable DNS-01 challenge config (acme-dns). Snippet so the apex and the
+# wildcard site stay identical.
+(acmedns_tls) {
+	tls {
+		dns acmedns {
+			username {$ACME_DNS_USERNAME}
+			password {$ACME_DNS_PASSWORD}
+			subdomain {$ACME_DNS_SUBDOMAIN}
+			server_url http://acme-dns:8081
+		}
+		propagation_timeout -1
+		resolvers 1.1.1.1 8.8.8.8
+	}
+}
 
 # ── Main platform ────────────────────────────────────────────────
 {$USERNODE_DOMAIN} {
+	import acmedns_tls
+
 	reverse_proxy usernode:3000
 
 	encode gzip
@@ -22,12 +82,57 @@
 	}
 }
 
-# ── Child-app routes (managed by the usernode platform itself) ───
-# src/services/caddy.js writes route blocks like:
-#
-#     myapp.<USERNODE_DOMAIN> {
-#         reverse_proxy usernode-app-myapp:3000
-#     }
-#
-# into /etc/caddy/runtime/usernode.conf and triggers a reload.
-import /etc/caddy/runtime/*.conf
+# ── Child apps + per-PR staging previews ─────────────────────────
+# Served by the single *.<domain> wildcard cert (issued via the DNS-01
+# challenge above). There is no per-host issuance, so no on-demand gate is
+# needed: unknown labels simply map to a nonexistent upstream and 502 — at
+# zero cert cost.
+*.{$USERNODE_DOMAIN} {
+	import acmedns_tls
+
+	# Derive the upstream container name from the leftmost DNS label.
+	# Staging is checked first because its label (slug--sID) also satisfies
+	# the broader prod-app pattern. Slugs never contain `--` (the sanitizer
+	# collapses runs of non-alphanumerics to a single `-`), so `--sID`
+	# reliably separates the slug from the staging suffix. The optional
+	# `(?:--[a-z0-9]+)?` matches the legacy `--<commitHash>` suffix so older
+	# preview URLs keep routing to the (stable) container during transition;
+	# either way only the session id maps to the container name.
+	map {host} {upstream} {
+		~^([a-z0-9-]+?)--s(\d+)(?:--[a-z0-9]+)?\. usernode-staging-${1}--${2}
+		~^([a-z0-9-]+)\. usernode-app-${1}
+		default usernode
+	}
+
+	# Per-app visibility gate. Every child-app / staging request is
+	# pre-flighted against the platform before being proxied: view-public
+	# apps get an instant 200 (one cached lookup, no session work);
+	# view-private apps require an admin or member credential — the
+	# scoped per-host access cookie, the shell's iframe token, or a
+	# bounce through the apex /__access/authorize route which reads the
+	# real platform session. See the decision tree atop GET /__caddy/access
+	# in src/routes/internal.js. On a non-2xx the gate's response
+	# (404 / authorize redirect / cookie-setting redirect) is returned to
+	# the client verbatim and the app container is never reached.
+	#
+	# WebSocket gotcha: forward_auth's subrequest PRESERVES the original
+	# Connection/Upgrade headers, so for a proxied WS handshake the gate
+	# check arrives at usernode:3000 as an upgrade-flagged request. Node
+	# diverts those to the http server's 'upgrade' event — the platform
+	# must re-dispatch non-/ws/* upgrades into its normal request chain
+	# (see src/services/ws.js attach()) or the gate answers EOF and Caddy
+	# 502s every WebSocket behind this wildcard. Keep that in mind before
+	# "simplifying" either side; tests/ws-upgrade-redispatch.test.js
+	# guards the platform half.
+	forward_auth usernode:3000 {
+		uri /__caddy/access
+	}
+
+	reverse_proxy {upstream}:3000
+
+	encode gzip
+
+	handle_errors {
+		respond "{err.status_code} {err.status_text}"
+	}
+}

@@ -16,6 +16,7 @@
   --text-code: #3f3f46;
   --accent: #7c3aed;
   --accent-light: #8b5cf6;
+  --accent-tint: rgba(124, 58, 237, 0.08);
 }
 
 .dark {
@@ -36,6 +37,7 @@
   --text-code: #e4e4e7;
   --accent: #a78bfa;
   --accent-light: #c4b5fd;
+  --accent-tint: rgba(167, 139, 250, 0.12);
 }
 
 html, body {
@@ -78,6 +80,20 @@ html, body {
 }
 .dark .home-create-tile:hover {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%238b5cf6' stroke-opacity='0.75' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+}
+
+/* Drag-reorderable starred cards (issue #191): a long-press must
+   pick the card up, not select its title text or pop the mobile
+   copy/look-up callout. Static rather than toggled at drag start
+   because selection begins during the ~350ms long-press window,
+   before any JS drag state exists. Scoped to the drag-enabled
+   class (added in home.js only when reordering is possible) so
+   text everywhere else on the page selects normally. */
+.app-card-draggable {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* ── Favorites section headers ─────────────────────────── */
@@ -214,6 +230,12 @@ html, body {
 .dc-task-check { display: inline-block; width: 1em; color: var(--text-muted); font-family: 'JetBrains Mono', 'Fira Code', monospace; }
 .dc-task-check.dc-task-checked { color: var(--accent); }
 
+/* Held-back trailing line of a live-streaming assistant bubble: the
+   still-being-typed final line, rendered as escaped plaintext until its
+   newline arrives (so a `- [ ]` fragment never momentarily parses as a
+   checkbox). Matches the surrounding prose and preserves leading spaces. */
+.dc-streaming-tail { display: block; white-space: pre-wrap; }
+
 /* Tables (F1): styled by class, not by .dc-msg-content ancestry, so they
    render identically in chat, the spec preview snippet, and the viewer. */
 .dc-table { border-collapse: collapse; margin: 8px 0; width: 100%; font-size: 13px; display: block; overflow-x: auto; }
@@ -347,10 +369,118 @@ html, body {
   border: 1px solid var(--border);
 }
 .dc-pr-btn-preview:hover { background: var(--bg-tertiary); }
+/* Merged sessions: the staging container is gone, so the preview link is
+   dead. Render it visibly inert (muted + not-allowed) instead of clickable. */
+.dc-pr-btn-preview:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  color: var(--text-muted);
+}
+.dc-pr-btn-preview:disabled:hover { background: var(--bg-secondary); }
 
 .dc-pr-btn-promote { background: #7c3aed; color: white; }
 .dc-pr-btn-promote:hover { background: #6d28d9; }
 .dc-pr-btn-promote:disabled { background: #3f3f46; cursor: not-allowed; }
+
+/* ── Q/A mode: suggested-answer chips (#32) ─────────────── */
+
+.dc-qa-chips { margin: 8px 0 2px; display: flex; flex-direction: column; gap: 8px; }
+
+.dc-qa-group-label { font-size: 11px; color: var(--text-muted); }
+
+.dc-qa-chip-row { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.dc-qa-chip {
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  background: var(--bg-secondary);
+  color: var(--accent);
+  border: 1px solid var(--border);
+  transition: background 150ms, border-color 150ms;
+  max-width: 100%;
+  text-align: left;
+}
+.dc-qa-chip:hover { background: var(--bg-tertiary); }
+.dc-qa-chip-default { border-color: var(--accent); }
+.dc-qa-chip-selected { background: #7c3aed; border-color: #7c3aed; color: #fff; }
+.dc-qa-chip-selected:hover { background: #6d28d9; }
+
+.dc-qa-chip-hint {
+  font-size: 9px;
+  margin-left: 6px;
+  opacity: 0.6;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.dc-qa-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 2px; }
+
+.dc-qa-send {
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  background: #7c3aed;
+  color: #fff;
+  transition: background 150ms;
+}
+.dc-qa-send:hover { background: #6d28d9; }
+
+.dc-qa-defaults {
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  transition: background 150ms;
+}
+.dc-qa-defaults:hover { background: var(--bg-tertiary); }
+
+/* ── Quick-reply pills above the composer (#285) ───────── */
+
+/* A single horizontally-scrollable row that never wraps, so it adds one
+   compact line of height and never pushes the text box down on mobile.
+   Empty by default (no quickReplies) — gains the -active modifier and its
+   bottom margin only when pills are present. */
+.dc-quick-replies {
+  display: none;
+}
+.dc-quick-replies.dc-quick-replies-active {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  margin-bottom: 6px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none; /* Firefox: hide the scrollbar but stay scrollable */
+}
+.dc-quick-replies.dc-quick-replies-active::-webkit-scrollbar {
+  display: none; /* WebKit: hide the scrollbar */
+}
+
+.dc-quick-pill {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  background: var(--bg-secondary);
+  color: var(--accent);
+  border: 1px solid var(--border);
+  transition: background 150ms, border-color 150ms;
+}
+.dc-quick-pill:hover { background: var(--bg-tertiary); border-color: var(--accent); }
 
 /* ── Claude Code log (collapsible) ─────────────────────── */
 
@@ -463,6 +593,74 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   border: none;
 }
 
+/* ── #50: progress indicator — elapsed ticker + live activity ──
+   .dc-status-elapsed shows a per-second ticking timer while a status
+   line is active and a static "(took Xm Ys)" once it finishes;
+   tabular-nums keeps the ticking digits from jittering the layout.
+   .dc-cc-current is the "what is it doing right now" snippet in the
+   running summary — ellipsized with a max-width so the right-aligned
+   id/timestamp span never shifts as the label changes. */
+.dc-status-elapsed {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.dc-cc-current {
+  color: var(--text-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40%;
+  min-width: 0;
+}
+
+.dc-cc-steps {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Experimental AI progress estimate (opt-in): italic and extra-muted so
+   the guess reads as tentative next to the honest timer/step count. */
+.dc-cc-estimate {
+  color: var(--text-muted);
+  opacity: 0.75;
+  font-style: italic;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40%;
+  min-width: 0;
+}
+
+/* Narrow viewports: drop the activity snippet (the log itself is one
+   tap away) but keep the elapsed timer at all widths. The AI progress
+   estimate (#286) is kept visible — it can't sit inline next to the
+   timer on a phone, so the summary row is allowed to wrap and the
+   estimate drops onto its own full-width line beneath the status line
+   (full text, no ellipsis). */
+@media (max-width: 640px) {
+  .dc-cc-current { display: none; }
+  .dc-cc-attached-summary { flex-wrap: wrap; }
+  .dc-cc-estimate {
+    /* order:1 sorts the estimate after the (order:0) timer + timestamp
+       so the status line stays intact on row 1 and the estimate wraps
+       onto its own full-width row beneath it. */
+    order: 1;
+    flex-basis: 100%;
+    max-width: 100%;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+  }
+}
+
 /* Sibling of .dc-cc-attached-log for the post-turn ccOutput
    markdown summary (rather than a monospaced live-log). Same
    indent + muted color, but body font and a bit more room for
@@ -493,24 +691,52 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 
 /* ── Vote panel ─────────────────────────────────────────── */
 
+/* Action pills: transparent "ghost" base (no gray fill) that picks up a
+ * violet accent tint on hover; semantic variants (yes/no/preview/admin)
+ * carry a faint resting tint of their own hue — the same tinted-chip
+ * language as the Closes-#N chips, bounty pill, and icon chips. */
 .gc-vote-btn {
-  padding: 2px 8px;
-  border-radius: 4px;
+  padding: 3px 10px;
+  border-radius: 9999px;
   font-size: 11px;
+  font-weight: 500;
   cursor: pointer;
   border: 1px solid var(--border);
-  background: var(--bg-secondary);
-  color: var(--text-faint);
+  background: transparent;
+  color: var(--text-muted);
   transition: all 150ms;
 }
-.gc-vote-btn:hover { background: var(--bg-tertiary); }
+.gc-vote-btn:hover {
+  background: var(--accent-tint);
+  border-color: var(--accent-light);
+  color: var(--accent);
+}
+.gc-vote-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text-muted);
+}
 
-.gc-vote-btn-yes { color: #22c55e; }
-.gc-vote-btn-yes:hover { background: rgba(34, 197, 94, 0.15); }
-.gc-vote-btn-no { color: #ef4444; }
-.gc-vote-btn-no:hover { background: rgba(239, 68, 68, 0.15); }
-.gc-vote-btn-preview { color: var(--accent); }
-.gc-vote-btn-preview:hover { background: rgba(167, 139, 250, 0.15); }
+.gc-vote-btn-yes {
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.10);
+  border-color: rgba(34, 197, 94, 0.35);
+}
+.gc-vote-btn-yes:hover { background: rgba(34, 197, 94, 0.18); border-color: rgba(34, 197, 94, 0.5); color: #22c55e; }
+.gc-vote-btn-no {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.10);
+  border-color: rgba(239, 68, 68, 0.35);
+}
+.gc-vote-btn-no:hover { background: rgba(239, 68, 68, 0.18); border-color: rgba(239, 68, 68, 0.5); color: #ef4444; }
+.gc-vote-btn-preview {
+  color: var(--accent);
+  background: rgba(167, 139, 250, 0.10);
+  border-color: rgba(167, 139, 250, 0.35);
+}
+.gc-vote-btn-preview:hover { background: rgba(167, 139, 250, 0.18); border-color: rgba(167, 139, 250, 0.5); color: var(--accent); }
 /* Admin force-merge / force-undo buttons. Amber instead of red so
  * they don't visually dominate the Yes/No pair, but distinct enough
  * from the regular vote buttons that an admin clicking through the
@@ -519,10 +745,15 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
  * misclick guard; the colour is just the affordance hint. */
 .gc-vote-btn-admin {
   color: #f59e0b;
+  background: rgba(245, 158, 11, 0.10);
   border-color: rgba(245, 158, 11, 0.4);
 }
-.gc-vote-btn-admin:hover { background: rgba(245, 158, 11, 0.15); }
-.gc-vote-active { background: var(--bg-tertiary); font-weight: 600; }
+.gc-vote-btn-admin:hover { background: rgba(245, 158, 11, 0.18); border-color: rgba(245, 158, 11, 0.55); color: #f59e0b; }
+/* The viewer's cast vote: stronger tint + bolder text (color comes from
+ * the -yes/-no variant it sits on). */
+.gc-vote-active { background: rgba(127, 127, 127, 0.18); font-weight: 600; }
+.gc-vote-btn-yes.gc-vote-active { background: rgba(34, 197, 94, 0.22); }
+.gc-vote-btn-no.gc-vote-active { background: rgba(239, 68, 68, 0.22); }
 /* Read-only "You voted X" box shown in place of the buttons once the viewer
    has cast a vote. Tinted by their choice (green = yes, red = no). */
 .gc-vote-voted-box {
@@ -585,6 +816,21 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .gc-vote-fill-full-yes { background: rgba(34, 197, 94, 0.40); }
 .gc-vote-fill-full-no { background: rgba(239, 68, 68, 0.40); }
 .gc-vote-count-label { position: relative; z-index: 1; color: #1f2937; }
+/* Dev-card headline cell (title + meta, left of the tally / 💬 pills).
+   flex-basis:auto makes the cell's preferred width the title's natural
+   single-line width, so on narrow screens the pills after it wrap to
+   the next flex line one by one (the 💬 discussion badge first, then
+   the vote tally) instead of the title being squeezed into an
+   ellipsis. Only when the title alone is wider than the card does the
+   cell shrink (min-width:0) and the title text wrap onto extra lines —
+   the title is never cut off. */
+.dev-card-headline { flex: 1 1 auto; min-width: 0; }
+/* The meta line under the title routinely overflows (PR# · user · time
+   · pills) and is fine to truncate. Inline-size containment zeroes its
+   intrinsic width contribution so only the *title's* width decides
+   when the pills wrap; without it a long meta line would push the
+   pills down even when the title fits comfortably. */
+.dev-card-headline-meta { contain: inline-size; }
 /* "Merging…" badge shown next to the vote controls while a PR is merging. */
 .gc-merging-badge {
   display: inline-flex;
@@ -594,6 +840,12 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   font-weight: 600;
   color: #10b981;
   white-space: nowrap;
+}
+/* #239: "Resolving conflicts…" badge — extends .gc-merging-badge, amber
+   instead of green so an in-flight auto-conflict-resolution reads as
+   "working on it" rather than "merging". */
+.gc-resolving-badge {
+  color: #f59e0b;
 }
 /* Settled "✓ Merged" badge — same slot as the merging badge, shown after a
    PR lands so the row's voting info stays put. */
@@ -701,6 +953,21 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 
 .gc-msg-username-self { color: var(--accent); }
 
+/* Per-message unread dot: a message this user has an unread mention/
+   reply/reaction notification for. Sits at the front of the header;
+   tapping the message clears it (POST /api/notifications/read with the
+   chat_message_id). Removed in place once cleared. */
+.gc-unread-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: 0 0 auto;
+  align-self: center;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
 .gc-msg-time {
   font-size: 11px;
   color: var(--text-muted);
@@ -724,6 +991,39 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   border-radius: 4px;
   color: var(--accent-light, var(--accent));
   font-weight: 600;
+}
+
+/* ── #130: PR / issue reference chips ───────────────────── */
+
+/* Inline chips for PR#N / #N tokens in user messages, also reused as the
+   number badge in the reference-autocomplete dropdown so the dropdown
+   teaches the rendering. Plain spans (role="link"), so iOS long-press
+   text selection still works around them; navigation is wired in
+   GroupChat._attachQuoteHandlers → AppView.revealInDrawer. */
+.gc-ref {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border-radius: 5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+/* Violet — matches the drawer's existing PR#N anchors. */
+.gc-ref-pr {
+  color: rgb(167, 139, 250);
+  background: rgba(139, 92, 246, 0.12);
+}
+/* Emerald — clearly distinct from the PR violet (amber already signals
+   bounties/warnings in the panel). */
+.gc-ref-issue {
+  color: rgb(52, 211, 153);
+  background: rgba(16, 185, 129, 0.12);
+}
+@media (hover: hover) {
+  .gc-ref:hover { filter: brightness(1.15); text-decoration: underline; }
 }
 
 .gc-msg-system {
@@ -818,6 +1118,10 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   0% { background: color-mix(in srgb, var(--accent) 30%, transparent); }
   100% { background: transparent; }
 }
+
+/* #130: same brief highlight on a drawer row revealed by a reference chip
+   (AppView.revealInDrawer). */
+.gc-vote-item-flash { animation: gcMsgFlash 1.5s ease-out; }
 
 /* ── #25: emoji reactions ───────────────────────────────── */
 
@@ -953,14 +1257,73 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 }
 .gc-react-bar-grid {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(8, 1fr);
   gap: 2px;
-  max-width: 264px;
+  max-width: 296px;
+  /* The full emoji set is long — cap the height and scroll within the bar
+     so opening "more" never pushes the picker off-screen. */
+  max-height: 244px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   margin-top: 6px;
   padding-top: 6px;
   border-top: 1px solid var(--border);
 }
 .gc-react-bar-grid.hidden { display: none; }
+
+/* ── #87: @mention autocomplete dropdown ───────────────── */
+
+.gc-mention-menu {
+  position: fixed;
+  z-index: 1000;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
+  padding: 4px;
+  max-height: 240px;       /* ~8 rows, then scroll */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.gc-mention-menu.hidden { display: none; }
+.gc-mention-option {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--text-primary, inherit);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gc-mention-option:hover,
+.gc-mention-option-active {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+.gc-mention-option-at { color: var(--accent); font-weight: 600; }
+
+/* #130: reference-autocomplete rows reuse the mention menu/option styling;
+   these only add room for the PR#N / #N badge plus a truncating title. */
+.gc-ref-option { gap: 8px; }
+.gc-ref-option-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  color: var(--text-secondary, inherit);
+}
+.gc-mention-option-you {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
 
 /* ── Streaming spinner (bouncing dots) ─────────────────── */
 
@@ -1335,17 +1698,30 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .dc-spec-viewer-header {
   display: flex;
   align-items: center;
+  /* Wrap so the share buttons drop to a second line on narrow (phone)
+     widths instead of overflowing horizontally and shoving the close
+     button off-screen. Harmless on the wide side-panel layout where the
+     row already fits. (#86 spec-viewer header overflow fix) */
+  flex-wrap: wrap;
   gap: 8px;
+  row-gap: 6px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border, rgba(255,255,255,0.12));
   flex-shrink: 0;
 }
 
 .dc-spec-viewer-close {
+  /* margin-left:auto pins the close to the trailing edge of the first
+     row so it stays top-right no matter what else wraps; flex-shrink:0
+     guarantees it is never compressed or displaced off-screen. */
+  margin-left: auto;
+  flex-shrink: 0;
   font-size: 20px;
   line-height: 1;
-  width: 28px;
-  height: 28px;
+  /* ~44px tap target for thumbs; padding keeps the glyph visually small. */
+  width: 44px;
+  height: 44px;
+  padding: 8px;
   border: none;
   border-radius: 4px;
   background: transparent;
@@ -1358,11 +1734,64 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   background: var(--bg-secondary, #18181b);
 }
 
+/* Let the version dropdown shrink and ellipsise rather than forcing the
+   header wide — a <select> won't shrink below its content's intrinsic
+   width without min-width:0. Long labels (vN (latest) · date · PR #N)
+   get a trailing "…" instead of overflowing the row. */
+#dc-spec-viewer-version {
+  min-width: 0;
+  flex: 0 1 auto;
+  max-width: 220px;
+  text-overflow: ellipsis;
+}
+
 .dc-spec-viewer-body-wrap {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   padding: 12px;
+}
+
+/* #196: two-half spec tabs (User-facing / Technical). Rendered only
+   when the doc contains both marker headings — legacy specs keep the
+   single untabbed body (see public/js/spec-sections.js). */
+.dc-spec-viewer-preamble {
+  margin-bottom: 12px;
+}
+
+.dc-spec-viewer-tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,0.12));
+}
+
+.dc-spec-viewer-tab {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary, #a1a1aa);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.dc-spec-viewer-tab:hover {
+  color: var(--text-primary, #e4e4e7);
+}
+
+.dc-spec-viewer-tab-active {
+  color: var(--accent);
+  border-bottom-color: currentColor;
+  font-weight: 600;
+}
+
+.dc-spec-tab-empty {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--text-secondary, #a1a1aa);
 }
 
 /* Footer bar reminding the user that a spec is a plan, not a built
@@ -1418,6 +1847,76 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .dc-spec-action-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* (#86) "Share to user" popover, anchored under the spec-viewer header. */
+.dc-spec-viewer-header {
+  position: relative;
+}
+
+.dc-spec-share-pop {
+  position: absolute;
+  top: 100%;
+  right: 12px;
+  z-index: 30;
+  width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--border, rgba(255,255,255,0.12));
+  border-radius: 8px;
+  background: var(--bg-primary, #09090b);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.dc-spec-share-pop.hidden {
+  display: none;
+}
+
+.dc-spec-share-input {
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border, rgba(255,255,255,0.12));
+  background: var(--bg-secondary, #18181b);
+  color: var(--text-primary, #e4e4e7);
+  outline: none;
+}
+
+.dc-spec-share-input:focus {
+  border-color: rgb(139 92 246);
+}
+
+.dc-spec-share-suggestions {
+  display: flex;
+  flex-direction: column;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.dc-spec-share-sug {
+  font-size: 12px;
+  text-align: left;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary, #e4e4e7);
+  cursor: pointer;
+}
+
+.dc-spec-share-sug:hover {
+  background: var(--bg-secondary, #18181b);
+}
+
+.dc-spec-share-error {
+  font-size: 11px;
+  color: rgb(248 113 113);
+}
+
+.dc-spec-share-error.hidden {
+  display: none;
 }
 
 /* ── Group-chat spec_share card ────────────────────────── */
@@ -1922,21 +2421,11 @@ html.in-native-webview #header-title {
     display: none;
   }
 
-  /* Header icons that move into the slide-out drawer at narrow widths. */
-  #leaderboard-btn,
-  #dev-console-btn,
-  #app-github-link,
-  #app-share-btn,
-  #feedback-btn,
-  #settings-btn {
-    display: none !important;
-  }
-
-  /* Hamburger trigger: hidden via Tailwind `hidden` class by default;
-     this rule makes it visible at the mobile breakpoint. */
-  #header-menu-btn {
-    display: inline-flex !important;
-  }
+  /* #122: no per-breakpoint icon hiding anymore — the secondary header
+     actions (GitHub, Share, Members, Settings) live in the slide-out
+     drawer at every width, and the remaining icons (leaderboard,
+     dev console, feedback, hamburger, notifications) are visible at
+     every width too. */
 }
 
 /* Slide-out drawer panel transition. The panel starts off-screen to
@@ -1978,6 +2467,31 @@ html.in-native-webview #header-title {
   cursor: default;
 }
 
+/* Visibility segmented pills (create modal + members modal). Active
+   state is a JS-toggled .active class — unlike the mode pills there are
+   two independent controls per surface, so an attribute on the modal
+   root doesn't fit. Same visual language as .create-mode-pill. */
+.create-vis-pill,
+.members-vis-pill {
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.create-vis-pill:hover,
+.members-vis-pill:hover {
+  color: var(--text-secondary);
+}
+.create-vis-pill.active,
+.members-vis-pill.active {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+.create-vis-pill:disabled,
+.members-vis-pill:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* Import-mode visibility gating.
    The flow is: paste URL → click Check → on success, the name field +
    submit button reveal so the user can confirm/edit and click Import.
@@ -1998,6 +2512,9 @@ html.in-native-webview #header-title {
 #import-status:empty { display: none; }
 #import-status.import-status--ok  { color: #10b981; }
 #import-status.import-status--err { color: #f87171; }
+/* The Members modal's invite status line reuses the same ok/err tones. */
+#members-invite-status.import-status--ok  { color: #10b981; }
+#members-invite-status.import-status--err { color: #f87171; }
 #import-status .import-spinner {
   display: inline-block;
   width: 12px;

@@ -8,6 +8,7 @@ const log = require('../services/logger');
 const { authLimiter, walletCheckLimiter } = require('../middleware/rate-limits');
 const genesisAccounts = require('../services/genesis-accounts');
 const events = require('../services/events');
+const { validatePassword } = require('../services/password-policy');
 
 const SESSION_DAYS = 7;
 
@@ -151,6 +152,12 @@ function authRoutes(config) {
     let hasApiKey = false;
     let keyLast4 = null;
     let usernodePubkey = null;
+    // Derived app-creation affordance: admins always can; everyone else
+    // can iff their live (non-errored) app count is below their quota
+    // (see users.app_quota in schema.sql). Computing the count here keeps
+    // the client contract a single boolean — the home screen reads only
+    // `canCreateApps` and needs no change as the quota feature lands.
+    let canCreateApps = !!req.user.isAdmin;
     try {
       const { rows } = await pool.query(
         'SELECT anthropic_key_enc, anthropic_key_last4, usernode_pubkey FROM users WHERE id = $1',
@@ -162,16 +169,30 @@ function authRoutes(config) {
       }
       usernodePubkey = rows[0]?.usernode_pubkey || null;
     } catch {}
+    if (!canCreateApps) {
+      try {
+        const { rows: countRows } = await pool.query(
+          `SELECT COUNT(*)::int AS n FROM apps WHERE created_by = $1 AND status <> 'error'`,
+          [req.user.id]
+        );
+        const liveCount = countRows[0]?.n ?? 0;
+        canCreateApps = (req.user.appQuota ?? 0) > 0 && liveCount < (req.user.appQuota ?? 0);
+      } catch {}
+    }
     res.json({
       user: {
         id: req.user.id,
         username: req.user.username,
         isAdmin: req.user.isAdmin,
-        // Per-user app-creation gate (admin-controlled, default FALSE).
-        // The home screen hides the "Create new app" affordance for
-        // anyone who can't create — admins implicitly can, see the
-        // canCreate helper in public/js/home.js.
-        canCreateApps: !!req.user.canCreateApps,
+        // Derived per-user app-creation affordance: isAdmin || (live app
+        // count < app_quota). The home screen hides the "Create new app"
+        // affordance for anyone who can't create — see the canCreate
+        // helper in public/js/home.js. The numeric quota itself is only
+        // surfaced through the admin API.
+        canCreateApps,
+        // Experimental: opt-in AI progress estimate for coding runs
+        // (Settings → Experimental). Default OFF.
+        aiProgressEstimate: !!req.user.aiProgressEstimate,
         hasApiKey,
         keyLast4,
         usernodePubkey,
@@ -237,6 +258,72 @@ function authRoutes(config) {
       res.json({ ok: true });
     } catch (err) {
       log.error('byok', 'Failed to remove key', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Change password for a signed-in user (issue #282). Wired from
+  // Settings → "Change password". We always require the current password:
+  // we don't track per-session wallet origin (no schema change), and every
+  // account has a knowable current password anyway — set at registration,
+  // handed over as an admin temporary password, or just chosen during a
+  // wallet reset. Wallet users who've forgotten it use the pre-login
+  // wallet-reset flow instead.
+  router.post('/api/me/password', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const { currentPassword, newPassword } = req.body || {};
+
+    const policy = validatePassword(newPassword);
+    if (!policy.ok) return res.status(400).json({ error: policy.error });
+
+    if (!currentPassword || typeof currentPassword !== 'string') {
+      return res.status(400).json({ error: 'Current password is required' });
+    }
+
+    try {
+      const { rows } = await pool.query(
+        'SELECT password FROM users WHERE id = $1',
+        [req.user.id]
+      );
+      if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
+
+      const valid = await bcrypt.compare(currentPassword, rows[0].password);
+      if (!valid) {
+        return res.status(401).json({ error: 'Current password is incorrect' });
+      }
+      if (currentPassword === newPassword) {
+        return res.status(400).json({ error: 'New password must be different from your current password' });
+      }
+
+      const hash = await bcrypt.hash(newPassword, 12);
+      await pool.query('UPDATE users SET password = $1 WHERE id = $2', [hash, req.user.id]);
+      log.info('auth', 'Password changed', { userId: req.user.id });
+      res.json({ ok: true });
+    } catch (err) {
+      log.error('auth', 'Change password failed', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Experimental: per-user "AI progress estimate" toggle (default OFF).
+  // Gates the Haiku estimator that watches in-flight Claude Code runs —
+  // see runClaudeCodeTool in src/routes/sessions.js. Wired to the
+  // Settings modal's Experimental section (fires on checkbox change).
+  router.post('/api/me/ai-progress-estimate', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const { enabled } = req.body || {};
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'enabled must be a boolean' });
+    }
+    try {
+      await pool.query(
+        'UPDATE users SET ai_progress_estimate = $1 WHERE id = $2',
+        [enabled, req.user.id]
+      );
+      log.info('settings', 'AI progress estimate toggled', { userId: req.user.id, enabled });
+      res.json({ ok: true, enabled });
+    } catch (err) {
+      log.error('settings', 'Failed to toggle AI progress estimate', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -450,6 +537,146 @@ function authRoutes(config) {
       res.json({ user: { id: user.id, username: user.username, isAdmin: user.is_admin } });
     } catch (err) {
       log.error('wallet-auth', 'wallet-verify failed', { url: verifyUrl, err: err.message, code: err.code, stack: err.stack?.split('\n')[0] });
+      res.status(500).json({ error: 'Signature verification service unavailable' });
+    }
+  });
+
+  // Self-service password reset proven by a linked wallet (issue #282).
+  // Structurally this is wallet-verify that ends in a password write
+  // instead of just a login. Key invariants:
+  //   - NO genesis gate. We mirror wallet-verify, which already resolves
+  //     the account by `usernode_pubkey` alone — proving control of the
+  //     specific linked key is the whole proof, so genesis status is
+  //     irrelevant here and would only block legitimate linked non-genesis
+  //     users.
+  //   - Account lookup is keyed ONLY on the verified pubkey, never a
+  //     username, so this pre-login endpoint is not a username oracle.
+  //   - On success every existing session is deleted (a leaked/old session
+  //     must not outlive a reset) and a fresh session is minted.
+  router.post('/api/auth/wallet-reset-verify', authLimiter, async (req, res) => {
+    const { pubkey, publicKey, challenge, signature, newPassword } = req.body || {};
+    if (!pubkey || !challenge || !signature) {
+      return res.status(400).json({ error: 'pubkey, challenge, and signature required' });
+    }
+
+    const policy = validatePassword(newPassword);
+    if (!policy.ok) return res.status(400).json({ error: policy.error });
+
+    const entry = walletChallenges.get(challenge);
+    if (!entry || entry.pubkey !== pubkey.trim() || Date.now() > entry.expiresAt) {
+      return res.status(401).json({ error: 'Invalid or expired challenge' });
+    }
+    walletChallenges.delete(challenge);
+
+    const cryptoKey = (publicKey || pubkey).trim();
+    const verifyUrl = `${config.nodeRpcUrl}/misc/verify-signature`;
+    try {
+      const verifyResp = await httpJson('POST', verifyUrl, {
+        public_key: cryptoKey,
+        message: challenge,
+        signature,
+      });
+
+      if (!verifyResp || !verifyResp.valid) {
+        log.warn('wallet-auth', 'Reset signature invalid', { resp: verifyResp });
+        return res.status(401).json({ error: 'Signature verification failed' });
+      }
+
+      const { rows } = await pool.query(
+        'SELECT id, username, is_admin FROM users WHERE usernode_pubkey = $1',
+        [pubkey.trim()]
+      );
+      if (rows.length === 0) {
+        return res.status(401).json({ error: 'No account linked to this pubkey' });
+      }
+
+      const user = rows[0];
+      const hash = await bcrypt.hash(newPassword, 12);
+      await pool.query('UPDATE users SET password = $1 WHERE id = $2', [hash, user.id]);
+      // Invalidate every existing session for this user before minting the
+      // new one, so a stale/leaked session can't survive the reset.
+      await pool.query('DELETE FROM sessions WHERE user_id = $1', [user.id]);
+
+      const { token, expiresAt } = await createSession(pool, user.id);
+      createSessionCookie(res, token, expiresAt);
+
+      log.info('wallet-auth', 'Wallet password reset successful', { userId: user.id, username: user.username });
+      res.json({ user: { id: user.id, username: user.username, isAdmin: user.is_admin } });
+    } catch (err) {
+      log.error('wallet-auth', 'wallet-reset-verify failed', { url: verifyUrl, err: err.message, code: err.code });
+      res.status(500).json({ error: 'Signature verification service unavailable' });
+    }
+  });
+
+  // Authenticated wallet-signed change-password (issue #282). The way back
+  // for a logged-in user (e.g. signed in via an admin temporary password,
+  // or a still-valid session) who has a linked wallet but has FORGOTTEN the
+  // password the normal /api/me/password form would require. Stays behind
+  // the auth gate (NOT in PUBLIC_PATHS) — it requires both a live session
+  // AND a wallet signature bound to this account's linked key. Key
+  // invariants:
+  //   - The verified pubkey must equal THIS logged-in user's own linked
+  //     usernode_pubkey (looked up by req.user.id). A valid signature from
+  //     any other wallet — even a genesis one — cannot set this user's
+  //     password.
+  //   - NO genesis gate, mirroring wallet-verify / wallet-reset-verify.
+  //   - Unlike the reset paths, existing sessions are left intact — this is
+  //     a change by an already-authenticated user, matching the semantics
+  //     of /api/me/password.
+  router.post('/api/me/wallet-change-password', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const { publicKey, challenge, signature, newPassword } = req.body || {};
+    if (!challenge || !signature) {
+      return res.status(400).json({ error: 'challenge and signature required' });
+    }
+
+    const policy = validatePassword(newPassword);
+    if (!policy.ok) return res.status(400).json({ error: policy.error });
+
+    // Resolve this user's linked wallet first — there's nothing to prove
+    // against if the account has no linked key.
+    let linkedPubkey;
+    try {
+      const { rows } = await pool.query(
+        'SELECT usernode_pubkey FROM users WHERE id = $1',
+        [req.user.id]
+      );
+      linkedPubkey = rows[0]?.usernode_pubkey || null;
+    } catch (err) {
+      log.error('wallet-auth', 'wallet-change-password lookup failed', { userId: req.user.id, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+    if (!linkedPubkey) {
+      return res.status(400).json({ error: 'No wallet is linked to your account' });
+    }
+
+    const entry = walletChallenges.get(challenge);
+    if (!entry || entry.pubkey !== linkedPubkey || Date.now() > entry.expiresAt) {
+      return res.status(401).json({ error: 'Invalid or expired challenge' });
+    }
+    walletChallenges.delete(challenge);
+
+    const cryptoKey = (publicKey || linkedPubkey).trim();
+    const verifyUrl = `${config.nodeRpcUrl}/misc/verify-signature`;
+    try {
+      const verifyResp = await httpJson('POST', verifyUrl, {
+        public_key: cryptoKey,
+        message: challenge,
+        signature,
+      });
+
+      if (!verifyResp || !verifyResp.valid) {
+        log.warn('wallet-auth', 'Change-password signature invalid', { userId: req.user.id, resp: verifyResp });
+        return res.status(401).json({ error: 'Signature verification failed' });
+      }
+
+      const hash = await bcrypt.hash(newPassword, 12);
+      await pool.query('UPDATE users SET password = $1 WHERE id = $2', [hash, req.user.id]);
+
+      log.info('wallet-auth', 'Wallet-signed password change successful', { userId: req.user.id });
+      res.json({ ok: true });
+    } catch (err) {
+      log.error('wallet-auth', 'wallet-change-password failed', { url: verifyUrl, err: err.message, code: err.code });
       res.status(500).json({ error: 'Signature verification service unavailable' });
     }
   });

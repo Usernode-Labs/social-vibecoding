@@ -127,7 +127,9 @@ up:
 #      Those live outside compose, so a plain `docker compose down` leaves
 #      them running (or stopped-but-piling-up) forever — see the
 #      "usernode-app-*", "usernode-staging-*", and "usernode-worker-*"
-#      containers that accumulate over weeks of dev.
+#      containers that accumulate over weeks of dev. "usernode-capture-*"
+#      one-shots are --rm'd on exit, but a killed docker client can leave
+#      one behind — swept here for hygiene.
 #
 # Volumes are intentionally NOT touched here. The CC session volumes
 # (usernode-cc-session-<id>) hold Claude's on-disk conversation memory
@@ -138,7 +140,7 @@ up:
 down:
 	$(DEV_COMPOSE) down
 	@echo "==> Tearing down platform-spawned containers (apps/staging/workers)..."
-	@for prefix in usernode-app- usernode-staging- usernode-worker-; do \
+	@for prefix in usernode-app- usernode-staging- usernode-worker- usernode-capture-; do \
 		ids=$$(docker ps -aq --filter "name=$$prefix" 2>/dev/null); \
 		if [ -n "$$ids" ]; then \
 			n=$$(echo $$ids | wc -w | tr -d ' '); \

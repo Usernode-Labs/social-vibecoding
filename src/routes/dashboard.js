@@ -446,7 +446,14 @@ function dashboardRoutes(config) {
   router.get('/api/admin/analytics/top-users', async (_req, res) => {
     try {
       const { rows } = await pool.query(
-        `SELECT u.username AS name, COUNT(cs.id)::int AS sessions
+        `SELECT u.username AS name,
+                COUNT(cs.id)::int AS sessions,
+                COUNT(*) FILTER (WHERE cs.pr_number IS NOT NULL)::int AS produced_pr,
+                COUNT(*) FILTER (WHERE cs.promoted_at IS NOT NULL
+                                   OR cs.status IN ('promoted','merging','merged'))::int AS promoted,
+                COUNT(*) FILTER (WHERE EXISTS (
+                          SELECT 1 FROM pr_votes pv WHERE pv.session_id = cs.id))::int AS received_vote,
+                COUNT(*) FILTER (WHERE cs.status = 'merged')::int AS merged
            FROM users u
            JOIN chat_sessions cs ON cs.user_id = u.id
           GROUP BY u.id, u.username
@@ -513,6 +520,45 @@ function dashboardRoutes(config) {
       res.json({ weeks: rows });
     } catch (err) {
       log.error('dashboard', 'kudos failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Daily spend (last 30 days) ─────────────────────────────
+  //
+  // Total LLM spend per calendar day for the last 30 days (today
+  // inclusive), summed across all users. A generate_series spine
+  // guarantees a row for every day, so quiet days render as a $0 bar
+  // rather than a gap — same continuous-axis pattern as growth /
+  // engagement. Cost lives in llm_usage.total_cost_cents (NUMERIC(10,4),
+  // sub-cent precision); summed to a float here and formatted as dollars
+  // client-side. `date` is bucketed by CURRENT_DATE at write time, so the
+  // window comparison uses CURRENT_DATE too.
+  router.get('/api/admin/analytics/spend', async (_req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `WITH spine AS (
+           SELECT generate_series(
+             CURRENT_DATE - 29,
+             CURRENT_DATE,
+             INTERVAL '1 day'
+           )::date AS day
+         ),
+         agg AS (
+           SELECT date AS day, SUM(total_cost_cents) AS cents
+           FROM llm_usage
+           WHERE date >= CURRENT_DATE - 29
+           GROUP BY date
+         )
+         SELECT to_char(s.day, 'YYYY-MM-DD') AS day,
+                COALESCE(a.cents, 0)::float AS cents
+         FROM spine s
+         LEFT JOIN agg a ON a.day = s.day
+         ORDER BY s.day`
+      );
+      res.json({ days: rows });
+    } catch (err) {
+      log.error('dashboard', 'spend failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

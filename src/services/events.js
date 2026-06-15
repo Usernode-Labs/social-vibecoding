@@ -25,12 +25,26 @@ const EVENT_TYPES = Object.freeze({
   PR_VOTE_CAST: 'pr_vote_cast',
   PR_VOTE_RECEIVED: 'pr_vote_received',
   KUDOS_GIVEN: 'kudos_given',
+  // Retraction of a previously given PR kudos (issue #197). Append-only
+  // ledger: the original kudos_given row stays; any consumer netting
+  // "kudos given" from raw events should subtract these. No backfill —
+  // historical retractions don't exist by definition.
+  KUDOS_RETRACTED: 'kudos_retracted',
   APP_FAVORITED: 'app_favorited',
   APP_CREATED: 'app_created',
   DEV_SESSION_STARTED: 'dev_session_started',
   PR_OPENED: 'pr_opened',
   PR_PROMOTED: 'pr_promoted',
   PR_MERGED: 'pr_merged',
+  BOUNTY_CREATED: 'bounty_created',
+  BOUNTY_AWARDED: 'bounty_awarded',
+  COLLAB_INVITED: 'collab_invited',
+  COLLAB_JOINED: 'collab_joined',
+  VISIBILITY_CHANGED: 'visibility_changed',
+  // Sync-with-main completed (issue: make sync emit session activity).
+  // Attributed to the session owner (sync bills the owner), recorded on
+  // the terminal path with { syncResult, behind, sha, pushOk, trigger }.
+  SYNC_MAIN: 'sync_main',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

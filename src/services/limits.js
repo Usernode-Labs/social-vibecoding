@@ -125,11 +125,85 @@ async function checkBudget(pool, userId) {
   };
 }
 
+// Shared BYOK key lookup + decrypt (#30/#212). Previously duplicated in
+// routes/sessions.js (loadUserApiKey + an inline copy in the chat route)
+// and services/sync-main.js — now the single home, used by
+// resolveBillingPath below. Returns the decrypted key string or null
+// (missing key, decrypt failure — both mean "no key on file").
+async function loadUserApiKey(pool, userId, jwtSecret) {
+  try {
+    const { rows } = await pool.query(
+      'SELECT anthropic_key_enc FROM users WHERE id = $1',
+      [userId]
+    );
+    if (rows[0]?.anthropic_key_enc) {
+      const secrets = require('./secrets');
+      const key = secrets.decrypt(rows[0].anthropic_key_enc, jwtSecret);
+      if (!key) {
+        log.warn('limits', 'BYOK key decryption failed; treating as no key', { userId });
+      }
+      return key || null;
+    }
+  } catch (err) {
+    log.warn('limits', 'Failed to load user API key', { userId, err: err.message });
+  }
+  return null;
+}
+
+// #212: decide who pays for the next billable unit (a chat turn, a
+// headless phase, a sync run). LIMIT-FIRST: the shared daily allowance
+// is consumed while it has headroom; the user's own BYOK key (#30)
+// takes over only once the budget — their per-user cap OR the global
+// cap — is exhausted. Returns exactly one of:
+//   { apiKey: null, byok: false }   — budget headroom: bill the
+//     platform key (counts against the daily caps via recordSpend).
+//   { apiKey: '<key>', byok: true } — budget exhausted and a BYOK key
+//     is on file: bill the user's own key (display-only bucket).
+//   { error: '...' }                — budget exhausted, no usable key:
+//     the same user-facing message checkBudget produces today.
+// Key decryption failures keep the existing tolerance (warn + treat as
+// "no key") — which now means a 429 once the cap is hit, instead of
+// the old silent payer switch.
+async function resolveBillingPath(pool, jwtSecret, userId) {
+  const budget = await checkBudget(pool, userId);
+  if (!budget.error) return { apiKey: null, byok: false };
+  const apiKey = await loadUserApiKey(pool, userId, jwtSecret);
+  if (apiKey) return { apiKey, byok: true };
+  return { error: budget.error };
+}
+
+// Daily-ledger upsert shared by every spend site (Mayor turns, Claude
+// Code dispatches, PR-metadata Haiku calls, feedback titles). Routes
+// the cost into the bucket matching who paid Anthropic (#119):
+//   byok: false → total_cost_cents (counts against the daily caps)
+//   byok: true  → byok_cost_cents  (billed to the user's own key once
+//                 the daily allowance ran out — see resolveBillingPath;
+//                 display only, checkBudget never reads it)
+// No-ops on a missing user or non-positive cost, and swallows+logs DB
+// errors — billing bookkeeping must never fail the request that
+// incurred the spend (same tolerance the call sites had inline).
+async function recordSpend(pool, userId, costCents, { byok = false } = {}) {
+  if (!userId || !(costCents > 0)) return;
+  const column = byok ? 'byok_cost_cents' : 'total_cost_cents';
+  try {
+    await pool.query(
+      `INSERT INTO llm_usage (user_id, date, ${column}) VALUES ($1, CURRENT_DATE, $2)
+       ON CONFLICT (user_id, date) DO UPDATE SET ${column} = llm_usage.${column} + EXCLUDED.${column}`,
+      [userId, costCents]
+    );
+  } catch (err) {
+    log.warn('limits', 'Failed to record llm_usage spend', { userId, costCents, byok, err: err.message });
+  }
+}
+
 module.exports = {
   getGlobalLimitCents,
   getDefaultUserLimitCents,
   getEffectiveUserLimitCents,
   checkBudget,
+  loadUserApiKey,
+  resolveBillingPath,
+  recordSpend,
   invalidate,
   KEY_USER,
   KEY_GLOBAL,

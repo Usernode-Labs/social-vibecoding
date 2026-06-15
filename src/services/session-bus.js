@@ -48,6 +48,9 @@ function scheduleCleanup(sessionId) {
     const cur = buffers.get(sessionId);
     if (cur && cur.subs.size === 0) buffers.delete(sessionId);
   }, IDLE_TTL_MS);
+  // A buffer-GC timer must not hold the process open (it also kept the
+  // node:test runner alive for the full TTL after headless-run tests).
+  b.idleTimer.unref();
 }
 
 // Publish an event to the session's bus. `event` MUST contain `_seq`

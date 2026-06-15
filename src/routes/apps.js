@@ -8,10 +8,38 @@ const github = require('../services/github');
 const driftPoller = require('../services/main-drift-poller');
 const appSecrets = require('../services/app-secrets');
 const appManifest = require('../services/app-manifest');
+const renamePr = require('../services/rename-pr');
 const staging = require('../services/staging');
 const { drainGuard } = require('../services/lifecycle');
-const { appCreateLimiter } = require('../middleware/rate-limits');
+const { appCreateLimiter, issueCreateLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
+const appAccess = require('../services/app-access');
+
+const VISIBILITY_VALUES = new Set(['public', 'private']);
+
+// Validate a (collabVisibility, viewVisibility) pair against the
+// invariants (see schema.sql): both must be public|private, and
+// collab-public implies view-public. Returns an error string or null.
+function validateVisibilityCombo(collabVisibility, viewVisibility) {
+  if (!VISIBILITY_VALUES.has(collabVisibility) || !VISIBILITY_VALUES.has(viewVisibility)) {
+    return 'Visibility must be "public" or "private"';
+  }
+  if (collabVisibility === 'public' && viewVisibility === 'private') {
+    return 'An app that everyone can build cannot be private to view';
+  }
+  return null;
+}
+
+// Per-viewer access flags appended to app payloads so the client can
+// gate tabs / render badges without extra round-trips.
+function accessFlags(app, user, isCollaborator) {
+  const isAdmin = !!user?.isAdmin;
+  return {
+    is_collaborator: !!isCollaborator,
+    can_collaborate: isAdmin || app.collab_visibility !== 'private' || !!isCollaborator,
+    can_manage: isAdmin || (user?.id != null && app.created_by === user.id),
+  };
+}
 
 // Local-dev URL fallback ("http://localhost:<hostport>" instead of the
 // real "https://<slug>.<USERNODE_DOMAIN>") is opt-in via env. Previously
@@ -115,13 +143,30 @@ function appRoutes(config) {
       // 10 days. Computed in one batched query (one row per app) to
       // avoid the obvious O(N apps) per-app round trip from the
       // group-chat dashboard tile path.
+      //
+      // The dev/iss joins power the home-card activity chips (#57):
+      // PRs awaiting community votes (status promoted/merging — same
+      // filter as the admin dashboard overview), in-flight dev sessions
+      // (status active; headless runs included — per-app activity
+      // legitimately covers autonomous builds, matching /api/status),
+      // and open issues. All DB-derived; no GitHub round trips.
       const userId = req.user?.id || null;
+      const isAdmin = !!req.user?.isAdmin;
+      // Visibility filter: admins see everything; everyone else sees
+      // view-public apps plus apps they're a member of (the `me` join).
+      // View-private apps are simply absent from the list for outsiders
+      // — same non-disclosure stance as the self_hosted filter.
       const { rows } = await pool.query(`
         SELECT a.*,
           COALESCE(msg_counts.cnt, 0) AS message_count,
           COALESCE(activity.total_seconds, 0) AS total_seconds,
           COALESCE(au.cnt, 0) AS active_users,
-          (favs.app_id IS NOT NULL) AS is_favorited
+          (favs.app_id IS NOT NULL) AS is_favorited,
+          favs.sort_order AS favorite_order,
+          (me.user_id IS NOT NULL) AS is_collaborator,
+          COALESCE(dev.open_prs, 0) AS open_prs,
+          COALESCE(dev.active_sessions, 0) AS active_sessions,
+          COALESCE(iss.open_issues, 0) AS open_issues
         FROM apps a
         LEFT JOIN (
           SELECT app_id, COUNT(*) AS cnt
@@ -148,11 +193,27 @@ function appRoutes(config) {
           GROUP BY a1.app_id
         ) au ON au.app_id = a.id
         LEFT JOIN (
-          SELECT app_id FROM app_favorites WHERE user_id = $2
+          SELECT app_id, sort_order FROM app_favorites WHERE user_id = $2
         ) favs ON favs.app_id = a.id
-        WHERE NOT a.self_hosted OR $1::boolean
+        LEFT JOIN app_collaborators me
+          ON me.app_id = a.id AND me.user_id = $2 AND me.status = 'member'
+        LEFT JOIN (
+          SELECT app_id,
+            COUNT(*) FILTER (WHERE status IN ('promoted', 'merging')) AS open_prs,
+            COUNT(*) FILTER (WHERE status = 'active') AS active_sessions
+          FROM chat_sessions
+          GROUP BY app_id
+        ) dev ON dev.app_id = a.id
+        LEFT JOIN (
+          SELECT app_id, COUNT(*) AS open_issues
+          FROM issues
+          WHERE status = 'open'
+          GROUP BY app_id
+        ) iss ON iss.app_id = a.id
+        WHERE (NOT a.self_hosted OR $1::boolean)
+          AND ($3::boolean OR a.view_visibility = 'public' OR me.user_id IS NOT NULL)
         ORDER BY (COALESCE(msg_counts.cnt, 0) + COALESCE(activity.total_seconds, 0)) DESC, a.created_at DESC
-      `, [showSelfHosted, userId]);
+      `, [showSelfHosted, userId, isAdmin]);
 
       const apps = await Promise.all(rows.map(async (a) => {
         // Per-app missing-required-secrets list. Cheap (one extra query
@@ -239,6 +300,11 @@ function appRoutes(config) {
           deployProgress: appDeployStatus.read(a.slug),
           missingSecrets,
           is_favorited: !!a.is_favorited,
+          favorite_order: a.favorite_order ?? null,
+          open_prs: parseInt(a.open_prs, 10) || 0,
+          active_sessions: parseInt(a.active_sessions, 10) || 0,
+          open_issues: parseInt(a.open_issues, 10) || 0,
+          ...accessFlags(a, req.user, a.is_collaborator),
         };
       }));
       res.json({ apps });
@@ -292,20 +358,18 @@ function appRoutes(config) {
   });
 
   router.post('/api/apps', drainGuard, appCreateLimiter, async (req, res) => {
-    // Per-user app-creation gate (admin-controlled, default off — see
-    // users.can_create_apps in schema.sql). The home-screen UI hides the
-    // create affordance for users who fail this check; the server-side
-    // enforcement here is the actual gate.
-    if (!req.user?.canCreateApps) {
-      return res.status(403).json({
-        error: 'You don\u2019t have permission to create apps. Ask an admin to enable app creation for your account.',
-      });
-    }
-
     const { name, repoUrl } = req.body;
 
     if (!name?.trim()) {
       return res.status(400).json({ error: 'App name is required' });
+    }
+
+    // Creation-time visibility (defaults preserve today's behavior).
+    const collabVisibility = req.body.collabVisibility || 'public';
+    const viewVisibility = req.body.viewVisibility || 'public';
+    const visibilityError = validateVisibilityCombo(collabVisibility, viewVisibility);
+    if (visibilityError) {
+      return res.status(400).json({ error: visibilityError });
     }
 
     // Import-existing pre-flight: parse URL, accept any pending invite
@@ -342,6 +406,33 @@ function appRoutes(config) {
     const slug = `${base}-${code}`;
 
     try {
+      // Per-user app-creation quota (admins bypass — parity with the
+      // global maxApps bypass below; see users.app_quota in schema.sql).
+      // Counts the user's LIVE (non-errored) apps so a deletion frees a
+      // slot. The home screen already hides the create affordance via the
+      // derived canCreateApps boolean (auth/me); this is the real gate.
+      // The count-then-insert race (two concurrent creates both passing)
+      // is acceptable — identical to the maxApps cap below, not worth a
+      // lock for a soft per-user limit.
+      if (!req.user?.isAdmin) {
+        const quota = req.user?.appQuota ?? 0;
+        const { rows: ownCountRows } = await pool.query(
+          `SELECT COUNT(*)::int AS n FROM apps WHERE created_by = $1 AND status <> 'error'`,
+          [req.user.id]
+        );
+        const liveCount = ownCountRows[0].n;
+        if (quota <= 0 || liveCount >= quota) {
+          log.warn('apps', 'App creation blocked by per-user quota', {
+            userId: req.user.id, liveCount, quota,
+          });
+          return res.status(403).json({
+            error: quota <= 0
+              ? 'You don’t have permission to create apps. Ask an admin to enable app creation for your account.'
+              : `You’ve reached your app limit (${quota}). Ask an admin to raise your quota.`,
+          });
+        }
+      }
+
       // Enforce global app cap (admins bypass). Errored apps don't count
       // toward the limit — they hold ~no resources and can be deleted to
       // free a slot.
@@ -361,11 +452,22 @@ function appRoutes(config) {
         }
       }
 
+      // The CTE makes app row + creator membership atomic — the creator
+      // must always have a member row (it's what makes a collab-private
+      // app reachable by anyone at all).
       const { rows } = await pool.query(
-        `INSERT INTO apps (name, slug, repo_url, created_by, status)
-         VALUES ($1, $2, $3, $4, 'creating')
-         RETURNING *`,
-        [name.trim(), slug, repoUrlNormalized, req.user.id]
+        `WITH new_app AS (
+           INSERT INTO apps (name, slug, repo_url, created_by, status,
+                             collab_visibility, view_visibility)
+           VALUES ($1, $2, $3, $4, 'creating', $5, $6)
+           RETURNING *
+         ), membership AS (
+           INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+           SELECT id, $4, 'member', NOW() FROM new_app
+           ON CONFLICT (app_id, user_id) DO NOTHING
+         )
+         SELECT * FROM new_app`,
+        [name.trim(), slug, repoUrlNormalized, req.user.id, collabVisibility, viewVisibility]
       );
 
       const appRow = rows[0];
@@ -378,7 +480,7 @@ function appRoutes(config) {
         type: events.EVENT_TYPES.APP_CREATED,
         userId: req.user.id,
         appId: appRow.id,
-        metadata: { imported: !!repoUrlNormalized },
+        metadata: { imported: !!repoUrlNormalized, collabVisibility, viewVisibility },
       });
 
       // Kick off async creation — don't await. If it throws, flip to error.
@@ -424,6 +526,12 @@ function appRoutes(config) {
       if (appRow.self_hosted && !req.user?.isAdmin && !config.selfAppPublicVoting) {
         return res.status(404).json({ error: 'App not found' });
       }
+      // Visibility gate (view level). 404, not 403, so view-private apps
+      // aren't enumerable — same stance as the self_hosted check above.
+      const isCollaborator = await appAccess.isCollaborator(pool, appRow.id, req.user?.id);
+      if (!req.user?.isAdmin && appRow.view_visibility === 'private' && !isCollaborator) {
+        return res.status(404).json({ error: 'App not found' });
+      }
       let url = null;
       if (appRow.status === 'running') {
         if (IS_LOCAL_DEV) {
@@ -457,7 +565,14 @@ function appRoutes(config) {
         }
       }
 
-      res.json({ app: { ...appRow, url, missingSecrets } });
+      res.json({
+        app: {
+          ...appRow,
+          url,
+          missingSecrets,
+          ...accessFlags(appRow, req.user, isCollaborator),
+        },
+      });
     } catch (err) {
       log.error('apps', 'Failed to get app', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -476,6 +591,10 @@ function appRoutes(config) {
     try {
       const appVersion = require('../services/app-version');
       const appDeployStatus = require('../services/app-deploy-status');
+      const gated = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!gated) return res.status(404).json({ error: 'App not found' });
       const info = await appVersion.getAppVersion(pool, req.params.slug);
       if (!info) return res.status(404).json({ error: 'App not found' });
       res.json({ ...info, deployProgress: appDeployStatus.read(req.params.slug) });
@@ -505,11 +624,15 @@ function appRoutes(config) {
   router.get('/api/apps/:slug/secrets', async (req, res) => {
     try {
       const { rows } = await pool.query(
-        'SELECT id, slug, manifest_snapshot, self_hosted FROM apps WHERE slug = $1',
+        'SELECT id, slug, manifest_snapshot, self_hosted, collab_visibility, view_visibility FROM apps WHERE slug = $1',
         [req.params.slug]
       );
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
       const app = rows[0];
+      // Secrets metadata is a build surface — collab-level access.
+      if (!(await appAccess.checkAppAccess(pool, app, req.user, 'collab'))) {
+        return res.status(404).json({ error: 'App not found' });
+      }
       // SELF-HOSTING.md sub-step 2j: 404 self-hosted secrets to
       // non-admins as well; otherwise the listing reveals declared
       // secret keys for the platform itself.
@@ -692,6 +815,67 @@ function appRoutes(config) {
     }
   });
 
+  // Rename an app by opening a PR that edits (or creates) the top-level
+  // `name` field in the repo's dapp.json. The rename does NOT take effect
+  // immediately — the PR drops into the existing vote panel as a promoted
+  // chat_sessions row and, when it reaches majority and merges, the prod
+  // rebuild re-reads dapp.json and reconciles apps.name (see
+  // services/app-manifest.js reconcileAppName + staging.rebuildProduction).
+  // This replaces the old issue-based rename proposal in routes/issues.js.
+  router.post('/api/apps/:slug/rename', drainGuard, issueCreateLimiter, async (req, res) => {
+    const newName = typeof req.body?.newName === 'string' ? req.body.newName.trim() : '';
+    if (!newName) {
+      return res.status(400).json({ error: 'newName is required' });
+    }
+    if (newName.length < 3) {
+      return res.status(400).json({ error: 'Name must be at least 3 characters' });
+    }
+    if (newName.length > appManifest.MAX_APP_NAME_LENGTH) {
+      return res.status(400).json({
+        error: `Name must be ${appManifest.MAX_APP_NAME_LENGTH} characters or fewer`,
+      });
+    }
+
+    try {
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
+      if (!app) return res.status(404).json({ error: 'App not found' });
+
+      if (newName.toLowerCase() === (app.name || '').toLowerCase()) {
+        return res.status(400).json({ error: 'App is already named that' });
+      }
+
+      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+        return res.status(503).json({
+          error: 'Renames need GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+        });
+      }
+      if (!app.repo_url) {
+        return res.status(400).json({ error: 'App has no GitHub repository to open a PR against' });
+      }
+      const repoMatch = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/);
+      if (!repoMatch) {
+        return res.status(400).json({ error: 'Could not parse the app repository URL' });
+      }
+
+      // Open the rename PR + promoted vote session via the shared helper
+      // (services/rename-pr.js) — the exact same code path the boot
+      // migration uses to drain legacy rename issues.
+      const result = await renamePr.createRenamePR(
+        config, pool, app, newName, { id: req.user.id, username: req.user.username }
+      );
+
+      res.status(201).json({
+        ok: true,
+        sessionId: result.sessionId,
+        prNumber: result.prNumber,
+        prUrl: result.prUrl,
+      });
+    } catch (err) {
+      log.error('apps', 'Rename PR failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: err.message || 'Internal server error' });
+    }
+  });
+
   // Toggle the admin-gated change lock (admin only). When locked=true,
   // applying any group-voted change (PR merge, rename proposal, secret
   // change) additionally requires at least one admin yes/up vote on top
@@ -740,6 +924,126 @@ function appRoutes(config) {
     }
   });
 
+  // Propose a visibility change (issue #124). The two statuses live in
+  // dapp.json's top-level `visibility` block, so changing them is a
+  // manifest-editing PR — same lifecycle as a rename: the PR drops into
+  // the vote panel, and when it merges, the production rebuild's
+  // reconcileAppVisibility applies the change (with the transition
+  // semantics — pending-invite cleanup etc. — in
+  // services/app-manifest.js applyVisibilityChange). The old instant
+  // PATCH /api/apps/:slug/visibility is gone; admins fast-track by
+  // force-merging the PR (POST /api/sessions/:id/admin-merge).
+  router.post('/api/apps/:slug/visibility-pr', drainGuard, issueCreateLimiter, async (req, res) => {
+    const collabVisibility = req.body?.collabVisibility;
+    const viewVisibility = req.body?.viewVisibility;
+    const visibilityError = validateVisibilityCombo(collabVisibility, viewVisibility);
+    if (visibilityError) {
+      return res.status(400).json({ error: visibilityError });
+    }
+    try {
+      const { rows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
+      if (!rows.length) return res.status(404).json({ error: 'App not found' });
+      const app = rows[0];
+      // Non-viewers get the existence-hiding 404; viewers without manage
+      // rights get an honest 403. Proposer scope stays creator/admin —
+      // same authority the old instant switch had (any collaborator can
+      // still reach the same outcome via a dev session editing the file).
+      if (!(await appAccess.checkAppAccess(pool, app, req.user, 'view'))) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+      if (!req.user?.isAdmin && app.created_by !== req.user?.id) {
+        return res.status(403).json({ error: 'Only the app creator or an admin can propose a visibility change' });
+      }
+      if (refuseIfSelfHosted(app, res, 'visibility')) return;
+
+      if (app.collab_visibility === collabVisibility
+          && app.view_visibility === viewVisibility) {
+        return res.status(400).json({ error: 'The app already has that visibility' });
+      }
+
+      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+        return res.status(503).json({
+          error: 'Visibility changes need GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+        });
+      }
+      if (!app.repo_url) {
+        return res.status(400).json({ error: 'App has no GitHub repository to open a PR against' });
+      }
+      if (!(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/)) {
+        return res.status(400).json({ error: 'Could not parse the app repository URL' });
+      }
+
+      // One visibility proposal in flight per app — point the caller at
+      // the open one instead of stacking PRs.
+      const existing = await renamePr.findVisibilityPr(pool, app.id);
+      if (existing) {
+        return res.status(409).json({
+          error: 'A visibility change is already up for vote',
+          sessionId: existing.id,
+          prNumber: existing.pr_number,
+          prUrl: existing.pr_url,
+        });
+      }
+
+      const result = await renamePr.createVisibilityPR(
+        config, pool, app,
+        { collab: collabVisibility, view: viewVisibility },
+        { id: req.user.id, username: req.user.username }
+      );
+
+      res.status(201).json({
+        ok: true,
+        sessionId: result.sessionId,
+        prNumber: result.prNumber,
+        prUrl: result.prUrl,
+      });
+    } catch (err) {
+      log.error('apps', 'Visibility PR failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: err.message || 'Internal server error' });
+    }
+  });
+
+  // ── Edge-gate authorize hop (view-private apps) ─────────────────────
+  //
+  // Platform session cookies are host-only (deliberately — child apps
+  // run user-authored code and must never see the platform credential),
+  // so a direct visit to a view-private app's subdomain carries no
+  // session for the edge gate (/__caddy/access in routes/internal.js)
+  // to read. The gate bounces bare browser GETs here, to the apex,
+  // where the session cookie IS present and authMiddleware has already
+  // resolved req.user (or redirected to /login.html). We re-run the
+  // standard view-level access check and, when allowed, send the
+  // browser back to the app host with a 120s single-purpose grant the
+  // gate exchanges for a per-host scoped access cookie. Non-members get
+  // the same existence-hiding 404 every other surface returns.
+  router.get('/__access/authorize', async (req, res) => {
+    try {
+      const parsed = appAccess.parseAppHost(req.query.host);
+      if (!parsed) return res.status(404).send('Not found');
+      const rawNext = typeof req.query.next === 'string' ? req.query.next : '/';
+      const next = rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '/';
+
+      const app = await appAccess.getAppForUser(
+        pool, parsed.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!app) return res.status(404).send('Not found');
+
+      const grant = appAccess.mintAccessGrant(config.jwtSecret, {
+        uid: req.user.id,
+        appId: app.id,
+        host: parsed.host,
+      });
+      return res.redirect(
+        302,
+        `https://${parsed.host}/__usernode_access`
+          + `?grant=${encodeURIComponent(grant)}&next=${encodeURIComponent(next)}`
+      );
+    } catch (err) {
+      log.error('apps', 'Edge authorize failed', { host: req.query.host, message: err.message });
+      return res.status(500).send('Internal server error');
+    }
+  });
+
   // Delete an app (admin only)
   router.delete('/api/apps/:slug', async (req, res) => {
     if (!req.user?.isAdmin) return res.status(403).json({ error: 'Admin access required' });
@@ -755,9 +1059,10 @@ function appRoutes(config) {
         await docker.stopAndRemove(`usernode-app-${app.slug}`).catch(() => {});
       }
 
-      // Remove Caddy route
-      const hostname = caddy.productionHostname(app.slug);
-      await caddy.removeRoute(hostname).catch(() => {});
+      // No Caddy route to remove — the wildcard site maps hostnames to
+      // container names dynamically, so removing the container above
+      // takes the app offline. The on-demand cert lingers harmlessly and
+      // the ask endpoint stops vouching once the app row is deleted below.
 
       // Drop app database
       const dbManager = require('../services/db-manager');
@@ -765,6 +1070,7 @@ function appRoutes(config) {
 
       // Delete from DB (cascades to chat_messages, sessions, etc.)
       await pool.query('DELETE FROM apps WHERE id = $1', [app.id]);
+      appAccess.invalidateVisibility(app.id, app.slug);
 
       log.info('apps', 'App deleted', { appId: app.id, slug: app.slug });
       res.json({ ok: true });
@@ -826,10 +1132,13 @@ function appRoutes(config) {
     try {
       const showSelfHosted = !!req.user?.isAdmin || !!config.selfAppPublicVoting;
       const { rows: appRows } = await pool.query(
-        'SELECT id FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)',
+        `SELECT ${appAccess.ACCESS_COLUMNS} FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`,
         [req.params.slug, showSelfHosted]
       );
       if (appRows.length === 0) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+      if (!(await appAccess.checkAppAccess(pool, appRows[0], req.user, 'view'))) {
         return res.status(404).json({ error: 'App not found' });
       }
       const appId = appRows[0].id;
@@ -851,6 +1160,62 @@ function appRoutes(config) {
     }
   });
 
+  // Persist the caller's personal ordering of starred apps (issue #128).
+  // Deliberately NOT under /api/apps/… so it can never collide with the
+  // :slug-parameterised routes above. Body is the user's complete starred
+  // list, first-to-last: { order: ["slug-a", "slug-b", ...] }.
+  //
+  // The save is a self-healing full rewrite inside one transaction:
+  // every one of the caller's favorites is reset to NULL, then each
+  // submitted slug that is actually favorited gets sort_order = its
+  // array index. Submitted slugs that aren't favorited (or don't exist)
+  // are silently ignored — favorites are non-sensitive (same trust
+  // level as the toggle's DELETE) and a stale client list shouldn't
+  // 400 the whole save. Favorites missing from the array end up NULL
+  // and fall to the back via the client's fallback ordering. No
+  // per-app access re-check needed: only rows keyed by req.user.id are
+  // touched, and a user can only have favorited apps they could view
+  // at star time.
+  router.put('/api/favorites/order', async (req, res) => {
+    const { order } = req.body || {};
+    if (
+      !Array.isArray(order) ||
+      order.length > 200 ||
+      order.some((s) => typeof s !== 'string')
+    ) {
+      return res.status(400).json({ error: 'order must be an array of at most 200 slugs' });
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        'UPDATE app_favorites SET sort_order = NULL WHERE user_id = $1',
+        [req.user.id]
+      );
+      if (order.length > 0) {
+        await client.query(
+          `UPDATE app_favorites f
+           SET sort_order = ord.idx
+           FROM (
+             SELECT slug, (ordinality - 1)::int AS idx
+             FROM unnest($2::text[]) WITH ORDINALITY AS t(slug, ordinality)
+           ) ord
+           JOIN apps a ON a.slug = ord.slug
+           WHERE f.user_id = $1 AND f.app_id = a.id`,
+          [req.user.id, order]
+        );
+      }
+      await client.query('COMMIT');
+      res.json({ ok: true });
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      log.error('apps', 'Failed to reorder favorites', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    } finally {
+      client.release();
+    }
+  });
+
   router.post('/api/apps/:slug/activity', async (req, res) => {
     const { seconds } = req.body;
 
@@ -859,14 +1224,13 @@ function appRoutes(config) {
     }
 
     try {
-      const { rows: appRows } = await pool.query(
-        'SELECT id FROM apps WHERE slug = $1',
-        [req.params.slug]
+      const appRow = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
       );
-
-      if (appRows.length === 0) {
+      if (!appRow) {
         return res.status(404).json({ error: 'App not found' });
       }
+      const appRows = [appRow];
 
       // `xmax = 0` is true only for a freshly INSERTed row; on the
       // ON CONFLICT update path xmax is the locking txid (non-zero). We

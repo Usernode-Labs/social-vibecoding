@@ -117,6 +117,12 @@ jobs:
             # $ sign in a password).
             cat > .env <<'ENVEOF'
             USERNODE_DOMAIN=${{ vars.USERNODE_DOMAIN }}
+            ZEROSSL_API_KEY=${{ secrets.ZEROSSL_API_KEY }}
+            ZEROSSL_EAB_KID=${{ secrets.ZEROSSL_EAB_KID }}
+            ZEROSSL_EAB_HMAC=${{ secrets.ZEROSSL_EAB_HMAC }}
+            ACME_DNS_USERNAME=${{ secrets.ACME_DNS_USERNAME }}
+            ACME_DNS_PASSWORD=${{ secrets.ACME_DNS_PASSWORD }}
+            ACME_DNS_SUBDOMAIN=${{ secrets.ACME_DNS_SUBDOMAIN }}
             ADMIN_USERNAME=${{ secrets.USERNODE_ADMIN_USERNAME }}
             ADMIN_PASSWORD=${{ secrets.USERNODE_ADMIN_PASSWORD }}
             SESSION_SECRET=${{ secrets.USERNODE_SESSION_SECRET }}

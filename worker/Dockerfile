@@ -24,9 +24,10 @@ COPY run-cc.sh       /usr/local/bin/run-cc.sh
 # The worker container itself carries zero GitHub credentials.
 COPY usernode-push   /usr/local/bin/usernode-push
 # usernode-issues is read-only: it GETs the platform's internal issues
-# endpoint (anonymous public-repo fetch happens platform-side) so Claude
-# Code can list the repo's open GitHub issues in both build and scout
-# modes. Authenticates with the read-only ISSUES_JWT, never WORKER_JWT.
+# endpoints (anonymous public-repo fetch happens platform-side) so Claude
+# Code can list the repo's open GitHub issues — or fetch one issue's full
+# untruncated body via `usernode-issues <number>` — in both build and
+# scout modes. Authenticates with the read-only ISSUES_JWT, never WORKER_JWT.
 COPY usernode-issues /usr/local/bin/usernode-issues
 # `.claude` must exist (owned by node) in the image so that when we mount a
 # named volume at that path for persistent CC sessions, Docker initialises the

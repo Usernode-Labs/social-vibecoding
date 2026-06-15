@@ -1,24 +1,27 @@
 // #30 — Settings modal (BYOK: bring your own Anthropic API key).
 //
-// The gear button in the header opens this modal. Users can paste an
-// `sk-ant-...` key; the server verifies it with a cheap 1-token call
-// and only then encrypts + stores it. Once saved, a small emerald dot
-// appears on the gear icon so the user can tell at a glance that their
-// key is active — and so can any other user viewing over their
-// shoulder (no secrets leak, just the indicator).
+// The Settings row in the header drawer opens this modal (wired in
+// app.js HeaderMenu.init). Users can paste an `sk-ant-...` key; the
+// server verifies it with a cheap 1-token call and only then encrypts
+// + stores it. Once saved, a small emerald dot appears on the drawer's
+// Settings row so the user can tell at a glance that their key is
+// active — and so can any other user viewing over their shoulder
+// (no secrets leak, just the indicator).
 (function () {
   'use strict';
 
   const Settings = {
     modal: null,
-    state: { hasApiKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false },
+    state: { hasApiKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false },
     _walletPollTimer: null,
+    _alertsTestTimer: null,
     _walletExpiresAt: null,
     _walletCountdownTimer: null,
 
     init() {
       this.modal = document.getElementById('settings-modal');
-      document.getElementById('settings-btn').addEventListener('click', () => this.open());
+      // The open entry point is the drawer's Settings row, wired in
+      // app.js HeaderMenu.init → Settings.open().
       document.getElementById('settings-close').addEventListener('click', () => this.close());
       document.getElementById('settings-save').addEventListener('click', () => this.save());
       document.getElementById('settings-remove').addEventListener('click', () => this.remove());
@@ -33,6 +36,19 @@
       const logoutBtn = document.getElementById('settings-logout');
       if (logoutBtn) logoutBtn.addEventListener('click', () => this.logout());
 
+      // Change password (issue #282) → POST /api/me/password.
+      const cpSave = document.getElementById('cp-save');
+      if (cpSave) cpSave.addEventListener('click', () => this.changePassword());
+
+      // Wallet-signed change-password → POST /api/me/wallet-change-password.
+      // Only reachable when the wallet-mode link is shown (native + linked).
+      const cpWalletSave = document.getElementById('cp-wallet-save');
+      if (cpWalletSave) cpWalletSave.addEventListener('click', () => this.changePasswordWithWallet());
+      const useWallet = document.getElementById('cp-use-wallet');
+      if (useWallet) useWallet.addEventListener('click', (e) => { e.preventDefault(); this._setChangePasswordMode('wallet'); });
+      const usePassword = document.getElementById('cp-use-password');
+      if (usePassword) usePassword.addEventListener('click', (e) => { e.preventDefault(); this._setChangePasswordMode('password'); });
+
       // Dev console "always show" toggle. State lives in DevConsole +
       // localStorage; we just mirror it here. Wire change immediately
       // so the icon appears/disappears without needing to close the
@@ -44,6 +60,65 @@
           DevConsole.setMode(e.target.checked
             ? DevConsole.MODE_ALWAYS
             : DevConsole.MODE_ERRORS_ONLY);
+        });
+      }
+
+      // Experimental "AI progress estimate" toggle. Server-side per-user
+      // flag (default OFF) — fire the POST on change so it takes effect
+      // on the next coding run without closing the modal; revert the
+      // checkbox if the save fails.
+      const estimateToggle = document.getElementById('ai-progress-estimate');
+      if (estimateToggle) {
+        estimateToggle.addEventListener('change', (e) => this._saveAiProgressEstimate(e.target.checked));
+      }
+
+      // #138 "Dev-chat sound & alerts" toggle. Client-only preference
+      // (localStorage, default ON) owned by DevAlerts — we just mirror its
+      // checked state and flip the stored flag. Turning it ON is a user
+      // gesture, so unlock audio + request notification permission then.
+      const alertsToggle = document.getElementById('devchat-alerts-toggle');
+      if (alertsToggle) {
+        alertsToggle.checked = window.DevAlerts ? DevAlerts.enabled() : true;
+        alertsToggle.addEventListener('change', (e) => {
+          if (!window.DevAlerts) return;
+          DevAlerts.setEnabled(e.target.checked);
+          if (e.target.checked) {
+            DevAlerts._unlockAudio();
+            DevAlerts.requestNotifyPermission();
+          }
+        });
+      }
+
+      // #138 "Send a test alert" — exercises the user's own setup. Fires a
+      // demo completion after a short delay so they can stay (hear the
+      // chime) or switch away (see the background notification).
+      const alertsTest = document.getElementById('devchat-alerts-test');
+      if (alertsTest) {
+        alertsTest.addEventListener('click', () => {
+          if (!window.DevAlerts) return;
+          const status = document.getElementById('devchat-alerts-test-status');
+          const ms = DevAlerts.testAlert();
+          if (!status) return;
+          // Visible countdown that ticks down each second (the previous
+          // version set the text once and it looked frozen). Guard against
+          // rapid re-clicks by clearing any in-flight countdown first; the
+          // same id is cleared on close().
+          this._clearAlertsTestCountdown();
+          status.classList.remove('hidden');
+          let remaining = Math.ceil(ms / 1000);
+          const render = () => {
+            status.textContent = `Alert in ${remaining}s — stay here for the chime, or switch away / background the app for a notification.`;
+          };
+          render();
+          this._alertsTestTimer = setInterval(() => {
+            remaining -= 1;
+            if (remaining > 0) {
+              render();
+              return;
+            }
+            this._clearAlertsTestCountdown();
+            status.textContent = 'Sent — you should hear a chime now (or get a notification if you switched away).';
+          }, 1000);
         });
       }
 
@@ -100,12 +175,13 @@
         this.state.keyLast4 = j.user?.keyLast4 || null;
         this.state.usernodePubkey = j.user?.usernodePubkey || null;
         this.state.walletLinkEnabled = !!j.user?.walletLinkEnabled;
+        this.state.aiProgressEstimate = !!j.user?.aiProgressEstimate;
         this._renderIndicator();
       } catch {}
     },
 
     _renderIndicator() {
-      const dot = document.getElementById('settings-byok-dot');
+      const dot = document.getElementById('drawer-byok-dot');
       if (dot) dot.classList.toggle('hidden', !this.state.hasApiKey);
       // Let dev-chat swap its budget indicator for the BYOK badge
       // without having to observe us directly.
@@ -116,8 +192,12 @@
 
     open() {
       this._renderBody();
+      this._refreshSpend();
+      this._renderLlmGrants();
       this._renderWalletSection();
+      this._renderChangePasswordSection();
       this._renderDevConsoleSection();
+      this._renderExperimentalSection();
       this._renderAdminSection();
       this._clearStatus();
       this.modal.classList.remove('hidden');
@@ -132,6 +212,42 @@
       if (!toggle) return;
       const mode = window.DevConsole ? DevConsole.getMode() : 'errors-only';
       toggle.checked = mode === 'always';
+    },
+
+    _renderExperimentalSection() {
+      const toggle = document.getElementById('ai-progress-estimate');
+      if (toggle) toggle.checked = !!this.state.aiProgressEstimate;
+      const status = document.getElementById('ai-progress-estimate-status');
+      if (status) { status.classList.add('hidden'); status.textContent = ''; }
+    },
+
+    async _saveAiProgressEstimate(enabled) {
+      const toggle = document.getElementById('ai-progress-estimate');
+      const status = document.getElementById('ai-progress-estimate-status');
+      const fail = (msg) => {
+        if (toggle) toggle.checked = !!this.state.aiProgressEstimate;
+        if (status) {
+          status.textContent = msg;
+          status.classList.remove('hidden', 'text-emerald-500', 'text-zinc-500');
+          status.classList.add('text-red-500');
+        }
+      };
+      try {
+        const r = await fetch('/api/me/ai-progress-estimate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ enabled: !!enabled }),
+        });
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}));
+          return fail(j.error || 'Failed to save.');
+        }
+        this.state.aiProgressEstimate = !!enabled;
+        if (status) { status.classList.add('hidden'); status.textContent = ''; }
+      } catch (err) {
+        fail(`Network error: ${err.message}`);
+      }
     },
 
     // Show the admin-preview section only when the server reports the
@@ -175,6 +291,16 @@
       this.modal.classList.add('hidden');
       document.getElementById('settings-api-key').value = '';
       this._stopWalletPolling();
+      this._clearAlertsTestCountdown();
+    },
+
+    // Clear the "Send a test alert" countdown interval (#138). Idempotent —
+    // safe to call when none is running (rapid re-clicks, modal close).
+    _clearAlertsTestCountdown() {
+      if (this._alertsTestTimer) {
+        clearInterval(this._alertsTestTimer);
+        this._alertsTestTimer = null;
+      }
     },
 
     _renderBody() {
@@ -196,6 +322,27 @@
         input.placeholder = 'sk-ant-...';
         saveBtn.textContent = 'Save';
       }
+    },
+
+    // #119 — "Today's spend" breakdown in the API-key section. Fetched
+    // fresh on every modal open; the block stays hidden while loading,
+    // on fetch failure, or when no key is saved, so it never shows
+    // stale or irrelevant figures.
+    async _refreshSpend() {
+      const block = document.getElementById('settings-spend');
+      if (!block) return;
+      block.classList.add('hidden');
+      if (!this.state.hasApiKey) return;
+      try {
+        const r = await fetch('/api/budget', { credentials: 'same-origin' });
+        if (!r.ok) return;
+        const b = await r.json();
+        document.getElementById('settings-spend-byok').textContent =
+          '$' + ((b.byokSpentCents || 0) / 100).toFixed(2);
+        document.getElementById('settings-spend-platform').textContent =
+          '$' + ((b.spentCents || 0) / 100).toFixed(2) + ' of $' + ((b.limitCents || 0) / 100).toFixed(2);
+        block.classList.remove('hidden');
+      } catch {}
     },
 
     _setStatus(text, kind) {
@@ -249,12 +396,150 @@
         this._setStatus('Saved. Your chats now bill to your Anthropic account.', 'ok');
         input.value = '';
         this._renderBody();
+        this._refreshSpend();
         setTimeout(() => this.close(), 900);
       } catch (err) {
         this._setStatus(`Network error: ${err.message}`, 'error');
       } finally {
         saveBtn.disabled = false;
         removeBtn.disabled = false;
+      }
+    },
+
+    // ── Change password (issue #282) ─────────────────────────────
+    _setCpStatus(text, kind) {
+      const el = document.getElementById('cp-status');
+      if (!el) return;
+      el.textContent = text;
+      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
+      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
+      el.classList.add(cls);
+    },
+
+    // Decide whether the wallet option is even offered, then default to
+    // the password form. The "Use your wallet instead" link only appears
+    // in the Usernode native app (signMessage available) AND when the
+    // logged-in account has a linked wallet to prove control of.
+    _renderChangePasswordSection() {
+      const section = document.getElementById('change-password-section');
+      if (!section) return;
+      const isNative = !!(window.usernode && window.usernode.isNative);
+      this._walletChangeAvailable = isNative && !!this.state.usernodePubkey;
+      // Clear any stale field values / status on each open.
+      ['cp-current', 'cp-new', 'cp-confirm'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+      });
+      const status = document.getElementById('cp-status');
+      if (status) { status.classList.add('hidden'); status.textContent = ''; }
+      this._setChangePasswordMode('password');
+    },
+
+    _setChangePasswordMode(mode) {
+      // In password mode (or when wallet isn't available) show the
+      // current-password field + the normal submit, and offer the
+      // "use your wallet" link only if it's available. In wallet mode hide
+      // the current-password field, swap the submit, and offer the way back.
+      const wallet = mode === 'wallet' && this._walletChangeAvailable;
+      const show = (id, on) => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('hidden', !on);
+      };
+      show('cp-current-row', !wallet);
+      show('cp-save', !wallet);
+      show('cp-wallet-save', wallet);
+      // Offer the "switch to wallet" link only in password mode and only
+      // when wallet change is available; offer the way back in wallet mode.
+      show('cp-wallet-mode', !wallet && this._walletChangeAvailable);
+      show('cp-password-mode', wallet);
+    },
+
+    async changePasswordWithWallet() {
+      const newEl = document.getElementById('cp-new');
+      const confirmEl = document.getElementById('cp-confirm');
+      const btn = document.getElementById('cp-wallet-save');
+      const newPassword = newEl.value;
+      const confirm = confirmEl.value;
+
+      if (newPassword.length < 8) { this._setCpStatus('New password must be at least 8 characters.', 'error'); return; }
+      if (newPassword !== confirm) { this._setCpStatus('New passwords do not match.', 'error'); return; }
+      if (!(window.usernode && window.usernode.isNative) || typeof window.signMessage !== 'function') {
+        this._setCpStatus('Wallet signing is only available in the Usernode app.', 'error');
+        return;
+      }
+
+      btn.disabled = true;
+      this._setCpStatus('Verifying identity…', 'info');
+      try {
+        const pubkey = this.state.usernodePubkey || (window.getNodeAddress ? await window.getNodeAddress() : null);
+        if (!pubkey) { this._setCpStatus('Could not read your wallet address.', 'error'); return; }
+
+        // Fresh single-use challenge from the shared wallet-check endpoint.
+        const checkRes = await fetch('/api/auth/wallet-check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ pubkey }),
+        });
+        const checkData = await checkRes.json().catch(() => ({}));
+        const challenge = checkData.challenge;
+        if (!challenge) { this._setCpStatus('Could not get a challenge from the server.', 'error'); return; }
+
+        const sig = await window.signMessage(challenge);
+        const r = await fetch('/api/me/wallet-change-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ publicKey: sig.publicKey, challenge, signature: sig.signature, newPassword }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { this._setCpStatus(j.error || 'Failed to change password.', 'error'); return; }
+        newEl.value = '';
+        confirmEl.value = '';
+        this._setCpStatus('Password changed.', 'ok');
+      } catch (err) {
+        if (err && err.message && err.message.includes('denied')) {
+          this._setCpStatus('Signature request was denied.', 'error');
+        } else {
+          this._setCpStatus(`Wallet change failed: ${err.message || err}`, 'error');
+        }
+      } finally {
+        btn.disabled = false;
+      }
+    },
+
+    async changePassword() {
+      const currentEl = document.getElementById('cp-current');
+      const newEl = document.getElementById('cp-new');
+      const confirmEl = document.getElementById('cp-confirm');
+      const btn = document.getElementById('cp-save');
+      const currentPassword = currentEl.value;
+      const newPassword = newEl.value;
+      const confirm = confirmEl.value;
+
+      if (!currentPassword) { this._setCpStatus('Enter your current password.', 'error'); return; }
+      if (newPassword.length < 8) { this._setCpStatus('New password must be at least 8 characters.', 'error'); return; }
+      if (newPassword !== confirm) { this._setCpStatus('New passwords do not match.', 'error'); return; }
+
+      btn.disabled = true;
+      this._setCpStatus('Saving…', 'info');
+      try {
+        const r = await fetch('/api/me/password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ currentPassword, newPassword }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { this._setCpStatus(j.error || 'Failed to change password.', 'error'); return; }
+        currentEl.value = '';
+        newEl.value = '';
+        confirmEl.value = '';
+        this._setCpStatus('Password changed.', 'ok');
+      } catch (err) {
+        this._setCpStatus(`Network error: ${err.message}`, 'error');
+      } finally {
+        btn.disabled = false;
       }
     },
 
@@ -286,6 +571,7 @@
         this.state.keyLast4 = null;
         this._renderIndicator();
         this._renderBody();
+        this._refreshSpend();
         this._setStatus('Removed.', 'ok');
         setTimeout(() => this.close(), 700);
       } catch (err) {
@@ -293,6 +579,168 @@
       } finally {
         removeBtn.disabled = false;
       }
+    },
+
+    // ── App AI permissions (issue #34) ───────────────────────────
+    //
+    // Fetched fresh on every modal open. Each active grant renders as
+    // a row: app name, $spent / $cap today, a cap editor, the BYOK
+    // spillover toggle (only when a key is on file), and Revoke.
+    // Revoked grants show a muted badge — re-approving happens via the
+    // app's own consent dialog, not from here. In staging previews the
+    // page's ?demo=1 is passed through so the (always-empty,
+    // staging:private) grant tables still produce a reviewable list.
+
+    async _renderLlmGrants() {
+      const list = document.getElementById('llm-grants-list');
+      if (!list) return;
+      list.innerHTML = '<p class="text-xs text-zinc-500">Loading…</p>';
+      const demo = new URLSearchParams(window.location.search).get('demo') === '1';
+      let grants = [];
+      try {
+        const r = await fetch('/api/me/llm-grants' + (demo ? '?demo=1' : ''), { credentials: 'same-origin' });
+        if (!r.ok) throw new Error('fetch failed');
+        const j = await r.json();
+        grants = j.grants || [];
+      } catch {
+        list.innerHTML = '<p class="text-xs text-red-500">Failed to load app permissions.</p>';
+        return;
+      }
+      if (!grants.length) {
+        list.innerHTML = '<p class="text-xs text-zinc-500 dark:text-zinc-500">No apps have asked to use AI yet.</p>';
+        return;
+      }
+      list.innerHTML = '';
+      for (const g of grants) list.appendChild(this._llmGrantRow(g));
+    },
+
+    _llmGrantRow(g) {
+      const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+      }[c]));
+      const row = document.createElement('div');
+      row.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs';
+      const revoked = g.status !== 'active';
+      const spent = ((g.spentTodayCents || 0) + (g.byokSpentTodayCents || 0)) / 100;
+      const cap = (g.dailyCapCents || 0) / 100;
+
+      if (revoked) {
+        row.innerHTML = `
+          <div class="flex items-center justify-between gap-2">
+            <span class="font-medium text-zinc-500 dark:text-zinc-500 truncate">${esc(g.appName)}</span>
+            <span class="shrink-0 rounded px-1.5 py-0.5 bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-400">Revoked</span>
+          </div>`;
+        return row;
+      }
+
+      row.innerHTML = `
+        <div class="flex items-center justify-between gap-2">
+          <span class="font-medium text-zinc-700 dark:text-zinc-300 truncate">${esc(g.appName)}</span>
+          <span class="font-mono text-zinc-600 dark:text-zinc-400 shrink-0">$${spent.toFixed(2)} / $${cap.toFixed(2)} today</span>
+        </div>
+        <div class="flex items-center justify-between gap-2 mt-2 flex-wrap">
+          <label class="flex items-center gap-1 text-zinc-600 dark:text-zinc-400">
+            Cap $<input data-role="cap" type="number" min="0.01" step="0.01" value="${cap.toFixed(2)}"
+              class="w-20 rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-1.5 py-0.5 font-mono text-zinc-900 dark:text-zinc-100" />
+          </label>
+          ${this.state.hasApiKey || g.allowByok ? `
+          <label class="flex items-center gap-1 cursor-pointer select-none text-zinc-600 dark:text-zinc-400">
+            <input data-role="byok" type="checkbox" class="accent-violet-500 w-3.5 h-3.5" ${g.allowByok ? 'checked' : ''} />
+            Use my own key past the daily budget
+          </label>` : ''}
+          <button data-role="revoke"
+            class="rounded border border-red-400 dark:border-red-700 px-2 py-0.5 font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors">Revoke</button>
+        </div>`;
+
+      const status = (text, kind) => this._setLlmGrantsStatus(text, kind);
+      const isDemo = g.appId < 0;
+
+      const capInput = row.querySelector('[data-role="cap"]');
+      capInput.addEventListener('change', async () => {
+        if (isDemo) { status('Demo data — changes are not saved.', 'info'); return; }
+        const cents = Math.round(parseFloat(capInput.value) * 100);
+        if (!Number.isFinite(cents) || cents <= 0) {
+          status('Enter a valid cap (at least $0.01).', 'error');
+          return;
+        }
+        try {
+          const r = await fetch(`/api/me/llm-grants/${g.appId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ dailyCapCents: cents }),
+          });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) { status(j.error || 'Failed to update cap.', 'error'); return; }
+          status('Cap updated.', 'ok');
+          this._renderLlmGrants();
+        } catch (err) {
+          status('Network error: ' + err.message, 'error');
+        }
+      });
+
+      const byokInput = row.querySelector('[data-role="byok"]');
+      if (byokInput) {
+        byokInput.addEventListener('change', async () => {
+          if (isDemo) { status('Demo data — changes are not saved.', 'info'); return; }
+          try {
+            const r = await fetch(`/api/me/llm-grants/${g.appId}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'same-origin',
+              body: JSON.stringify({ allowByok: byokInput.checked }),
+            });
+            const j = await r.json().catch(() => ({}));
+            if (!r.ok) {
+              byokInput.checked = !byokInput.checked;
+              status(j.error || 'Failed to update.', 'error');
+              return;
+            }
+            status(byokInput.checked
+              ? 'This app may spill over onto your own key (still capped).'
+              : 'Spillover disabled.', 'ok');
+          } catch (err) {
+            byokInput.checked = !byokInput.checked;
+            status('Network error: ' + err.message, 'error');
+          }
+        });
+      }
+
+      row.querySelector('[data-role="revoke"]').addEventListener('click', async () => {
+        const ok = window.ConfirmModal
+          ? await ConfirmModal.show({
+              title: `Revoke AI access for "${g.appName}"?`,
+              message: 'Its next AI call will fail immediately. The app can ask for access again later.',
+              confirmLabel: 'Revoke',
+              danger: true,
+            })
+          : confirm(`Revoke AI access for "${g.appName}"?`);
+        if (!ok) return;
+        if (isDemo) { status('Demo data — changes are not saved.', 'info'); return; }
+        try {
+          const r = await fetch(`/api/me/llm-grants/${g.appId}`, {
+            method: 'DELETE', credentials: 'same-origin',
+          });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) { status(j.error || 'Failed to revoke.', 'error'); return; }
+          status('Revoked.', 'ok');
+          this._renderLlmGrants();
+        } catch (err) {
+          status('Network error: ' + err.message, 'error');
+        }
+      });
+
+      return row;
+    },
+
+    _setLlmGrantsStatus(text, kind) {
+      const el = document.getElementById('llm-grants-status');
+      if (!el) return;
+      el.textContent = text;
+      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
+      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
+      el.classList.add(cls);
+      if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
     },
 
     // ── Wallet linking ───────────────────────────────────────────

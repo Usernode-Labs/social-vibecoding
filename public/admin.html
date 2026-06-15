@@ -18,6 +18,7 @@
       document.documentElement.classList.remove('dark');
     }
   </script>
+  <script src="/js/theme.js"></script>
   <style>
     .ios-switch { position:relative; width:40px; height:22px; flex-shrink:0; }
     .ios-switch input { opacity:0; width:0; height:0; position:absolute; }
@@ -114,8 +115,37 @@
 
     <!-- User list -->
     <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800">
-      <h2 class="text-lg font-semibold p-4 border-b border-zinc-200 dark:border-zinc-800">Users</h2>
+      <div class="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-zinc-200 dark:border-zinc-800">
+        <h2 class="text-lg font-semibold">Users</h2>
+        <!-- Bulk "Set all quotas to…": writes the same app_quota to every
+             user (PUT /api/admin/users/app-quota), then refreshes the list. -->
+        <div class="flex items-center gap-2" title="Set every user's app quota to this number.">
+          <span class="text-xs text-zinc-400">Set all quotas to</span>
+          <input id="bulk-quota-input" type="number" min="0" step="1" inputmode="numeric"
+            class="w-16 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono"
+            placeholder="0">
+          <button id="bulk-quota-btn" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs font-medium text-white transition-colors">Set all</button>
+        </div>
+      </div>
       <div id="user-list" class="divide-y divide-zinc-200 dark:divide-zinc-800"></div>
+    </div>
+  </div>
+
+  <!-- Temporary password modal (issue #282). Shown ONCE after an admin
+       resets a user's password. The plaintext is returned only in the
+       reset response and never persisted in cleartext, so this is the only
+       chance to copy it — the admin relays it to the user out-of-band. -->
+  <div id="temp-pw-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl border border-zinc-200 dark:border-zinc-800">
+      <h2 class="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">Temporary password</h2>
+      <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
+        Give this to <span id="temp-pw-username" class="font-medium text-zinc-800 dark:text-zinc-200"></span> out-of-band (chat, in person). They use it as their password to log in, then set their own from Settings → Change password. It signs them out everywhere and <span class="font-medium">won't be shown again</span>.
+      </p>
+      <div class="flex gap-2">
+        <code id="temp-pw-value" class="flex-1 min-w-0 break-all rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-900 dark:text-zinc-100"></code>
+        <button id="temp-pw-copy" class="shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Copy</button>
+      </div>
+      <button id="temp-pw-close" class="mt-4 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Done</button>
     </div>
   </div>
 
@@ -197,6 +227,39 @@
       loadCodes();
     });
 
+    // Bulk "Set all quotas to…": confirm, PUT the same quota to every user,
+    // then refresh the list so each row's number + "N used" reflects it.
+    document.getElementById('bulk-quota-btn').addEventListener('click', async () => {
+      const input = document.getElementById('bulk-quota-input');
+      const raw = input.value.trim();
+      const n = Number(raw);
+      if (raw === '' || !Number.isInteger(n) || n < 0) {
+        alert('Enter a non-negative whole number.');
+        return;
+      }
+      if (!confirm(`Set EVERY user's app quota to ${n}? This overwrites all current quotas.`)) return;
+      const btn = document.getElementById('bulk-quota-btn');
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/admin/users/app-quota', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ quota: n }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          alert(data.error || `Set all failed (HTTP ${res.status})`);
+          return;
+        }
+        input.value = '';
+        await loadUsers();
+      } catch (err) {
+        alert(`Set all failed: ${err.message}`);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
     async function loadUsers() {
       const res = await fetch('/api/admin/users');
       if (res.status === 403) {
@@ -212,6 +275,11 @@
       const list = document.getElementById('user-list');
       list.innerHTML = '';
 
+      // Used to disable the Admin toggle for the sole remaining admin —
+      // the server enforces the same rule (last-admin guard), this is the
+      // matching UX affordance.
+      const adminCount = users.filter((u) => u.is_admin).length;
+
       for (const user of users) {
         const el = document.createElement('div');
         el.className = 'p-4 flex items-center gap-4';
@@ -222,17 +290,48 @@
 
         const costToday = (parseFloat(user.cost_today_cents || 0) / 100).toFixed(2);
 
-        const canCreate = !!user.can_create_apps;
-        const toggleHtml = `
+        // Admin grant/revoke toggle. Disabled for the current user's own
+        // row (self-lockout) and for the last remaining admin — both also
+        // enforced server-side on POST /api/admin/users/:id/is-admin.
+        const isAdmin = !!user.is_admin;
+        const isSelf = !!user.is_self;
+        const isLastAdmin = isAdmin && adminCount <= 1;
+        const adminToggleDisabled = isSelf || isLastAdmin;
+        let adminToggleTitle;
+        if (isSelf) {
+          adminToggleTitle = "You can't change your own admin status.";
+        } else if (isLastAdmin) {
+          adminToggleTitle = "Can't revoke the last admin.";
+        } else if (isAdmin) {
+          adminToggleTitle = 'This user is an admin. Click to revoke.';
+        } else {
+          adminToggleTitle = 'This user is not an admin. Click to grant.';
+        }
+        const adminToggleHtml = `
           <div class="flex items-center gap-2">
-            <span class="text-xs text-zinc-400">Create apps</span>
-            <label class="ios-switch" title="${canCreate
-              ? 'This user can create apps. Click to revoke.'
-              : 'This user cannot create apps. Click to grant.'}">
-              <input type="checkbox" class="create-toggle-cb" data-user-id="${user.id}"
-                ${canCreate ? 'checked' : ''}>
+            <span class="text-xs text-zinc-400">Admin</span>
+            <label class="ios-switch" title="${adminToggleTitle}">
+              <input type="checkbox" class="admin-toggle-cb" data-user-id="${user.id}"
+                ${isAdmin ? 'checked' : ''} ${adminToggleDisabled ? 'disabled' : ''}>
               <span class="track"></span>
             </label>
+          </div>`;
+
+        // Per-user app quota. Editable number (max apps this user may have
+        // created); 0 = cannot create. The "N used" helper shows their
+        // current live app count so the admin sees who's near their limit.
+        // Same inline save/revert behaviour as the Cap $ field below.
+        const appQuota = user.app_quota == null ? 0 : user.app_quota;
+        const appsCreated = user.apps_created == null ? 0 : user.apps_created;
+        const quotaHtml = `
+          <div class="flex items-center gap-1" title="Max apps this user may create. 0 = cannot create. Admins bypass this.">
+            <span class="text-xs text-zinc-400">App quota</span>
+            <input type="number" min="0" step="1" inputmode="numeric"
+              class="quota-input w-16 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono"
+              data-user-id="${user.id}"
+              data-original="${appQuota}"
+              value="${appQuota}">
+            <span class="text-xs text-zinc-500 whitespace-nowrap">${appsCreated} used</span>
           </div>`;
 
         // Per-user daily-cap override. Empty input = no override =
@@ -253,11 +352,13 @@
 
         el.innerHTML = `
           <div class="flex-1">
-            <div class="font-medium">${escapeHtml(user.username)}${user.is_admin ? ' <span class="text-xs text-violet-400 ml-1">admin</span>' : ''}</div>
+            <div class="font-medium">${escapeHtml(user.username)}</div>
             <div class="text-sm text-zinc-500">$${costToday} spent today ${codeInfo}</div>
           </div>
           ${limitHtml}
-          ${toggleHtml}
+          ${adminToggleHtml}
+          ${quotaHtml}
+          <button data-reset-id="${user.id}" data-username="${escapeHtml(user.username)}" class="text-violet-400 hover:text-violet-300 text-sm reset-pw-btn">Reset password</button>
           ${!user.is_admin ? `<button data-delete-id="${user.id}" class="text-red-400 hover:text-red-300 text-sm delete-btn">Delete</button>` : ''}
         `;
         list.appendChild(el);
@@ -315,16 +416,16 @@
         });
       });
 
-      list.querySelectorAll('.create-toggle-cb').forEach((cb) => {
+      list.querySelectorAll('.admin-toggle-cb').forEach((cb) => {
         cb.addEventListener('change', async () => {
           const userId = cb.dataset.userId;
           const next = cb.checked;
           cb.disabled = true;
           try {
-            const res = await fetch(`/api/admin/users/${userId}/can-create-apps`, {
+            const res = await fetch(`/api/admin/users/${userId}/is-admin`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ canCreateApps: next }),
+              body: JSON.stringify({ isAdmin: next }),
             });
             if (!res.ok) {
               const data = await res.json().catch(() => ({}));
@@ -332,6 +433,8 @@
               alert(data.error || `Toggle failed (HTTP ${res.status})`);
               return;
             }
+            // Re-render so the admin badge logic, last-admin disabling, and
+            // the Delete-button visibility (hidden for admins) all refresh.
             await loadUsers();
           } catch (err) {
             cb.checked = !next;
@@ -339,6 +442,51 @@
           } finally {
             cb.disabled = false;
           }
+        });
+      });
+
+      list.querySelectorAll('.quota-input').forEach((inp) => {
+        // Save on blur or Enter, mirroring the Cap $ field's inline
+        // save/revert. Validates a non-negative integer client-side; on a
+        // failed save reverts to the original value and surfaces the error.
+        const commit = async () => {
+          const next = inp.value.trim();
+          const orig = inp.dataset.original || '';
+          if (next === orig) return;
+          const userId = inp.dataset.userId;
+          const n = Number(next);
+          if (next === '' || !Number.isInteger(n) || n < 0) {
+            alert('Quota must be a non-negative whole number.');
+            inp.value = orig;
+            return;
+          }
+          inp.disabled = true;
+          try {
+            const res = await fetch(`/api/admin/users/${userId}/app-quota`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ quota: n }),
+            });
+            if (!res.ok) {
+              const data = await res.json().catch(() => ({}));
+              alert(data.error || `Save failed (HTTP ${res.status})`);
+              inp.value = orig;
+            } else {
+              const data = await res.json();
+              const v = String(data.app_quota);
+              inp.value = v;
+              inp.dataset.original = v;
+            }
+          } catch (err) {
+            alert(`Save failed: ${err.message}`);
+            inp.value = orig;
+          } finally {
+            inp.disabled = false;
+          }
+        };
+        inp.addEventListener('blur', commit);
+        inp.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
         });
       });
 
@@ -350,6 +498,57 @@
           if (res.ok) { loadUsers(); loadCodes(); }
         });
       });
+
+      list.querySelectorAll('.reset-pw-btn').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const username = btn.dataset.username;
+          if (!confirm(`Reset ${username}'s password? This signs them out everywhere and issues a one-time temporary password.`)) return;
+          btn.disabled = true;
+          try {
+            const res = await fetch(`/api/admin/users/${btn.dataset.resetId}/reset-password`, { method: 'POST' });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              alert(data.error || `Reset failed (HTTP ${res.status})`);
+              return;
+            }
+            showTempPasswordModal(data.username || username, data.tempPassword);
+          } catch (err) {
+            alert(`Reset failed: ${err.message}`);
+          } finally {
+            btn.disabled = false;
+          }
+        });
+      });
+    }
+
+    // Temporary-password modal — shows the one-time plaintext exactly once.
+    function showTempPasswordModal(username, tempPassword) {
+      const modal = document.getElementById('temp-pw-modal');
+      document.getElementById('temp-pw-username').textContent = username;
+      const valueEl = document.getElementById('temp-pw-value');
+      valueEl.textContent = tempPassword;
+      const copyBtn = document.getElementById('temp-pw-copy');
+      copyBtn.textContent = 'Copy';
+      copyBtn.onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(tempPassword);
+          copyBtn.textContent = 'Copied';
+        } catch {
+          // Clipboard API can be blocked (insecure context); select instead.
+          const range = document.createRange();
+          range.selectNodeContents(valueEl);
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+          copyBtn.textContent = 'Select & copy';
+        }
+      };
+      const close = () => {
+        modal.classList.add('hidden');
+        valueEl.textContent = '';
+      };
+      document.getElementById('temp-pw-close').onclick = close;
+      modal.classList.remove('hidden');
     }
 
     function escapeHtml(str) {

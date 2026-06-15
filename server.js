@@ -17,13 +17,19 @@ const { adminRoutes } = require('./src/routes/admin');
 const { dashboardRoutes } = require('./src/routes/dashboard');
 const { feedbackRoutes } = require('./src/routes/feedback');
 const { notificationsRoutes } = require('./src/routes/notifications');
+const { collaboratorRoutes } = require('./src/routes/collaborators');
 const { statusRoutes } = require('./src/routes/status');
 const { internalRoutes } = require('./src/routes/internal');
+const { visualsRoutes } = require('./src/routes/visuals');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
+const appLlmProxyRoutes = require('./src/routes/app-llm-proxy');
+const { llmGrantsRoutes } = require('./src/routes/llm-grants');
+const { proposalDiscussRoutes } = require('./src/routes/proposal-discuss');
 const github = require('./src/services/github');
 const llm = require('./src/services/llm');
 const worker = require('./src/services/worker');
 const sessionLifecycle = require('./src/services/session-lifecycle');
+const limits = require('./src/services/limits');
 const ws = require('./src/services/ws');
 const log = require('./src/services/logger');
 const lifecycle = require('./src/services/lifecycle');
@@ -120,6 +126,7 @@ app.use('/explorer-api', (req, res) => {
 // large limit. See routes/anthropic-proxy.js for the scoped parser.
 app.use((req, res, next) => {
   if (req.path.startsWith('/api/internal/anthropic/')) return next();
+  if (req.path.startsWith('/api/app-llm/')) return next();
   express.json()(req, res, next);
 });
 app.use(cookieParser());
@@ -260,6 +267,22 @@ app.use(internalRoutes(config));
 // gate as internalRoutes; not reachable through Caddy externally.
 app.use(anthropicProxyRoutes(config));
 
+// Dapp → platform LLM proxy (issue #34). App containers call
+// /api/app-llm/v1/messages with their per-app token
+// (USERNODE_LLM_PROXY_TOKEN) plus the user's iframe JWT; the proxy
+// verifies both, requires an active per-(app,user) grant, swaps in the
+// real key (platform or the user's own, per the grant), meters spend
+// against the user's daily budget AND the grant's per-app cap, and
+// forwards to api.anthropic.com. Same private-IP gate as the worker
+// proxy; mounted before authMiddleware because callers are app
+// containers, not browser sessions.
+app.use(appLlmProxyRoutes(config));
+
+// Before/after visuals artifacts (#195). Public by design: GitHub's camo
+// proxy fetches the PR-body embeds anonymously, so this must not redirect
+// to login. Access control is the unguessable 32-hex artifact id.
+app.use(visualsRoutes(config));
+
 app.use(authMiddleware(config));
 app.use(authRoutes(config));
 app.use(appRoutes(config));
@@ -272,6 +295,9 @@ app.use(adminRoutes(config));
 app.use(dashboardRoutes(config));
 app.use(feedbackRoutes(config));
 app.use(notificationsRoutes(config));
+app.use(collaboratorRoutes(config));
+app.use(llmGrantsRoutes(config));
+app.use(proposalDiscussRoutes(config));
 
 app.get('/api/iframe-token', async (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
@@ -353,6 +379,16 @@ async function start() {
     log.warn('server', 'private-repo audit failed', { err: err.message });
   });
 
+  // One-time, idempotent: convert any open legacy rename *issues* into
+  // rename PRs (the new dapp.json-name flow), then close the issues so
+  // the backlog drains. Runs after github.init so it can actually open
+  // PRs; no-op when GitHub isn't configured. Non-blocking + guarded
+  // per-app so one failing repo doesn't hold up boot or the batch.
+  const { migrateOpenRenameIssues } = require('./src/services/rename-pr');
+  migrateOpenRenameIssues(config, getPool(config)).catch((err) => {
+    log.warn('server', 'rename-issue migration failed', { err: err.message });
+  });
+
   worker.ensureWorkerImage().catch((err) => {
     log.warn('server', 'Worker image build deferred', { err: err.message });
   });
@@ -379,9 +415,23 @@ async function start() {
   // orphans are a feature, not a bug: workers are intentionally detached
   // from the server lifecycle so `node --watch` restarts don't interrupt
   // in-flight Claude Code sessions.
-  recoverActiveWorkers(config).catch((err) => {
-    log.warn('server', 'Worker adoption failed', { err: err.message });
-  });
+  recoverActiveWorkers(config)
+    .catch((err) => {
+      log.warn('server', 'Worker adoption failed', { err: err.message });
+    })
+    .finally(() => {
+      // Resume headless auto sessions that were 'generating' when the
+      // previous process died. Runs after worker adoption so any warm
+      // container for a headless session is already registered (the
+      // resume path also tolerates adoption not having finished — it
+      // falls back to the deterministic container name). Each row is
+      // carried forward from its persisted headless_step checkpoint;
+      // unresumable rows are marked 'failed' (the pre-resume behavior).
+      const { resumeHeadlessRuns } = require('./src/routes/sessions');
+      resumeHeadlessRuns(config).catch((err) => {
+        log.warn('server', 'Headless resume failed', { err: err.message });
+      });
+    });
 
   // Idle-eviction sweeper. Warm workers cost ~256MB resident; eviction
   // reclaims that memory after a tunable idle period. The CC volume
@@ -418,6 +468,19 @@ async function start() {
     log.warn('server', 'Stuck-merge recovery failed', { err: err.message });
   });
 
+  // #144: re-arm post-merge issue-close watches a restart killed. The
+  // watcher (services/issue-close-watcher.js) is fired-and-forgotten
+  // in-process from the merge path; for the self-edits app a merge
+  // triggers the GitHub Actions deploy that rolls THIS platform process,
+  // so the watcher dies before it can confirm GitHub's async auto-close
+  // and refresh the "Open Issues" panel — the closed issue then lingers
+  // until someone happens to reload after the cache TTL. Re-watching
+  // recently-merged sessions on boot closes that gap (and covers crash
+  // restarts mid-watch for ordinary apps too).
+  resumeIssueCloseWatches(config).catch((err) => {
+    log.warn('server', 'Issue-close watch resume failed', { err: err.message });
+  });
+
   // Fallback recovery: for sessions whose container is already gone but
   // whose branch is ahead of main (i.e. CC pushed commits during an old
   // pre-autonomous-worker run), complete the PR + staging tail.
@@ -428,17 +491,27 @@ async function start() {
   return server;
 }
 
-start().catch((err) => {
-  // pg's ECONNREFUSED and some Octokit errors leave `.message` empty, so
-  // also surface `.code` and the stack — otherwise boot failures print
-  // as `{"message":""}` and there's nothing to act on.
-  log.error('server', 'Failed to start', {
-    message: err.message || '(empty)',
-    code: err.code,
-    stack: err.stack,
+// Boot only when run as the entry point (`node server.js` — the Docker CMD
+// and npm start path). Tests require() this module to reach the recovery
+// internals exported below without starting servers or sweepers.
+if (require.main === module) {
+  start().catch((err) => {
+    // pg's ECONNREFUSED and some Octokit errors leave `.message` empty, so
+    // also surface `.code` and the stack — otherwise boot failures print
+    // as `{"message":""}` and there's nothing to act on.
+    log.error('server', 'Failed to start', {
+      message: err.message || '(empty)',
+      code: err.code,
+      stack: err.stack,
+    });
+    process.exit(1);
   });
-  process.exit(1);
-});
+}
+
+// Test-only surface (#183): the orphan-adoption + recovered-turn finalize
+// internals, so the headless-recovery guards stay covered by node --test.
+// Not used by any runtime caller.
+module.exports = { adoptOrphanWorker, finalizeRecoveredTurn };
 
 // Scan existing imported apps for privacy violations. Usernode workers
 // run with zero GitHub credentials and rely on unauthenticated public
@@ -528,6 +601,47 @@ async function recoverStuckMerges(config) {
   }
 }
 
+// Resume post-merge issue-close watches for sessions merged shortly
+// before this process started. See the call site for rationale. The
+// 15-minute window comfortably covers the merge → GHA build → rolling
+// restart sequence of the self-edits app; re-watching an issue GitHub
+// already closed is cheap (first poll confirms, one cache bust + panel
+// broadcast) and idempotent.
+async function resumeIssueCloseWatches(config) {
+  const github = require('./src/services/github');
+  if (!github.isEnabled()) return;
+  const { getPool } = require('./src/db/pool');
+  const pool = getPool(config);
+  const { rows } = await pool.query(
+    `SELECT cs.id, cs.pr_number, cs.linked_issues,
+            a.repo_url, a.slug AS app_slug, a.id AS app_id
+       FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+      WHERE cs.status = 'merged'
+        AND cs.merged_at > NOW() - INTERVAL '15 minutes'
+        AND cs.pr_number IS NOT NULL`
+  );
+  if (!rows.length) return;
+  const { watchIssuesClosedAfterMerge } = require('./src/services/issue-close-watcher');
+  log.info('server', 'Resuming post-merge issue-close watches', {
+    count: rows.length, sessionIds: rows.map((r) => r.id),
+  });
+  for (const row of rows) {
+    const [, owner, repo] = (row.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+    if (!owner || !repo) continue;
+    watchIssuesClosedAfterMerge({
+      owner, repo,
+      prNumber: row.pr_number,
+      linkedIssues: row.linked_issues,
+      appSlug: row.app_slug,
+      appId: row.app_id,
+    }).catch((err) => {
+      log.warn('server', 'Resumed issue-close watch failed', {
+        sessionId: row.id, err: err.message,
+      });
+    });
+  }
+}
+
 // Rebuild the staging preview for a single session that has a branch +
 // commits ahead of main but a NULL staging_url. Shared by the startup
 // recovery sweep (recoverSessions) and the periodic sweeper's staging-heal
@@ -578,21 +692,44 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   const commitHash = compare.commits[compare.commits.length - 1]?.sha || 'latest';
   const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
 
-  // Create PR if missing (active-session recovery only).
+  // Create PR if missing (active-session recovery only). Route through
+  // applyPrMetadata — NOT a bare createPR — so the PR gets a real
+  // generated title/body and pr_title/session_title are persisted. A
+  // bare createPR here used to mint PRs titled "Changes on <branch>"
+  // with pr_title left NULL; the promote path then trusted pr_number's
+  // presence and skipped its own metadata pass, so the throwaway title
+  // stuck (the UI then renders its own "Change by <user>" NULL-fallback).
   if (!session.pr_number) {
     try {
-      const pr = await ghub.createPR(owner, repo, {
-        branch: session.branch_name,
-        title: `Changes on ${session.branch_name}`,
-        body: `Recovered dev session via Usernode`,
-      });
-      await pool.query(
-        `UPDATE chat_sessions SET pr_number = $1, pr_url = $2 WHERE id = $3`,
-        [pr.number, pr.html_url, session.id]
+      // username + latest user message give applyPrMetadata the same
+      // signals the live dev-turn path has; without the username the
+      // fallback title would read "undefined's changes".
+      const { rows: ctxRows } = await pool.query(
+        `SELECT u.username,
+                (SELECT content FROM chat_session_messages
+                  WHERE session_id = cs.id AND role = 'user'
+                  ORDER BY id DESC LIMIT 1) AS last_user_message
+           FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id
+          WHERE cs.id = $1`,
+        [session.id]
       );
-      session.pr_number = pr.number;
-      session.pr_url = pr.html_url;
-    } catch {}
+      const username = ctxRows[0]?.username || session.username || 'someone';
+      const recoveredUserMessage = ctxRows[0]?.last_user_message || '';
+      const prMetadata = require('./src/services/pr-metadata');
+      await prMetadata.applyPrMetadata({
+        pool, session, repoOwner: owner, repoName: repo,
+        userMessage: recoveredUserMessage,
+        ccSummary: '',
+        username,
+        userId: session.user_id,
+        broadcast: (event, data) =>
+          broadcastGlobal({ type: 'session_event', sessionId: session.id, event, ...data }),
+      });
+    } catch (err) {
+      log.warn('server', 'Recovery PR creation via applyPrMetadata failed', {
+        sessionId: session.id, err: err.message,
+      });
+    }
   }
 
   const stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
@@ -614,6 +751,10 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   broadcastGlobal({
     type: 'session_event', sessionId: session.id,
     event: 'staging_ready', url: stagingResult.stagingUrl,
+    // #127: keep any open dev-chat's testing affordances in sync after a
+    // staging rebuild (the guidance itself lives on the session row).
+    testingMd: session.testing_md || null,
+    testingPath: session.testing_path || null,
   });
   pushSessionUpdate({ action: 'staging_ready', sessionId: session.id, appSlug: session.app_slug });
 
@@ -621,17 +762,39 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   return 'built';
 }
 
-// Recover sessions where CC finished but post-processing didn't complete,
-// AND promoted PRs whose staging preview was reclaimed by the staging GC.
+// Does a promoted/merging session need its staging preview (re)built?
 //
-// The second case is the recoverable tail of a real gap: the staging GC
-// (server.js sweeper Pass 2 → teardownStagingForSession) nulls staging_url
-// for idle sessions, but the promote path never rebuilds staging and this
-// recovery historically only scanned 'active'. So a promoted PR that lost
-// its preview stayed previewless forever — the group-chat vote card
-// rendered Yes/No/Admin-merge but no Preview button (gated on staging_url
-// in app-view.js). Including 'promoted' here heals those on the next
-// startup; the sweeper's Pass 3 heals them live without a restart.
+// Two failure shapes leave a vote card without a working preview:
+//   1. staging_url IS NULL — GC reclaimed it (or it was GC'd before
+//      promotion). The Preview button is hidden (gated on staging_url).
+//   2. staging_url is set but the staging container is gone — the
+//      Preview button renders but the hostname has no upstream, so the
+//      iframe 502s / fails to connect. (Pre-wildcard-Caddy this also
+//      surfaced as "secure connection failed" when the per-host route
+//      was dropped; routing is now container-name based so the only
+//      remaining cause is a missing/stopped container.)
+// Both are healable by a rebuild. We deliberately do NOT rebuild on a
+// merely-unhealthy-but-running container (that's a 502, an app bug, not
+// a missing preview) to avoid churn.
+async function stagingNeedsRebuild(session) {
+  if (!session.staging_url) return true;
+  if (!session.staging_container_id) return true;
+  const docker = require('./src/services/docker');
+  const status = await docker.getContainerStatus(session.staging_container_id);
+  return status !== 'running';
+}
+
+// Recover sessions where CC finished but post-processing didn't complete,
+// AND promoted/merging PRs whose staging preview is missing or dead.
+//
+// The staging gap: GC (sweeper Pass 2 → teardownStagingForSession) nulls
+// staging_url for idle sessions, and a container can also be lost
+// independently (host restart that didn't bring it back, manual cleanup,
+// crash). Either way a promoted PR's group-chat vote card loses its
+// working preview. recoverSessions heals these on startup; the sweeper's
+// Pass 3 heals them live without a restart. The liveness check
+// (stagingNeedsRebuild) means healthy, still-running previews are left
+// untouched — only genuinely broken ones are rebuilt.
 async function recoverSessions(config) {
   const { getPool } = require('./src/db/pool');
   const pool = getPool(config);
@@ -640,13 +803,13 @@ async function recoverSessions(config) {
     `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
      FROM chat_sessions cs
      JOIN apps a ON cs.app_id = a.id
-     WHERE cs.status IN ('active', 'promoted')
-       AND cs.branch_name IS NOT NULL
-       AND cs.staging_url IS NULL`
+     WHERE cs.status IN ('active', 'promoted', 'merging')
+       AND cs.branch_name IS NOT NULL`
   );
 
   for (const session of rows) {
     try {
+      if (!(await stagingNeedsRebuild(session))) continue;
       await rebuildSessionStaging({ config, pool, session, reason: 'startup' });
     } catch (err) {
       log.warn('server', 'Failed to recover session', { sessionId: session.id, err: err.message });
@@ -722,20 +885,54 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     return;
   }
 
+  // #183: headless auto sessions own their multi-step loop for ALL
+  // container states — the turn resume AND the Mayor wrap-up continuation
+  // both happen in resumeHeadlessRuns (runs right after worker adoption).
+  // Running containers are registered warm so that loop can drive them;
+  // exited ones are left strictly alone: scraping them here would replay
+  // the interactive post-turn tail (PR + staging on the auto branch — the
+  // original #183 bug) and clearing active_turn would destroy the journal
+  // pointer the cc_running resume step needs. Leftover exited containers
+  // are reaped by the normal worker sweeps once the run goes terminal.
+  if (session.is_headless) {
+    if (containerState === 'running') {
+      log.info('server', 'Adopting headless worker (resume owned by resumeHeadlessRuns)', {
+        containerName, sessionId,
+      });
+      worker.adoptWarmWorker(sessionId, containerName);
+    } else {
+      log.info('server', 'Leaving exited headless worker to resumeHeadlessRuns', {
+        containerName, sessionId,
+      });
+    }
+    return;
+  }
+
   // Long-lived worker reality check: a *running* container could be
   //   (a) a warm-idle wrapper sitting in `sleep infinity` — clean adopt,
   //       no log scrape needed.
   //   (b) a legacy single-shot still in flight — only possible during
   //       rollout from the old worker contract; tail logs as before.
-  //   (c) a warm wrapper that was mid-exec when our process died. The
-  //       host-side `docker exec` child was killed with us; the in-
-  //       container claude/run-cc.sh keeps running but its stdout went
-  //       to a disconnected client and is unrecoverable. Killing it
-  //       avoids racing the next dispatch's exec against a phantom.
-  //
-  // `pgrep claude || pgrep run-cc.sh` inside the container distinguishes
-  // case (a) from (b)+(c).
+  //   (c) a warm wrapper with a detached turn in flight (or finished
+  //       while we were down). The turn's output lives in a journal
+  //       file in the CC volume, recorded on chat_sessions.active_turn
+  //       — resume it from line 0 and finish the post-turn work as if
+  //       we'd never restarted.
+  //   (d) a mid-exec wrapper from BEFORE the detached-turn contract
+  //       (no active_turn record). Its output went to a dead pipe and
+  //       is unrecoverable; kill it so it can't race the next dispatch.
   if (containerState === 'running') {
+    // Case (c): detached turn with a durable record — resume it.
+    const activeTurn = session.active_turn || null;
+    if (activeTurn && activeTurn.journal) {
+      worker.adoptWarmWorker(sessionId, containerName);
+      await resumeDetachedTurn({
+        config, pool, staging, broadcastGlobal, session, sessionId,
+        containerName, activeTurn,
+      });
+      return;
+    }
+
     const busy = await worker.isWorkerExecuting(containerName);
     if (busy === false) {
       log.info('server', 'Adopting warm-idle worker (no in-flight exec)', {
@@ -745,20 +942,17 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
       return;
     }
     if (busy === true && session.cc_session_id) {
-      // V1 conservative recovery for case (c): the prior in-flight turn
-      // is unrecoverable from the host. Kill the orphan exec to free
-      // the warm container for fresh dispatches, then post a system
-      // message so the user knows to retry. We DON'T try to scrape
-      // logs — `docker exec` output went to our dead parent, not the
-      // wrapper's stdout, so `docker logs -f` would only ever show
-      // bootstrap + warm-ready. Better to fail fast than hang forever.
+      // Case (d) conservative recovery: the prior in-flight turn
+      // predates the detached contract and is unrecoverable from the
+      // host. Kill the orphan exec to free the warm container for
+      // fresh dispatches, then post a system message so the user
+      // knows to retry.
       log.info('server', 'Adopting mid-exec worker — killing orphan exec', {
         containerName, sessionId,
       });
-      const docker = require('./src/services/docker');
-      await docker.execFileAsync('docker', [
-        'exec', containerName, 'pkill', '-f', '(^|/)(claude|run-cc.sh)( |$)',
-      ], { timeout: 5000 }).catch(() => {});
+      // worker.stopTurn walks /proc inside the container — the worker
+      // image has no pkill (see TURN_PROC_KILL_SCRIPT in worker.js).
+      await worker.stopTurn(sessionId).catch(() => {});
       await pool.query(
         `INSERT INTO chat_session_messages (session_id, role, content, metadata)
          VALUES ($1, 'system', $2, $3)`,
@@ -780,6 +974,22 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     // watchWorker scrape. Safe on already-exited containers; for a
     // hung warm wrapper it'd block, but the idle sweeper plus session
     // archive cap the worst case.
+  } else if (session.active_turn) {
+    // A detached turn was recorded but its container is gone (evicted /
+    // host reboot). The journal lives in the unreachable volume, so the
+    // turn itself can't be replayed — but if it pushed before dying,
+    // recoverSessions' staging heal picks the branch up. Clear the
+    // record and let the user know.
+    await worker.clearActiveTurn(sessionId);
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+       VALUES ($1, 'system', $2, $3)`,
+      [
+        sessionId,
+        'A coding turn was interrupted by a restart and its worker is gone — please retry your request.',
+        JSON.stringify({}),
+      ]
+    ).catch(() => {});
   }
 
   const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
@@ -810,6 +1020,36 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     },
   });
 
+  await finalizeRecoveredTurn({
+    config, pool, staging, session, sessionId, result, repoOwner, repoName,
+    emit, containerName,
+    // Legacy single-shot containers are per-turn; reap when done.
+    keepWorker: false,
+  });
+}
+
+// Shared post-turn finalization for both recovery transports (legacy
+// `docker logs` scrape and detached-journal resume): persist the CC
+// session id, then — when the turn pushed a commit — run the same PR +
+// staging tail the live dev-turn path runs. `keepWorker` distinguishes
+// the long-lived warm contract (container stays adoptable) from the
+// legacy single-shot contract (container is reaped when done).
+async function finalizeRecoveredTurn({
+  config, pool, staging, session, sessionId, result, repoOwner, repoName,
+  emit, containerName, keepWorker,
+}) {
+  // #183 belt-and-braces: headless rows must never get the interactive
+  // post-turn tail (PR on the auto branch + staging + system message) from
+  // any recovery transport — resumeHeadlessRuns owns them. adoptOrphanWorker
+  // already routes headless sessions away before reaching here; this guard
+  // protects against future transports forgetting to.
+  if (session.is_headless) {
+    log.info('server', 'Skipping recovered-turn finalize for headless session (owned by resumeHeadlessRuns)', {
+      sessionId,
+    });
+    return;
+  }
+
   // Capture the CC session id so the next turn can --resume, even though
   // the server process that originally spawned this worker is gone.
   const newCcId = result.sessionId || result.initSessionId || null;
@@ -823,8 +1063,48 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   const hasChanges = result.ahead > 0 && !!result.sha;
   if (!hasChanges) {
     emit('status', { text: 'Recovered session produced no changes.' });
-    await worker.destroyWorker(containerName);
+    if (!keepWorker) await worker.destroyWorker(containerName);
     return;
+  }
+
+  // The turn committed locally (ahead/sha set) but the worker's
+  // usernode-push callback never landed the branch on GitHub
+  // (push_ok=0 — e.g. the platform was mid-restart when the worker
+  // called POST /api/internal/sessions/:id/push). `result.ahead` is
+  // computed from the worker's LOCAL `origin/main..HEAD`, so it's >0
+  // even with the remote branch still empty. Heal it here, while the
+  // worker container still exists, before applyPrMetadata's createPR —
+  // otherwise createPR 422s ("No commits between main and <branch>")
+  // and, once the worker is evicted, the only copy of the commit is
+  // gone. (chat 510 / issue #295: a restart mid-push left the branch
+  // un-pushable and the work recoverable only from the CC transcript.)
+  if (!result.pushOk) {
+    try {
+      const pushed = await worker.execPushFromWorker(sessionId, session.branch_name);
+      result.pushOk = true;
+      log.info('server', 'Recovered turn: re-pushed un-pushed branch', {
+        sessionId, branch: session.branch_name,
+        sha: (pushed?.sha || result.sha || '').substring(0, 8),
+      });
+    } catch (err) {
+      log.warn('server', 'Recovered turn: re-push failed — skipping PR creation', {
+        sessionId, branch: session.branch_name, err: err.message,
+      });
+      emit('status', {
+        text: 'Recovered your changes but could not push them to GitHub — please retry your request.',
+      });
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'system', $2, $3)`,
+        [
+          sessionId,
+          'Your changes were committed but could not be pushed to GitHub after a restart — please retry your request to re-push and open the PR.',
+          JSON.stringify({}),
+        ]
+      ).catch(() => {});
+      if (!keepWorker) await worker.destroyWorker(containerName);
+      return;
+    }
   }
 
   try {
@@ -840,7 +1120,22 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
       [sessionId]
     );
     const recoveredUserMessage = userMsgRows[0]?.content || '';
-    const recoveredCcSummary = result.lastResultText || '';
+
+    // #127: same TESTING-block handling as the live dev-turn path — peel
+    // the block off the recovered summary (so markers don't leak into the
+    // PR body prompt) and persist the guidance before applyPrMetadata
+    // reads it back for the "How to test" section.
+    const testingNotes = require('./src/services/testing-notes');
+    const recoveredTesting = testingNotes.extract(result.lastResultText || '');
+    const recoveredCcSummary = recoveredTesting.cleanedText;
+    if (recoveredTesting.testingMd || recoveredTesting.testingPath) {
+      await pool.query(
+        `UPDATE chat_sessions SET testing_md = $1, testing_path = $2 WHERE id = $3`,
+        [recoveredTesting.testingMd, recoveredTesting.testingPath, sessionId]
+      ).catch(() => {});
+      session.testing_md = recoveredTesting.testingMd;
+      session.testing_path = recoveredTesting.testingPath;
+    }
 
     const prMetadata = require('./src/services/pr-metadata');
     await prMetadata.applyPrMetadata({
@@ -867,12 +1162,181 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
       [sessionId, JSON.stringify({ stagingUrl: stagingResult.stagingUrl })]
     );
 
-    emit('staging_ready', { url: stagingResult.stagingUrl });
+    emit('staging_ready', {
+      url: stagingResult.stagingUrl,
+      testingMd: session.testing_md || null,
+      testingPath: session.testing_path || null,
+    });
     log.info('server', 'Orphan finalized', {
       sessionId, commitHash: result.sha.substring(0, 8), url: stagingResult.stagingUrl,
     });
   } finally {
-    await worker.destroyWorker(containerName);
+    if (!keepWorker) await worker.destroyWorker(containerName);
+  }
+}
+
+// Resume a detached CC turn after a restart. The turn kept running (or
+// finished) while we were down — its output is in the journal file
+// recorded on chat_sessions.active_turn. Replays the journal from line
+// 0 (rebuilding progress + result state), follows it live if the turn
+// is still going, then runs the standard post-turn tail. The warm
+// container stays registered for the session's next dispatch.
+async function resumeDetachedTurn({
+  config, pool, staging, broadcastGlobal, session, sessionId,
+  containerName, activeTurn,
+}) {
+  const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  const emit = (event, data) => {
+    broadcastGlobal({ type: 'session_event', sessionId, event, ...data });
+  };
+
+  log.info('server', 'Resuming detached turn from journal', {
+    sessionId, containerName, mode: activeTurn.mode, journal: activeTurn.journal,
+  });
+  emit('status', { text: 'Resuming in-flight coding agent after restart...' });
+
+  // The journal replay re-feeds every line from the start of the turn,
+  // including ones the previous process already appended to the latest
+  // "Claude Code progress" row. Rebuild that row's progressLog
+  // WHOLESALE from the replayed lines (idempotent) instead of appending
+  // duplicates; live tabs still get each line over the WebSocket.
+  const progressLines = [];
+  let flushQueued = false;
+  const flushProgress = () => {
+    flushQueued = false;
+    pool.query(
+      `UPDATE chat_session_messages
+       SET metadata = jsonb_set(metadata, '{progressLog}', $1::jsonb)
+       WHERE id = (
+         SELECT id FROM chat_session_messages
+         WHERE session_id = $2 AND role = 'system'
+           AND metadata->>'progressLog' IS NOT NULL
+         ORDER BY id DESC LIMIT 1
+       )`,
+      [JSON.stringify(progressLines), sessionId]
+    ).catch(() => {});
+  };
+
+  let result;
+  try {
+    result = await worker.resumeTurnFromJournal(sessionId, {
+      journal: activeTurn.journal,
+      onProgress: (text) => {
+        emit('cc_progress', { text });
+        progressLines.push(text);
+        if (!flushQueued) {
+          flushQueued = true;
+          setTimeout(flushProgress, 1000);
+        }
+      },
+    });
+  } catch (err) {
+    log.warn('server', 'Detached-turn resume failed', { sessionId, err: err.message });
+    await worker.clearActiveTurn(sessionId);
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+       VALUES ($1, 'system', $2, $3)`,
+      [sessionId, 'A coding turn was interrupted by a restart and could not be resumed — please retry your request.', JSON.stringify({})]
+    ).catch(() => {});
+    return;
+  }
+  flushProgress();
+
+  // #174: the journal replay rebuilt the turn's self-reported cost —
+  // without this debit a restart silently drops the CC turn's spend from
+  // both ledger buckets. active_turn rows persisted before the byok flag
+  // shipped fall back to key-on-file (presence of the encrypted key is
+  // enough; no decryption needed).
+  if (result.costUsd) {
+    let byok = activeTurn.byok;
+    if (byok === undefined || byok === null) {
+      try {
+        const { rows } = await pool.query(
+          'SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND anthropic_key_enc IS NOT NULL) AS byok',
+          [session.user_id]
+        );
+        byok = !!rows[0]?.byok;
+      } catch {
+        byok = false;
+      }
+    }
+    await limits.recordSpend(pool, session.user_id, Math.round(result.costUsd * 100), { byok: !!byok });
+  }
+
+  try {
+    if (activeTurn.mode === 'scout') {
+      // Scout turns push nothing — their product is the spec text.
+      // Persist it the same way runScoutTool does (spec_md + frozen
+      // version) so the draft isn't lost with the dead SSE.
+      const { stripSpecWrapperFence, snapshotSessionSpec } = require('./src/routes/sessions');
+      const ccText = stripSpecWrapperFence((result.lastResultText || '').trim());
+      if (ccText) {
+        await pool.query(
+          'UPDATE chat_sessions SET spec_md = $1 WHERE id = $2',
+          [ccText, sessionId]
+        ).catch(() => {});
+        const specVersion = await snapshotSessionSpec(pool, sessionId, ccText);
+        const lineCount = ccText.split('\n').length;
+        await pool.query(
+          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+           VALUES ($1, 'system', $2, $3)`,
+          [
+            sessionId,
+            `Scout finished after restart — drafted a ${lineCount}-line spec.`,
+            JSON.stringify({ specLines: lineCount, scoutOutput: ccText, specVersion }),
+          ]
+        ).catch(() => {});
+        emit('spec_updated', { length: ccText.length, lines: lineCount, version: specVersion });
+      } else {
+        emit('status', { text: 'Recovered scout turn produced no spec text.' });
+      }
+      // Persist the CC session id for the next --resume.
+      const newCcId = result.sessionId || result.initSessionId || null;
+      if (newCcId && newCcId !== session.cc_session_id) {
+        await pool.query(
+          'UPDATE chat_sessions SET cc_session_id = $1 WHERE id = $2',
+          [newCcId, sessionId]
+        ).catch(() => {});
+      }
+    } else {
+      await finalizeRecoveredTurn({
+        config, pool, staging, session, sessionId, result, repoOwner, repoName,
+        emit, containerName,
+        // Warm contract: the container outlives the turn.
+        keepWorker: true,
+      });
+    }
+    // The dead SSE's Mayor phase-2 narration can't be resumed (matches
+    // pre-existing recovery semantics) — drop a breadcrumb instead.
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+       VALUES ($1, 'system', $2, $3)`,
+      [sessionId, 'Coding turn recovered after a platform restart.', JSON.stringify({})]
+    ).catch(() => {});
+    emit('status', { text: 'Coding turn recovered after a platform restart.' });
+
+    // #161: the pre-restart SSE is guaranteed dead, so the owner cannot
+    // have been watching this turn finish — treat recovered turns as
+    // armed regardless of the persisted notify_on_done flag: clear it
+    // and always create the session_done notification (the WS push
+    // reaches them if they have a tab open elsewhere in the app).
+    try {
+      const notifications = require('./src/services/notifications');
+      await pool.query(
+        `UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1`,
+        [sessionId]
+      ).catch(() => {});
+      const created = await notifications.createSessionDoneNotification(pool, {
+        userId: session.user_id, appId: session.app_id, sessionId,
+      });
+      if (created.length) await notifications.hydrateAndPush(pool, created[0]);
+    } catch (err) {
+      log.warn('server', 'recovered-turn session_done notify failed', {
+        sessionId, err: err.message,
+      });
+    }
+  } finally {
+    await worker.clearActiveTurn(sessionId);
   }
 }
 
@@ -1020,15 +1484,18 @@ function startSessionAutoPauseSweeper(config) {
     }
 
     // Pass 3: staging heal. The flip side of Pass 2 — rebuild the staging
-    // preview for promoted/merging sessions that have lost it (GC'd while
-    // 'active'/'paused' before promotion, or reclaimed by an older GC that
-    // didn't yet exclude promoted). Their preview backs the group's PR
-    // vote, so a missing staging_url renders the vote card with no Preview
-    // button (gated on staging_url in app-view.js). recoverSessions() heals
-    // these on startup; this keeps them healed live without a restart.
-    // Per-session cooldown so a persistently failing build (missing secret,
-    // broken manifest) doesn't rebuild on every tick; LIMIT keeps the
-    // (heavy: docker build + pg clone) work bounded per sweep.
+    // preview for promoted/merging sessions whose preview is missing or
+    // dead. Two shapes (see stagingNeedsRebuild): staging_url IS NULL
+    // (GC'd before/after promotion → no Preview button, gated on
+    // staging_url in app-view.js), OR staging_url set but the container
+    // is gone (Preview renders but the iframe can't connect). Their
+    // preview backs the group's PR vote, so either way it must come back.
+    // recoverSessions() heals these on startup; this keeps them healed
+    // live without a restart. We over-fetch candidates and gate each on a
+    // cheap liveness check, rebuilding at most a few per sweep so healthy
+    // previews are never rebuilt and the heavy (docker build + pg clone)
+    // work stays bounded. Per-session cooldown so a persistently failing
+    // build (missing secret, broken manifest) doesn't retry every tick.
     try {
       const { rows } = await pool.query(
         `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
@@ -1036,18 +1503,22 @@ function startSessionAutoPauseSweeper(config) {
          JOIN apps a ON cs.app_id = a.id
          WHERE cs.status IN ('promoted', 'merging')
            AND cs.branch_name IS NOT NULL
-           AND cs.staging_url IS NULL
          ORDER BY cs.promoted_at ASC NULLS FIRST
-         LIMIT 5`
+         LIMIT 50`
       );
+      const MAX_HEALS_PER_SWEEP = 5;
+      let healed = 0;
       for (const session of rows) {
+        if (healed >= MAX_HEALS_PER_SWEEP) break;
         if (worker.isInFlight(session.id)) continue;
+        if (!(await stagingNeedsRebuild(session))) continue;
         const last = stagingHealAttempts.get(session.id) || 0;
         if (Date.now() - last < STAGING_HEAL_COOLDOWN_MS) continue;
         // Stamp the attempt BEFORE the (minutes-long) build so a later
         // tick won't kick off a duplicate concurrent rebuild for the same
         // session while this one is still in flight.
         stagingHealAttempts.set(session.id, Date.now());
+        healed++;
         try {
           const result = await rebuildSessionStaging({ config, pool, session, reason: 'heal' });
           if (result === 'built') stagingHealAttempts.delete(session.id);

@@ -14,7 +14,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 // Install module stubs before requiring the unit under test.
-function loadWithStubs({ onGenerate, githubCalls }) {
+function loadWithStubs({ onGenerate, githubCalls, createPR }) {
   const llmPath = require.resolve('../src/services/llm');
   const ghPath = require.resolve('../src/services/github');
   const subjectPath = require.resolve('../src/services/pr-metadata');
@@ -37,7 +37,7 @@ function loadWithStubs({ onGenerate, githubCalls }) {
   };
   require.cache[ghPath] = {
     exports: {
-      createPR: async (owner, repo, opts) => { githubCalls.push({ type: 'create', owner, repo, opts }); return { number: 42, html_url: 'https://example/pr/42' }; },
+      createPR: createPR || (async (owner, repo, opts) => { githubCalls.push({ type: 'create', owner, repo, opts }); return { number: 42, html_url: 'https://example/pr/42' }; }),
       updatePR: async (owner, repo, num, opts) => { githubCalls.push({ type: 'update', owner, repo, num, opts }); },
     },
     loaded: true, id: ghPath, filename: ghPath, paths: orig.gh ? orig.gh.paths : [],
@@ -58,14 +58,22 @@ function loadWithStubs({ onGenerate, githubCalls }) {
 // A mock pool that returns canned rows per table: chat_session_messages
 // (turn history), chat_session_specs (saved spec snapshots), and
 // chat_sessions (the live spec_md). UPDATEs are no-ops.
-function mockPool(rows, { specRows = [], liveSpec = '', linkedIssues = [], appliedIssues = [] } = {}) {
+function mockPool(rows, {
+  specRows = [], liveSpec = '', linkedIssues = [], appliedIssues = [],
+  testingMd = null, testingPath = null, appliedTesting = null,
+} = {}) {
   return {
     queries: [],
     async query(sql, params) {
       this.queries.push({ sql, params });
       if (/FROM chat_session_specs/i.test(sql)) return { rows: specRows };
       if (/FROM chat_sessions\b/i.test(sql)) {
-        return { rows: [{ spec_md: liveSpec, linked_issues: linkedIssues, pr_linked_issues_applied: appliedIssues }] };
+        return {
+          rows: [{
+            spec_md: liveSpec, linked_issues: linkedIssues, pr_linked_issues_applied: appliedIssues,
+            testing_md: testingMd, testing_path: testingPath, pr_testing_applied: appliedTesting,
+          }],
+        };
       }
       if (/FROM chat_session_messages/i.test(sql)) return { rows };
       return { rows: [] };
@@ -291,4 +299,148 @@ test('sanitizeIssueNumbers / buildClosingBlock helpers behave', async () => {
   assert.deepEqual(sanitizeIssueNumbers(null), []);
   assert.equal(buildClosingBlock([]), '');
   assert.equal(buildClosingBlock([2, 1]), 'Closes #1\nCloses #2');
+});
+
+// ---- #127: How to test ----
+
+test('buildTestingBlock helper behaves', async () => {
+  const { buildTestingBlock } = require('../src/services/pr-metadata');
+  assert.equal(buildTestingBlock(null, null), '');
+  assert.equal(buildTestingBlock('', '  '), '');
+  assert.equal(buildTestingBlock('1. Click it.', null), '## How to test\n\n1. Click it.');
+  assert.equal(buildTestingBlock(null, '/board'), '## How to test\n\nDeep link: `/board`');
+  assert.equal(
+    buildTestingBlock('1. Click it.', '/board?d=1'),
+    '## How to test\n\n1. Click it.\n\nDeep link: `/board?d=1`'
+  );
+});
+
+test('testing guidance lands in the body between LLM body and Closes block', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }], {
+      linkedIssues: [75], testingMd: '1. Open the board.', testingPath: '/board',
+    });
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.equal(githubCalls[0].type, 'create');
+    assert.equal(
+      githubCalls[0].opts.body,
+      'Cumulative body\n\n## How to test\n\n1. Open the board.\n\nDeep link: `/board`\n\nCloses #75\n\n---\n_Dev session by evan via Usernode_'
+    );
+    // The applied snapshot is persisted on the new-PR write (param after
+    // the linked-issues snapshot).
+    const upd = pool.queries.find((q) => /UPDATE chat_sessions SET pr_number/.test(q.sql));
+    assert.equal(upd.params[4], '## How to test\n\n1. Open the board.\n\nDeep link: `/board`');
+  } finally {
+    restore();
+  }
+});
+
+test('existing PR updates when testing guidance changed even if title and issues did not', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }], {
+      linkedIssues: [75], appliedIssues: [75],
+      testingMd: 'New steps.', appliedTesting: '## How to test\n\nOld steps.',
+    });
+    const session = { id: 1, branch_name: 'feat/x', pr_number: 42, pr_url: 'u', pr_title: 'Cumulative title' };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.equal(githubCalls.length, 1, 'GitHub update fired despite unchanged title + issues');
+    assert.equal(githubCalls[0].type, 'update');
+    assert.match(githubCalls[0].opts.body, /## How to test\n\nNew steps\./);
+    // The applied snapshot is advanced so the next unchanged turn is a no-op.
+    const upd = pool.queries.find((q) => /UPDATE chat_sessions SET pr_title/.test(q.sql));
+    assert.equal(upd.params[2], '## How to test\n\nNew steps.');
+  } finally {
+    restore();
+  }
+});
+
+test('existing PR makes no GitHub call when title, issues and testing are all unchanged', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls });
+  try {
+    const applied = '## How to test\n\nSteps.';
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }], {
+      linkedIssues: [75], appliedIssues: [75],
+      testingMd: 'Steps.', appliedTesting: applied,
+    });
+    const session = { id: 1, branch_name: 'feat/x', pr_number: 42, pr_url: 'u', pr_title: 'Cumulative title' };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.equal(githubCalls.length, 0, 'no GitHub call when nothing changed');
+  } finally {
+    restore();
+  }
+});
+
+// ---- #295 / chat 510: honest error when the branch has no pushed commits ----
+
+test('applyPrMetadata re-throws createPR "no_commits" so the caller can be honest', async () => {
+  const githubCalls = [];
+  const noCommits = async () => {
+    const e = new Error('No commits between main and feat/x — the branch has no pushed commits.');
+    e.code = 'no_commits';
+    throw e;
+  };
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls, createPR: noCommits });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }]);
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    await assert.rejects(
+      () => subject.applyPrMetadata({
+        pool, session, repoOwner: 'acme', repoName: 'app',
+        userMessage: 'x', ccSummary: 'y', username: 'evan',
+      }),
+      (err) => err && err.code === 'no_commits',
+      'the typed no_commits error propagates to the caller'
+    );
+  } finally {
+    restore();
+  }
+});
+
+test('applyPrMetadata stays best-effort (returns null) on other createPR failures', async () => {
+  const githubCalls = [];
+  const boom = async () => { throw new Error('GitHub 500 — transient'); };
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls, createPR: boom });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }]);
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    const res = await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.equal(res, null, 'non-no_commits failures are swallowed as before');
+  } finally {
+    restore();
+  }
+});
+
+test('no testing guidance -> body has no How to test section (legacy bytes)', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }]);
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.ok(!/How to test/.test(githubCalls[0].opts.body));
+    assert.match(githubCalls[0].opts.body, /^Cumulative body\n\n---\n_Dev session by evan via Usernode_$/);
+  } finally {
+    restore();
+  }
 });

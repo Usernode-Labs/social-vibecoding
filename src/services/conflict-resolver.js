@@ -45,7 +45,13 @@ function parseRepo(repoUrl) {
 // boolean (`true` mergeable / `false` conflicting) or `null` if it
 // never settled within the budget. Throws are surfaced to the caller.
 async function pollMergeable(owner, repo, prNumber) {
-  const octokit = await github.getInstallationOctokit(owner);
+  // getOctokit (PAT-preferred), NOT getInstallationOctokit: the
+  // self-app's repo owner (e.g. Usernode-Labs) has no GitHub App
+  // installation, so the installation path throws on every poll and
+  // the resolver flies blind on exactly the PR class (selfHosted)
+  // where a wrong merge decision hurts most. mergePR already goes
+  // through the PAT path; mergeability reads must match.
+  const octokit = await github.getOctokit(owner);
   for (let i = 0; i < MERGEABLE_POLL_TRIES; i++) {
     const { data: pr } = await octokit.request(
       'GET /repos/{owner}/{repo}/pulls/{pull_number}',
@@ -65,7 +71,8 @@ async function pollMergeable(owner, repo, prNumber) {
 // should NOT merge, to avoid the null-window 405). `afterPush` adds a
 // short initial delay so we don't read the stale pre-push value.
 async function waitForMergeableTrue(owner, repo, prNumber, { afterPush = false } = {}) {
-  const octokit = await github.getInstallationOctokit(owner);
+  // PAT-preferred for the same reason as pollMergeable above.
+  const octokit = await github.getOctokit(owner);
   if (afterPush && MERGEABLE_AFTER_PUSH_INITIAL_MS > 0) {
     await sleep(MERGEABLE_AFTER_PUSH_INITIAL_MS);
   }
@@ -88,7 +95,8 @@ async function waitForMergeableTrue(owner, repo, prNumber, { afterPush = false }
 // trigger fired).
 async function loadSession(pool, sessionId) {
   const { rows } = await pool.query(
-    `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.name AS app_name
+    `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.name AS app_name,
+            a.self_hosted AS app_self_hosted
      FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
      WHERE cs.id = $1`,
     [sessionId]
@@ -145,6 +153,29 @@ async function checkAndResolveConflicts(config, mergedSession) {
 // one worker turn / one merge attempt) and receive the same result.
 const _inFlightResolves = new Map(); // sessionId -> Promise<result>
 
+// Process-local "is a resolve currently in flight for this session?" —
+// authoritative because the platform runs as a single Node process.
+// Read by GET /api/sessions/:id/status (the banner's reload-recovery
+// poll) and GET /api/apps/:slug/promoted (the vote-panel badge).
+function isResolving(sessionId) {
+  return _inFlightResolves.has(sessionId);
+}
+
+// #239: map the inner resolve's exit `reason` onto the coarse outcome
+// the client banner switches on. `failed` covers every exit where the
+// branch is still broken (or the sync never ran for a budget/error
+// reason after a real conflict was detected); `synced` means the branch
+// is fixed but the merge still needs votes; everything that did nothing
+// user-visible is `noop`.
+function resolutionOutcomeFor(reason) {
+  if (reason === 'synced_and_merged' || reason === 'merged') return 'merged';
+  if (reason === 'synced_awaiting_votes' || reason === 'mergeable_recompute_pending') return 'synced';
+  if (['unresolved_conflict', 'sync_threw', 'still_conflicting', 'over_budget', 'retry_threw'].includes(reason)) {
+    return 'failed';
+  }
+  return 'noop';
+}
+
 async function resolveAndMaybeRetry(config, target) {
   const sessionId = target.sessionId != null ? target.sessionId : target.session?.id;
   if (sessionId != null && _inFlightResolves.has(sessionId)) {
@@ -157,6 +188,25 @@ async function resolveAndMaybeRetry(config, target) {
       if (_inFlightResolves.get(sessionId) === p) _inFlightResolves.delete(sessionId);
     });
   }
+  // #239: terminal lifecycle broadcast — exactly once per in-flight
+  // resolve (deduped callers share `p`, so they share this too). The
+  // inner resolve decorates its result with appSlug/selfHosted once the
+  // session row is loaded; exits before that (session_not_found) carry
+  // no appSlug and are skipped. Clients use this to clear the resolving
+  // banner / vote-panel badge.
+  p.then((result) => {
+    if (!result || !result.appSlug) return;
+    try {
+      const { pushVoteUpdate } = require('./ws');
+      pushVoteUpdate({
+        sessionId: result.sessionId != null ? result.sessionId : sessionId,
+        appSlug: result.appSlug,
+        resolving: false,
+        resolutionOutcome: resolutionOutcomeFor(result.reason),
+        selfHosted: !!result.selfHosted,
+      });
+    } catch (_) { /* ws non-fatal */ }
+  }).catch(() => { /* inner never throws by contract; belt-and-braces */ });
   return p;
 }
 
@@ -167,7 +217,20 @@ async function resolveAndMaybeRetryInner(config, target) {
     session = await loadSession(pool, target.sessionId);
     if (!session) return { ok: false, reason: 'session_not_found' };
   }
+  const result = await resolveWithSession(config, pool, session);
+  // #239: decorate every loaded-session exit with the fields the
+  // wrapper's terminal broadcast needs. Pre-loaded sessions from
+  // checkAndMerge already carry app_slug / app_self_hosted; loadSession
+  // selects them too.
+  return {
+    ...result,
+    sessionId: session.id,
+    appSlug: session.app_slug,
+    selfHosted: !!session.app_self_hosted,
+  };
+}
 
+async function resolveWithSession(config, pool, session) {
   if (!github.isEnabled() || !session.repo_url || !session.pr_number) {
     return { ok: false, reason: 'github_disabled_or_no_pr' };
   }
@@ -201,14 +264,17 @@ async function resolveAndMaybeRetryInner(config, target) {
       sessionId: session.id, pr: session.pr_number, behind, mergeable0,
     });
 
-    // The worker sync charges the session owner (their BYOK key, or the
-    // platform proxy). Gate on their daily cap so a runaway conflict
-    // loop can't blow the budget; surface the skip in group chat so the
-    // owner knows to sync manually or wait for the cap to reset.
-    const budgetCheck = await limits.checkBudget(pool, session.user_id);
-    if (budgetCheck.error) {
-      log.info('conflict', 'Skipped — session owner over daily cap', {
-        sessionId: session.id, ownerId: session.user_id, reason: budgetCheck.error,
+    // The worker sync charges the session owner, limit-first (#212):
+    // their daily allowance while it has headroom, then their BYOK key
+    // once it's exhausted (runSyncMain resolves the same way at turn
+    // time — mirrors the gate order in POST /chat and the headless
+    // route). Skip — and surface it in group chat — only when the owner
+    // is over the cap AND has no key on file, so a runaway conflict
+    // loop can't blow the shared budget.
+    const billing = await limits.resolveBillingPath(pool, config.jwtSecret, session.user_id);
+    if (billing.error) {
+      log.info('conflict', 'Skipped — session owner over daily cap with no BYOK key', {
+        sessionId: session.id, ownerId: session.user_id, reason: billing.error,
       });
       await postGroupMessage(pool, session,
         `Auto-conflict-resolution skipped on PR #${session.pr_number}: the PR owner has hit their daily LLM limit. Resolve manually via "Sync with main" or wait for the cap to reset.`
@@ -216,9 +282,25 @@ async function resolveAndMaybeRetryInner(config, target) {
       return { ok: false, reason: 'over_budget' };
     }
 
+    // #239: start lifecycle broadcast — emitted only here, past the
+    // needsSync + billing gates, so the frequent no-op sweeps (post-merge
+    // sibling sweep / drift poller calls that find nothing to do) never
+    // flash the resolving banner. Clients arm the non-blocking
+    // "resolving merge conflicts" banner (self-hosted) and the
+    // vote-panel badge off this.
+    try {
+      const { pushVoteUpdate } = require('./ws');
+      pushVoteUpdate({
+        sessionId: session.id,
+        appSlug: session.app_slug,
+        resolving: true,
+        selfHosted: !!session.app_self_hosted,
+      });
+    } catch (_) { /* ws non-fatal */ }
+
     let sync;
     try {
-      sync = await runSyncMain(config, pool, session.id, { sessionRow: session });
+      sync = await runSyncMain(config, pool, session.id, { sessionRow: session, trigger: 'conflict_resolver' });
     } catch (err) {
       log.error('conflict', 'runSyncMain threw', { sessionId: session.id, err: err.message });
       await postGroupMessage(pool, session,
@@ -321,4 +403,4 @@ async function postGroupMessage(pool, session, content) {
   }
 }
 
-module.exports = { checkAndResolveConflicts, resolveAndMaybeRetry, pollMergeable };
+module.exports = { checkAndResolveConflicts, resolveAndMaybeRetry, pollMergeable, isResolving };

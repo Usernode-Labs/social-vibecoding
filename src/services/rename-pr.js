@@ -1,0 +1,396 @@
+'use strict';
+
+/**
+ * Manifest-editing PR creation — PRs that change a single dapp.json
+ * field and drop straight into the vote panel as a `promoted`
+ * chat_sessions row with full promote-path parity (promoted_at,
+ * pr_promoted analytics event, pr_proposed voter-nudge notifications,
+ * group-chat vote message).
+ *
+ * Two flavors share the createManifestPR core so they can never drift:
+ *   - rename PRs (top-level `name`) — used by the interactive route
+ *     (POST /api/apps/:slug/rename in routes/apps.js) and the one-time
+ *     boot migration that drains the legacy rename-issue backlog
+ *     (migrateOpenRenameIssues below);
+ *   - visibility PRs (top-level `visibility` block, issue #124) — used
+ *     by POST /api/apps/:slug/visibility-pr in routes/apps.js. The
+ *     change applies when the merged PR's production rebuild runs
+ *     appManifest.reconcileAppVisibility.
+ */
+
+const log = require('./logger');
+const github = require('./github');
+const appManifest = require('./app-manifest');
+const events = require('./events');
+
+function renamePrTitle(newName) {
+  return `Rename to "${newName}"`;
+}
+
+/**
+ * Shared core: open a PR that edits dapp.json via `opts.mutate` and drop
+ * it into the vote panel as a `promoted` session. The caller owns
+ * user-facing validation and dedupe; this helper assumes it's been
+ * cleared to proceed.
+ *
+ * `actor` is `{ id, username }` — the user attributed as the proposer.
+ * `id` may be null (e.g. a deleted issue author).
+ *
+ * `opts`:
+ *   - mutate(manifestObj)  — applies the field change in place;
+ *   - branchPrefix         — 'rename' | 'visibility';
+ *   - commitMessage, prTitle, prBody;
+ *   - chatText(prData, majority, activeUsers) — group-chat vote message;
+ *   - eventMetadata        — extra pr_promoted metadata (prNumber is
+ *                            added automatically).
+ *
+ * Throws on GitHub / DB failure so callers can map it to an HTTP error
+ * or skip-and-continue. On success returns
+ * `{ sessionId, prNumber, prUrl, branch }`.
+ */
+async function createManifestPR(config, pool, app, actor, opts) {
+  const [, owner, repo] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  if (!owner || !repo) throw new Error('Could not parse the app repository URL');
+
+  // Build the updated dapp.json. Preserve existing fields when the file
+  // is present + parseable; create a minimal manifest when it's missing
+  // (legacy apps predating the manifest). A malformed file is already
+  // treated as empty by the deploy reader, so falling back to a fresh
+  // object there is safe.
+  let manifestObj = { secrets: [] };
+  const existing = await github.getFileContent(owner, repo, appManifest.MANIFEST_FILENAME, 'main');
+  if (existing != null) {
+    try {
+      const parsed = JSON.parse(existing);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) manifestObj = parsed;
+    } catch {
+      log.warn('rename-pr', 'Existing dapp.json unparseable; writing fresh manifest', { slug: app.slug });
+    }
+  }
+  opts.mutate(manifestObj);
+  const updatedContent = `${JSON.stringify(manifestObj, null, 2)}\n`;
+
+  // Branch naming pattern: <prefix>/<slug>-<timestamp>. The timestamp
+  // suffix avoids collisions if a prior attempt left a stale branch on
+  // the remote. (Plain service code, not a workflow script, so Date.now
+  // is fine here.)
+  const branch = `${opts.branchPrefix}/${app.slug}-${Date.now()}`;
+  await github.createBranch(owner, repo, branch);
+  await github.pushFiles(
+    owner, repo,
+    [{ path: appManifest.MANIFEST_FILENAME, content: updatedContent }],
+    { branch, message: opts.commitMessage }
+  );
+
+  const prTitle = opts.prTitle;
+  // safeMention is applied inside github.createPR; the actor.username
+  // and names flow into the body verbatim here.
+  const prData = await github.createPR(owner, repo, { branch, title: prTitle, body: opts.prBody });
+
+  // Drop the rename PR straight into the vote panel as a promoted
+  // session, mirroring the normal promote path (POST
+  // /api/sessions/:id/promote in routes/votes.js): set promoted_at
+  // (anchors the stale-PR sweeper), emit pr_promoted, fan out
+  // pr_proposed notifications.
+  const { rows: sessRows } = await pool.query(
+    `INSERT INTO chat_sessions
+       (app_id, user_id, branch_name, pr_number, pr_url, pr_title, status, promoted_at)
+     VALUES ($1, $2, $3, $4, $5, $6, 'promoted', NOW())
+     RETURNING id`,
+    [app.id, actor.id || null, branch, prData.number, prData.html_url, prTitle]
+  );
+  const sessionId = sessRows[0].id;
+
+  const { sendSystemMessage, pushVoteUpdate, pushNotificationToUser } = require('./ws');
+  const notifications = require('./notifications');
+  const { getActiveUserStats } = require('./active-users');
+  const { active: activeUsers, majority } = await getActiveUserStats(pool, app.id);
+
+  await sendSystemMessage(pool, app.id,
+    opts.chatText(prData, majority, activeUsers),
+    'vote',
+    { vote: { sessionId, prNumber: prData.number } }
+  ).catch((err) => log.warn('rename-pr', 'Manifest-PR chat msg failed', { err: err.message }));
+
+  pushVoteUpdate({ sessionId, appSlug: app.slug, merged: false });
+
+  // pr_promoted is the funnel stage the PR-promotion analytics read;
+  // emit it so manifest PRs count like every other promoted PR.
+  events.record(pool, {
+    type: events.EVENT_TYPES.PR_PROMOTED,
+    userId: actor.id || null,
+    appId: app.id,
+    sessionId,
+    metadata: { prNumber: prData.number, ...(opts.eventMetadata || {}) },
+  });
+
+  // Vote-request fan-out — same as the normal promote path. Non-fatal:
+  // the rename PR is already open, so a notification hiccup must not
+  // poison the result.
+  try {
+    const notifRows = await notifications.createPrProposedNotifications(pool, {
+      appId: app.id,
+      sessionId,
+      proposerId: actor.id || null,
+    });
+    for (const row of notifRows) {
+      pushNotificationToUser(row.user_id, {
+        type: 'notification_new',
+        notification: notifications.serialize({
+          ...row,
+          app_slug: app.slug,
+          app_name: app.name,
+          pr_title: prTitle,
+          pr_number: prData.number,
+          source_username: actor.username,
+        }),
+      });
+    }
+    if (notifRows.length) {
+      log.info('rename-pr', 'Manifest-PR pr_proposed notifications sent', {
+        sessionId, count: notifRows.length,
+      });
+    }
+  } catch (err) {
+    log.warn('rename-pr', 'Manifest-PR pr_proposed notify failed', { sessionId, err: err.message });
+  }
+
+  log.info('rename-pr', 'Manifest PR opened', {
+    slug: app.slug, prNumber: prData.number, title: prTitle, by: actor.username,
+  });
+
+  return { sessionId, prNumber: prData.number, prUrl: prData.html_url, branch };
+}
+
+/**
+ * Open a rename PR for `app` targeting `newName` — a manifest PR that
+ * sets dapp.json's top-level `name`. Caller owns validation (length,
+ * name-differs, GitHub-enabled) and dedupe.
+ */
+async function createRenamePR(config, pool, app, newName, actor) {
+  return createManifestPR(config, pool, app, actor, {
+    mutate: (m) => { m.name = newName; },
+    branchPrefix: 'rename',
+    commitMessage: `Rename to "${newName}"`,
+    prTitle: renamePrTitle(newName),
+    prBody:
+      `${actor.username} (via Usernode) proposed renaming "${app.name}" to "${newName}".\n\n` +
+      `This PR updates the \`name\` field in \`dapp.json\`. It still needs a regular ` +
+      `merge vote to land — vote in the app's group chat panel. The new name applies ` +
+      `automatically once the PR merges and the app redeploys.`,
+    chatText: (prData, majority, activeUsers) =>
+      `${actor.username} proposed renaming to "${newName}". Opened PR #${prData.number} — needs ${majority}/${activeUsers} votes to land.`,
+    eventMetadata: { rename: true },
+  });
+}
+
+function visibilityPrTitle(collab, view) {
+  return `Make this app ${appManifest.describeVisibility(collab, view)}`;
+}
+
+/**
+ * Open a visibility-change PR for `app` (issue #124) — a manifest PR
+ * that sets dapp.json's top-level `visibility` block to
+ * `{ build: collab, view }`. Caller owns validation (combo invariant,
+ * differs-from-current, creator/admin gate, GitHub-enabled) and dedupe
+ * (findVisibilityPr below). The change applies when the merged PR's
+ * production rebuild runs reconcileAppVisibility.
+ */
+async function createVisibilityPR(config, pool, app, { collab, view }, actor) {
+  const desc = appManifest.describeVisibility(collab, view);
+  return createManifestPR(config, pool, app, actor, {
+    mutate: (m) => { m.visibility = { build: collab, view }; },
+    branchPrefix: 'visibility',
+    commitMessage: visibilityPrTitle(collab, view),
+    prTitle: visibilityPrTitle(collab, view),
+    prBody:
+      `${actor.username} (via Usernode) proposed changing "${app.name}" to be ${desc}.\n\n` +
+      `This PR updates the \`visibility\` block in \`dapp.json\` (\`build\` = who can ` +
+      `build the app, \`view\` = who can see & use it). It still needs a regular merge ` +
+      `vote to land — vote in the app's group chat panel. The new visibility applies ` +
+      `automatically once the PR merges and the app redeploys.`,
+    chatText: (prData, majority, activeUsers) =>
+      `${actor.username} proposed making this app ${desc}. Opened PR #${prData.number} — needs ${majority}/${activeUsers} votes to land.`,
+    eventMetadata: { visibility: true },
+  });
+}
+
+// Returns the open visibility-change PR session for an app, if any —
+// the dedupe check for POST /api/apps/:slug/visibility-pr (only one
+// visibility proposal is allowed in flight per app, unlike renames
+// which dedupe per target name).
+async function findVisibilityPr(pool, appId) {
+  const { rows } = await pool.query(
+    `SELECT id, pr_number, pr_url, pr_title FROM chat_sessions
+      WHERE app_id = $1 AND status IN ('promoted', 'merging')
+        AND branch_name LIKE 'visibility/%'
+      ORDER BY id DESC
+      LIMIT 1`,
+    [appId]
+  );
+  return rows[0] || null;
+}
+
+// Returns a matching rename PR session for the same target name. Used by
+// the migration to stay idempotent without collapsing distinct legacy
+// rename proposals for the same app into one PR.
+async function findRenamePrForName(pool, appId, newName) {
+  const { rows } = await pool.query(
+    `SELECT id, pr_number, pr_url FROM chat_sessions
+      WHERE app_id = $1 AND status IN ('promoted', 'merging')
+        AND branch_name LIKE 'rename/%'
+        AND pr_title = $2
+      ORDER BY id DESC
+      LIMIT 1`,
+    [appId, renamePrTitle(newName)]
+  );
+  return rows[0] || null;
+}
+
+async function restoreIssueVotesToPr(pool, issueId, sessionId) {
+  const { rowCount } = await pool.query(
+    `INSERT INTO pr_votes (session_id, user_id, vote, created_at)
+       SELECT $2, iv.user_id,
+              CASE iv.vote WHEN 'up' THEN 'yes' WHEN 'down' THEN 'no' END,
+              iv.created_at
+         FROM issue_votes iv
+        WHERE iv.issue_id = $1
+          AND iv.vote IN ('up', 'down')
+      ON CONFLICT (session_id, user_id) DO NOTHING`,
+    [issueId, sessionId]
+  );
+  return rowCount;
+}
+
+/**
+ * One-time, idempotent boot routine: convert every open `issues` row with
+ * kind='rename' into an equivalent rename PR (via createRenamePR), then
+ * best-effort close the GitHub issue + close the DB issue row so the
+ * legacy backlog drains and repos' issue trackers stay clean.
+ *
+ * Idempotency: a rename issue whose exact target name already has an open
+ * rename PR is not re-opened; its old issue votes are copied onto that PR.
+ * Distinct rename issues for the same app still become distinct PRs so the
+ * vote surface preserves all in-flight proposals. A single failing app
+ * (GitHub disabled, no bot access, unparseable repo) logs and continues
+ * rather than aborting the batch. No-op when GitHub isn't configured.
+ */
+async function migrateOpenRenameIssues(config, pool) {
+  if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+    log.info('rename-pr', 'Skipping rename-issue migration (GitHub not configured)');
+    return { migrated: 0, skipped: 0 };
+  }
+
+  let rows;
+  try {
+    ({ rows } = await pool.query(
+      `SELECT i.id, i.app_id, i.github_issue_number, i.payload,
+              a.slug, a.name, a.repo_url,
+              u.username AS created_by_username, i.created_by
+         FROM issues i
+         JOIN apps a ON a.id = i.app_id
+         LEFT JOIN users u ON u.id = i.created_by
+        WHERE i.kind = 'rename' AND i.status = 'open'`
+    ));
+  } catch (err) {
+    // issues table or columns missing on a fresh DB — nothing to migrate.
+    log.warn('rename-pr', 'Could not query open rename issues (skipping)', { err: err.message });
+    return { migrated: 0, skipped: 0 };
+  }
+  if (!rows.length) return { migrated: 0, skipped: 0 };
+
+  log.info('rename-pr', 'Migrating open rename issues to rename PRs', { count: rows.length });
+  let migrated = 0;
+  let skipped = 0;
+
+  for (const issue of rows) {
+    try {
+      const newName = typeof issue.payload?.newName === 'string' ? issue.payload.newName.trim() : '';
+      if (!newName || newName.length > appManifest.MAX_APP_NAME_LENGTH) {
+        log.warn('rename-pr', 'Skipping rename issue with invalid newName', { issueId: issue.id });
+        skipped++;
+        continue;
+      }
+      const [, owner, repo] = (issue.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+      if (!owner || !repo) {
+        log.warn('rename-pr', 'Skipping rename issue (no parseable repo_url)', {
+          issueId: issue.id, slug: issue.slug,
+        });
+        skipped++;
+        continue;
+      }
+
+      const app = { id: issue.app_id, slug: issue.slug, name: issue.name, repo_url: issue.repo_url };
+      const actor = { id: issue.created_by || null, username: issue.created_by_username || 'Usernode' };
+
+      const alreadyNamed = newName.toLowerCase() === (issue.name || '').toLowerCase();
+      let renameSession = alreadyNamed ? null : await findRenamePrForName(pool, issue.app_id, newName);
+
+      if (!alreadyNamed && !renameSession) {
+        renameSession = await createRenamePR(config, pool, app, newName, actor);
+        migrated++;
+      } else {
+        // Nothing new to open (name already applied, or this exact target
+        // rename PR is already in flight) — just drain this lingering issue
+        // row below after restoring its votes when a PR exists.
+        log.info('rename-pr', 'Rename PR already open / name already applied; draining issue only', {
+          issueId: issue.id, slug: issue.slug, alreadyNamed,
+          existingSessionId: renameSession?.sessionId || renameSession?.id || null,
+        });
+        skipped++;
+      }
+
+      const sessionId = renameSession?.sessionId || renameSession?.id || null;
+      const prNumber = renameSession?.prNumber || renameSession?.pr_number || null;
+      if (sessionId) {
+        const copiedVotes = await restoreIssueVotesToPr(pool, issue.id, sessionId);
+        if (copiedVotes > 0) {
+          log.info('rename-pr', 'Restored issue votes to rename PR', {
+            issueId: issue.id, sessionId, copiedVotes,
+          });
+        }
+      }
+
+      // Best-effort: close the GitHub issue + close the DB row so it leaves
+      // the app's open-issues list. Failures don't undo the PR we opened.
+      if (issue.github_issue_number) {
+        await github.closeIssue(owner, repo, issue.github_issue_number).catch((err) =>
+          log.warn('rename-pr', 'GitHub issue close failed during migration', {
+            issue: issue.github_issue_number, err: err.message,
+          }));
+      }
+      await pool.query(
+        `UPDATE issues SET status = 'closed',
+            payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+          WHERE id = $1 AND status = 'open'`,
+        [issue.id, JSON.stringify({
+          migratedToPrAt: new Date().toISOString(),
+          ...(sessionId ? { migratedToPrSessionId: sessionId } : {}),
+          ...(prNumber ? { migratedToPrNumber: prNumber } : {}),
+        })]
+      ).catch((err) => log.warn('rename-pr', 'Could not close migrated rename issue row', {
+        issueId: issue.id, err: err.message,
+      }));
+    } catch (err) {
+      // One app failing (GitHub disabled mid-run, lost bot access, branch
+      // collision, etc.) must not abort the whole batch — leave its issue
+      // as-is so a later boot can retry.
+      log.warn('rename-pr', 'Rename-issue migration failed for one app; continuing', {
+        issueId: issue.id, slug: issue.slug, err: err.message,
+      });
+      skipped++;
+    }
+  }
+
+  log.info('rename-pr', 'Rename-issue migration complete', { migrated, skipped });
+  return { migrated, skipped };
+}
+
+module.exports = {
+  createRenamePR,
+  createVisibilityPR,
+  findVisibilityPr,
+  migrateOpenRenameIssues,
+  findRenamePrForName,
+  restoreIssueVotesToPr,
+};

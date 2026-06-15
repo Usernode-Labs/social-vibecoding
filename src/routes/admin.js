@@ -1,9 +1,18 @@
 const { Router } = require('express');
 const crypto = require('crypto');
+const bcrypt = require('bcrypt');
 const { getPool } = require('../db/pool');
 const { adminMiddleware } = require('../middleware/admin');
 const log = require('../services/logger');
 const limits = require('../services/limits');
+
+// Fixed app-wide key for pg_advisory_xact_lock, dedicated to admin-status
+// mutations (revoke-admin and delete-user). Any code path that could drop
+// the admin count must take this lock inside its transaction so the
+// "at least one admin must remain" invariant is checked and committed
+// atomically — two concurrent revokes/deletes can't both observe >1 admin
+// and race to zero. The number is arbitrary but must stay stable.
+const ADMIN_MUTATION_LOCK = 991001;
 
 function adminRoutes(config) {
   const router = Router();
@@ -64,14 +73,22 @@ function adminRoutes(config) {
   router.get('/api/admin/users', async (req, res) => {
     try {
       const { rows } = await pool.query(
-        `SELECT u.id, u.username, u.is_admin, u.can_create_apps, u.created_at,
+        `SELECT u.id, u.username, u.is_admin, u.app_quota, u.created_at,
                 u.daily_limit_cents,
+                (u.id = $1) AS is_self,
                 ac.code as activation_code,
-                COALESCE(lu.total_cost_cents, 0) as cost_today_cents
+                COALESCE(lu.total_cost_cents, 0) as cost_today_cents,
+                COALESCE(ac2.n, 0) AS apps_created
          FROM users u
          LEFT JOIN activation_codes ac ON ac.used_by = u.id
          LEFT JOIN llm_usage lu ON lu.user_id = u.id AND lu.date = CURRENT_DATE
-         ORDER BY u.created_at ASC`
+         LEFT JOIN (
+           SELECT created_by, COUNT(*) FILTER (WHERE status <> 'error') AS n
+           FROM apps
+           GROUP BY created_by
+         ) ac2 ON ac2.created_by = u.id
+         ORDER BY u.created_at ASC`,
+        [req.user.id]
       );
       res.json(rows);
     } catch (err) {
@@ -80,33 +97,155 @@ function adminRoutes(config) {
     }
   });
 
-  // Toggle the per-user app-creation permission (see users.can_create_apps
-  // in schema.sql). Default for every user is FALSE — set TRUE here to
-  // allow them to create apps. Admins are included; there is no bypass.
-  router.post('/api/admin/users/:id/can-create-apps', async (req, res) => {
+  // Bulk set every user's app-creation quota (see users.app_quota in
+  // schema.sql). Body `{ quota }` — a non-negative integer applied to ALL
+  // users. Admins are included; since they bypass enforcement this is
+  // harmless and keeps the operation simple ("set all to 0", "set all to
+  // 3"). Declared BEFORE the per-user `:id` route below: Express matches
+  // this distinctly (different segment count), but ordering keeps intent
+  // obvious.
+  router.put('/api/admin/users/app-quota', async (req, res) => {
+    const { quota } = req.body || {};
+    const n = Number(quota);
+    if (!Number.isInteger(n) || n < 0) {
+      return res.status(400).json({ error: 'quota must be a non-negative integer' });
+    }
+    try {
+      await pool.query('UPDATE users SET app_quota = $1', [n]);
+      log.info('admin', 'App quota set for all users', { quota: n, by: req.user.username });
+      res.json({ ok: true, quota: n });
+    } catch (err) {
+      log.error('admin', 'Bulk app-quota update failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Set one user's app-creation quota (see users.app_quota in schema.sql).
+  // Body `{ quota }` — a non-negative integer. Modeled on the per-user
+  // daily-limit handler below. Quota 0 means the user cannot create apps;
+  // admins bypass enforcement regardless (their quota is cosmetic).
+  router.put('/api/admin/users/:id/app-quota', async (req, res) => {
     const userId = parseInt(req.params.id, 10);
-    const { canCreateApps } = req.body || {};
     if (!Number.isFinite(userId)) {
       return res.status(400).json({ error: 'Invalid user id' });
     }
-    if (typeof canCreateApps !== 'boolean') {
-      return res.status(400).json({ error: 'canCreateApps (boolean) required in body' });
+    const { quota } = req.body || {};
+    const n = Number(quota);
+    if (!Number.isInteger(n) || n < 0) {
+      return res.status(400).json({ error: 'quota must be a non-negative integer' });
     }
     try {
       const { rows } = await pool.query(
-        `UPDATE users SET can_create_apps = $1 WHERE id = $2
-         RETURNING id, username, can_create_apps`,
-        [canCreateApps, userId]
+        `UPDATE users SET app_quota = $1 WHERE id = $2
+         RETURNING id, username, app_quota`,
+        [n, userId]
       );
       if (!rows.length) return res.status(404).json({ error: 'User not found' });
-      log.info('admin', 'App-creation permission toggled', {
+      log.info('admin', 'App quota updated', {
         id: rows[0].id, username: rows[0].username,
-        canCreateApps: rows[0].can_create_apps, by: req.user.username,
+        appQuota: rows[0].app_quota, by: req.user.username,
       });
-      res.json({ ok: true, canCreateApps: rows[0].can_create_apps });
+      res.json({ ok: true, app_quota: rows[0].app_quota });
     } catch (err) {
-      log.error('admin', 'App-creation toggle failed', { message: err.message });
+      log.error('admin', 'App quota update failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Grant / revoke admin status (see users.is_admin in schema.sql).
+  // Multiple admins are supported; admin is read live on every request
+  // (src/middleware/auth.js), so toggling takes effect on the target's
+  // next request — no session invalidation needed.
+  //
+  // Two server-authoritative guardrails on REVOKE (mirrored in the UI for
+  // UX only):
+  //   - You can't revoke your own admin status (self-lockout).
+  //   - You can't revoke the last admin (the platform must always have
+  //     at least one). Enforced inside a transaction that takes the
+  //     ADMIN_MUTATION_LOCK advisory lock, then counts admins and performs
+  //     the UPDATE atomically — two concurrent revokes can't both observe
+  //     >1 admin and race to zero.
+  router.post('/api/admin/users/:id/is-admin', async (req, res) => {
+    const userId = parseInt(req.params.id, 10);
+    const { isAdmin } = req.body || {};
+    if (!Number.isFinite(userId)) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+    if (typeof isAdmin !== 'boolean') {
+      return res.status(400).json({ error: 'isAdmin (boolean) required in body' });
+    }
+
+    if (!isAdmin && userId === req.user.id) {
+      return res.status(400).json({ error: "You can't revoke your own admin status." });
+    }
+
+    // Grant needs no lock — it only ever increases the admin count.
+    if (isAdmin) {
+      try {
+        const { rows } = await pool.query(
+          `UPDATE users SET is_admin = TRUE WHERE id = $1
+           RETURNING id, username, is_admin`,
+          [userId]
+        );
+        if (!rows.length) return res.status(404).json({ error: 'User not found' });
+        log.info('admin', 'Admin status toggled', {
+          id: rows[0].id, username: rows[0].username,
+          isAdmin: rows[0].is_admin, by: req.user.username,
+        });
+        return res.json({ ok: true, isAdmin: rows[0].is_admin });
+      } catch (err) {
+        log.error('admin', 'Admin toggle failed', { message: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+    }
+
+    // Revoke: serialize on the advisory lock, re-count admins, and update
+    // inside one transaction so the last-admin invariant holds under
+    // concurrency.
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock($1)', [ADMIN_MUTATION_LOCK]);
+
+      const { rows: existing } = await client.query(
+        'SELECT id, is_admin FROM users WHERE id = $1',
+        [userId]
+      );
+      if (!existing.length) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'User not found' });
+      }
+      if (!existing[0].is_admin) {
+        // Already not an admin — idempotent no-op.
+        await client.query('ROLLBACK');
+        return res.json({ ok: true, isAdmin: false });
+      }
+
+      const { rows: countRows } = await client.query(
+        'SELECT COUNT(*)::int AS n FROM users WHERE is_admin = TRUE'
+      );
+      if (countRows[0].n <= 1) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: "Can't revoke the last admin." });
+      }
+
+      const { rows } = await client.query(
+        `UPDATE users SET is_admin = FALSE WHERE id = $1
+         RETURNING id, username, is_admin`,
+        [userId]
+      );
+      await client.query('COMMIT');
+      log.info('admin', 'Admin status toggled', {
+        id: rows[0].id, username: rows[0].username,
+        isAdmin: rows[0].is_admin, by: req.user.username,
+      });
+      res.json({ ok: true, isAdmin: rows[0].is_admin });
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      log.error('admin', 'Admin toggle failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    } finally {
+      client.release();
     }
   });
 
@@ -117,15 +256,83 @@ function adminRoutes(config) {
       return res.status(400).json({ error: 'Cannot delete yourself' });
     }
 
+    // Deleting drops the admin count just like a revoke, so it takes the
+    // same advisory lock / transaction and enforces the last-admin
+    // invariant server-side — even though the UI hides Delete for admins,
+    // a direct API call must not be able to zero out the admins.
+    const client = await pool.connect();
     try {
-      const result = await pool.query('DELETE FROM users WHERE id = $1', [userId]);
-      if (result.rowCount === 0) {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock($1)', [ADMIN_MUTATION_LOCK]);
+
+      const { rows: existing } = await client.query(
+        'SELECT id, is_admin FROM users WHERE id = $1',
+        [userId]
+      );
+      if (!existing.length) {
+        await client.query('ROLLBACK');
         return res.status(404).json({ error: 'User not found' });
       }
+      if (existing[0].is_admin) {
+        const { rows: countRows } = await client.query(
+          'SELECT COUNT(*)::int AS n FROM users WHERE is_admin = TRUE'
+        );
+        if (countRows[0].n <= 1) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: "Can't delete the last admin." });
+        }
+      }
+
+      await client.query('DELETE FROM users WHERE id = $1', [userId]);
+      await client.query('COMMIT');
       log.info('admin', 'User deleted', { id: userId, by: req.user.username });
       res.json({ ok: true });
     } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
       log.error('admin', 'Delete user failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    } finally {
+      client.release();
+    }
+  });
+
+  // Admin-issued temporary password (issue #282). The universal recovery
+  // path for accounts that can't self-reset with a wallet (no wallet
+  // linked, or on plain desktop web). Gated by the same router-level
+  // adminMiddleware as every other user route — any admin may issue one,
+  // consistent with the rest of admin user-management.
+  //
+  // We generate a one-time temporary password, store only its bcrypt hash,
+  // and return the plaintext exactly ONCE in the response for the admin to
+  // relay out-of-band. The plaintext is never logged. Resetting deletes all
+  // of the target's sessions so a leaked/old session can't outlive it. No
+  // last-admin concern — this doesn't touch is_admin — and an admin may
+  // reset their own password too.
+  router.post('/api/admin/users/:id/reset-password', async (req, res) => {
+    const userId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(userId)) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+    try {
+      // URL-safe, ~12-char temporary password. base64url avoids +/=
+      // so it's painless to relay over chat or read aloud.
+      const tempPassword = crypto.randomBytes(9).toString('base64url');
+      const hash = await bcrypt.hash(tempPassword, 12);
+
+      const { rows } = await pool.query(
+        'UPDATE users SET password = $1 WHERE id = $2 RETURNING id, username',
+        [hash, userId]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'User not found' });
+
+      await pool.query('DELETE FROM sessions WHERE user_id = $1', [userId]);
+
+      log.info('admin', 'Password reset issued', {
+        id: rows[0].id, username: rows[0].username, by: req.user.username,
+      });
+      res.json({ ok: true, username: rows[0].username, tempPassword });
+    } catch (err) {
+      log.error('admin', 'Password reset failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
