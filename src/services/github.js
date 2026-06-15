@@ -405,13 +405,30 @@ async function createBranch(owner, repo, branchName, fromBranch = 'main') {
 
 async function createPR(owner, repo, { branch, title, body }) {
   const octokit = await getOctokit(owner);
-  const { data } = await octokit.rest.pulls.create({
-    owner, repo,
-    title: safeMention(title),
-    body: safeMention(body),
-    head: branch,
-    base: 'main',
-  });
+  let data;
+  try {
+    ({ data } = await octokit.rest.pulls.create({
+      owner, repo,
+      title: safeMention(title),
+      body: safeMention(body),
+      head: branch,
+      base: 'main',
+    }));
+  } catch (err) {
+    // GitHub answers 422 "No commits between main and <branch>" when the
+    // head branch has nothing to merge (typically: committed locally but
+    // never pushed). Surface this as a typed, non-transient error so
+    // callers can tell the user the truth instead of "try again in a
+    // moment" — retrying a permanently-empty branch never succeeds.
+    const detail = err && (err.message || '') +
+      ' ' + JSON.stringify(err?.response?.data?.errors || err?.response?.data || '');
+    if (err && err.status === 422 && /No commits between/i.test(detail)) {
+      const e = new Error(`No commits between main and ${branch} — the branch has no pushed commits.`);
+      e.code = 'no_commits';
+      throw e;
+    }
+    throw err;
+  }
   log.info('github', 'PR created', { repo: `${owner}/${repo}`, pr: data.number });
   return data;
 }

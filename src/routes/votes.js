@@ -150,6 +150,7 @@ function voteRoutes(config) {
         );
         const prMetadata = require('../services/pr-metadata');
         let prResult = null;
+        let prError = null;
         try {
           prResult = await prMetadata.applyPrMetadata({
             pool, session, repoOwner, repoName,
@@ -159,12 +160,23 @@ function voteRoutes(config) {
             userId: req.user.id,
           });
         } catch (err) {
-          log.warn('votes', 'Lazy PR creation/backfill threw', { sessionId: session.id, backfill: isBackfill, err: err.message });
+          prError = err;
+          log.warn('votes', 'Lazy PR creation/backfill threw', { sessionId: session.id, backfill: isBackfill, err: err.message, code: err.code || null });
         }
         if (!isBackfill && (!prResult || !session.pr_number)) {
           // Refuse to promote PR-less — a vote with nothing to merge is a
-          // dead end. The user can retry; nothing was mutated yet.
-          return res.status(502).json({ error: 'Could not create the pull request for this change — try again in a moment.' });
+          // dead end. Nothing was mutated yet.
+          if (prError && prError.code === 'no_commits') {
+            // Permanent condition: the branch has no commits on GitHub
+            // (typically committed locally but never pushed). "Try again
+            // in a moment" would loop forever — tell the truth instead.
+            return res.status(409).json({
+              error: 'This change has no committed code on its branch yet, so there is nothing to open a pull request for. Re-run your request in the session so it produces and pushes a commit, then propose again.',
+            });
+          }
+          return res.status(502).json({
+            error: 'Could not create the pull request for this change. Please retry; if it keeps failing, re-run your request in the session.',
+          });
         }
       }
 

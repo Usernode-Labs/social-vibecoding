@@ -460,35 +460,51 @@ test('shouldPostHeadlessQuestionComment: only pure-text question outcomes qualif
 
 // ── 4. specHasBlockingQuestions (#178) ──────────────────────────────────
 
-test('specHasBlockingQuestions: matches Questions/Open questions ATX headings only', () => {
+test('specHasBlockingQuestions: blocks only when a Questions section has real content', () => {
   const pool = makeMockPool();
   const loaded = loadSessions(pool);
   try {
     const has = loaded.subject.specHasBlockingQuestions;
+    // Real questions → blocking.
     assert.equal(has('# Goal\n\n## Questions\n\n1. Soft or hard delete?'), true);
     assert.equal(has('## Goal\n\n### Open questions\n\n1. Which screen?'), true);
-    assert.equal(has('#### QUESTIONS'), true);
     assert.equal(has('# Open Question\n\n1. One blocker.'), true);
+    assert.equal(has('### Questions\n\n1. Soft or hard delete? (default: soft)'), true);
+    // #196: a Questions heading whose body is empty or a "nothing here"
+    // marker is NOT a blocker — the scout's habitual "None" no longer parks.
+    assert.equal(has('#### QUESTIONS'), false);
+    assert.equal(has('## Questions\n\nNone'), false);
+    assert.equal(has('### Questions\n\nN/A'), false);
+    assert.equal(has('### Questions\n\n_None_'), false);
+    assert.equal(has('### Questions\n\n- None'), false);
+    assert.equal(has('### Questions\n\nNone — resolved from code.'), false);
+    assert.equal(has('### Questions\n\nNone blocking — see Considerations.'), false);
     // Prose mentions and non-heading lines don't count.
     assert.equal(has('Questions arise when reading this code.'), false);
     assert.equal(has('# Goal\n\nNo open items.'), false);
     assert.equal(has(''), false);
     assert.equal(has(null), false);
-    // Chosen semantics: the regex keys on the heading PREFIX, so a heading
-    // like "Questions we answered" still matches (a safe false positive —
-    // it only downgrades a buildable spec to a questions round-trip).
-    assert.equal(has('## Questions we answered'), true);
+    // The regex keys on the heading PREFIX, so a heading like "Questions we
+    // answered" still matches as a heading — but its body is now inspected:
+    // an empty body reads non-blocking, real prose reads blocking.
+    assert.equal(has('## Questions we answered'), false);
+    assert.equal(has('## Questions we answered\n\nBut should we also paginate the list?'), true);
     // #196: the two-half spec convention places blockers at the END of
-    // the user-facing half as "### Questions" — still detected.
-    assert.equal(has([
+    // the user-facing half as "### Questions", stopping at the next
+    // same-or-higher-level heading (## Technical implementation).
+    const twoHalf = (questionsBody) => [
       '# Title',
       '## User-facing changes',
       'Stuff changes.',
-      '### Questions',
-      '1. A or B? (default: A)',
+      `### Questions\n\n${questionsBody}`,
       '## Technical implementation',
       'Details.',
-    ].join('\n\n')), true);
+    ].join('\n\n');
+    assert.equal(has(twoHalf('1. A or B? (default: A)')), true);
+    assert.equal(has(twoHalf('None')), false);
+    // Deeper sub-headings stay part of the section (stop only at <= level),
+    // so a question nested under a #### sub-heading is still detected.
+    assert.equal(has('### Questions\n\n#### Sub-point\n\n1. A real blocker?'), true);
   } finally {
     loaded.restore();
   }
@@ -501,6 +517,9 @@ test('specHasBlockingQuestions: matches Questions/Open questions ATX headings on
 
 const SPEC_WITH_QUESTIONS = '# Fix the thing\n\n## Plan\n\nDo it.\n\n## Questions\n\n1. Soft or hard delete? (default: soft)';
 const SPEC_WITHOUT_QUESTIONS = '# Fix the thing\n\n## Plan\n\nDo it.\n\n## Considerations\n\nNone blocking.';
+// #196: the scout habitually appends a "### Questions\nNone" section even
+// when nothing blocks — this must read as buildable, not parked.
+const SPEC_WITH_EMPTY_QUESTIONS = '# Fix the thing\n\n## Plan\n\nDo it.\n\n### Questions\n\nNone';
 
 // llm.streamChat stub that replays `responses` in order (repeating the
 // last one if called again).
@@ -647,6 +666,66 @@ test('scout resolves everything (no Questions section) → outcome spec, no comm
     assert.ok(!pool.state.messages.some(
       (m) => /Posted clarifying questions/.test(m.content || '')
     ));
+  } finally {
+    await srv.close();
+    loaded.restore();
+  }
+});
+
+// #196: a scout-authored spec that ends with "### Questions\nNone" is NOT a
+// blocker — the decision turn must dispatch the build (no comment posted),
+// in contrast to SPEC_WITH_QUESTIONS which still routes to the reporter.
+test('scout writes "Questions: None" → decision turn builds, no comment posted', async () => {
+  const commentCalls = [];
+  const execCalls = [];
+  const pool = makeMockPool();
+  const loaded = loadSessions(pool, {
+    llm: sequencedLlm([
+      SCOUT_CALL_TURN,
+      // Decision turn: the spec is unblocked, so dispatch the build.
+      {
+        text: 'Spec has no blockers (Questions: None) — implementing now.',
+        toolUses: [{ id: 'tu-build', name: 'dispatch_claude_code', input: { prompt: 'Build it.' } }],
+        usage: USAGE,
+        rawContent: [],
+      },
+      // Phase-3 wrap-up text after the build returns.
+      { text: 'Implemented the spec and pushed the change.', toolUses: [], usage: USAGE, rawContent: [] },
+    ]),
+    worker: {
+      execInWorker: async (sessionId, opts) => {
+        execCalls.push(opts.mode);
+        if (opts.mode === 'scout') {
+          return { lastResultText: SPEC_WITH_EMPTY_QUESTIONS, sessionId: 'cc-1' };
+        }
+        // Build stub: a clean exit that committed nothing. hasChanges is
+        // false so the build degrades to outcome 'spec' (no real staging
+        // side effects in the test) — but crucially it was DISPATCHED, and
+        // the run never routes to the reporter.
+        return { lastResultText: 'done', sessionId: 'cc-2', exitCode: 0, ahead: 0, sha: null };
+      },
+    },
+    github: {
+      createIssueComment: async (owner, repo, issueNumber, body) => {
+        commentCalls.push({ issueNumber, body });
+      },
+    },
+  });
+  const srv = await startTestServer(loaded);
+  try {
+    await startHeadlessRun(srv);
+    await waitFor(() => pool.state.terminal !== null);
+
+    // The build WAS dispatched (detector now discriminates by content).
+    assert.deepEqual(execCalls, ['scout', 'build']);
+    // Finalizes as spec_code on a successful build, or spec if the build
+    // stub committed nothing — either way NOT 'question'.
+    assert.ok(['spec_code', 'spec'].includes(pool.state.terminal.outcome),
+      `expected spec_code|spec, got ${pool.state.terminal.outcome}`);
+    assert.equal(pool.state.specMd, SPEC_WITH_EMPTY_QUESTIONS);
+    // No reporter-facing comment is posted for an unblocked spec.
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(commentCalls.length, 0);
   } finally {
     await srv.close();
     loaded.restore();
