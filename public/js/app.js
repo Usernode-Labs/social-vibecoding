@@ -1463,24 +1463,33 @@ const App = {
       const appData = (typeof AppView !== 'undefined' && AppView.appData) || null;
       const repoUrl = appData?.repo_url || '';
       const hasRepo = /github\.com\/[^/]+\/[^/]+/.test(repoUrl);
-      // fromDev callers are by construction inside an open app's dev
-      // view, so the header button's currentTab === 'app' gate doesn't
-      // apply. The self-hosted platform app is excluded: targeting "this
-      // app" would file into the same platform repo via a different
+      // An app is "open" whenever its view is mounted — on the running
+      // App tab OR the Dev screen. Both `currentApp` and `appData` are
+      // cleared together by AppView.close() (on navigateHome /
+      // navigateToLeaderboard), so they're never stale on the
+      // home/leaderboard screens. This unifies the old fromDev-vs-header
+      // split: the dev plus-menu's "New issue" item (currentTab==='dev')
+      // and the top-bar Send feedback button now resolve identically, so
+      // the header button targets the app whose dev screen is open
+      // instead of falling back to "No app open" (#312).
+      const appIsOpen = !!App.currentApp && !!appData
+        && (App.currentTab === 'app' || App.currentTab === 'dev');
+      // The self-hosted platform app is excluded: targeting "this app"
+      // would file into the same platform repo via a different
       // credential path and skip the usernode label, so we force the
-      // Platform target instead.
-      const canTargetApp = opts.fromDev
-        ? !!appData && hasRepo && !appData.self_hosted
-        : !!App.currentApp && App.currentTab === 'app' && hasRepo;
+      // Platform target instead. (Self-hosted apps hide their App tab
+      // and land on Dev, so this only ever fires on the dev screen.)
+      const canTargetApp = appIsOpen && hasRepo && !appData.self_hosted;
       if (canTargetApp) {
         feedbackTargetApp.textContent = appData?.name ? `This app (${appData.name})` : 'This app';
         setAppTargetEnabled(true);
         // Default to the app the user is looking at — most likely intent.
         setFeedbackTarget('app');
       } else {
-        // With an app actually open (dev-view caller) keep its name on
-        // the grayed label — "No app open" would be wrong there.
-        feedbackTargetApp.textContent = (opts.fromDev && appData)
+        // With an app actually open (no repo yet, or self-hosted) keep
+        // its name on the grayed label — "No app open" would be wrong
+        // there. Only show "No app open" when no app is really open.
+        feedbackTargetApp.textContent = appData
           ? (appData.name ? `This app (${appData.name})` : 'This app')
           : 'No app open';
         setAppTargetEnabled(false);
