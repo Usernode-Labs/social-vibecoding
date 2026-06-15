@@ -6,7 +6,7 @@ const staging = require('../services/staging');
 const docker = require('../services/docker');
 const { checkAndResolveConflicts, resolveAndMaybeRetry, isResolving } = require('../services/conflict-resolver');
 const { sendSystemMessage, pushNotificationToUser } = require('../services/ws');
-const { getActiveUserStats, isUserActive } = require('../services/active-users');
+const { getActiveUserStats, isUserActive, mergeGate } = require('../services/active-users');
 const notifications = require('../services/notifications');
 const { isAppLocked, hasAdminYesVote } = require('../services/admin-approval');
 const events = require('../services/events');
@@ -26,7 +26,10 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 function stagingMockProposals() {
   const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
-  const mk = (id, prNumber, title, hours, yes, no, chat) => ({
+  const hoursAhead = (h) => new Date(Date.now() + h * 3600 * 1000).toISOString();
+  // gate = { required, windowEndsAt, contested } — precomputed because mock
+  // rows bypass the live `active`/promoted_at gate computation in /promoted.
+  const mk = (id, prNumber, title, hours, yes, no, chat, gate = {}) => ({
     id,
     pr_number: prNumber,
     pr_url: null,
@@ -53,23 +56,44 @@ function stagingMockProposals() {
     last_message_at: chat ? hoursAgo(Math.max(0, hours - 1)) : null,
     visuals: null,
     resolving: false,
+    // Dynamic merge-gate fields (span every regime across the mock set).
+    votes_required: gate.required ?? Math.max(yes, 1),
+    merge_window_ends_at: gate.windowEndsAt ?? null,
+    contested: gate.contested ?? false,
   });
   return [
+    // Unopposed, thin support: threshold met but a multi-day visibility
+    // window still running → "Merging in ~2d" countdown pill.
     mk(9000001, 900101,
       '[Mock] Long-title test: rework the proposal card header so the '
       + 'discussion badge and vote tally wrap gracefully on narrow phones',
-      3, 1, 0, 4),
+      3, 2, 0, 4, { required: 2, windowEndsAt: hoursAhead(46) }),
+    // Near-majority, no opposition: window almost elapsed → short
+    // "Merging in Xh" countdown.
+    mk(9000005, 900105,
+      '[Mock] Near-majority test: tighten the proposal card spacing on tablet widths',
+      20, 5, 0, 3, { required: 3, windowEndsAt: hoursAhead(5) }),
+    // Majority reached: no window, would merge immediately in prod.
+    mk(9000006, 900106,
+      '[Mock] Majority test: bump the vote pill contrast for accessibility',
+      6, 6, 0, 2, { required: 5, windowEndsAt: null }),
+    // One No vote: eased threshold restored, window pushed back out.
     mk(9000002, 900102,
       '[Mock] Long-title test: walk brand-new collaborators through '
       + 'voting, kudos and dev sessions step by step',
-      11, 0, 1, 0),
+      11, 1, 1, 0, { required: 5, windowEndsAt: hoursAhead(120) }),
+    // Contested (No >= 1/3): window no longer applies, pure full-majority
+    // count gate — no countdown, "Contested" treatment.
+    mk(9000007, 900107,
+      '[Mock] Contested test: switch the default theme from light to dark',
+      8, 4, 3, 5, { required: 6, windowEndsAt: null, contested: true }),
     // #239: a row mid-auto-conflict-resolution so the "Resolving
     // conflicts…" badge is verifiable on staging via ?demo=1 without
     // manufacturing a real merge conflict.
     {
       ...mk(9000003, 900103,
         '[Mock] Resolving-state test: add a dark-mode toggle to the settings drawer',
-        1, 2, 0, 2),
+        1, 2, 0, 2, { required: 2, windowEndsAt: hoursAhead(40) }),
       resolving: true,
     },
     // #124: a visibility-change proposal (a dapp.json PR opened by the
@@ -77,7 +101,7 @@ function stagingMockProposals() {
     // reviewable on staging via ?demo=1.
     mk(9000004, 900104,
       '[Mock] Make this app invite-only build, public to view',
-      2, 1, 0, 1),
+      2, 1, 0, 1, { required: 2, windowEndsAt: hoursAhead(60) }),
   ];
 }
 
@@ -531,16 +555,32 @@ function voteRoutes(config) {
       }
 
       res.json({
-        proposals: sessions.map((s) => ({
-          ...s,
-          majority: statsByApp[s.app_id]?.majority || 1,
-          activeUsers: statsByApp[s.app_id]?.active || 1,
-        })),
-        governance: governance.map((g) => ({
-          ...g,
-          majority: statsByApp[g.app_id]?.majority || 1,
-          activeUsers: statsByApp[g.app_id]?.active || 1,
-        })),
+        proposals: sessions.map((s) => {
+          const active = statsByApp[s.app_id]?.active || 1;
+          const gate = mergeGate(active, s.yes_count, s.no_count, s.promoted_at || s.created_at);
+          return {
+            ...s,
+            majority: statsByApp[s.app_id]?.majority || 1,
+            activeUsers: active,
+            votes_required: gate.required,
+            merge_window_ends_at: gate.windowEndsAt,
+            contested: gate.contested,
+          };
+        }),
+        governance: governance.map((g) => {
+          const active = statsByApp[g.app_id]?.active || 1;
+          // Governance proposals have no promote step — created_at is the
+          // visibility-window anchor. down votes feed both gates.
+          const gate = mergeGate(active, g.up_count, g.down_count, g.created_at);
+          return {
+            ...g,
+            majority: statsByApp[g.app_id]?.majority || 1,
+            activeUsers: active,
+            votes_required: gate.required,
+            merge_window_ends_at: gate.windowEndsAt,
+            contested: gate.contested,
+          };
+        }),
       });
     } catch (err) {
       log.error('votes', 'Failed to list my proposals', { message: err.message });
@@ -652,6 +692,22 @@ function voteRoutes(config) {
       // it. Cheap query (two EXISTS lookups), runs alongside the
       // existing active-stats query.
       const viewerActive = await isUserActive(pool, appRows[0].id, userId);
+
+      // Per-row dynamic merge gate. The eased threshold and the visibility
+      // window both depend on this row's own yes/no counts and open time, so
+      // they can't be a single app-level number. Mock rows (?demo=1) already
+      // carry precomputed values that bypass the live `active` lookup — leave
+      // those untouched.
+      for (const row of rows) {
+        if (row.votes_required != null) continue;
+        const gate = mergeGate(
+          activeUsers, row.yes_count, row.no_count,
+          row.promoted_at || row.created_at
+        );
+        row.votes_required = gate.required;
+        row.merge_window_ends_at = gate.windowEndsAt;
+        row.contested = gate.contested;
+      }
 
       res.json({
         promoted: rows,
@@ -952,9 +1008,40 @@ async function checkAndMerge(config, pool, session, options = {}) {
   );
   const yesCount = parseInt(yesRows[0].cnt);
 
+  // No votes now feed BOTH merge gates: they raise the eased Yes threshold
+  // (`required`) and push the visibility window back out. See
+  // services/active-users.js → mergeGate.
+  const { rows: noRows } = await pool.query(
+    `SELECT COUNT(*) as cnt FROM pr_votes WHERE session_id = $1 AND vote = 'no'`,
+    [session.id]
+  );
+  const noCount = parseInt(noRows[0].cnt);
+
+  // The proposal's "opened for voting" anchor is promoted_at (falls back to
+  // created_at defensively). Both gates derive from one snapshot.
+  const openedAt = session.promoted_at || session.created_at || null;
+  const gate = mergeGate(activeCount, yesCount, noCount, openedAt);
+  const required = gate.required;
+
   if (!force) {
-    if (yesCount < majority) {
-      return { merged: false, yesCount, needed: majority };
+    // Gate 1: eased Yes-vote threshold (dynamic; capped at simple majority).
+    if (yesCount < required) {
+      return { merged: false, yesCount, needed: required, windowEndsAt: gate.windowEndsAt };
+    }
+
+    // Gate 2: minimum visibility window. The threshold is met but the
+    // proposal hasn't been visible long enough yet — stay 'promoted' (don't
+    // claim the merge) so it can keep gathering votes; the next vote after
+    // the window, or the stale-PR sweeper pass, will re-attempt the merge.
+    if (!gate.windowElapsed) {
+      log.info('votes', 'Threshold met but inside visibility window; deferring merge', {
+        sessionId: session.id, yesCount, noCount, required,
+        windowMs: gate.windowMs, windowEndsAt: gate.windowEndsAt,
+      });
+      return {
+        merged: false, yesCount, needed: required,
+        windowEndsAt: gate.windowEndsAt, waitingForWindow: true,
+      };
     }
 
     // Locked apps additionally require at least one admin yes vote (see
@@ -965,10 +1052,10 @@ async function checkAndMerge(config, pool, session, options = {}) {
     if (await isAppLocked(pool, session.app_id)) {
       const adminYes = await hasAdminYesVote(pool, session.id);
       if (!adminYes) {
-        log.info('votes', 'Majority reached but app is locked; awaiting admin yes', {
-          sessionId: session.id, yesCount, majority,
+        log.info('votes', 'Threshold + window met but app is locked; awaiting admin yes', {
+          sessionId: session.id, yesCount, required,
         });
-        return { merged: false, yesCount, needed: majority, awaitingAdmin: true };
+        return { merged: false, yesCount, needed: required, awaitingAdmin: true };
       }
     }
 
@@ -1007,7 +1094,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
           });
         });
       }
-      return { merged: false, yesCount, needed: majority, behindMain: session.behind_main };
+      return { merged: false, yesCount, needed: required, behindMain: session.behind_main };
     }
   }
   // For admin force-merge we deliberately skip the behind_main pre-check
@@ -1062,7 +1149,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
   log.info('votes',
     force ? 'Admin force-merge invoked, merging' : 'Majority reached, merging',
     {
-      sessionId: session.id, yesCount, needed: majority,
+      sessionId: session.id, yesCount, needed: required,
       ...(force && forceBy ? { forcedBy: forceBy.username } : {}),
     });
 
@@ -1133,17 +1220,20 @@ async function checkAndMerge(config, pool, session, options = {}) {
 
     // #58: snapshot the vote threshold + active-user count in effect at
     // this merge, so the merged-PR pill shows the historical "yes / N"
-    // instead of drifting with the live majority. majority/activeCount come
-    // from getActiveUserStats() at the top of this function. COALESCE keeps
-    // any earlier snapshot (defensive; the promoted→merging claim already
-    // guarantees a single merge transition).
+    // instead of drifting with the live threshold. `required` is the eased
+    // dynamic threshold (services/active-users.js → requiredVotes) actually
+    // applied to this merge; activeCount comes from getActiveUserStats() at
+    // the top of this function. The visibility window is intentionally NOT
+    // snapshotted (a merged row just shows its historical count). COALESCE
+    // keeps any earlier snapshot (defensive; the promoted→merging claim
+    // already guarantees a single merge transition).
     await pool.query(
       `UPDATE chat_sessions SET status = 'merged', merged_at = NOW(),
                                 merge_commit_sha = COALESCE($2, merge_commit_sha),
                                 votes_required = COALESCE(votes_required, $3),
                                 active_users_at_merge = COALESCE(active_users_at_merge, $4)
        WHERE id = $1`,
-      [session.id, mergeCommitSha, majority, activeCount]
+      [session.id, mergeCommitSha, required, activeCount]
     );
 
     // pr_merged is the terminal stage of the PR-promotion funnel and the

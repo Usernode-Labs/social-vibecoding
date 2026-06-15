@@ -43,6 +43,143 @@
 // mental model — "everyone using the platform is a user of the
 // platform" — and unblocks self-app voting/governance.
 
+// ---------------------------------------------------------------------------
+// Dynamic merge gates (see SPEC: "Visibility window + dynamic threshold").
+//
+// Two independent, pure gates that BOTH must hold before a proposal merges:
+//
+//   1. requiredVotes(active, noCount) — the eased Yes-vote threshold. Largest
+//      discount when unopposed; rises back toward the simple majority M as No
+//      votes arrive; never exceeds M and never drops below an anti-self-merge
+//      floor. Replaces the old fixed `majority` count gate.
+//
+//   2. mergeWindowMs(active, yesCount, noCount) — a minimum *visibility window*
+//      measured from when the proposal opened. Shrinks as the Yes fraction
+//      climbs (7d at low participation → 3d at 1/3 → 0 at majority, with a
+//      front-loaded non-linear drop between 1/3 and 1/2), and is pushed back
+//      out toward the 7d max by opposition. A clear majority (yes >= M) or a
+//      Contested proposal (No fraction >= 1/3) collapses the window to 0.
+//
+// Both are pure given the constants below, so they're unit-testable in
+// isolation and shared verbatim by the merge route, the governance paths, the
+// stale-PR sweeper, and the client (via the serialized window-end timestamp).
+// ---------------------------------------------------------------------------
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Dynamic-threshold knobs. Defaults: a quarter-of-active discount when
+// unopposed (BASE_DISCOUNT_DIVISOR=4), each No worth two votes of that
+// discount (DOWN_WEIGHT=2), never below two Yes once an app has >=2 active
+// users (FLOOR=2). Env-overridable to mirror the rest of config.js.
+const BASE_DISCOUNT_DIVISOR = parseInt(process.env.VOTE_BASE_DISCOUNT_DIVISOR || '4', 10);
+const DOWN_WEIGHT = parseInt(process.env.VOTE_DOWN_WEIGHT || '2', 10);
+const FLOOR = parseInt(process.env.VOTE_FLOOR || '2', 10);
+
+// Visibility-window knobs (windows in ms, like prStaleNotifyMs in config.js).
+const WINDOW_MAX_MS = parseInt(process.env.MERGE_WINDOW_MAX_MS || String(7 * DAY_MS), 10);
+const WINDOW_MID_MS = parseInt(process.env.MERGE_WINDOW_MID_MS || String(3 * DAY_MS), 10);
+const WINDOW_CURVE_EXP = parseFloat(process.env.MERGE_WINDOW_CURVE_EXP || '3');
+// Fraction breakpoints. The mid mark is where the window settles to
+// WINDOW_MID_MS; the majority mark is where it collapses to 0; the contested
+// mark is the No fraction at which the window stops applying entirely.
+const YES_MID_FRAC = 1 / 3;
+const YES_MAJORITY_FRAC = 1 / 2;
+const CONTESTED_NO_FRAC = 1 / 3;
+
+function clamp(n, lo, hi) {
+  return Math.min(Math.max(n, lo), hi);
+}
+
+// The eased Yes-vote threshold. Pure. M = floor(active/2)+1 is both the
+// simple majority and the hard upper cap (opposition can restore the bar but
+// never push it above majority — no permanent deadlock).
+function requiredVotes(active, noCount) {
+  const a = Math.max(parseInt(active, 10) || 0, 1);
+  const no = Math.max(parseInt(noCount, 10) || 0, 0);
+  const M = Math.floor(a / 2) + 1;
+  const discount = Math.max(0, Math.floor(a / BASE_DISCOUNT_DIVISOR) - DOWN_WEIGHT * no);
+  const floorEff = Math.min(FLOOR, M);
+  return clamp(M - discount, floorEff, M);
+}
+
+// Whether opposition has crossed the "Contested" line — at/above this the
+// window no longer applies and the proposal is a pure simple-majority count
+// gate (today's behaviour).
+function isContested(active, noCount) {
+  const a = Math.max(parseInt(active, 10) || 0, 1);
+  const no = Math.max(parseInt(noCount, 10) || 0, 0);
+  return no / a >= CONTESTED_NO_FRAC;
+}
+
+// The minimum visibility window in ms. Pure. See the block comment above for
+// the shape; returns 0 whenever the window doesn't gate (majority reached or
+// contested).
+function mergeWindowMs(active, yesCount, noCount) {
+  const a = Math.max(parseInt(active, 10) || 0, 1);
+  const yes = Math.max(parseInt(yesCount, 10) || 0, 0);
+  const no = Math.max(parseInt(noCount, 10) || 0, 0);
+  const M = Math.floor(a / 2) + 1;
+  // A clear majority satisfies the window instantly ("majority just merges").
+  if (yes >= M) return 0;
+  const yesFrac = yes / a;
+  const noFrac = no / a;
+  // Contested: opposition has removed the window entirely.
+  if (noFrac >= CONTESTED_NO_FRAC) return 0;
+
+  let yesWindow;
+  if (yesFrac >= YES_MAJORITY_FRAC) {
+    // >= 1/2 of active said Yes: collapse to instant.
+    yesWindow = 0;
+  } else if (yesFrac < YES_MID_FRAC) {
+    // Low participation: linear ramp 7d (at 0) -> 3d (at 1/3).
+    const f = yesFrac / YES_MID_FRAC;
+    yesWindow = WINDOW_MAX_MS + f * (WINDOW_MID_MS - WINDOW_MAX_MS);
+  } else {
+    // Between 1/3 and 1/2: non-linear, front-loaded 3d -> 0. Stays near 3d
+    // for most of the range, then drops sharply as Yes nears a majority.
+    const t = (yesFrac - YES_MID_FRAC) / (YES_MAJORITY_FRAC - YES_MID_FRAC);
+    yesWindow = WINDOW_MID_MS * (1 - Math.pow(t, WINDOW_CURVE_EXP));
+  }
+
+  // No-vote pushback: blend the Yes-driven window back toward the max on a
+  // gradient as the No fraction rises from 0 toward the contested cut-off.
+  const p = clamp(noFrac / CONTESTED_NO_FRAC, 0, 1);
+  const windowMs = yesWindow + p * (WINDOW_MAX_MS - yesWindow);
+  return Math.round(clamp(windowMs, 0, WINDOW_MAX_MS));
+}
+
+// One-call convenience that derives every field the merge route, sweeper, and
+// client need from a single (active, yes, no, openedAt) snapshot. `now` and
+// `openedAt` accept a Date, ms number, or ISO string; `openedAt` falls back to
+// `now` when missing (so a proposal with no anchor is treated as just-opened).
+function mergeGate(active, yesCount, noCount, openedAt, now) {
+  const toMs = (v, fallback) => {
+    if (v == null) return fallback;
+    if (v instanceof Date) return v.getTime();
+    if (typeof v === 'number') return v;
+    const ms = new Date(v).getTime();
+    return Number.isFinite(ms) ? ms : fallback;
+  };
+  const nowMs = toMs(now, Date.now());
+  const openedMs = toMs(openedAt, nowMs);
+  const required = requiredVotes(active, noCount);
+  const windowMs = mergeWindowMs(active, yesCount, noCount);
+  const contested = isContested(active, noCount);
+  const yes = Math.max(parseInt(yesCount, 10) || 0, 0);
+  const thresholdMet = yes >= required;
+  const windowElapsed = windowMs <= 0 || nowMs - openedMs >= windowMs;
+  const windowEndsAt = windowMs > 0 ? new Date(openedMs + windowMs).toISOString() : null;
+  return {
+    required,
+    windowMs,
+    windowEndsAt,
+    contested,
+    thresholdMet,
+    windowElapsed,
+    mergeable: thresholdMet && windowElapsed,
+  };
+}
+
 async function getAppMeta(pool, appId) {
   const { rows } = await pool.query(
     'SELECT self_hosted, collab_visibility FROM apps WHERE id = $1',
@@ -180,4 +317,24 @@ async function listActiveUserIds(pool, appId) {
   return rows.map((r) => r.id);
 }
 
-module.exports = { getActiveUserStats, isUserActive, listActiveUserIds };
+module.exports = {
+  getActiveUserStats,
+  isUserActive,
+  listActiveUserIds,
+  requiredVotes,
+  mergeWindowMs,
+  isContested,
+  mergeGate,
+  // Exported for tests / config visibility.
+  MERGE_GATE_CONSTANTS: {
+    BASE_DISCOUNT_DIVISOR,
+    DOWN_WEIGHT,
+    FLOOR,
+    WINDOW_MAX_MS,
+    WINDOW_MID_MS,
+    WINDOW_CURVE_EXP,
+    YES_MID_FRAC,
+    YES_MAJORITY_FRAC,
+    CONTESTED_NO_FRAC,
+  },
+};
