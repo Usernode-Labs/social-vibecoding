@@ -182,8 +182,13 @@ function makeMockPool(initial = {}) {
       return { rows: [row] };
     }
     // Transcript inserts (seed, statuses, assistant turns, progress rows).
+    // Capture the metadata column when present (last param on inserts that
+    // name a `metadata` column) so #32 tests can assert persisted
+    // suggestions on the assistant rows.
     if (/INSERT INTO chat_session_messages/i.test(s)) {
-      state.messages.push({ role: /'user'/.test(s) ? 'user' : (/'system'/.test(s) ? 'system' : 'assistant'), content: params[1] });
+      const role = /'user'/.test(s) ? 'user' : (/'system'/.test(s) ? 'system' : 'assistant');
+      const metadata = /metadata/i.test(s) ? params[params.length - 1] : undefined;
+      state.messages.push({ role, content: params[1], metadata });
       return { rows: [{ id: state.nextId++ }] };
     }
     // Scout output → spec doc (runScoutTool), read back by loadSessionSpec.
@@ -721,6 +726,110 @@ test('scout writes "Questions: None" → decision turn builds, no comment posted
     // No reporter-facing comment is posted for an unblocked spec.
     await new Promise((r) => setTimeout(r, 100));
     assert.equal(commentCalls.length, 0);
+  } finally {
+    await srv.close();
+    loaded.restore();
+  }
+});
+
+// ── #32: decision-turn phase-3 persists metadata.suggestions ────────────
+// On the rejected-build path (the Mayor dispatches a build over an open
+// Questions section, the hard rail rejects it) the phase-3 wrap-up
+// re-asks the human-only questions and now exposes suggest_answers. When
+// the Mayor returns it, the wrap-up row must persist metadata.suggestions
+// so a cloned session can forward the chips; when it doesn't, the row must
+// carry an empty-metadata object (never a missing column).
+
+const DECISION_SUGGESTIONS = [
+  { question: 'Soft or hard delete?', answers: ['Soft delete', 'Hard delete'] },
+];
+
+function lastAssistantMeta(pool) {
+  const assistants = pool.state.messages.filter((m) => m.role === 'assistant');
+  const last = assistants[assistants.length - 1];
+  return last ? last.metadata : undefined;
+}
+
+test('decision-turn question path persists metadata.suggestions when suggest_answers is returned', async () => {
+  const commentCalls = [];
+  const pool = makeMockPool();
+  const loaded = loadSessions(pool, {
+    llm: sequencedLlm([
+      SCOUT_CALL_TURN,
+      // Decision turn dispatches a build over the open Questions section.
+      {
+        text: 'Looks simple, implementing now.',
+        toolUses: [{ id: 'tu-build', name: 'dispatch_claude_code', input: { prompt: 'Build it.' } }],
+        usage: USAGE,
+        rawContent: [],
+      },
+      // Phase-3 wrap-up: the reporter-facing questions PLUS a
+      // suggest_answers tool call carrying the answer chips.
+      {
+        text: '1. Soft or hard delete? (default: soft)',
+        toolUses: [{
+          id: 'tu-suggest',
+          name: 'suggest_answers',
+          input: { questions: DECISION_SUGGESTIONS },
+        }],
+        usage: USAGE,
+        rawContent: [],
+      },
+    ]),
+    worker: {
+      execInWorker: async () => ({ lastResultText: SPEC_WITH_QUESTIONS, sessionId: 'cc-1' }),
+    },
+    github: {
+      createIssueComment: async (owner, repo, issueNumber, body) => {
+        commentCalls.push({ issueNumber, body });
+      },
+    },
+  });
+  const srv = await startTestServer(loaded);
+  try {
+    await startHeadlessRun(srv);
+    await waitFor(() => commentCalls.length > 0);
+
+    assert.deepEqual(pool.state.terminal, { status: 'ready', outcome: 'question' });
+    const meta = JSON.parse(lastAssistantMeta(pool));
+    assert.deepEqual(meta.suggestions, DECISION_SUGGESTIONS);
+  } finally {
+    await srv.close();
+    loaded.restore();
+  }
+});
+
+test('decision-turn question path persists empty metadata when suggest_answers is absent', async () => {
+  const commentCalls = [];
+  const pool = makeMockPool();
+  const loaded = loadSessions(pool, {
+    llm: sequencedLlm([
+      SCOUT_CALL_TURN,
+      {
+        text: 'Looks simple, implementing now.',
+        toolUses: [{ id: 'tu-build', name: 'dispatch_claude_code', input: { prompt: 'Build it.' } }],
+        usage: USAGE,
+        rawContent: [],
+      },
+      // Phase-3 wrap-up: questions only, the Mayor declined suggest_answers.
+      { text: '1. Soft or hard delete? (default: soft)', toolUses: [], usage: USAGE, rawContent: [] },
+    ]),
+    worker: {
+      execInWorker: async () => ({ lastResultText: SPEC_WITH_QUESTIONS, sessionId: 'cc-1' }),
+    },
+    github: {
+      createIssueComment: async (owner, repo, issueNumber, body) => {
+        commentCalls.push({ issueNumber, body });
+      },
+    },
+  });
+  const srv = await startTestServer(loaded);
+  try {
+    await startHeadlessRun(srv);
+    await waitFor(() => commentCalls.length > 0);
+
+    assert.deepEqual(pool.state.terminal, { status: 'ready', outcome: 'question' });
+    assert.deepEqual(JSON.parse(lastAssistantMeta(pool)), {});
   } finally {
     await srv.close();
     loaded.restore();

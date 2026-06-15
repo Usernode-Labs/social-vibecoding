@@ -35,6 +35,7 @@ async function migrate(config) {
   await seedStagingVisuals(pool);
   await seedStagingLeaderboardProfile(pool);
   await seedStagingQaSession(pool, config);
+  await seedStagingCloneQuestionSuggestions(pool, config);
   await seedStagingSpecViewerSessions(pool, config);
   await seedStagingSpecUserShareFixtures(pool, config);
   await seedStagingHeadlessFixtures(pool, config);
@@ -1777,6 +1778,114 @@ async function seedStagingQaSession(pool, config) {
   );
 
   log.info('db', 'Staging Q/A fixture seeded', {
+    appId,
+    owner: owner.username,
+    sessionId,
+  });
+}
+
+// #32: reproduces the "session cloned from an auto run that ended in
+// questions" shape so a tester can verify the suggested-answer chips
+// render under the FOLLOW-UP message (the last row) without a live LLM
+// run. An ordinary active, non-headless session with, in order:
+//   1. a user seed message (the issue text),
+//   2. an assistant message holding the clarifying questions WITH
+//      metadata.suggestions (the cloned question turn), and
+//   3. an assistant follow-up message — text in the spirit of
+//      buildHeadlessFollowUpMessage's question branch — ALSO carrying the
+//      same metadata.suggestions.
+// The chips must appear under the follow-up (row 3), confirming Defect 2
+// (Part B's forwarding) is fixed. chat_sessions / chat_session_messages
+// are staging:private, hence the seed. Owner is the first-admin selection
+// shared with the other session fixtures; idempotent via branch name.
+async function seedStagingCloneQuestionSuggestions(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging clone-question fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging clone-question fixture skipped: no users');
+    return;
+  }
+  const owner = userRows[0];
+
+  const branch = 'staging-fixture/clone-question-suggestions';
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, branch]
+  );
+  if (existing.length) return;
+
+  const { rows: sessionRows } = await pool.query(
+    `INSERT INTO chat_sessions
+       (app_id, user_id, branch_name, pr_title, status, created_at)
+     VALUES
+       ($1, $2, $3, $4, 'active', NOW() - INTERVAL '20 minutes')
+     RETURNING id`,
+    [appId, owner.id, branch, '[staging fixture] Staging demo: chips on a cloned auto-question session']
+  );
+  const sessionId = sessionRows[0].id;
+
+  // Reuse the two-question shape from seedStagingQaSession.
+  const suggestions = [
+    {
+      question: 'Which header?',
+      answers: ['The platform-wide top bar', 'The app view header'],
+    },
+    {
+      question: 'What does "nicer" mean?',
+      answers: ['Tidier spacing', 'A bolder visual refresh'],
+    },
+  ];
+
+  // 1. The issue text the auto session worked from.
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, created_at)
+     VALUES ($1, 'user', $2, NOW() - INTERVAL '19 minutes')`,
+    [sessionId, 'Please work on GitHub issue #42: "Make the header nicer".']
+  );
+
+  // 2. The cloned question turn — clarifying questions WITH suggestions.
+  const questionContent = 'Two quick questions before I can proceed:\n\n'
+    + '1. Which header — the platform-wide top bar, or the app view header? (suggested: the platform-wide top bar)\n'
+    + '2. What does "nicer" mean here — tidier spacing, or a bolder visual refresh? (suggested: tidier spacing)';
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+     VALUES ($1, 'assistant', $2, $3, NOW() - INTERVAL '18 minutes')`,
+    [sessionId, questionContent, JSON.stringify({ suggestions })]
+  );
+
+  // 3. The appended follow-up — last row, carrying the SAME suggestions so
+  // the chips render under it (the thing Part B fixes).
+  const followUpContent =
+    'This session was cloned from an auto session that ran unattended on GitHub issue #42. '
+    + "You're on your own branch (forked from the auto session's, so its commits carry over).\n\n"
+    + 'Where things stand: the auto session ran into something that needs a human decision — '
+    + 'see its questions above (the same questions were also posted as a comment on the GitHub '
+    + "issue). Answer here and we'll continue from where it left off.";
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+     VALUES ($1, 'assistant', $2, $3, NOW() - INTERVAL '17 minutes')`,
+    [sessionId, followUpContent, JSON.stringify({ suggestions })]
+  );
+
+  log.info('db', 'Staging clone-question fixture seeded', {
     appId,
     owner: owner.username,
     sessionId,
