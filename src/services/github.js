@@ -489,6 +489,46 @@ async function listChangedFiles(owner, repo, basehead) {
   return (data.files || []).map((f) => f.filename);
 }
 
+// #297: a size-capped unified diff for the proposal-advisor context.
+// Concatenates the per-file `patch` hunks from the compare endpoint
+// (`main...<branch>`) into one unified-diff string, truncated to a hard
+// char budget so a huge PR can't blow the advisor's prompt budget.
+// Mirrors listChangedFiles' use of compareCommitsWithBasehead (so it
+// works on any ref pair, PR or not). Binary / overly-large files have no
+// `patch` field — those get a one-line "+N/-M" summary instead. Throws on
+// transport errors; the proposal-discuss route fails open (metadata +
+// spec only) rather than letting a GitHub hiccup break the conversation.
+const PROPOSAL_DIFF_CHAR_BUDGET = 12000;
+
+async function getProposalDiff(owner, repo, basehead, charBudget = PROPOSAL_DIFF_CHAR_BUDGET) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
+    owner, repo, basehead, per_page: 100,
+  });
+  const files = data.files || [];
+  let out = '';
+  let truncated = false;
+  for (const f of files) {
+    const header = `diff --git a/${f.filename} b/${f.filename}\n`;
+    const patch = f.patch
+      ? `${f.patch}\n`
+      : `(no textual diff — ${f.status}, +${f.additions || 0}/-${f.deletions || 0})\n`;
+    const block = header + patch;
+    if (out.length + block.length > charBudget) {
+      const remaining = charBudget - out.length;
+      // Only spill a partial block if a meaningful chunk still fits.
+      if (remaining > header.length + 40) out += block.slice(0, remaining);
+      truncated = true;
+      break;
+    }
+    out += block;
+  }
+  if (truncated) {
+    out += `\n…diff truncated at ~${charBudget} chars (${files.length} files changed in total)…\n`;
+  }
+  return { diff: out, fileCount: files.length, truncated };
+}
+
 // Close an issue. Goes through getOctokit (PAT-preferred) so we get a
 // real @octokit/rest instance with `.rest.issues.update`. Used by the
 // rename-issue → rename-PR migration to retire the legacy issue once its
@@ -1141,6 +1181,7 @@ module.exports = {
   mergePR,
   getPR,
   listChangedFiles,
+  getProposalDiff,
   getIssue,
   createIssue,
   createIssueComment,

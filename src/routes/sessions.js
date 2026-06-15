@@ -2386,12 +2386,18 @@ function sessionRoutes(config) {
         [req.user.id]
       );
       const byokSpentCents = parseFloat(byokRows[0]?.byok_cost_cents || 0);
+      // #297: surface AI availability so client chrome (the proposal
+      // "Ask AI" button) can disable itself with a tooltip when there's
+      // no usable LLM path — the platform key is unset AND the user has
+      // no BYOK key on file. Same degradation posture the dev chat takes.
+      const userApiKey = await limits.loadUserApiKey(pool, req.user.id, config.jwtSecret);
       res.json({
         spentCents: userSpent,
         limitCents: userLimit,
         globalSpentCents: globalSpent,
         globalLimitCents: globalLimit,
         byokSpentCents,
+        aiEnabled: llm.isEnabled() || !!userApiKey,
       });
     } catch (err) {
       log.error('sessions', 'Budget check failed', { message: err.message });

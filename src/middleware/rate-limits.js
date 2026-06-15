@@ -88,4 +88,16 @@ const chatLimiter = makeLimiter({
   message: 'Too many chat messages — slow down for a minute.',
 });
 
-module.exports = { authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, chatLimiter };
+// #297: the per-proposal "Ask AI" advisor. Same 30/min/user shape as
+// chatLimiter — it hits the same daily LLM budget, so it must not be a
+// faster drain path than the dev chat. Per-user keyed for the same
+// shared-NAT fairness reason.
+const proposalDiscussLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 30,
+  name: 'proposal-discuss',
+  keyByUser: true,
+  message: 'Too many messages — slow down for a minute.',
+});
+
+module.exports = { authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, chatLimiter, proposalDiscussLimiter };

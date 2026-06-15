@@ -27,6 +27,7 @@ async function migrate(config) {
   await seedStagingEnvProposal(pool, config);
   await seedStagingMergedPrs(pool, config);
   await seedStagingMyOpenPr(pool, config);
+  await seedStagingProposalDiscussion(pool, config);
   await seedStagingActiveSessions(pool, config);
   await seedStagingCcProgressRun(pool, config);
   await seedStagingCcEstimateRun(pool, config);
@@ -2256,6 +2257,56 @@ async function seedStagingMyOpenPr(pool, config) {
     targetUser: target.username,
     sessionId,
   });
+}
+
+// #297: seed a short "Ask AI" advisor conversation on the staging
+// my-open-PR fixture so a tester on a prod-cloned staging DB (where
+// proposal_ai_messages ships empty — it's staging:private) sees a
+// populated panel without needing a live LLM. Idempotent: fixed high IDs
+// + ON CONFLICT DO NOTHING. Owned by the same demo author the fixture PR
+// belongs to, pointed at that PR session (proposal_kind='pr').
+async function seedStagingProposalDiscussion(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) return;
+
+  // Anchor on the open-PR fixture seeded just above (same branch name).
+  const { rows: sessRows } = await pool.query(
+    `SELECT id, user_id FROM chat_sessions
+      WHERE app_id = $1 AND branch_name = $2 LIMIT 1`,
+    [appId, 'staging-fixture/my-open-pr']
+  );
+  if (!sessRows.length) {
+    log.warn('db', 'Staging proposal-discuss fixture skipped: open-PR fixture missing');
+    return;
+  }
+  const proposalRef = sessRows[0].id;
+  const userId = sessRows[0].user_id;
+
+  // 4 alternating turns — a tiny multi-turn Q&A so the panel shows the
+  // back-and-forth feel. Fixed high IDs keep the seed idempotent.
+  const turns = [
+    [990001, 'user', 'Staging demo: explain this proposal in plain terms.'],
+    [990002, 'assistant', 'Staging demo: This proposal adds a small, self-contained change to the app. In plain terms, it introduces a new feature without touching the existing data model, so it should be low-risk to merge. (This is seeded demo content — no live AI ran.)'],
+    [990003, 'user', 'Staging demo: what could break, and should I vote yes?'],
+    [990004, 'assistant', 'Staging demo: The main thing to watch is the new UI surface, but it degrades gracefully and is private per-user, so the blast radius is small. If it matches the linked issue, voting yes is reasonable. Remember I can only advise here — to actually build something, use "Propose a change" in your own dev chat.'],
+  ];
+
+  for (const [id, role, content] of turns) {
+    await pool.query(
+      `INSERT INTO proposal_ai_messages (id, app_id, proposal_kind, proposal_ref, user_id, role, content, model)
+       VALUES ($1, $2, 'pr', $3, $4, $5, $6, $7)
+       ON CONFLICT (id) DO NOTHING`,
+      [id, appId, proposalRef, userId, role, content, role === 'assistant' ? 'claude-sonnet-4-6' : null]
+    );
+  }
+
+  log.info('db', 'Staging proposal-discuss fixture seeded', { appId, proposalRef, userId });
 }
 
 // Per-app postgres role migration. Pre-migration model: every per-app

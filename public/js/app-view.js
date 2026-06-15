@@ -605,9 +605,72 @@ const AppView = {
         : '';
     }
 
-    head.innerHTML = cardHtml + bodyHtml;
+    // #297: the "Ask AI" advisor button — only for proposals (PR) and
+    // governance proposals, not plain GitHub issues. Opens a private,
+    // read-only conversation scoped to THIS proposal (see proposal-discuss.js).
+    const askAiHtml = (t.kind === 'proposal' || t.kind === 'gov')
+      ? AppView._askAiButtonHtml() : '';
+
+    head.innerHTML = cardHtml + bodyHtml + askAiHtml;
     if (window.Kudos) Kudos.attach(head);
     if (t.kind === 'proposal' && item.status !== 'merged') AppView._loadVoteRoster(item.id);
+
+    if (askAiHtml) {
+      const btn = head.querySelector('#proposal-ask-ai');
+      if (btn) {
+        btn.addEventListener('click', () => {
+          if (btn.disabled) return;
+          if (typeof ProposalDiscuss !== 'undefined') {
+            ProposalDiscuss.open(t.kind, t.id, AppView._findTopicItem());
+          }
+        });
+      }
+      // Resolve AI availability and disable the button (with tooltip) when
+      // no LLM is configured — matches the dev chat's posture.
+      AppView._ensureAiAvailability().then((enabled) => {
+        const b = document.getElementById('proposal-ask-ai');
+        if (!b) return;
+        b.disabled = !enabled;
+        if (!enabled) {
+          b.title = "AI chat isn't configured on this deployment.";
+          b.classList.add('opacity-50', 'cursor-not-allowed');
+        } else {
+          b.title = 'Ask AI about this proposal (private to you)';
+          b.classList.remove('opacity-50', 'cursor-not-allowed');
+        }
+      });
+    }
+  },
+
+  _askAiButtonHtml() {
+    return `
+      <div class="mt-3 px-1">
+        <button id="proposal-ask-ai" type="button"
+          class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium
+                 bg-violet-500/10 text-violet-600 dark:text-violet-300 border border-violet-500/30
+                 hover:bg-violet-500/20 transition-colors"
+          title="Ask AI about this proposal (private to you)">
+          <span aria-hidden="true">✨</span> Ask AI
+        </button>
+      </div>`;
+  },
+
+  // Cached check of whether any LLM path is usable (platform key or the
+  // user's BYOK key). Resolves to a boolean; the promise is memoized so
+  // repeated topic renders don't refetch /api/budget every time.
+  _ensureAiAvailability() {
+    if (AppView._aiAvailabilityPromise) return AppView._aiAvailabilityPromise;
+    AppView._aiAvailabilityPromise = (async () => {
+      try {
+        const res = await fetch('/api/budget');
+        if (!res.ok) return true; // optimistic — the endpoint itself 503s if truly off
+        const data = await res.json();
+        return data.aiEnabled !== false;
+      } catch {
+        return true;
+      }
+    })();
+    return AppView._aiAvailabilityPromise;
   },
 
   _mountTopicThread() {
