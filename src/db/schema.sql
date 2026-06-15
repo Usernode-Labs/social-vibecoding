@@ -1044,3 +1044,33 @@ CREATE INDEX IF NOT EXISTS idx_progress_estimates_session ON progress_estimates(
 -- FK-ing a private one. The rows are also per-user run-timing data with
 -- no value in a staging clone, so it ships schema-only + empty there.
 COMMENT ON TABLE progress_estimates IS 'staging:private';
+
+-- #297: per-user, read-only "Ask AI" advisor conversations scoped to a
+-- single proposal — the "Mayor in advisor mode" surface. Each row is one
+-- turn the conversation OWNER (user_id) sent or the advisor replied with,
+-- keyed to either a promoted/merging/merged PR (proposal_kind='pr',
+-- proposal_ref=chat_sessions.id) or a governance issue
+-- (proposal_kind='gov', proposal_ref=issues.id). proposal_ref is a
+-- polymorphic reference with no FK — same precedent as chat_messages
+-- thread_ref (a PR session id and a governance issue id can't share one
+-- FK target). The conversation is private scratch data: never posted into
+-- the shared group thread, and never copied into staging clones
+-- (staging:private), so a prod-cloned staging DB ships this table empty
+-- and seeds its own "Staging demo …" rows. A private table may FK public
+-- tables (apps, users); only the reverse is barred by the linter.
+CREATE TABLE IF NOT EXISTS proposal_ai_messages (
+  id            SERIAL PRIMARY KEY,
+  app_id        INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  proposal_kind VARCHAR(8) NOT NULL,
+  proposal_ref  INTEGER NOT NULL,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role          VARCHAR(16) NOT NULL,
+  content       TEXT NOT NULL,
+  model         VARCHAR(64),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- Per-conversation, per-user history load: WHERE app_id + kind + ref +
+-- user_id, ORDER BY id. The composite index makes that an index range scan.
+CREATE INDEX IF NOT EXISTS idx_proposal_ai_messages_convo
+  ON proposal_ai_messages (app_id, proposal_kind, proposal_ref, user_id, id);
+COMMENT ON TABLE proposal_ai_messages IS 'staging:private';
