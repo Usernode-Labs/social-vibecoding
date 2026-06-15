@@ -13,6 +13,43 @@ const AppView = {
   _ghIssuesMeta: { truncatedList: false, note: null, repoUrl: null, myRemaining: null },
   _bountyInFlight: new Set(),
 
+  // Scroll-position memory for the Dev card list, keyed by app slug
+  // (`App.currentApp`). In-memory only — reset on a full page reload by
+  // design, so a hard refresh starts at the top. Mirrors the
+  // per-session chat scroll memory in dev-chat.js
+  // (`_savedScrollBySession`): we capture the list's scrollTop when
+  // leaving it (any route that re-enters renderDevView) and restore it
+  // after the feed repaints, so tapping into an item and coming Back
+  // lands the user where they left off instead of at the top.
+  _savedFeedScroll: {},
+
+  // Store the Dev list's scroll offset under an app slug. A missing
+  // slug or a non-positive offset clears any saved value (top is the
+  // default, so there's nothing to remember). Pure besides the map
+  // write — DOM-free for unit testing.
+  _saveFeedScroll(slug, scrollTop) {
+    if (!slug) return;
+    const n = Number(scrollTop);
+    if (!Number.isFinite(n) || n <= 0) { delete AppView._savedFeedScroll[slug]; return; }
+    AppView._savedFeedScroll[slug] = n;
+  },
+
+  // Read back a saved offset for a slug, or 0 (top) when none is
+  // stored. Positions stay isolated per slug.
+  _getFeedScroll(slug) {
+    const v = AppView._savedFeedScroll[slug];
+    return Number.isFinite(v) && v > 0 ? v : 0;
+  },
+
+  // Clamp a saved offset to the maximum scrollable offset of the
+  // (possibly shorter) rebuilt list — the same clamp the browser's own
+  // scrollTo applies — so a collapsed "Show more" list lands at the
+  // bottom of its available content rather than overshooting.
+  _clampScrollTop(saved, scrollHeight, clientHeight) {
+    const max = Math.max(0, Number(scrollHeight) - Number(clientHeight));
+    return Math.max(0, Math.min(Number(saved) || 0, max));
+  },
+
   // Shared list-item shell for every card on the Dev page — the General
   // chat card, issue/proposal/governance cards, Your-sessions rows, and
   // Recently-merged rows — so the whole page reads as one uniform list
@@ -402,6 +439,15 @@ const AppView = {
     const content = document.getElementById('app-content');
     if (!content) return;
 
+    // Capture the Dev list's scroll position before any branch below
+    // overwrites #app-content. #dev-forum-scroll only exists when the
+    // outgoing view was the card list, so this is a no-op for
+    // topic/session/chat sub-views. Every back-navigation re-enters
+    // renderDevView, so this single point covers the Back buttons,
+    // browser back/forward, and programmatic navigation alike.
+    const outgoingScroll = document.getElementById('dev-forum-scroll');
+    if (outgoingScroll) AppView._saveFeedScroll(App.currentApp, outgoingScroll.scrollTop);
+
     // Leaving whatever thread surface was open: drop the live render
     // target so incoming thread messages turn into badge bumps.
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
@@ -519,6 +565,24 @@ const AppView = {
     AppView._renderSessionsStrip();
     AppView._syncStripPolling();
     await AppView._loadDevFeed();
+
+    // Restore the saved scroll position now that the feed has painted.
+    // requestAnimationFrame waits for layout so scrollHeight is final;
+    // scrollTo({ behavior: 'instant' }) overrides any CSS smooth-scroll
+    // (matching dev-chat.js's restoreSessionScroll) so this is an
+    // instant jump, not a visible animation. We clamp to the rebuilt
+    // list's max offset — a shorter list (collapsed "Show more") lands
+    // near the old spot rather than overshooting. No saved value (or 0)
+    // → top, as before.
+    const savedScroll = AppView._getFeedScroll(App.currentApp);
+    if (savedScroll > 0) {
+      requestAnimationFrame(() => {
+        const container = document.getElementById('dev-forum-scroll');
+        if (!container) return;
+        const top = AppView._clampScrollTop(savedScroll, container.scrollHeight, container.clientHeight);
+        container.scrollTo({ top, behavior: 'instant' });
+      });
+    }
   },
 
   // ── Full-screen topic sub-view ──────────────────────────────────────
@@ -3548,9 +3612,11 @@ const AppView = {
 // Bridge → shell consent relay for app LLM access (issue #34). One
 // top-level listener; handleLlmBridgeMessage verifies the source is an
 // iframe this shell owns and ignores everything else.
-window.addEventListener('message', (e) => {
-  try { AppView.handleLlmBridgeMessage(e); } catch {}
-});
+if (typeof window !== 'undefined') {
+  window.addEventListener('message', (e) => {
+    try { AppView.handleLlmBridgeMessage(e); } catch {}
+  });
+}
 
 // Small helpers used by the #21 version pill. Kept local so app-view
 // stays self-contained — the dev-console has its own copy of these.
@@ -3560,6 +3626,15 @@ function escapeHtml(s) {
   }[c]));
 }
 function escapeAttr(s) { return escapeHtml(s).replace(/\n/g, ' '); }
+
+// Browser script first, but expose AppView to node so the pure
+// scroll-memory helpers (_saveFeedScroll / _getFeedScroll /
+// _clampScrollTop) can be unit-tested without a DOM. No-op in the
+// browser, where `module` is undefined.
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = AppView;
+}
+
 function relTime(iso) {
   const then = new Date(iso).getTime();
   if (!Number.isFinite(then)) return '';
