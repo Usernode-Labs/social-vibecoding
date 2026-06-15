@@ -35,6 +35,7 @@ async function migrate(config) {
   await seedStagingCcEstimateRun(pool, config);
   await seedStagingDemoAppCard(pool);
   await seedStagingAppQuotaUsers(pool);
+  await seedStagingViewOnlyAdmin(pool);
   await seedStagingVisuals(pool);
   await seedStagingLeaderboardProfile(pool);
   await seedStagingQaSession(pool, config);
@@ -1601,6 +1602,38 @@ async function seedStagingAppQuotaUsers(pool) {
     log.info('db', 'Staging app-quota fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging app-quota fixtures seeding failed', { message: err.message });
+  }
+}
+
+// View-only admin role fixtures (issue #311). The admin user list and its
+// three-way role selector are row-rendering, data-dependent UI. Staging
+// clones preserve prod `users` rows, but prod may contain NO view-only
+// admin, so the new read-only treatment and the third selector option
+// wouldn't be demonstrable. Seed one obviously-fake account as a view-only
+// admin (is_admin = TRUE, admin_readonly = TRUE) so a staging reviewer sees
+// the three roles side-by-side in /admin. The existing seeded admin stays a
+// FULL admin (untouched), preserving the last-full-admin invariant. Strict
+// no-op outside staging; idempotent via fixed id + ON CONFLICT and a pinned
+// UPDATE on reboot.
+async function seedStagingViewOnlyAdmin(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    // Sentinel password means this account can never log in interactively.
+    await pool.query(
+      `INSERT INTO users (id, username, password, is_admin, admin_readonly)
+       VALUES (900030, 'staging-demo-view-admin', '!staging-fixture-no-login!', TRUE, TRUE)
+       ON CONFLICT (id) DO NOTHING`
+    );
+    // Pin the role explicitly so a reboot (or a tester flipping it) restores
+    // the intended view-only state.
+    await pool.query(
+      'UPDATE users SET is_admin = TRUE, admin_readonly = TRUE WHERE id = 900030'
+    );
+
+    log.info('db', 'Staging view-only admin fixture seeded');
+  } catch (err) {
+    log.warn('db', 'Staging view-only admin fixture seeding failed', { message: err.message });
   }
 }
 

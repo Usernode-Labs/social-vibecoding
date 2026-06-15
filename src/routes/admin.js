@@ -2,7 +2,7 @@ const { Router } = require('express');
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const { getPool } = require('../db/pool');
-const { adminMiddleware } = require('../middleware/admin');
+const { adminMiddleware, requireAdminWrite } = require('../middleware/admin');
 const log = require('../services/logger');
 const limits = require('../services/limits');
 
@@ -73,7 +73,7 @@ function adminRoutes(config) {
   router.get('/api/admin/users', async (req, res) => {
     try {
       const { rows } = await pool.query(
-        `SELECT u.id, u.username, u.is_admin, u.app_quota, u.created_at,
+        `SELECT u.id, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.created_at,
                 u.daily_limit_cents,
                 (u.id = $1) AS is_self,
                 ac.code as activation_code,
@@ -104,7 +104,7 @@ function adminRoutes(config) {
   // 3"). Declared BEFORE the per-user `:id` route below: Express matches
   // this distinctly (different segment count), but ordering keeps intent
   // obvious.
-  router.put('/api/admin/users/app-quota', async (req, res) => {
+  router.put('/api/admin/users/app-quota', requireAdminWrite, async (req, res) => {
     const { quota } = req.body || {};
     const n = Number(quota);
     if (!Number.isInteger(n) || n < 0) {
@@ -124,7 +124,7 @@ function adminRoutes(config) {
   // Body `{ quota }` — a non-negative integer. Modeled on the per-user
   // daily-limit handler below. Quota 0 means the user cannot create apps;
   // admins bypass enforcement regardless (their quota is cosmetic).
-  router.put('/api/admin/users/:id/app-quota', async (req, res) => {
+  router.put('/api/admin/users/:id/app-quota', requireAdminWrite, async (req, res) => {
     const userId = parseInt(req.params.id, 10);
     if (!Number.isFinite(userId)) {
       return res.status(400).json({ error: 'Invalid user id' });
@@ -152,104 +152,130 @@ function adminRoutes(config) {
     }
   });
 
-  // Grant / revoke admin status (see users.is_admin in schema.sql).
-  // Multiple admins are supported; admin is read live on every request
-  // (src/middleware/auth.js), so toggling takes effect on the target's
+  // Set a user's role (issue #311). The three-way role selector in
+  // public/admin.html posts here. Role is read live on every request
+  // (src/middleware/auth.js), so a change takes effect on the target's
   // next request — no session invalidation needed.
   //
-  // Two server-authoritative guardrails on REVOKE (mirrored in the UI for
-  // UX only):
-  //   - You can't revoke your own admin status (self-lockout).
-  //   - You can't revoke the last admin (the platform must always have
-  //     at least one). Enforced inside a transaction that takes the
-  //     ADMIN_MUTATION_LOCK advisory lock, then counts admins and performs
-  //     the UPDATE atomically — two concurrent revokes can't both observe
-  //     >1 admin and race to zero.
-  router.post('/api/admin/users/:id/is-admin', async (req, res) => {
+  //   user       → is_admin = FALSE, admin_readonly = FALSE
+  //   view_admin → is_admin = TRUE,  admin_readonly = TRUE   (see-only)
+  //   admin      → is_admin = TRUE,  admin_readonly = FALSE  (full)
+  //
+  // Back-compat: an older client posting `{ isAdmin: boolean }` is mapped
+  // (true → 'admin', false → 'user').
+  //
+  // Two server-authoritative guardrails (mirrored in the UI for UX only),
+  // both counting FULL admins only — a view-only admin can't promote anyone
+  // back, so they don't satisfy the "at least one admin" requirement:
+  //   - A full admin can't lower their OWN role (self-lockout).
+  //   - The platform must always retain at least one full admin. Enforced
+  //     inside a transaction that takes the ADMIN_MUTATION_LOCK advisory
+  //     lock, then counts full admins and performs the UPDATE atomically —
+  //     two concurrent demotions can't both observe >1 and race to zero.
+  //   Setting the last full admin to `view_admin` is blocked the same way
+  //   as demoting them to `user`.
+  router.post('/api/admin/users/:id/is-admin', requireAdminWrite, async (req, res) => {
     const userId = parseInt(req.params.id, 10);
-    const { isAdmin } = req.body || {};
     if (!Number.isFinite(userId)) {
       return res.status(400).json({ error: 'Invalid user id' });
     }
-    if (typeof isAdmin !== 'boolean') {
-      return res.status(400).json({ error: 'isAdmin (boolean) required in body' });
+
+    let role = req.body?.role;
+    if (role === undefined && typeof req.body?.isAdmin === 'boolean') {
+      role = req.body.isAdmin ? 'admin' : 'user';
+    }
+    const ROLE_COLUMNS = {
+      user:       { is_admin: false, admin_readonly: false },
+      view_admin: { is_admin: true,  admin_readonly: true },
+      admin:      { is_admin: true,  admin_readonly: false },
+    };
+    const target = ROLE_COLUMNS[role];
+    if (!target) {
+      return res.status(400).json({ error: "role must be one of 'user', 'view_admin', 'admin'" });
     }
 
-    if (!isAdmin && userId === req.user.id) {
-      return res.status(400).json({ error: "You can't revoke your own admin status." });
+    const endsFullAdmin = target.is_admin && !target.admin_readonly;
+
+    // Self-protection: a full admin can't set their own role to anything
+    // that isn't full admin (re-affirming 'admin' on yourself is a no-op).
+    if (userId === req.user.id && !endsFullAdmin) {
+      return res.status(400).json({ error: "You can't lower your own admin role." });
     }
 
-    // Grant needs no lock — it only ever increases the admin count.
-    if (isAdmin) {
+    // A change that ENDS in full admin never reduces the full-admin count,
+    // so it needs no lock.
+    if (endsFullAdmin) {
       try {
         const { rows } = await pool.query(
-          `UPDATE users SET is_admin = TRUE WHERE id = $1
-           RETURNING id, username, is_admin`,
-          [userId]
+          `UPDATE users SET is_admin = $1, admin_readonly = $2 WHERE id = $3
+           RETURNING id, username, is_admin, admin_readonly`,
+          [target.is_admin, target.admin_readonly, userId]
         );
         if (!rows.length) return res.status(404).json({ error: 'User not found' });
-        log.info('admin', 'Admin status toggled', {
-          id: rows[0].id, username: rows[0].username,
-          isAdmin: rows[0].is_admin, by: req.user.username,
+        log.info('admin', 'Role set', {
+          id: rows[0].id, username: rows[0].username, role, by: req.user.username,
         });
-        return res.json({ ok: true, isAdmin: rows[0].is_admin });
+        return res.json({
+          ok: true, role,
+          isAdmin: rows[0].is_admin, adminReadonly: rows[0].admin_readonly,
+        });
       } catch (err) {
-        log.error('admin', 'Admin toggle failed', { message: err.message });
+        log.error('admin', 'Role set failed', { message: err.message });
         return res.status(500).json({ error: 'Internal server error' });
       }
     }
 
-    // Revoke: serialize on the advisory lock, re-count admins, and update
-    // inside one transaction so the last-admin invariant holds under
-    // concurrency.
+    // Demotion path (→ user or → view_admin): serialize on the advisory
+    // lock, re-count FULL admins, and update inside one transaction so the
+    // last-full-admin invariant holds under concurrency.
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock($1)', [ADMIN_MUTATION_LOCK]);
 
       const { rows: existing } = await client.query(
-        'SELECT id, is_admin FROM users WHERE id = $1',
+        'SELECT id, is_admin, admin_readonly FROM users WHERE id = $1',
         [userId]
       );
       if (!existing.length) {
         await client.query('ROLLBACK');
         return res.status(404).json({ error: 'User not found' });
       }
-      if (!existing[0].is_admin) {
-        // Already not an admin — idempotent no-op.
-        await client.query('ROLLBACK');
-        return res.json({ ok: true, isAdmin: false });
-      }
 
-      const { rows: countRows } = await client.query(
-        'SELECT COUNT(*)::int AS n FROM users WHERE is_admin = TRUE'
-      );
-      if (countRows[0].n <= 1) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ error: "Can't revoke the last admin." });
+      const wasFullAdmin = existing[0].is_admin && !existing[0].admin_readonly;
+      if (wasFullAdmin) {
+        const { rows: countRows } = await client.query(
+          'SELECT COUNT(*)::int AS n FROM users WHERE is_admin = TRUE AND admin_readonly = FALSE'
+        );
+        if (countRows[0].n <= 1) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: "Can't drop the last full admin." });
+        }
       }
 
       const { rows } = await client.query(
-        `UPDATE users SET is_admin = FALSE WHERE id = $1
-         RETURNING id, username, is_admin`,
-        [userId]
+        `UPDATE users SET is_admin = $1, admin_readonly = $2 WHERE id = $3
+         RETURNING id, username, is_admin, admin_readonly`,
+        [target.is_admin, target.admin_readonly, userId]
       );
       await client.query('COMMIT');
-      log.info('admin', 'Admin status toggled', {
-        id: rows[0].id, username: rows[0].username,
-        isAdmin: rows[0].is_admin, by: req.user.username,
+      log.info('admin', 'Role set', {
+        id: rows[0].id, username: rows[0].username, role, by: req.user.username,
       });
-      res.json({ ok: true, isAdmin: rows[0].is_admin });
+      res.json({
+        ok: true, role,
+        isAdmin: rows[0].is_admin, adminReadonly: rows[0].admin_readonly,
+      });
     } catch (err) {
       await client.query('ROLLBACK').catch(() => {});
-      log.error('admin', 'Admin toggle failed', { message: err.message });
+      log.error('admin', 'Role set failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     } finally {
       client.release();
     }
   });
 
-  router.delete('/api/admin/users/:id', async (req, res) => {
+  router.delete('/api/admin/users/:id', requireAdminWrite, async (req, res) => {
     const userId = parseInt(req.params.id);
 
     if (userId === req.user.id) {
@@ -266,20 +292,22 @@ function adminRoutes(config) {
       await client.query('SELECT pg_advisory_xact_lock($1)', [ADMIN_MUTATION_LOCK]);
 
       const { rows: existing } = await client.query(
-        'SELECT id, is_admin FROM users WHERE id = $1',
+        'SELECT id, is_admin, admin_readonly FROM users WHERE id = $1',
         [userId]
       );
       if (!existing.length) {
         await client.query('ROLLBACK');
         return res.status(404).json({ error: 'User not found' });
       }
-      if (existing[0].is_admin) {
+      // Only a FULL admin counts toward the "at least one admin" invariant
+      // (issue #311) — deleting a view-only admin never threatens it.
+      if (existing[0].is_admin && !existing[0].admin_readonly) {
         const { rows: countRows } = await client.query(
-          'SELECT COUNT(*)::int AS n FROM users WHERE is_admin = TRUE'
+          'SELECT COUNT(*)::int AS n FROM users WHERE is_admin = TRUE AND admin_readonly = FALSE'
         );
         if (countRows[0].n <= 1) {
           await client.query('ROLLBACK');
-          return res.status(400).json({ error: "Can't delete the last admin." });
+          return res.status(400).json({ error: "Can't delete the last full admin." });
         }
       }
 
@@ -308,7 +336,7 @@ function adminRoutes(config) {
   // of the target's sessions so a leaked/old session can't outlive it. No
   // last-admin concern — this doesn't touch is_admin — and an admin may
   // reset their own password too.
-  router.post('/api/admin/users/:id/reset-password', async (req, res) => {
+  router.post('/api/admin/users/:id/reset-password', requireAdminWrite, async (req, res) => {
     const userId = parseInt(req.params.id, 10);
     if (!Number.isFinite(userId)) {
       return res.status(400).json({ error: 'Invalid user id' });
@@ -355,7 +383,7 @@ function adminRoutes(config) {
     }
   });
 
-  router.post('/api/admin/codes', async (req, res) => {
+  router.post('/api/admin/codes', requireAdminWrite, async (req, res) => {
     try {
       const code = crypto.randomBytes(6).toString('hex');
       const { rows } = await pool.query(
@@ -370,7 +398,7 @@ function adminRoutes(config) {
     }
   });
 
-  router.delete('/api/admin/codes/:id', async (req, res) => {
+  router.delete('/api/admin/codes/:id', requireAdminWrite, async (req, res) => {
     const codeId = parseInt(req.params.id);
     try {
       const result = await pool.query('DELETE FROM activation_codes WHERE id = $1 AND used_by IS NULL', [codeId]);
@@ -407,7 +435,7 @@ function adminRoutes(config) {
     }
   });
 
-  router.put('/api/admin/limits', async (req, res) => {
+  router.put('/api/admin/limits', requireAdminWrite, async (req, res) => {
     const { user, global } = req.body || {};
     const updates = [];
     const validate = (label, v) => {
@@ -462,7 +490,7 @@ function adminRoutes(config) {
   // platform default. Cache invalidation isn't needed because the per-
   // user limit is read fresh from the users table on every checkBudget
   // call (only the platform_settings rows are cached).
-  router.put('/api/admin/users/:id/daily-limit', async (req, res) => {
+  router.put('/api/admin/users/:id/daily-limit', requireAdminWrite, async (req, res) => {
     const userId = parseInt(req.params.id, 10);
     if (!Number.isFinite(userId)) {
       return res.status(400).json({ error: 'Invalid user id' });

@@ -1741,7 +1741,7 @@ const AppView = {
     const tallyPill = AppView.voteCountPill({ yes_count: upCount, no_count: downCount }, majority);
     const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${myVote === 'up' ? ' gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'up')">Yes (${upCount})</button>`;
     const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${myVote === 'down' ? ' gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'down')">No (${downCount})</button>`;
-    const adminBtn = (!isRename && App.user?.isAdmin)
+    const adminBtn = (!isRename && App.user?.canAdminWrite)
       ? `<button class="gc-vote-btn gc-vote-btn-admin" title="Admin: apply this change right now, bypassing the vote majority" onclick="AppView.castIssueAdminApply(${issue.id})">Admin merge</button>`
       : '';
     const govChatN = parseInt(issue.chat_count) || 0;
@@ -2787,7 +2787,7 @@ const AppView = {
     const preview = pr.staging_url
       ? `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStagingForSession(${pr.id}, '${pr.staging_url}')">Preview</button>`
       : '';
-    const adminMerge = App.user?.isAdmin
+    const adminMerge = App.user?.canAdminWrite
       ? `<button class="gc-vote-btn gc-vote-btn-admin" title="Admin: merge this PR right now, bypassing the vote majority" onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
       : '';
     const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}" onclick="AppView.castVote(${pr.id}, 'yes')">Yes (${pr.yes_count})</button>`;

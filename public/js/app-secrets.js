@@ -102,14 +102,19 @@ const Secrets = {
     const list = document.getElementById('app-secrets-list');
     const footer = document.getElementById('app-secrets-footer');
     if (!list) return;
-    const isAdmin = !!App.user?.isAdmin;
+    // View-only admins can SEE the secrets list (gated on isAdmin server-
+    // side) but only full admins get the direct-write fast path — the
+    // "Set/Replace/Clear" buttons and the "redeploy now" footer all gate
+    // on canAdminWrite (issue #311). Everyone else still gets the vote-
+    // based propose flow.
+    const canWrite = !!App.user?.canAdminWrite;
     // Footer contains the "redeploy now" shortcut, which hits
     // /api/apps/:slug/redeploy. For self-hosted apps that endpoint is
     // gated by refuseIfSelfHosted (the platform deploys via GitHub
     // Actions). The /api/apps/:slug/secrets response sets readOnly=true
     // for self-hosted apps; respect it here so admins don't get a
     // confusing 403 from a button that shouldn't have been offered.
-    const showFooter = isAdmin && !data.readOnly;
+    const showFooter = canWrite && !data.readOnly;
     footer?.classList.toggle('hidden', !showFooter);
 
     if (!data.manifestKnown) {
@@ -130,7 +135,7 @@ const Secrets = {
       return;
     }
 
-    list.innerHTML = data.secrets.map((s) => Secrets.renderRow(s, isAdmin)).join('');
+    list.innerHTML = data.secrets.map((s) => Secrets.renderRow(s, canWrite)).join('');
 
     list.querySelectorAll('[data-action="set"]').forEach((btn) => {
       btn.addEventListener('click', () => Secrets.handleSet(btn.dataset.key, btn.dataset.sensitive === '1'));
@@ -146,7 +151,7 @@ const Secrets = {
     });
   },
 
-  renderRow(s, isAdmin) {
+  renderRow(s, canWrite) {
     const requiredBadge = s.required
       ? `<span class="text-[0.65rem] uppercase font-bold text-red-500">required</span>`
       : '';
@@ -187,7 +192,7 @@ const Secrets = {
       ${s.hasValue ? `<button data-action="propose-clear" data-key="${escapeAttr(s.key)}"
         class="text-xs px-2 py-1 rounded border border-red-300 text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950">propose clear</button>` : ''}
     `;
-    const actions = isAdmin
+    const actions = canWrite
       ? `${directButtons}<span class="inline-block w-px h-4 bg-zinc-300 dark:bg-zinc-700 mx-1 self-center" aria-hidden="true"></span>${proposeButtons}`
       : proposeButtons;
 

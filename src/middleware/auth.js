@@ -61,7 +61,7 @@ function authMiddleware(config) {
     if (cookieToken) {
       try {
         const { rows } = await pool.query(
-          `SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.app_quota, u.ai_progress_estimate
+          `SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate
            FROM sessions s JOIN users u ON s.user_id = u.id
            WHERE s.token = $1`,
           [cookieToken]
@@ -72,6 +72,12 @@ function authMiddleware(config) {
             id: rows[0].user_id,
             username: rows[0].username,
             isAdmin: rows[0].is_admin,
+            // View-only admin marker + derived write capability (issue
+            // #311). `isAdmin` still gates every read/visibility check;
+            // `canAdminWrite` is the single gate for privileged mutations
+            // (a full admin only — view-only admins get FALSE).
+            adminReadonly: !!rows[0].admin_readonly,
+            canAdminWrite: !!rows[0].is_admin && !rows[0].admin_readonly,
             // Per-user app-creation quota (see users.app_quota in
             // schema.sql). The POST /api/apps gate compares this to the
             // user's live app count; admins bypass it. The derived
@@ -143,7 +149,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
   let userRow;
   try {
     const { rows } = await pool.query(
-      'SELECT id, username, is_admin, app_quota, ai_progress_estimate FROM users WHERE id = $1',
+      'SELECT id, username, is_admin, admin_readonly, app_quota, ai_progress_estimate FROM users WHERE id = $1',
       [payload.id]
     );
     userRow = rows[0];
@@ -192,6 +198,8 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
     id: userRow.id,
     username: userRow.username,
     isAdmin: userRow.is_admin,
+    adminReadonly: !!userRow.admin_readonly,
+    canAdminWrite: !!userRow.is_admin && !userRow.admin_readonly,
     appQuota: userRow.app_quota ?? 0,
     aiProgressEstimate: !!userRow.ai_progress_estimate,
   };
