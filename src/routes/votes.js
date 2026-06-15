@@ -1079,6 +1079,14 @@ async function checkAndMerge(config, pool, session, options = {}) {
     });
 
   let mergeCommitSha = null;
+  // Tracks whether the irreversible GitHub merge has already happened. Once
+  // it has, a failure in any LATER step (prod rebuild, staging teardown,
+  // bounty payout, …) must NOT roll the session back to 'promoted' — the PR
+  // is merged on GitHub and re-opening it for voting is the bug behind
+  // "merged PRs still show up for voting" (the rebuild can keep failing —
+  // e.g. a newly-required secret with no production value — yet the merge is
+  // done). See the catch block below.
+  let githubMerged = false;
 
   try {
     // Merge PR on GitHub
@@ -1090,6 +1098,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
         // can `git revert <sha>` against main. The Octokit `pulls.merge`
         // response shape is { sha, merged: true, message }.
         mergeCommitSha = mergeData?.sha || null;
+        githubMerged = true;
       }
     }
 
@@ -1326,7 +1335,61 @@ async function checkAndMerge(config, pool, session, options = {}) {
 
     return { merged: true };
   } catch (err) {
-    log.error('votes', 'Merge failed', { sessionId: session.id, err: err.message });
+    log.error('votes', 'Merge failed', { sessionId: session.id, err: err.message, githubMerged });
+
+    // The GitHub merge is irreversible. If it already succeeded and a
+    // LATER step threw (most commonly `staging.rebuildProduction` — e.g. a
+    // PR that introduces a new required secret with no production value
+    // raises MissingSecretsError, or two sibling rebuilds race on the
+    // container name), the PR *is* merged. Rolling the session back to
+    // 'promoted' here is exactly what left whiteboard PRs #41/#44/#52/#54
+    // showing "up for voting" forever: `GET /api/apps/:slug/promoted`
+    // returns `status IN ('promoted','merging')`, and any "retry" merge
+    // 405s because GitHub has nothing left to merge. Instead, record the
+    // merge and surface the deploy failure separately so an operator can
+    // fix the cause and re-run the rebuild ("Check for updates" / drift
+    // poller). The pre-merge conflict/behind_main handling further down is
+    // premised on the merge NOT having happened, so we return early.
+    if (githubMerged) {
+      await pool.query(
+        `UPDATE chat_sessions
+            SET status = 'merged',
+                merged_at = COALESCE(merged_at, NOW()),
+                merge_commit_sha = COALESCE(merge_commit_sha, $2),
+                votes_required = COALESCE(votes_required, $3),
+                active_users_at_merge = COALESCE(active_users_at_merge, $4)
+          WHERE id = $1 AND status IN ('merging', 'merged')`,
+        [session.id, mergeCommitSha, majority, activeCount]
+      ).catch((e) => log.error('votes',
+        'Failed to mark session merged after post-merge error', {
+          sessionId: session.id, err: e.message,
+        }));
+
+      const failLabel = session.pr_title
+        ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+        : `PR #${session.pr_number || session.id}`;
+      await sendSystemMessage(pool, session.app_id,
+        `${failLabel} merged on GitHub, but the production deploy failed: ${err.message}. ` +
+        `The change is on main; an operator can retry the deploy once the cause is resolved.`,
+        'system'
+      ).catch(() => {});
+
+      try {
+        const { pushVoteUpdate } = require('../services/ws');
+        pushVoteUpdate({
+          sessionId: session.id,
+          appSlug: session.app_slug,
+          merged: true,
+          merging: false,
+          deployFailed: true,
+          selfHosted: !!session.app_self_hosted,
+        });
+      } catch (_) { /* ws failures non-fatal */ }
+
+      return { merged: true, deployFailed: true, error: err.message };
+    }
+
+    // GitHub merge did NOT happen (conflict, auth, transient API error).
     // Release the 'merging' claim so a subsequent vote (or retry) can
     // try again. Without this the session would be stuck in 'merging'
     // forever on any transient failure.
