@@ -803,6 +803,14 @@ const DevChat = {
 
   async sendMessage(message) {
     if (!DevChat.currentSession || DevChat.isStreaming) return;
+    // #138: a send is a user gesture — unlock the AudioContext and lazily
+    // request OS-notification permission now, so the completion chime /
+    // notification can fire when this turn finishes (browsers only allow
+    // audio + permission prompts from inside a gesture).
+    if (window.DevAlerts) {
+      DevAlerts._unlockAudio();
+      DevAlerts.requestNotifyPermission();
+    }
     const model = DevChat.selectedModel;
     DevChat.isStreaming = true;
     DevChat._setStreamingUI(true);
@@ -1174,6 +1182,17 @@ const DevChat = {
     DevChat._setStreamingUI(false);
     DevChat.renderMessages();
     DevChat.refreshBudget();
+    // #138: the turn genuinely finished (this is the real turn-end hook,
+    // unlike _setStreamingUI(false) which also fires on session-switch
+    // teardown / reconnect drops). Chime when the user is looking at the
+    // app — this covers "watching the same dev chat", where notify_on_done
+    // was disarmed so no notification_new (and thus no other tone) arrives.
+    // Hidden = backgrounded: stay silent here; the armed session_done
+    // notification drives the OS notification via Notifications.handleIncoming.
+    // playDoneTone's own dedup guard collapses any incidental overlap.
+    if (window.DevAlerts && document.visibilityState === 'visible') {
+      DevAlerts.playDoneTone();
+    }
   },
 
   // Open (or reopen) the resumable GET /events SSE for the active session.

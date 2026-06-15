@@ -71,6 +71,39 @@
         estimateToggle.addEventListener('change', (e) => this._saveAiProgressEstimate(e.target.checked));
       }
 
+      // #138 "Dev-chat sound & alerts" toggle. Client-only preference
+      // (localStorage, default ON) owned by DevAlerts — we just mirror its
+      // checked state and flip the stored flag. Turning it ON is a user
+      // gesture, so unlock audio + request notification permission then.
+      const alertsToggle = document.getElementById('devchat-alerts-toggle');
+      if (alertsToggle) {
+        alertsToggle.checked = window.DevAlerts ? DevAlerts.enabled() : true;
+        alertsToggle.addEventListener('change', (e) => {
+          if (!window.DevAlerts) return;
+          DevAlerts.setEnabled(e.target.checked);
+          if (e.target.checked) {
+            DevAlerts._unlockAudio();
+            DevAlerts.requestNotifyPermission();
+          }
+        });
+      }
+
+      // #138 "Send a test alert" — exercises the user's own setup. Fires a
+      // demo completion after a short delay so they can stay (hear the
+      // chime) or switch away (see the background notification).
+      const alertsTest = document.getElementById('devchat-alerts-test');
+      if (alertsTest) {
+        alertsTest.addEventListener('click', () => {
+          if (!window.DevAlerts) return;
+          const status = document.getElementById('devchat-alerts-test-status');
+          const ms = DevAlerts.testAlert();
+          if (status) {
+            status.classList.remove('hidden');
+            status.textContent = `Alert in ${Math.round(ms / 1000)}s — stay here for the chime, or switch away / background the app for a notification.`;
+          }
+        });
+      }
+
       // "View as non-admin" admin tool. Mirror state to localStorage
       // and reload — the simplest way to flush every admin-gated
       // render path (home buttons, app-secrets editor, etc.) without
