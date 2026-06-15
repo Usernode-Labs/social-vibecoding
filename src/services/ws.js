@@ -6,6 +6,7 @@ const log = require('./logger');
 const notifications = require('./notifications');
 const events = require('./events');
 const appAccess = require('./app-access');
+const game = require('./game');
 
 let wss;
 // Captured in attach() so the module-level push* helpers can run the
@@ -18,6 +19,8 @@ const globalClients = new Set(); // Set<{ ws, user }> for /ws/events
 function attach(server, config) {
   const pool = getPool(config);
   _pool = pool;
+  // Let the obstacle-race engine persist results through the same pool.
+  game.init(pool);
 
   wss = new WebSocketServer({ noServer: true });
 
@@ -77,10 +80,39 @@ function attach(server, config) {
       return;
     }
 
+    // Multiplayer obstacle-race rooms. Reuses the same authenticateWs gate
+    // above (cookie session + staging iframe-JWT fallback) so staging
+    // testers can connect on a fresh deploy. Game state lives entirely in
+    // src/services/game.js — kept separate from the chat `rooms` map.
+    if (req.url?.startsWith('/ws/game/')) {
+      const roomCode = req.url.replace('/ws/game/', '').split('?')[0];
+      if (!roomCode) { socket.destroy(); return; }
+
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        wss.emit('connection', ws, req, { user, gameCode: roomCode });
+      });
+      return;
+    }
+
     socket.destroy();
   });
 
-  wss.on('connection', async (ws, req, { user, appSlug }) => {
+  wss.on('connection', async (ws, req, ctx) => {
+    const { user, appSlug, gameCode } = ctx;
+
+    // Obstacle-race socket — delegate entirely to the game engine.
+    if (gameCode) {
+      const room = game.handleConnect(ws, user, gameCode);
+      if (!room) return; // engine already closed the socket
+      ws.on('message', (raw) => {
+        let msg;
+        try { msg = JSON.parse(raw); } catch { return; }
+        game.handleMessage(ws, user, gameCode, msg);
+      });
+      ws.on('close', () => game.handleDisconnect(ws, user, gameCode));
+      return;
+    }
+
     const app = await resolveAppForAccess(pool, appSlug);
     if (!app) {
       ws.close(4004, 'App not found');

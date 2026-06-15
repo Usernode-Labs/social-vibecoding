@@ -1002,3 +1002,52 @@ CREATE INDEX IF NOT EXISTS idx_progress_estimates_session ON progress_estimates(
 -- FK-ing a private one. The rows are also per-user run-timing data with
 -- no value in a staging clone, so it ships schema-only + empty there.
 COMMENT ON TABLE progress_estimates IS 'staging:private';
+
+-- Multiplayer obstacle-race ("Stumble Guys"-style) — rooms, participants,
+-- and per-race results. These hold ONLY gameplay content: ephemeral join
+-- codes, public usernames, finish placements, and winners — exactly the
+-- "game scores / leaderboards" category the platform conventions call out
+-- as public by default. A stranger seeing every row learns nothing
+-- sensitive, so NONE of these are tagged `staging:private`; they get a
+-- full prod-data copy in staging (plus the IS_STAGING demo fixtures in
+-- migrate.js so a fresh table still has a recent-races row to show). All
+-- FKs point at `users`, which is cloned row-wise, so the linter rule
+-- "public table must not FK a private one" is satisfied.
+--
+-- Live race state (player positions, snapshots) is NEVER stored here —
+-- it lives in memory in src/services/game.js. Only terminal results land
+-- in the DB.
+CREATE TABLE IF NOT EXISTS game_rooms (
+  id            SERIAL PRIMARY KEY,
+  code          VARCHAR(12) UNIQUE NOT NULL,
+  host_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  -- 'lobby' | 'racing' | 'finished' | 'closed'
+  status        VARCHAR(16) NOT NULL DEFAULT 'lobby',
+  arena_id      VARCHAR(64) NOT NULL DEFAULT 'classic',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at   TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_game_rooms_code ON game_rooms(code);
+CREATE INDEX IF NOT EXISTS idx_game_rooms_status ON game_rooms(status);
+
+CREATE TABLE IF NOT EXISTS game_room_players (
+  id           SERIAL PRIMARY KEY,
+  room_id      INTEGER NOT NULL REFERENCES game_rooms(id) ON DELETE CASCADE,
+  user_id      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  username     VARCHAR(255),
+  color        VARCHAR(16),
+  joined_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at  TIMESTAMPTZ,
+  placement    INTEGER,
+  UNIQUE (room_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_game_room_players_room ON game_room_players(room_id);
+
+CREATE TABLE IF NOT EXISTS game_results (
+  id             SERIAL PRIMARY KEY,
+  room_id        INTEGER NOT NULL REFERENCES game_rooms(id) ON DELETE CASCADE,
+  winner_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  player_count   INTEGER NOT NULL DEFAULT 0,
+  finished_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_game_results_finished ON game_results(finished_at DESC);
