@@ -2524,7 +2524,7 @@ function buildHeadlessDecisionAddendum(issueNumber) {
 DECISION TURN: the scout's spec is now in your system prompt (CURRENT SPEC DOC). You get exactly ONE more action.
 If the spec contains a Questions section with decisions a human must make: do NOT dispatch. Reply in plain text containing ONLY those numbered questions with your suggested defaults, written for the issue reporter — your reply will be posted verbatim as a comment on GitHub issue #${issueNumber} (no greetings, no meta-talk about sessions or specs).
 Otherwise, dispatch dispatch_claude_code to implement the spec NOW only if ALL of these hold:
-- The spec has no "Questions" section, no open decisions, and no choices deferred to a human.
+- The spec has no **unresolved/blocking** questions — a "Questions" section that says "None" (or is empty) is NOT a blocker; proceed to build it. Only an open question that genuinely requires a human decision blocks the build.
 - It describes a small, bounded change with concrete file paths — roughly a handful of files, no broad refactor.
 - No database schema migrations, no destructive or irreversible operations, no changes to auth, billing, permissions, or security-sensitive code.
 - No new external services, dependencies, or credentials.
@@ -2579,14 +2579,63 @@ function shouldPostHeadlessQuestionComment({ outcome, dispatchedTool, mayorText 
   return outcome === 'question' && !dispatchedTool && !!(mayorText || '').trim();
 }
 
-// #178: does the spec still carry a blocking "Questions" section after the
-// scout's investigation? Keys on ATX headings whose text begins with
+// #178/#196: does the spec still carry a blocking "Questions" section after
+// the scout's investigation? Keys on ATX headings whose text begins with
 // "Question(s)" / "Open question(s)" — the exact section name the base
-// prompt and scout prompt mandate for blockers. A false positive merely
-// downgrades a buildable spec to a posted-questions round-trip; a false
-// negative reproduces the old park-for-human behavior. Exported for tests.
+// prompt and scout prompt mandate for blockers — then INSPECTS the section
+// body: a heading whose body is empty or only a "nothing here" marker
+// ("None", "N/A", …) is NOT a blocker, so a scout's habitual
+// "### Questions\nNone" no longer parks the run for a human. Only a section
+// with real residual content (a list item or sentence) blocks. A false
+// positive merely downgrades a buildable spec to a posted-questions
+// round-trip; a false negative reproduces the old park-for-human behavior.
+// Exported for tests.
+//
+// Recognized "nothing here" markers (case-insensitive, tolerating trailing
+// punctuation and a short trailing clause like "None — resolved from code.").
+const QUESTIONS_EMPTY_MARKER_RE = /^(?:none|n\/a|na|no\s+open\s+questions|no\s+questions|no\s+blocking\s+questions|none\s+blocking|nothing\s+blocking)\b/i;
+
 function specHasBlockingQuestions(specMd) {
-  return /^#{1,6}\s*(?:open\s+)?questions?\b/im.test(specMd || '');
+  const text = specMd || '';
+  // Match a Questions-style ATX heading, capturing its level (# count) so we
+  // can find where its section ends (next same-or-higher-level heading).
+  const headingRe = /^(#{1,6})\s*(?:open\s+)?questions?\b[^\n]*$/gim;
+  let m;
+  while ((m = headingRe.exec(text)) !== null) {
+    const level = m[1].length;
+    const bodyStart = m.index + m[0].length;
+    // Find the next heading whose level is <= this section's level (a sibling
+    // or higher heading); deeper sub-headings stay part of the section.
+    const rest = text.slice(bodyStart);
+    const stopRe = /^(#{1,6})\s/gm;
+    let stop;
+    let bodyEnd = rest.length;
+    while ((stop = stopRe.exec(rest)) !== null) {
+      if (stop[1].length <= level) { bodyEnd = stop.index; break; }
+    }
+    const body = rest.slice(0, bodyEnd);
+    if (questionsBodyHasContent(body)) return true;
+  }
+  return false;
+}
+
+// Strip markdown noise from a Questions section body and decide whether it
+// carries a real question (vs. empty or a "None"-style marker).
+function questionsBodyHasContent(body) {
+  const cleaned = (body || '')
+    .split('\n')
+    .map((line) => line
+      // drop leading list/quote markers
+      .replace(/^\s*(?:[-*>]\s*)+/, '')
+      // drop emphasis underscores/asterisks anywhere
+      .replace(/[_*]/g, '')
+      .trim())
+    .filter((line) => line.length > 0)
+    .join(' ')
+    .trim();
+  if (!cleaned) return false;
+  if (QUESTIONS_EMPTY_MARKER_RE.test(cleaned)) return false;
+  return true;
 }
 
 const HEADLESS_QUESTION_FOOTER = '\n\n— Posted by this issue\'s proposal session. '
@@ -3908,7 +3957,7 @@ Your job is to investigate this repo and produce a MARKDOWN SPEC for the change.
 
 The spec is rendered as markdown in a viewer that follows standard CommonMark fencing. If you include a fenced code block that ITSELF contains a triple-backtick fence (common when quoting markdown examples or the platform's \`\`\`filepath:...\`\`\` output convention), wrap the OUTER block in a four-backtick fence (\`\`\`\`) — a longer fence can safely contain shorter ones. Otherwise the inner \`\`\` closes the block early and the rest of the spec renders broken. When in doubt, prefer fewer/inline code samples over deeply nested fences.
 
-Do NOT pad the spec with open questions. Only include a "### Questions" subsection — placed at the END of the "User-facing changes" half, since questions are for the (possibly non-technical) requester — for things that genuinely BLOCK implementation: decisions the coding agent cannot reasonably make on its own and that would change what gets built. Make a sensible default choice wherever you can and state it, rather than asking. Non-blocking items — things worth noting but not required to answer before building — belong in the "Technical implementation" half under "### Considerations" (trade-offs, assumptions, things to keep in mind) or "### Deferred work" (out-of-scope or follow-up items), NOT as questions.
+Do NOT pad the spec with open questions. Only include a "### Questions" subsection — placed at the END of the "User-facing changes" half, since questions are for the (possibly non-technical) requester — for things that genuinely BLOCK implementation: decisions the coding agent cannot reasonably make on its own and that would change what gets built. Make a sensible default choice wherever you can and state it, rather than asking. Non-blocking items — things worth noting but not required to answer before building — belong in the "Technical implementation" half under "### Considerations" (trade-offs, assumptions, things to keep in mind) or "### Deferred work" (out-of-scope or follow-up items), NOT as questions. When there are no blockers, OMIT the "### Questions" subsection entirely — do NOT write "### Questions\nNone" or an empty section.
 
 Your final assistant message must be ONLY the markdown spec — no preamble, no "I'll investigate...", no "Here's the spec:". The host captures that final message verbatim and stores it as the session's spec doc.
 
@@ -4982,7 +5031,7 @@ THE SPEC DOC:
 Every session has a markdown SPEC DOC that the user can read in the dev-chat spec viewer (a side-panel they open via the spec preview cards in the chat). It is your collaborative working surface for planning before code is written. The current spec is included verbatim below in the CURRENT SPEC DOC block — refer to it whenever you discuss or summarize the spec. The viewer is read-only: the user cannot hand-edit the spec, so all revisions go through you — and YOU never edit the spec in-process either. ALL spec writing and revising, however small, is done by dispatching the scout (dispatch_scout), which reads the repo and rewrites the doc; you only relay what the user wants changed. When they're happy with the spec they'll ask you to dispatch the coding agent in chat — you don't need to call dispatch_claude_code just because the spec is done; the user owns that decision.
 
 SPEC QUESTIONS — KEEP THEM RARE:
-Do not pad the spec with open questions. Only include a "Questions" section for things that genuinely BLOCK implementation — decisions the coding agent cannot reasonably make on its own and that would change what gets built. Wherever you can, make a sensible default choice and state it instead of asking. Non-blocking items belong under "Considerations" (trade-offs, assumptions, things to keep in mind) or "Deferred work" (out-of-scope or follow-up items) — never phrase those as questions. When you instruct the scout to write or revise the spec, tell it to prefer decisions over questions.
+Do not pad the spec with open questions. Only include a "Questions" section for things that genuinely BLOCK implementation — decisions the coding agent cannot reasonably make on its own and that would change what gets built. Wherever you can, make a sensible default choice and state it instead of asking. Non-blocking items belong under "Considerations" (trade-offs, assumptions, things to keep in mind) or "Deferred work" (out-of-scope or follow-up items) — never phrase those as questions. When there are no blockers, OMIT the "Questions" section entirely rather than writing "None" or an empty section. When you instruct the scout to write or revise the spec, tell it to prefer decisions over questions.
 
 CLARITY GATE — ask before acting on unclear requests:
 Before dispatching any tool on a request or issue, check whether it is clear enough to act on. A request/issue is UNCLEAR when any of these hold:
