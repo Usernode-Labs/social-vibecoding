@@ -4,6 +4,7 @@ const cookieParser = require('cookie-parser');
 const path = require('path');
 const { load: loadConfig } = require('./src/config');
 const { migrate } = require('./src/db/migrate');
+const { shellAssetCacheControl } = require('./src/services/static-cache');
 const { authMiddleware } = require('./src/middleware/auth');
 const { authRoutes } = require('./src/routes/auth');
 const jwt = require('jsonwebtoken');
@@ -330,7 +331,18 @@ app.use('/usernode-bridge', (_req, res, next) => {
   next();
 });
 
-app.use(express.static(path.join(__dirname, 'public')));
+// Serve the shell's static assets, but force HTML/JS/CSS to revalidate on
+// every load (see src/services/static-cache.js). Without this, mobile
+// WebViews cached the shell's own /js/app.js on a PR's stable staging URL
+// and kept running pre-fix code across redeploys — fixes appeared to have
+// no effect ("same as before"). setHeaders runs as `send` streams the file,
+// so it reliably overrides send's default `max-age=0`. 304s still apply.
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders(res, filePath) {
+    const cc = shellAssetCacheControl(filePath);
+    if (cc) res.setHeader('Cache-Control', cc);
+  },
+}));
 
 app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
@@ -346,6 +358,10 @@ app.get('/dashboard', (req, res) => {
 
 app.get('*', (req, res) => {
   if (req.accepts('html')) {
+    // Client-side-routing fallback: serve the SPA shell. Same revalidation
+    // policy as the static handler so a redeployed index.html (which pulls
+    // in fresh /js/*.js) is never pinned in a WebView cache.
+    res.setHeader('Cache-Control', shellAssetCacheControl('index.html'));
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
   } else {
     res.status(404).json({ error: 'Not found' });
