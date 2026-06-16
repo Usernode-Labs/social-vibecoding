@@ -618,6 +618,16 @@ const DevChat = {
       DevChat._streamingPhase = null;
       DevChat._stopProgressPolling();
       DevChat._closeResumableStream();
+      // Abort the previous session's in-flight POST SSE the same way
+      // reset() does. Without this, the old session's chat reader loop
+      // keeps running after the switch and leaks its tokens / cc_progress
+      // lines into the freshly-opened session's view (#329). isStreaming
+      // was just set false, so the post-loop recovery branch won't reopen
+      // a resumable stream for the abandoned turn.
+      if (DevChat._abortController) {
+        try { DevChat._abortController.abort(); } catch {}
+        DevChat._abortController = null;
+      }
       DevChat._setStreamingUI(false);
     }
     try {
@@ -920,6 +930,12 @@ const DevChat = {
 
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue;
+          // Defensive scope guard (#329): if the user has since switched to
+          // a different session, this POST SSE belongs to the one we left.
+          // The abort in openSession's teardown normally stops us, but it's
+          // async relative to already-buffered events — drop the rest of
+          // this batch rather than apply it to the now-current session.
+          if (Number(sessionId) !== Number(DevChat.currentSession?.id)) break;
           try {
             const data = JSON.parse(line.slice(6));
             if (data._seq && DevChat._seenSeqs?.has(data._seq)) continue;
@@ -1228,7 +1244,7 @@ const DevChat = {
     es.onmessage = (ev) => {
       try {
         const data = JSON.parse(ev.data);
-        DevChat._handleResumedEvent(data);
+        DevChat._handleResumedEvent(data, sessionId);
       } catch {}
     };
     es.onerror = () => {
@@ -1263,7 +1279,13 @@ const DevChat = {
   // reachable here — instead we locate the live assistant message by
   // scanning DevChat.messages, and create one if the run ended up with
   // no tokens before the drop.
-  _handleResumedEvent(data) {
+  _handleResumedEvent(data, sessionId) {
+    // Defensive scope guard (#329): drop a late resumable-SSE event that
+    // arrives for a session the user has already navigated away from, so
+    // it can't paint into the now-current session. `sessionId` is the id
+    // the EventSource was opened for; absent (legacy callers) skips the
+    // check.
+    if (sessionId != null && Number(sessionId) !== Number(DevChat.currentSession?.id)) return;
     if (data._seq) {
       if (DevChat._seenSeqs?.has(data._seq)) return;
       if (!DevChat._seenSeqs) DevChat._seenSeqs = new Set();
