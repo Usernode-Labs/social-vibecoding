@@ -254,6 +254,30 @@ test('buildHeadlessSeed: no comments → title + body only', () => {
   }
 });
 
+test('buildHeadlessDecisionAddendum: permits append-only DDL but still blocks risky migrations', () => {
+  const pool = makeMockPool();
+  const loaded = loadSessions(pool);
+  try {
+    const addendum = loaded.subject.buildHeadlessDecisionAddendum(42);
+    // Permitted append-only / forward-only forms are spelled out.
+    assert.ok(/CREATE TABLE IF NOT EXISTS/.test(addendum));
+    assert.ok(/ADD COLUMN IF NOT EXISTS/.test(addendum));
+    assert.ok(/forward-only/i.test(addendum));
+    assert.ok(/append-only/i.test(addendum));
+    // Risky forms are still named as blockers.
+    assert.ok(/drops/i.test(addendum));
+    assert.ok(/renames/i.test(addendum));
+    assert.ok(/type changes/i.test(addendum));
+    assert.ok(/not-null tightenings/i.test(addendum));
+    // Default-to-human-review-when-unsure is restated.
+    assert.ok(/when in doubt|unsure/i.test(addendum));
+    // Untouched clauses remain.
+    assert.ok(/auth, billing, permissions/i.test(addendum));
+  } finally {
+    loaded.restore();
+  }
+});
+
 test('buildHeadlessSeed: appends comments oldest-first and tags bot-authored ones', () => {
   const pool = makeMockPool();
   const loaded = loadSessions(pool);
