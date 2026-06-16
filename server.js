@@ -1552,13 +1552,37 @@ function startStalePrSweeper(config) {
             stats.active, session.yes_count, session.no_count,
             session.promoted_at || session.created_at
           );
-          // Only act once BOTH gates pass; checkAndMerge re-confirms.
-          if (!gate.mergeable) continue;
-          const result = await checkAndMerge(config, pool, session);
-          if (result?.merged) {
-            log.info('server', 'Window-elapsed PR merged by sweeper', {
-              sessionId: session.id, yesCount: session.yes_count,
+          // Merge takes precedence: a row that just became mergeable should
+          // merge, not reject. checkAndMerge re-confirms both gates atomically.
+          if (gate.mergeable) {
+            const result = await checkAndMerge(config, pool, session);
+            if (result?.merged) {
+              log.info('server', 'Window-elapsed PR merged by sweeper', {
+                sessionId: session.id, yesCount: session.yes_count,
+              });
+            }
+            continue;
+          }
+          // Auto-takedown: the rejection window has elapsed on a promoted PR
+          // the group is voting down (No > Yes, under the keep-alive support
+          // line). Reuse the real close/un-promote path (archiveSession),
+          // then nudge clients to refetch /promoted so the row drops out (the
+          // session_update 'archived' broadcast isn't wired to the vote panel).
+          if (gate.rejectable) {
+            const res = await sessionLifecycle.archiveSession({
+              pool, sessionId: session.id, reason: 'auto-rejected',
             });
+            if (res?.archived) {
+              try {
+                ws.pushVoteUpdate({
+                  sessionId: session.id, appSlug: session.app_slug, merged: false,
+                });
+              } catch {}
+              log.info('server', 'Promoted PR auto-rejected by sweeper', {
+                sessionId: session.id,
+                yesCount: session.yes_count, noCount: session.no_count,
+              });
+            }
           }
         } catch (err) {
           log.warn('server', 'Window-elapsed merge check failed', {

@@ -60,6 +60,9 @@ function stagingMockProposals() {
     votes_required: gate.required ?? Math.max(yes, 1),
     merge_window_ends_at: gate.windowEndsAt ?? null,
     contested: gate.contested ?? false,
+    // Auto-takedown (rejection) fields.
+    reject_window_ends_at: gate.rejectEndsAt ?? null,
+    rejection_armed: gate.rejectionArmed ?? false,
   });
   return [
     // Unopposed, thin support: threshold met but a multi-day visibility
@@ -102,6 +105,21 @@ function stagingMockProposals() {
     mk(9000004, 900104,
       '[Mock] Make this app invite-only build, public to view',
       2, 1, 0, 1, { required: 2, windowEndsAt: hoursAhead(60) }),
+    // Auto-takedown — slim No majority (No just edges ahead of Yes, under the
+    // 1/3 keep-alive line): long rejection window → "Rejecting in ~6d".
+    mk(9000008, 900108,
+      '[Mock] Rejection test: replace the home feed with an infinite-scroll redesign',
+      30, 2, 3, 6, { required: 6, rejectEndsAt: hoursAhead(140), rejectionArmed: true }),
+    // Auto-takedown — lopsided opposition (No heavily outweighs Yes): short
+    // rejection window → "Rejecting in ~Xh".
+    mk(9000009, 900109,
+      '[Mock] Rejection test: drop dark mode entirely to simplify the theme code',
+      18, 1, 6, 4, { required: 6, rejectEndsAt: hoursAhead(7), rejectionArmed: true }),
+    // Kept-alive despite No > Yes: Yes fraction >= 1/3 cancels the rejection
+    // clock entirely (Contested, not rejected) → normal tally, no countdown.
+    mk(9000010, 900110,
+      '[Mock] Kept-alive test: add keyboard shortcuts even though some object',
+      9, 7, 9, 5, { required: 11, contested: true, rejectionArmed: false }),
   ];
 }
 
@@ -565,6 +583,8 @@ function voteRoutes(config) {
             votes_required: gate.required,
             merge_window_ends_at: gate.windowEndsAt,
             contested: gate.contested,
+            reject_window_ends_at: gate.rejectionEndsAt,
+            rejection_armed: gate.rejectionArmed,
           };
         }),
         governance: governance.map((g) => {
@@ -707,6 +727,8 @@ function voteRoutes(config) {
         row.votes_required = gate.required;
         row.merge_window_ends_at = gate.windowEndsAt;
         row.contested = gate.contested;
+        row.reject_window_ends_at = gate.rejectionEndsAt;
+        row.rejection_armed = gate.rejectionArmed;
       }
 
       res.json({

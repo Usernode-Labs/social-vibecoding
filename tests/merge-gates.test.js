@@ -14,13 +14,14 @@ const assert = require('node:assert/strict');
 const {
   requiredVotes,
   mergeWindowMs,
+  rejectionWindowMs,
   isContested,
   mergeGate,
   MERGE_GATE_CONSTANTS,
 } = require('../src/services/active-users');
 
 const DAY = 24 * 60 * 60 * 1000;
-const { WINDOW_MAX_MS, WINDOW_MID_MS } = MERGE_GATE_CONSTANTS;
+const { WINDOW_MAX_MS, WINDOW_MID_MS, REJECT_WINDOW_MAX_MS } = MERGE_GATE_CONSTANTS;
 
 test('requiredVotes: unopposed easing scales with app size, capped at majority', () => {
   // active=8 → M=5; unopposed discount = floor(8/4) = 2 → 3.
@@ -139,4 +140,92 @@ test('mergeGate: combines threshold + window into a single decision', () => {
   assert.equal(contestedMajority.contested, true);
   assert.equal(contestedMajority.windowMs, 0);
   assert.equal(contestedMajority.mergeable, true);
+});
+
+// ---------------------------------------------------------------------------
+// Auto-takedown (rejection) window.
+// ---------------------------------------------------------------------------
+
+test('rejectionWindowMs: kept alive (null) when Yes fraction >= 1/3', () => {
+  // active=20: yes=7 → 0.35 >= 1/3, even with heavy No → no rejection clock.
+  assert.equal(rejectionWindowMs(20, 7, 10), null);
+  assert.equal(rejectionWindowMs(9, 3, 9), null); // 3/9 = 1/3 exactly → kept alive
+});
+
+test('rejectionWindowMs: not armed (null) when No does not strictly lead Yes', () => {
+  assert.equal(rejectionWindowMs(20, 3, 3), null); // tie
+  assert.equal(rejectionWindowMs(20, 4, 3), null); // Yes ahead
+});
+
+test('rejectionWindowMs: a lone No can never arm (REJECT_MIN_NO)', () => {
+  // yes=0, no=1: No leads but is below the min-No floor → null.
+  assert.equal(rejectionWindowMs(20, 0, 1), null);
+  // yes=0, no=2: clears the floor → armed (and fully dominant → instant).
+  assert.equal(rejectionWindowMs(20, 0, 2), 0);
+});
+
+test('rejectionWindowMs: ~max when No barely leads Yes (with support present)', () => {
+  // active=20, yes=5, no=6: t=(6-5)/11 ≈ 0.09 → window ≈ max.
+  const w = rejectionWindowMs(20, 5, 6);
+  assert.ok(w > 0.98 * REJECT_WINDOW_MAX_MS, `expected ~7d, got ${w / DAY}d`);
+  assert.ok(w <= REJECT_WINDOW_MAX_MS);
+});
+
+test('rejectionWindowMs: shrinks monotonically as No dominance grows', () => {
+  const slim = rejectionWindowMs(20, 2, 3);   // t small
+  const mid = rejectionWindowMs(20, 2, 6);    // t larger
+  const heavy = rejectionWindowMs(20, 1, 10); // t large
+  assert.ok(slim > mid && mid > heavy, `expected slim>${mid / DAY}>${heavy / DAY}`);
+  // Full dominance (no Yes at all) → instant.
+  assert.equal(rejectionWindowMs(20, 0, 5), 0);
+});
+
+test('rejectionWindowMs: non-linear front-loaded (stays nearer max at mid-dominance)', () => {
+  // Pick yes/no giving t=0.5: (no-yes)/(no+yes)=0.5 → no=3*yes. yes=3,no=9
+  // but 3/active must be < 1/3, so use a big active. active=60, yes=3, no=9:
+  // yesFrac=0.05 (<1/3), t=(9-3)/12=0.5.
+  const w = rejectionWindowMs(60, 3, 9);
+  const linearMid = REJECT_WINDOW_MAX_MS * 0.5;
+  assert.ok(w > linearMid, 'front-loaded curve stays above the straight-line midpoint');
+  assert.ok(w > 0.85 * REJECT_WINDOW_MAX_MS, `expected ~6.1d, got ${w / DAY}d`);
+});
+
+test('mergeGate: rejection fields and rejectable transitions', () => {
+  const opened = '2026-06-01T00:00:00.000Z';
+  const openedMs = Date.parse(opened);
+
+  // Armed, slim No majority, just opened → not yet rejectable.
+  const fresh = mergeGate(20, 2, 3, opened, openedMs + 60 * 1000);
+  assert.equal(fresh.rejectionArmed, true);
+  assert.ok(fresh.rejectionEndsAt, 'exposes a rejection-end timestamp while armed');
+  assert.equal(fresh.rejectable, false);
+
+  // Same proposal, well past the rejection window → rejectable.
+  const aged = mergeGate(20, 2, 3, opened, openedMs + 8 * DAY);
+  assert.equal(aged.rejectionArmed, true);
+  assert.equal(aged.rejectable, true);
+
+  // Kept alive (Yes fraction >= 1/3) → never armed/rejectable, even aged.
+  const keptAlive = mergeGate(20, 7, 12, opened, openedMs + 30 * DAY);
+  assert.equal(keptAlive.rejectionArmed, false);
+  assert.equal(keptAlive.rejectionEndsAt, null);
+  assert.equal(keptAlive.rejectable, false);
+
+  // Not armed (No not ahead) → no rejection.
+  const notLosing = mergeGate(20, 4, 3, opened, openedMs + 30 * DAY);
+  assert.equal(notLosing.rejectionArmed, false);
+  assert.equal(notLosing.rejectable, false);
+});
+
+test('mergeGate: mergeable and rejectable are never simultaneously true', () => {
+  const opened = '2026-06-01T00:00:00.000Z';
+  const long = Date.parse(opened) + 60 * DAY; // far past any window
+  // Sweep a range of yes/no on a 20-active app long after opening.
+  for (let yes = 0; yes <= 20; yes++) {
+    for (let no = 0; no <= 20; no++) {
+      const g = mergeGate(20, yes, no, opened, long);
+      assert.ok(!(g.mergeable && g.rejectable),
+        `mergeable && rejectable both true at yes=${yes} no=${no}`);
+    }
+  }
 });

@@ -1197,15 +1197,17 @@ const AppView = {
     return `~${m}m`;
   },
 
-  // Ticks the "Merging in ~X" countdown pills purely from the passage of
-  // time (vote changes already refetch via the WS vote-update path). Updates
-  // each pill's label in place; when a window crosses zero it refetches the
-  // feed so the row reflects server truth — the actual merge is server-driven
-  // (next vote, or the stale-PR sweeper's window-elapsed pass). Self-clears
-  // when no countdown pills remain so it never runs idle.
+  // Ticks the "Merging in ~X" / "Rejecting in ~X" countdown pills purely from
+  // the passage of time (vote changes already refetch via the WS vote-update
+  // path). Updates each pill's label in place; when a window crosses zero it
+  // refetches the feed so the row reflects server truth — the actual merge /
+  // takedown is server-driven (next vote, or the stale-PR sweeper's
+  // window-elapsed / rejection pass). Self-clears when no countdown pills
+  // remain so it never runs idle.
+  _COUNTDOWN_SEL: '.gc-merge-countdown[data-window-ends], .gc-reject-countdown[data-window-ends]',
   _startMergeCountdownTimer() {
     const feed = document.getElementById('dev-feed');
-    if (!feed || !feed.querySelector('.gc-merge-countdown[data-window-ends]')) {
+    if (!feed || !feed.querySelector(AppView._COUNTDOWN_SEL)) {
       if (AppView._mergeCountdownTimer) {
         clearInterval(AppView._mergeCountdownTimer);
         AppView._mergeCountdownTimer = null;
@@ -1215,7 +1217,7 @@ const AppView = {
     if (AppView._mergeCountdownTimer) return;
     AppView._mergeCountdownTimer = setInterval(() => {
       const el = document.getElementById('dev-feed');
-      const pills = el ? el.querySelectorAll('.gc-merge-countdown[data-window-ends]') : [];
+      const pills = el ? el.querySelectorAll(AppView._COUNTDOWN_SEL) : [];
       if (!pills.length) {
         clearInterval(AppView._mergeCountdownTimer);
         AppView._mergeCountdownTimer = null;
@@ -1229,8 +1231,9 @@ const AppView = {
           anyExpired = true;
           return;
         }
+        const verb = pill.classList.contains('gc-reject-countdown') ? 'Rejecting' : 'Merging';
         const label = pill.querySelector('.gc-vote-count-label');
-        if (label) label.textContent = `Merging in ${AppView._fmtCountdown(remaining)}`;
+        if (label) label.textContent = `${verb} in ${AppView._fmtCountdown(remaining)}`;
       });
       if (anyExpired) AppView._loadDevFeed();
     }, 30000);
@@ -2282,6 +2285,22 @@ const AppView = {
         + ` title="Enough yes votes (${yes} / ${maj}) — merges when the visibility window elapses unless opposed">`
         + `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-yes"></span>`
         + `<span class="gc-vote-count-label">Merging in ${label}</span>`
+        + `</span>`;
+    }
+
+    // Rejection (auto-takedown) countdown: the group is voting this down
+    // (No > Yes, under the 1/3 support line) and the takedown clock is armed.
+    // Render a red "Rejecting in ~X" pill. Mutually exclusive with the merge
+    // countdown above (can't reach the Yes threshold while losing). The
+    // `gc-reject-countdown` class + data-window-ends drive the same timer.
+    const rejectEndsMs = pr.reject_window_ends_at ? Date.parse(pr.reject_window_ends_at) : NaN;
+    const inReject = Number.isFinite(rejectEndsMs) && rejectEndsMs > Date.now();
+    if (isOpenRow && pr.rejection_armed && inReject) {
+      const label = AppView._fmtCountdown(rejectEndsMs - Date.now());
+      return `<span class="gc-vote-count gc-vote-count-no gc-reject-countdown" data-window-ends="${rejectEndsMs}"`
+        + ` title="More No than Yes and not enough support (${yes} / ${maj}) — closes when this elapses unless support arrives">`
+        + `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-no"></span>`
+        + `<span class="gc-vote-count-label">Rejecting in ${label}</span>`
         + `</span>`;
     }
     // #58: when both at-merge figures are present, surface the historical
