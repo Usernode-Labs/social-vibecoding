@@ -2586,7 +2586,7 @@ If the spec contains a Questions section with decisions a human must make: do NO
 Otherwise, dispatch dispatch_claude_code to implement the spec NOW only if ALL of these hold:
 - The spec has no **unresolved/blocking** questions — a "Questions" section that says "None" (or is empty) is NOT a blocker; proceed to build it. Only an open question that genuinely requires a human decision blocks the build.
 - It describes a small, bounded change with concrete file paths — roughly a handful of files, no broad refactor.
-- No database schema migrations, no destructive or irreversible operations, no changes to auth, billing, permissions, or security-sensitive code.
+- Database schema changes are allowed ONLY when they are append-only and forward-only: creating new tables (\`CREATE TABLE IF NOT EXISTS\`), adding new nullable columns (\`ADD COLUMN IF NOT EXISTS\`), and forward-only data backfills. Drops, renames, type changes, not-null tightenings, and any other destructive or irreversible database operation are NOT allowed — defer to a human when in doubt. Also no other destructive or irreversible operations, and no changes to auth, billing, permissions, or security-sensitive code.
 - No new external services, dependencies, or credentials.
 - The spec stays within what issue #${issueNumber} asked for (no scope expansion).
 If ANY criterion fails or you are unsure, reply in plain text instead — summarize the spec and stop; a human will review it. When you do dispatch, the prompt must tell the agent to implement the session's spec doc exactly as written and not redesign it. Remember: headless mode means commit + push + staging preview — no PR.`;
@@ -5312,4 +5312,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, describeMarkerlessExit, shouldRetryHeadlessTurn };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, describeMarkerlessExit, shouldRetryHeadlessTurn };
