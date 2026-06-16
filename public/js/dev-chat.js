@@ -1,3 +1,4 @@
+// Build trigger: no-op change to force a fresh staging build (2026-06-16).
 // localStorage key for the user's last-chosen model. Single global
 // key (not per-app/per-session) so the preference is sticky wherever
 // the user goes — nobody wants "I set Opus here, but the next app
