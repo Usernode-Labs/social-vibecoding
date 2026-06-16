@@ -49,6 +49,7 @@ async function migrate(config) {
   await seedStagingSyncActivity(pool, config);
   await seedStagingChatEditFixtures(pool, config);
   await seedStagingLlmUsage(pool);
+  await seedStagingDashboardAdminSplit(pool);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
   // Must run BEFORE backfillOrphanedSpecDrafts: unwrapping spec_md after that
@@ -1970,6 +1971,105 @@ async function seedStagingLlmUsage(pool) {
   }
 
   log.info('db', 'Staging llm_usage fixtures seeded', { users: users.length });
+}
+
+// Admin-attributed footprint for the dashboard's amber admin-split charts
+// (#341). The colour split (Funnels, Growth, Engagement tiers, Top builders)
+// is only visible when staging holds an ADMIN user whose recent activity
+// overlaps the existing non-admin demo data. seedStagingLlmUsage already
+// gives admins spend (so Daily spend / Spend-by-builder show the amber
+// outline + tooltip breakout immediately); this fills the rest by giving the
+// seeded view-only admin (900030, is_admin = TRUE) a small, recent footprint:
+//   - two dev sessions, one promoted (~2wks ago), one merged (~1wk ago)
+//     → Funnels admin segment, Growth promoted/merged admin, Top builders bar
+//   - a few app_activity days + matching dapp_active_day / pr_promoted events
+//     → Funnels "opened/returned" admin segment, Engagement DAU/WAU admin
+//   - one kudos given → Funnels "engaged socially" admin segment
+// With "Include admin users" ticked every admin-split chart then renders a
+// non-zero amber segment beside the non-admin demo data. Idempotent (fixed
+// 9000xx ids + ON CONFLICT), [staging fixture]-tagged, a no-op outside staging.
+async function seedStagingDashboardAdminSplit(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const ADMIN_ID = 900030; // staging-demo-view-admin (seeded earlier, is_admin)
+  try {
+    const { rows: adminRows } = await pool.query(
+      'SELECT id FROM users WHERE id = $1 AND is_admin', [ADMIN_ID]
+    );
+    if (!adminRows.length) {
+      log.warn('db', 'Staging dashboard admin-split skipped: admin user missing');
+      return;
+    }
+
+    const { rows: appRows } = await pool.query(
+      `SELECT id FROM apps
+         WHERE COALESCE(self_hosted, FALSE) = FALSE AND status <> 'deleted'
+         ORDER BY id LIMIT 1`
+    );
+    const appId = appRows[0]?.id;
+    if (!appId) {
+      log.warn('db', 'Staging dashboard admin-split skipped: no public app');
+      return;
+    }
+
+    // Two admin dev sessions: one promoted, one merged, dated within the
+    // last couple of weeks so they fall inside the 12-week growth/engagement
+    // windows. chat_sessions is staging:private → seeded here.
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_title, status,
+          created_at, promoted_at, merged_at)
+       VALUES
+         (9000401, $1, $2, 'staging-fixture/admin-split-promoted', 900401,
+          '[staging fixture] Staging demo admin PR — promoted',
+          'promoted', NOW() - INTERVAL '15 days', NOW() - INTERVAL '14 days', NULL),
+         (9000402, $1, $2, 'staging-fixture/admin-split-merged', 900402,
+          '[staging fixture] Staging demo admin PR — merged',
+          'merged', NOW() - INTERVAL '9 days', NOW() - INTERVAL '8 days', NOW() - INTERVAL '7 days')
+       ON CONFLICT (id) DO NOTHING`,
+      [appId, ADMIN_ID]
+    );
+
+    // app_activity across 4 distinct recent days → Funnels opened/returned
+    // admin segment + Engagement WAU (>= 2 days in the trailing 2 weeks).
+    await pool.query(
+      `INSERT INTO app_activity (app_id, user_id, seconds_spent, date)
+       SELECT $1, $2, 120, CURRENT_DATE - g
+         FROM generate_series(1, 4) g
+       ON CONFLICT (app_id, user_id, date) DO NOTHING`,
+      [appId, ADMIN_ID]
+    );
+
+    // Explicit events so the admin amber shows in Engagement tiers even when
+    // the one-shot events backfill already ran on a prior boot of this
+    // container: 4 dapp_active_day days (>= 2 → WAU) + a pr_promoted (→ DAU).
+    await pool.query(
+      `INSERT INTO events (id, user_id, app_id, event_type, created_at)
+       SELECT 90004100 + g, $2, $1, 'dapp_active_day', NOW() - (g || ' days')::interval
+         FROM generate_series(1, 4) g
+       ON CONFLICT (id) DO NOTHING`,
+      [appId, ADMIN_ID]
+    );
+    await pool.query(
+      `INSERT INTO events (id, user_id, app_id, session_id, event_type, created_at)
+       VALUES (90004110, $2, $1, 9000401, 'pr_promoted', NOW() - INTERVAL '14 days')
+       ON CONFLICT (id) DO NOTHING`,
+      [appId, ADMIN_ID]
+    );
+
+    // One kudos given by the admin → Funnels "engaged socially" admin segment.
+    await pool.query(
+      `INSERT INTO pr_kudos (session_id, giver_user_id, week_start, created_at)
+       SELECT 9000402, $1, date_trunc('week', NOW() AT TIME ZONE 'UTC')::date, NOW()
+        WHERE EXISTS (SELECT 1 FROM chat_sessions WHERE id = 9000402)
+       ON CONFLICT (session_id, giver_user_id) DO NOTHING`,
+      [ADMIN_ID]
+    );
+
+    log.info('db', 'Staging dashboard admin-split fixtures seeded', { appId });
+  } catch (err) {
+    log.warn('db', 'Staging dashboard admin-split seeding failed', { message: err.message });
+  }
 }
 
 // Q/A-mode fixture (#32): one demo dev-chat session whose latest Mayor
