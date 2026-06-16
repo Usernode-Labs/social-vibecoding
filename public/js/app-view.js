@@ -271,8 +271,8 @@ const AppView = {
         id="app-iframe"
         src="${iframeSrc}"
         class="w-full h-full border-0"
-        sandbox="allow-scripts allow-forms allow-same-origin allow-popups"
-        allow="clipboard-write"
+        sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock"
+        allow="clipboard-write; pointer-lock"
       ></iframe>`;
 
     const iframe = document.getElementById('app-iframe');
