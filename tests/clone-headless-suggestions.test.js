@@ -164,8 +164,17 @@ test('question clone with no source suggestions writes an empty-metadata follow-
   }
 });
 
+// #330: spec/code/spec_code clones must carry NO chips (they have no
+// questions) but DO carry outcome-appropriate next-step quick-reply pills,
+// so the cloned follow-up never lands with an empty pill bar.
+const EXPECTED_PILLS = {
+  spec: ['Build it', 'Revise the spec', 'What will this change?'],
+  code: ['Propose it to the group', 'Make a tweak', 'What did it change?'],
+  spec_code: ['Propose it to the group', 'Revise the spec', 'Make a tweak'],
+};
+
 for (const outcome of ['spec', 'code', 'spec_code']) {
-  test(`${outcome} clone produces a chip-free follow-up and skips the lookup`, async () => {
+  test(`${outcome} clone carries next-step pills, no chips, and skips the lookup`, async () => {
     captured = [];
     handler = makeHandler({
       outcome,
@@ -180,7 +189,12 @@ for (const outcome of ['spec', 'code', 'spec_code']) {
 
       const ins = followUpInsert();
       assert.ok(ins, 'follow-up INSERT was issued');
-      assert.deepStrictEqual(JSON.parse(ins.params[2]), {});
+      const meta = JSON.parse(ins.params[2]);
+      assert.deepStrictEqual(meta.quickReplies, EXPECTED_PILLS[outcome]);
+      assert.strictEqual(meta.suggestions, undefined, 'no answer chips off the question path');
+      // Pills must respect the shared sanitizeQuickReplies envelope.
+      assert.ok(meta.quickReplies.length <= 3, '≤3 pills');
+      for (const p of meta.quickReplies) assert.ok(p.length <= 80, '≤80 chars per pill');
 
       const lookup = captured.find((c) => /SELECT metadata FROM chat_session_messages/.test(c.sql));
       assert.strictEqual(lookup, undefined, 'suggestions lookup must be skipped off the question path');
@@ -189,3 +203,22 @@ for (const outcome of ['spec', 'code', 'spec_code']) {
     }
   });
 }
+
+test('question clone carries chips but no pills', async () => {
+  captured = [];
+  handler = makeHandler({
+    outcome: 'question',
+    suggestionsRow: { metadata: { suggestions: SUGGESTIONS } },
+  });
+  const server = await startServer();
+  try {
+    const { res } = await clone(server);
+    assert.strictEqual(res.status, 201);
+    const ins = followUpInsert();
+    const meta = JSON.parse(ins.params[2]);
+    assert.deepStrictEqual(meta.suggestions, SUGGESTIONS);
+    assert.strictEqual(meta.quickReplies, undefined, 'pills suppressed on the question path');
+  } finally {
+    server.close();
+  }
+});
