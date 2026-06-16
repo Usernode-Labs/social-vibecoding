@@ -2870,6 +2870,9 @@ async function seedStagingHeadlessFixtures(pool, config) {
     { branch: 'staging-fixture/headless-question', status: 'ready', outcome: 'question', issue: 900003, step: null },
     { branch: 'staging-fixture/headless-spec', status: 'ready', outcome: 'spec', issue: 900004, step: null },
     { branch: 'staging-fixture/headless-failed', status: 'failed', outcome: null, issue: 900005, step: null },
+    // #361: a `code` outcome — the auto-run produced a reviewable commit.
+    // Its viewer-owned clones (below) carry "Changes ready" cards.
+    { branch: 'staging-fixture/headless-code', status: 'ready', outcome: 'code', issue: 900006, step: null },
   ];
 
   const sessionIds = {};
@@ -2920,6 +2923,85 @@ async function seedStagingHeadlessFixtures(pool, config) {
          VALUES ($1, $2, $3, 'active', FALSE, $4,
                  NOW() - INTERVAL '20 minutes')`,
         [appId, target.id, cloneBranch, specHeadlessId]
+      );
+      cloneInserted++;
+    }
+  }
+
+  // #361: two viewer-owned clones of the `code` headless session, each
+  // seeded with a "Changes ready" system status message so both card
+  // variants are reviewable in staging WITHOUT running a real build:
+  //   - preview-OK clone: changesReady + a (fake) stagingUrl → full card
+  //     (Preview staging + Propose to group).
+  //   - preview-failed clone: changesReady + stagingFailed + a missing-key
+  //     hint → card with a disabled Preview button + working Propose.
+  // Both also carry the cloned follow-up assistant message (reusing the
+  // real builders) so the intro copy + quick replies sit alongside the
+  // card, exactly like a freshly-cloned auto session. Owned by `target`
+  // (the tester), non-headless, 'active' (so the Propose button renders).
+  const codeHeadlessId = sessionIds['staging-fixture/headless-code'];
+  if (codeHeadlessId) {
+    const { buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies } =
+      require('../routes/sessions');
+    // Mirror the `src` shape buildHeadlessFollowUp* reads off a session row.
+    const cloneSrc = { headless_issue_number: 900006, headless_outcome: 'code', spec_md: null };
+    const followUp = buildHeadlessFollowUpMessage(cloneSrc);
+    const followUpQuickReplies = buildHeadlessFollowUpQuickReplies(cloneSrc);
+    const followUpMeta = JSON.stringify(
+      followUpQuickReplies ? { quickReplies: followUpQuickReplies } : {}
+    );
+
+    const codeClones = [
+      {
+        branch: 'staging-fixture/headless-code-myclone-ok',
+        statusText: 'Staging preview built',
+        metadata: {
+          changesReady: true,
+          stagingUrl: `https://staging-fixture-code-ok.${process.env.USERNODE_DOMAIN || 'social-vibecoding.usernodelabs.org'}`,
+          prNumber: null,
+        },
+      },
+      {
+        branch: 'staging-fixture/headless-code-myclone-failed',
+        statusText: 'Staging build failed',
+        metadata: {
+          changesReady: true,
+          stagingFailed: true,
+          stagingErrorName: 'MissingSecretsError',
+          stagingMissingKeys: ['EXAMPLE_KEY'],
+          prNumber: null,
+        },
+      },
+    ];
+
+    for (const c of codeClones) {
+      const { rows: existingClone } = await pool.query(
+        'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+        [appId, c.branch]
+      );
+      if (existingClone.length) continue;
+      const { rows: cloneRows } = await pool.query(
+        `INSERT INTO chat_sessions
+           (app_id, user_id, branch_name, status, is_headless,
+            cloned_from_session_id, created_at)
+         VALUES ($1, $2, $3, 'active', FALSE, $4,
+                 NOW() - INTERVAL '18 minutes')
+         RETURNING id`,
+        [appId, target.id, c.branch, codeHeadlessId]
+      );
+      const cloneId = cloneRows[0].id;
+      // Cloned follow-up assistant message (intro copy + quick replies).
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+         VALUES ($1, 'assistant', $2, $3, NOW() - INTERVAL '17 minutes')`,
+        [cloneId, followUp, followUpMeta]
+      );
+      // The "Changes ready" card driver — a system status row whose
+      // metadata carries the staging-independent marker.
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+         VALUES ($1, 'system', $2, $3, NOW() - INTERVAL '16 minutes')`,
+        [cloneId, c.statusText, JSON.stringify(c.metadata)]
       );
       cloneInserted++;
     }
