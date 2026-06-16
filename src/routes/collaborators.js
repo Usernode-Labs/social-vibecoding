@@ -297,7 +297,7 @@ function collaboratorRoutes(config) {
       );
       if (!app) return res.status(404).json({ error: 'App not found' });
 
-      const allowed = req.user?.isAdmin
+      const allowed = req.user?.canAdminWrite
         || app.created_by === req.user?.id
         || targetId === req.user?.id;
       if (!allowed) {

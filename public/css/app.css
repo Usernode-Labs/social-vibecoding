@@ -230,6 +230,12 @@ html, body {
 .dc-task-check { display: inline-block; width: 1em; color: var(--text-muted); font-family: 'JetBrains Mono', 'Fira Code', monospace; }
 .dc-task-check.dc-task-checked { color: var(--accent); }
 
+/* Held-back trailing line of a live-streaming assistant bubble: the
+   still-being-typed final line, rendered as escaped plaintext until its
+   newline arrives (so a `- [ ]` fragment never momentarily parses as a
+   checkbox). Matches the surrounding prose and preserves leading spaces. */
+.dc-streaming-tail { display: block; white-space: pre-wrap; }
+
 /* Tables (F1): styled by class, not by .dc-msg-content ancestry, so they
    render identically in chat, the spec preview snippet, and the viewer. */
 .dc-table { border-collapse: collapse; margin: 8px 0; width: 100%; font-size: 13px; display: block; overflow-x: auto; }
@@ -973,6 +979,110 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   color: var(--text-secondary);
   overflow-wrap: anywhere;
   word-break: break-word;
+  /* Honor the user's own line breaks in multi-line messages (general chat
+     and threads share this class). overflow-wrap/word-break above still
+     wrap long unbroken runs. This is the FALLBACK path (renderMessageBody
+     -> renderWithMentions): plain escaped text + mention/ref spans, no block
+     children, so pre-wrap preserves the user's newlines. The markdown path
+     overrides this below via :has(). */
+  white-space: pre-wrap;
+}
+
+/* #328: markdown-rendered message bodies. When DevChat.renderMarkdown is
+   available, renderMessageBody produces block-level children (<p>/<ul>/<pre>
+   …) that manage their own spacing and carry the dev-chat `dc-*` classes.
+   marked emits literal newlines between those block tags, so leave the
+   container on pre-wrap and they'd render as extra blank lines — switch to
+   normal whitespace whenever block markdown is present. The :has() guard
+   keeps the inline-only fallback path (above) on pre-wrap. */
+.gc-msg-content:has(.dc-p, .dc-ul, .dc-ol, .dc-blockquote, .dc-code-block,
+                    .dc-table, .dc-h3, .dc-h4, .dc-h5) {
+  white-space: normal;
+}
+
+/* Tighten the spec-viewer markdown rhythm for the narrower chat bubble: a
+   single-paragraph message must not gain vertical padding (overrides the
+   global `.dc-p { margin-top: .5em }`), stacked blocks get a compact gap,
+   and code blocks / tables can't overflow the bubble width. */
+.gc-msg-content .dc-p { margin: 0; }
+.gc-msg-content .dc-ul,
+.gc-msg-content .dc-ol,
+.gc-msg-content .dc-blockquote { margin: 4px 0; }
+.gc-msg-content .dc-code-block { margin: 4px 0; max-width: 100%; }
+.gc-msg-content .dc-table { margin: 4px 0; }
+.gc-msg-content > :first-child { margin-top: 0; }
+.gc-msg-content > :last-child { margin-bottom: 0; }
+.gc-msg-content
+  :is(.dc-p, .dc-ul, .dc-ol, .dc-blockquote, .dc-code-block, .dc-table,
+      .dc-h3, .dc-h4, .dc-h5)
+  + :is(.dc-p, .dc-ul, .dc-ol, .dc-blockquote, .dc-code-block, .dc-table,
+        .dc-h3, .dc-h4, .dc-h5) {
+  margin-top: 6px;
+}
+
+/* "edited" marker shown next to a message's timestamp once it has been
+   edited. Muted like the time; the full edit timestamp is in its title
+   tooltip (revealed on hover/tap). */
+.gc-msg-edited {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+  cursor: default;
+}
+
+/* Auto-growing composer / inline-editor textarea. Height is driven by JS
+   (GroupChat._autoGrowTextarea); this just keeps single-row metrics close
+   to the old <input> and prevents the manual resize grabber. */
+.gc-composer-input {
+  line-height: 1.5;
+}
+
+/* Inline message editor (replaces .gc-msg-content while editing own msg). */
+.gc-edit {
+  margin-top: 2px;
+}
+.gc-edit-textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  overflow-y: auto;
+  font-size: 13px;
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.3));
+  color: var(--text-primary, var(--text-secondary));
+}
+.gc-edit-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.gc-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.gc-edit-save,
+.gc-edit-cancel {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.gc-edit-save {
+  background: var(--accent);
+  color: #fff;
+}
+.gc-edit-cancel {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+.gc-edit-notice {
+  font-size: 11px;
+  color: var(--danger, #ef4444);
 }
 
 .gc-mention {
@@ -1181,6 +1291,40 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   .gc-react-add:hover { opacity: 1; }
 }
 @media (hover: none) { .gc-react-add { display: none; } }
+
+/* Edit affordance on own ordinary messages — same hover-reveal model as
+   the react button. Lives in the header row next to the timestamp. On touch
+   (no hover) it's hidden; the long-press reaction bar carries Edit there. */
+.gc-msg-edit {
+  align-self: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms;
+}
+@media (hover: hover) {
+  .gc-msg:hover .gc-msg-edit { opacity: 0.85; }
+  .gc-msg-edit:hover { opacity: 1; }
+}
+@media (hover: none) { .gc-msg-edit { display: none; } }
+
+/* Edit button inside the long-press reaction bar (touch). */
+.gc-react-bar-edit {
+  font-size: 18px;
+  line-height: 1;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 6px;
+}
 
 /* Reaction pills under a message. */
 .gc-reactions {

@@ -166,7 +166,29 @@ test('archiveSession: purgeCc=true destroys the CC volume immediately', async ()
   }
 });
 
-test('archiveSession: returns archived=false when no row matched', async () => {
+test('archiveSession: owner-scopes the UPDATE by user_id when a userId is given', async () => {
+  // Backs the proposal-card Withdraw button: POST /api/sessions/:id/archive
+  // passes req.user.id, so the archive only matches the proposer's own row.
+  const { subject, restore } = loadWithStubs();
+  try {
+    const pool = makePool([
+      [/SET status = 'archived'/, [{ id: 7 }]],
+      [/SELECT cs\.\*/, [{ id: 7, app_slug: 'w', repo_url: REPO, pr_number: null }]],
+    ]);
+    await subject.archiveSession({ pool, sessionId: 7, userId: 3, reason: 'manual' });
+    const upd = pool.calls.find((c) => /SET status = 'archived'/.test(c.sql));
+    assert.match(upd.sql, /AND user_id = \$2/, 'owner-scoped on the caller');
+    assert.match(upd.sql, /status IN \('active', 'promoted', 'paused'\)/,
+      'only matches still-live rows (a merging/merged PR is left alone)');
+    assert.deepEqual(upd.params, [7, 3], 'params carry sessionId + userId');
+  } finally {
+    restore();
+  }
+});
+
+test('archiveSession: returns archived=false when no row matched (non-owner tap)', async () => {
+  // A non-owner POST matches no row (the AND user_id = $2 fails), so the
+  // archive is a harmless no-op: no PR close, no teardown, no chat line.
   const { subject, spies, restore } = loadWithStubs();
   try {
     const pool = makePool([[/SET status = 'archived'/, []]]);
@@ -174,6 +196,30 @@ test('archiveSession: returns archived=false when no row matched', async () => {
     assert.equal(res.archived, false);
     assert.deepEqual(spies.destroyWorker, []);
     assert.deepEqual(spies.closePR, []);
+    assert.deepEqual(spies.sendSystemMessage, []);
+  } finally {
+    restore();
+  }
+});
+
+test('archiveSession: a rename/visibility PR row archives like any promoted session', async () => {
+  // Rename ('rename/…') and visibility ('visibility/…') PRs are ordinary
+  // promoted chat_sessions rows, so withdrawing them via the same archive
+  // path closes the PR and posts the withdrawal line with no special-casing.
+  const { subject, spies, restore } = loadWithStubs();
+  try {
+    const pool = makePool([
+      [/SET status = 'archived'/, [{ id: 8 }]],
+      [/SELECT cs\.\*/, [{
+        id: 8, app_id: 4, app_slug: 'widget', repo_url: REPO,
+        branch_name: 'rename/cooler-name', pr_number: 21,
+        pr_title: 'Rename to "Cooler App"', owner_username: 'evan',
+      }]],
+    ]);
+    const res = await subject.archiveSession({ pool, sessionId: 8, userId: 3, reason: 'manual' });
+    assert.equal(res.archived, true);
+    assert.deepEqual(spies.closePR, [{ owner: 'acme', repo: 'widget', pr: 21 }]);
+    assert.equal(spies.sendSystemMessage[0].content, 'evan withdrew PR #21 — Rename to "Cooler App"');
   } finally {
     restore();
   }

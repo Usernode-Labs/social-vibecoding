@@ -13,6 +13,43 @@ const AppView = {
   _ghIssuesMeta: { truncatedList: false, note: null, repoUrl: null, myRemaining: null },
   _bountyInFlight: new Set(),
 
+  // Scroll-position memory for the Dev card list, keyed by app slug
+  // (`App.currentApp`). In-memory only — reset on a full page reload by
+  // design, so a hard refresh starts at the top. Mirrors the
+  // per-session chat scroll memory in dev-chat.js
+  // (`_savedScrollBySession`): we capture the list's scrollTop when
+  // leaving it (any route that re-enters renderDevView) and restore it
+  // after the feed repaints, so tapping into an item and coming Back
+  // lands the user where they left off instead of at the top.
+  _savedFeedScroll: {},
+
+  // Store the Dev list's scroll offset under an app slug. A missing
+  // slug or a non-positive offset clears any saved value (top is the
+  // default, so there's nothing to remember). Pure besides the map
+  // write — DOM-free for unit testing.
+  _saveFeedScroll(slug, scrollTop) {
+    if (!slug) return;
+    const n = Number(scrollTop);
+    if (!Number.isFinite(n) || n <= 0) { delete AppView._savedFeedScroll[slug]; return; }
+    AppView._savedFeedScroll[slug] = n;
+  },
+
+  // Read back a saved offset for a slug, or 0 (top) when none is
+  // stored. Positions stay isolated per slug.
+  _getFeedScroll(slug) {
+    const v = AppView._savedFeedScroll[slug];
+    return Number.isFinite(v) && v > 0 ? v : 0;
+  },
+
+  // Clamp a saved offset to the maximum scrollable offset of the
+  // (possibly shorter) rebuilt list — the same clamp the browser's own
+  // scrollTo applies — so a collapsed "Show more" list lands at the
+  // bottom of its available content rather than overshooting.
+  _clampScrollTop(saved, scrollHeight, clientHeight) {
+    const max = Math.max(0, Number(scrollHeight) - Number(clientHeight));
+    return Math.max(0, Math.min(Number(saved) || 0, max));
+  },
+
   // Shared list-item shell for every card on the Dev page — the General
   // chat card, issue/proposal/governance cards, Your-sessions rows, and
   // Recently-merged rows — so the whole page reads as one uniform list
@@ -402,6 +439,15 @@ const AppView = {
     const content = document.getElementById('app-content');
     if (!content) return;
 
+    // Capture the Dev list's scroll position before any branch below
+    // overwrites #app-content. #dev-forum-scroll only exists when the
+    // outgoing view was the card list, so this is a no-op for
+    // topic/session/chat sub-views. Every back-navigation re-enters
+    // renderDevView, so this single point covers the Back buttons,
+    // browser back/forward, and programmatic navigation alike.
+    const outgoingScroll = document.getElementById('dev-forum-scroll');
+    if (outgoingScroll) AppView._saveFeedScroll(App.currentApp, outgoingScroll.scrollTop);
+
     // Leaving whatever thread surface was open: drop the live render
     // target so incoming thread messages turn into badge bumps.
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
@@ -501,6 +547,10 @@ const AppView = {
     // survives until the next renderDevView).
     const feedEl = document.getElementById('dev-feed');
     feedEl.addEventListener('click', (e) => {
+      // #313: the card-level "Ask AI" button is a <button>, so the guard
+      // below would swallow it — handle it first, then bail.
+      const askBtn = e.target.closest('.gc-ask-ai-btn');
+      if (askBtn) { AppView._openAskAiFromCard(askBtn.dataset.proposalId); return; }
       if (e.target.closest('a, button, input, form')) return;
       const issueRow = e.target.closest('[data-issue-row]');
       if (issueRow) {
@@ -516,9 +566,42 @@ const AppView = {
       if (govRow) AppView.openTopic('gov', parseInt(govRow.dataset.govRow, 10));
     });
 
+    // Completed (merged) proposals live in a sibling container with its own
+    // bespoke layout; bind the same tap-to-open behaviour here so merged
+    // rows open their (still-live) discussion thread full-screen. The node
+    // is stable across toggleMergedPrs()/_loadDevFeed() innerHTML rewrites.
+    const mergedEl = document.getElementById('gc-merged');
+    if (mergedEl) {
+      mergedEl.addEventListener('click', (e) => {
+        const askBtn = e.target.closest('.gc-ask-ai-btn');
+        if (askBtn) { AppView._openAskAiFromCard(askBtn.dataset.proposalId); return; }
+        if (e.target.closest('a, button, input, form')) return;
+        const prRow = e.target.closest('[data-proposal-row]');
+        if (prRow) AppView.openTopic('proposal', parseInt(prRow.dataset.proposalRow, 10));
+      });
+    }
+
     AppView._renderSessionsStrip();
     AppView._syncStripPolling();
     await AppView._loadDevFeed();
+
+    // Restore the saved scroll position now that the feed has painted.
+    // requestAnimationFrame waits for layout so scrollHeight is final;
+    // scrollTo({ behavior: 'instant' }) overrides any CSS smooth-scroll
+    // (matching dev-chat.js's restoreSessionScroll) so this is an
+    // instant jump, not a visible animation. We clamp to the rebuilt
+    // list's max offset — a shorter list (collapsed "Show more") lands
+    // near the old spot rather than overshooting. No saved value (or 0)
+    // → top, as before.
+    const savedScroll = AppView._getFeedScroll(App.currentApp);
+    if (savedScroll > 0) {
+      requestAnimationFrame(() => {
+        const container = document.getElementById('dev-forum-scroll');
+        if (!container) return;
+        const top = AppView._clampScrollTop(savedScroll, container.scrollHeight, container.clientHeight);
+        container.scrollTo({ top, behavior: 'instant' });
+      });
+    }
   },
 
   // ── Full-screen topic sub-view ──────────────────────────────────────
@@ -572,7 +655,8 @@ const AppView = {
       return (AppView._ghIssues || []).find((i) => i.number === t.id) || null;
     }
     if (t.kind === 'proposal') {
-      // Open proposals first; merged ones stay viewable (read-only thread).
+      // Open proposals first; merged ones stay viewable with a still-live,
+      // postable discussion thread (voting is settled, talking isn't).
       return (AppView._proposals || []).find((p) => p.id === t.id)
         || (AppView._merged || []).find((p) => p.id === t.id) || null;
     }
@@ -597,7 +681,10 @@ const AppView = {
       bodyHtml = AppView._issueBodyHtml(item);
     } else if (t.kind === 'proposal') {
       cardHtml = AppView._renderProposalCard(item, { noNav: true });
-      bodyHtml = AppView._proposalDetailsHtml(item);
+      // Plain-language summary (when one was generated) sits at the very top
+      // of the proposal body region, above proposer / linked issues / roster
+      // and the discussion thread — mirroring _issueBodyHtml for issues.
+      bodyHtml = AppView._proposalSummaryHtml(item) + AppView._proposalDetailsHtml(item);
     } else {
       cardHtml = AppView._renderGovCard(item, { noNav: true });
       bodyHtml = item.description
@@ -605,9 +692,149 @@ const AppView = {
         : '';
     }
 
-    head.innerHTML = cardHtml + bodyHtml;
+    // #297/#321/#348: the standalone "Ask AI" advisor button is the
+    // governance-only entry point. Opens a private, read-only conversation
+    // scoped to THIS proposal (see proposal-discuss.js).
+    //
+    // Why governance only:
+    // - Another user's PR proposal already carries an Ask AI PILL in its card
+    //   action row (_askAiCardBtnHtml, rendered when !mine), so the pill below
+    //   is the keeper and a standalone here would just duplicate it (#321).
+    // - The viewer's OWN PR proposal intentionally has NO Ask AI at all: the
+    //   card omits the pill (#313) because owners reach AI via "Open session"
+    //   + the in-session advisor, and #348 fixed the leftover standalone that
+    //   used to leak onto own proposals here.
+    // - Governance proposals have no dev session and their cards never show a
+    //   pill, so the standalone is the only advisor affordance — keep it
+    //   regardless of who created the proposal.
+    const mine = !!(App.user && item.user_id === App.user.id);
+    const cardHasAskAiPill = (t.kind === 'proposal' && !mine);
+    const askAiHtml = (t.kind === 'gov') ? AppView._askAiButtonHtml() : '';
+
+    head.innerHTML = cardHtml + bodyHtml + askAiHtml;
     if (window.Kudos) Kudos.attach(head);
     if (t.kind === 'proposal' && item.status !== 'merged') AppView._loadVoteRoster(item.id);
+
+    // #321: wire the kept card pill in the topic head. Unlike the feed and
+    // Completed list, #dev-topic-head has no delegated .gc-ask-ai-btn handler,
+    // so without this the pill would be inert (no click, no availability
+    // dimming). Bind the click to the same advisor opener the standalone used
+    // and run the shared availability pass over this container.
+    if (cardHasAskAiPill) {
+      const pill = head.querySelector('.gc-ask-ai-btn');
+      if (pill) {
+        pill.addEventListener('click', () => {
+          if (pill.disabled) return;
+          if (typeof ProposalDiscuss !== 'undefined') {
+            ProposalDiscuss.open(t.kind, t.id, AppView._findTopicItem());
+          }
+        });
+      }
+      AppView._applyAskAiCardAvailability(head);
+    }
+
+    if (askAiHtml) {
+      const btn = head.querySelector('#proposal-ask-ai');
+      if (btn) {
+        btn.addEventListener('click', () => {
+          if (btn.disabled) return;
+          if (typeof ProposalDiscuss !== 'undefined') {
+            ProposalDiscuss.open(t.kind, t.id, AppView._findTopicItem());
+          }
+        });
+      }
+      // Resolve AI availability and disable the button (with tooltip) when
+      // no LLM is configured — matches the dev chat's posture.
+      AppView._ensureAiAvailability().then((enabled) => {
+        const b = document.getElementById('proposal-ask-ai');
+        if (!b) return;
+        b.disabled = !enabled;
+        if (!enabled) {
+          b.title = "AI chat isn't configured on this deployment.";
+          b.classList.add('opacity-50', 'cursor-not-allowed');
+        } else {
+          b.title = 'Ask AI about this proposal (private to you)';
+          b.classList.remove('opacity-50', 'cursor-not-allowed');
+        }
+      });
+    }
+  },
+
+  _askAiButtonHtml() {
+    return `
+      <div class="mt-3 px-1">
+        <button id="proposal-ask-ai" type="button"
+          class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium
+                 bg-violet-500/10 text-violet-600 dark:text-violet-300 border border-violet-500/30
+                 hover:bg-violet-500/20 transition-colors"
+          title="Ask AI about this proposal (private to you)">
+          <span aria-hidden="true">✨</span> Ask AI
+        </button>
+      </div>`;
+  },
+
+  // #313: a compact "Ask AI" action for the proposal CARD action row
+  // (the Dev feed + the Completed list), as opposed to the full-screen
+  // topic-head button above. Cards render many at once, so this uses a
+  // class + data-proposal-id hook instead of the id="proposal-ask-ai"
+  // the head uses (ids must stay unique). Only rendered on proposals the
+  // viewer does NOT own — owners reach AI through "Open session" and the
+  // in-discussion advisor, so a card button would be redundant clutter.
+  // Click is dispatched by the delegated feed/merged handlers.
+  _askAiCardBtnHtml(pr) {
+    return `<button type="button" class="gc-vote-btn gc-ask-ai-btn" data-proposal-id="${pr.id}"
+      title="Ask AI about this proposal (private to you)"><span aria-hidden="true">✨</span> Ask AI</button>`;
+  },
+
+  // Open the private read-only advisor for a card's proposal, resolving
+  // the row from the in-memory promoted/merged lists (same shape the
+  // topic head passes to ProposalDiscuss.open).
+  _openAskAiFromCard(id) {
+    const pid = parseInt(id, 10);
+    if (!pid || typeof ProposalDiscuss === 'undefined') return;
+    const pr = (AppView._proposals || []).find((p) => p.id === pid)
+      || (AppView._merged || []).find((p) => p.id === pid);
+    if (pr) ProposalDiscuss.open('proposal', pid, pr);
+  },
+
+  // Resolve AI availability once (memoized) and disable every card-level
+  // Ask AI button under `root` with a tooltip when no LLM is configured —
+  // mirrors the topic-head pass at _renderTopicHead. Must be re-run after
+  // each feed/merged re-render, since innerHTML replacement paints fresh,
+  // enabled buttons every time.
+  _applyAskAiCardAvailability(root) {
+    const scope = root || document;
+    if (!scope.querySelector('.gc-ask-ai-btn')) return;
+    AppView._ensureAiAvailability().then((enabled) => {
+      scope.querySelectorAll('.gc-ask-ai-btn').forEach((b) => {
+        b.disabled = !enabled;
+        if (!enabled) {
+          b.title = "AI chat isn't configured on this deployment.";
+          b.classList.add('opacity-50', 'cursor-not-allowed');
+        } else {
+          b.title = 'Ask AI about this proposal (private to you)';
+          b.classList.remove('opacity-50', 'cursor-not-allowed');
+        }
+      });
+    });
+  },
+
+  // Cached check of whether any LLM path is usable (platform key or the
+  // user's BYOK key). Resolves to a boolean; the promise is memoized so
+  // repeated topic renders don't refetch /api/budget every time.
+  _ensureAiAvailability() {
+    if (AppView._aiAvailabilityPromise) return AppView._aiAvailabilityPromise;
+    AppView._aiAvailabilityPromise = (async () => {
+      try {
+        const res = await fetch('/api/budget');
+        if (!res.ok) return true; // optimistic — the endpoint itself 503s if truly off
+        const data = await res.json();
+        return data.aiEnabled !== false;
+      } catch {
+        return true;
+      }
+    })();
+    return AppView._aiAvailabilityPromise;
   },
 
   _mountTopicThread() {
@@ -615,23 +842,16 @@ const AppView = {
     const slot = document.getElementById('dev-topic-thread');
     if (!t || !slot || typeof GroupChat === 'undefined' || !GroupChat.mountThread) return;
     const typeMap = { issue: 'issue', proposal: 'session', gov: 'governance' };
-    // A proposal that has left voting gets a read-only thread.
-    let readOnly = false;
-    let notice = '';
-    if (t.kind === 'proposal') {
-      const item = AppView._findTopicItem();
-      if (item && item.status === 'merged') {
-        readOnly = true;
-        notice = 'Voting closed — this proposal was merged. The discussion is read-only.';
-      }
-    }
+    // Every topic thread — including merged proposals — mounts with a live,
+    // editable composer. Merging settles the vote, not the conversation:
+    // people keep posting follow-ups after a proposal lands. The WS handler
+    // accepts session-thread posts on merged sessions (existence-only gate),
+    // so there is no read-only lock or "voting closed" notice here.
     GroupChat.mountThread({
       type: typeMap[t.kind],
       ref: t.id,
       container: slot,
       fullHeight: true,
-      readOnly,
-      notice,
     });
   },
 
@@ -872,15 +1092,15 @@ const AppView = {
               <!-- #15: "Replying to …" preview chip; populated by
                    GroupChat._renderQuotePreview when a quote is staged. -->
               <div id="gc-reply-preview" class="hidden"></div>
-              <form id="gc-form" class="flex gap-2">
-                <input
+              <form id="gc-form" class="flex gap-2 items-end">
+                <textarea
                   id="gc-input"
-                  type="text"
-                  maxlength="2000"
+                  maxlength="${typeof GC_MAX_MESSAGE_LEN !== 'undefined' ? GC_MAX_MESSAGE_LEN : 8000}"
+                  rows="1"
                   placeholder="Type a message..."
                   autocomplete="off"
-                  class="flex-1 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-                >
+                  class="gc-composer-input flex-1 min-w-0 resize-none overflow-y-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                ></textarea>
                 <button type="submit" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors shrink-0">Send</button>
               </form>
             </div>
@@ -914,19 +1134,41 @@ const AppView = {
       const saved = GroupChat.getDraft(slugForDraft);
       if (saved) gcInput.value = saved;
     }
+    // Size the (now multi-line) composer to its restored draft, then back
+    // to one row after a send.
+    GroupChat._autoGrowTextarea(gcInput);
 
-    document.getElementById('gc-form').addEventListener('submit', (e) => {
-      e.preventDefault();
+    const submitGeneral = () => {
       const content = gcInput.value.trim();
       if (!content) return;
       GroupChat.send(content);
       gcInput.value = '';
       if (slugForDraft) GroupChat.setDraft(slugForDraft, '');
+      GroupChat._autoGrowTextarea(gcInput);
+    };
+
+    document.getElementById('gc-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      submitGeneral();
     });
 
     gcInput.addEventListener('input', () => {
       if (slugForDraft) GroupChat.setDraft(slugForDraft, gcInput.value);
+      GroupChat._autoGrowTextarea(gcInput);
       GroupChat.sendTyping();
+    });
+
+    // Multi-line submit semantics: a <textarea> doesn't auto-submit on
+    // Enter, so we drive it here. Enter (no Shift) sends; Shift+Enter
+    // inserts a newline (default). On touch the on-screen return key
+    // always inserts a newline (no Shift chord there) — the Send button is
+    // the reliable send action. Bubble phase, so the autocomplete's
+    // capture-phase keydown still owns Enter while its dropdown is open.
+    gcInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey && !GroupChat._isTouch()) {
+        e.preventDefault();
+        submitGeneral();
+      }
     });
 
     // #87: @mention autocomplete. Re-attaches on every tab mount (the
@@ -1075,6 +1317,7 @@ const AppView = {
     if (mergedEl) {
       mergedEl.innerHTML = (AppView._merged || []).length ? AppView._renderMergedInner() : '';
       if (window.Kudos) Kudos.attach(mergedEl);
+      AppView._applyAskAiCardAvailability(mergedEl);
     }
   },
 
@@ -1182,6 +1425,7 @@ const AppView = {
     if (!el) return;
     el.innerHTML = AppView._renderFeedInner();
     if (window.Kudos) Kudos.attach(el);
+    AppView._applyAskAiCardAvailability(el);
     AppView._startMergeCountdownTimer();
   },
 
@@ -1254,9 +1498,16 @@ const AppView = {
     if (!el || !AppView.appData) return;
     const slug = AppView.appData.slug;
     try {
-      const res = await fetch('/api/me/active-sessions');
-      if (!res.ok) { el.innerHTML = ''; return; }
-      const data = await res.json();
+      // Two sources: /api/me/active-sessions carries the live `busy`
+      // annotation for active/paused chips; /api/apps/:slug/sessions is
+      // the only endpoint that returns the viewer's *archived* rows
+      // (owner-scoped, includes every status). Fetch both in parallel.
+      const [activeRes, allRes] = await Promise.all([
+        fetch('/api/me/active-sessions'),
+        fetch(`/api/apps/${encodeURIComponent(slug)}/sessions`).catch(() => null),
+      ]);
+      if (!activeRes.ok) { el.innerHTML = ''; return; }
+      const data = await activeRes.json();
       // Most-recent-activity-first, matching the feed's within-group
       // order. last_activity_at folds in the latest session message;
       // older servers without it fall back to created_at.
@@ -1267,39 +1518,159 @@ const AppView = {
       const mine = (data.sessions || [])
         .filter((s) => s.app_slug === slug && (s.status === 'active' || s.status === 'paused'))
         .sort((a, b) => actTs(b) - actTs(a));
+      // Archived rows for this app (owner-scoped via the per-app
+      // endpoint). Tolerate a failed/older fetch by treating it as none.
+      let archived = [];
+      if (allRes && allRes.ok) {
+        const allData = await allRes.json().catch(() => ({}));
+        archived = (allData.sessions || [])
+          .filter((s) => s.status === 'archived')
+          .sort((a, b) => actTs(b) - actTs(a));
+      }
       // The container may have been replaced while the fetch was in
       // flight (tab switch) — re-resolve before painting.
       const live = document.getElementById('dev-sessions-strip');
       if (!live) return;
-      if (!mine.length) { live.innerHTML = ''; return; }
+      if (!mine.length && !archived.length) { live.innerHTML = ''; return; }
+
+      const chipsHtml = mine.map((s) => {
+        const label = escapeHtml(s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`);
+        const statusTag = s.busy
+          ? '<span class="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
+          : (s.status === 'paused' ? '<span class="text-xs text-zinc-500 shrink-0">paused</span>' : '');
+        // A clickable <div> (not <button>) so the inner Archive button is
+        // valid HTML. The row navigates on click; Archive stops propagation.
+        return `<div data-session-chip="${s.id}" role="button" tabindex="0"
+          class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}"
+          title="${s.busy ? 'AI is working — ' : ''}${label}">
+          ${AppView._devCardIcon('session')}
+          <span class="flex-1 min-w-0">
+            <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200 break-words">${label}</span>
+            <span class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">Your dev session</span>
+          </span>
+          ${statusTag}
+          <button type="button" class="dc-active-archive" data-archive-chip="${s.id}" data-name="${label}" title="Archive this session (closes the PR, frees the slot)">Archive</button>
+          <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+        </div>`;
+      }).join('');
+
+      // Archived toggle — collapsed by default on every render (no
+      // persistence). Hidden entirely when the viewer has no archived
+      // sessions for this app.
+      const archivedHtml = archived.length ? `
+        <div class="pt-1">
+          <button type="button" data-archived-toggle aria-expanded="false"
+            class="text-xs text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 inline-flex items-center gap-1">
+            <svg data-archived-caret class="w-3 h-3 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+            Show archived (${archived.length})
+          </button>
+          <div data-archived-list class="hidden space-y-2 pt-2">
+            ${archived.map((s) => {
+              const label = escapeHtml(s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`);
+              return `<div class="${AppView.DEV_CARD_CLS}">
+                ${AppView._devCardIcon('session')}
+                <span class="flex-1 min-w-0">
+                  <span class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 break-words">${label}</span>
+                  <span class="block text-xs text-zinc-400 dark:text-zinc-500 truncate">Archived</span>
+                </span>
+                <button type="button" class="gc-vote-btn" data-unarchive-chip="${s.id}" title="Restore this session (reopens its PR)">Unarchive</button>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>` : '';
+
       live.innerHTML = `
         <div class="space-y-2">
-          ${mine.map((s) => {
-            const label = escapeHtml(s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`);
-            const statusTag = s.busy
-              ? '<span class="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
-              : (s.status === 'paused' ? '<span class="text-xs text-zinc-500 shrink-0">paused</span>' : '');
-            return `<button data-session-chip="${s.id}"
-              class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}"
-              title="${s.busy ? 'AI is working — ' : ''}${label}">
-              ${AppView._devCardIcon('session')}
-              <span class="flex-1 min-w-0">
-                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200 break-words">${label}</span>
-                <span class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">Your dev session</span>
-              </span>
-              ${statusTag}
-              <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-            </button>`;
-          }).join('')}
+          ${chipsHtml}
+          ${archivedHtml}
         </div>`;
-      live.querySelectorAll('[data-session-chip]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-          App.switchTab('dev', parseInt(btn.dataset.sessionChip, 10), 'sessions');
+
+      live.querySelectorAll('[data-session-chip]').forEach((row) => {
+        const go = () => App.switchTab('dev', parseInt(row.dataset.sessionChip, 10), 'sessions');
+        row.addEventListener('click', go);
+        row.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); go(); }
+        });
+      });
+      live.querySelectorAll('[data-archive-chip]').forEach((btn) => {
+        btn.addEventListener('click', async (ev) => {
+          ev.stopPropagation();
+          const id = parseInt(btn.dataset.archiveChip, 10);
+          const ok = await AppView._archiveSession(id, btn.dataset.name || 'this session');
+          if (!ok) return;
+          await AppView._renderSessionsStrip();
+          await AppView._loadDevFeed();
+        });
+      });
+      const toggle = live.querySelector('[data-archived-toggle]');
+      if (toggle) {
+        toggle.addEventListener('click', () => {
+          const listEl = live.querySelector('[data-archived-list]');
+          const caret = live.querySelector('[data-archived-caret]');
+          const open = listEl.classList.toggle('hidden') === false;
+          toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+          if (caret) caret.style.transform = open ? 'rotate(90deg)' : '';
+        });
+      }
+      live.querySelectorAll('[data-unarchive-chip]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const id = parseInt(btn.dataset.unarchiveChip, 10);
+          const original = btn.textContent;
+          btn.textContent = '...';
+          btn.disabled = true;
+          try {
+            const resp = await fetch(`/api/sessions/${id}/unarchive`, { method: 'POST' });
+            const body = await resp.json().catch(() => ({}));
+            if (!resp.ok) {
+              alert(body.error || 'Failed to unarchive session');
+              btn.textContent = original;
+              btn.disabled = false;
+              return;
+            }
+            if (body.ccPurged) {
+              alert("Session restored. Note: Claude's memory had already been cleared, so this picks up as a fresh chat on the same branch.");
+            }
+          } catch (err) {
+            alert(`Unarchive failed: ${err.message}`);
+            btn.textContent = original;
+            btn.disabled = false;
+            return;
+          }
+          await AppView._renderSessionsStrip();
+          await AppView._loadDevFeed();
         });
       });
     } catch {
       el.innerHTML = '';
     }
+  },
+
+  // Shared archive flow for a dev session: confirm (proposal-card copy,
+  // since restore now lives in the strip's archived toggle, not a
+  // removed session-list screen) then POST /api/sessions/:id/archive.
+  // Owner-scoped server-side. Returns true on success so callers can
+  // re-render. Used by the dev-sessions strip's Archive button.
+  async _archiveSession(sessionId, name) {
+    if (!sessionId) return false;
+    const ok = await ConfirmModal.show({
+      title: `Archive "${name}"?`,
+      message: "This closes the PR and frees the slot. You can Unarchive it later to restore it (chat memory is kept for 30 days).",
+      confirmLabel: 'Archive',
+      danger: true,
+    });
+    if (!ok) return false;
+    try {
+      const resp = await fetch(`/api/sessions/${sessionId}/archive`, { method: 'POST' });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        alert(data.error || `Archive failed (HTTP ${resp.status}).`);
+        return false;
+      }
+    } catch (err) {
+      alert(`Archive failed: ${err.message}`);
+      return false;
+    }
+    return true;
   },
 
   // Refresh the strip's busy indicators on a slow tick while the forum
@@ -1325,6 +1696,22 @@ const AppView = {
     return issue && issue.body && issue.body.trim()
       ? `<div class="dev-issue-body text-xs text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 mt-2">${renderMd(issue.body)}</div>`
       : '';
+  },
+
+  // The proposal's plain-language summary (pr_summary_md), rendered at the
+  // top of the proposal topic sub-view above the proposer/linked-issues/
+  // roster details. Mirrors _issueBodyHtml: light markdown through the same
+  // DevChat.renderMarkdown (marked + DOMPurify) pipeline, same styled
+  // container. Empty string when no summary was generated (legacy proposals,
+  // or an LLM-unavailable turn) so nothing renders and the rest of the view
+  // is unchanged.
+  _proposalSummaryHtml(pr) {
+    const md = pr && typeof pr.pr_summary_md === 'string' ? pr.pr_summary_md.trim() : '';
+    if (!md) return '';
+    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
+      ? (s) => DevChat.renderMarkdown(s)
+      : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
+    return `<div class="dev-issue-body text-xs text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 mt-2">${renderMd(md)}</div>`;
   },
 
   // One PR-proposal card: line 1 is identity + info (icon chip, title,
@@ -1378,6 +1765,17 @@ const AppView = {
     const sessionBtn = mine
       ? `<button class="gc-vote-btn" title="Open the dev session behind this proposal" onclick="AppView.openProposalSession(${pr.id})">Open session</button>`
       : '';
+    // Withdraw sits beside "Open session" on your own live proposals only.
+    // Not shown on merged/merging cards (their PR is settled). A proposal's
+    // id is its session id, so it reuses POST /api/sessions/:id/archive
+    // (owner-scoped) — closing the PR and dropping the card from the panel.
+    const archiveBtn = (mine && !isMerged && !isMerging && pr.status === 'promoted')
+      ? `<button class="gc-vote-btn" title="Withdraw this proposal (closes the PR, removes it from the vote panel)" onclick="AppView.withdrawProposal(${pr.id})">Withdraw</button>`
+      : '';
+    // #313: the per-proposal "Ask AI" advisor, surfaced on the card for
+    // proposals the viewer does NOT own. Owners reach AI via "Open
+    // session" + the in-discussion advisor, so it's omitted on own cards.
+    const askAiBtn = !mine ? AppView._askAiCardBtnHtml(pr) : '';
     // #195/#211: before/after capture tiles, collapsed by default behind a
     // "Show before/after" pill that sits with the other action buttons. The
     // tiles wait in an inert <template> (no bandwidth, no autoplay loops)
@@ -1395,8 +1793,8 @@ const AppView = {
     // Merged proposals (topic-view fallback) drop the live vote buttons —
     // the vote is settled; kudos stays open.
     const actions = (isMerged
-      ? [kudosBtn, sessionBtn, visualsBtn]
-      : [AppView.voteButtonsHtml(pr), kudosBtn, sessionBtn, visualsBtn]
+      ? [kudosBtn, sessionBtn, askAiBtn, visualsBtn]
+      : [AppView.voteButtonsHtml(pr), kudosBtn, sessionBtn, archiveBtn, askAiBtn, visualsBtn]
     ).filter(Boolean).join('');
 
     return `
@@ -1481,8 +1879,14 @@ const AppView = {
     }, majority);
     const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${myVote === 'up' ? ' gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'up')">Yes (${upCount})</button>`;
     const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${myVote === 'down' ? ' gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'down')">No (${downCount})</button>`;
-    const adminBtn = (!isRename && App.user?.isAdmin)
+    const adminBtn = (!isRename && App.user?.canAdminWrite)
       ? `<button class="gc-vote-btn gc-vote-btn-admin" title="Admin: apply this change right now, bypassing the vote majority" onclick="AppView.castIssueAdminApply(${issue.id})">Admin merge</button>`
+      : '';
+    // mine: the viewer created this governance proposal, so they may
+    // withdraw it (creator-scoped POST /api/issues/:id/close).
+    const mine = !!(App.user && issue.created_by === App.user.id);
+    const withdrawBtn = mine
+      ? `<button class="gc-vote-btn" title="Withdraw this proposal (removes it from the vote panel)" onclick="AppView.withdrawGovProposal(${issue.id})">Withdraw</button>`
       : '';
     const govChatN = parseInt(issue.chat_count) || 0;
 
@@ -1502,6 +1906,7 @@ const AppView = {
             ${yesBtn}
             ${noBtn}
             ${adminBtn}
+            ${withdrawBtn}
           </div>
         </div>
         ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
@@ -1539,6 +1944,68 @@ const AppView = {
     if (typeof App !== 'undefined' && App.switchTab) {
       App.switchTab('dev', sessionId, 'sessions');
     }
+  },
+
+  // Withdraw a live PR proposal straight from its card (proposer-only; the
+  // button only renders on your own promoted proposals). A proposal's id is
+  // its session id, so this reuses the owner-scoped POST
+  // /api/sessions/:id/archive — but with withdraw-flavoured confirm copy,
+  // distinct from the dev-sessions strip's "Archive" wording (that surface
+  // is about freeing slots, not withdrawing proposals). On success the feed
+  // reloads; GET /api/apps/:slug/promoted only returns status IN
+  // ('promoted','merging'), so the withdrawn card drops out.
+  async withdrawProposal(sessionId) {
+    if (!sessionId) return;
+    const pr = (AppView._proposals || []).find((p) => p.id === sessionId);
+    const prNum = pr ? (pr.pr_number || pr.id) : sessionId;
+    const ok = await ConfirmModal.show({
+      title: 'Withdraw this proposal?',
+      message: `This closes PR #${prNum} and removes it from the vote panel. You can propose it again later.`,
+      confirmLabel: 'Withdraw',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      const resp = await fetch(`/api/sessions/${sessionId}/archive`, { method: 'POST' });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        alert(data.error || `Withdraw failed (HTTP ${resp.status}).`);
+        return;
+      }
+    } catch (err) {
+      alert(`Withdraw failed: ${err.message}`);
+      return;
+    }
+    await AppView._loadDevFeed();
+  },
+
+  // Withdraw a governance proposal (secret_change / legacy rename) from its
+  // card (creator-only; the button only renders when issue.created_by is the
+  // viewer). Posts to the creator-gated POST /api/issues/:id/close, which
+  // marks the issue closed, posts a withdrawal chat line, and pushes an
+  // issue update so open clients drop the card. Gov-worded confirm (no PR
+  // mention — governance proposals have no pull request).
+  async withdrawGovProposal(issueId) {
+    if (!issueId) return;
+    const ok = await ConfirmModal.show({
+      title: 'Withdraw this proposal?',
+      message: 'This removes it from the vote panel and stops the vote. You can propose it again later.',
+      confirmLabel: 'Withdraw',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      const resp = await fetch(`/api/issues/${issueId}/close`, { method: 'POST' });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        alert(data.error || `Withdraw failed (HTTP ${resp.status}).`);
+        return;
+      }
+    } catch (err) {
+      alert(`Withdraw failed: ${err.message}`);
+      return;
+    }
+    await AppView._loadDevFeed();
   },
 
   async createProposal() {
@@ -1727,9 +2194,11 @@ const AppView = {
   },
 
   // One issue row for the forum feed, with everything the old Open
-  // Issues section rendered per row (bounty/kudos, Create PR, the
+  // Issues section rendered per row (bounty/kudos, Create proposal, the
   // Generate-proposal state machine, Preview, creator attribution) plus the
   // accordion expansion into the issue body + thread chat.
+  // The middle "start work" button reads "Create proposal" (no session yet)
+  // or "Create new proposal" (viewer already has one) — see createBtn below.
   _renderIssueRow(issue, opts) {
     const noNav = !!(opts && opts.noNav);
     const meta = AppView._ghIssuesMeta || {};
@@ -1752,16 +2221,18 @@ const AppView = {
       ? 'You already placed a bounty on this issue'
       : (budgetSpent ? 'Weekly kudos allowance spent' : 'Pledge a kudos bounty — paid to whoever\'s merged PR closes this issue');
     const kudosBtn = `<button class="gc-vote-btn"${kudosDisabled ? ' disabled' : ''} title="${kudosTitle}" onclick="AppView.giveIssueBounty(${n})">${issue.my_bounty ? '&#9733; Bountied' : 'Pledge kudos'}</button>`;
-    // #287: once the viewer has started a Create-PR dev chat for this issue
-    // (myPrSessionId, from /github-issues), the "Create PR" button is
-    // replaced — for them — with "Open Session", which reopens that chat.
-    // Strictly per-viewer and reverts to "Create PR" once the session is
-    // archived (server filters archived rows out of myPrSessionId). This is
+    // #287: once the viewer has started a proposal dev chat for this issue
+    // (myPrSessionId, from /github-issues), the "Create proposal" button is
+    // replaced — for them — with "Create new proposal", which starts another
+    // fresh dev chat (a second attempt) rather than reopening the first.
+    // Strictly per-viewer and reverts to "Create proposal" once the session
+    // is archived (server filters archived rows out of myPrSessionId). This is
     // independent of the headless Generate-proposal path below — both can
-    // show on the same row.
+    // show on the same row. The viewer's existing session is still reachable
+    // from the Dev Chat tab.
     const createBtn = issue.myPrSessionId
-      ? `<button class="gc-vote-btn" title="Open the dev chat you started for this issue" onclick="AppView.openIssuePrSession(${issue.myPrSessionId})">Open Session</button>`
-      : `<button class="gc-vote-btn" title="Start a dev chat to solve this issue" onclick="AppView.createPrForIssue(${n})">Create PR</button>`;
+      ? `<button class="gc-vote-btn" title="Start another dev chat for this issue" onclick="AppView.createPrForIssue(${n})">Create new proposal</button>`
+      : `<button class="gc-vote-btn" title="Start a dev chat to solve this issue" onclick="AppView.createPrForIssue(${n})">Create proposal</button>`;
     // #155: headless auto-session button. Four states driven by the
     // issue's `headless` field from /github-issues:
     //   none/failed → "Generate proposal" (opens the confirm + model popup)
@@ -1891,6 +2362,10 @@ const AppView = {
       const kudosBtn = window.Kudos
         ? Kudos.renderButton(pr, { compact: true })
         : '';
+      // #313: Ask AI on the Completed list too, for proposals the viewer
+      // does not own (parallel to the live feed cards).
+      const mine = !!(App.user && pr.user_id === App.user.id);
+      const askAiBtn = !mine ? AppView._askAiCardBtnHtml(pr) : '';
 
       // #16: undo is a single direct action — clicking Undo opens a
       // revert PR (like proposing a change) which then needs the
@@ -1928,7 +2403,7 @@ const AppView = {
       }
 
       html += `
-        <div class="gc-vote-item ${AppView.DEV_CARD_CLS}" data-ref-pr="${pr.pr_number || pr.id}">
+        <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-ref-pr="${pr.pr_number || pr.id}" data-proposal-row="${pr.id}" title="Open this proposal's discussion">
           ${AppView._devCardIcon('done')}
           <div class="flex-1 min-w-0">
             <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -1937,13 +2412,16 @@ const AppView = {
                 <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta"><a href="${pr.pr_url || '#'}" target="_blank" rel="noopener" class="font-mono text-emerald-400 hover:underline">PR#${pr.pr_number || pr.id}</a> · ${date}${AppView.closesPillHtml(pr) ? ` ${AppView.closesPillHtml(pr)}` : ''}</div>
               </div>
               ${AppView.voteCountPill(pr, majority)}
+              ${AppView._devChatBadge(parseInt(pr.chat_count) || 0)}
             </div>
             <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
               ${AppView.voteButtonsHtml(pr, { collapseVoted: true })}
               ${undoUI}
               ${kudosBtn}
+              ${askAiBtn}
             </div>
           </div>
+          ${AppView.DEV_CARD_CHEVRON}
         </div>`;
     }
     html += '</div>';
@@ -1962,7 +2440,10 @@ const AppView = {
   toggleMergedPrs() {
     AppView._mergedExpanded = !AppView._mergedExpanded;
     const el = document.getElementById('gc-merged');
-    if (el) el.innerHTML = AppView._renderMergedInner();
+    if (el) {
+      el.innerHTML = AppView._renderMergedInner();
+      AppView._applyAskAiCardAvailability(el);
+    }
   },
 
   // "Give kudos" — pledge a bounty on a GitHub issue. Debits the shared
@@ -2000,22 +2481,25 @@ const AppView = {
     }
   },
 
-  // "Create PR" — spin up a fresh dev chat for this issue and seed the first
-  // turn with the issue's number/title/body so the Mayor links it
-  // (addresses_issues → linked_issues → `Closes #N`) and solves it. Mirrors
-  // DevChat.startNewChange's create→open→render flow, then sends the seed.
+  // "Create proposal" / "Create new proposal" — spin up a fresh dev chat for
+  // this issue and seed the first turn with the issue's number/title/body so
+  // the Mayor links it (addresses_issues → linked_issues → `Closes #N`) and
+  // solves it. Mirrors DevChat.startNewChange's create→open→render flow, then
+  // sends the seed. Safe to call from either button state — each call spawns a
+  // brand-new session.
   async createPrForIssue(issueNumber) {
     const slug = AppView.appData && AppView.appData.slug;
     if (!slug || typeof DevChat === 'undefined') return;
     const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
 
     // #287: pass the issue number so the session is persistently linked
-    // (created_from_issue_number) and the row can swap to "Open Session".
+    // (created_from_issue_number) and the row keeps the has-session state.
     const session = await DevChat.createSession(slug, issueNumber);
     if (!session) return; // createSession already alerts (cap reached / error)
 
-    // #287: optimistically swap "Create PR" → "Open Session" right away,
-    // before the next /github-issues load confirms the link server-side.
+    // #287: optimistically move the row into the has-session state right away
+    // ("Create proposal" → "Create new proposal"), before the next
+    // /github-issues load confirms the link server-side.
     if (issue) {
       issue.myPrSessionId = session.id;
       if (typeof AppView._rerenderFeed === 'function') AppView._rerenderFeed();
@@ -2198,9 +2682,11 @@ const AppView = {
     }
   },
 
-  // #287: "Open Session" — the viewer already started a Create-PR dev chat
-  // for this issue, so reopen it instead of spinning up another. Same
-  // navigation as goToAutoSessionClone; the switchTab path reloads the
+  // #287: reopen the viewer's existing proposal dev chat for an issue. No
+  // longer wired to the start-work button (which now always creates a new
+  // proposal via createPrForIssue — see _renderIssueRow); retained for the
+  // deferred "keep both buttons" variant that would re-add a one-tap reopen.
+  // Same navigation as goToAutoSessionClone; the switchTab path reloads the
   // session list before opening the session.
   async openIssuePrSession(sessionId) {
     if (typeof DevChat === 'undefined') return;
@@ -2536,7 +3022,7 @@ const AppView = {
     const preview = pr.staging_url
       ? `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStagingForSession(${pr.id}, '${pr.staging_url}')">Preview</button>`
       : '';
-    const adminMerge = App.user?.isAdmin
+    const adminMerge = App.user?.canAdminWrite
       ? `<button class="gc-vote-btn gc-vote-btn-admin" title="Admin: merge this PR right now, bypassing the vote majority" onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
       : '';
     const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}" onclick="AppView.castVote(${pr.id}, 'yes')">Yes (${pr.yes_count})</button>`;
@@ -2658,6 +3144,39 @@ const AppView = {
   // public apps (e.g. echo) render directly. resolveDevHost rewrites
   // localhost-shaped URLs to whatever hostname the browser is actually on,
   // so the link is reachable from a phone on the same LAN as the dev box.
+  // ── Gesture-safe modal reveal/dismiss (shared by every header modal) ──
+  //
+  // The bug this guards against: a drawer row's click handler reveals a
+  // full-screen modal, and on a touch device / WebView the very tap that
+  // opened it — the browser can synthesize a trailing `click` ~300ms after
+  // `touchend` — lands on the freshly-shown [data-modal-backdrop] and
+  // dismisses the modal in the same gesture. The user saw nothing happen
+  // ("Members & visibility does nothing").
+  //
+  // The fix is the DISMISS GUARD, not a deferral. revealModal() shows the
+  // modal SYNCHRONOUSLY (deferring the reveal to requestAnimationFrame
+  // proved unreliable in the platform WebView — the frame callback could be
+  // throttled or dropped, leaving the drawer closed with no panel at all)
+  // and stamps the open time on the element. modalDismissGuarded() then lets
+  // each backdrop-dismiss handler ignore any dismiss click that arrives
+  // within MODAL_GESTURE_GUARD_MS of the open — i.e. the trailing ghost
+  // click. Revealing now guarantees the panel appears; the guard keeps it
+  // from being closed by its own opening gesture. Done centrally so every
+  // caller (members, share, settings) inherits it.
+  MODAL_GESTURE_GUARD_MS: 450,
+  revealModal(modal) {
+    if (!modal) return;
+    modal.dataset.openedAt = String(Date.now());
+    modal.classList.remove('hidden');
+    // Diagnostic breadcrumb (surfaces in the platform dev console) so a
+    // future "panel didn't open" report is debuggable at a glance.
+    try { console.debug('[modal] revealed', modal.id || '(no id)'); } catch {}
+  },
+  modalDismissGuarded(modal) {
+    const at = modal && modal.dataset ? Number(modal.dataset.openedAt) : 0;
+    return at > 0 && (Date.now() - at) < AppView.MODAL_GESTURE_GUARD_MS;
+  },
+
   openShareModal() {
     const url = AppView.appData?.url ? resolveDevHost(AppView.appData.url) : '';
     const modal = document.getElementById('share-modal');
@@ -2667,7 +3186,9 @@ const AppView = {
     if (input) input.value = url;
     if (link) link.href = url || '#';
     if (copyBtn) copyBtn.textContent = 'Copy';
-    if (modal) modal.classList.remove('hidden');
+    // Reveal now (see revealModal); the dismiss guard stops the opening tap
+    // from ghost-clicking the backdrop closed.
+    AppView.revealModal(modal);
     setTimeout(() => { if (input) { input.focus(); input.select(); } }, 0);
   },
 
@@ -3183,10 +3704,26 @@ const AppView = {
 
   async openMembersModal() {
     const appData = AppView.appData;
-    if (!appData) return;
     const modal = document.getElementById('members-modal');
     if (!modal) return;
-    modal.classList.remove('hidden');
+    // No app loaded: don't fail silently (that's the "button does nothing"
+    // symptom). Surface a one-line message and still open the dialog so the
+    // tap visibly does something. The row only renders when appData is set,
+    // so this is a defensive/diagnostic path, not the normal one.
+    if (!appData) {
+      console.warn('[members] openMembersModal called with no app loaded');
+      const visStatus = document.getElementById('members-vis-error');
+      if (visStatus) {
+        visStatus.textContent = 'This app is still loading — open Members & visibility again in a moment.';
+        visStatus.className = 'text-sm text-red-400';
+      }
+      AppView.revealModal(modal);
+      return;
+    }
+    // Reveal now (see revealModal); the dismiss guard stops the opening tap
+    // from ghost-clicking the backdrop closed. Sections are configured below
+    // (the modal is already visible, but they only paint after this frame).
+    AppView.revealModal(modal);
 
     AppView._membersVis = {
       collab: appData.collab_visibility || 'public',
@@ -3647,9 +4184,11 @@ const AppView = {
 // Bridge → shell consent relay for app LLM access (issue #34). One
 // top-level listener; handleLlmBridgeMessage verifies the source is an
 // iframe this shell owns and ignores everything else.
-window.addEventListener('message', (e) => {
-  try { AppView.handleLlmBridgeMessage(e); } catch {}
-});
+if (typeof window !== 'undefined') {
+  window.addEventListener('message', (e) => {
+    try { AppView.handleLlmBridgeMessage(e); } catch {}
+  });
+}
 
 // Small helpers used by the #21 version pill. Kept local so app-view
 // stays self-contained — the dev-console has its own copy of these.
@@ -3659,6 +4198,15 @@ function escapeHtml(s) {
   }[c]));
 }
 function escapeAttr(s) { return escapeHtml(s).replace(/\n/g, ' '); }
+
+// Browser script first, but expose AppView to node so the pure
+// scroll-memory helpers (_saveFeedScroll / _getFeedScroll /
+// _clampScrollTop) can be unit-tested without a DOM. No-op in the
+// browser, where `module` is undefined.
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = AppView;
+}
+
 function relTime(iso) {
   const then = new Date(iso).getTime();
   if (!Number.isFinite(then)) return '';
@@ -3672,3 +4220,13 @@ function relTime(iso) {
   if (diffDay < 30) return `${diffDay}d ago`;
   return new Date(iso).toLocaleDateString();
 }
+
+// Expose AppView on the global object. `const AppView = {…}` above is a
+// top-level lexical binding: in a classic (non-module) script it's reachable
+// as a bareword from other scripts, but it is NOT a property of `window`.
+// The header-drawer row handlers in app.js gate on `window.AppView` (mirroring
+// `window.App`/`window.Settings`), so without this assignment those handlers
+// see `window.AppView === undefined` and never call openMembersModal /
+// openShareModal — the drawer closed but no panel ever opened. (Found via the
+// staging debug overlay: "drawer-row-members CLICK fired → window.AppView MISSING".)
+window.AppView = AppView;

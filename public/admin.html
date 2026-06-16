@@ -47,6 +47,15 @@
       </div>
     </div>
 
+    <!-- View-only admin banner (issue #311). Shown when the viewer is a
+         view-only admin (isAdmin && !canAdminWrite): they can see every
+         admin surface but can't make changes, so this makes the read-only
+         state obvious rather than looking broken. -->
+    <div id="view-only-banner" class="hidden bg-amber-100 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-200 rounded-lg px-4 py-3 mb-6 text-sm">
+      <span class="font-semibold">View-only — read access only.</span>
+      You can see every admin surface but can't make changes. Mutating controls are hidden.
+    </div>
+
     <!-- Operations Overview -->
     <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 mb-6 border border-zinc-200 dark:border-zinc-800">
       <div class="flex items-center justify-between mb-3">
@@ -115,7 +124,18 @@
 
     <!-- User list -->
     <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800">
-      <h2 class="text-lg font-semibold p-4 border-b border-zinc-200 dark:border-zinc-800">Users</h2>
+      <div class="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-zinc-200 dark:border-zinc-800">
+        <h2 class="text-lg font-semibold">Users</h2>
+        <!-- Bulk "Set all quotas to…": writes the same app_quota to every
+             user (PUT /api/admin/users/app-quota), then refreshes the list. -->
+        <div id="bulk-quota-control" class="flex items-center gap-2" title="Set every user's app quota to this number.">
+          <span class="text-xs text-zinc-400">Set all quotas to</span>
+          <input id="bulk-quota-input" type="number" min="0" step="1" inputmode="numeric"
+            class="w-16 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono"
+            placeholder="0">
+          <button id="bulk-quota-btn" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs font-medium text-white transition-colors">Set all</button>
+        </div>
+      </div>
       <div id="user-list" class="divide-y divide-zinc-200 dark:divide-zinc-800"></div>
     </div>
   </div>
@@ -180,7 +200,7 @@
           <div class="flex items-center gap-2">
             ${!used ? `<button class="copy-btn text-xs text-zinc-400 hover:text-violet-400 transition-colors" data-code="${escapeHtml(code.code)}">Copy</button>` : ''}
             ${!used ? `<button class="share-btn text-xs text-zinc-400 hover:text-green-400 transition-colors" data-code="${escapeHtml(code.code)}">Share link</button>` : ''}
-            ${!used ? `<button class="delete-code-btn text-xs text-zinc-400 hover:text-red-400 transition-colors" data-id="${code.id}">&times;</button>` : ''}
+            ${!used && CAN_WRITE ? `<button class="delete-code-btn text-xs text-zinc-400 hover:text-red-400 transition-colors" data-id="${code.id}">&times;</button>` : ''}
           </div>
         `;
         list.appendChild(el);
@@ -216,6 +236,39 @@
       loadCodes();
     });
 
+    // Bulk "Set all quotas to…": confirm, PUT the same quota to every user,
+    // then refresh the list so each row's number + "N used" reflects it.
+    document.getElementById('bulk-quota-btn').addEventListener('click', async () => {
+      const input = document.getElementById('bulk-quota-input');
+      const raw = input.value.trim();
+      const n = Number(raw);
+      if (raw === '' || !Number.isInteger(n) || n < 0) {
+        alert('Enter a non-negative whole number.');
+        return;
+      }
+      if (!confirm(`Set EVERY user's app quota to ${n}? This overwrites all current quotas.`)) return;
+      const btn = document.getElementById('bulk-quota-btn');
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/admin/users/app-quota', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ quota: n }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          alert(data.error || `Set all failed (HTTP ${res.status})`);
+          return;
+        }
+        input.value = '';
+        await loadUsers();
+      } catch (err) {
+        alert(`Set all failed: ${err.message}`);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
     async function loadUsers() {
       const res = await fetch('/api/admin/users');
       if (res.status === 403) {
@@ -231,10 +284,11 @@
       const list = document.getElementById('user-list');
       list.innerHTML = '';
 
-      // Used to disable the Admin toggle for the sole remaining admin —
-      // the server enforces the same rule (last-admin guard), this is the
-      // matching UX affordance.
-      const adminCount = users.filter((u) => u.is_admin).length;
+      // Used to disable the role selector for the sole remaining FULL
+      // admin — the server enforces the same rule (last-full-admin guard),
+      // this is the matching UX affordance. View-only admins don't count
+      // (issue #311): they can't promote anyone back.
+      const fullAdminCount = users.filter((u) => u.is_admin && !u.admin_readonly).length;
 
       for (const user of users) {
         const el = document.createElement('div');
@@ -246,44 +300,59 @@
 
         const costToday = (parseFloat(user.cost_today_cents || 0) / 100).toFixed(2);
 
-        // Admin grant/revoke toggle. Disabled for the current user's own
-        // row (self-lockout) and for the last remaining admin — both also
-        // enforced server-side on POST /api/admin/users/:id/is-admin.
+        // Three-way role selector — User / View-only admin / Admin (issue
+        // #311). Disabled for the current user's own row (self-lockout) and
+        // for the last remaining FULL admin (can't drop it below one); both
+        // also enforced server-side on POST /api/admin/users/:id/is-admin.
+        // Hidden behind a read-only label entirely for view-only admins
+        // (CAN_WRITE === false).
         const isAdmin = !!user.is_admin;
+        const isReadonlyAdmin = isAdmin && !!user.admin_readonly;
+        const role = !isAdmin ? 'user' : (isReadonlyAdmin ? 'view_admin' : 'admin');
         const isSelf = !!user.is_self;
-        const isLastAdmin = isAdmin && adminCount <= 1;
-        const adminToggleDisabled = isSelf || isLastAdmin;
-        let adminToggleTitle;
+        const isLastFullAdmin = isAdmin && !isReadonlyAdmin && fullAdminCount <= 1;
+        const roleSelectDisabled = isSelf || isLastFullAdmin;
+        let roleTitle;
         if (isSelf) {
-          adminToggleTitle = "You can't change your own admin status.";
-        } else if (isLastAdmin) {
-          adminToggleTitle = "Can't revoke the last admin.";
-        } else if (isAdmin) {
-          adminToggleTitle = 'This user is an admin. Click to revoke.';
+          roleTitle = "You can't change your own role.";
+        } else if (isLastFullAdmin) {
+          roleTitle = "Can't drop the last full admin.";
         } else {
-          adminToggleTitle = 'This user is not an admin. Click to grant.';
+          roleTitle = 'Set this user\'s role.';
         }
-        const adminToggleHtml = `
+        const roleLabel = { user: 'User', view_admin: 'View-only admin', admin: 'Admin' }[role];
+        const roleControlHtml = CAN_WRITE
+          ? `
+          <div class="flex items-center gap-2" title="${roleTitle}">
+            <span class="text-xs text-zinc-400">Role</span>
+            <select class="role-select rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs"
+              data-user-id="${user.id}" data-original="${role}" ${roleSelectDisabled ? 'disabled' : ''}>
+              <option value="user" ${role === 'user' ? 'selected' : ''}>User</option>
+              <option value="view_admin" ${role === 'view_admin' ? 'selected' : ''}>View-only admin</option>
+              <option value="admin" ${role === 'admin' ? 'selected' : ''}>Admin</option>
+            </select>
+          </div>`
+          : `
           <div class="flex items-center gap-2">
-            <span class="text-xs text-zinc-400">Admin</span>
-            <label class="ios-switch" title="${adminToggleTitle}">
-              <input type="checkbox" class="admin-toggle-cb" data-user-id="${user.id}"
-                ${isAdmin ? 'checked' : ''} ${adminToggleDisabled ? 'disabled' : ''}>
-              <span class="track"></span>
-            </label>
+            <span class="text-xs text-zinc-400">Role</span>
+            <span class="text-xs font-medium text-zinc-500 dark:text-zinc-300">${roleLabel}</span>
           </div>`;
 
-        const canCreate = !!user.can_create_apps;
-        const toggleHtml = `
-          <div class="flex items-center gap-2">
-            <span class="text-xs text-zinc-400">Create apps</span>
-            <label class="ios-switch" title="${canCreate
-              ? 'This user can create apps. Click to revoke.'
-              : 'This user cannot create apps. Click to grant.'}">
-              <input type="checkbox" class="create-toggle-cb" data-user-id="${user.id}"
-                ${canCreate ? 'checked' : ''}>
-              <span class="track"></span>
-            </label>
+        // Per-user app quota. Editable number (max apps this user may have
+        // created); 0 = cannot create. The "N used" helper shows their
+        // current live app count so the admin sees who's near their limit.
+        // Same inline save/revert behaviour as the Cap $ field below.
+        const appQuota = user.app_quota == null ? 0 : user.app_quota;
+        const appsCreated = user.apps_created == null ? 0 : user.apps_created;
+        const quotaHtml = `
+          <div class="flex items-center gap-1" title="Max apps this user may create. 0 = cannot create. Admins bypass this.">
+            <span class="text-xs text-zinc-400">App quota</span>
+            <input type="number" min="0" step="1" inputmode="numeric"
+              class="quota-input w-16 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono disabled:opacity-60"
+              data-user-id="${user.id}"
+              data-original="${appQuota}"
+              value="${appQuota}" ${CAN_WRITE ? '' : 'disabled'}>
+            <span class="text-xs text-zinc-500 whitespace-nowrap">${appsCreated} used</span>
           </div>`;
 
         // Per-user daily-cap override. Empty input = no override =
@@ -295,11 +364,11 @@
           <div class="flex items-center gap-1" title="Per-user daily cap in dollars. Blank = use platform default.">
             <span class="text-xs text-zinc-400">Cap $</span>
             <input type="number" min="0" step="0.01" inputmode="decimal"
-              class="user-limit-input w-20 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono"
+              class="user-limit-input w-20 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono disabled:opacity-60"
               data-user-id="${user.id}"
               data-original="${overrideDollars}"
               value="${overrideDollars}"
-              placeholder="default">
+              placeholder="default" ${CAN_WRITE ? '' : 'disabled'}>
           </div>`;
 
         el.innerHTML = `
@@ -308,10 +377,10 @@
             <div class="text-sm text-zinc-500">$${costToday} spent today ${codeInfo}</div>
           </div>
           ${limitHtml}
-          ${adminToggleHtml}
-          ${toggleHtml}
-          <button data-reset-id="${user.id}" data-username="${escapeHtml(user.username)}" class="text-violet-400 hover:text-violet-300 text-sm reset-pw-btn">Reset password</button>
-          ${!user.is_admin ? `<button data-delete-id="${user.id}" class="text-red-400 hover:text-red-300 text-sm delete-btn">Delete</button>` : ''}
+          ${roleControlHtml}
+          ${quotaHtml}
+          ${CAN_WRITE ? `<button data-reset-id="${user.id}" data-username="${escapeHtml(user.username)}" class="text-violet-400 hover:text-violet-300 text-sm reset-pw-btn">Reset password</button>` : ''}
+          ${CAN_WRITE && !user.is_admin ? `<button data-delete-id="${user.id}" class="text-red-400 hover:text-red-300 text-sm delete-btn">Delete</button>` : ''}
         `;
         list.appendChild(el);
       }
@@ -368,59 +437,79 @@
         });
       });
 
-      list.querySelectorAll('.admin-toggle-cb').forEach((cb) => {
-        cb.addEventListener('change', async () => {
-          const userId = cb.dataset.userId;
-          const next = cb.checked;
-          cb.disabled = true;
+      list.querySelectorAll('.role-select').forEach((sel) => {
+        sel.addEventListener('change', async () => {
+          const userId = sel.dataset.userId;
+          const orig = sel.dataset.original;
+          const next = sel.value;
+          if (next === orig) return;
+          sel.disabled = true;
           try {
             const res = await fetch(`/api/admin/users/${userId}/is-admin`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ isAdmin: next }),
+              body: JSON.stringify({ role: next }),
             });
             if (!res.ok) {
               const data = await res.json().catch(() => ({}));
-              cb.checked = !next;
-              alert(data.error || `Toggle failed (HTTP ${res.status})`);
+              sel.value = orig;
+              alert(data.error || `Role change failed (HTTP ${res.status})`);
               return;
             }
-            // Re-render so the admin badge logic, last-admin disabling, and
-            // the Delete-button visibility (hidden for admins) all refresh.
+            // Re-render so the last-full-admin disabling and the Delete-
+            // button visibility (hidden for admins) all refresh.
             await loadUsers();
           } catch (err) {
-            cb.checked = !next;
-            alert(`Toggle failed: ${err.message}`);
+            sel.value = orig;
+            alert(`Role change failed: ${err.message}`);
           } finally {
-            cb.disabled = false;
+            sel.disabled = false;
           }
         });
       });
 
-      list.querySelectorAll('.create-toggle-cb').forEach((cb) => {
-        cb.addEventListener('change', async () => {
-          const userId = cb.dataset.userId;
-          const next = cb.checked;
-          cb.disabled = true;
+      list.querySelectorAll('.quota-input').forEach((inp) => {
+        // Save on blur or Enter, mirroring the Cap $ field's inline
+        // save/revert. Validates a non-negative integer client-side; on a
+        // failed save reverts to the original value and surfaces the error.
+        const commit = async () => {
+          const next = inp.value.trim();
+          const orig = inp.dataset.original || '';
+          if (next === orig) return;
+          const userId = inp.dataset.userId;
+          const n = Number(next);
+          if (next === '' || !Number.isInteger(n) || n < 0) {
+            alert('Quota must be a non-negative whole number.');
+            inp.value = orig;
+            return;
+          }
+          inp.disabled = true;
           try {
-            const res = await fetch(`/api/admin/users/${userId}/can-create-apps`, {
-              method: 'POST',
+            const res = await fetch(`/api/admin/users/${userId}/app-quota`, {
+              method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ canCreateApps: next }),
+              body: JSON.stringify({ quota: n }),
             });
             if (!res.ok) {
               const data = await res.json().catch(() => ({}));
-              cb.checked = !next;
-              alert(data.error || `Toggle failed (HTTP ${res.status})`);
-              return;
+              alert(data.error || `Save failed (HTTP ${res.status})`);
+              inp.value = orig;
+            } else {
+              const data = await res.json();
+              const v = String(data.app_quota);
+              inp.value = v;
+              inp.dataset.original = v;
             }
-            await loadUsers();
           } catch (err) {
-            cb.checked = !next;
-            alert(`Toggle failed: ${err.message}`);
+            alert(`Save failed: ${err.message}`);
+            inp.value = orig;
           } finally {
-            cb.disabled = false;
+            inp.disabled = false;
           }
+        };
+        inp.addEventListener('blur', commit);
+        inp.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
         });
       });
 
@@ -631,10 +720,43 @@
       }
     });
 
-    loadCodes();
-    loadUsers();
-    loadOverview();
-    loadLimits();
+    // View-only admin role (issue #311). Both full and view-only admins
+    // reach this page (it's gated on isAdmin), so the whole panel renders
+    // for both. CAN_WRITE — derived from /api/auth/me's canAdminWrite —
+    // decides whether mutating controls render at all; reads stay visible.
+    let CAN_WRITE = false;
+
+    async function initAdminPanel() {
+      try {
+        const res = await fetch('/api/auth/me');
+        if (res.ok) {
+          const data = await res.json();
+          CAN_WRITE = !!data.user?.canAdminWrite;
+          // Show the read-only banner for a view-only admin.
+          if (data.user?.isAdmin && !CAN_WRITE) {
+            document.getElementById('view-only-banner')?.classList.remove('hidden');
+          }
+        }
+      } catch {}
+
+      // Hide the panel-level mutating controls for view-only admins. The
+      // values they act on (codes, limits, quotas) still render read-only.
+      if (!CAN_WRITE) {
+        for (const id of ['generate-code-btn', 'save-limits-btn', 'bulk-quota-control']) {
+          document.getElementById(id)?.classList.add('hidden');
+        }
+        // Lock the platform-default limit inputs so they read as display-only.
+        document.getElementById('limit-user')?.setAttribute('disabled', 'true');
+        document.getElementById('limit-global')?.setAttribute('disabled', 'true');
+      }
+
+      loadCodes();
+      loadUsers();
+      loadOverview();
+      loadLimits();
+    }
+
+    initAdminPanel();
   </script>
 </body>
 </html>

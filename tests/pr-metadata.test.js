@@ -14,7 +14,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 // Install module stubs before requiring the unit under test.
-function loadWithStubs({ onGenerate, githubCalls }) {
+function loadWithStubs({ onGenerate, githubCalls, createPR, summary = '' }) {
   const llmPath = require.resolve('../src/services/llm');
   const ghPath = require.resolve('../src/services/github');
   const subjectPath = require.resolve('../src/services/pr-metadata');
@@ -30,14 +30,14 @@ function loadWithStubs({ onGenerate, githubCalls }) {
       estimateCostCents: () => 0,
       generatePrMetadata: async (args) => {
         onGenerate(args);
-        return { title: 'Cumulative title', body: 'Cumulative body', usage: undefined, model: 'claude-haiku-4-5' };
+        return { title: 'Cumulative title', body: 'Cumulative body', summary, usage: undefined, model: 'claude-haiku-4-5' };
       },
     },
     loaded: true, id: llmPath, filename: llmPath, paths: orig.llm ? orig.llm.paths : [],
   };
   require.cache[ghPath] = {
     exports: {
-      createPR: async (owner, repo, opts) => { githubCalls.push({ type: 'create', owner, repo, opts }); return { number: 42, html_url: 'https://example/pr/42' }; },
+      createPR: createPR || (async (owner, repo, opts) => { githubCalls.push({ type: 'create', owner, repo, opts }); return { number: 42, html_url: 'https://example/pr/42' }; }),
       updatePR: async (owner, repo, num, opts) => { githubCalls.push({ type: 'update', owner, repo, num, opts }); },
     },
     loaded: true, id: ghPath, filename: ghPath, paths: orig.gh ? orig.gh.paths : [],
@@ -61,6 +61,7 @@ function loadWithStubs({ onGenerate, githubCalls }) {
 function mockPool(rows, {
   specRows = [], liveSpec = '', linkedIssues = [], appliedIssues = [],
   testingMd = null, testingPath = null, appliedTesting = null,
+  appliedSummary = null,
 } = {}) {
   return {
     queries: [],
@@ -72,6 +73,7 @@ function mockPool(rows, {
           rows: [{
             spec_md: liveSpec, linked_issues: linkedIssues, pr_linked_issues_applied: appliedIssues,
             testing_md: testingMd, testing_path: testingPath, pr_testing_applied: appliedTesting,
+            pr_visuals_applied: null, pr_summary_md: appliedSummary,
           }],
         };
       }
@@ -385,6 +387,49 @@ test('existing PR makes no GitHub call when title, issues and testing are all un
   }
 });
 
+// ---- #295 / chat 510: honest error when the branch has no pushed commits ----
+
+test('applyPrMetadata re-throws createPR "no_commits" so the caller can be honest', async () => {
+  const githubCalls = [];
+  const noCommits = async () => {
+    const e = new Error('No commits between main and feat/x — the branch has no pushed commits.');
+    e.code = 'no_commits';
+    throw e;
+  };
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls, createPR: noCommits });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }]);
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    await assert.rejects(
+      () => subject.applyPrMetadata({
+        pool, session, repoOwner: 'acme', repoName: 'app',
+        userMessage: 'x', ccSummary: 'y', username: 'evan',
+      }),
+      (err) => err && err.code === 'no_commits',
+      'the typed no_commits error propagates to the caller'
+    );
+  } finally {
+    restore();
+  }
+});
+
+test('applyPrMetadata stays best-effort (returns null) on other createPR failures', async () => {
+  const githubCalls = [];
+  const boom = async () => { throw new Error('GitHub 500 — transient'); };
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls, createPR: boom });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }]);
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    const res = await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.equal(res, null, 'non-no_commits failures are swallowed as before');
+  } finally {
+    restore();
+  }
+});
+
 test('no testing guidance -> body has no How to test section (legacy bytes)', async () => {
   const githubCalls = [];
   const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls });
@@ -397,6 +442,108 @@ test('no testing guidance -> body has no How to test section (legacy bytes)', as
     });
     assert.ok(!/How to test/.test(githubCalls[0].opts.body));
     assert.match(githubCalls[0].opts.body, /^Cumulative body\n\n---\n_Dev session by evan via Usernode_$/);
+  } finally {
+    restore();
+  }
+});
+
+// ---- plain-language summary (user-facing) ----
+
+test('summary is prepended as the first paragraph of the PR body, before bullets/testing/closing/footer', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => {}, githubCalls,
+    summary: 'Adds a dark-mode toggle so people can switch to a dark colour scheme.',
+  });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }], {
+      linkedIssues: [75], testingMd: '1. Open the board.', testingPath: '/board',
+    });
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.equal(githubCalls[0].type, 'create');
+    // Summary leads, then the model body, then testing, then closing, then footer.
+    assert.equal(
+      githubCalls[0].opts.body,
+      'Adds a dark-mode toggle so people can switch to a dark colour scheme.\n\n'
+      + 'Cumulative body\n\n## How to test\n\n1. Open the board.\n\nDeep link: `/board`\n\n'
+      + 'Closes #75\n\n---\n_Dev session by evan via Usernode_'
+    );
+    // The summary is persisted to pr_summary_md on the new-PR write.
+    const upd = pool.queries.find((q) => /UPDATE chat_sessions SET pr_number/.test(q.sql));
+    assert.equal(upd.params[6], 'Adds a dark-mode toggle so people can switch to a dark colour scheme.');
+  } finally {
+    restore();
+  }
+});
+
+test('empty summary leaves the body byte-identical to the legacy output', async () => {
+  const githubCalls = [];
+  // summary defaults to '' — the no-summary path.
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }]);
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.match(githubCalls[0].opts.body, /^Cumulative body\n\n---\n_Dev session by evan via Usernode_$/);
+    // pr_summary_md persisted as null when no summary was generated.
+    const upd = pool.queries.find((q) => /UPDATE chat_sessions SET pr_number/.test(q.sql));
+    assert.equal(upd.params[6], null);
+  } finally {
+    restore();
+  }
+});
+
+test('existing PR updates when only the summary changed (title/issues/testing unchanged)', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => {}, githubCalls,
+    summary: 'A fresh, revised plain-language summary.',
+  });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }], {
+      linkedIssues: [75], appliedIssues: [75],
+      appliedSummary: 'The stale, previously-applied summary.',
+    });
+    const session = { id: 1, branch_name: 'feat/x', pr_number: 42, pr_url: 'u', pr_title: 'Cumulative title' };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.equal(githubCalls.length, 1, 'GitHub update fired on a summary-only change');
+    assert.equal(githubCalls[0].type, 'update');
+    assert.match(githubCalls[0].opts.body, /^A fresh, revised plain-language summary\./);
+    // The applied snapshot (pr_summary_md) is advanced for the next turn.
+    const upd = pool.queries.find((q) => /UPDATE chat_sessions SET pr_title/.test(q.sql));
+    assert.equal(upd.params[4], 'A fresh, revised plain-language summary.');
+  } finally {
+    restore();
+  }
+});
+
+test('existing PR makes no GitHub call when summary (and everything else) is unchanged', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => {}, githubCalls,
+    summary: 'Steady summary.',
+  });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }], {
+      linkedIssues: [75], appliedIssues: [75],
+      appliedSummary: 'Steady summary.',
+    });
+    const session = { id: 1, branch_name: 'feat/x', pr_number: 42, pr_url: 'u', pr_title: 'Cumulative title' };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.equal(githubCalls.length, 0, 'no GitHub call when the summary is unchanged too');
   } finally {
     restore();
   }

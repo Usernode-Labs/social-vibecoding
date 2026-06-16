@@ -547,10 +547,12 @@ const Home = {
     // is rendered conditionally so we don't reserve right padding on
     // tiles that have no buttons there at all.
     const isFavorited = !!app.is_favorited;
-    const showRetry = isError && (App.user?.isAdmin || App.user?.id === app.created_by);
-    const showCheck = App.user?.isAdmin && app.repo_url && isRunning && !app.self_hosted;
-    const showDelete = !!App.user?.isAdmin;
-    const showLock = !!App.user?.isAdmin;
+    // Mutating controls gate on canAdminWrite (full admin) — view-only
+    // admins don't get them (issue #311). Retry stays creator-or-full-admin.
+    const showRetry = isError && (App.user?.canAdminWrite || App.user?.id === app.created_by);
+    const showCheck = App.user?.canAdminWrite && app.repo_url && isRunning && !app.self_hosted;
+    const showDelete = !!App.user?.canAdminWrite;
+    const showLock = !!App.user?.canAdminWrite;
     const isLocked = !!app.locked;
     const hasCornerBtns = true;
     // `Retry` is text rather than a glyph so we widen the title-row's
