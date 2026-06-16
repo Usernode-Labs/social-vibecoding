@@ -47,6 +47,7 @@ async function migrate(config) {
   await seedStagingHeadlessFixtures(pool, config);
   await seedStagingSyncActivity(pool, config);
   await seedStagingChatEditFixtures(pool, config);
+  await seedStagingLlmUsage(pool);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
   // Must run BEFORE backfillOrphanedSpecDrafts: unwrapping spec_md after that
@@ -1925,6 +1926,48 @@ async function seedStagingLeaderboardProfile(pool) {
   }
 
   log.info('db', 'Staging leaderboard-profile fixtures seeded', { appId });
+}
+
+// LLM-spend fixtures for the admin dashboard's Daily-spend and
+// Spend-by-builder charts. `llm_usage` is staging:private (copied
+// schema-only → empty in staging), so without this both charts render
+// "Not enough data yet." We attach 30 days of spend to a handful of
+// existing seeded users, admins FIRST, so the "Include admin users"
+// checkbox visibly changes the totals. Each user gets a distinct mix of
+// platform-key spend (total_cost_cents) and user-key/BYOK spend
+// (byok_cost_cents) so all three toggle modes — and the builder ranking
+// per mode — differ. Idempotent via ON CONFLICT (user_id, date).
+async function seedStagingLlmUsage(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: users } = await pool.query(
+    `SELECT id, is_admin FROM users ORDER BY is_admin DESC, id ASC LIMIT 6`
+  );
+  if (!users.length) {
+    log.warn('db', 'Staging llm_usage fixtures skipped: no users');
+    return;
+  }
+
+  // Per-user spend profile. Cycle platform-only / byok-only / both so the
+  // toggles tell different stories; platform base descends with index
+  // while byok base ascends, so the two rankings genuinely disagree.
+  for (let i = 0; i < users.length; i++) {
+    const mode = i % 3; // 0 platform-only, 1 byok-only, 2 both
+    const platformBase = mode === 1 ? 0 : (users.length - i) * 6 + 4; // cents/day
+    const byokBase = mode === 0 ? 0 : (i + 1) * 5 + 3;                 // cents/day
+    await pool.query(
+      `INSERT INTO llm_usage (user_id, date, total_cost_cents, byok_cost_cents)
+       SELECT $1,
+              CURRENT_DATE - g,
+              ($2::numeric * (0.5 + (g % 5) * 0.12))::numeric(10,4),
+              ($3::numeric * (0.5 + ((g + 2) % 5) * 0.12))::numeric(10,4)
+         FROM generate_series(0, 29) g
+       ON CONFLICT (user_id, date) DO NOTHING`,
+      [users[i].id, platformBase, byokBase]
+    );
+  }
+
+  log.info('db', 'Staging llm_usage fixtures seeded', { users: users.length });
 }
 
 // Q/A-mode fixture (#32): one demo dev-chat session whose latest Mayor
