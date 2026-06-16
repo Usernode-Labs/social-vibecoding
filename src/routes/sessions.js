@@ -3438,12 +3438,66 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
             'UPDATE chat_sessions SET testing_md = $1, testing_path = $2, testing_paths = $3 WHERE id = $4',
             [testing.testingMd, testing.testingPath, JSON.stringify(testing.testingPaths || []), session.id]
           ).catch(() => {});
+          session.testing_md = testing.testingMd;
+          session.testing_path = testing.testingPath;
+          session.testing_paths = testing.testingPaths || [];
         }
         outcome = session.spec_md ? 'spec_code' : 'code';
-        dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}. `
-          + 'Headless mode: no PR was opened and no staging preview was built.'
-          + (session.spec_md ? ' The change implements the spec drafted earlier this run (in the session spec doc).' : '')
-          + (testing.cleanedText ? `\n\nWhat the agent did:\n${testing.cleanedText.slice(0, 2000)}` : '');
+
+        // #361/#183 parity (chat 735 / issue #370): the LIVE headless path
+        // builds a staging preview and persists a `changesReady: true` system
+        // message — that marker is what makes a dev chat cloned from this auto
+        // session render the "Changes ready" card (Preview / Test / Propose),
+        // since the clone copies this session's messages verbatim. A
+        // restart-resumed run reaches the same committed-and-pushed state, so
+        // it must emit the same marker; without it, a proposal interrupted by
+        // a platform restart silently loses its card even though the branch
+        // has a reviewable commit. Build best-effort and persist the marker
+        // whether or not staging succeeds, exactly like the live path.
+        const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
+        let stagingResult = null;
+        let stagingErr = null;
+        try {
+          stagingResult = await staging.buildAndDeployStaging(config, session, app, result.sha);
+        } catch (e) {
+          stagingErr = e;
+        }
+        if (stagingResult) {
+          await pool.query(
+            'UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3',
+            [stagingResult.containerId, stagingResult.stagingUrl, session.id]
+          ).catch(() => {});
+          await staging.warmStagingCert(session, stagingResult.hostname, stagingResult.stagingUrl).catch(() => {});
+          await pool.query(
+            `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+             VALUES ($1, 'system', $2, $3)`,
+            [session.id, 'Staging preview built',
+              JSON.stringify({ stagingUrl: stagingResult.stagingUrl, changesReady: true, prNumber: null })]
+          ).catch(() => {});
+          // Before/after visuals: best-effort, never throws; there is no live
+          // client to stream to on a resumed run, so the no-op send is fine.
+          visuals.captureForSession(config, session, app, result.sha, stagingResult, { send: () => {} })
+            .catch((err) => log.warn('visuals', 'Resumed headless capture failed (non-fatal)', { sessionId: session.id, err: err.message }));
+          dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}, and a staging preview was built. `
+            + 'Headless mode: no PR was opened (it is created on a clone at propose time).'
+            + (session.spec_md ? ' The change implements the spec drafted earlier this run (in the session spec doc).' : '')
+            + (testing.cleanedText ? `\n\nWhat the agent did:\n${testing.cleanedText.slice(0, 2000)}` : '');
+        } else {
+          const { errMsg, errName, missingKeys } = describeStagingFailure(stagingErr);
+          await pool.query(
+            `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+             VALUES ($1, 'system', $2, $3)`,
+            [session.id, 'Staging build failed',
+              JSON.stringify({ error: errMsg, changesReady: true, stagingFailed: true, stagingErrorName: errName, stagingMissingKeys: missingKeys, prNumber: null })]
+          ).catch(() => {});
+          log.warn('staging', 'Resumed headless staging build failed (non-fatal — commit pushed)', {
+            sessionId: session.id, errName, err: errMsg, missingKeys,
+          });
+          dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}. `
+            + 'Headless mode: no PR was opened. The staging preview could not be built, but the commit is reviewable — the "Changes ready" card still appears on a clone.'
+            + (session.spec_md ? ' The change implements the spec drafted earlier this run (in the session spec doc).' : '')
+            + (testing.cleanedText ? `\n\nWhat the agent did:\n${testing.cleanedText.slice(0, 2000)}` : '');
+        }
       } else {
         outcome = session.spec_md ? 'spec' : 'question';
         dispatchSummary = (result.fatalError

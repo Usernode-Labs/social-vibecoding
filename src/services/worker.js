@@ -1388,8 +1388,17 @@ async function cloneCcVolume(srcSessionId, destSessionId) {
   // failed before its first worker bootstrap).
   await docker.execFileAsync('docker', ['volume', 'inspect', src], { timeout: 5000 });
   await docker.ensureVolume(dest);
+  // Run the copy as root (`--user 0:0`). A freshly-created named volume is
+  // owned root:root (0755), but the worker image's default user is non-root,
+  // so a non-root copy container can't create entries under /to — the exact
+  // failures seen cloning chat 735 ("cp: cannot create directory
+  // '/to/./backups': Permission denied", "cp: preserving times for '/to/.':
+  // Operation not permitted"), which left the clone with fresh CC memory.
+  // `cp -a` still preserves each source entry's original uid/gid, so the
+  // worker user can read its own ~/.claude files afterward.
   await docker.execFileAsync('docker', [
     'run', '--rm',
+    '--user', '0:0',
     '-v', `${src}:/from:ro`,
     '-v', `${dest}:/to`,
     '--entrypoint', 'sh',
