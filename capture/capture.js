@@ -49,7 +49,22 @@
 const fs = require('fs');
 const { execFile } = require('child_process');
 
-const VIEWPORT = { width: 1280, height: 800, deviceScaleFactor: 1 };
+// Pixel density of the captured shots. Default 2× (HiDPI/retina) so the
+// whole class of "only broken on retina" bugs surfaces as a visible
+// before/after diff for free (#360). Apps that genuinely want 1× (pixel
+// art, deliberately low-res canvases) opt out via dapp.json's
+// `screenshot.deviceScaleFactor`, which the orchestrator plumbs in as
+// DEVICE_SCALE_FACTOR. Only 1 and 2 are accepted; anything else (unset,
+// garbage, out of range) falls back to 2 — so even an old orchestrator
+// that doesn't set the var still gets 2× from a freshly-built image.
+function resolveDeviceScaleFactor(raw) {
+  return parseInt(raw, 10) === 1 ? 1 : 2;
+}
+const VIEWPORT = {
+  width: 1280,
+  height: 800,
+  deviceScaleFactor: resolveDeviceScaleFactor(process.env.DEVICE_SCALE_FACTOR),
+};
 const NAV_TIMEOUT_MS = 30000;
 const SETTLE_MS = 500;
 const PRE_SCROLL_HOLD_MS = 1500;
@@ -315,4 +330,4 @@ if (require.main === module) {
     .then(() => process.exit(0));
 }
 
-module.exports = { parseCookie, resolveTargets };
+module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor };

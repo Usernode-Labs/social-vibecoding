@@ -162,7 +162,7 @@ function makeTopicHarness(viewerId) {
   return { AppView, els, opened };
 }
 
-// A fake #dev-topic-head whose innerHTML setter records the HTML and exposes
+// A fake #gc-thread-head whose innerHTML setter records the HTML and exposes
 // stub button nodes for the pill / standalone so we can probe click wiring.
 function fakeHead() {
   const btnStub = () => ({
@@ -197,7 +197,7 @@ function fakeHead() {
 test("topic head for another user's proposal shows ONLY the pill (no standalone)", () => {
   const { AppView, els, opened } = makeTopicHarness(ME);
   const head = fakeHead();
-  els['dev-topic-head'] = head;
+  els['gc-thread-head'] = head;
   AppView._devTopic = { kind: 'proposal', id: 7 };
   AppView._findTopicItem = () => baseProposal({ user_id: 999 });
 
@@ -218,7 +218,7 @@ test("topic head for the viewer's OWN proposal shows no Ask AI button", () => {
   // the viewer's own PR proposal (matching the card behaviour from #313).
   const { AppView, els } = makeTopicHarness(ME);
   const head = fakeHead();
-  els['dev-topic-head'] = head;
+  els['gc-thread-head'] = head;
   AppView._devTopic = { kind: 'proposal', id: 7 };
   AppView._findTopicItem = () => baseProposal({ user_id: ME });
 
@@ -231,7 +231,7 @@ test("topic head for the viewer's OWN proposal shows no Ask AI button", () => {
 test('topic head for a governance proposal keeps the standalone button', () => {
   const { AppView, els } = makeTopicHarness(ME);
   const head = fakeHead();
-  els['dev-topic-head'] = head;
+  els['gc-thread-head'] = head;
   AppView._devTopic = { kind: 'gov', id: 5 };
   AppView._findTopicItem = () => ({
     id: 5, kind: 'gov', title: 'Adopt a code of conduct',
