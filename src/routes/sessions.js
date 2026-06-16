@@ -1570,16 +1570,16 @@ function sessionRoutes(config) {
         // it with a short note. The system prompt forbids this, but
         // models occasionally regress; without this check the user sees
         // a totally fabricated "fix summary" with no underlying commit.
-        const fakeMarker = mayorText1.includes('[CODING AGENT COMPLETED]');
-        const dispatched = mayor1.toolUses.some((t) => t.name === 'dispatch_claude_code');
-        if (fakeMarker && !dispatched) {
-          log.warn('sessions', 'Mayor wrote fake [CODING AGENT COMPLETED] without dispatching', {
-            sessionId: session.id,
-            preview: mayorText1.substring(0, 300),
-          });
-          mayorText1 = mayorText1
-            .replace(/\[CODING AGENT COMPLETED\][\s\S]*$/i, '')
-            .trim() || '(I described what should change, but didn\'t actually run the coding agent — try sending again.)';
+        // Strip unconditionally (#358): the marker is only ever produced by
+        // the harness (buildMayorMessages); an assistant turn must never
+        // carry it, whether or not a tool was also called. When the scrub
+        // empties the text, substitute an honest note.
+        {
+          const stripped = stripFakeCompletionMarker(mayorText1, { sessionId: session.id });
+          if (stripped !== mayorText1) {
+            mayorText1 = stripped
+              || '(I described what should change, but didn\'t actually run the coding agent — try sending again.)';
+          }
         }
 
         // Q/A mode (#32): suggested answers for clarifying questions.
@@ -1840,7 +1840,7 @@ function sessionRoutes(config) {
         // tool_use is terminal (end of turn) — no tool_result round-trip.
         const quickReplies2 = resolveQuickReplies(mayor2.toolUses);
 
-        let mayorText2 = mayor2.text;
+        let mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
         log.info('sessions', 'Mayor phase-2 response', {
           sessionId: session.id,
           textLen: mayorText2.length,
@@ -2860,7 +2860,7 @@ async function runHeadlessSession({
       ];
     }
 
-    const mayorText1 = mayor1.text;
+    const mayorText1 = stripFakeCompletionMarker(mayor1.text, { sessionId: session.id });
     // Q/A mode (#32): same suggestion handling as the interactive route —
     // persisted on the assistant row so the cloned session a human picks
     // up renders the answer chips. Dropped if a dispatch co-occurred.
@@ -2981,7 +2981,7 @@ async function runHeadlessSession({
         });
         const buildCall = mayor2.toolUses.find((t) => t.name === 'dispatch_claude_code');
         const strayCalls = mayor2.toolUses.filter((t) => t.name !== 'dispatch_claude_code');
-        const mayorText2 = mayor2.text;
+        const mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
         const costCents2 = llm.estimateCostCents(mayor2.usage, selectedModel);
 
         if (!mayor2.toolUses.length) {
@@ -3105,7 +3105,7 @@ async function runHeadlessSession({
             tools: [SUGGEST_ANSWERS_TOOL],
             apiKey: userApiKey,
           });
-          let mayorText3 = mayor3.text;
+          let mayorText3 = stripFakeCompletionMarker(mayor3.text, { sessionId: session.id });
           // #32: persist suggestions only on the question outcome — that's
           // the row a cloned session forwards onto its follow-up to render
           // the answer chips. Non-question wrap-ups carry no metadata.
@@ -3145,7 +3145,7 @@ async function runHeadlessSession({
           apiKey: userApiKey,
         });
 
-        let mayorText2 = mayor2.text;
+        let mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
         if (!mayorText2.trim()) {
           mayorText2 = toolResult.isError
             ? "_The auto session's dispatch didn't finish successfully — see the status above._"
@@ -3940,6 +3940,33 @@ function prettyModelLabel(modelId) {
   return modelId;
 }
 
+// The synthetic label the harness folds a REAL coding-agent run under
+// when replaying history into the Mayor's context (see buildMayorMessages
+// below). It is reserved for the harness — the system prompt forbids the
+// Mayor from ever typing it, and stripFakeCompletionMarker enforces that
+// server-side. Centralized so the generator, the scrub, and the system
+// prompt can't drift apart.
+const CODING_AGENT_COMPLETED_MARKER = '[CODING AGENT COMPLETED]';
+const COMPLETION_MARKER_RE = /\[CODING AGENT COMPLETED\][\s\S]*$/i;
+
+// Defense in depth (#358): remove a hallucinated completion marker (and
+// anything after it) from Mayor-authored text. The marker is ONLY ever
+// legitimately produced by buildMayorMessages from a ccOutput system row,
+// so it must never survive in a persisted assistant row — if the Mayor
+// reproduces it, it is faking a coding-agent run that never happened. Pure
+// + trims; returns the input unchanged when no marker is present. Pass
+// sessionId to have the (rare) regression logged.
+function stripFakeCompletionMarker(text, { sessionId } = {}) {
+  if (typeof text !== 'string') return '';
+  if (!COMPLETION_MARKER_RE.test(text)) return text;
+  if (sessionId) {
+    log.warn('sessions', 'Mayor wrote fake [CODING AGENT COMPLETED] without a real run — stripping', {
+      sessionId, preview: text.substring(0, 300),
+    });
+  }
+  return text.replace(COMPLETION_MARKER_RE, '').trim();
+}
+
 function buildMayorMessages(history) {
   const CC_SUMMARY_MAX = 2000;
   const messages = [];
@@ -3953,7 +3980,18 @@ function buildMayorMessages(history) {
   for (const row of history) {
     if (row.role === 'system' && row.metadata?.ccOutput) {
       const summary = String(row.metadata.ccOutput).slice(0, CC_SUMMARY_MAX);
-      pushAssistant(`[CODING AGENT COMPLETED]:\n${summary}`);
+      // Outcome-aware label (#358): only a run that actually changed code is
+      // folded under the "COMPLETED" marker. No-op / error runs carry a
+      // distinct label so the Mayor doesn't see (and imitate) a "completed"
+      // entry for work that never landed. Rows without ccOutcome — legacy
+      // history and the staging seeds — keep the legacy completed label.
+      const outcome = row.metadata.ccOutcome;
+      const label = outcome === 'no_changes'
+        ? '[CODING AGENT RAN — NO CHANGES]'
+        : outcome === 'error'
+          ? '[CODING AGENT FAILED]'
+          : CODING_AGENT_COMPLETED_MARKER;
+      pushAssistant(`${label}:\n${summary}`);
     } else if (row.role === 'assistant') {
       pushAssistant(row.content);
     } else if (row.role === 'user') {
@@ -5092,7 +5130,21 @@ path: /another/changed/view
     }
 
     if (ccText) {
-      await sendStatus('Claude Code finished', { ccOutput: ccText, durationMs: Date.now() - turnStartedMs });
+      // Outcome-aware completion row (#358): the green "Claude Code finished"
+      // card + the [CODING AGENT COMPLETED] fold-in are reserved for runs
+      // that actually changed code. A run that committed nothing (no-op) or
+      // errored gets an honest header instead, and a ccOutcome discriminator
+      // so buildMayorMessages labels the Mayor's context accordingly — a
+      // no-op/failure must never masquerade as a completed build.
+      const ccOutcome = hasChanges
+        ? 'success'
+        : ((result.fatalError || result.ccIsError) ? 'error' : 'no_changes');
+      const statusText = ccOutcome === 'success'
+        ? 'Claude Code finished'
+        : ccOutcome === 'no_changes'
+          ? 'Claude Code made no changes'
+          : 'Claude Code did not complete';
+      await sendStatus(statusText, { ccOutput: ccText, ccOutcome, durationMs: Date.now() - turnStartedMs });
       // Prepend CC's own description so the Mayor leads with what was
       // actually built, with our outcome bullets as supplementary context.
       summaryParts.unshift(`What the agent did:\n${ccText}`);
@@ -5238,10 +5290,10 @@ A dispatch_claude_code tool_result may report that the commit/push/PR succeeded 
 For other staging failures (Docker build, network, image cache), explain briefly and offer to retry. Do NOT pretend a failed staging build succeeded — the user can see the build status in the chat.
 
 HISTORY CONTEXT:
-Some assistant turns in this conversation contain "[CODING AGENT COMPLETED]:" — that is a summary from a PAST coding-agent run, written by the system, not by you. You may reference it when the user asks an INFORMATIONAL question about a past turn (e.g. "what did you do?", "why did you change X?", "what files were touched?") — quote or paraphrase to answer.
+Some assistant turns in this conversation contain "${CODING_AGENT_COMPLETED_MARKER}:" — that is a summary from a PAST coding-agent run, written by the system, not by you. You may reference it when the user asks an INFORMATIONAL question about a past turn (e.g. "what did you do?", "why did you change X?", "what files were touched?") — quote or paraphrase to answer.
 
 You MUST NOT, under any circumstances:
-- Write the literal string "[CODING AGENT COMPLETED]" in your reply. That marker is reserved for the harness; emitting it yourself fakes a coding-agent run that never happened.
+- Write the literal string "${CODING_AGENT_COMPLETED_MARKER}" in your reply. That marker is reserved for the harness; emitting it yourself fakes a coding-agent run that never happened.
 - Paraphrase a past summary as a substitute for dispatching a new run. If the user reports a bug, regression, or "still not quite right" — even if a previous run targeted the same area — that is a NEW change request and you MUST call dispatch_claude_code (assuming the tool is available per STATUS). Past summaries are read-only history; they cannot fix new bugs.${toolNote}${conventionsBlock}${selfHosted ? getSelfHostedRefuseList() : ''}${prBlock}${openProposalsBlock || ''}${specBlock}`;
 }
 
@@ -5388,4 +5440,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, describeMarkerlessExit, shouldRetryHeadlessTurn };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER };

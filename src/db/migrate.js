@@ -1388,6 +1388,17 @@ async function seedStagingCcProgressRun(pool, config) {
     '- Persisted run durations on finished statuses.',
   ].join('\n');
 
+  // #358: a no-op outcome demo so QA can see the non-success card, which is
+  // visually distinct from the green "Claude Code finished" card and never
+  // shows the [CODING AGENT COMPLETED] marker. The ccOutcome:'no_changes'
+  // discriminator is what makes the harness fold this into the Mayor's
+  // context under a non-completed label rather than a fake completion.
+  const ccNoOpOutput = [
+    '[staging fixture] I reviewed the relevant files but the requested',
+    'behaviour was already in place — nothing needed changing, so no commit',
+    'was made.',
+  ].join('\n');
+
   // Timeline order matters: the dev-chat pairing pre-pass attaches the
   // 'Claude Code progress' row to the nearest PRECEDING "Claude Code is
   // running" status, so insert status → progress → finished with
@@ -1397,7 +1408,11 @@ async function seedStagingCcProgressRun(pool, config) {
     { role: 'system', content: 'Spinning up coding agent (Claude Sonnet 4.6)...', metadata: {}, minutesAgo: 38 },
     { role: 'system', content: 'Claude Code is running...', metadata: {}, minutesAgo: 38 },
     { role: 'system', content: 'Claude Code progress', metadata: { progressLog }, minutesAgo: 38 },
-    { role: 'system', content: 'Claude Code finished', metadata: { ccOutput, durationMs: 252000 }, minutesAgo: 34 },
+    { role: 'system', content: 'Claude Code finished', metadata: { ccOutput, ccOutcome: 'success', durationMs: 252000 }, minutesAgo: 34 },
+    { role: 'user', content: '[staging fixture] Make sure the elapsed timer never disappears.', metadata: {}, minutesAgo: 33 },
+    { role: 'system', content: 'Spinning up coding agent (Claude Sonnet 4.6)...', metadata: {}, minutesAgo: 32 },
+    { role: 'system', content: 'Claude Code is running...', metadata: {}, minutesAgo: 32 },
+    { role: 'system', content: 'Claude Code made no changes', metadata: { ccOutput: ccNoOpOutput, ccOutcome: 'no_changes', durationMs: 41000 }, minutesAgo: 31 },
   ];
 
   for (const m of messages) {
@@ -2639,7 +2654,7 @@ async function seedStagingDemoProposal(pool, config) {
     { role: 'user', content: '[staging fixture] Please draft a proposal for a demo widget.', metadata: {}, minutesAgo: 45 },
     { role: 'system', content: `Scout drafted a ${specLines}-line spec from the codebase.`,
       metadata: { specPreview, specLines, specVersion: 1 }, minutesAgo: 44 },
-    { role: 'system', content: 'Claude Code finished', metadata: { ccOutput, durationMs: 198000 }, minutesAgo: 40 },
+    { role: 'system', content: 'Claude Code finished', metadata: { ccOutput, ccOutcome: 'success', durationMs: 198000 }, minutesAgo: 40 },
   ];
 
   for (const m of messages) {
