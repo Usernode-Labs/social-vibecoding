@@ -289,3 +289,141 @@ test('mobile (#286): staging seeds an active running line with an estimate', () 
   assert.match(fnBody, /estimate:\s*\{\s*text:/, 'fixture must persist estimate metadata');
   assert.match(fnBody, /Claude Code is running/, 'fixture must seed an active running line');
 });
+
+// ── 4. Reliability for long runs (#323) ─────────────────────────────────
+//
+// The estimator must keep producing guesses for the whole life of a long
+// run: a few transient failures must not disable it for good, the flat
+// 20-emit cap must be gone, the first guess must be able to fire before any
+// progress line lands, and the countdown must refresh on a wall-clock
+// cadence so it never freezes during a quiet phase. These pin the inline
+// estimator contract in sessions.js (it's a closure inside the route
+// handler, so source guards are the practical seam).
+
+// Slice out the estimator block: from the toggle gate down to the 60s tick.
+function estimatorBlock() {
+  const src = read('src/routes/sessions.js');
+  const at = src.indexOf('const estimatorEnabled = !headless');
+  assert.ok(at !== -1, 'estimatorEnabled gate must exist');
+  const end = src.indexOf('}, 60_000);', at);
+  assert.ok(end !== -1, 'estimator 60s tick must exist');
+  return src.slice(at, end + 20);
+}
+
+test('#323: estimator no longer permanently dies after a flat failure/emit count', () => {
+  const block = estimatorBlock();
+  // The old hard kill — `estimateFailures >= 3 || estimateSuccesses >= 20`
+  // followed by clearInterval — must be gone.
+  assert.doesNotMatch(block, /estimateFailures\s*>=\s*3/,
+    'the permanent 3-failure clearInterval must be removed');
+  assert.doesNotMatch(block, /estimateSuccesses\s*>=\s*20/,
+    'the flat 20-emit hard stop must be removed');
+});
+
+test('#323: estimator backs off on failure and resets the counter on success', () => {
+  const block = estimatorBlock();
+  // Backoff: failures increment a counter that skips a bounded number of
+  // ticks rather than tearing down the interval.
+  assert.match(block, /consecutiveFailures\+\+/, 'failures must increment a backoff counter');
+  assert.match(block, /ticksToSkip\s*=\s*Math\.min\(consecutiveFailures,\s*5\)/,
+    'failure backoff must skip up to 5 ticks');
+  assert.match(block, /if\s*\(ticksToSkip\s*>\s*0\)\s*\{\s*ticksToSkip--;\s*return;\s*\}/,
+    'the tick must wait out the backoff window');
+  // Recovery: a success zeroes the failure counter so the run self-heals.
+  assert.match(block, /consecutiveFailures\s*=\s*0/, 'a success must reset the failure counter');
+});
+
+test('#323: emits are bounded only by a generous runaway ceiling', () => {
+  const block = estimatorBlock();
+  assert.match(block, /MAX_ESTIMATES\s*=\s*60/, 'the runaway backstop must be a generous ceiling');
+  assert.match(block, /estimateSuccesses\s*>=\s*MAX_ESTIMATES/,
+    'the ceiling must gate only as a runaway backstop');
+});
+
+test('#323: first estimate can fire before any progress line lands', () => {
+  const block = estimatorBlock();
+  // lastEstimateAtMs == null (no successful emit yet) forces a run even with
+  // zero lines — the old `lines === linesAtLastEstimate` early-return is gone.
+  assert.match(block, /lastEstimateAtMs\s*==\s*null\)\s*shouldRun\s*=\s*true/,
+    'the first tick must run even with no new progress lines');
+  assert.doesNotMatch(block, /if\s*\(liveProgressLines\.length === linesAtLastEstimate\)\s*return;/,
+    'the unconditional idle early-return must be removed');
+});
+
+test('#323: the countdown refreshes on a wall-clock cadence when idle', () => {
+  const block = estimatorBlock();
+  assert.match(block, /IDLE_REFRESH_MS/, 'an idle-refresh wall-clock threshold must exist');
+  assert.match(block, /sinceLastMs\s*>=\s*IDLE_REFRESH_MS/,
+    'an idle tick must re-ask once enough wall-clock has passed');
+  // ...but a brand-new estimate is still skipped when nothing changed and it
+  // was just asked (cost containment): the idle branch is the *else* of
+  // hasNewLines, not an unconditional re-ask.
+  assert.match(block, /else if\s*\(hasNewLines\)\s*shouldRun\s*=\s*true/,
+    'new progress lines must still trigger an immediate estimate');
+});
+
+test('#323: cadence widens with elapsed time instead of stopping', () => {
+  const block = estimatorBlock();
+  assert.match(block, /WIDEN_AFTER_MS\s*=\s*15\s*\*\s*60_000/, 'cadence must widen after ~15 min');
+  assert.match(block, /WIDE_SPACING_MS/, 'late-run minimum spacing must be defined');
+  assert.match(block, /sinceLastMs\s*<\s*minSpacingMs\)\s*shouldRun\s*=\s*false/,
+    'the widened spacing must throttle (not stop) late-run estimates');
+});
+
+test('#323: estimator logs start, backoff, and the silent-disable case', () => {
+  const sessions = read('src/routes/sessions.js');
+  assert.match(sessions, /AI progress estimator started/, 'estimator creation must be logged');
+  assert.match(sessions, /backing off/, 'failure backoff must be logged');
+  assert.match(sessions, /AI progress estimate skipped: no LLM key available/,
+    'the toggle-on-but-no-key case must be logged for diagnosis');
+});
+
+test('#323: estimateRunProgress requests schema-constrained structured output', () => {
+  const src = read('src/services/llm.js');
+  const fnStart = src.indexOf('async function estimateRunProgress');
+  const fnBody = src.slice(fnStart, src.indexOf('module.exports'));
+  // The messages.create call must force Haiku to emit valid schema-matching
+  // JSON via output_config.format, eliminating the parse-failure class at the
+  // source. The bound schema (ESTIMATE_SCHEMA) must cover both keys the parser
+  // reads — estimate + remaining_seconds.
+  assert.match(fnBody, /output_config/, 'estimate call must pass output_config');
+  assert.match(fnBody, /json_schema/, 'output_config.format must be a json_schema');
+  assert.match(fnBody, /ESTIMATE_SCHEMA/, 'the bound schema must be passed to the call');
+
+  // ESTIMATE_SCHEMA is a top-level object with additionalProperties:false whose
+  // required keys are estimate (string) and remaining_seconds (nullable int).
+  const schemaStart = src.indexOf('const ESTIMATE_SCHEMA');
+  assert.ok(schemaStart !== -1, 'ESTIMATE_SCHEMA must be defined');
+  const schemaBlock = src.slice(schemaStart, src.indexOf('estimateRunProgress', schemaStart));
+  assert.match(schemaBlock, /additionalProperties:\s*false/, 'schema must forbid extra keys');
+  assert.match(schemaBlock, /estimate:\s*\{\s*type:\s*'string'\s*\}/, 'schema must declare estimate as a string');
+  assert.match(schemaBlock, /remaining_seconds:\s*\{\s*type:\s*\['integer',\s*'null'\]\s*\}/,
+    'schema must declare remaining_seconds as a nullable integer');
+  assert.match(schemaBlock, /required:\s*\['estimate',\s*'remaining_seconds'\]/,
+    'both keys must be required');
+});
+
+test('#323: estimateRunProgress tolerates code fences and smart quotes', () => {
+  const src = read('src/services/llm.js');
+  const fnStart = src.indexOf('async function estimateRunProgress');
+  const fnBody = src.slice(fnStart, src.indexOf('module.exports'));
+  // Defensive fallback (now that structured outputs is the primary path):
+  // strips ```json fences and normalises curly quotes before JSON.parse so an
+  // off-schema response (refusal / truncation / older model) decorated with a
+  // fence or smart quotes still parses rather than counting as a failure.
+  assert.match(fnBody, /replace\(\/```/, 'must strip code fences before parsing');
+  assert.match(fnBody, /[“”]/, 'must normalise smart double quotes');
+  assert.match(fnBody, /[‘’]/, 'must normalise smart single quotes');
+});
+
+test('#323: _applyEstimate stashes a pending estimate instead of dropping it', () => {
+  const devChat = read('public/js/dev-chat.js');
+  // No active line yet → stash, don't silently return.
+  assert.match(devChat, /_pendingEstimate\s*=\s*\{\s*text:\s*clean/,
+    '_applyEstimate must stash the estimate when no active line exists');
+  // renderMessages drains the pending estimate onto the active line.
+  assert.match(devChat, /DevChat\._pendingEstimate\)/, 'renderMessages must drain a pending estimate');
+  // Patch is scoped to THIS run's DOM node by persist-id, not the last span.
+  assert.match(devChat, /data-persist-id="\$\{pid\}"\]\s*\.dc-cc-estimate/,
+    'in-place patch must target the active run by persist-id');
+});
