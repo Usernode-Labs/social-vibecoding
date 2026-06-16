@@ -927,6 +927,11 @@ const GroupChat = {
         if (id) GroupChat._startEdit(id);
         return;
       }
+      // Clicks inside an open inline editor (textarea, notice span, or any
+      // other non-button descendant) belong to the editor — it manages its
+      // own behaviour through the listeners attached in _startEdit. Handled
+      // before tap-to-quote so the click doesn't also stage a reply.
+      if (e.target.closest('.gc-edit')) return;
       // Hover react button (desktop) → open the bar for this row.
       const addBtn = e.target.closest('.gc-react-add');
       if (addBtn) {
