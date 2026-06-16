@@ -969,6 +969,15 @@ COMMENT ON TABLE session_visuals IS 'staging:private';
 -- unchanged body.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_visuals_applied TEXT;
 
+-- Plain-language, user-facing summary of a proposed change (1-3 sentences,
+-- no jargon/file names/code). Generated alongside pr_title by the Haiku
+-- PR-metadata call, prepended as the first paragraph of the GitHub PR body,
+-- and rendered at the top of the in-app proposal view (the column is this
+-- surface's single source of truth). NULL = none generated yet (legacy /
+-- pre-feature proposals, or an LLM-unavailable fallback); the view simply
+-- omits the summary paragraph in that case.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_md TEXT;
+
 -- App access to user LLM budgets (issue #34). One row per (app, user)
 -- consent: the user explicitly allowed this app to spend from their
 -- daily AI budget through the platform proxy (/api/app-llm), up to

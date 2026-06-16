@@ -211,15 +211,25 @@ async function generatePrMetadata({ userMessage, ccSummary, requests, summaries,
       username,
       apiKey,
     });
+    // Plain-language user-facing summary (optional). Prepend it as the very
+    // first paragraph of the PR body — before the model's bullets and before
+    // the deterministic testing/visuals/closing suffix and the footer — so
+    // the GitHub PR literally leads with the user-facing explanation, and
+    // surface it on the metadata object so applyPrMetadata can persist it to
+    // chat_sessions.pr_summary_md (the in-app proposal view renders it from
+    // there). Empty string when the model omitted it; keeps the body legacy.
+    const summary = typeof meta.summary === 'string' ? meta.summary.trim() : '';
+    const bodyWithSummary = summary ? `${summary}\n\n${meta.body}` : meta.body;
     return {
       title: meta.title,
-      body: `${meta.body}${suffix}\n\n---\n_Dev session by ${username} via Usernode_`,
+      summary,
+      body: `${bodyWithSummary}${suffix}\n\n---\n_Dev session by ${username} via Usernode_`,
       usage: meta.usage,
       model: meta.model,
     };
   } catch (err) {
     log.warn('pr-metadata', 'Generation failed; using fallback', { err: err.message });
-    return { title: fallbackTitle, body: fallbackBody };
+    return { title: fallbackTitle, body: fallbackBody, summary: '' };
   }
 }
 
@@ -245,6 +255,7 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
     requests: [], summaries: [], specs: [], linkedIssues: [], appliedIssues: [],
     testingMd: null, testingPath: null, appliedTesting: null,
     visuals: null, appliedVisuals: null,
+    appliedSummary: null,
   };
   if (pool && sessionId != null) {
     try {
@@ -283,7 +294,7 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
       const { rows: liveRows } = await pool.query(
         `SELECT spec_md, linked_issues, pr_linked_issues_applied,
                 testing_md, testing_path, pr_testing_applied,
-                pr_visuals_applied
+                pr_visuals_applied, pr_summary_md
            FROM chat_sessions WHERE id = $1`,
         [sessionId]
       );
@@ -307,6 +318,11 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
       // services/visuals.js) so this module stays free of a circular
       // require; visuals.js depends on pr-metadata for the block builder.
       ctx.appliedVisuals = (liveRows[0] && liveRows[0].pr_visuals_applied) || null;
+
+      // Plain-language summary last written to pr_summary_md (the in-app
+      // proposal view's source of truth). Read here so the drift gate below
+      // can push a revised summary to GitHub on a title-unchanged turn.
+      ctx.appliedSummary = (liveRows[0] && liveRows[0].pr_summary_md) || null;
       try {
         // #270: group by capture_index (ascending) into the same ordered
         // { captures: [ { index, path, before, after } ] } shape
@@ -378,7 +394,7 @@ async function applyPrMetadata({
   const {
     requests, summaries, specs, linkedIssues, appliedIssues,
     testingMd, testingPath, appliedTesting,
-    visuals, appliedVisuals,
+    visuals, appliedVisuals, appliedSummary,
   } = await gatherSessionContext(pool, session && session.id, ccSummary);
 
   // Deterministic `Closes #N` block (#75), regenerated from the linked set
@@ -400,6 +416,10 @@ async function applyPrMetadata({
     userMessage, ccSummary, requests, summaries, specs, username, apiKey, closingBlock, testingBlock, visualsBlock,
   });
   const { title: prTitle, body: prBody } = meta;
+  // Plain-language user-facing summary (optional, empty string when absent).
+  // Stored to chat_sessions.pr_summary_md and rendered at the top of the
+  // in-app proposal view; the same string already leads the PR body above.
+  const prSummary = typeof meta.summary === 'string' ? meta.summary.trim() : '';
 
   // Whether the linked-issue set drifted from what's reflected in the live
   // PR body. Drives the existing-PR update gate below so a newly-linked
@@ -414,6 +434,12 @@ async function applyPrMetadata({
   // And for the visuals section (#195): a capture that landed since the
   // last body write must reach GitHub even on a title-unchanged turn.
   const visualsChanged = visualsBlock !== (appliedVisuals || '');
+
+  // Same drift check for the plain-language summary: a revised summary must
+  // reach the PR body on a title-unchanged turn (the summary leads the body),
+  // so compare the freshly-generated value against what's stored in
+  // pr_summary_md (the applied snapshot).
+  const summaryChanged = prSummary !== (appliedSummary || '');
 
   // Debit the Haiku call to the session owner — into the BYOK bucket
   // when the user's own key paid for it (#119). The fallback-template
@@ -437,9 +463,10 @@ async function applyPrMetadata({
       // #249: once a PR exists its title owns the session's display
       // name — mirror it so every list shows one name everywhere.
       session.session_title = prTitle;
+      session.pr_summary_md = prSummary || null;
       await pool.query(
-        `UPDATE chat_sessions SET pr_number = $1, pr_url = $2, pr_title = $3, session_title = $3, pr_linked_issues_applied = $4, pr_testing_applied = $5, pr_visuals_applied = $6 WHERE id = $7`,
-        [pr.number, pr.html_url, prTitle, linkedIssues, testingBlock || null, visualsBlock || null, session.id]
+        `UPDATE chat_sessions SET pr_number = $1, pr_url = $2, pr_title = $3, session_title = $3, pr_linked_issues_applied = $4, pr_testing_applied = $5, pr_visuals_applied = $6, pr_summary_md = $7 WHERE id = $8`,
+        [pr.number, pr.html_url, prTitle, linkedIssues, testingBlock || null, visualsBlock || null, prSummary || null, session.id]
       );
       if (broadcast) broadcast('pr_created', { prNumber: pr.number, prUrl: pr.html_url, prTitle });
       return { prNumber: pr.number, prUrl: pr.html_url, prTitle };
@@ -461,7 +488,7 @@ async function applyPrMetadata({
   // set changed (#195) — these would otherwise be skipped on a
   // title-unchanged turn, leaving the new `Closes #N` line / "How to
   // test" / "Before / after" section off the PR body.
-  if (prTitle === session.pr_title && !issuesChanged && !testingChanged && !visualsChanged) {
+  if (prTitle === session.pr_title && !issuesChanged && !testingChanged && !visualsChanged && !summaryChanged) {
     return { prNumber: session.pr_number, prUrl: session.pr_url, prTitle: session.pr_title };
   }
 
@@ -473,9 +500,10 @@ async function applyPrMetadata({
     session.pr_title = prTitle;
     // #249: keep the session display name tracking the PR title.
     session.session_title = prTitle;
+    session.pr_summary_md = prSummary || null;
     await pool.query(
-      `UPDATE chat_sessions SET pr_title = $1, session_title = $1, pr_linked_issues_applied = $2, pr_testing_applied = $3, pr_visuals_applied = $4 WHERE id = $5`,
-      [prTitle, linkedIssues, testingBlock || null, visualsBlock || null, session.id]
+      `UPDATE chat_sessions SET pr_title = $1, session_title = $1, pr_linked_issues_applied = $2, pr_testing_applied = $3, pr_visuals_applied = $4, pr_summary_md = $5 WHERE id = $6`,
+      [prTitle, linkedIssues, testingBlock || null, visualsBlock || null, prSummary || null, session.id]
     );
     if (broadcast) broadcast('pr_updated', { prNumber: session.pr_number, prUrl: session.pr_url, prTitle });
     return { prNumber: session.pr_number, prUrl: session.pr_url, prTitle };

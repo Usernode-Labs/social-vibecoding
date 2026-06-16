@@ -158,6 +158,29 @@ function estimateCostCents(usage, model) {
 // Returns `{ title, body }` or throws on failure — callers MUST catch
 // and fall back to the old template ("<user>'s changes") rather than
 // blocking PR creation on LLM downtime.
+// Parse + sanitize the model's PR-metadata response into {title, body,
+// summary}. Tolerates light fencing / chatter around the JSON even though
+// we asked for none — LLMs occasionally add ```json wrappers — by matching
+// the first {...} object. `title` is REQUIRED (throws when empty, hard-capped
+// at 200 chars). `body` and `summary` are OPTIONAL (empty string when
+// missing/malformed) so a short or absent value never blocks PR creation;
+// `summary` is the plain-language, user-facing blurb (1-3 sentences) and is
+// length-capped defensively so a verbose model response can't dominate the
+// proposal view. Exported pure for tests.
+function parsePrMetadataText(text) {
+  const match = String(text || '').match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('No JSON object in PR metadata response');
+  const parsed = JSON.parse(match[0]);
+
+  let title = typeof parsed.title === 'string' ? parsed.title.trim() : '';
+  const body = typeof parsed.body === 'string' ? parsed.body.trim() : '';
+  let summary = typeof parsed.summary === 'string' ? parsed.summary.trim() : '';
+  if (summary.length > 600) summary = summary.slice(0, 600).trimEnd();
+  if (!title) throw new Error('Empty PR title from LLM');
+  if (title.length > 200) title = title.slice(0, 200);
+  return { title, body, summary };
+}
+
 async function generatePrMetadata({ userRequest, ccSummary, requests, summaries, specs, username, apiKey }) {
   const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
   if (!activeClient) throw new Error('LLM not initialized');
@@ -187,10 +210,11 @@ async function generatePrMetadata({ userRequest, ccSummary, requests, summaries,
 A pull request may bundle several updates made over multiple turns. You are given the FULL history of the user's requests and the coding agent's summaries for this PR, and possibly the session's spec doc(s). Produce metadata that reflects ALL the changes in the PR, not just the latest update:
 - A title (max 72 chars, imperative mood, no trailing period, no PR #) that captures the overall scope of the PR. If the updates are related, summarize them as one theme; if they are distinct, lead with the most significant change.
 - A short markdown description (2-6 lines): 1 sentence of context, then bullet points covering the concrete changes across all updates. Keep it tight; no filler.
+- A summary: 1-3 short sentences in plain, everyday English describing what this change does for the people who USE the app. No file names, no code, no technical jargon, no developer terms — just what changes for a user. This is read by non-technical voters deciding on the change, so contrast it with the developer-oriented description above.
 
 The SPEC section (when present) describes the intended scope and overall theme — useful for framing — but it may describe work that isn't built yet, so base the concrete changes on the requests and coding-agent summaries, not the spec alone.
 
-Respond with ONLY a JSON object: {"title": "...", "body": "..."}. No prose before or after.`;
+Respond with ONLY a JSON object: {"title": "...", "body": "...", "summary": "..."}. No prose before or after.`;
 
   const reqBlock = reqList.length
     ? reqList.map((r, i) => (multi ? `${i + 1}. ${r.slice(0, 1000)}` : r.slice(0, 2000))).join('\n')
@@ -219,20 +243,11 @@ Author: ${username || 'unknown'}`;
   });
 
   const text = (resp.content || []).find((b) => b.type === 'text')?.text || '';
-  // Tolerate light fencing / chatter around the JSON even though we
-  // asked for none — LLMs occasionally add ```json wrappers.
-  const match = text.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error('No JSON object in PR metadata response');
-  const parsed = JSON.parse(match[0]);
-
-  let title = typeof parsed.title === 'string' ? parsed.title.trim() : '';
-  let body = typeof parsed.body === 'string' ? parsed.body.trim() : '';
-  if (!title) throw new Error('Empty PR title from LLM');
-  if (title.length > 200) title = title.slice(0, 200);
+  const { title, body, summary } = parsePrMetadataText(text);
   // Surface usage so callers (pr-metadata.js) can debit the user
   // who triggered the PR. May be undefined if the SDK strips it on
   // some response shapes; callers must tolerate that.
-  return { title, body, usage: resp.usage, model };
+  return { title, body, summary, usage: resp.usage, model };
 }
 
 // Clamp an estimate phrase to something safe to inline in the dev-chat
@@ -391,4 +406,4 @@ Respond with ONLY a JSON object: {“title”: “...”}. No prose before or af
   return { title, usage: resp.usage, model };
 }
 
-module.exports = { init, isEnabled, getSystemPrompt, streamChat, estimateCostCents, generatePrMetadata, generateSessionTitle, parseSessionTitleText, estimateRunProgress, sanitizeEstimate, sanitizeRemainingSeconds, DEFAULT_MODEL };
+module.exports = { init, isEnabled, getSystemPrompt, streamChat, estimateCostCents, generatePrMetadata, parsePrMetadataText, generateSessionTitle, parseSessionTitleText, estimateRunProgress, sanitizeEstimate, sanitizeRemainingSeconds, DEFAULT_MODEL };
