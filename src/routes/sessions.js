@@ -722,10 +722,16 @@ function sessionRoutes(config) {
           if (Array.isArray(s) && s.length) followUpSuggestions = s;
         }
       }
+      // #330: spec/code/spec_code clones get static next-step pills (the
+      // question path stays pill-free — its answer chips take precedence).
+      const followUpQuickReplies = buildHeadlessFollowUpQuickReplies(src);
       const followUp = buildHeadlessFollowUpMessage(src);
       await pool.query(
         `INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'assistant', $2, $3)`,
-        [session.id, followUp, JSON.stringify(followUpSuggestions ? { suggestions: followUpSuggestions } : {})]
+        [session.id, followUp, JSON.stringify({
+          ...(followUpSuggestions ? { suggestions: followUpSuggestions } : {}),
+          ...(followUpQuickReplies ? { quickReplies: followUpQuickReplies } : {}),
+        })]
       );
 
       events.record(pool, {
@@ -2521,6 +2527,33 @@ function buildHeadlessFollowUpMessage(src) {
     default:
       return `${intro}\n\nWhere things stand: the auto session ran into something that needs a human decision — see its last message above (the same questions were also posted as a comment on the GitHub issue). Answer here and we'll continue from where it left off.${(src.spec_md || '').trim() ? ' The auto session also drafted a spec — open the spec viewer to review it alongside the questions.' : ''}`;
   }
+}
+
+// #330: next-step quick-reply pills for the cloned follow-up message. The
+// auto-session clone produces no Mayor turn, so the follow-up would
+// otherwise land with an empty pill bar — leaving the user told to "build
+// it" with nothing to tap. Attach static, outcome-appropriate pills so the
+// above-box pill row is populated from the first screen. The 'question'
+// outcome returns null: it already forwards the question turn's answer
+// chips, and pills are mutually exclusive with chips (answers win). Routed
+// through sanitizeQuickReplies to keep the ≤3 / ≤80-char invariant shared
+// with the Mayor's suggest_replies path.
+function buildHeadlessFollowUpQuickReplies(src) {
+  let replies;
+  switch (src.headless_outcome) {
+    case 'spec':
+      replies = ['Build it', 'Revise the spec', 'What will this change?'];
+      break;
+    case 'code':
+      replies = ['Propose it to the group', 'Make a tweak', 'What did it change?'];
+      break;
+    case 'spec_code':
+      replies = ['Propose it to the group', 'Revise the spec', 'Make a tweak'];
+      break;
+    default:
+      return null;
+  }
+  return sanitizeQuickReplies({ replies });
 }
 
 // The unattended-mode addendum appended to the Mayor system prompt for

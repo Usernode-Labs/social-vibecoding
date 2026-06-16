@@ -41,6 +41,7 @@ async function migrate(config) {
   await seedStagingLeaderboardProfile(pool);
   await seedStagingQaSession(pool, config);
   await seedStagingCloneQuestionSuggestions(pool, config);
+  await seedStagingCloneSpecPills(pool, config);
   await seedStagingSpecViewerSessions(pool, config);
   await seedStagingDemoProposal(pool, config);
   await seedStagingSpecUserShareFixtures(pool, config);
@@ -2157,6 +2158,93 @@ async function seedStagingCloneQuestionSuggestions(pool, config) {
   );
 
   log.info('db', 'Staging clone-question fixture seeded', {
+    appId,
+    owner: owner.username,
+    sessionId,
+  });
+}
+
+
+// #330: a cloned-from-auto session whose auto run ended in a SPEC outcome.
+// The appended follow-up message (the last row) carries metadata.quickReplies
+// so the above-box pill bar renders next-step pills ("Build it" / "Revise the
+// spec" / "What will this change?") — the bug this fixes was that bar being
+// empty. Sibling of seedStagingCloneQuestionSuggestions (that one covers the
+// chips/question path; this one the pills/spec path). chat_sessions /
+// chat_session_messages are staging:private (schema-only in staging), hence
+// the seed. Idempotent via the branch-name existence check.
+async function seedStagingCloneSpecPills(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging clone-spec-pills fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging clone-spec-pills fixture skipped: no users');
+    return;
+  }
+  const owner = userRows[0];
+
+  const branch = 'staging-fixture/clone-spec-pills';
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, branch]
+  );
+  if (existing.length) return;
+
+  // Carry a spec so the follow-up's "open the spec viewer" line is truthful;
+  // headless_outcome 'spec' matches what the clone handler keys pills off.
+  const specMd = '## User-facing changes\n\nStaging demo spec for the cloned auto proposal.\n\n'
+    + '## Technical implementation\n\nStaging demo: no real change — fixture for the pill bar.';
+  const { rows: sessionRows } = await pool.query(
+    `INSERT INTO chat_sessions
+       (app_id, user_id, branch_name, pr_title, status, spec_md, cloned_from_session_id,
+        is_headless, headless_outcome, headless_issue_number, created_at)
+     VALUES
+       ($1, $2, $3, $4, 'active', $5, NULL, FALSE, 'spec', 42, NOW() - INTERVAL '15 minutes')
+     RETURNING id`,
+    [appId, owner.id, branch, '[staging fixture] Staging demo: pills on a cloned auto-spec session', specMd]
+  );
+  const sessionId = sessionRows[0].id;
+
+  // 1. The issue text the auto session worked from.
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, created_at)
+     VALUES ($1, 'user', $2, NOW() - INTERVAL '14 minutes')`,
+    [sessionId, 'Please work on GitHub issue #42: "Make the header nicer".']
+  );
+
+  // 2. The appended follow-up — last row, carrying the SPEC-outcome pills so
+  // the above-box pill bar renders (the thing #330 fixes).
+  const quickReplies = ['Build it', 'Revise the spec', 'What will this change?'];
+  const followUpContent =
+    'This session was cloned from an auto session that ran unattended on GitHub issue #42. '
+    + "You're on your own branch (forked from the auto session's, so its commits carry over).\n\n"
+    + 'Where things stand: the auto session investigated the repo and drafted a spec — open the '
+    + "spec viewer to review it. When you're happy with it, tell me to build it and I'll dispatch "
+    + 'the coding agent.';
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+     VALUES ($1, 'assistant', $2, $3, NOW() - INTERVAL '13 minutes')`,
+    [sessionId, followUpContent, JSON.stringify({ quickReplies })]
+  );
+
+  log.info('db', 'Staging clone-spec-pills fixture seeded', {
     appId,
     owner: owner.username,
     sessionId,
