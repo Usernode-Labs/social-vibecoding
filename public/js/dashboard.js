@@ -653,9 +653,12 @@ function renderSpend() {
   const labels = days.map((x) => weekLabel(x.day));
   const plat = days.map((x) => Number(x.platform_cents) || 0);
   const byok = days.map((x) => Number(x.user_key_cents) || 0);
-  // Admin-attributed portion per day (#341). Daily spend keeps its existing
-  // colours and its bar stays the full total; the admin split is surfaced as
-  // an "of which admin" line in the tooltip only. 0 when the box is off.
+  // Admin-attributed portion per day. When "Include admin users" is on, the
+  // admin spend is stacked as an amber (ADMIN_COLOR) cap on top of the
+  // non-admin remainder, keeping each bar's total height unchanged; the
+  // existing "of which admin" tooltip line is kept. 0 when the box is off
+  // (the server's adminFilter dropped all admin rows), so the rendering is
+  // identical to before in that case.
   const platAdmin = days.map((x) => Number(x.platform_cents_admin) || 0);
   const byokAdmin = days.map((x) => Number(x.user_key_cents_admin) || 0);
   const totals = days.map((_, i) =>
@@ -676,21 +679,36 @@ function renderSpend() {
     const barX = i * bw;
     const w = Math.max(1, bw - 2).toFixed(1);
     const x0 = (barX + 1).toFixed(1);
+    // Admin-attributed cents for the active mode (0 when the box is off).
+    const pAdmin = includeAdmins ? platAdmin[i] : 0;
+    const uAdmin = includeAdmins ? byokAdmin[i] : 0;
+    // Compose each bar as a bottom-up stack: the non-admin remainder in its
+    // mode colour, then the admin spend as an amber cap. Subtracting the
+    // admin portion from the non-admin segment keeps the total height equal
+    // to totals[i]; Math.max(0, …) guards against float rounding where the
+    // admin portion could marginally exceed the segment total.
+    const stack = spendMode === 'both'
+      ? [
+          { value: Math.max(0, plat[i] - pAdmin), color: SPEND_PLATFORM },
+          { value: Math.max(0, byok[i] - uAdmin), color: SPEND_USERKEY },
+          { value: pAdmin + uAdmin, color: ADMIN_COLOR },
+        ]
+      : spendMode === 'user'
+        ? [
+            { value: Math.max(0, byok[i] - uAdmin), color: SPEND_USERKEY },
+            { value: uAdmin, color: ADMIN_COLOR },
+          ]
+        : [
+            { value: Math.max(0, plat[i] - pAdmin), color: SPEND_PLATFORM },
+            { value: pAdmin, color: ADMIN_COLOR },
+          ];
+    let yCursor = topPad + plot;
     let segs = '';
-    if (spendMode === 'both') {
-      // Stacked: platform at the bottom, user-key above it.
-      const hp = (plat[i] / max) * plot;
-      const hu = (byok[i] / max) * plot;
-      const yp = topPad + plot - hp;
-      const yu = yp - hu;
-      segs = `<rect x="${x0}" y="${yp.toFixed(1)}" width="${w}" height="${Math.max(0, hp).toFixed(1)}" fill="${SPEND_PLATFORM}"></rect>` +
-        `<rect x="${x0}" y="${yu.toFixed(1)}" width="${w}" height="${Math.max(0, hu).toFixed(1)}" fill="${SPEND_USERKEY}"></rect>`;
-    } else {
-      const v = totals[i];
-      const h = (v / max) * plot;
-      const y = topPad + plot - h;
-      const color = spendMode === 'user' ? SPEND_USERKEY : SPEND_PLATFORM;
-      segs = `<rect x="${x0}" y="${y.toFixed(1)}" width="${w}" height="${Math.max(0, h).toFixed(1)}" fill="${color}"></rect>`;
+    for (const s of stack) {
+      if (s.value <= 0) continue;
+      const h = (s.value / max) * plot;
+      yCursor -= h;
+      segs += `<rect x="${x0}" y="${yCursor.toFixed(1)}" width="${w}" height="${Math.max(0, h).toFixed(1)}" fill="${s.color}"></rect>`;
     }
     const tipId = `spend-${i}`;
     const detail = spendMode === 'both'
@@ -709,11 +727,24 @@ function renderSpend() {
       fill="#8b5cf6" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></rect>`;
     return segs + overlay;
   }).join('');
-  const legend = spendMode === 'both' ? `
-    <div class="flex items-center gap-3 text-[10px] text-zinc-400 mb-2">
-      <span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${SPEND_PLATFORM}"></span> Platform key</span>
-      <span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${SPEND_USERKEY}"></span> User key (BYOK)</span>
-    </div>` : '';
+  // Amber "Admin spend" swatch appears whenever the box is on and the active
+  // mode has any admin spend. Not reusing adminLegend() here: its "Non-admin"
+  // swatch is hard-coded violet and would mismatch the green (User key) and
+  // dual-colour (Both) cases — mirroring renderSpendByBuilder's bespoke swatch.
+  const adminTotals = days.map((_, i) =>
+    spendMode === 'platform' ? platAdmin[i]
+      : spendMode === 'user' ? byokAdmin[i] : platAdmin[i] + byokAdmin[i]);
+  const hasAdminSpend = includeAdmins && adminTotals.some((v) => v > 0);
+  const modeSwatches = spendMode === 'both'
+    ? `<span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${SPEND_PLATFORM}"></span> Platform key</span>
+       <span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${SPEND_USERKEY}"></span> User key (BYOK)</span>`
+    : '';
+  const adminSwatch = hasAdminSpend
+    ? `<span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${ADMIN_COLOR}"></span> Admin spend</span>`
+    : '';
+  const legend = (modeSwatches || adminSwatch)
+    ? `<div class="flex flex-wrap items-center gap-3 text-[10px] text-zinc-400 mb-2">${modeSwatches}${adminSwatch}</div>`
+    : '';
   el.innerHTML = `${legend}
     <svg viewBox="0 0 ${W} ${H}" class="w-full text-zinc-500" preserveAspectRatio="none" style="height:180px">
       ${grid}${bars}

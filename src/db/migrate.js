@@ -2066,6 +2066,20 @@ async function seedStagingDashboardAdminSplit(pool) {
       [ADMIN_ID]
     );
 
+    // Admin LLM spend across 6 recent days (inside the 30-day Daily spend
+    // window) → the new amber admin segment on Daily spend in all three
+    // toggle modes, plus the Spend-by-builder admin outline (bonus). Both
+    // platform (total_cost_cents) and user-key (byok_cost_cents) costs are
+    // non-zero so Platform / User key / Both modes each show the amber.
+    // llm_usage is staging:private and UNIQUE(user_id, date) → ON CONFLICT.
+    await pool.query(
+      `INSERT INTO llm_usage (user_id, date, total_cost_cents, byok_cost_cents)
+       SELECT $1, CURRENT_DATE - g, 40 + g * 6, 15 + g * 3
+         FROM generate_series(1, 6) g
+       ON CONFLICT (user_id, date) DO NOTHING`,
+      [ADMIN_ID]
+    );
+
     log.info('db', 'Staging dashboard admin-split fixtures seeded', { appId });
   } catch (err) {
     log.warn('db', 'Staging dashboard admin-split seeding failed', { message: err.message });

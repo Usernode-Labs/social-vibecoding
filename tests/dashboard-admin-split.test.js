@@ -169,7 +169,9 @@ test('spend: each day carries the admin-portion breakout columns', async () => {
   const day = d.days[0];
   assert.ok('platform_cents_admin' in day);
   assert.ok('user_key_cents_admin' in day);
-  // The visible bar stays the full total (no colour change for Daily spend).
+  // Each bar's total height is unchanged — the admin amber is stacked by
+  // subtracting the admin portion from the non-admin segment (see the
+  // renderSpend client guard below), so the payload totals stay the full value.
   assert.equal(day.platform_cents, 420);
   assert.equal(day.platform_cents_admin, 60);
 });
@@ -236,6 +238,7 @@ test('migrate: the seed is staging-gated, idempotent, fixture-tagged', () => {
   assert.match(body, /'dapp_active_day'/, 'must seed dapp_active_day events');
   assert.match(body, /'pr_promoted'/, 'must seed a pr_promoted event');
   assert.match(body, /INTO pr_kudos/, 'must seed a kudos given by the admin');
+  assert.match(body, /INTO llm_usage/, 'must seed admin LLM spend for the Daily spend amber segment');
 });
 
 // ── 3. Client — per-card tooltips + amber colour ─────────────────────────
@@ -273,4 +276,22 @@ test('dashboard.js: the amber admin colour + Non-admin/Admin legend are wired', 
   // top-users swaps the fill; spend-by-builder uses an amber outline.
   assert.match(src, /opts\.adminValues/, 'barChart must accept a parallel admin series');
   assert.match(src, /stroke="\$\{ADMIN_COLOR\}"/, 'spend-by-builder must outline admin bars in amber');
+});
+
+test('dashboard.js: renderSpend stacks an amber admin segment on Daily spend', () => {
+  const src = read('public/js/dashboard.js');
+  const start = src.indexOf('function renderSpend');
+  const end = src.indexOf('function renderSpendByBuilder');
+  const body = src.slice(start, end);
+  assert.ok(start !== -1 && end !== -1, 'renderSpend must be defined before renderSpendByBuilder');
+  // Non-admin remainder = colour total minus the admin portion, clamped at 0.
+  assert.match(body, /Math\.max\(0, plat\[i\] - pAdmin\)/,
+    'platform/both modes must subtract the admin portion from the violet segment');
+  assert.match(body, /Math\.max\(0, byok\[i\] - uAdmin\)/,
+    'user/both modes must subtract the admin portion from the green segment');
+  // The admin spend is drawn as an amber (ADMIN_COLOR) segment.
+  assert.match(body, /color: ADMIN_COLOR/, 'admin spend must be stacked as an ADMIN_COLOR segment');
+  // A dedicated "Admin spend" amber legend swatch when the box is on.
+  assert.match(body, /Admin spend/, 'an "Admin spend" legend swatch must be added');
+  assert.match(body, /hasAdminSpend/, 'the admin swatch must be gated on there being admin spend');
 });
