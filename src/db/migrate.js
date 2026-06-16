@@ -50,6 +50,7 @@ async function migrate(config) {
   await seedStagingSyncActivity(pool, config);
   await seedStagingChatEditFixtures(pool, config);
   await seedStagingLlmUsage(pool);
+  await seedStagingCapReached(pool, config);
   await seedStagingSystemTokenUsage(pool);
   await seedStagingDashboardAdminSplit(pool);
   await backfillEvents(pool);
@@ -2011,6 +2012,83 @@ async function seedStagingLlmUsage(pool) {
   }
 
   log.info('db', 'Staging llm_usage fixtures seeded', { users: users.length });
+}
+
+// #370: make the token/spend cap reproducible in a staging preview so a
+// tester can verify that hitting the cap on send no longer wipes the
+// composer text. Three idempotent, staging-only steps against the
+// tester's own login (the admin / first user — the account staging
+// previews sign in as):
+//   1. Pin their per-user daily limit to 1¢ (users.daily_limit_cents).
+//   2. Ensure today's recorded spend is well over that (≥ 50¢), so
+//      limits.checkBudget reports "Daily limit reached" → the chat POST
+//      returns 429 { error } on the very next send.
+//   3. Seed a clearly-named ACTIVE dev session on the self-app for them
+//      to type into.
+// The result: opening that session, typing a message and pressing Send
+// bounces with the cap notice while the typed text stays in the box.
+// Strictly a no-op outside staging; only this ephemeral PR preview's DB
+// is touched (never prod).
+async function seedStagingCapReached(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging cap-reached fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username FROM users ORDER BY is_admin DESC, id ASC LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging cap-reached fixture skipped: no users');
+    return;
+  }
+  const tester = userRows[0];
+
+  // 1. Pin the per-user daily cap to 1¢.
+  await pool.query(
+    'UPDATE users SET daily_limit_cents = 1 WHERE id = $1',
+    [tester.id]
+  );
+
+  // 2. Guarantee today's spend exceeds the 1¢ cap (raise-only, so the
+  //    dashboard's own llm_usage fixtures aren't reduced on re-runs).
+  await pool.query(
+    `INSERT INTO llm_usage (user_id, date, total_cost_cents)
+     VALUES ($1, CURRENT_DATE, 50)
+     ON CONFLICT (user_id, date)
+       DO UPDATE SET total_cost_cents = GREATEST(llm_usage.total_cost_cents, 50)`,
+    [tester.id]
+  );
+
+  // 3. An active dev session to type into, named so the testing steps
+  //    can reference it. Idempotent via branch-name lookup.
+  const branch = 'staging-fixture/token-cap';
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, branch]
+  );
+  if (!existing.length) {
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, session_title, status, created_at)
+       VALUES ($1, $2, $3, $4, 'active', NOW() - INTERVAL '2 minutes')`,
+      [appId, tester.id, branch,
+       '[staging fixture] Token cap — your text is preserved']
+    );
+  }
+
+  log.info('db', 'Staging cap-reached fixture seeded', {
+    appId, tester: tester.username,
+  });
 }
 
 // #361: seed ~30 days of system-token spend so the dashboard's Daily
