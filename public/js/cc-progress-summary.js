@@ -2,6 +2,7 @@
 // indicator for Claude Code runs. Two exports:
 //
 //   formatElapsed(ms)            → "42s", "3m 05s", "1h 12m"
+//   formatCountdown(toMs, nowMs) → " · ~3m 05s left" / " · due now"
 //   summarizeCcProgress(log)     → { currentLabel, steps }
 //
 // The progress log lines come from src/services/worker.js (parseLine /
@@ -35,6 +36,18 @@ function formatElapsed(ms) {
   var hours = Math.floor(totalMin / 60);
   var min = totalMin % 60;
   return hours + 'h ' + String(min).padStart(2, '0') + 'm';
+}
+
+// Live count-down readout for the experimental AI progress estimate
+// (#359). Mirrors the "· ~Xm Ys left" wording the old static suffix used,
+// but recomputed from an absolute target end-timestamp so the shared 1s
+// elapsed ticker can drive it second-by-second. Clamps at zero to a fixed
+// "· due now" label — never negative, never a second count-up (the elapsed
+// ticker beside it already conveys how far past the estimate a run has gone).
+function formatCountdown(targetMs, nowMs) {
+  var remaining = (Number(targetMs) || 0) - (Number(nowMs) || 0);
+  if (remaining > 0) return ' · ~' + formatElapsed(remaining) + ' left';
+  return ' · due now';
 }
 
 // Friendly names for the __USERNODE_PHASE__ markers run-cc.sh emits.
@@ -104,5 +117,5 @@ function summarizeCcProgress(progressLog) {
 
 // Node (tests) — browsers just get the globals.
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { formatElapsed, summarizeCcProgress, ccPhaseLabel, truncateCcLabel };
+  module.exports = { formatElapsed, formatCountdown, summarizeCcProgress, ccPhaseLabel, truncateCcLabel };
 }

@@ -20,6 +20,7 @@ const path = require('node:path');
 
 const {
   formatElapsed,
+  formatCountdown,
   summarizeCcProgress,
   ccPhaseLabel,
 } = require('../public/js/cc-progress-summary.js');
@@ -50,6 +51,32 @@ test('formatElapsed: garbage and negative inputs clamp to 0s', () => {
   assert.equal(formatElapsed(-5_000), '0s');
   assert.equal(formatElapsed(NaN), '0s');
   assert.equal(formatElapsed(undefined), '0s');
+});
+
+// ── 1a-bis. formatCountdown unit tests (#359) ───────────────────────────
+
+test('formatCountdown: positive remaining renders "· ~X left" via formatElapsed', () => {
+  // 2m 30s out
+  assert.equal(formatCountdown(1_150_000, 1_000_000), ' · ~2m 30s left');
+  // sub-minute
+  assert.equal(formatCountdown(1_042_000, 1_000_000), ' · ~42s left');
+});
+
+test('formatCountdown: zero / overrun clamps to "· due now"', () => {
+  assert.equal(formatCountdown(1_000_000, 1_000_000), ' · due now');
+  assert.equal(formatCountdown(1_000_000, 1_005_000), ' · due now');
+});
+
+test('formatCountdown: re-anchoring to a new target yields the new value', () => {
+  const now = 1_000_000;
+  assert.equal(formatCountdown(now + 30_000, now), ' · ~30s left');
+  // a fresh, larger estimate counts down from the bigger number
+  assert.equal(formatCountdown(now + 120_000, now), ' · ~2m 00s left');
+});
+
+test('formatCountdown: garbage inputs clamp to "· due now"', () => {
+  assert.equal(formatCountdown(NaN, 1_000), ' · due now');
+  assert.equal(formatCountdown(undefined, undefined), ' · due now');
 });
 
 // ── 1b. summarizeCcProgress unit tests ──────────────────────────────────
@@ -161,7 +188,9 @@ test('index.html loads cc-progress-summary.js before dev-chat.js', () => {
 test('dev-chat.js actually calls the helpers (not dead code)', () => {
   assert.ok(/summarizeCcProgress\(/.test(devChatSrc), 'dev-chat.js must call summarizeCcProgress');
   assert.ok(/formatElapsed\(/.test(devChatSrc), 'dev-chat.js must call formatElapsed');
+  assert.ok(/formatCountdown\(/.test(devChatSrc), 'dev-chat.js must call formatCountdown (#359)');
   assert.ok(/data-elapsed-since/.test(devChatSrc), 'dev-chat.js must render the elapsed-ticker span');
+  assert.ok(/data-countdown-to/.test(devChatSrc), 'dev-chat.js must render the count-down span (#359)');
 });
 
 test("sessions.js persists durationMs on the 'Claude Code finished' status", () => {

@@ -1499,7 +1499,10 @@ async function seedStagingCcEstimateRun(pool, config) {
     {
       role: 'system',
       content: 'Claude Code is running...',
-      metadata: { estimate: { text: 'wiring up the new route', remainingSeconds: 120 } },
+      // #359: a low remainingSeconds so a reviewer opening the seeded run
+      // watches the live count-down tick down and cross into "due now" within
+      // ~½m (the count-down re-anchors from load time — see dev-chat hydration).
+      metadata: { estimate: { text: 'wiring up the new route', remainingSeconds: 35 } },
       minutesAgo: 2,
     },
     { role: 'system', content: 'Claude Code progress', metadata: { progressLog }, minutesAgo: 2 },
