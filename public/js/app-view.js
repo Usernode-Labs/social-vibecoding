@@ -763,6 +763,12 @@ const AppView = {
         }
       });
     }
+
+    // Keep the generating-state poller in sync with what we just painted, the
+    // same way _renderFeedInner does for the feed. An issue opened while its
+    // headless run is 'generating' begins polling so the card advances to its
+    // outcome label without a manual refresh.
+    AppView._syncHeadlessPolling();
   },
 
   _askAiButtonHtml() {
@@ -1436,6 +1442,21 @@ const AppView = {
     AppView._applyAskAiCardAvailability(el);
   },
 
+  // Sub-tab-aware repaint for card-action handlers that perform an optimistic
+  // local mutation. The Dev area paints cards on two surfaces from the same
+  // cached data: the feed list (#dev-feed) and the opened-topic full-screen
+  // card (#gc-thread-head). _rerenderFeed alone no-ops in the topic view, so
+  // an in-card action looked dead there (#368-class bug). This repaints
+  // whichever surface is mounted, purely from cache — no _loadDevData — so the
+  // just-set optimistic state isn't clobbered by a slower/racing refetch.
+  _repaintCards() {
+    AppView._rerenderFeed();
+    if (typeof App !== 'undefined' && App.currentSubTab === 'topic'
+        && document.getElementById('gc-thread-head')) {
+      AppView._renderTopicHead();
+    }
+  },
+
   showMoreFeed() {
     AppView._feedShown = (AppView._feedShown || 20) + 10;
     AppView._rerenderFeed();
@@ -1958,6 +1979,13 @@ const AppView = {
       return;
     }
     await AppView._loadDevFeed();
+    // _loadDevFeed's repaint no-ops in the opened-topic view (#dev-feed is
+    // absent), so the withdrawn proposal card would stay stale there. Repaint
+    // the topic head from the freshly-refetched data.
+    if (typeof App !== 'undefined' && App.currentSubTab === 'topic'
+        && document.getElementById('gc-thread-head')) {
+      AppView._renderTopicHead();
+    }
   },
 
   // Withdraw a governance proposal (secret_change / legacy rename) from its
@@ -1987,6 +2015,12 @@ const AppView = {
       return;
     }
     await AppView._loadDevFeed();
+    // Same as withdrawProposal: refresh the opened-topic card too, since
+    // _loadDevFeed's feed repaint no-ops when #dev-feed isn't mounted.
+    if (typeof App !== 'undefined' && App.currentSubTab === 'topic'
+        && document.getElementById('gc-thread-head')) {
+      AppView._renderTopicHead();
+    }
   },
 
   async createProposal() {
@@ -2454,7 +2488,7 @@ const AppView = {
         issue.bounty_count = typeof data.bountyCount === 'number' ? data.bountyCount : (issue.bounty_count || 0) + 1;
       }
       if (typeof data.remaining === 'number') AppView._ghIssuesMeta.myRemaining = data.remaining;
-      AppView._rerenderFeed();
+      AppView._repaintCards();
     } catch (err) {
       alert(`Couldn't place bounty: ${err.message}`);
     } finally {
@@ -2483,7 +2517,7 @@ const AppView = {
     // /github-issues load confirms the link server-side.
     if (issue) {
       issue.myPrSessionId = session.id;
-      if (typeof AppView._rerenderFeed === 'function') AppView._rerenderFeed();
+      if (typeof AppView._repaintCards === 'function') AppView._repaintCards();
     }
 
     // Land on the Dev Chat tab focused on the new session. switchTab
@@ -2547,7 +2581,10 @@ const AppView = {
       }
       const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
       if (issue) issue.headless = { sessionId: data.session.id, status: 'generating' };
-      AppView._rerenderFeed();
+      AppView._repaintCards();
+      // Start the completion poller right away so a run begun from the opened
+      // topic view advances to its outcome label without a manual refresh.
+      AppView._syncHeadlessPolling();
     } catch (err) {
       alert(`Couldn't start generating the proposal: ${err.message}`);
     }
@@ -2694,7 +2731,13 @@ const AppView = {
     if (AppView._headlessPollTimer) return;
     AppView._headlessPollTimer = setInterval(async () => {
       const slug = AppView.appData && AppView.appData.slug;
-      if (!slug || !document.getElementById('dev-feed')) {
+      // Stop only when the user has actually left the Dev area — i.e. neither
+      // the feed list nor the opened-topic card surface is mounted. Keying on
+      // #dev-feed alone would kill polling for a run watched from the opened
+      // topic view (#gc-thread-head), where the feed isn't present.
+      const mounted = document.getElementById('dev-feed')
+        || document.getElementById('gc-thread-head');
+      if (!slug || !mounted) {
         clearInterval(AppView._headlessPollTimer);
         AppView._headlessPollTimer = null;
         return;
@@ -2710,7 +2753,7 @@ const AppView = {
         for (const issue of AppView._ghIssues || []) {
           if (byNumber.has(issue.number)) issue.headless = byNumber.get(issue.number);
         }
-        AppView._rerenderFeed();
+        AppView._repaintCards();
       } catch {}
     }, 8000);
   },
