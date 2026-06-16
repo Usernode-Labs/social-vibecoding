@@ -979,6 +979,75 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   color: var(--text-secondary);
   overflow-wrap: anywhere;
   word-break: break-word;
+  /* Honor the user's own line breaks in multi-line messages (general chat
+     and threads share this class). overflow-wrap/word-break above still
+     wrap long unbroken runs. */
+  white-space: pre-wrap;
+}
+
+/* "edited" marker shown next to a message's timestamp once it has been
+   edited. Muted like the time; the full edit timestamp is in its title
+   tooltip (revealed on hover/tap). */
+.gc-msg-edited {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+  cursor: default;
+}
+
+/* Auto-growing composer / inline-editor textarea. Height is driven by JS
+   (GroupChat._autoGrowTextarea); this just keeps single-row metrics close
+   to the old <input> and prevents the manual resize grabber. */
+.gc-composer-input {
+  line-height: 1.5;
+}
+
+/* Inline message editor (replaces .gc-msg-content while editing own msg). */
+.gc-edit {
+  margin-top: 2px;
+}
+.gc-edit-textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  overflow-y: auto;
+  font-size: 13px;
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.3));
+  color: var(--text-primary, var(--text-secondary));
+}
+.gc-edit-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.gc-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.gc-edit-save,
+.gc-edit-cancel {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.gc-edit-save {
+  background: var(--accent);
+  color: #fff;
+}
+.gc-edit-cancel {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+.gc-edit-notice {
+  font-size: 11px;
+  color: var(--danger, #ef4444);
 }
 
 .gc-mention {
@@ -1187,6 +1256,40 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   .gc-react-add:hover { opacity: 1; }
 }
 @media (hover: none) { .gc-react-add { display: none; } }
+
+/* Edit affordance on own ordinary messages — same hover-reveal model as
+   the react button. Lives in the header row next to the timestamp. On touch
+   (no hover) it's hidden; the long-press reaction bar carries Edit there. */
+.gc-msg-edit {
+  align-self: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms;
+}
+@media (hover: hover) {
+  .gc-msg:hover .gc-msg-edit { opacity: 0.85; }
+  .gc-msg-edit:hover { opacity: 1; }
+}
+@media (hover: none) { .gc-msg-edit { display: none; } }
+
+/* Edit button inside the long-press reaction bar (touch). */
+.gc-react-bar-edit {
+  font-size: 18px;
+  line-height: 1;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 6px;
+}
 
 /* Reaction pills under a message. */
 .gc-reactions {

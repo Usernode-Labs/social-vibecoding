@@ -46,6 +46,7 @@ async function migrate(config) {
   await seedStagingSpecUserShareFixtures(pool, config);
   await seedStagingHeadlessFixtures(pool, config);
   await seedStagingSyncActivity(pool, config);
+  await seedStagingChatEditFixtures(pool, config);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
   // Must run BEFORE backfillOrphanedSpecDrafts: unwrapping spec_md after that
@@ -894,6 +895,79 @@ async function seedStagingNotifications(pool, config) {
     backlogInserted,
     otherApps: otherApps.length,
   });
+}
+
+// Staging fixtures for multi-line messages + message editing. Both behaviors
+// are otherwise invisible on a fresh staging preview (a multi-line message
+// needs someone to have typed one; the "edited" marker needs a row with
+// edited_at set). Seeds two obviously-fake messages on the self-app:
+//   1. a multi-line message (embedded newlines + a blank line) to verify
+//      white-space: pre-wrap rendering.
+//   2. an already-edited message (edited_at after created_at) to verify the
+//      "edited" marker and its full-timestamp tooltip.
+// Idempotent: keyed on (app_id, content) like seedStagingNotifications, so a
+// rebuild doesn't duplicate. Strictly a staging no-op in production.
+async function seedStagingChatEditFixtures(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username FROM users ORDER BY is_admin DESC, id ASC LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging chat-edit fixtures skipped: no users');
+    return;
+  }
+  const author = userRows[0];
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging chat-edit fixtures skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  // 1) Multi-line message (pre-wrap rendering). Blank line between
+  //    paragraphs is intentional — it must survive to the rendered row.
+  const multiline = [
+    '[staging fixture] Multi-line message:',
+    '• first point',
+    '• second point',
+    '',
+    'A closing paragraph after a blank line.',
+  ].join('\n');
+
+  // 2) Already-edited message (shows the "edited" marker + tooltip).
+  const edited = '[staging fixture] This message was edited — hover the “edited” marker by the timestamp to see when.';
+
+  let inserted = 0;
+  for (const fixture of [
+    { content: multiline, createdMinutesAgo: 8, editedMinutesAgo: null },
+    { content: edited, createdMinutesAgo: 7, editedMinutesAgo: 5 },
+  ]) {
+    const { rows: existing } = await pool.query(
+      'SELECT id FROM chat_messages WHERE app_id = $1 AND content = $2 LIMIT 1',
+      [appId, fixture.content]
+    );
+    if (existing.length) continue;
+    await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, created_at, edited_at)
+       VALUES ($1, $2, $3, 'message',
+               NOW() - ($4::int * INTERVAL '1 minute'),
+               CASE WHEN $5::int IS NULL THEN NULL
+                    ELSE NOW() - ($5::int * INTERVAL '1 minute') END)`,
+      [appId, author.id, fixture.content, fixture.createdMinutesAgo, fixture.editedMinutesAgo]
+    );
+    inserted++;
+  }
+
+  if (inserted) {
+    log.info('db', 'Seeded staging chat-edit/multiline fixtures', { appId, inserted });
+  }
 }
 
 // Staging fixture for the "Environment variables" vote-panel section

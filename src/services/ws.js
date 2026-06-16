@@ -362,7 +362,10 @@ async function handleMessage(pool, client, msg) {
                 source: normalizedSource,
                 refMsgId: r.id,
                 author,
-                snippet: (snippet || '').substring(0, 200),
+                // Collapse any newlines (multi-line messages) to single
+                // spaces so the compact "Replying to…" chip and the small
+                // quoted block above a reply stay single-line.
+                snippet: (snippet || '').replace(/\s+/g, ' ').trim().substring(0, 200),
               };
               replyRecipientId = r.user_id || null;
             }
@@ -502,6 +505,71 @@ async function handleMessage(pool, client, msg) {
           appId: client.appId, userId: client.user.id, err: err.message,
         });
       }
+      break;
+    }
+
+    // Message editing: the author rewrites the content of one of their own
+    // ordinary chat messages. Canonical mutation path (same as 'chat' /
+    // 'react'); the socket is already scoped to the app room and gated by
+    // appAccess.checkAppAccess(...,'collab') at connect time.
+    // Inbound: { type: 'edit', messageId, content }.
+    case 'edit': {
+      const messageId = Number(msg.messageId);
+      if (!Number.isInteger(messageId) || messageId <= 0) return;
+      // Mirror the send path: trim (drops leading/trailing whitespace and
+      // blank lines) then cap at 2000. An empty edit is rejected — editing
+      // is not a deletion path.
+      if (!msg.content || !msg.content.trim()) return;
+      const content = msg.content.trim().substring(0, 2000);
+
+      // Authorization (enforced server-side so a hand-crafted request can't
+      // edit another user's message or a system/vote/conflict/spec_share
+      // row): the row must exist in this app, belong to the editor, and be
+      // an ordinary 'message'.
+      const { rows } = await pool.query(
+        `SELECT user_id, msg_type, thread_type, thread_ref
+           FROM chat_messages WHERE id = $1 AND app_id = $2`,
+        [messageId, client.appId]
+      );
+      if (!rows.length) {
+        log.warn('ws', 'edit dropped: message not found in app', {
+          appId: client.appId, userId: client.user.id, messageId,
+        });
+        return;
+      }
+      const row = rows[0];
+      if (row.user_id !== client.user.id || row.msg_type !== 'message') {
+        log.warn('ws', 'edit rejected: not author or not an editable message', {
+          appId: client.appId, userId: client.user.id, messageId, msgType: row.msg_type,
+        });
+        return;
+      }
+
+      // Leave metadata (the reply quote) untouched so a reply still points
+      // at what it replied to, and reactions (keyed on message id) survive.
+      const { rows: upd } = await pool.query(
+        `UPDATE chat_messages SET content = $1, edited_at = NOW()
+          WHERE id = $2 RETURNING edited_at`,
+        [content, messageId]
+      );
+      const editedAt = upd[0].edited_at;
+
+      // NOTE: we intentionally do NOT re-fire createMentionNotifications for
+      // edits in this iteration — a brand-new @mention introduced by an edit
+      // won't notify. See the spec's "Deferred work".
+
+      // Echo the row's thread scope (when set) so thread-scoped edits route
+      // to the right render target, mirroring the 'chat' broadcast.
+      const thread = row.thread_type
+        ? { type: row.thread_type, ref: row.thread_ref }
+        : null;
+      broadcast(client.appId, {
+        type: 'chat_edit',
+        messageId,
+        content,
+        editedAt,
+        ...(thread ? { thread } : {}),
+      });
       break;
     }
 
@@ -777,4 +845,4 @@ function pushNotificationToUser(userId, payload) {
   return sent;
 }
 
-module.exports = { attach, broadcast, broadcastGlobal, broadcastGlobalScoped, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushSessionUpdate, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushNotificationToUser, getReactionsForMessages, validateThread };
+module.exports = { attach, broadcast, broadcastGlobal, broadcastGlobalScoped, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushSessionUpdate, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushNotificationToUser, getReactionsForMessages, validateThread, handleMessage };

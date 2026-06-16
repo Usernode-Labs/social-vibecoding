@@ -504,6 +504,14 @@ ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAU
 -- governance refs are validated server-side at post time (ws.js).
 ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS thread_type VARCHAR(16);
 ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS thread_ref INTEGER;
+
+-- Message editing: NULL = never edited; a timestamp = the most recent edit
+-- time (rendered as the "edited" marker's tooltip). No backfill needed —
+-- all pre-existing rows are unedited (matches the metadata/thread_type
+-- precedent). Only the original author may set it (enforced in the WS
+-- 'edit' handler, src/services/ws.js).
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+
 CREATE INDEX IF NOT EXISTS idx_chat_messages_thread
   ON chat_messages (app_id, thread_type, thread_ref, id)
   WHERE thread_type IS NOT NULL;
