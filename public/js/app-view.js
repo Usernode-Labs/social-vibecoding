@@ -1698,9 +1698,17 @@ const AppView = {
     // #239: resolving badge only when not already merging/merged — the
     // merge pipeline states outrank the resolver's. No opacity-70 fade
     // and no disabled vote controls: voting during resolution is valid.
+    // #361: priority order merging > merged > resolving > failed >
+    // conflict > behind > none. The first three outrank the persisted
+    // merge-conflict snapshot (an active merge/resolve is the live truth).
+    const mcs = pr.merge_conflict_state;
     const stateBadge = isMerging ? AppView.mergingBadgeHtml()
       : isMerged ? AppView.mergedBadgeHtml()
-      : pr.resolving ? AppView.resolvingBadgeHtml() : '';
+      : pr.resolving ? AppView.resolvingBadgeHtml()
+      : mcs === 'failed' ? AppView.conflictFailedBadgeHtml()
+      : mcs === 'conflict' ? AppView.conflictBadgeHtml(pr)
+      : (mcs === 'behind' || (parseInt(pr.behind_main, 10) || 0) > 0) ? AppView.behindBadgeHtml(pr)
+      : '';
     // Sessions are owner-scoped (GET /api/sessions/:id), so the session
     // button only renders for the proposer.
     const chatN = parseInt(pr.chat_count) || 0;
@@ -1789,8 +1797,38 @@ const AppView = {
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">
         <div>${details.join(' · ')}</div>
         ${chips ? `<div class="mt-1 flex flex-wrap gap-1 items-center"><span>Linked issues:</span> ${chips}</div>` : ''}
+        ${AppView._mergeConflictDetailHtml(pr)}
         ${roster}
         ${lockedNote}
+      </div>`;
+  },
+
+  // #361: expanded merge-conflict detail for the proposal detail screen.
+  // Lists the conflicting file paths and when the snapshot was last
+  // checked, plus the standing guidance to run "Sync with main" from the
+  // session's dev-chat. Only renders for the conflict/failed states; a
+  // clean/behind proposal shows nothing here (the card badge is enough).
+  _mergeConflictDetailHtml(pr) {
+    const mcs = pr.merge_conflict_state;
+    if (mcs !== 'conflict' && mcs !== 'failed') return '';
+    const files = Array.isArray(pr.conflict_files) ? pr.conflict_files : [];
+    const heading = mcs === 'failed'
+      ? 'Automatic conflict resolution failed.'
+      : 'This proposal conflicts with main.';
+    const fileList = files.length
+      ? `<div class="mt-1">Conflicting files:</div>
+         <ul class="mt-0.5 ml-3 list-disc space-y-0.5">${files.map((f) =>
+           `<li class="font-mono text-[0.7rem] break-all">${escapeHtml(String(f))}</li>`).join('')}</ul>`
+      : '';
+    const checked = pr.conflict_checked_at
+      ? `<div class="mt-1 opacity-80">Last checked ${escapeHtml(relTime(pr.conflict_checked_at))}.</div>`
+      : '';
+    return `
+      <div class="mt-2 rounded border border-red-500/30 bg-red-500/5 px-2 py-1.5 text-red-500">
+        <div class="font-medium">${heading}</div>
+        ${fileList}
+        ${checked}
+        <div class="mt-1 opacity-80">The owner can run "Sync with main" from the session's dev-chat to resolve it.</div>
       </div>`;
   },
 
@@ -2736,6 +2774,28 @@ const AppView = {
   // rows after a PR lands so the voting info doesn't disappear.
   mergedBadgeHtml() {
     return `<span class="gc-merged-badge">✓ Merged</span>`;
+  },
+
+  // #361: persistent merge-status badges. Unlike the transient
+  // resolving/merging badges these reflect the proposal's recorded
+  // relationship to main (merge_conflict_state + behind_main from
+  // GET /api/apps/:slug/promoted). Red "Conflicts · N files" when the
+  // branch genuinely conflicts; red "Conflict resolution failed" when
+  // the last auto-resolve couldn't fix it; amber "Behind main · N" when
+  // it's stale but still merges cleanly.
+  conflictBadgeHtml(pr) {
+    const files = Array.isArray(pr.conflict_files) ? pr.conflict_files : [];
+    const n = files.length;
+    const label = n ? `Conflicts · ${n} file${n === 1 ? '' : 's'}` : 'Conflicts';
+    return `<span class="gc-conflict-badge" title="This proposal conflicts with main">⚠ ${escapeHtml(label)}</span>`;
+  },
+  conflictFailedBadgeHtml() {
+    return `<span class="gc-conflict-badge" title="The last automatic conflict resolution failed — the owner needs to resolve manually">⚠ Conflict resolution failed</span>`;
+  },
+  behindBadgeHtml(pr) {
+    const n = parseInt(pr.behind_main, 10) || 0;
+    const label = n ? `Behind main · ${n}` : 'Behind main';
+    return `<span class="gc-behind-badge" title="This proposal is behind main but still merges cleanly">${escapeHtml(label)}</span>`;
   },
 
   // #195/#270: before/after visual tiles for a session's stored capture

@@ -561,6 +561,7 @@ function voteRoutes(config) {
       const { rows: sessions } = await pool.query(
         `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status,
                 cs.created_at, cs.promoted_at,
+                cs.merge_conflict_state, cs.behind_main,
                 a.id AS app_id, a.slug AS app_slug, a.name AS app_name,
                 (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count,
                 (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'no') AS no_count
@@ -626,6 +627,9 @@ function voteRoutes(config) {
       // list at the very end, making it look like the vote was lost.
       const { rows } = await pool.query(
         `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
+           -- #361: persisted merge-conflict snapshot for the card badge +
+           -- detail block (state, conflicting file paths, last-checked).
+           cs.merge_conflict_state, cs.behind_main, cs.conflict_files, cs.conflict_checked_at,
            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') as yes_count,
            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'no') as no_count,
            (SELECT vote FROM pr_votes WHERE session_id = cs.id AND user_id = $2) as my_vote,
@@ -1523,7 +1527,13 @@ async function checkAndMerge(config, pool, session, options = {}) {
     if (isConflict) {
       try {
         const { rows: bumpRows } = await pool.query(
-          `UPDATE chat_sessions SET behind_main = GREATEST(behind_main, 1)
+          `UPDATE chat_sessions
+             SET behind_main = GREATEST(behind_main, 1),
+                 -- #361: a real merge-time conflict — reflect it on the
+                 -- card immediately (conflict_files fills in on the next
+                 -- sync, which captures the --diff-filter=U set).
+                 merge_conflict_state = 'conflict',
+                 conflict_checked_at = NOW()
            WHERE id = $1 RETURNING behind_main`,
           [session.id]
         );

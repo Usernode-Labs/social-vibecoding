@@ -233,6 +233,17 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS pr_title VARCHAR(256
 -- turn (no separate migration backfill — pre-#8 sessions just show no
 -- banner until they next run).
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS behind_main INTEGER NOT NULL DEFAULT 0;
+-- #361: persisted merge-conflict snapshot so proposal cards can render a
+-- rich merge-status badge (clean | behind | conflict | resolving |
+-- failed) without a live GitHub call per render. Derived/written by
+-- services/sync-main.js (persistConflictState) and
+-- services/conflict-resolver.js; `behind` is derived when behind_main>0
+-- and the branch still merges cleanly. conflict_files holds the file
+-- paths that contained conflict markers on the last detection, and
+-- conflict_checked_at is when the snapshot was last computed.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS merge_conflict_state TEXT;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS conflict_files JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS conflict_checked_at TIMESTAMPTZ;
 -- #11: vote-to-undo a merged PR. When the undo majority is reached we
 -- open a `git revert <merge_commit_sha>` PR and insert a new
 -- chat_sessions row pointing back here via revert_of_session_id.
@@ -580,6 +591,19 @@ CREATE TABLE IF NOT EXISTS llm_usage (
   UNIQUE(user_id, date)
 );
 
+-- #361: dedicated "system tokens" daily ledger for platform-driven
+-- merge-conflict / sync-with-main resolution turns. One row per day (not
+-- per user — this spend isn't attributable to a person). Mirrors the
+-- llm_usage upsert shape. Kept separate from llm_usage so this
+-- housekeeping spend never pollutes per-user analytics or the global
+-- cap aggregation. Written via limits.recordSystemSpend, gated via
+-- limits.checkSystemBudget against system_tokens_daily_limit_cents.
+CREATE TABLE IF NOT EXISTS system_token_usage (
+  date       DATE PRIMARY KEY DEFAULT CURRENT_DATE,
+  cost_cents NUMERIC(10,4) NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- #119: split daily spend by who paid Anthropic.
 --   total_cost_cents = platform-key spend (drives the daily caps)
 --   byok_cost_cents  = spend billed to the user's own Anthropic key
@@ -604,7 +628,10 @@ CREATE TABLE IF NOT EXISTS platform_settings (
 -- NOTHING means existing operator-set values survive every boot.
 INSERT INTO platform_settings (key, value) VALUES
   ('user_daily_limit_cents',   '2500'),
-  ('global_daily_limit_cents', '20000')
+  ('global_daily_limit_cents', '20000'),
+  -- #361: separate "system tokens" budget that funds platform-driven
+  -- merge-conflict / sync-with-main resolution turns. Defaults to $25/day.
+  ('system_tokens_daily_limit_cents', '2500')
 ON CONFLICT (key) DO NOTHING;
 
 -- One-shot backfill of users.app_quota from the legacy can_create_apps
