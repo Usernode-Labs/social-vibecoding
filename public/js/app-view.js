@@ -692,20 +692,24 @@ const AppView = {
         : '';
     }
 
-    // #297/#321: the "Ask AI" advisor button — only for proposals (PR) and
-    // governance proposals, not plain GitHub issues. Opens a private,
-    // read-only conversation scoped to THIS proposal (see proposal-discuss.js).
+    // #297/#321/#348: the standalone "Ask AI" advisor button is the
+    // governance-only entry point. Opens a private, read-only conversation
+    // scoped to THIS proposal (see proposal-discuss.js).
     //
-    // #321: another user's proposal card already carries an Ask AI PILL in
-    // its action row (_askAiCardBtnHtml, rendered when !mine), so emitting
-    // this standalone button too would duplicate it. Only render the
-    // standalone where the card has NO pill: governance proposals (gov cards
-    // never show one) and the viewer's OWN proposal (the pill is omitted on
-    // own cards). For another user's proposal the pill below is the keeper.
+    // Why governance only:
+    // - Another user's PR proposal already carries an Ask AI PILL in its card
+    //   action row (_askAiCardBtnHtml, rendered when !mine), so the pill below
+    //   is the keeper and a standalone here would just duplicate it (#321).
+    // - The viewer's OWN PR proposal intentionally has NO Ask AI at all: the
+    //   card omits the pill (#313) because owners reach AI via "Open session"
+    //   + the in-session advisor, and #348 fixed the leftover standalone that
+    //   used to leak onto own proposals here.
+    // - Governance proposals have no dev session and their cards never show a
+    //   pill, so the standalone is the only advisor affordance — keep it
+    //   regardless of who created the proposal.
     const mine = !!(App.user && item.user_id === App.user.id);
     const cardHasAskAiPill = (t.kind === 'proposal' && !mine);
-    const askAiHtml = ((t.kind === 'proposal' || t.kind === 'gov') && !cardHasAskAiPill)
-      ? AppView._askAiButtonHtml() : '';
+    const askAiHtml = (t.kind === 'gov') ? AppView._askAiButtonHtml() : '';
 
     head.innerHTML = cardHtml + bodyHtml + askAiHtml;
     if (window.Kudos) Kudos.attach(head);
