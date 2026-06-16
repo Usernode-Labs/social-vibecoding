@@ -885,8 +885,14 @@ const DevChat = {
         const data = await res.json();
         DevChat._removeSpinner();
         DevChat.messages.push({ role: 'assistant', content: `**Rate limit reached.** ${data.error || 'Try again later.'}`, created_at: new Date().toISOString() });
-        DevChat.renderMessages();
         DevChat._finishStreaming();
+        // #370: the cap rejected the send before any turn ran. Put the
+        // text back in the composer (editable, draft re-saved) and drop
+        // the optimistic user bubble so the message lives only in the
+        // editor — the user never has to retype it. Restore AFTER
+        // _finishStreaming so the input is re-enabled before we focus it.
+        DevChat._restoreComposer(message, { dropOptimisticUser: true });
+        DevChat.renderMessages();
         return;
       }
 
@@ -902,20 +908,19 @@ const DevChat = {
           if (data?.error) errText = data.error;
         } catch {}
         DevChat._removeSpinner();
-        // Drop the optimistic user message — it was never persisted, and
-        // leaving it in the list while the spinner disappears is what the
-        // user perceived as "my message disappears".
-        const lastIdx = DevChat.messages.length - 1;
-        if (lastIdx >= 0 && DevChat.messages[lastIdx].role === 'user' && !DevChat.messages[lastIdx].id) {
-          DevChat.messages.splice(lastIdx, 1);
-        }
         DevChat.messages.push({
           role: 'assistant',
           content: `**Couldn't send message:** ${errText}`,
           created_at: new Date().toISOString(),
         });
-        DevChat.renderMessages();
         DevChat._finishStreaming();
+        // #370: restore the typed text into the composer and drop the
+        // optimistic (never-persisted) user bubble so the message isn't
+        // lost — same recovery as the 429 cap path above. Leaving the
+        // bubble in the list while the spinner disappears is what the
+        // user perceived as "my message disappears".
+        DevChat._restoreComposer(message, { dropOptimisticUser: true });
+        DevChat.renderMessages();
         return;
       }
 
@@ -1688,19 +1693,15 @@ const DevChat = {
     // can edit + resend without retyping. We pull from the in-memory
     // messages array (most recent user row is the one they just sent)
     // rather than plumbing it through from sendMessage so this also
-    // works when stop is pressed after a cross-tab reconnect.
+    // works when stop is pressed after a cross-tab reconnect. onlyIfEmpty
+    // keeps a half-typed follow-up from being clobbered; the sent bubble
+    // stays in the timeline (the turn really ran), so no splice here.
     try {
-      const input = document.getElementById('dc-input');
-      if (input && !input.value.trim()) {
-        for (let i = DevChat.messages.length - 1; i >= 0; i--) {
-          const m = DevChat.messages[i];
-          if (m.role === 'user' && typeof m.content === 'string' && m.content.trim()) {
-            input.value = m.content;
-            input.style.height = 'auto';
-            input.style.height = Math.min(input.scrollHeight, 120) + 'px';
-            DevChat._setDraft(sessionId, m.content);
-            break;
-          }
+      for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+        const m = DevChat.messages[i];
+        if (m.role === 'user' && typeof m.content === 'string' && m.content.trim()) {
+          DevChat._restoreComposer(m.content, { onlyIfEmpty: true });
+          break;
         }
       }
     } catch {}
@@ -3722,6 +3723,42 @@ const DevChat = {
       if (value) localStorage.setItem(DevChat._draftKey(sessionId), value);
       else localStorage.removeItem(DevChat._draftKey(sessionId));
     } catch {}
+  },
+
+  // #370: put a message the user was about to send (or just sent, on a
+  // turn that bounced) back into the composer so they never have to
+  // retype it. Shared by _stopCurrentTurn and sendMessage's failure
+  // paths (429 token/spend cap, generic non-ok response).
+  //
+  // - `dropOptimisticUser` (cap/error paths): the optimistic user row
+  //   pushed in sendMessage was never persisted (no id) and the turn
+  //   never ran — splice it so the text lives only in the editor, not
+  //   as a duplicate sent-looking bubble. Scans backwards for the most
+  //   recent un-persisted user row so it still finds it even after an
+  //   assistant error message has been pushed on top.
+  // - `onlyIfEmpty` (Stop path): never clobber a half-typed follow-up,
+  //   and — matching the original inline behaviour — do nothing at all
+  //   when the textarea isn't mounted.
+  //
+  // Every DOM / storage touch is guarded (the textarea may be gone if
+  // the user navigated away) and an empty message is a no-op.
+  _restoreComposer(message, { dropOptimisticUser = false, onlyIfEmpty = false } = {}) {
+    if (!message || typeof message !== 'string') return;
+    const input = document.getElementById('dc-input');
+    if (onlyIfEmpty && (!input || input.value.trim())) return;
+    if (dropOptimisticUser) {
+      for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+        const m = DevChat.messages[i];
+        if (m.role === 'user' && !m.id) { DevChat.messages.splice(i, 1); break; }
+      }
+    }
+    if (input) {
+      input.value = message;
+      input.style.height = 'auto';
+      input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+      if (dropOptimisticUser) { try { input.focus(); } catch {} }
+    }
+    if (DevChat.currentSession) DevChat._setDraft(DevChat.currentSession.id, message);
   },
 
   _restoreDraft() {
