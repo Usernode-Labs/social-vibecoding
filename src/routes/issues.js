@@ -112,6 +112,15 @@ function stagingMockIssues(repoUrl) {
       'Staging-only mock issue with a deliberately long title (~120 '
       + 'chars) for checking that dev-card titles wrap instead of '
       + 'truncating on narrow phone screens.', 14),
+    // #361: row for the headless `code` outcome — an auto-run that produced
+    // a reviewable commit. Its viewer-owned clones (seeded in migrate.js)
+    // demonstrate both "Changes ready" card variants (preview-OK and
+    // preview-failed).
+    mk(900006, '[Mock] Voting buttons need a clearer disabled state',
+      'Staging-only mock issue for previewing the headless "code" outcome.\n\n'
+      + 'When a proposal is closed, the Yes/No buttons stay full-colour but '
+      + 'do nothing on click. They should render visibly disabled (greyed '
+      + 'out, no hover) so it is obvious voting is over.', 11),
     // #287: dedicated row for reviewing the has-session button state. The
     // synthetic-myPrSessionId block below targets this number so the
     // "Create new proposal" variant of the start-work button is reviewable

@@ -445,8 +445,10 @@ function sessionRoutes(config) {
   // key when on file — the UI shows a confirmation warning + model
   // selector before calling this.
   //
-  // The run may create + push its branch, but never opens a PR and never
-  // builds a staging preview (see runClaudeCodeTool's `headless` flag).
+  // The run may create + push its branch and deliberately builds a staging
+  // preview, but never opens a PR — the PR is created lazily on a cloned
+  // session's branch at propose time (see runClaudeCodeTool's `headless`
+  // flag).
   router.post('/api/apps/:slug/issues/:number/headless-session', drainGuard, async (req, res) => {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
@@ -2521,9 +2523,9 @@ function buildHeadlessFollowUpMessage(src) {
     case 'spec':
       return `${intro}\n\nWhere things stand: the auto session investigated the repo and drafted a spec — open the spec viewer to review it. When you're happy with it, tell me to build it and I'll dispatch the coding agent (that turn also opens the PR and staging preview).`;
     case 'code':
-      return `${intro}\n\nWhere things stand: the code change is already committed and pushed on this branch, and a staging preview was built — see the "Changes ready" card above ("Preview staging" / "Test this change"). No PR exists yet. Review the change, iterate if you want, and when you're ready hit "Propose to group" on the card — that opens the PR on this branch and starts the vote (or just ask me).`;
+      return `${intro}\n\nWhere things stand: the code change is already committed and pushed on this branch — see the "Changes ready" card above. A staging preview may be shown there ("Preview staging" / "Test this change") if one built; if it didn't, the card still lets you propose and the preview is rebuilt then. No PR exists yet. Review the change, iterate if you want, and when you're ready hit "Propose to group" on the card — that opens the PR on this branch and starts the vote (or just ask me).`;
     case 'spec_code':
-      return `${intro}\n\nWhere things stand: the auto session drafted a spec (open the spec viewer to review it) AND implemented it — the change is committed and pushed on this branch, and a staging preview was built (see the "Changes ready" card above). No PR exists yet. Review the spec and the change, iterate if you want, and when you're ready hit "Propose to group" on the card — that opens the PR on this branch and starts the vote (or just ask me).`;
+      return `${intro}\n\nWhere things stand: the auto session drafted a spec (open the spec viewer to review it) AND implemented it — the change is committed and pushed on this branch. See the "Changes ready" card above; a staging preview may be shown there if one built, and either way the card lets you propose (the preview is rebuilt at propose time if needed). No PR exists yet. Review the spec and the change, iterate if you want, and when you're ready hit "Propose to group" on the card — that opens the PR on this branch and starts the vote (or just ask me).`;
     default:
       return `${intro}\n\nWhere things stand: the auto session ran into something that needs a human decision — see its last message above (the same questions were also posted as a comment on the GitHub issue). Answer here and we'll continue from where it left off.${(src.spec_md || '').trim() ? ' The auto session also drafted a spec — open the spec viewer to review it alongside the questions.' : ''}`;
   }
@@ -4853,10 +4855,14 @@ path: /another/changed/view
         stagingUrl = stagingResult.stagingUrl;
         // The stagingUrl metadata is what makes this row render as the
         // "Changes ready" staging card (Preview / Test / Propose buttons)
-        // in every dev chat later cloned from this auto session.
-        await sendStatus('Staging preview built', { stagingUrl });
+        // in every dev chat later cloned from this auto session. The
+        // explicit `changesReady: true` flag is what now DRIVES the card
+        // (rather than incidentally `stagingUrl`), so the card renders the
+        // same whether or not staging succeeded — see the failure branch.
+        await sendStatus('Staging preview built', { stagingUrl, changesReady: true, prNumber: null });
         send('staging_ready', {
           url: stagingUrl,
+          changesReady: true,
           testingMd: session.testing_md || null,
           testingPath: session.testing_path || null,
         });
@@ -4878,8 +4884,26 @@ path: /another/changed/view
         // problems surface in the Mayor's wrap-up summary — but isError
         // stays false and the run's outcome is unchanged.
         const { fix, missingKeys, errMsg, errName } = describeStagingFailure(stagingErr);
-        await sendStatus('Staging preview failed to build — you can build one from a cloned session', { error: errMsg });
-        send('staging_failed', { error: errMsg, errorName: errName, missingKeys });
+        // The commit IS pushed and reviewable — `changesReady: true` makes
+        // the "Changes ready" card render (with a disabled Preview button +
+        // missing-secret hint) on any clone, exactly as the success branch
+        // does, instead of leaving a card-less "build failed" line. Headless
+        // never opens a PR, so prNumber/prUrl are null.
+        await sendStatus('Staging build failed', {
+          error: errMsg,
+          changesReady: true,
+          stagingFailed: true,
+          stagingErrorName: errName,
+          stagingMissingKeys: missingKeys,
+          prNumber: null,
+        });
+        send('staging_failed', {
+          error: errMsg,
+          errorName: errName,
+          missingKeys,
+          changesReady: true,
+          prNumber: null,
+        });
         summaryParts.push(
           `Staging preview failed to build (non-fatal — commit ${commitHash.substring(0, 8)} is pushed; `
           + `a preview can be built from a cloned session).\n\n${fix}`
@@ -4980,12 +5004,22 @@ path: /another/changed/view
         await staging.warmStagingCert(session, stagingResult.hostname, stagingResult.stagingUrl);
 
         stagingUrl = stagingResult.stagingUrl;
-        await sendStatus('Staging deployed!', { stagingUrl });
+        // `changesReady: true` is now what drives the "Changes ready" card
+        // (rather than incidentally `stagingUrl`), so the same card renders
+        // on the staging-failed branch below. prNumber/prUrl ride along so
+        // the card header + "View on GitHub" survive a reload from metadata.
+        await sendStatus('Staging deployed!', {
+          stagingUrl,
+          changesReady: true,
+          prNumber: session.pr_number || null,
+          prUrl: session.pr_url || null,
+        });
         // #127: ship the session's testing guidance (this turn's block, or
         // the kept-previous one off the session row) alongside the staging
         // URL so the client can offer "Test this change" without a refetch.
         send('staging_ready', {
           url: stagingUrl,
+          changesReady: true,
           testingMd: session.testing_md || null,
           testingPath: session.testing_path || null,
         });
@@ -5058,11 +5092,27 @@ path: /another/changed/view
           `. Only the staging preview container is missing — there is no preview URL for this commit.\n\n` +
           fix;
 
-        await sendStatus('Staging build failed', { error: errMsg });
+        // The commit (and PR, if any) already landed — `changesReady: true`
+        // keeps the "Changes ready" card + Propose button on screen (with a
+        // disabled Preview button and the missing-secret hint), so a failed
+        // preview no longer hides a perfectly proposable change. Propose
+        // rebuilds staging itself (routes/votes.js), so this stays usable.
+        await sendStatus('Staging build failed', {
+          error: errMsg,
+          changesReady: true,
+          stagingFailed: true,
+          stagingErrorName: errName,
+          stagingMissingKeys: missingKeys,
+          prNumber: session.pr_number || null,
+          prUrl: session.pr_url || null,
+        });
         send('staging_failed', {
           error: errMsg,
           errorName: errName,
           missingKeys,
+          changesReady: true,
+          prNumber: session.pr_number || null,
+          prUrl: session.pr_url || null,
         });
         summaryParts.push(message);
 
@@ -5388,4 +5438,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, describeMarkerlessExit, shouldRetryHeadlessTurn };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, describeMarkerlessExit, shouldRetryHeadlessTurn };

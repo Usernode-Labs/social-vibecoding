@@ -194,8 +194,8 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005 only', 
     const body = await res.json();
     const byNumber = new Map(body.issues.map((i) => [i.number, i]));
 
-    // 5 live issues + 6 appended mocks.
-    assert.strictEqual(body.issues.length, 11);
+    // 5 live issues + 7 appended mocks.
+    assert.strictEqual(body.issues.length, 12);
 
     const generating = byNumber.get(900003).headless;
     assert.ok(generating, '900003 carries synthetic headless state');
@@ -213,7 +213,7 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005 only', 
     assert.strictEqual(ready.sessionId, 900005);
 
     // The other mocks — and the live issues — stay plain.
-    for (const n of [900001, 900002, 900004, 1, 2, 3, 4, 5]) {
+    for (const n of [900001, 900002, 900004, 900006, 1, 2, 3, 4, 5]) {
       assert.strictEqual(byNumber.get(n).headless, null, `#${n} has no headless`);
     }
   } finally {

@@ -697,6 +697,18 @@ const DevChat = {
       DevChat.messages = messages.map((m) => {
         if (m.metadata) {
           if (m.metadata.stagingUrl) m.stagingUrl = m.metadata.stagingUrl;
+          // #361: the "Changes ready" card is driven by an explicit marker
+          // (set on both the staging-success and staging-failed branches of
+          // runClaudeCodeTool) rather than incidentally by stagingUrl, so it
+          // rehydrates the same whether or not a preview built. When staging
+          // failed the disabled-Preview note reads stagingErrorName /
+          // stagingMissingKeys; prNumber/prUrl back the header + GitHub link.
+          if (m.metadata.changesReady) m.changesReady = true;
+          if (m.metadata.stagingFailed) m.stagingFailed = true;
+          if (m.metadata.stagingErrorName) m.stagingErrorName = m.metadata.stagingErrorName;
+          if (m.metadata.stagingMissingKeys) m.stagingMissingKeys = m.metadata.stagingMissingKeys;
+          if (m.metadata.prNumber != null) m.prNumber = m.metadata.prNumber;
+          if (m.metadata.prUrl) m.prUrl = m.metadata.prUrl;
           if (m.metadata.ccLog) m.ccLog = m.metadata.ccLog;
           if (m.metadata.ccOutput) m.ccOutput = m.metadata.ccOutput;
           if (m.metadata.ccSummary) m.ccSummary = m.metadata.ccSummary;
@@ -1036,9 +1048,15 @@ const DevChat = {
                 DevChat.messages.push({
                   role: 'system',
                   content: `Staging build failed: ${data.error || 'unknown error'}`,
+                  // #361: a staging_failed event always implies a pushed,
+                  // proposable commit, so render the "Changes ready" card
+                  // (disabled Preview + working Propose) — not a card-less line.
+                  changesReady: true,
                   stagingFailed: true,
                   stagingErrorName: data.errorName || 'Error',
                   stagingMissingKeys: data.missingKeys || [],
+                  prNumber: data.prNumber != null ? data.prNumber : (DevChat.currentSession?.pr_number ?? null),
+                  prUrl: data.prUrl || DevChat.currentSession?.pr_url || null,
                   created_at: new Date().toISOString(),
                   _slug: Math.random().toString(36).slice(2, 8),
                 });
@@ -1424,9 +1442,14 @@ const DevChat = {
         DevChat.messages.push({
           role: 'system',
           content: `Staging build failed: ${data.error || 'unknown error'}`,
+          // #361: same as the primary SSE path — a failed staging build still
+          // means there's a reviewable commit, so render the card.
+          changesReady: true,
           stagingFailed: true,
           stagingErrorName: data.errorName || 'Error',
           stagingMissingKeys: data.missingKeys || [],
+          prNumber: data.prNumber != null ? data.prNumber : (DevChat.currentSession?.pr_number ?? null),
+          prUrl: data.prUrl || DevChat.currentSession?.pr_url || null,
           created_at: new Date().toISOString(),
           _slug: Math.random().toString(36).slice(2, 8),
         });
@@ -2272,7 +2295,16 @@ const DevChat = {
           const icon = '<span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span>';
           return `<details class="dc-cc-attached" data-persist-id="${outerPid}" data-default-open="1" open><summary class="dc-status-line dc-cc-attached-summary">${icon} Claude Code output<span class="dc-cc-attached-chevron" aria-hidden="true"></span><span style="font-size:9px;opacity:0.4;margin-left:auto">${id} ${ts}</span></summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
         }
-        if (msg.stagingUrl) {
+        // #361: the "Changes ready" card renders whenever the turn produced
+        // a reviewable commit — i.e. either a preview built (msg.stagingUrl)
+        // OR the staging-independent marker (msg.changesReady) is set on the
+        // message (staging-failed turns, rehydrated metadata, cloned rows).
+        // Staging is an ENRICHMENT of the card, not its on/off switch: when
+        // the preview is absent, the Preview button is shown disabled with a
+        // short "rebuild on propose" note (surfacing the missing-secret hint
+        // when that was the cause), while Propose still works — promote
+        // lazily creates the PR and rebuilds staging itself (routes/votes.js).
+        if (msg.stagingUrl || msg.changesReady) {
           const stgTs = msg.created_at ? new Date(msg.created_at).getTime() : '';
           const stgId = msg.id || msg._slug || '';
           // Once the PR merges (or is mid-merge), the merge path tears down
@@ -2280,47 +2312,81 @@ const DevChat = {
           // clicking it lands on a 502/blank page. Disable it instead, with a
           // tooltip pointing the user at the now-live app.
           const previewGone = !!session && (session.status === 'merged' || session.status === 'merging' || !!session.merged_at);
+          // A usable preview exists only when we have a URL and it hasn't been
+          // torn down by a merge. Otherwise (staging failed, or preview gone)
+          // the Preview button renders disabled.
+          const hasPreview = !!msg.stagingUrl && !previewGone;
           // #127: bot-emitted testing guidance lives on the session row
           // (testing_md / testing_path). When present, offer a "Test this
           // change" button that opens the preview at the deep link with the
           // instructions panel showing. The markdown is looked up at click
           // time (DevChat.previewStaging) — never inlined in the attribute.
+          // Only meaningful when a live preview exists to open.
           const hasTesting = !!(session?.testing_md || session?.testing_path);
-          const testBtn = !hasTesting ? '' : (previewGone
-            ? `<button class="dc-pr-btn dc-pr-btn-preview" disabled title="Preview removed after merge — this change is now live in the app">Test this change</button>`
-            : `<button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.previewStaging('${msg.stagingUrl}', true)">Test this change</button>`);
+          // Active Test button when a live preview exists; the existing
+          // disabled "Test this change" when the preview was torn down by a
+          // merge (previewGone); nothing when staging simply failed to build
+          // (no URL to test — the missing-preview note covers that case).
+          const testBtn = !hasTesting ? '' : (hasPreview
+            ? `<button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.previewStaging('${msg.stagingUrl}', true)">Test this change</button>`
+            : (previewGone
+              ? `<button class="dc-pr-btn dc-pr-btn-preview" disabled title="Preview removed after merge — this change is now live in the app">Test this change</button>`
+              : ''));
+          // Disabled-Preview note when no live preview. Distinguish the two
+          // causes: a merge tore it down (now live) vs. the build failed (it
+          // rebuilds on propose). For the failure case, surface the missing
+          // secret keys when describeStagingFailure flagged them.
+          const missingKeys = Array.isArray(msg.stagingMissingKeys) ? msg.stagingMissingKeys.filter(Boolean) : [];
+          const missingHint = missingKeys.length
+            ? ` Missing secret${missingKeys.length > 1 ? 's' : ''}: ${escapeHtml(missingKeys.join(', '))}.`
+            : '';
+          const previewBtnTitle = previewGone
+            ? 'Preview removed after merge — this change is now live in the app'
+            : `Preview unavailable — proposing will rebuild it.${missingHint}`;
+          const previewBtnHtml = hasPreview
+            ? `<button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.previewStaging('${msg.stagingUrl}', false)">Preview staging</button>`
+            : `<button class="dc-pr-btn dc-pr-btn-preview" disabled title="${escapeHtml(previewBtnTitle)}">Preview staging</button>`;
+          // Inline note explaining the disabled preview on a staging-failure
+          // card (not on a post-merge card — that one's self-explanatory).
+          const previewNote = (!hasPreview && !previewGone)
+            ? `<div class="dc-pr-card-note" style="font-size:11px;color:var(--text-muted);margin-top:4px">Preview unavailable — proposing will rebuild it.${missingHint}</div>`
+            : '';
+          // PR link prefers the session row, falling back to the marker the
+          // message carries (so a rehydrated/cloned failure card still links
+          // out even before the session refetch lands).
+          const prUrl = session?.pr_url || msg.prUrl || null;
+          const prNumber = session?.pr_number || msg.prNumber || null;
           // #195: before/after capture tiles. Visuals are latest-set-per-
           // session, so only the NEWEST staging card carries them — older
-          // cards from earlier turns would just repeat the same media.
-          // Arrives via session.visuals (history reload) or the
-          // visuals_ready event (live upgrade-in-place after capture).
+          // cards from earlier turns would just repeat the same media. The
+          // scan recognizes changesReady cards too so a later success card
+          // still wins; visuals only attach to a card that has a live URL.
           let visualsHtml = '';
           if (window.AppView && session?.visuals) {
             let latestStagingMsg = null;
             for (let vi = DevChat.messages.length - 1; vi >= 0; vi--) {
-              if (DevChat.messages[vi].stagingUrl) { latestStagingMsg = DevChat.messages[vi]; break; }
+              if (DevChat.messages[vi].stagingUrl || DevChat.messages[vi].changesReady) { latestStagingMsg = DevChat.messages[vi]; break; }
             }
-            if (latestStagingMsg === msg) visualsHtml = AppView.visualsTilesHtml(session.visuals);
+            if (latestStagingMsg === msg && msg.stagingUrl) visualsHtml = AppView.visualsTilesHtml(session.visuals);
           }
           return `
             <div class="dc-status-line"><span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span> ${msg.content} <span style="font-size:9px;opacity:0.4;margin-left:auto">${stgId} ${stgTs}</span></div>
             <div class="dc-pr-card" id="dc-pr-card">
               <div class="dc-pr-card-header">
-                ${session?.pr_url ? `<a href="${session.pr_url}" target="_blank" class="dc-pr-link">PR #${session.pr_number}</a>` : '<span style="color:var(--text-muted)">Changes ready</span>'}
+                ${prUrl ? `<a href="${prUrl}" target="_blank" class="dc-pr-link">PR #${prNumber}</a>` : '<span style="color:var(--text-muted)">Changes ready</span>'}
                 ${(session?.session_title || session?.pr_title) ? `<span class="dc-pr-title">${escapeHtml(session.session_title || session.pr_title)}</span>` : ''}
                 ${window.AppView ? AppView.closesPillHtml(session) : ''}
                 <span style="font-size:9px;opacity:0.4;margin-left:8px">${stgId} ${stgTs}</span>
               </div>
               ${visualsHtml ? `<div class="dc-pr-card-visuals" style="margin:6px 0 2px">${visualsHtml}</div>` : ''}
               <div class="dc-pr-card-actions">
-                ${previewGone
-                  ? `<button class="dc-pr-btn dc-pr-btn-preview" disabled title="Preview removed after merge — this change is now live in the app">Preview staging</button>`
-                  : `<button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.previewStaging('${msg.stagingUrl}', false)">Preview staging</button>`}
+                ${previewBtnHtml}
                 ${testBtn}
-                ${session?.pr_url ? `<a href="${session.pr_url}" target="_blank" class="dc-pr-btn dc-pr-btn-preview" style="text-decoration:none">View on GitHub</a>` : ''}
+                ${prUrl ? `<a href="${prUrl}" target="_blank" class="dc-pr-btn dc-pr-btn-preview" style="text-decoration:none">View on GitHub</a>` : ''}
                 ${session?.status === 'active' ? `<button class="dc-pr-btn dc-pr-btn-promote" onclick="DevChat.promotePR()">Propose to group</button>` : ''}
                 ${session?.status === 'promoted' ? '<span class="text-xs" style="color:var(--accent)">Proposed!</span>' : ''}
               </div>
+              ${previewNote}
             </div>`;
         }
         const sTs = msg.created_at ? new Date(msg.created_at).getTime() : '';
