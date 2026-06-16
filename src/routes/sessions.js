@@ -4483,46 +4483,105 @@ path: /another/changed/view
     const progressMsgId = progRows[0].id;
 
     // Experimental AI progress estimate: while the per-user toggle is ON,
-    // a 60s ticker asks Haiku to skim the progress-log tail and emits a
-    // vague "AI guess" via send('cc_estimate'). Gated hard: never for
+    // a 60s base ticker asks Haiku to skim the progress-log tail and emits
+    // a vague "AI guess" via send('cc_estimate'). Gated hard: never for
     // headless turns (no live watcher), never without an LLM client, and
     // the whole block is skipped when the toggle is off — degradation to
     // today's behavior is structural, not a runtime branch. Estimates are
     // ephemeral (in-memory + SSE only, never persisted).
+    //
+    // Reliability for long runs (#323): the estimator no longer dies
+    // permanently after a few failures or a flat emit count. Transient
+    // Haiku errors trigger a short tick-skip backoff that resets on the
+    // next success, and the cadence widens with elapsed time instead of
+    // stopping — so a 12+ minute run keeps getting refreshed guesses. The
+    // first guess fires even before any progress line lands, and the
+    // remaining-time countdown is re-asked on a wall-clock cadence so it
+    // never freezes during a long quiet phase (one slow command/edit).
     const estimatorEnabled = !headless && !!req?.user?.aiProgressEstimate
       && (llm.isEnabled() || !!userApiKey);
     const liveProgressLines = [];
     let estimator = null;
+    // Diagnose the silent-disable case: toggle ON + live turn but no LLM
+    // key path means the user sees nothing with no obvious reason (#323).
+    if (!headless && !!req?.user?.aiProgressEstimate && !estimatorEnabled) {
+      log.warn('chat', 'AI progress estimate skipped: no LLM key available', {
+        sessionId: session.id, userId: req.user.id,
+      });
+    }
     if (estimatorEnabled) {
+      log.info('chat', 'AI progress estimator started', { sessionId: session.id });
       let estimateInFlight = false;
       let linesAtLastEstimate = 0;
-      let estimateFailures = 0;
-      let estimateSuccesses = 0;
+      let consecutiveFailures = 0;   // drives the backoff window
+      let ticksToSkip = 0;           // remaining backoff ticks to wait out
+      let estimateSuccesses = 0;     // counted only for the runaway backstop
+      let lastEstimateAtMs = null;   // wall-clock of the last successful emit
+      let ceilingLogged = false;
+      // Runaway backstop only — with the widening cadence below this is
+      // reached around the ~2h mark, never by a normal long run.
+      const MAX_ESTIMATES = 60;
+      // After this much elapsed time the cadence widens (cost containment
+      // on genuinely long runs); below it we stay at the 60s base tick.
+      const WIDEN_AFTER_MS = 15 * 60_000;
+      const WIDE_SPACING_MS = 150_000;   // ~2.5 min minimum spacing late in a run
+      const IDLE_REFRESH_MS = 180_000;   // re-ask even with no new lines so ~X left moves
       const CC_ACTION_RE = /^(Reading |Writing |Editing |\$ |Using )/;
       estimator = setInterval(() => {
-        // Cost containment: one call in flight at a time; skip while the
-        // run is idle (no new lines — re-guessing identical input wastes
-        // money); stop for good after 3 consecutive failures or 20
-        // estimates (bounds a pathological multi-hour run).
+        // One call in flight at a time.
         if (estimateInFlight) return;
-        if (estimateFailures >= 3 || estimateSuccesses >= 20) {
+        // Runaway backstop: stop for good only on a pathological multi-hour
+        // run. Logged once so it's diagnosable, then the timer is torn down.
+        if (estimateSuccesses >= MAX_ESTIMATES) {
+          if (!ceilingLogged) {
+            ceilingLogged = true;
+            log.info('chat', 'AI progress estimator hit emit ceiling', {
+              sessionId: session.id, estimates: estimateSuccesses,
+            });
+          }
           clearInterval(estimator);
           return;
         }
-        if (liveProgressLines.length === linesAtLastEstimate) return;
+        // Backoff after failures: wait out the skip window, then retry. The
+        // counter resets on the next success so a transient blip can't
+        // disable estimates for the rest of a long run.
+        if (ticksToSkip > 0) { ticksToSkip--; return; }
+
+        const now = Date.now();
+        const elapsedMs = now - turnStartedMs;
+        const hasNewLines = liveProgressLines.length !== linesAtLastEstimate;
+        const sinceLastMs = lastEstimateAtMs == null ? Infinity : now - lastEstimateAtMs;
+        const minSpacingMs = elapsedMs >= WIDEN_AFTER_MS ? WIDE_SPACING_MS : 0;
+
+        // Decide whether to run this tick:
+        //  - first estimate ever: always (even with zero lines — the prompt
+        //    renders "(no output yet)" and answers "still early …");
+        //  - too soon under the widened late-run cadence: skip;
+        //  - new progress since last estimate: run;
+        //  - otherwise idle-refresh once enough wall-clock passed so the
+        //    remaining-time guess doesn't freeze during a quiet phase.
+        let shouldRun;
+        if (lastEstimateAtMs == null) shouldRun = true;
+        else if (sinceLastMs < minSpacingMs) shouldRun = false;
+        else if (hasNewLines) shouldRun = true;
+        else shouldRun = sinceLastMs >= IDLE_REFRESH_MS;
+        if (!shouldRun) return;
+
         estimateInFlight = true;
         const linesAtStart = liveProgressLines.length;
         llm.estimateRunProgress({
           userRequest: userMessage,
           progressTail: liveProgressLines,
-          elapsedMs: Date.now() - turnStartedMs,
+          elapsedMs,
           steps: liveProgressLines.filter((l) => CC_ACTION_RE.test(l)).length,
           apiKey: userApiKey || undefined,
         }).then(async ({ text, remainingSeconds, usage, model: estModel }) => {
-          estimateFailures = 0;
+          consecutiveFailures = 0;
+          ticksToSkip = 0;
           estimateSuccesses++;
           linesAtLastEstimate = linesAtStart;
-          const elapsedAtEstimate = Date.now() - turnStartedMs;
+          lastEstimateAtMs = Date.now();
+          const elapsedAtEstimate = lastEstimateAtMs - turnStartedMs;
           // A call resolving after the user hit stop is dropped — the
           // running line is already deactivated client-side.
           if (!(stopHandle && stopHandle.stopped)) {
@@ -4552,8 +4611,14 @@ path: /another/changed/view
             await limits.recordSpend(pool, req.user.id, cents, { byok: !!userApiKey });
           }
         }).catch((err) => {
-          estimateFailures++;
-          log.warn('chat', 'AI progress estimate failed', { sessionId: session.id, err: err.message });
+          // Self-healing backoff: skip up to 5 ticks (~5 min) after repeated
+          // failures, but never stop for good — the next success resets it.
+          consecutiveFailures++;
+          ticksToSkip = Math.min(consecutiveFailures, 5);
+          log.warn('chat', 'AI progress estimate failed; backing off', {
+            sessionId: session.id, err: err.message,
+            consecutiveFailures, ticksToSkip,
+          });
         }).finally(() => {
           estimateInFlight = false;
         });

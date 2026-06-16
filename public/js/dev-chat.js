@@ -1884,18 +1884,34 @@ const DevChat = {
   _applyEstimate(text, remainingSeconds) {
     const clean = (text || '').toString().trim();
     if (!clean) return;
+    const remaining = remainingSeconds == null ? null : remainingSeconds;
     let target = null;
     for (let i = DevChat.messages.length - 1; i >= 0; i--) {
       const m = DevChat.messages[i];
       if (m.role === 'system' && m._active) { target = m; break; }
     }
-    if (!target) return;
+    if (!target) {
+      // No active running line yet (the estimate beat the first status
+      // render, or we just reconnected). Stash it so the next render/poll
+      // applies it instead of dropping it silently (#323).
+      DevChat._pendingEstimate = { text: clean, remainingSeconds: remaining };
+      return;
+    }
+    DevChat._pendingEstimate = null;
     target._estimate = clean;
-    target._estimateRemaining = remainingSeconds == null ? null : remainingSeconds;
-    // Patch in place — the active run's span is the last one rendered.
-    const spans = document.querySelectorAll('#dc-messages .dc-cc-estimate');
-    const span = spans.length ? spans[spans.length - 1] : null;
-    if (span) span.textContent = `· ✦ AI guess: ${clean}${DevChat._estimateSuffix(remainingSeconds)}`;
+    target._estimateRemaining = remaining;
+    // Patch in place within THIS run's own DOM node (keyed by persist-id)
+    // rather than the last estimate span on the page, so a prior collapsed
+    // run's span can't be mis-targeted (#323).
+    const pid = DevChat._detailsId(target, 'ccrun');
+    let span = document.querySelector(`#dc-messages [data-persist-id="${pid}"] .dc-cc-estimate`);
+    if (!span) {
+      // Fallback: before the progress log attaches the run may render via a
+      // different path — patch the last estimate span as the old code did.
+      const spans = document.querySelectorAll('#dc-messages .dc-cc-estimate');
+      span = spans.length ? spans[spans.length - 1] : null;
+    }
+    if (span) span.textContent = `· ✦ AI guess: ${clean}${DevChat._estimateSuffix(remaining)}`;
   },
 
   // ── #50: elapsed-time ticker ────────────────────────────────
@@ -2036,6 +2052,22 @@ const DevChat = {
     const container = document.getElementById('dc-messages');
     if (!container) return;
     const session = DevChat.currentSession;
+
+    // Drain a pending AI progress estimate (#323): an estimate can arrive
+    // before the active running line exists in DevChat.messages (estimate
+    // beat the first status render, or a reconnect). Apply it now so the
+    // guess survives onto the line instead of being silently dropped.
+    if (DevChat._pendingEstimate) {
+      for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+        const m = DevChat.messages[i];
+        if (m.role === 'system' && m._active) {
+          m._estimate = DevChat._pendingEstimate.text;
+          m._estimateRemaining = DevChat._pendingEstimate.remainingSeconds;
+          DevChat._pendingEstimate = null;
+          break;
+        }
+      }
+    }
 
     // Pre-pass: pair each `progressLog` system message with the
     // nearest preceding active-CC status line ("Claude Code is

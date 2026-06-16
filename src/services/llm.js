@@ -299,7 +299,17 @@ ${tail || '(no output yet)'}`;
     messages: [{ role: 'user', content: user }],
   });
 
-  const text = (resp.content || []).find((b) => b.type === 'text')?.text || '';
+  const raw = (resp.content || []).find((b) => b.type === 'text')?.text || '';
+  // Tolerant parse before throwing (#323): Haiku occasionally wraps the JSON
+  // in a ```json code fence or echoes the smart quotes from the system
+  // prompt, both of which break a naive JSON.parse and used to count as a
+  // failure. Strip fences and normalise curly quotes to straight ones first;
+  // only genuinely unparseable output throws (the caller backs off and
+  // retries on the next tick).
+  const text = raw
+    .replace(/```(?:json)?/gi, '')
+    .replace(/[“”]/g, '"')   // “ ” → "
+    .replace(/[‘’]/g, "'");  // ‘ ’ → '
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) throw new Error('No JSON object in progress estimate response');
   const parsed = JSON.parse(match[0]);
