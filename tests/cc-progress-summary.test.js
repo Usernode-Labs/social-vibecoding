@@ -193,13 +193,26 @@ test('dev-chat.js actually calls the helpers (not dead code)', () => {
   assert.ok(/data-countdown-to/.test(devChatSrc), 'dev-chat.js must render the count-down span (#359)');
 });
 
-test("sessions.js persists durationMs on the 'Claude Code finished' status", () => {
+test("sessions.js persists durationMs on the completion status", () => {
+  // #358: the completion status text is now outcome-derived (a `statusText`
+  // variable that is 'Claude Code finished' only on success), but the
+  // terminal ccOutput row must still carry durationMs.
   const finishedCall = sessionsSrc.match(
-    /sendStatus\('Claude Code finished',\s*\{[^}]*\}/
+    /sendStatus\(statusText,\s*\{[^}]*\}/
   );
-  assert.ok(finishedCall, "missing sendStatus('Claude Code finished', {...})");
+  assert.ok(finishedCall, 'missing sendStatus(statusText, {...}) completion row');
   assert.ok(
     /durationMs/.test(finishedCall[0]),
-    "'Claude Code finished' metadata must include durationMs"
+    'completion status metadata must include durationMs'
+  );
+  assert.ok(
+    /ccOutcome/.test(finishedCall[0]),
+    'completion status metadata must include ccOutcome'
+  );
+  // The literal 'Claude Code finished' header is still produced for the
+  // success outcome.
+  assert.ok(
+    /statusText\s*=\s*ccOutcome === 'success'\s*\?\s*'Claude Code finished'/.test(sessionsSrc),
+    "success outcome must still surface 'Claude Code finished'"
   );
 });

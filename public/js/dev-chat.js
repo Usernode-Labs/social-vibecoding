@@ -1332,12 +1332,17 @@ const DevChat = {
         if (!am || am._finalized) {
           DevChat.messages.push({ role: 'assistant', content: data.text, created_at: new Date().toISOString() });
           DevChat.renderMessages();
-        } else if (am.content.length < data.text.length) {
-          // Growing an EXISTING live bubble: patch its content node in
-          // place via the stabilized streaming updater rather than tearing
-          // down and rebuilding the whole list (which would re-parse and
-          // re-mount every checkbox-bearing message mid-stream). The full
-          // renderMessages() still runs when a new bubble is pushed above.
+        } else if (am.content !== data.text) {
+          // Reconcile an EXISTING live bubble to the server's authoritative
+          // text whenever it DIFFERS — not only when it's longer (#358). The
+          // server may have SHORTENED the text by scrubbing a hallucinated
+          // "[CODING AGENT COMPLETED]" marker the user already saw stream in;
+          // a grow-only patch would leave that fake marker on screen until
+          // reload. Patch the content node in place via the stabilized
+          // streaming updater rather than tearing down and rebuilding the
+          // whole list (which would re-parse and re-mount every
+          // checkbox-bearing message mid-stream). The full renderMessages()
+          // still runs when a new bubble is pushed above.
           am.content = data.text;
           const displayContent = am.content.replace(/^\[CHAT_ONLY\]\s*/i, '');
           const els = document.querySelectorAll('#dc-messages .dc-msg-assistant .dc-msg-content');
