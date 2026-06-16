@@ -378,12 +378,39 @@ test('#323: estimator logs start, backoff, and the silent-disable case', () => {
     'the toggle-on-but-no-key case must be logged for diagnosis');
 });
 
+test('#323: estimateRunProgress requests schema-constrained structured output', () => {
+  const src = read('src/services/llm.js');
+  const fnStart = src.indexOf('async function estimateRunProgress');
+  const fnBody = src.slice(fnStart, src.indexOf('module.exports'));
+  // The messages.create call must force Haiku to emit valid schema-matching
+  // JSON via output_config.format, eliminating the parse-failure class at the
+  // source. The bound schema (ESTIMATE_SCHEMA) must cover both keys the parser
+  // reads — estimate + remaining_seconds.
+  assert.match(fnBody, /output_config/, 'estimate call must pass output_config');
+  assert.match(fnBody, /json_schema/, 'output_config.format must be a json_schema');
+  assert.match(fnBody, /ESTIMATE_SCHEMA/, 'the bound schema must be passed to the call');
+
+  // ESTIMATE_SCHEMA is a top-level object with additionalProperties:false whose
+  // required keys are estimate (string) and remaining_seconds (nullable int).
+  const schemaStart = src.indexOf('const ESTIMATE_SCHEMA');
+  assert.ok(schemaStart !== -1, 'ESTIMATE_SCHEMA must be defined');
+  const schemaBlock = src.slice(schemaStart, src.indexOf('estimateRunProgress', schemaStart));
+  assert.match(schemaBlock, /additionalProperties:\s*false/, 'schema must forbid extra keys');
+  assert.match(schemaBlock, /estimate:\s*\{\s*type:\s*'string'\s*\}/, 'schema must declare estimate as a string');
+  assert.match(schemaBlock, /remaining_seconds:\s*\{\s*type:\s*\['integer',\s*'null'\]\s*\}/,
+    'schema must declare remaining_seconds as a nullable integer');
+  assert.match(schemaBlock, /required:\s*\['estimate',\s*'remaining_seconds'\]/,
+    'both keys must be required');
+});
+
 test('#323: estimateRunProgress tolerates code fences and smart quotes', () => {
   const src = read('src/services/llm.js');
   const fnStart = src.indexOf('async function estimateRunProgress');
   const fnBody = src.slice(fnStart, src.indexOf('module.exports'));
-  // Strips ```json fences and normalises curly quotes before JSON.parse so a
-  // well-formed-but-decorated response no longer counts as a failure.
+  // Defensive fallback (now that structured outputs is the primary path):
+  // strips ```json fences and normalises curly quotes before JSON.parse so an
+  // off-schema response (refusal / truncation / older model) decorated with a
+  // fence or smart quotes still parses rather than counting as a failure.
   assert.match(fnBody, /replace\(\/```/, 'must strip code fences before parsing');
   assert.match(fnBody, /[“”]/, 'must normalise smart double quotes');
   assert.match(fnBody, /[‘’]/, 'must normalise smart single quotes');
