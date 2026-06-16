@@ -248,6 +248,49 @@ test('opening a genuinely busy session re-applies Stop/streaming UI (busy:true)'
   assert.equal(DevChat._titleStatus, 'thinking', 'thinking marker re-applied');
 });
 
+test('switching sessions aborts the previous session\'s in-flight POST SSE', async () => {
+  // #329: the POST SSE chat reader for session A must be aborted when the
+  // user navigates to session B, or A's tokens / cc_progress leak into B.
+  const { DevChat, sandbox } = makeHarness();
+
+  // Simulate a streaming session A with a live abort controller.
+  let aborted = false;
+  DevChat.currentSession = { id: 111 };
+  DevChat.isStreaming = true;
+  DevChat._abortController = { abort: () => { aborted = true; }, signal: {} };
+
+  sandbox.fetch = statusFetch(false);
+
+  await DevChat.openSession(999);
+
+  assert.equal(aborted, true, 'previous session POST SSE was aborted');
+  assert.equal(DevChat._abortController, null, '_abortController cleared after abort');
+});
+
+test('resumed-event guard drops a stale-session event', async () => {
+  // #329: a late resumable-SSE event tagged with the session it was opened
+  // for must not paint into a different, now-current session.
+  const { DevChat } = makeHarness();
+
+  DevChat.currentSession = { id: 999 };
+  DevChat.messages = [];
+  DevChat.scrollToBottom = () => {};
+  let rendered = 0;
+  DevChat.renderMessages = () => { rendered += 1; };
+
+  // A cc_progress-shaped event that belongs to session 111 (the one we left)
+  // arriving while 999 is current must be a no-op.
+  DevChat._handleResumedEvent({ type: 'cc_progress', text: 'Reading foo.js', _seq: 5 }, 111);
+
+  const leaked = DevChat.messages.some((m) => m._progress);
+  assert.equal(leaked, false, 'no Claude Code progress message leaked from stale session');
+  assert.equal(DevChat.messages.length, 0, 'no message appended for a stale-session event');
+
+  // Sanity: the SAME event for the current session is NOT dropped by the guard.
+  DevChat._handleResumedEvent({ type: 'cc_progress', text: 'Reading foo.js', _seq: 6 }, 999);
+  assert.ok(DevChat.messages.some((m) => m._progress), 'current-session event still applies');
+});
+
 test('reopening the SAME busy session does not tear down its stream', async () => {
   // Guard the "gated on a session-id change" edge case: returning to the
   // already-tracked busy session must NOT drop+reopen its resumable
