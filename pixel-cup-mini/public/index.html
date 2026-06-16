@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Pixel Cup Mini</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: #0b1020;
+      overflow: hidden;
+      /* Pixel-art font stack: a system monospace reads crisp at small
+         sizes without shipping a binary font. */
+      font-family: "Courier New", monospace;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+    }
+    #game {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+    #game canvas {
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+  </style>
+  <!-- Centrally-hosted Usernode bridge (never vendored). -->
+  <script src="https://social-vibecoding.usernodelabs.org/usernode-bridge/v1/bridge.js"></script>
+</head>
+<body>
+  <script>
+  // usernode-dev-console@1
+  (function () {
+    if (window.__usernodeDevConsole) return;
+    window.__usernodeDevConsole = true;
+    var S = '__usernodeDevConsole';
+    function serialize(v, depth) {
+      depth = depth || 0;
+      try {
+        if (v === undefined) return 'undefined';
+        if (v === null) return 'null';
+        if (typeof v === 'string') return v;
+        if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+        if (typeof v === 'function') return '[Function ' + (v.name || 'anonymous') + ']';
+        if (v instanceof Error) return (v.stack || (v.name + ': ' + v.message));
+        if (depth > 3) return '[…]';
+        var seen = new WeakSet();
+        return JSON.stringify(v, function (k, val) {
+          if (typeof val === 'object' && val !== null) {
+            if (seen.has(val)) return '[Circular]';
+            seen.add(val);
+          }
+          if (typeof val === 'function') return '[Function ' + (val.name || 'anonymous') + ']';
+          if (val instanceof Error) return val.stack || (val.name + ': ' + val.message);
+          return val;
+        });
+      } catch (e) { try { return String(v); } catch (_) { return '[unserializable]'; } }
+    }
+    function post(level, args, meta) {
+      try {
+        var payload = {
+          sentinel: S,
+          level: level,
+          args: Array.prototype.slice.call(args).map(function (a) { return serialize(a); }),
+          ts: Date.now(),
+          url: location.href,
+        };
+        if (meta) for (var k in meta) payload[k] = meta[k];
+        if (window.parent && window.parent !== window) {
+          window.parent.postMessage(payload, '*');
+        }
+      } catch (_) {}
+    }
+    ['log','info','warn','error','debug'].forEach(function (level) {
+      var orig = console[level] ? console[level].bind(console) : function () {};
+      console[level] = function () { post(level, arguments); orig.apply(null, arguments); };
+    });
+    window.addEventListener('error', function (e) {
+      var msg = (e.error && (e.error.stack || e.error.message)) || e.message || 'Error';
+      post('error', [msg], { source: e.filename || '', line: e.lineno || 0, col: e.colno || 0, kind: 'error' });
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+      var r = e.reason;
+      var msg = (r && (r.stack || r.message)) || String(r);
+      post('error', [msg], { kind: 'unhandledrejection' });
+    });
+    try { post('info', ['[dev-console ready]'], { kind: 'ready' }); } catch (_) {}
+  })();
+  </script>
+
+  <div id="game"></div>
+  <script src="/game.bundle.js"></script>
+</body>
+</html>

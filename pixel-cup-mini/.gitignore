@@ -1,0 +1,5 @@
+node_modules/
+*.log
+.DS_Store
+# NOTE: public/game.bundle.js is intentionally COMMITTED (not ignored) so
+# any deploy path that skips the build step still serves a working game.
