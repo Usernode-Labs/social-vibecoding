@@ -49,6 +49,7 @@ async function migrate(config) {
   await seedStagingSyncActivity(pool, config);
   await seedStagingChatEditFixtures(pool, config);
   await seedStagingLlmUsage(pool);
+  await seedStagingSystemTokenUsage(pool);
   await seedStagingDashboardAdminSplit(pool);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
@@ -1993,6 +1994,30 @@ async function seedStagingLlmUsage(pool) {
   log.info('db', 'Staging llm_usage fixtures seeded', { users: users.length });
 }
 
+// #361: seed ~30 days of system-token spend so the dashboard's Daily
+// spend chart renders its new cyan "System tokens" segment and the
+// "System tokens today: $X.XX / $25.00" readout has real data. A modest
+// daily figure (a few hundred cents) tapering down, staying under the
+// $25 cap most days and brushing it on one or two so the readout looks
+// realistic. Idempotent via ON CONFLICT (date); a no-op outside staging.
+async function seedStagingSystemTokenUsage(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  // Cost (cents) per day-offset g (0 = today). Base ~480¢ ($4.80) tapering
+  // with a wobble; two recent days near the $25 cap (2300–2450¢).
+  await pool.query(
+    `INSERT INTO system_token_usage (date, cost_cents)
+     SELECT CURRENT_DATE - g,
+            CASE
+              WHEN g = 0 THEN 2310
+              WHEN g = 3 THEN 2440
+              ELSE GREATEST(60, 480 - g * 9 + (g % 4) * 70)
+            END::numeric(10,4)
+       FROM generate_series(0, 29) g
+     ON CONFLICT (date) DO NOTHING`
+  );
+  log.info('db', 'Staging system_token_usage fixtures seeded');
+}
+
 // Admin-attributed footprint for the dashboard's amber admin-split charts
 // (#341). The colour split (Funnels, Growth, Engagement tiers, Top builders)
 // is only visible when staging holds an ADMIN user whose recent activity
@@ -2993,6 +3018,76 @@ async function seedStagingMyOpenPr(pool, config) {
        VALUES ($1, $2, 'yes', NOW() - INTERVAL '13 minutes')
        ON CONFLICT (session_id, user_id) DO NOTHING`,
       [sessionId, users[1].id]
+    );
+  }
+
+  // #361: give the main fixture a real "Conflicts · 2 files" badge so the
+  // card + detail block render in staging (idempotent UPDATE on re-runs).
+  await pool.query(
+    `UPDATE chat_sessions
+        SET merge_conflict_state = 'conflict',
+            conflict_files = '["src/app.js","public/index.html"]'::jsonb,
+            conflict_checked_at = NOW()
+      WHERE id = $1`,
+    [sessionId]
+  );
+
+  // #361: two sibling promoted fixtures so all the new badge states show
+  // at once — a red "Conflict resolution failed" card and an amber
+  // "Behind main · 2" card. Idempotent via branch-name lookup.
+  const siblings = [
+    {
+      branch: 'staging-fixture/conflict-failed',
+      pr: 9201,
+      title: '[staging fixture] Conflict resolution failed',
+      state: 'failed',
+      files: '["src/server.js"]',
+      behind: 1,
+    },
+    {
+      branch: 'staging-fixture/behind-main',
+      pr: 9202,
+      title: '[staging fixture] Behind main — still mergeable',
+      state: 'behind',
+      files: '[]',
+      behind: 2,
+    },
+  ];
+  for (const s of siblings) {
+    const { rows: have } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, s.branch]
+    );
+    let sibId = have[0]?.id;
+    if (!sibId) {
+      const { rows } = await pool.query(
+        `INSERT INTO chat_sessions
+           (app_id, user_id, branch_name, pr_number, pr_title, pr_summary_md, status,
+            votes_required, behind_main, merge_conflict_state, conflict_files,
+            conflict_checked_at, created_at)
+         VALUES
+           ($1, $2, $3, $4, $5,
+            'In plain terms: a demo proposal showing the new merge-status badge.',
+            'promoted', $6, $7, $8, $9::jsonb, NOW(), NOW() - INTERVAL '20 minutes')
+         RETURNING id`,
+        [appId, target.id, s.branch, s.pr, s.title,
+         Math.max(1, Math.ceil(users.length / 2)), s.behind, s.state, s.files]
+      );
+      sibId = rows[0].id;
+    } else {
+      await pool.query(
+        `UPDATE chat_sessions
+            SET behind_main = $2, merge_conflict_state = $3,
+                conflict_files = $4::jsonb, conflict_checked_at = NOW()
+          WHERE id = $1`,
+        [sibId, s.behind, s.state, s.files]
+      );
+    }
+    await pool.query(
+      `INSERT INTO pr_votes (session_id, user_id, vote, created_at)
+       VALUES ($1, $2, 'yes', NOW() - INTERVAL '18 minutes')
+       ON CONFLICT (session_id, user_id) DO NOTHING`,
+      [sibId, target.id]
     );
   }
 

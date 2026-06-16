@@ -677,14 +677,25 @@ function dashboardRoutes(config) {
            WHERE lu.date >= CURRENT_DATE - 29
              ${adminFilter('lu.user_id', includeAdmins)}
            GROUP BY lu.date
+         ),
+         -- #361: system-token spend (merge-conflict / sync resolution).
+         -- One row per day, not user-attributed, so the admin filter
+         -- doesn't apply — the same value shows in both toggle modes.
+         sys AS (
+           SELECT stu.date AS day,
+                  stu.cost_cents AS system_cents
+           FROM system_token_usage stu
+           WHERE stu.date >= CURRENT_DATE - 29
          )
          SELECT to_char(s.day, 'YYYY-MM-DD') AS day,
                 COALESCE(a.platform_cents, 0)::float AS platform_cents,
                 COALESCE(a.user_key_cents, 0)::float AS user_key_cents,
                 COALESCE(a.platform_cents_admin, 0)::float AS platform_cents_admin,
-                COALESCE(a.user_key_cents_admin, 0)::float AS user_key_cents_admin
+                COALESCE(a.user_key_cents_admin, 0)::float AS user_key_cents_admin,
+                COALESCE(sy.system_cents, 0)::float AS system_cents
          FROM spine s
          LEFT JOIN agg a ON a.day = s.day
+         LEFT JOIN sys sy ON sy.day = s.day
          ORDER BY s.day`
       );
       res.json({ days: rows });

@@ -847,6 +847,27 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .gc-resolving-badge {
   color: #f59e0b;
 }
+/* #361: persistent merge-status badges. Mirror .gc-merging-badge's slot
+   treatment. Conflict (and conflict-resolution-failed) reads red; behind
+   reads amber-neutral so a merely-stale proposal doesn't alarm. */
+.gc-conflict-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #ef4444;
+  white-space: nowrap;
+}
+.gc-behind-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #f59e0b;
+  white-space: nowrap;
+}
 /* Settled "✓ Merged" badge — same slot as the merging badge, shown after a
    PR lands so the row's voting info stays put. */
 .gc-merged-badge {

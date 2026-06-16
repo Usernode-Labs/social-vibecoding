@@ -73,6 +73,31 @@ const sessionUserCache = new Map(); // sessionId -> userId
 const userBudgetCache = new Map();
 //   userId -> { totalAtCheckpointCents, fetchedAt, liveDeltaCents }
 
+// #361: process-local mirror of userBudgetCache for the system-token
+// budget. Merge-conflict / sync turns bill this single daily bucket
+// instead of any user, so there's one tracker (not keyed by user). Same
+// checkpoint+liveDelta shape so the mid-stream kill works identically.
+let systemBudgetCache = null; // { totalAtCheckpointCents, fetchedAt, liveDeltaCents }
+
+async function refreshSystemBudget(pool) {
+  const now = Date.now();
+  if (systemBudgetCache && now - systemBudgetCache.fetchedAt < BUDGET_CACHE_TTL_MS) {
+    return systemBudgetCache;
+  }
+  try {
+    const { rows } = await pool.query(
+      'SELECT cost_cents FROM system_token_usage WHERE date = CURRENT_DATE'
+    );
+    const totalAtCheckpointCents = parseFloat(rows[0]?.cost_cents || 0);
+    systemBudgetCache = { totalAtCheckpointCents, fetchedAt: now, liveDeltaCents: 0 };
+    return systemBudgetCache;
+  } catch (err) {
+    log.warn('anthropic-proxy', 'System budget refresh failed; failing open', { err: err.message });
+    systemBudgetCache = { totalAtCheckpointCents: 0, fetchedAt: now, liveDeltaCents: 0 };
+    return systemBudgetCache;
+  }
+}
+
 async function resolveUserId(pool, sessionId) {
   if (sessionUserCache.has(sessionId)) return sessionUserCache.get(sessionId);
   try {
@@ -167,27 +192,43 @@ function anthropicProxyRoutes(config) {
       return res.status(403).json({ ok: false, code: 'session_not_found' });
     }
 
+    // #361: merge-conflict / sync turns are platform housekeeping and
+    // bill the dedicated system-token budget, not the owner's allowance.
+    // The worker records the in-flight turn's mode in its warm registry;
+    // read it synchronously to decide which cap+tracker to gate against.
+    const isSyncTurn = (() => {
+      try { return require('../services/worker').getActiveTurnMode(sessionId) === 'sync'; }
+      catch { return false; }
+    })();
+
     // Resolve effective cap + current spend snapshot. Both come from
     // small caches (limits.js's own 10s cache for the cap, our
-    // userBudgetCache for the user's daily total) so the steady-state
-    // cost per Anthropic call is one hash-map lookup, not a DB
-    // roundtrip.
-    const capCents = await limits.getEffectiveUserLimitCents(pool, userId);
-    const budget = await refreshUserBudget(pool, userId);
+    // per-user / system budget tracker for the daily total) so the
+    // steady-state cost per Anthropic call is one hash-map lookup, not a
+    // DB roundtrip.
+    const capCents = isSyncTurn
+      ? await limits.getSystemTokensLimitCents(pool)
+      : await limits.getEffectiveUserLimitCents(pool, userId);
+    const budget = isSyncTurn
+      ? await refreshSystemBudget(pool)
+      : await refreshUserBudget(pool, userId);
+    const overMessage = isSyncTurn
+      ? `System token budget reached ($${(capCents / 100).toFixed(2)}). Resets at midnight UTC.`
+      : `Daily limit reached ($${(capCents / 100).toFixed(2)}). Resets at midnight UTC.`;
 
-    // Start-of-call gate: if we already know the user is over cap,
-    // refuse before opening any socket to Anthropic. The gate uses
-    // the cached snapshot, so it's only as fresh as BUDGET_CACHE_TTL_MS
-    // — but mid-stream kill catches anything the gate misses.
+    // Start-of-call gate: if we already know we're over cap, refuse
+    // before opening any socket to Anthropic. The gate uses the cached
+    // snapshot, so it's only as fresh as BUDGET_CACHE_TTL_MS — but
+    // mid-stream kill catches anything the gate misses.
     const spentBeforeCall = budget.totalAtCheckpointCents + budget.liveDeltaCents;
     if (spentBeforeCall >= capCents) {
       log.info('anthropic-proxy', 'Start-of-call gate fired', {
-        sessionId, userId, spentCents: spentBeforeCall, capCents,
+        sessionId, userId, isSyncTurn, spentCents: spentBeforeCall, capCents,
       });
       return res.status(429).json({
         ok: false,
         code: 'budget_exceeded',
-        message: `Daily limit reached ($${(capCents / 100).toFixed(2)}). Resets at midnight UTC.`,
+        message: overMessage,
       });
     }
 
@@ -203,9 +244,10 @@ function anthropicProxyRoutes(config) {
       logTag: 'anthropic-proxy',
       logCtx: { sessionId, userId, upstreamPath },
       shouldKill: (currentCallCents, model) => {
-        // Re-read the snapshot in case a parallel session for the same
-        // user updated liveDeltaCents while we were streaming.
-        const live = userBudgetCache.get(userId);
+        // Re-read the snapshot in case a parallel session updated
+        // liveDeltaCents while we were streaming. Sync turns track the
+        // single system bucket; everything else the per-user bucket.
+        const live = isSyncTurn ? systemBudgetCache : userBudgetCache.get(userId);
         const spentEffectiveCents =
           (live ? live.totalAtCheckpointCents + live.liveDeltaCents : spentBeforeCall) +
           currentCallCents;
@@ -228,7 +270,7 @@ function anthropicProxyRoutes(config) {
     // worker really did consume those tokens (Anthropic charges for
     // partial generations).
     if (result.costCents > 0) {
-      const live = userBudgetCache.get(userId);
+      const live = isSyncTurn ? systemBudgetCache : userBudgetCache.get(userId);
       if (live) {
         live.liveDeltaCents += result.costCents;
       }

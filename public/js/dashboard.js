@@ -18,6 +18,11 @@ function esc(s) {
 // ticked; with the box off every chart looks exactly as it did before.
 const ADMIN_COLOR = '#f59e0b';
 
+// #361: system-token spend colour for the Daily-spend chart. A distinct
+// sky/cyan, clearly separate from platform violet (#8b5cf6), user-key
+// green (#34d399), and admin amber (#f59e0b).
+const SYSTEM_COLOR = '#06b6d4';
+
 // The small "Non-admin / Admin" swatch legend, reusing the inline-swatch
 // markup the spend "Both" legend already uses. Rendered only while admins
 // are included; the non-admin swatch defaults to violet but can be set to a
@@ -642,6 +647,9 @@ const SPEND_PLATFORM = '#8b5cf6';
 const SPEND_USERKEY = '#34d399';
 let lastSpend = null;
 let spendMode = 'platform'; // 'platform' | 'user' | 'both'
+// #361: the admin-configured system-token daily cap (cents), loaded
+// alongside the spend series so the "today / cap" readout can show it.
+let systemCapCents = 2500;
 
 function renderSpend() {
   const days = (lastSpend && lastSpend.days) || [];
@@ -661,8 +669,12 @@ function renderSpend() {
   // identical to before in that case.
   const platAdmin = days.map((x) => Number(x.platform_cents_admin) || 0);
   const byokAdmin = days.map((x) => Number(x.user_key_cents_admin) || 0);
+  // #361: system-token spend per day — its own budget, stacked as an
+  // extra cyan segment on top of every bar regardless of the toggle mode
+  // (it isn't platform/user/admin-attributed). Adds to each bar's height.
+  const sys = days.map((x) => Number(x.system_cents) || 0);
   const totals = days.map((_, i) =>
-    spendMode === 'platform' ? plat[i] : spendMode === 'user' ? byok[i] : plat[i] + byok[i]);
+    (spendMode === 'platform' ? plat[i] : spendMode === 'user' ? byok[i] : plat[i] + byok[i]) + sys[i]);
   const max = Math.max(1, ...totals);
   const W = 640, H = 180, topPad = 14, botPad = 18, n = days.length;
   const plot = H - topPad - botPad;
@@ -687,7 +699,7 @@ function renderSpend() {
     // admin portion from the non-admin segment keeps the total height equal
     // to totals[i]; Math.max(0, …) guards against float rounding where the
     // admin portion could marginally exceed the segment total.
-    const stack = spendMode === 'both'
+    const stack = (spendMode === 'both'
       ? [
           { value: Math.max(0, plat[i] - pAdmin), color: SPEND_PLATFORM },
           { value: Math.max(0, byok[i] - uAdmin), color: SPEND_USERKEY },
@@ -701,7 +713,9 @@ function renderSpend() {
         : [
             { value: Math.max(0, plat[i] - pAdmin), color: SPEND_PLATFORM },
             { value: pAdmin, color: ADMIN_COLOR },
-          ];
+          ])
+      // #361: system-token segment, always on top, in every mode.
+      .concat([{ value: sys[i], color: SYSTEM_COLOR }]);
     let yCursor = topPad + plot;
     let segs = '';
     for (const s of stack) {
@@ -722,7 +736,11 @@ function renderSpend() {
     const adminLine = includeAdmins && adminCents > 0
       ? `<div class="flex justify-between gap-3 text-[11px]" style="color:${ADMIN_COLOR}"><span>of which admin</span><span>${dollars(adminCents)}</span></div>`
       : '';
-    tipStore[tipId] = `<div class="font-semibold">${esc(labels[i])}</div>${detail}${adminLine}`;
+    // #361: system-token spend line, shown whenever the day had any.
+    const systemLine = sys[i] > 0
+      ? `<div class="flex justify-between gap-3 text-[11px]" style="color:${SYSTEM_COLOR}"><span>System tokens</span><span>${dollars(sys[i])}</span></div>`
+      : '';
+    tipStore[tipId] = `<div class="font-semibold">${esc(labels[i])}</div>${detail}${systemLine}${adminLine}`;
     const overlay = `<rect class="dc-hover" x="${barX.toFixed(1)}" y="${topPad}" width="${bw.toFixed(1)}" height="${plot}"
       fill="#8b5cf6" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></rect>`;
     return segs + overlay;
@@ -742,10 +760,20 @@ function renderSpend() {
   const adminSwatch = hasAdminSpend
     ? `<span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${ADMIN_COLOR}"></span> Admin spend</span>`
     : '';
-  const legend = (modeSwatches || adminSwatch)
-    ? `<div class="flex flex-wrap items-center gap-3 text-[10px] text-zinc-400 mb-2">${modeSwatches}${adminSwatch}</div>`
+  // #361: a "System tokens" swatch appears whenever any day in the window
+  // had system spend, in any mode (the segment is always charted).
+  const hasSystemSpend = sys.some((v) => v > 0);
+  const systemSwatch = hasSystemSpend
+    ? `<span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${SYSTEM_COLOR}"></span> System tokens</span>`
     : '';
-  el.innerHTML = `${legend}
+  const legend = (modeSwatches || adminSwatch || systemSwatch)
+    ? `<div class="flex flex-wrap items-center gap-3 text-[10px] text-zinc-400 mb-2">${modeSwatches}${adminSwatch}${systemSwatch}</div>`
+    : '';
+  // #361: "System tokens today: $X.XX / $cap" readout — today is the last
+  // day in the series; cap from /api/admin/limits (loaded in loadAll).
+  const systemToday = sys.length ? sys[sys.length - 1] : 0;
+  const systemReadout = `<div class="text-[11px] mb-2" style="color:${SYSTEM_COLOR}">System tokens today: ${dollars(systemToday)} / ${dollars(systemCapCents)}</div>`;
+  el.innerHTML = `${systemReadout}${legend}
     <svg viewBox="0 0 ${W} ${H}" class="w-full text-zinc-500" preserveAspectRatio="none" style="height:180px">
       ${grid}${bars}
     </svg>
@@ -950,7 +978,7 @@ async function init() {
 // Fetch every analytics endpoint (with the current includeAdmins flag)
 // and (re)render. Shared by first load and the admin-checkbox toggle.
 async function loadAll() {
-  const [overview, spend, growth, retention, engagement, topUsers, kudos, spendByBuilder] =
+  const [overview, spend, growth, retention, engagement, topUsers, kudos, spendByBuilder, limits] =
     await Promise.all([
       getJSON(withAdmins('/api/admin/analytics/overview')),
       getJSON(withAdmins('/api/admin/analytics/spend')),
@@ -960,8 +988,14 @@ async function loadAll() {
       getJSON(withAdmins('/api/admin/analytics/top-users')),
       getJSON(withAdmins('/api/admin/analytics/kudos')),
       getJSON(withAdmins('/api/admin/analytics/spend-by-builder')),
+      // #361: system-token cap for the "today / cap" readout. Tolerate a
+      // failure (non-admin-write tokens still GET it) — default stays 2500.
+      getJSON('/api/admin/limits').catch(() => null),
     ]);
   renderCounters(overview);
+  if (limits && Number.isFinite(Number(limits.system_tokens_daily_limit_cents))) {
+    systemCapCents = Number(limits.system_tokens_daily_limit_cents);
+  }
   lastSpend = spend;
   renderSpend();
   renderGrowth(growth);

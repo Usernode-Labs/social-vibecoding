@@ -425,9 +425,11 @@ function adminRoutes(config) {
     try {
       const userCents = await limits.getDefaultUserLimitCents(pool);
       const globalCents = await limits.getGlobalLimitCents(pool);
+      const systemCents = await limits.getSystemTokensLimitCents(pool);
       res.json({
         user_daily_limit_cents: userCents,
         global_daily_limit_cents: globalCents,
+        system_tokens_daily_limit_cents: systemCents,
       });
     } catch (err) {
       log.error('admin', 'Read limits failed', { message: err.message });
@@ -436,7 +438,7 @@ function adminRoutes(config) {
   });
 
   router.put('/api/admin/limits', requireAdminWrite, async (req, res) => {
-    const { user, global } = req.body || {};
+    const { user, global, system } = req.body || {};
     const updates = [];
     const validate = (label, v) => {
       if (v === undefined) return null;
@@ -450,11 +452,14 @@ function adminRoutes(config) {
     if (typeof userN === 'string') return res.status(400).json({ error: userN });
     const globalN = validate('global', global);
     if (typeof globalN === 'string') return res.status(400).json({ error: globalN });
-    if (userN === null && globalN === null) {
-      return res.status(400).json({ error: 'Provide at least one of: user, global' });
+    const systemN = validate('system', system);
+    if (typeof systemN === 'string') return res.status(400).json({ error: systemN });
+    if (userN === null && globalN === null && systemN === null) {
+      return res.status(400).json({ error: 'Provide at least one of: user, global, system' });
     }
     if (userN !== null) updates.push([limits.KEY_USER, String(userN)]);
     if (globalN !== null) updates.push([limits.KEY_GLOBAL, String(globalN)]);
+    if (systemN !== null) updates.push([limits.KEY_SYSTEM, String(systemN)]);
 
     try {
       for (const [key, value] of updates) {
@@ -471,13 +476,15 @@ function adminRoutes(config) {
       limits.invalidate(...updates.map(([k]) => k));
       log.info('admin', 'Platform limits updated', {
         by: req.user.username,
-        user: userN, global: globalN,
+        user: userN, global: globalN, system: systemN,
       });
       const userCents = await limits.getDefaultUserLimitCents(pool);
       const globalCents = await limits.getGlobalLimitCents(pool);
+      const systemCents = await limits.getSystemTokensLimitCents(pool);
       res.json({
         user_daily_limit_cents: userCents,
         global_daily_limit_cents: globalCents,
+        system_tokens_daily_limit_cents: systemCents,
       });
     } catch (err) {
       log.error('admin', 'Update limits failed', { message: err.message });
