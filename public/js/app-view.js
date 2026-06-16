@@ -614,18 +614,18 @@ const AppView = {
 
   async _renderTopicSubView(content, ref) {
     AppView._devTopic = { kind: ref.kind, id: ref.id };
-    // The header row is just the back control — the topic's icon, title and
-    // number already live on the header card painted into #dev-topic-head,
-    // so repeating them up here was pure duplication.
+    // #363: only the back bar is pinned here. The topic card/body no longer
+    // sits in its own capped, separately scrolling box — it's painted into the
+    // mounted thread's in-scroll header slot (#gc-thread-head) so the header
+    // and the discussion scroll as ONE area (matching the general chat, where
+    // only the composer is pinned). The topic's icon, title and number live on
+    // that header card, so repeating them up here would be pure duplication.
     content.innerHTML = `
       <div class="flex flex-col h-full min-h-0">
         <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
           <button id="dev-topic-back" class="inline-flex items-center gap-1 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm shrink-0" title="Back to the dev page">&larr; Back</button>
         </div>
-        <div class="flex-1 min-h-0 flex flex-col px-3 py-2">
-          <div id="dev-topic-head" class="shrink-0 overflow-y-auto overscroll-contain" style="max-height:45%"><span class="text-xs text-zinc-500 dark:text-zinc-400">Loading…</span></div>
-          <div id="dev-topic-thread" class="flex-1 min-h-0 mt-2"></div>
-        </div>
+        <div id="dev-topic-thread" class="flex-1 min-h-0"></div>
       </div>`;
 
     document.getElementById('dev-topic-back').addEventListener('click', () => {
@@ -636,7 +636,7 @@ const AppView = {
     // The view may have been replaced (or retargeted) while the fetch
     // was in flight.
     const t = AppView._devTopic;
-    if (!document.getElementById('dev-topic-head') || !t
+    if (!document.getElementById('dev-topic-thread') || !t
         || t.kind !== ref.kind || t.id !== ref.id) return;
     if (!ok || !AppView._findTopicItem()) {
       // Missing ref (closed issue, archived session, bad link) — fall
@@ -644,8 +644,10 @@ const AppView = {
       App.switchTab('dev');
       return;
     }
-    AppView._renderTopicHead();
+    // #363: mount the thread FIRST so its header slot (#gc-thread-head) exists,
+    // then paint the topic card/body into it.
     AppView._mountTopicThread();
+    AppView._renderTopicHead();
   },
 
   _findTopicItem() {
@@ -668,7 +670,10 @@ const AppView = {
   // WS-driven refreshes.
   _renderTopicHead() {
     const t = AppView._devTopic;
-    const head = document.getElementById('dev-topic-head');
+    // #363: the topic card/body lives inside the thread's unified scroll
+    // region (#gc-thread-head), a sibling of #gc-thread-messages, so it
+    // survives renderThread()'s message-list rewrites and WS-driven refreshes.
+    const head = document.getElementById('gc-thread-head');
     if (!t || !head) return;
     const item = AppView._findTopicItem();
     // Closed / merged away mid-view: keep the last render readable.
@@ -716,7 +721,7 @@ const AppView = {
     if (t.kind === 'proposal' && item.status !== 'merged') AppView._loadVoteRoster(item.id);
 
     // #321: wire the kept card pill in the topic head. Unlike the feed and
-    // Completed list, #dev-topic-head has no delegated .gc-ask-ai-btn handler,
+    // Completed list, #gc-thread-head has no delegated .gc-ask-ai-btn handler,
     // so without this the pill would be inert (no click, no availability
     // dimming). Bind the click to the same advisor opener the standalone used
     // and run the shared availability pass over this container.
@@ -852,6 +857,9 @@ const AppView = {
       ref: t.id,
       container: slot,
       fullHeight: true,
+      // #363: request the in-scroll header slot so _renderTopicHead can paint
+      // the topic card/body above the messages in the same scroll region.
+      withHeader: true,
     });
   },
 
