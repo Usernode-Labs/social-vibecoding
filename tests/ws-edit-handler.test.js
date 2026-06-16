@@ -3,7 +3,8 @@
 // handleMessage's 'edit' case is the server-side authority for message
 // editing: only the original author may edit, only ordinary 'message' rows
 // are editable, empty edits are rejected, and content is trimmed + capped at
-// 2000 before the UPDATE. We drive handleMessage directly with a recording
+// MAX_CHAT_LEN (8000, #328) before the UPDATE. We drive handleMessage
+// directly with a recording
 // pool and assert on the SQL it issues (the UPDATE running — or not — and its
 // params), since broadcast() is a no-op with no connected room here.
 //
@@ -131,14 +132,16 @@ test('invalid messageId is rejected before any query', async () => {
   assert.equal(pool.seen.length, 0, 'non-integer messageId short-circuits');
 });
 
-test('content is capped at 2000 characters', async () => {
-  const { handleMessage } = loadWs();
+test('content is capped at MAX_CHAT_LEN (8000) characters', async () => {
+  const ws = loadWs();
+  const { handleMessage } = ws;
   const pool = makeEditPool(ownMessageRow);
   const client = { user: { id: 5, username: 'alice' }, appId: 7 };
-  await handleMessage(pool, client, { type: 'edit', messageId: 42, content: '   ' + 'x'.repeat(2500) });
+  await handleMessage(pool, client, { type: 'edit', messageId: 42, content: '   ' + 'x'.repeat(9000) });
   const upd = pool.update();
   assert.ok(upd, 'UPDATE ran');
-  assert.equal(upd.params[0].length, 2000, 'content trimmed then capped at 2000');
+  assert.equal(ws.MAX_CHAT_LEN, 8000, 'cap raised from 2000 to 8000 (#328)');
+  assert.equal(upd.params[0].length, 8000, 'content trimmed then capped at 8000');
 });
 
 test('thread scope is echoed on the broadcast for a thread-scoped edit', async () => {

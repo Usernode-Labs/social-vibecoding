@@ -7,6 +7,15 @@ const notifications = require('./notifications');
 const events = require('./events');
 const appAccess = require('./app-access');
 
+// #328: server-side cap on a single chat message body. Must match the
+// composer `maxlength` (GC_MAX_MESSAGE_LEN in public/js/group-chat.js) — both
+// ends agree so a message that passes the composer isn't silently truncated
+// here on insert. Raised from 2000 to 8000 alongside markdown support. We
+// trim then truncate (rather than reject) to mirror the long-standing
+// behaviour: an over-length body from a hostile/buggy client is clamped, not
+// dropped.
+const MAX_CHAT_LEN = 8000;
+
 let wss;
 // Captured in attach() so the module-level push* helpers can run the
 // per-app visibility filter (appAccess.getWsVisibility) without every
@@ -285,7 +294,7 @@ async function handleMessage(pool, client, msg) {
   switch (msg.type) {
     case 'chat': {
       if (!msg.content?.trim()) return;
-      const content = msg.content.trim().substring(0, 2000);
+      const content = msg.content.trim().substring(0, MAX_CHAT_LEN);
 
       // #194: optional thread scoping. An invalid/spoofed ref drops the
       // whole message (never silently re-route a thread post into the
@@ -517,10 +526,10 @@ async function handleMessage(pool, client, msg) {
       const messageId = Number(msg.messageId);
       if (!Number.isInteger(messageId) || messageId <= 0) return;
       // Mirror the send path: trim (drops leading/trailing whitespace and
-      // blank lines) then cap at 2000. An empty edit is rejected — editing
-      // is not a deletion path.
+      // blank lines) then cap at MAX_CHAT_LEN. An empty edit is rejected —
+      // editing is not a deletion path.
       if (!msg.content || !msg.content.trim()) return;
-      const content = msg.content.trim().substring(0, 2000);
+      const content = msg.content.trim().substring(0, MAX_CHAT_LEN);
 
       // Authorization (enforced server-side so a hand-crafted request can't
       // edit another user's message or a system/vote/conflict/spec_share
@@ -845,4 +854,4 @@ function pushNotificationToUser(userId, payload) {
   return sent;
 }
 
-module.exports = { attach, broadcast, broadcastGlobal, broadcastGlobalScoped, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushSessionUpdate, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushNotificationToUser, getReactionsForMessages, validateThread, handleMessage };
+module.exports = { attach, broadcast, broadcastGlobal, broadcastGlobalScoped, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushSessionUpdate, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushNotificationToUser, getReactionsForMessages, validateThread, handleMessage, MAX_CHAT_LEN };

@@ -1,3 +1,10 @@
+// #328: max characters in a single group-chat message. Raised from 2000 to
+// 8000 to give room for markdown-formatted messages (code samples, lists).
+// Kept in sync with the server-side cap in src/services/ws.js — both ends
+// must agree or a message that passes the composer would be silently
+// truncated on insert. Drives every composer/edit `maxlength` below.
+const GC_MAX_MESSAGE_LEN = 8000;
+
 const GroupChat = {
   ws: null,
   appSlug: null,
@@ -29,8 +36,8 @@ const GroupChat = {
   //                        a long-offline session can't grow
   //                        unbounded; oldest entries are dropped
   //                        first when full (rare in practice; the
-  //                        2000-char-per-message * 50 ceiling is
-  //                        ~100KB which is fine to hold in RAM).
+  //                        8000-char-per-message * 50 ceiling is
+  //                        ~400KB which is fine to hold in RAM).
   _reconnectAttempts: 0,
   _reconnectTimer: null,
   _pendingOutgoing: [],
@@ -571,7 +578,7 @@ const GroupChat = {
       : `<div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2">
           <div id="gc-thread-reply-preview" class="hidden"></div>
           <form id="gc-thread-form" class="flex gap-2 items-end">
-            <textarea id="gc-thread-input" maxlength="2000" rows="1" autocomplete="off"
+            <textarea id="gc-thread-input" maxlength="${GC_MAX_MESSAGE_LEN}" rows="1" autocomplete="off"
               placeholder="${escapeHtml(opts.placeholder || 'Reply in thread…')}"
               class="gc-composer-input flex-1 min-w-0 resize-none overflow-y-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 ${fill ? 'py-2' : 'py-1.5'} text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"></textarea>
             <button type="submit" class="rounded-lg bg-violet-600 hover:bg-violet-500 ${fill ? 'px-4 py-2' : 'px-3 py-1.5'} text-sm font-medium text-white transition-colors shrink-0">Send</button>
@@ -1136,7 +1143,7 @@ const GroupChat = {
     const editor = document.createElement('div');
     editor.className = 'gc-edit';
     editor.innerHTML =
-      `<textarea class="gc-edit-textarea gc-composer-input" maxlength="2000" rows="1"></textarea>` +
+      `<textarea class="gc-edit-textarea gc-composer-input" maxlength="${GC_MAX_MESSAGE_LEN}" rows="1"></textarea>` +
       `<div class="gc-edit-actions">` +
         `<button type="button" class="gc-edit-save">Save</button>` +
         `<button type="button" class="gc-edit-cancel">Cancel</button>` +
@@ -1194,7 +1201,7 @@ const GroupChat = {
     // Optimistically paint the new content so there's no flash; the
     // authoritative content + "edited" marker arrive via the broadcast.
     const contentEl = row.querySelector('.gc-msg-content');
-    if (contentEl) contentEl.innerHTML = renderWithMentions(content);
+    if (contentEl) contentEl.innerHTML = renderMessageBody(content);
     GroupChat._cancelEdit(row);
   },
 
@@ -1212,7 +1219,7 @@ const GroupChat = {
     // authoritative.
     GroupChat._cancelEdit(row);
     const contentEl = row.querySelector('.gc-msg-content');
-    if (contentEl) contentEl.innerHTML = renderWithMentions(content);
+    if (contentEl) contentEl.innerHTML = renderMessageBody(content);
     GroupChat._patchEditedMarker(row, editedAt);
   },
 
@@ -1464,7 +1471,7 @@ const GroupChat = {
           ${GroupChat._renderReactAddBtn(msg)}
         </div>
         ${quotedHtml}
-        <div class="gc-msg-content">${renderWithMentions(msg.content)}</div>
+        <div class="gc-msg-content">${renderMessageBody(msg.content)}</div>
         ${GroupChat._renderReactionsHtml(msg)}
       </div>`;
   },
@@ -2087,6 +2094,126 @@ function renderRefChips(html) {
     const label = isPr ? `PR#${num}` : `#${num}`;
     return `${pre}<span class="${cls}" data-ref-type="${type}" data-ref-number="${num}" role="link" tabindex="0">${label}</span>`;
   });
+}
+
+// #328: the authoritative renderer for a USER message body. Renders a safe
+// markdown subset via the shared DevChat.renderMarkdown (marked + DOMPurify,
+// strict allowlist, https-only links, raw HTML escaped) and then layers the
+// existing @mention + PR/issue-ref decoration on top.
+//
+// Why a DOM walk and not another regex pass: renderWithMentions runs its
+// regexes over *escaped text*. After markdown the body is *sanitized HTML*,
+// so a string regex could match inside an <a href> attribute, inside a
+// <code>/<pre> literal, or straddle a tag — reintroducing exactly the
+// injection the sanitizer just removed. Instead we parse the sanitized HTML
+// and walk TEXT NODES ONLY, skipping anything inside <a>/<code>/<pre>, and
+// build the mention/ref <span>s via DOM APIs (textContent / setAttribute) so
+// no unsanitized HTML is ever re-created. Message content stays plain
+// markdown source on the wire and in the DB — this is display-only.
+//
+// Falls back to the plain renderWithMentions path when the markdown libs /
+// DevChat aren't available (CDN blocked, native shell, the test sandbox).
+function renderMessageBody(raw) {
+  const text = raw == null ? '' : String(raw);
+  const renderMd = typeof DevChat !== 'undefined' && DevChat.renderMarkdown;
+  if (!renderMd || typeof document === 'undefined' || !document.createElement) {
+    return renderWithMentions(text);
+  }
+  let html;
+  try {
+    html = DevChat.renderMarkdown(text, { breaks: true });
+  } catch {
+    return renderWithMentions(text);
+  }
+  const root = document.createElement('div');
+  root.innerHTML = html;
+  decorateMentionsAndRefs(root);
+  return root.innerHTML;
+}
+
+// Tags whose text content must stay literal: links (don't rewrite hrefs or
+// double-link), and code spans/blocks (a `@name` or `#5` in code is source,
+// not a mention/ref).
+const GC_DECORATE_SKIP = new Set(['A', 'CODE', 'PRE']);
+
+// Recursively walk `node`'s subtree, decorating eligible text nodes in place.
+// Snapshots childNodes first because decorateTextNode mutates the list.
+function decorateMentionsAndRefs(node) {
+  const children = node.childNodes ? Array.prototype.slice.call(node.childNodes) : [];
+  for (const child of children) {
+    if (child.nodeType === 3) { // text node
+      decorateTextNode(child);
+    } else if (child.nodeType === 1) { // element
+      const tag = (child.tagName || '').toUpperCase();
+      if (GC_DECORATE_SKIP.has(tag)) continue;
+      decorateMentionsAndRefs(child);
+    }
+  }
+}
+
+// Replace one text node with [text, <span class="gc-mention">…</span>,
+// <span class="gc-ref">…</span>, …] when it contains mentions/refs.
+function decorateTextNode(textNode) {
+  const value = textNode.nodeValue != null ? textNode.nodeValue : (textNode.textContent || '');
+  const me = (typeof App !== 'undefined' && App.user && App.user.username
+    ? App.user.username : '').toLowerCase();
+  const segs = tokenizeMentionsAndRefs(value, me);
+  if (segs.length === 1 && segs[0].type === 'text') return; // nothing to decorate
+  const parent = textNode.parentNode;
+  if (!parent) return;
+  const frag = document.createDocumentFragment();
+  for (const seg of segs) {
+    if (seg.type === 'text') {
+      frag.appendChild(document.createTextNode(seg.value));
+    } else if (seg.type === 'mention') {
+      const span = document.createElement('span');
+      span.className = seg.isSelf ? 'gc-mention gc-mention-self' : 'gc-mention';
+      span.textContent = `@${seg.name}`;
+      frag.appendChild(span);
+    } else { // ref
+      const span = document.createElement('span');
+      span.className = seg.isPr ? 'gc-ref gc-ref-pr' : 'gc-ref gc-ref-issue';
+      span.setAttribute('data-ref-type', seg.isPr ? 'pr' : 'issue');
+      span.setAttribute('data-ref-number', seg.num);
+      span.setAttribute('role', 'link');
+      span.setAttribute('tabindex', '0');
+      span.textContent = seg.isPr ? `PR#${seg.num}` : `#${seg.num}`;
+      frag.appendChild(span);
+    }
+  }
+  parent.replaceChild(frag, textNode);
+}
+
+// Pure tokenizer (no DOM): split a raw text run into ordered segments of
+// plain text, @mentions, and PR/issue refs. Mirrors the boundary + char-class
+// rules of renderWithMentions/renderRefChips so behaviour matches the string
+// path and the server-side mention parser (MENTION_CHARS, length 1..32). The
+// leading boundary char each pattern requires is preserved as text. One
+// combined regex so `PR#12` is never half-consumed by the bare `#N` pattern.
+function tokenizeMentionsAndRefs(text, me) {
+  const RE = /(^|[^\w])(@([A-Za-z0-9_]{1,32})|(pr ?#|#)(\d{1,7})(?!\w))/gi;
+  const segs = [];
+  let pos = 0;
+  let m;
+  const pushText = (s) => {
+    if (!s) return;
+    const last = segs[segs.length - 1];
+    if (last && last.type === 'text') last.value += s;
+    else segs.push({ type: 'text', value: s });
+  };
+  while ((m = RE.exec(text)) !== null) {
+    pushText(text.slice(pos, m.index));
+    pushText(m[1]); // boundary char (start-of-string is '')
+    if (m[3] != null) {
+      segs.push({ type: 'mention', name: m[3], isSelf: m[3].toLowerCase() === me });
+    } else {
+      segs.push({ type: 'ref', isPr: m[4].trim().length > 1, num: m[5] });
+    }
+    pos = m.index + m[0].length;
+  }
+  pushText(text.slice(pos));
+  if (segs.length === 0) segs.push({ type: 'text', value: '' });
+  return segs;
 }
 
 // ── #87: @mention autocomplete ─────────────────────────────────────────
