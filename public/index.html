@@ -376,6 +376,24 @@
     </div>
   </div>
 
+  <!-- #353: before/after comparison (fullscreen overlay). Opened by
+       clicking either tile rendered by AppView.visualsTilesHtml — shows
+       the before + after for one capture group side-by-side at full size
+       (stacked on narrow screens), instead of dumping the raw asset into
+       a new tab. Built dynamically by AppView.openVisualComparison;
+       closed via Back / backdrop / Escape (closeVisualComparison). -->
+  <div id="visual-compare-overlay" class="hidden fixed inset-0 z-50 bg-zinc-950/95 flex flex-col" role="dialog" aria-modal="true" aria-label="Before / after comparison">
+    <div class="flex items-center gap-3 px-4 py-2 border-b border-zinc-800 shrink-0">
+      <button id="visual-compare-back" class="text-zinc-400 hover:text-zinc-100 text-sm flex items-center gap-1">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        Close
+      </button>
+      <span class="flex-1"></span>
+      <span id="visual-compare-label" class="text-xs text-zinc-400 font-mono truncate"></span>
+    </div>
+    <div id="visual-compare-body" class="usn-compare-body flex-1 overflow-auto p-4"></div>
+  </div>
+
   <!-- Create app modal.
        data-mode controls "new" vs "import"; data-import-state controls
        the import sub-states (idle / checking / ok / error). CSS in

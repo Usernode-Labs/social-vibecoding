@@ -69,6 +69,40 @@ test('withToken passes the URL through unchanged on an empty token', () => {
   assert.equal(visuals.withToken('http://x:3000/', null), 'http://x:3000/');
 });
 
+test('withToken places the token BEFORE a #fragment (#353)', () => {
+  // A self-app hash deep link: the token must reach the server, so it
+  // belongs in the query string, never inside the fragment.
+  assert.equal(
+    visuals.withToken('http://x:3000/#app/social/dev/proposals/5', 'tok'),
+    'http://x:3000/?token=tok#app/social/dev/proposals/5'
+  );
+});
+
+test('withToken keeps an existing query AND the fragment in order (#353)', () => {
+  assert.equal(
+    visuals.withToken('http://x:3000/?demo=1#leaderboard', 'tok'),
+    'http://x:3000/?demo=1&token=tok#leaderboard'
+  );
+});
+
+// ── selfAppHashPath (hash-route normalisation, #353) ───────────────────
+
+test('selfAppHashPath moves SPA hash routes into the fragment', () => {
+  assert.equal(visuals.selfAppHashPath('/app/social/dev/proposals/5'), '/#app/social/dev/proposals/5');
+  assert.equal(visuals.selfAppHashPath('/leaderboard'), '/#leaderboard');
+  assert.equal(visuals.selfAppHashPath('/group-chat'), '/#group-chat');
+  assert.equal(visuals.selfAppHashPath('/individual-chat/9'), '/#individual-chat/9');
+});
+
+test('selfAppHashPath leaves bare /, already-fragment, and server pages alone', () => {
+  assert.equal(visuals.selfAppHashPath('/'), '/');
+  assert.equal(visuals.selfAppHashPath('/#app/social/dev'), '/#app/social/dev');
+  assert.equal(visuals.selfAppHashPath('/dashboard'), '/dashboard');
+  assert.equal(visuals.selfAppHashPath('/admin'), '/admin');
+  assert.equal(visuals.selfAppHashPath('/status'), '/status');
+  assert.equal(visuals.selfAppHashPath('/node-status'), '/node-status');
+});
+
 // ── beforeContainerName ("before" target resolution) ───────────────────
 
 test('normal slugs resolve to usernode-app-<slug>', () => {

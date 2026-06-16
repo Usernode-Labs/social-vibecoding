@@ -2745,12 +2745,15 @@ const AppView = {
   // { before, after, capturedPath } which is normalized to a single group.
   // Shared by the vote-panel PR rows here and the dev-chat staging card
   // (which calls through window.AppView). Webm plays as a silent loop with
-  // the PNG as poster; PNG-only sets render a plain image. Click opens full
-  // size in a new tab. One labelled row per group — the label names the
-  // captured path so reviewers see which screen each pair shows; a single
-  // root-only group renders unlabelled, exactly as before. Deliberately
-  // dedicated DOM — the markdown sanitizer's whitelist stays untouched
-  // (<img>/<video> remain stripped from chat markdown).
+  // the PNG as poster; PNG-only sets render a plain image. Clicking a tile
+  // opens an in-app side-by-side comparison overlay (openVisualComparison)
+  // rather than the raw asset in a new tab (#353) — each tile carries the
+  // whole group's artifact ids as data-* attributes so the overlay can
+  // show before+after together. One labelled row per group — the label
+  // names the captured path so reviewers see which screen each pair shows;
+  // a single root-only group renders unlabelled, exactly as before.
+  // Deliberately dedicated DOM — the markdown sanitizer's whitelist stays
+  // untouched (<img>/<video> remain stripped from chat markdown).
   visualsTilesHtml(visuals) {
     if (!visuals) return '';
     const groups = Array.isArray(visuals.captures)
@@ -2764,30 +2767,52 @@ const AppView = {
     const esc = (s) => String(s).replace(/[&<>"]/g, (c) => (
       { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]
     ));
-    const tile = (label, v) => {
-      if (!v) return '';
+    // Sanitize one side's media ids into a `png|webm|gif`-keyed object of
+    // validated 32-hex ids (or null per slot). Reused by the data-*
+    // attribute encoder and the overlay builder.
+    const sideIds = (v) => {
+      if (!v) return null;
       const png = idOk(v.png) ? v.png : null;
       const webm = idOk(v.webm) ? v.webm : null;
       const gif = idOk(v.gif) ? v.gif : null;
-      if (!png && !webm && !gif) return '';
+      return (png || webm || gif) ? { png, webm, gif } : null;
+    };
+    // A clickable tile for one side. Carries the FULL group's ids (both
+    // sides) plus which side was clicked, so the overlay opens straight
+    // onto the matching pair. ids are 32-hex-validated, so they're safe
+    // inside the data-* attributes; path goes through esc().
+    const tile = (label, side, b, a, path) => {
+      const v = side === 'before' ? b : a;
+      if (!v) return '';
       const mediaStyle = 'display:block;width:100%;max-height:160px;object-fit:contain;object-position:top;background:rgba(0,0,0,0.25);border:1px solid rgba(127,127,127,0.25);border-radius:6px';
-      const media = webm
-        ? `<video src="/visuals/${webm}"${png ? ` poster="/visuals/${png}"` : ''} muted loop autoplay playsinline style="${mediaStyle}"></video>`
-        : `<img src="/visuals/${png || gif}" alt="${label}" loading="lazy" style="${mediaStyle}">`;
-      const href = `/visuals/${webm || gif || png}`;
-      return `<a href="${href}" target="_blank" rel="noopener" title="${label} — open full size" style="flex:1 1 0;min-width:0;display:block;text-decoration:none">
+      const media = v.webm
+        ? `<video src="/visuals/${v.webm}"${v.png ? ` poster="/visuals/${v.png}"` : ''} muted loop autoplay playsinline style="${mediaStyle}"></video>`
+        : `<img src="/visuals/${v.png || v.gif}" alt="${label}" loading="lazy" style="${mediaStyle}">`;
+      const dataAttrs = [
+        `data-visual-tile="${side}"`,
+        `data-path="${esc(path)}"`,
+        b && b.png ? `data-before-png="${b.png}"` : '',
+        b && b.webm ? `data-before-webm="${b.webm}"` : '',
+        b && b.gif ? `data-before-gif="${b.gif}"` : '',
+        a && a.png ? `data-after-png="${a.png}"` : '',
+        a && a.webm ? `data-after-webm="${a.webm}"` : '',
+        a && a.gif ? `data-after-gif="${a.gif}"` : '',
+      ].filter(Boolean).join(' ');
+      return `<button type="button" ${dataAttrs} title="${label} — open before/after comparison" style="flex:1 1 0;min-width:0;display:block;text-align:left;padding:0;border:0;background:none;cursor:pointer;font:inherit;color:inherit" onclick="AppView.openVisualComparison(this)">
         <div class="text-[0.65rem] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}</div>
         ${media}
-      </a>`;
+      </button>`;
     };
 
     const single = groups.length === 1;
     const rows = [];
     for (const g of groups) {
-      const before = tile('Before', g.before);
-      const after = tile('After', g.after);
-      if (!after && !before) continue;
+      const b = sideIds(g.before);
+      const a = sideIds(g.after);
       const path = g.path || '/';
+      const before = tile('Before', 'before', b, a, path);
+      const after = tile('After', 'after', b, a, path);
+      if (!after && !before) continue;
       // Label the row with its captured path unless it's the single
       // root-only group (unchanged from the pre-#270 single-tile output).
       const label = (single && (path === '/' || !path))
@@ -2796,6 +2821,99 @@ const AppView = {
       rows.push(`${label}<div class="usn-visual-tiles" style="display:flex;gap:8px;align-items:flex-start;margin:4px 0 2px">${before}${after}</div>`);
     }
     return rows.join('');
+  },
+
+  // #353: open the before/after comparison overlay from a clicked tile.
+  // Reads the group's artifact ids off the tile's data-* attributes
+  // (written by visualsTilesHtml; all 32-hex-validated at render time)
+  // and renders before + after side-by-side at full size — two columns on
+  // a wide screen, stacked on a narrow one. webm plays muted/looping with
+  // the PNG poster; otherwise the PNG (or GIF) shows as an image. Each
+  // column keeps an "open original" link so the raw asset is still one
+  // click away. A side with no artifacts renders a "no version" note
+  // (e.g. a brand-new screen with no production "before").
+  openVisualComparison(triggerEl) {
+    const overlay = document.getElementById('visual-compare-overlay');
+    const body = document.getElementById('visual-compare-body');
+    const labelEl = document.getElementById('visual-compare-label');
+    if (!overlay || !body || !triggerEl) return;
+    const d = triggerEl.dataset || {};
+    const idOk = (id) => typeof id === 'string' && /^[a-f0-9]{32}$/.test(id);
+    const pick = (...ids) => ids.find((id) => idOk(id)) || null;
+    const before = {
+      png: idOk(d.beforePng) ? d.beforePng : null,
+      webm: idOk(d.beforeWebm) ? d.beforeWebm : null,
+      gif: idOk(d.beforeGif) ? d.beforeGif : null,
+    };
+    const after = {
+      png: idOk(d.afterPng) ? d.afterPng : null,
+      webm: idOk(d.afterWebm) ? d.afterWebm : null,
+      gif: idOk(d.afterGif) ? d.afterGif : null,
+    };
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]
+    ));
+    const path = d.path || '/';
+    if (labelEl) labelEl.textContent = (path && path !== '/') ? path : '';
+
+    const colStyle = 'flex:1 1 320px;min-width:0;display:flex;flex-direction:column;gap:6px';
+    const mediaStyle = 'display:block;width:100%;max-height:78vh;object-fit:contain;object-position:top;background:rgba(0,0,0,0.35);border:1px solid rgba(127,127,127,0.25);border-radius:8px';
+    const column = (label, v) => {
+      const has = v && (v.png || v.webm || v.gif);
+      const heading = `<div class="text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-400">${label}</div>`;
+      if (!has) {
+        return `<div style="${colStyle}">${heading}<div class="text-xs text-zinc-500" style="padding:24px 0;text-align:center;border:1px dashed rgba(127,127,127,0.3);border-radius:8px">No ${label.toLowerCase()} version to compare.</div></div>`;
+      }
+      const media = v.webm
+        ? `<video src="/visuals/${v.webm}"${v.png ? ` poster="/visuals/${v.png}"` : ''} muted loop autoplay playsinline controls style="${mediaStyle}"></video>`
+        : `<img src="/visuals/${v.png || v.gif}" alt="${label}" style="${mediaStyle}">`;
+      const orig = pick(v.webm, v.gif, v.png);
+      const origLink = orig
+        ? `<a href="/visuals/${orig}" target="_blank" rel="noopener" class="text-[0.7rem] text-violet-400 hover:text-violet-300">Open original ↗</a>`
+        : '';
+      return `<div style="${colStyle}">${heading}${media}${origLink}</div>`;
+    };
+
+    const pathLabel = (path && path !== '/')
+      ? `<div class="text-xs text-zinc-400" style="margin-bottom:10px">Before / after — <code>${esc(path)}</code></div>`
+      : '';
+    body.innerHTML = `${pathLabel}<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">${column('Before', before)}${column('After', after)}</div>`;
+
+    // Reveal now + stamp openedAt so modalDismissGuarded can swallow the
+    // opening tap's ghost click (same as the share/members modals).
+    AppView.revealModal(overlay);
+
+    // Close affordances: Back button, backdrop click (the overlay root
+    // itself, not its children), and Escape. The Escape handler is added
+    // on open / removed on close so it never lingers. modalDismissGuarded
+    // swallows the opening tap's ghost click (matches the share modal).
+    const back = document.getElementById('visual-compare-back');
+    if (back) back.onclick = () => AppView.closeVisualComparison();
+    overlay.onclick = (e) => {
+      if (window.AppView && AppView.modalDismissGuarded && AppView.modalDismissGuarded(overlay)) return;
+      if (e.target === overlay) AppView.closeVisualComparison();
+    };
+    AppView._visualCompareKeyHandler = (e) => {
+      if (e.key === 'Escape') AppView.closeVisualComparison();
+    };
+    document.addEventListener('keydown', AppView._visualCompareKeyHandler);
+  },
+
+  // #353: tear down the comparison overlay. Clear the body innerHTML (not
+  // display:none) so any looping <video> actually stops, mirroring
+  // toggleVisuals, and remove the Escape handler installed on open.
+  closeVisualComparison() {
+    const overlay = document.getElementById('visual-compare-overlay');
+    const body = document.getElementById('visual-compare-body');
+    if (body) body.innerHTML = '';
+    if (overlay) {
+      overlay.classList.add('hidden');
+      overlay.onclick = null;
+    }
+    if (AppView._visualCompareKeyHandler) {
+      document.removeEventListener('keydown', AppView._visualCompareKeyHandler);
+      AppView._visualCompareKeyHandler = null;
+    }
   },
 
   // #211: sessions whose before/after tiles the viewer expanded in the
@@ -3356,6 +3474,22 @@ const AppView = {
     } catch {}
   },
 
+  // #353: the self-app is a hash-routed SPA — its internal screens live in
+  // location.hash (`#app/...`, `#leaderboard`, ...), so a testing path
+  // joined as a server pathname just loads the home feed. Mirror the
+  // server-side normalisation (src/services/visuals.js selfAppHashPath):
+  // when the path's first segment is one of the SPA hash routes, move it
+  // into the fragment; leave the bare '/', an already-'/#...' path, and
+  // standalone server pages (/dashboard, /admin, ...) untouched.
+  _SELF_APP_HASH_ROUTES: ['app', 'leaderboard', 'group-chat', 'individual-chat'],
+  _selfAppHashPath(p) {
+    const path = typeof p === 'string' ? p : null;
+    if (!path || !path.startsWith('/') || path.startsWith('/#')) return path;
+    const firstSeg = path.slice(1).split(/[/?#]/)[0];
+    if (!AppView._SELF_APP_HASH_ROUTES.includes(firstSeg)) return path;
+    return '/#' + path.slice(1);
+  },
+
   // Open staging in fullscreen overlay.
   //
   // #127: `testing` is the session's bot-generated testing guidance
@@ -3383,9 +3517,14 @@ const AppView = {
 
     // Build iframe URLs with the URL API so a deep link carrying its own
     // query string composes with the token param (no '?token=' concat).
+    // The URL API also keeps a `#app/...` fragment after the token query,
+    // so the self-app deep link below loads correctly (#353).
     const buildSrc = (path) => {
+      const visit = AppView.appData && AppView.appData.self_hosted
+        ? AppView._selfAppHashPath(path)
+        : path;
       let url;
-      try { url = new URL(path || '/', resolved); } catch { return resolved; }
+      try { url = new URL(visit || '/', resolved); } catch { return resolved; }
       if (AppView.iframeToken) url.searchParams.set('token', AppView.iframeToken);
       return url.toString();
     };
