@@ -927,6 +927,18 @@ BEGIN
   END IF;
 END $$;
 
+-- Pixel density the platform captures this app's before/after preview
+-- screenshots at (issue #360). 2 = HiDPI/retina (the default, matching
+-- real laptops/phones — surfaces "only broken on retina" bugs as a
+-- visible before/after diff); 1 = standard density, opted into by apps
+-- that genuinely need it (pixel art). Source of truth is dapp.json's
+-- top-level `screenshot.deviceScaleFactor`, reconciled here on every
+-- deploy (services/app-manifest.js reconcileAppScreenshot) and read by
+-- the capture orchestrator (services/visuals.js captureForSession).
+-- DEFAULT 2 means every pre-migration app captures at 2× with no
+-- manifest edit.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS screenshot_device_scale SMALLINT NOT NULL DEFAULT 2;
+
 -- App membership + invites in one table. A row with status='invited' is
 -- a pending invite (grants NO access — every check requires 'member');
 -- declining deletes the row so re-invites work. The creator gets a
