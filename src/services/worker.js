@@ -6,6 +6,7 @@ const log = require('./logger');
 const docker = require('./docker');
 const github = require('./github');
 const models = require('./models');
+const inLoopBrowser = require('./in-loop-browser');
 
 const WORKER_IMAGE = 'usernode-worker:latest';
 // Per-session worker container resource limits. Read from env (mirrored
@@ -850,6 +851,13 @@ async function execInWorker(sessionId, {
     ...(useProxy
       ? { ANTHROPIC_BASE_URL: `${PLATFORM_INTERNAL_URL}/api/internal/anthropic` }
       : {}),
+    // Optional in-loop browser: build-only INLOOP_* env (port,
+    // USERNODE_ENV=staging, throwaway DB pointer) the agent uses to boot
+    // the edited app locally for a headless visual check. Empty for
+    // scout/sync. This is purely local app/browser config — distinct from
+    // ANTHROPIC_BASE_URL, which only retargets the Anthropic SDK and is
+    // never used by the local launch. See services/in-loop-browser.js.
+    ...inLoopBrowser.browserEnvForMode(mode),
   };
   // Journal transport: the turn runs DETACHED from this process. The
   // wrapper below redirects run-cc.sh's combined output to a journal

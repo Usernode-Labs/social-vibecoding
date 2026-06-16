@@ -61,6 +61,7 @@ die() {
 : "${COMMIT_MSG:=Changes via Usernode}"
 : "${PAT:=}"
 : "${CLAUDE_RESUME_SESSION_ID:=}"
+: "${BROWSER_MCP_CONFIG:=/home/node/.usernode-mcp.json}"
 
 cd /home/node/workspace || die "no /home/node/workspace"
 
@@ -214,24 +215,40 @@ else
   PERMISSION_FLAGS="--dangerously-skip-permissions"
 fi
 
+# Optional in-loop browser: expose the pinned Playwright MCP server so a
+# BUILD turn CAN open the app it just edited in a headless browser to catch
+# render/JS errors before committing (see app-conventions.md, worker-run.sh).
+# `--strict-mcp-config` makes claude load ONLY this config — never a
+# `.mcp.json` an untrusted repo might carry, which under
+# --dangerously-skip-permissions would otherwise auto-start arbitrary
+# servers. Scout (read-only) and sync (bookkeeping) get NO browser tooling:
+# the flags stay empty, so their `claude` invocations are byte-for-byte as
+# before. The MCP server only spawns on claude startup; Chromium launches
+# lazily on the first browser tool call, so a build turn that never reaches
+# for it pays nothing.
+BROWSER_MCP_FLAGS=""
+if [ "$MODE" = "build" ] && [ -f "$BROWSER_MCP_CONFIG" ]; then
+  BROWSER_MCP_FLAGS="--mcp-config $BROWSER_MCP_CONFIG --strict-mcp-config"
+fi
+
 # stream-json emits one JSON object per line. The host parses this via
 # the docker-exec child's stdout (long-lived path) or `docker logs -f`
 # (legacy single-shot path) — same pipeline, different transport.
 if [ -n "$CLAUDE_RESUME_SESSION_ID" ]; then
   echo "__USERNODE_PHASE__ claude (resume $CLAUDE_RESUME_SESSION_ID, mode $MODE)"
-  claude --print $PERMISSION_FLAGS --verbose \
+  claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS --verbose \
     --resume "$CLAUDE_RESUME_SESSION_ID" \
     --model "$MODEL" --output-format stream-json -p "$PROMPT"
   CC_EXIT=$?
   if [ "$CC_EXIT" -ne 0 ]; then
     echo "__USERNODE_WARN__ resume failed (exit $CC_EXIT); retrying fresh"
-    claude --print $PERMISSION_FLAGS --verbose \
+    claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS --verbose \
       --model "$MODEL" --output-format stream-json -p "$PROMPT"
     CC_EXIT=$?
   fi
 else
   echo "__USERNODE_PHASE__ claude (mode $MODE)"
-  claude --print $PERMISSION_FLAGS --verbose \
+  claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS --verbose \
     --model "$MODEL" --output-format stream-json -p "$PROMPT"
   CC_EXIT=$?
 fi
