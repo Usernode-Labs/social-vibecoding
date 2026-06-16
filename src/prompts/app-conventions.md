@@ -819,6 +819,52 @@ Behaviour:
   the vendored forwarder, so there's nothing to re-vendor). Add the
   bridge tag if your shell doesn't already load it.
 
+## In-loop browser (build turns) — optional, encouraged
+
+On a **build** turn (not scout/sync) Claude Code has a headless browser
+available through the **Playwright MCP server** — `browser_navigate`,
+`browser_console_messages`, `browser_take_screenshot`, and friends. It
+lets the agent load the app it just edited and *see* the result —
+catching a blank page, a JS crash on load, a broken layout, or a failing
+API call that source-reading alone would miss — and fix it before
+committing.
+
+It is **optional and encouraged, never a gate.** Reach for it when a
+change is user-visible and a visual check is genuinely informative; skip
+it for backend-only / refactor / docs work where rendering tells you
+nothing. Turns that don't use it behave exactly as before, and Chromium
+only launches on the first browser tool call, so there's no cost when
+it's unused. Scout and sync turns have no browser at all.
+
+### Launch contract
+
+The app must actually be running for the browser to load it. Boot it
+locally inside the worker the same way a staging container does:
+
+- **`USERNODE_ENV=staging`** against a **fresh, empty local database** —
+  the build turn exposes `INLOOP_ENV`, `INLOOP_PORT`, and
+  `INLOOP_DATABASE_URL` for exactly this. Typical launch:
+  `USERNODE_ENV=$INLOOP_ENV PORT=$INLOOP_PORT DATABASE_URL=$INLOOP_DATABASE_URL node server.js &`
+  (or this app's declared `dapp.json` entrypoint).
+- Private secrets resolve from the manifest's `staging_default` /
+  `default` only, same as a real staging build — never the prod store.
+- Navigate to `http://127.0.0.1:$INLOOP_PORT` joined with the SAME
+  route(s) you put in the TESTING block's `path:` lines. For the
+  hash-routed self-app, put the route after the `#`.
+- A **blank or empty page usually means missing seed data, not a bug** —
+  the local DB starts empty. Add the `IS_STAGING` seed (or a `?demo=1`
+  route) per "Staging mock data" and re-check, rather than "fixing"
+  code that already works.
+- Keep it tight (a couple of launch→check→fix cycles, a minute or two).
+  **If the app won't boot** — no local Postgres, a missing required
+  secret, a crash on start — don't fight it: note that you skipped the
+  visual check and commit anyway. The in-loop browser must never block
+  or fail the turn.
+
+This is an agent-facing quality aid. The before/after screenshots and
+the "Test this change" button (driven by the TESTING block) remain the
+reviewer-facing tools and are unchanged.
+
 ## Outputting file edits
 
 When Claude Code outputs updated file contents, use the standard

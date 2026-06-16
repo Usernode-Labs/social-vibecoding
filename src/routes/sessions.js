@@ -19,6 +19,7 @@ const sessionLifecycle = require('../services/session-lifecycle');
 const sessionBus = require('../services/session-bus');
 const { drainGuard } = require('../services/lifecycle');
 const { getAppConventions, getSelfHostedRefuseList } = require('../services/prompts');
+const { IN_LOOP_BROWSER_GUIDANCE } = require('../services/in-loop-browser');
 const models = require('../services/models');
 const limits = require('../services/limits');
 const events = require('../services/events');
@@ -4513,6 +4514,7 @@ INSTRUCTIONS:
 - After all changes are made, stage everything with "git add -A" and commit
   with a clear message describing what was built.
 - Do NOT ask questions or request clarification. Just build it.
+${IN_LOOP_BROWSER_GUIDANCE}
 - End your FINAL message with a testing block (optional, but strongly
   encouraged whenever the change is user-visible) so reviewers can try the
   change in the staging preview:

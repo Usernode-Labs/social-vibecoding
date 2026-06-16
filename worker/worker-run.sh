@@ -70,6 +70,30 @@ if [ ! -f /home/node/.claude.json ]; then
   fi
 fi
 
+# Seed the Playwright MCP config used by the OPTIONAL in-loop browser
+# (build-mode turns only — see run-cc.sh). Written on every bootstrap so a
+# warm container always has a config matching the image's pinned MCP
+# server. It lives on the container filesystem (re-created each bootstrap),
+# NOT the ~/.claude volume, so it can't go stale against an image rebuild.
+# Harmless for warm/scout/sync, which never reference it.
+#   --headless : no display in the worker; Chromium runs headless.
+#   --isolated : ephemeral profile per session, no on-disk profile state.
+# `npx @playwright/mcp` resolves the globally-installed pinned package, so
+# there's no network fetch at launch, and Chromium itself launches lazily
+# on the first browser tool call.
+BROWSER_MCP_CONFIG=/home/node/.usernode-mcp.json
+cat > "$BROWSER_MCP_CONFIG" <<'JSON'
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["--yes", "@playwright/mcp", "--headless", "--isolated"]
+    }
+  }
+}
+JSON
+echo "__USERNODE_PHASE__ seeded playwright mcp config"
+
 # Bootstrap: clone the repo if the workspace is empty. Re-warming
 # (after eviction) skips this because the volume isn't reused for the
 # workspace — the workspace lives on container fs, so a destroyed
