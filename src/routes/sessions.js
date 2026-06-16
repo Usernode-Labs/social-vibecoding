@@ -3958,6 +3958,7 @@ const COMPLETION_MARKER_RE = /\[CODING AGENT COMPLETED\][\s\S]*$/i;
 // sessionId to have the (rare) regression logged.
 function stripFakeCompletionMarker(text, { sessionId } = {}) {
   if (typeof text !== 'string') return '';
+  // Fast path: most Mayor turns never contain the marker, so bail early.
   if (!COMPLETION_MARKER_RE.test(text)) return text;
   if (sessionId) {
     log.warn('sessions', 'Mayor wrote fake [CODING AGENT COMPLETED] without a real run — stripping', {
