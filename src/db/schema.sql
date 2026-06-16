@@ -1089,3 +1089,17 @@ CREATE TABLE IF NOT EXISTS proposal_ai_messages (
 CREATE INDEX IF NOT EXISTS idx_proposal_ai_messages_convo
   ON proposal_ai_messages (app_id, proposal_kind, proposal_ref, user_id, id);
 COMMENT ON TABLE proposal_ai_messages IS 'staging:private';
+
+-- Block Blast high-score leaderboard. One personal-best row per player,
+-- keyed by user_id. wallet_pubkey mirrors the linked address at the time
+-- of the best score. Public: score values are not sensitive, matching
+-- the game_rooms / game_results pattern.
+CREATE TABLE IF NOT EXISTS block_blast_scores (
+  id             SERIAL PRIMARY KEY,
+  user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  wallet_pubkey  VARCHAR(255) NOT NULL,
+  score          INTEGER NOT NULL DEFAULT 0,
+  achieved_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_block_blast_scores_score ON block_blast_scores(score DESC);

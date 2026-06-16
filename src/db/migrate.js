@@ -46,6 +46,7 @@ async function migrate(config) {
   await seedStagingSpecUserShareFixtures(pool, config);
   await seedStagingHeadlessFixtures(pool, config);
   await seedStagingSyncActivity(pool, config);
+  await seedStagingBlockBlastScores(pool);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
   // Must run BEFORE backfillOrphanedSpecDrafts: unwrapping spec_md after that
@@ -3046,6 +3047,39 @@ async function migrateAppDbsToPerRole(pool, config) {
       }
     }
   }
+}
+
+async function seedStagingBlockBlastScores(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const players = [
+    { id: 9100001, username: 'staging-blast-player-1', pubkey: 'staging_pubkey_00001', score: 3200 },
+    { id: 9100002, username: 'staging-blast-player-2', pubkey: 'staging_pubkey_00002', score: 2750 },
+    { id: 9100003, username: 'staging-blast-player-3', pubkey: 'staging_pubkey_00003', score: 1980 },
+    { id: 9100004, username: 'staging-blast-player-4', pubkey: 'staging_pubkey_00004', score: 1450 },
+    { id: 9100005, username: 'staging-blast-player-5', pubkey: 'staging_pubkey_00005', score: 880 },
+  ];
+
+  for (const p of players) {
+    await pool.query(
+      `INSERT INTO users (id, username, password)
+       VALUES ($1, $2, '!staging-fixture-no-login!')
+       ON CONFLICT (id) DO NOTHING`,
+      [p.id, p.username]
+    );
+    await pool.query(
+      `UPDATE users SET usernode_pubkey = $1 WHERE id = $2 AND usernode_pubkey IS NULL`,
+      [p.pubkey, p.id]
+    );
+    await pool.query(
+      `INSERT INTO block_blast_scores (user_id, wallet_pubkey, score, achieved_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (user_id) DO NOTHING`,
+      [p.id, p.pubkey, p.score]
+    );
+  }
+
+  log.info('db', 'Staging Block Blast score fixtures seeded');
 }
 
 module.exports = { migrate };

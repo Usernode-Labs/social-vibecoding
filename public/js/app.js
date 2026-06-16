@@ -22,6 +22,8 @@ const App = {
   // three top-level screens, and they're mutually exclusive. Flipped
   // by navigateToLeaderboard() / _exitLeaderboard() / navigateHome().
   _inLeaderboard: false,
+  // Tracks whether #blockblast-screen is visible.
+  _inBlockBlast: false,
 
   // Set to true while restoreFromHash() is applying a URL (e.g. on
   // popstate/hashchange) so that the navigation helpers it calls
@@ -1558,6 +1560,7 @@ const App = {
       if (!hash) {
         if (App.currentApp) App.navigateHome();
         else if (App._inLeaderboard) App.navigateHome();
+        else if (App._inBlockBlast) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
           // navigateHome() — that would pushState, AppView.close(),
@@ -1586,6 +1589,10 @@ const App = {
           ? decodeURIComponent(parts[2])
           : null;
         App.navigateToLeaderboard(parts[1], profileUser);
+        return;
+      }
+      if (parts[0] === 'blockblast') {
+        App.navigateToBlockBlast();
         return;
       }
       if (parts[0] === 'app' && parts[1]) {
@@ -1636,6 +1643,7 @@ const App = {
           tab = 'app';
         }
         if (App._inLeaderboard) App._exitLeaderboard();
+        if (App._inBlockBlast) App._exitBlockBlast();
         if (App.currentApp !== slug) {
           App.navigateToApp(slug, tab, ref, subTab);
         } else if (App.currentTab !== tab
@@ -1648,6 +1656,7 @@ const App = {
         }
       } else {
         if (App._inLeaderboard) App._exitLeaderboard();
+        if (App._inBlockBlast) App._exitBlockBlast();
         App.setHeaderTitle('dApps');
         Home.load();
       }
@@ -1667,6 +1676,7 @@ const App = {
       App.currentApp = null;
       document.getElementById('app-view').classList.add('hidden');
     }
+    if (App._inBlockBlast) App._exitBlockBlast();
     document.getElementById('home-screen').classList.add('hidden');
     const screen = document.getElementById('leaderboard-screen');
     if (screen) screen.classList.remove('hidden');
@@ -1698,6 +1708,38 @@ const App = {
     const screen = document.getElementById('leaderboard-screen');
     if (screen) screen.classList.add('hidden');
     if (window.Leaderboard?.close) Leaderboard.close();
+  },
+
+  // Show the Block Blast game screen. Sibling to navigateToLeaderboard —
+  // hides home + app + leaderboard, reveals #blockblast-screen, hands
+  // control to the BlockBlast module.
+  navigateToBlockBlast() {
+    if (App.currentApp) {
+      AppView.close();
+      App.currentApp = null;
+      document.getElementById('app-view').classList.add('hidden');
+    }
+    if (App._inLeaderboard) App._exitLeaderboard();
+    document.getElementById('home-screen').classList.add('hidden');
+    const screen = document.getElementById('blockblast-screen');
+    if (screen) screen.classList.remove('hidden');
+    document.getElementById('back-btn').classList.remove('hidden');
+    const _drg = document.getElementById('drawer-row-github');
+    const _drs = document.getElementById('drawer-row-share');
+    const _drm = document.getElementById('drawer-row-members');
+    if (_drg) _drg.classList.add('hidden');
+    if (_drs) _drs.classList.add('hidden');
+    if (_drm) _drm.classList.add('hidden');
+    App.setHeaderTitle('Block Blast');
+    App._inBlockBlast = true;
+    if (window.BlockBlast?.open) BlockBlast.open();
+  },
+
+  _exitBlockBlast() {
+    App._inBlockBlast = false;
+    const screen = document.getElementById('blockblast-screen');
+    if (screen) screen.classList.add('hidden');
+    if (window.BlockBlast?.close) BlockBlast.close();
   },
 
   // Push a new history entry on real screen transitions (entering an
@@ -1981,6 +2023,7 @@ const App = {
     }
     App.currentApp = slug;
     if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inBlockBlast) App._exitBlockBlast();
     document.getElementById('home-screen').classList.add('hidden');
     document.getElementById('app-view').classList.remove('hidden');
     document.getElementById('back-btn').classList.remove('hidden');
@@ -2052,6 +2095,7 @@ const App = {
     App.currentApp = null;
     document.getElementById('app-view').classList.add('hidden');
     if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inBlockBlast) App._exitBlockBlast();
     document.getElementById('home-screen').classList.remove('hidden');
     document.getElementById('back-btn').classList.add('hidden');
     const _drgH = document.getElementById('drawer-row-github');

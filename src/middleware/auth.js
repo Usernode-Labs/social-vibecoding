@@ -19,6 +19,8 @@ const PUBLIC_PATHS = [
   // board can be linked/embedded without a session; no private data is
   // exposed (usernames + public PR titles + aggregate counts only).
   '/api/leaderboard/',
+  // Block Blast top-scores board — same rationale: usernames + scores only.
+  '/api/block-blast/leaderboard',
   '/health',
   '/css/',
   '/js/',
