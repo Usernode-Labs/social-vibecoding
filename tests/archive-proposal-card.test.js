@@ -212,7 +212,10 @@ test("topic head for another user's proposal shows ONLY the pill (no standalone)
     'pill click reaches ProposalDiscuss.open with kind/id/item');
 });
 
-test("topic head for the viewer's OWN proposal keeps the standalone button", () => {
+test("topic head for the viewer's OWN proposal shows no Ask AI button", () => {
+  // #348: owners reach AI via "Open session" + the in-session advisor, so the
+  // detail view must show neither the standalone button nor the card pill on
+  // the viewer's own PR proposal (matching the card behaviour from #313).
   const { AppView, els } = makeTopicHarness(ME);
   const head = fakeHead();
   els['dev-topic-head'] = head;
@@ -221,7 +224,7 @@ test("topic head for the viewer's OWN proposal keeps the standalone button", () 
 
   AppView._renderTopicHead();
 
-  assert.match(head._html, /id="proposal-ask-ai"/, 'own proposal keeps the standalone Ask AI');
+  assert.doesNotMatch(head._html, /id="proposal-ask-ai"/, 'own proposal has no standalone Ask AI');
   assert.doesNotMatch(head._html, /gc-ask-ai-btn/, 'no card pill on own proposal');
 });
 

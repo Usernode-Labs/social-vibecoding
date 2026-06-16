@@ -11,6 +11,25 @@ function esc(s) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// Admin accent colour (#341). A single amber, layered as the "admin" marker
+// on every colour-differentiated chart — verified unused in the existing
+// palette (violet #8b5cf6, lilac #a78bfa, green #34d399, blue #60a5fa, and
+// the kudos ramp). It only appears while the "Include admin users" box is
+// ticked; with the box off every chart looks exactly as it did before.
+const ADMIN_COLOR = '#f59e0b';
+
+// The small "Non-admin / Admin" swatch legend, reusing the inline-swatch
+// markup the spend "Both" legend already uses. Rendered only while admins
+// are included; the non-admin swatch defaults to violet but can be set to a
+// chart's own base colour. `includeAdmins` is the module-level toggle below.
+function adminLegend(nonAdminColor = '#8b5cf6') {
+  if (!includeAdmins) return '';
+  return `<div class="flex items-center gap-3 text-[10px] text-zinc-400 mb-2">
+    <span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${nonAdminColor}"></span> Non-admin</span>
+    <span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${ADMIN_COLOR}"></span> Admin</span>
+  </div>`;
+}
+
 // ── Hover tooltip ─────────────────────────────────────────────
 // Native SVG <title> tooltips are slow and only fire over the painted
 // bar, so columns with a short/zero bar feel "dead". Instead each chart
@@ -87,19 +106,39 @@ const INFO = {
   kudos: 'Per ISO week, how many users gave 0–5 kudos (everyone gets a budget of 5/week). The 0 bucket is registered users who gave none that week, making this a participation view rather than a raw count.',
 };
 
-// Wire the (?) icons: register each one's copy in the tip store and make
-// it reachable by mouse (via the body-level tooltip delegation) and by
-// keyboard (focus/blur). Idempotent — safe to call once after render.
+// Per-card Overview definitions (#341). Keyed by a stable card id, mirroring
+// the chart-level INFO map. Each is the plain-language definition of how that
+// card's number is actually computed (see renderCounters + the /overview SQL).
+const CARD_INFO = {
+  'total-users': 'Count of all registered accounts (admins excluded unless the box above is ticked).',
+  'new-7d': 'Accounts that signed up in the last 7 days.',
+  'new-30d': 'Accounts that signed up in the last 30 days.',
+  'wau-mau': 'Two independent counts, not a ratio. <b>WAU</b> = distinct users who took any tracked action (used a dapp, sent a chat message, or sent a dev-session message) in the last 7 days. <b>MAU</b> = the same, over the last 30 days. Different from the Engagement-tiers DAU/WAU bars lower down, which use custom operator definitions.',
+  'apps': 'Published apps that aren\'t self-hosted and aren\'t deleted.',
+  'promoted-open': 'Live count of dev sessions sitting in the "promoted" or "merging" state right now (not a lifetime total).',
+  'promoted-all': 'Every dev session that was ever opened for a group vote.',
+  'merged-all': 'Every dev session that landed in production.',
+  'kudos': 'Total kudos handed out across all users.',
+  'llm-today': 'Today\'s platform-key LLM spend (the spend the daily caps track), in dollars.',
+};
+
+// Register one (?) icon for keyboard focus + mouse hover: stash its copy in
+// the tip store, tag it with data-tip-id (the body-level delegation drives
+// the mouse tooltip), and wire focus/blur for keyboard access. Shared by the
+// chart-level icons and the per-card Overview icons.
+function wireInfoIcon(el, tipId, html) {
+  if (!html) return;
+  tipStore[tipId] = html;
+  el.dataset.tipId = tipId;
+  el.addEventListener('focus', () => showTipAt(el, html));
+  el.addEventListener('blur', () => { ensureTip().style.display = 'none'; });
+}
+
+// Wire the chart/section (?) icons. Idempotent — safe to call once after render.
 function wireInfoIcons() {
-  document.querySelectorAll('.dc-info').forEach((el) => {
+  document.querySelectorAll('.dc-info[data-info]').forEach((el) => {
     const key = el.dataset.info;
-    const html = INFO[key];
-    if (!html) return;
-    const tipId = `info-${key}`;
-    tipStore[tipId] = html;
-    el.dataset.tipId = tipId;
-    el.addEventListener('focus', () => showTipAt(el, html));
-    el.addEventListener('blur', () => { ensureTip().style.display = 'none'; });
+    wireInfoIcon(el, `info-${key}`, INFO[key]);
   });
   // One body-level delegation drives the mouse-following tooltip for the
   // icons (and any other [data-tip-id] outside a chart container).
@@ -131,78 +170,104 @@ async function getJSON(url) {
 // ── Counters ──────────────────────────────────────────────────
 function renderCounters(o) {
   const dollars = (c) => `$${(Number(c || 0) / 100).toFixed(2)}`;
+  // Each card carries a stable id keying its per-card (?) definition (#341).
   const cards = [
-    { label: 'Total users (all time)', value: fmtInt(o.users.total) },
-    { label: 'New (7d)', value: fmtInt(o.users.new_week) },
-    { label: 'New (30d)', value: fmtInt(o.users.new_month) },
+    { id: 'total-users', label: 'Total users (all time)', value: fmtInt(o.users.total) },
+    { id: 'new-7d', label: 'New (7d)', value: fmtInt(o.users.new_week) },
+    { id: 'new-30d', label: 'New (30d)', value: fmtInt(o.users.new_month) },
     // WAU and MAU are two independent counts (distinct users active in the
     // last 7 vs 30 days), not a ratio — the "|" keeps that clear.
-    { label: 'WAU | MAU', value: `${fmtInt(o.wau)} | ${fmtInt(o.mau)}` },
-    { label: 'Apps', value: fmtInt(o.appsTotal) },
+    { id: 'wau-mau', label: 'WAU | MAU', value: `${fmtInt(o.wau)} | ${fmtInt(o.mau)}` },
+    { id: 'apps', label: 'Apps', value: fmtInt(o.appsTotal) },
     // Live count of sessions currently in promoted/merging (not lifetime).
-    { label: 'Promoted (open)', value: fmtInt(o.prs.promoted) },
+    { id: 'promoted-open', label: 'Promoted (open)', value: fmtInt(o.prs.promoted) },
     // Lifetime count of sessions that ever recorded a promoted_at.
-    { label: 'Promoted PRs (all time)', value: fmtInt(o.prs.promoted_all_time) },
-    { label: 'Merged PRs (all time)', value: fmtInt(o.prs.merged) },
-    { label: 'Kudos given (all time)', value: fmtInt(o.kudosTotal) },
-    { label: 'LLM spend today', value: dollars(o.llmSpendTodayCents) },
+    { id: 'promoted-all', label: 'Promoted PRs (all time)', value: fmtInt(o.prs.promoted_all_time) },
+    { id: 'merged-all', label: 'Merged PRs (all time)', value: fmtInt(o.prs.merged) },
+    { id: 'kudos', label: 'Kudos given (all time)', value: fmtInt(o.kudosTotal) },
+    { id: 'llm-today', label: 'LLM spend today', value: dollars(o.llmSpendTodayCents) },
   ];
   document.getElementById('counters').innerHTML = cards.map((c) => `
     <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
-      <div class="text-xs uppercase tracking-wide text-zinc-500">${esc(c.label)}</div>
+      <div class="flex items-start justify-between gap-1">
+        <div class="text-xs uppercase tracking-wide text-zinc-500">${esc(c.label)}</div>
+        <span class="dc-info" data-card-info="${c.id}" tabindex="0" role="button" aria-label="What is this?">?</span>
+      </div>
       <div class="text-2xl font-bold mt-1">${esc(c.value)}</div>
     </div>`).join('');
+  // Register each per-card (?) icon: tip-store copy + focus wiring. The
+  // body-level delegation (wired in init) already drives the mouse tooltip.
+  cards.forEach((c) => {
+    const el = document.querySelector(`.dc-info[data-card-info="${c.id}"]`);
+    if (el) wireInfoIcon(el, `card-${c.id}`, CARD_INFO[c.id]);
+  });
 }
 
 // ── Funnel bars ───────────────────────────────────────────────
-// stages: [{ label, value }]. Bar width is relative to the first stage;
-// the caption shows the absolute count and the step-over-step conversion.
+// stages: [{ label, value, admin }]. Bar width is relative to the first
+// stage's total; the caption shows the absolute count and the step-over-step
+// conversion. When admins are included (#341) each stage bar splits into a
+// non-admin (violet) segment plus an amber admin segment, the caption breaks
+// out "total · N admin", and a small Non-admin/Admin legend is shown.
 function renderFunnel(containerId, stages) {
-  const top = stages[0]?.value || 0;
+  const stageTotal = (s) => (Number(s.value) || 0) + (Number(s.admin) || 0);
+  const top = stages[0] ? stageTotal(stages[0]) : 0;
+  const anyAdmin = includeAdmins && stages.some((s) => (Number(s.admin) || 0) > 0);
   const html = stages.map((s, i) => {
-    const widthPct = top > 0 ? Math.max(2, Math.round((s.value / top) * 100)) : 0;
+    const value = Number(s.value) || 0;
+    const admin = Number(s.admin) || 0;
+    const total = value + admin;
+    // Width relative to the first stage's total. Keep a 2% floor on a
+    // non-zero total so a tiny stage is still visible.
+    const naW = top > 0 ? (value / top) * 100 : 0;
+    const adW = top > 0 ? (admin / top) * 100 : 0;
+    const floor = total > 0 && naW + adW < 2 ? 2 - (naW + adW) : 0;
     const conv = i === 0
       ? '100%'
-      : `${pct(s.value, stages[i - 1].value)}% of prev`;
+      : `${pct(total, stageTotal(stages[i - 1]))}% of prev`;
+    const count = anyAdmin && admin > 0
+      ? `${fmtInt(total)} · ${fmtInt(admin)} admin`
+      : fmtInt(total);
     return `
       <div>
         <div class="flex items-center justify-between text-xs mb-1">
           <span class="text-zinc-300">${esc(s.label)}</span>
-          <span class="text-zinc-500">${fmtInt(s.value)} · ${conv}</span>
+          <span class="text-zinc-500">${count} · ${conv}</span>
         </div>
-        <div class="h-6 rounded bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
-          <div class="h-full bg-violet-600" style="width:${widthPct}%"></div>
+        <div class="h-6 rounded bg-zinc-200 dark:bg-zinc-800 overflow-hidden flex">
+          <div class="h-full bg-violet-600" style="width:${(naW + floor).toFixed(2)}%"></div>
+          <div class="h-full" style="width:${adW.toFixed(2)}%;background:${ADMIN_COLOR}"></div>
         </div>
       </div>`;
   }).join('');
-  document.getElementById(containerId).innerHTML = html;
+  document.getElementById(containerId).innerHTML = adminLegend('#7c3aed') + html;
 }
 
 function renderFunnels(f) {
   const d = f.dappUsage;
   renderFunnel('funnel-dapp', [
-    { label: 'Signed up', value: d.signed_up },
-    { label: 'Opened a dapp', value: d.opened_dapp },
-    { label: 'Returned (2+ days)', value: d.returned },
-    { label: 'Engaged socially', value: d.engaged },
-    { label: 'Became a creator', value: d.creators },
+    { label: 'Signed up', value: d.signed_up, admin: d.signed_up_admin },
+    { label: 'Opened a dapp', value: d.opened_dapp, admin: d.opened_dapp_admin },
+    { label: 'Returned (2+ days)', value: d.returned, admin: d.returned_admin },
+    { label: 'Engaged socially', value: d.engaged, admin: d.engaged_admin },
+    { label: 'Became a creator', value: d.creators, admin: d.creators_admin },
   ]);
 
   const s = f.prSessions;
   renderFunnel('funnel-pr', [
-    { label: 'Dev session started', value: s.started },
-    { label: 'Produced a PR', value: s.produced_pr },
-    { label: 'Promoted to group', value: s.promoted },
-    { label: 'Received a vote', value: s.received_vote },
-    { label: 'Merged', value: s.merged },
+    { label: 'Dev session started', value: s.started, admin: s.started_admin },
+    { label: 'Produced a PR', value: s.produced_pr, admin: s.produced_pr_admin },
+    { label: 'Promoted to group', value: s.promoted, admin: s.promoted_admin },
+    { label: 'Received a vote', value: s.received_vote, admin: s.received_vote_admin },
+    { label: 'Merged', value: s.merged, admin: s.merged_admin },
   ]);
 
   const u = f.prUsers;
   renderFunnel('funnel-pr-users', [
-    { label: 'Started building', value: u.started },
-    { label: 'Opened a PR', value: u.produced_pr },
-    { label: 'Promoted a PR', value: u.promoted },
-    { label: 'Got a PR merged', value: u.merged },
+    { label: 'Started building', value: u.started, admin: u.started_admin },
+    { label: 'Opened a PR', value: u.produced_pr, admin: u.produced_pr_admin },
+    { label: 'Promoted a PR', value: u.promoted, admin: u.promoted_admin },
+    { label: 'Got a PR merged', value: u.merged, admin: u.merged_admin },
   ]);
 }
 
@@ -224,26 +289,36 @@ function gridLines(W, H, steps, pad) {
 //   a full-height transparent hover overlay over each column (so even a
 //   short/zero bar is hoverable). The caller must attachTooltip() on the
 //   container afterwards.
+// opts.adminValues → a parallel array of admin-attributed counts (#341);
+//   each is stacked as a small amber sub-rect on top of its non-admin bar.
 function barChart(values, labels, color, opts = {}) {
-  const max = Math.max(1, ...values);
+  const admin = opts.adminValues || [];
+  // Scale to the per-column total so the stacked admin segment never clips.
+  const max = Math.max(1, ...values.map((v, i) => v + (Number(admin[i]) || 0)));
   const W = 320, H = 90, n = values.length, pad = 14;
   const bw = n > 0 ? (W / n) : W;
   const grid = opts.grid ? gridLines(W, H, 4, pad) : '';
   const rich = opts.tipPrefix && typeof opts.tip === 'function';
   const bars = values.map((v, i) => {
-    const h = Math.round((v / max) * (H - pad));
+    const a = Number(admin[i]) || 0;
+    const hBase = Math.round((v / max) * (H - pad));
+    const hAdmin = Math.round((a / max) * (H - pad));
     const x = i * bw;
-    const y = H - h;
+    const yBase = H - hBase;
+    const yAdmin = yBase - hAdmin;
+    const x0 = (x + 1).toFixed(1);
+    const w = Math.max(1, bw - 2).toFixed(1);
+    const adminRect = a > 0
+      ? `<rect x="${x0}" y="${yAdmin}" width="${w}" height="${hAdmin}" fill="${ADMIN_COLOR}" rx="1"></rect>`
+      : '';
     if (rich) {
       const tipId = `${opts.tipPrefix}-${i}`;
       tipStore[tipId] = opts.tip(i);
-      const x0 = (x + 1).toFixed(1);
-      const w = Math.max(1, bw - 2).toFixed(1);
-      return `<rect x="${x0}" y="${y}" width="${w}" height="${h}" fill="${color}" rx="1"></rect>` +
+      return `<rect x="${x0}" y="${yBase}" width="${w}" height="${hBase}" fill="${color}" rx="1"></rect>${adminRect}` +
         `<rect class="dc-hover" x="${x.toFixed(1)}" y="0" width="${bw.toFixed(1)}" height="${H}" fill="${color}" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></rect>`;
     }
-    return `<rect x="${(x + 1).toFixed(1)}" y="${y}" width="${Math.max(1, bw - 2).toFixed(1)}" height="${h}" fill="${color}" rx="1">
-      <title>${esc(labels[i])}: ${v}</title></rect>`;
+    return `<rect x="${x0}" y="${yBase}" width="${w}" height="${hBase}" fill="${color}" rx="1">
+      <title>${esc(labels[i])}: ${v}</title></rect>${adminRect}`;
   }).join('');
   return `<svg viewBox="0 0 ${W} ${H}" class="w-full text-zinc-500" preserveAspectRatio="none" style="height:90px">${grid}${bars}</svg>`;
 }
@@ -258,25 +333,32 @@ function renderGrowth(g) {
     { key: 'merged_prs', label: 'Merged PRs', color: '#60a5fa' },
   ];
   const el = document.getElementById('growth');
-  el.innerHTML = series.map((s) => {
+  const body = series.map((s) => {
     const vals = weeks.map((w) => Number(w[s.key]) || 0);
+    const adminVals = weeks.map((w) => Number(w[`${s.key}_admin`]) || 0);
     const total = vals.reduce((a, b) => a + b, 0);
+    const totalAdmin = adminVals.reduce((a, b) => a + b, 0);
+    const showAdmin = includeAdmins && totalAdmin > 0;
     const tip = (i) => `<div class="font-semibold">${esc(s.label)}</div>
       <div class="text-zinc-300">Week of ${esc(labels[i] || '')}</div>
-      <div class="text-zinc-300">${fmtInt(vals[i])}</div>`;
+      <div class="text-zinc-300">${fmtInt(vals[i] + adminVals[i])}${includeAdmins && adminVals[i] > 0 ? ` · ${fmtInt(adminVals[i])} admin` : ''}</div>`;
     return `
       <div>
         <div class="flex items-center justify-between text-xs mb-1">
           <span class="text-zinc-300">${esc(s.label)}</span>
-          <span class="text-zinc-500">${fmtInt(total)} total</span>
+          <span class="text-zinc-500">${fmtInt(total + totalAdmin)} total${showAdmin ? ` · ${fmtInt(totalAdmin)} admin` : ''}</span>
         </div>
-        ${barChart(vals, labels, s.color, { grid: true, tipPrefix: `growth-${s.key}`, tip })}
+        ${barChart(vals, labels, s.color, { grid: true, tipPrefix: `growth-${s.key}`, tip, adminValues: adminVals })}
         <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
           <span>${esc(labels[0] || '')}</span>
           <span>${esc(labels[labels.length - 1] || '')}</span>
         </div>
       </div>`;
   }).join('');
+  // The legend spans the full grid width so it reads as one chart-wide key.
+  const legend = includeAdmins
+    ? `<div class="sm:col-span-2">${adminLegend()}</div>` : '';
+  el.innerHTML = legend + body;
   attachTooltip(el);
 }
 
@@ -372,28 +454,32 @@ function renderEngagement(e) {
   const labels = weeks.map((w) => weekLabel(w.wk));
   const dau = weeks.map((w) => Number(w.dau) || 0);
   const wau = weeks.map((w) => Number(w.wau) || 0);
+  const dauAdmin = weeks.map((w) => Number(w.dau_admin) || 0);
+  const wauAdmin = weeks.map((w) => Number(w.wau_admin) || 0);
 
-  const block = (containerId, latestId, vals, color, prefix, def) => {
+  const block = (containerId, latestId, vals, adminVals, color, prefix, def) => {
     const tip = (i) => `<div class="font-semibold">${esc(prefix.toUpperCase())}</div>
       <div class="text-zinc-300">Week of ${esc(labels[i] || '')}</div>
-      <div class="text-zinc-300">${fmtInt(vals[i])} users</div>
+      <div class="text-zinc-300">${fmtInt(vals[i] + adminVals[i])} users${includeAdmins && adminVals[i] > 0 ? ` · ${fmtInt(adminVals[i])} admin` : ''}</div>
       <div class="text-zinc-500 mt-1 text-[11px]">${def}</div>`;
     const el = document.getElementById(containerId);
     el.innerHTML = `
-      ${barChart(vals, labels, color, { grid: true, tipPrefix: `eng-${prefix}`, tip })}
+      ${adminLegend(color)}
+      ${barChart(vals, labels, color, { grid: true, tipPrefix: `eng-${prefix}`, tip, adminValues: adminVals })}
       <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
         <span>${esc(labels[0] || '')}</span>
         <span>${esc(labels[labels.length - 1] || '')}</span>
       </div>`;
     attachTooltip(el);
     const latest = vals[vals.length - 1];
+    const latestAdmin = adminVals[adminVals.length - 1] || 0;
     document.getElementById(latestId).textContent =
-      latest == null ? '' : `${fmtInt(latest)} this week`;
+      latest == null ? '' : `${fmtInt(latest + latestAdmin)} this week`;
   };
 
-  block('eng-dau', 'eng-dau-latest', dau, '#8b5cf6', 'dau',
+  block('eng-dau', 'eng-dau-latest', dau, dauAdmin, '#8b5cf6', 'dau',
     'Used a dapp ≥ 4× OR promoted ≥ 1 session that week.');
-  block('eng-wau', 'eng-wau-latest', wau, '#34d399', 'wau',
+  block('eng-wau', 'eng-wau-latest', wau, wauAdmin, '#34d399', 'wau',
     'Used a dapp ≥ 2× in the trailing 2 weeks.');
 }
 
@@ -435,21 +521,25 @@ function renderTopUsers(d) {
     const merged = Number(u.merged) || 0;
     const tipRow = (label, n) =>
       `<div class="flex justify-between gap-3 text-zinc-400"><span>${label}</span><span class="text-zinc-300">${n}</span></div>`;
-    tipStore[tipId] = `<div class="font-semibold">${esc(u.name)}</div>
+    // Each bar is a single user, so an admin builder gets the whole bar in
+    // amber (#341) instead of the usual violet, and "(admin)" in the header.
+    const isAdmin = includeAdmins && !!u.is_admin;
+    const barColor = isAdmin ? ADMIN_COLOR : '#8b5cf6';
+    tipStore[tipId] = `<div class="font-semibold">${esc(u.name)}${isAdmin ? ' (admin)' : ''}</div>
       <div class="text-zinc-300 mb-1">#${i + 1} · ${v} dev session${v === 1 ? '' : 's'}</div>
       ${tipRow('Produced a PR', producedPr)}
       ${tipRow('Promoted to group', promoted)}
       ${tipRow('Received a vote', receivedVote)}
       ${tipRow('Merged', merged)}`;
     return `
-      <rect x="${(x + 3).toFixed(1)}" y="${y}" width="${bw - 6}" height="${h}" fill="#8b5cf6" rx="2"></rect>
+      <rect x="${(x + 3).toFixed(1)}" y="${y}" width="${bw - 6}" height="${h}" fill="${barColor}" rx="2"></rect>
       <text x="${cx}" y="${y - 3}" text-anchor="middle" font-size="9" fill="currentColor" class="text-zinc-400">${v}</text>
       <text x="${cx}" y="${H - botPad + 12}" text-anchor="end" font-size="9" fill="currentColor"
             class="text-zinc-400" transform="rotate(-55 ${cx} ${H - botPad + 12})">${esc(short)}</text>
       <rect class="dc-hover" x="${x.toFixed(1)}" y="${topPad}" width="${bw.toFixed(1)}" height="${plot}"
             fill="#8b5cf6" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></rect>`;
   }).join('');
-  el.innerHTML = `
+  el.innerHTML = `${adminLegend()}
     <div class="overflow-x-auto">
       <svg viewBox="0 0 ${W} ${H}" style="height:200px;min-width:${W}px" class="text-zinc-500">
         ${grid}${bars}
@@ -563,6 +653,14 @@ function renderSpend() {
   const labels = days.map((x) => weekLabel(x.day));
   const plat = days.map((x) => Number(x.platform_cents) || 0);
   const byok = days.map((x) => Number(x.user_key_cents) || 0);
+  // Admin-attributed portion per day. When "Include admin users" is on, the
+  // admin spend is stacked as an amber (ADMIN_COLOR) cap on top of the
+  // non-admin remainder, keeping each bar's total height unchanged; the
+  // existing "of which admin" tooltip line is kept. 0 when the box is off
+  // (the server's adminFilter dropped all admin rows), so the rendering is
+  // identical to before in that case.
+  const platAdmin = days.map((x) => Number(x.platform_cents_admin) || 0);
+  const byokAdmin = days.map((x) => Number(x.user_key_cents_admin) || 0);
   const totals = days.map((_, i) =>
     spendMode === 'platform' ? plat[i] : spendMode === 'user' ? byok[i] : plat[i] + byok[i]);
   const max = Math.max(1, ...totals);
@@ -581,21 +679,36 @@ function renderSpend() {
     const barX = i * bw;
     const w = Math.max(1, bw - 2).toFixed(1);
     const x0 = (barX + 1).toFixed(1);
+    // Admin-attributed cents for the active mode (0 when the box is off).
+    const pAdmin = includeAdmins ? platAdmin[i] : 0;
+    const uAdmin = includeAdmins ? byokAdmin[i] : 0;
+    // Compose each bar as a bottom-up stack: the non-admin remainder in its
+    // mode colour, then the admin spend as an amber cap. Subtracting the
+    // admin portion from the non-admin segment keeps the total height equal
+    // to totals[i]; Math.max(0, …) guards against float rounding where the
+    // admin portion could marginally exceed the segment total.
+    const stack = spendMode === 'both'
+      ? [
+          { value: Math.max(0, plat[i] - pAdmin), color: SPEND_PLATFORM },
+          { value: Math.max(0, byok[i] - uAdmin), color: SPEND_USERKEY },
+          { value: pAdmin + uAdmin, color: ADMIN_COLOR },
+        ]
+      : spendMode === 'user'
+        ? [
+            { value: Math.max(0, byok[i] - uAdmin), color: SPEND_USERKEY },
+            { value: uAdmin, color: ADMIN_COLOR },
+          ]
+        : [
+            { value: Math.max(0, plat[i] - pAdmin), color: SPEND_PLATFORM },
+            { value: pAdmin, color: ADMIN_COLOR },
+          ];
+    let yCursor = topPad + plot;
     let segs = '';
-    if (spendMode === 'both') {
-      // Stacked: platform at the bottom, user-key above it.
-      const hp = (plat[i] / max) * plot;
-      const hu = (byok[i] / max) * plot;
-      const yp = topPad + plot - hp;
-      const yu = yp - hu;
-      segs = `<rect x="${x0}" y="${yp.toFixed(1)}" width="${w}" height="${Math.max(0, hp).toFixed(1)}" fill="${SPEND_PLATFORM}"></rect>` +
-        `<rect x="${x0}" y="${yu.toFixed(1)}" width="${w}" height="${Math.max(0, hu).toFixed(1)}" fill="${SPEND_USERKEY}"></rect>`;
-    } else {
-      const v = totals[i];
-      const h = (v / max) * plot;
-      const y = topPad + plot - h;
-      const color = spendMode === 'user' ? SPEND_USERKEY : SPEND_PLATFORM;
-      segs = `<rect x="${x0}" y="${y.toFixed(1)}" width="${w}" height="${Math.max(0, h).toFixed(1)}" fill="${color}"></rect>`;
+    for (const s of stack) {
+      if (s.value <= 0) continue;
+      const h = (s.value / max) * plot;
+      yCursor -= h;
+      segs += `<rect x="${x0}" y="${yCursor.toFixed(1)}" width="${w}" height="${Math.max(0, h).toFixed(1)}" fill="${s.color}"></rect>`;
     }
     const tipId = `spend-${i}`;
     const detail = spendMode === 'both'
@@ -603,16 +716,35 @@ function renderSpend() {
          <div class="flex justify-between gap-3"><span class="text-zinc-400">User key</span><span>${dollars(byok[i])}</span></div>
          <div class="flex justify-between gap-3 border-t border-zinc-700 mt-1 pt-1"><span class="text-zinc-400">Total</span><span>${dollars(plat[i] + byok[i])}</span></div>`
       : `<div class="text-zinc-300">${dollars(totals[i])}</div>`;
-    tipStore[tipId] = `<div class="font-semibold">${esc(labels[i])}</div>${detail}`;
+    // Admin portion for the active mode (#341): tooltip-only breakout.
+    const adminCents = spendMode === 'platform' ? platAdmin[i]
+      : spendMode === 'user' ? byokAdmin[i] : platAdmin[i] + byokAdmin[i];
+    const adminLine = includeAdmins && adminCents > 0
+      ? `<div class="flex justify-between gap-3 text-[11px]" style="color:${ADMIN_COLOR}"><span>of which admin</span><span>${dollars(adminCents)}</span></div>`
+      : '';
+    tipStore[tipId] = `<div class="font-semibold">${esc(labels[i])}</div>${detail}${adminLine}`;
     const overlay = `<rect class="dc-hover" x="${barX.toFixed(1)}" y="${topPad}" width="${bw.toFixed(1)}" height="${plot}"
       fill="#8b5cf6" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></rect>`;
     return segs + overlay;
   }).join('');
-  const legend = spendMode === 'both' ? `
-    <div class="flex items-center gap-3 text-[10px] text-zinc-400 mb-2">
-      <span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${SPEND_PLATFORM}"></span> Platform key</span>
-      <span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${SPEND_USERKEY}"></span> User key (BYOK)</span>
-    </div>` : '';
+  // Amber "Admin spend" swatch appears whenever the box is on and the active
+  // mode has any admin spend. Not reusing adminLegend() here: its "Non-admin"
+  // swatch is hard-coded violet and would mismatch the green (User key) and
+  // dual-colour (Both) cases — mirroring renderSpendByBuilder's bespoke swatch.
+  const adminTotals = days.map((_, i) =>
+    spendMode === 'platform' ? platAdmin[i]
+      : spendMode === 'user' ? byokAdmin[i] : platAdmin[i] + byokAdmin[i]);
+  const hasAdminSpend = includeAdmins && adminTotals.some((v) => v > 0);
+  const modeSwatches = spendMode === 'both'
+    ? `<span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${SPEND_PLATFORM}"></span> Platform key</span>
+       <span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${SPEND_USERKEY}"></span> User key (BYOK)</span>`
+    : '';
+  const adminSwatch = hasAdminSpend
+    ? `<span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${ADMIN_COLOR}"></span> Admin spend</span>`
+    : '';
+  const legend = (modeSwatches || adminSwatch)
+    ? `<div class="flex flex-wrap items-center gap-3 text-[10px] text-zinc-400 mb-2">${modeSwatches}${adminSwatch}</div>`
+    : '';
   el.innerHTML = `${legend}
     <svg viewBox="0 0 ${W} ${H}" class="w-full text-zinc-500" preserveAspectRatio="none" style="height:180px">
       ${grid}${bars}
@@ -668,24 +800,29 @@ function renderSpendByBuilder() {
     const tipId = `builder-${i}`;
     const tipRow = (label, val) =>
       `<div class="flex justify-between gap-3 text-zinc-400"><span>${label}</span><span class="text-zinc-300">${dollars(val)}</span></div>`;
-    tipStore[tipId] = `<div class="font-semibold">${esc(b.name)}</div>
+    // Admin builders get an amber OUTLINE (#341), not a fill swap — the fill
+    // is already occupied by the platform/user/both colours, so an outline
+    // composes with every toggle mode. The tooltip gains an "admin" line.
+    const isAdmin = includeAdmins && !!b.is_admin;
+    const outline = isAdmin ? ` stroke="${ADMIN_COLOR}" stroke-width="2"` : '';
+    tipStore[tipId] = `<div class="font-semibold">${esc(b.name)}${isAdmin ? ' (admin)' : ''}</div>
       <div class="text-zinc-300 mb-1">#${i + 1} · ${dollars(valueOf(b))}</div>
       ${tipRow('Platform key', p)}
       ${tipRow('User key (BYOK)', u)}
-      ${tipRow('Total', p + u)}`;
+      ${tipRow('Total', p + u)}${isAdmin ? `<div class="mt-1 text-[11px]" style="color:${ADMIN_COLOR}">admin</div>` : ''}`;
     let segs;
     if (builderMode === 'both') {
       const hp = Math.round((p / max) * plot);
       const hu = Math.round((u / max) * plot);
       const yp = topPad + (plot - hp);
       const yu = yp - hu;
-      segs = `<rect x="${(x + 3).toFixed(1)}" y="${yp}" width="${bw - 6}" height="${hp}" fill="${SPEND_PLATFORM}" rx="2"></rect>` +
-        `<rect x="${(x + 3).toFixed(1)}" y="${yu}" width="${bw - 6}" height="${hu}" fill="${SPEND_USERKEY}" rx="2"></rect>`;
+      segs = `<rect x="${(x + 3).toFixed(1)}" y="${yp}" width="${bw - 6}" height="${hp}" fill="${SPEND_PLATFORM}" rx="2"${outline}></rect>` +
+        `<rect x="${(x + 3).toFixed(1)}" y="${yu}" width="${bw - 6}" height="${hu}" fill="${SPEND_USERKEY}" rx="2"${outline}></rect>`;
     } else {
       const v = valueOf(b);
       const h = Math.round((v / max) * plot);
       const y = topPad + (plot - h);
-      segs = `<rect x="${(x + 3).toFixed(1)}" y="${y}" width="${bw - 6}" height="${h}" fill="${color}" rx="2"></rect>`;
+      segs = `<rect x="${(x + 3).toFixed(1)}" y="${y}" width="${bw - 6}" height="${h}" fill="${color}" rx="2"${outline}></rect>`;
     }
     return segs +
       `<text x="${cx}" y="${H - botPad + 12}" text-anchor="end" font-size="9" fill="currentColor"
@@ -693,11 +830,17 @@ function renderSpendByBuilder() {
       `<rect class="dc-hover" x="${x.toFixed(1)}" y="${topPad}" width="${bw.toFixed(1)}" height="${plot}"
             fill="#8b5cf6" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></rect>`;
   }).join('');
-  const legend = builderMode === 'both' ? `
-    <div class="flex items-center gap-3 text-[10px] text-zinc-400 mb-2">
-      <span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${SPEND_PLATFORM}"></span> Platform key</span>
-      <span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${SPEND_USERKEY}"></span> User key (BYOK)</span>
-    </div>` : '';
+  const modeLegend = builderMode === 'both'
+    ? `<span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${SPEND_PLATFORM}"></span> Platform key</span>
+       <span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${SPEND_USERKEY}"></span> User key (BYOK)</span>`
+    : '';
+  // Admin marker is an outline here (#341), so its legend swatch is outlined.
+  const adminSwatch = includeAdmins
+    ? `<span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="border:2px solid ${ADMIN_COLOR}"></span> Admin builder</span>`
+    : '';
+  const legend = (modeLegend || adminSwatch)
+    ? `<div class="flex flex-wrap items-center gap-3 text-[10px] text-zinc-400 mb-2">${modeLegend}${adminSwatch}</div>`
+    : '';
   el.innerHTML = `${legend}
     <div class="overflow-x-auto">
       <svg viewBox="0 0 ${W} ${H}" style="height:200px;min-width:${W}px" class="text-zinc-500">

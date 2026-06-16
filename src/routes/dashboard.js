@@ -40,6 +40,15 @@ function wantsAdmins(req) {
   return req.query.includeAdmins === 'true';
 }
 
+// Admin-membership split for the colour differentiation (#341). When
+// `includeAdmins` is on, the affected endpoints keep their existing column as
+// the NON-ADMIN value (admins always excluded, via `FILTER (WHERE NOT
+// is_admin)` / a joined `is_admin` flag) and add a parallel `_admin`
+// companion computed with the matching `FILTER (WHERE is_admin)`. When the
+// box is off, `adminFilter` has already dropped every admin row upstream, so
+// the admin companions evaluate to 0 and the non-admin column equals the old
+// aggregate — the payload is byte-for-byte unchanged.
+
 // "Active" surface: one row per (user, day) the user did anything we
 // count as activity. Reused by retention + WAU/MAU. `day` is a DATE.
 // Built per-request so the admin-exclusion filter can be woven into each
@@ -162,28 +171,41 @@ function dashboardRoutes(config) {
     const sessUserCohort = since ? `usr.created_at >= ${since}` : 'TRUE';
 
     try {
-      // Dapp-usage funnel — distinct users reaching each milestone.
+      // Dapp-usage funnel — distinct users reaching each milestone. `base`
+      // carries each user's is_admin flag so every stage can be split into a
+      // non-admin count and an `_admin` companion (#341). When admins are
+      // excluded, base holds no admin rows so the companions are all 0.
       const dapp = await pool.query(
         `WITH base AS (
-           SELECT u.id AS user_id FROM users u
+           SELECT u.id AS user_id, u.is_admin FROM users u
             WHERE ${userCohort} ${adminFilter('u.id', includeAdmins)}
+         ),
+         flags AS (
+           SELECT b.user_id, b.is_admin,
+             EXISTS (SELECT 1 FROM app_activity aa WHERE aa.user_id = b.user_id) AS opened,
+             (SELECT COUNT(DISTINCT aa.date) FROM app_activity aa
+                WHERE aa.user_id = b.user_id) >= 2 AS returned,
+             (EXISTS (SELECT 1 FROM chat_messages cm WHERE cm.user_id = b.user_id)
+               OR EXISTS (SELECT 1 FROM pr_votes pv WHERE pv.user_id = b.user_id)
+               OR EXISTS (SELECT 1 FROM pr_kudos pk WHERE pk.giver_user_id = b.user_id)
+               OR EXISTS (SELECT 1 FROM app_favorites af WHERE af.user_id = b.user_id)
+             ) AS engaged,
+             EXISTS (SELECT 1 FROM apps a WHERE a.created_by = b.user_id
+                       AND COALESCE(a.self_hosted, FALSE) = FALSE) AS creator
+           FROM base b
          )
          SELECT
-           (SELECT COUNT(*)::int FROM base) AS signed_up,
-           (SELECT COUNT(DISTINCT b.user_id)::int FROM base b
-              JOIN app_activity aa ON aa.user_id = b.user_id) AS opened_dapp,
-           (SELECT COUNT(DISTINCT b.user_id)::int FROM base b
-              WHERE (SELECT COUNT(DISTINCT aa.date) FROM app_activity aa
-                       WHERE aa.user_id = b.user_id) >= 2) AS returned,
-           (SELECT COUNT(DISTINCT b.user_id)::int FROM base b
-              WHERE EXISTS (SELECT 1 FROM chat_messages cm WHERE cm.user_id = b.user_id)
-                 OR EXISTS (SELECT 1 FROM pr_votes pv WHERE pv.user_id = b.user_id)
-                 OR EXISTS (SELECT 1 FROM pr_kudos pk WHERE pk.giver_user_id = b.user_id)
-                 OR EXISTS (SELECT 1 FROM app_favorites af WHERE af.user_id = b.user_id)
-             ) AS engaged,
-           (SELECT COUNT(DISTINCT b.user_id)::int FROM base b
-              JOIN apps a ON a.created_by = b.user_id
-              WHERE COALESCE(a.self_hosted, FALSE) = FALSE) AS creators`
+           COUNT(*) FILTER (WHERE NOT is_admin)::int AS signed_up,
+           COUNT(*) FILTER (WHERE is_admin)::int     AS signed_up_admin,
+           COUNT(*) FILTER (WHERE opened AND NOT is_admin)::int AS opened_dapp,
+           COUNT(*) FILTER (WHERE opened AND is_admin)::int     AS opened_dapp_admin,
+           COUNT(*) FILTER (WHERE returned AND NOT is_admin)::int AS returned,
+           COUNT(*) FILTER (WHERE returned AND is_admin)::int     AS returned_admin,
+           COUNT(*) FILTER (WHERE engaged AND NOT is_admin)::int AS engaged,
+           COUNT(*) FILTER (WHERE engaged AND is_admin)::int     AS engaged_admin,
+           COUNT(*) FILTER (WHERE creator AND NOT is_admin)::int AS creators,
+           COUNT(*) FILTER (WHERE creator AND is_admin)::int     AS creators_admin
+         FROM flags`
       );
 
       // PR-promotion funnel — session-level conversion (counts of dev
@@ -191,25 +213,41 @@ function dashboardRoutes(config) {
       // directly as 'promoted' have no promoted_at, so the promoted test
       // also accepts the terminal statuses.
       const sessCohort = since ? `cs.created_at >= ${since}` : 'TRUE';
+      // Session-level conversion, each stage split non-admin vs admin via the
+      // session owner's is_admin flag (#341).
       const sessions = await pool.query(
         `SELECT
-           COUNT(*)::int AS started,
-           COUNT(*) FILTER (WHERE cs.pr_number IS NOT NULL)::int AS produced_pr,
-           COUNT(*) FILTER (WHERE cs.promoted_at IS NOT NULL
-                              OR cs.status IN ('promoted','merging','merged'))::int AS promoted,
-           COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM pr_votes pv WHERE pv.session_id = cs.id))::int AS received_vote,
-           COUNT(*) FILTER (WHERE cs.status = 'merged')::int AS merged
+           COUNT(*) FILTER (WHERE NOT COALESCE(usr.is_admin, FALSE))::int AS started,
+           COUNT(*) FILTER (WHERE COALESCE(usr.is_admin, FALSE))::int     AS started_admin,
+           COUNT(*) FILTER (WHERE cs.pr_number IS NOT NULL AND NOT COALESCE(usr.is_admin, FALSE))::int AS produced_pr,
+           COUNT(*) FILTER (WHERE cs.pr_number IS NOT NULL AND COALESCE(usr.is_admin, FALSE))::int     AS produced_pr_admin,
+           COUNT(*) FILTER (WHERE (cs.promoted_at IS NOT NULL OR cs.status IN ('promoted','merging','merged'))
+                              AND NOT COALESCE(usr.is_admin, FALSE))::int AS promoted,
+           COUNT(*) FILTER (WHERE (cs.promoted_at IS NOT NULL OR cs.status IN ('promoted','merging','merged'))
+                              AND COALESCE(usr.is_admin, FALSE))::int     AS promoted_admin,
+           COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM pr_votes pv WHERE pv.session_id = cs.id)
+                              AND NOT COALESCE(usr.is_admin, FALSE))::int AS received_vote,
+           COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM pr_votes pv WHERE pv.session_id = cs.id)
+                              AND COALESCE(usr.is_admin, FALSE))::int     AS received_vote_admin,
+           COUNT(*) FILTER (WHERE cs.status = 'merged' AND NOT COALESCE(usr.is_admin, FALSE))::int AS merged,
+           COUNT(*) FILTER (WHERE cs.status = 'merged' AND COALESCE(usr.is_admin, FALSE))::int     AS merged_admin
          FROM chat_sessions cs
+         LEFT JOIN users usr ON usr.id = cs.user_id
          WHERE ${sessCohort} ${adminFilter('cs.user_id', includeAdmins)}`
       );
 
       const usersReach = await pool.query(
         `SELECT
-           COUNT(DISTINCT cs.user_id)::int AS started,
-           COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.pr_number IS NOT NULL)::int AS produced_pr,
-           COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.promoted_at IS NOT NULL
-                              OR cs.status IN ('promoted','merging','merged'))::int AS promoted,
-           COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status = 'merged')::int AS merged
+           COUNT(DISTINCT cs.user_id) FILTER (WHERE NOT usr.is_admin)::int AS started,
+           COUNT(DISTINCT cs.user_id) FILTER (WHERE usr.is_admin)::int     AS started_admin,
+           COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.pr_number IS NOT NULL AND NOT usr.is_admin)::int AS produced_pr,
+           COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.pr_number IS NOT NULL AND usr.is_admin)::int     AS produced_pr_admin,
+           COUNT(DISTINCT cs.user_id) FILTER (WHERE (cs.promoted_at IS NOT NULL
+                              OR cs.status IN ('promoted','merging','merged')) AND NOT usr.is_admin)::int AS promoted,
+           COUNT(DISTINCT cs.user_id) FILTER (WHERE (cs.promoted_at IS NOT NULL
+                              OR cs.status IN ('promoted','merging','merged')) AND usr.is_admin)::int     AS promoted_admin,
+           COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status = 'merged' AND NOT usr.is_admin)::int AS merged,
+           COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status = 'merged' AND usr.is_admin)::int     AS merged_admin
          FROM chat_sessions cs
          JOIN users usr ON usr.id = cs.user_id
          WHERE ${sessUserCohort} ${adminFilter('usr.id', includeAdmins)}`
@@ -248,30 +286,44 @@ function dashboardRoutes(config) {
            )::date AS wk
          ),
          u AS (
-           SELECT date_trunc('week', created_at)::date AS wk, COUNT(*)::int AS n
+           SELECT date_trunc('week', created_at)::date AS wk,
+                  COUNT(*) FILTER (WHERE NOT is_admin)::int AS n,
+                  COUNT(*) FILTER (WHERE is_admin)::int     AS n_admin
            FROM users WHERE TRUE ${adminFilter('id', includeAdmins)} GROUP BY 1
          ),
          a AS (
-           SELECT date_trunc('week', created_at)::date AS wk, COUNT(*)::int AS n
-           FROM apps WHERE COALESCE(self_hosted, FALSE) = FALSE
-             ${adminFilter('created_by', includeAdmins)} GROUP BY 1
+           SELECT date_trunc('week', ap.created_at)::date AS wk,
+                  COUNT(*) FILTER (WHERE NOT COALESCE(au.is_admin, FALSE))::int AS n,
+                  COUNT(*) FILTER (WHERE COALESCE(au.is_admin, FALSE))::int     AS n_admin
+           FROM apps ap LEFT JOIN users au ON au.id = ap.created_by
+           WHERE COALESCE(ap.self_hosted, FALSE) = FALSE
+             ${adminFilter('ap.created_by', includeAdmins)} GROUP BY 1
          ),
          pr AS (
-           SELECT date_trunc('week', promoted_at)::date AS wk, COUNT(*)::int AS n
-           FROM chat_sessions WHERE promoted_at IS NOT NULL
-             ${adminFilter('user_id', includeAdmins)} GROUP BY 1
+           SELECT date_trunc('week', cs.promoted_at)::date AS wk,
+                  COUNT(*) FILTER (WHERE NOT COALESCE(pu.is_admin, FALSE))::int AS n,
+                  COUNT(*) FILTER (WHERE COALESCE(pu.is_admin, FALSE))::int     AS n_admin
+           FROM chat_sessions cs LEFT JOIN users pu ON pu.id = cs.user_id
+           WHERE cs.promoted_at IS NOT NULL
+             ${adminFilter('cs.user_id', includeAdmins)} GROUP BY 1
          ),
          mg AS (
-           SELECT date_trunc('week', COALESCE(merged_at, promoted_at, created_at))::date AS wk,
-                  COUNT(*)::int AS n
-           FROM chat_sessions WHERE status = 'merged'
-             ${adminFilter('user_id', includeAdmins)} GROUP BY 1
+           SELECT date_trunc('week', COALESCE(cs.merged_at, cs.promoted_at, cs.created_at))::date AS wk,
+                  COUNT(*) FILTER (WHERE NOT COALESCE(mu.is_admin, FALSE))::int AS n,
+                  COUNT(*) FILTER (WHERE COALESCE(mu.is_admin, FALSE))::int     AS n_admin
+           FROM chat_sessions cs LEFT JOIN users mu ON mu.id = cs.user_id
+           WHERE cs.status = 'merged'
+             ${adminFilter('cs.user_id', includeAdmins)} GROUP BY 1
          )
          SELECT to_char(s.wk, 'YYYY-MM-DD') AS wk,
                 COALESCE(u.n, 0)  AS new_users,
+                COALESCE(u.n_admin, 0)  AS new_users_admin,
                 COALESCE(a.n, 0)  AS new_apps,
+                COALESCE(a.n_admin, 0)  AS new_apps_admin,
                 COALESCE(pr.n, 0) AS promoted_prs,
-                COALESCE(mg.n, 0) AS merged_prs
+                COALESCE(pr.n_admin, 0) AS promoted_prs_admin,
+                COALESCE(mg.n, 0) AS merged_prs,
+                COALESCE(mg.n_admin, 0) AS merged_prs_admin
          FROM spine s
          LEFT JOIN u  ON u.wk  = s.wk
          LEFT JOIN a  ON a.wk  = s.wk
@@ -412,20 +464,25 @@ function dashboardRoutes(config) {
            )::date AS wk
          ),
          agg AS (
-           SELECT user_id,
-                  date_trunc('week', created_at)::date AS wk,
-                  COUNT(DISTINCT created_at::date) FILTER (WHERE event_type = 'dapp_active_day') AS dapp_days,
-                  COUNT(*) FILTER (WHERE event_type = 'pr_promoted')     AS promo_ct
-           FROM events
-           WHERE user_id IS NOT NULL
-             AND event_type IN ('dapp_active_day', 'pr_promoted')
-             ${adminFilter('user_id', includeAdmins)}
-           GROUP BY user_id, date_trunc('week', created_at)::date
+           SELECT e.user_id,
+                  COALESCE(u.is_admin, FALSE) AS is_admin,
+                  date_trunc('week', e.created_at)::date AS wk,
+                  COUNT(DISTINCT e.created_at::date) FILTER (WHERE e.event_type = 'dapp_active_day') AS dapp_days,
+                  COUNT(*) FILTER (WHERE e.event_type = 'pr_promoted')     AS promo_ct
+           FROM events e
+           LEFT JOIN users u ON u.id = e.user_id
+           WHERE e.user_id IS NOT NULL
+             AND e.event_type IN ('dapp_active_day', 'pr_promoted')
+             ${adminFilter('e.user_id', includeAdmins)}
+           GROUP BY e.user_id, COALESCE(u.is_admin, FALSE), date_trunc('week', e.created_at)::date
          )
          SELECT to_char(w.wk, 'YYYY-MM-DD') AS wk,
                 COUNT(DISTINCT a.user_id) FILTER (
-                  WHERE a.dapp_days >= 4 OR a.promo_ct >= 1
-                )::int AS dau
+                  WHERE (a.dapp_days >= 4 OR a.promo_ct >= 1) AND NOT a.is_admin
+                )::int AS dau,
+                COUNT(DISTINCT a.user_id) FILTER (
+                  WHERE (a.dapp_days >= 4 OR a.promo_ct >= 1) AND a.is_admin
+                )::int AS dau_admin
          FROM weeks w
          LEFT JOIN agg a ON a.wk = w.wk
          GROUP BY w.wk
@@ -441,22 +498,25 @@ function dashboardRoutes(config) {
            )::date AS wk
          ),
          dapp AS (
-           SELECT user_id, created_at::date AS day
-           FROM events
-           WHERE event_type = 'dapp_active_day' AND user_id IS NOT NULL
-             ${adminFilter('user_id', includeAdmins)}
+           SELECT e.user_id, COALESCE(u.is_admin, FALSE) AS is_admin, e.created_at::date AS day
+           FROM events e
+           LEFT JOIN users u ON u.id = e.user_id
+           WHERE e.event_type = 'dapp_active_day' AND e.user_id IS NOT NULL
+             ${adminFilter('e.user_id', includeAdmins)}
          ),
          qualifying AS (
            -- A user counts for week w if they used a dapp on >= 2 distinct
            -- calendar days in the 14-day window [w-7, w+7) ending at that
-           -- week's close.
-           SELECT w.wk, d.user_id
+           -- week's close. bool_or carries the admin flag for the split.
+           SELECT w.wk, d.user_id, bool_or(d.is_admin) AS is_admin
            FROM weeks w
            JOIN dapp d ON d.day >= w.wk - 7 AND d.day < w.wk + 7
            GROUP BY w.wk, d.user_id
            HAVING COUNT(DISTINCT d.day) >= 2
          )
-         SELECT to_char(w.wk, 'YYYY-MM-DD') AS wk, COUNT(q.user_id)::int AS wau
+         SELECT to_char(w.wk, 'YYYY-MM-DD') AS wk,
+                COUNT(q.user_id) FILTER (WHERE NOT q.is_admin)::int AS wau,
+                COUNT(q.user_id) FILTER (WHERE q.is_admin)::int     AS wau_admin
          FROM weeks w
          LEFT JOIN qualifying q ON q.wk = w.wk
          GROUP BY w.wk
@@ -465,10 +525,13 @@ function dashboardRoutes(config) {
 
       // Merge the two weekly series on week for a single tidy payload.
       const byWeek = new Map();
-      for (const r of dau.rows) byWeek.set(r.wk, { wk: r.wk, dau: r.dau, wau: 0 });
+      for (const r of dau.rows) {
+        byWeek.set(r.wk, { wk: r.wk, dau: r.dau, dau_admin: r.dau_admin || 0, wau: 0, wau_admin: 0 });
+      }
       for (const r of wau.rows) {
-        const e = byWeek.get(r.wk) || { wk: r.wk, dau: 0, wau: 0 };
+        const e = byWeek.get(r.wk) || { wk: r.wk, dau: 0, dau_admin: 0, wau: 0, wau_admin: 0 };
         e.wau = r.wau;
+        e.wau_admin = r.wau_admin || 0;
         byWeek.set(r.wk, e);
       }
       const weeks = Array.from(byWeek.values()).sort((a, b) => (a.wk < b.wk ? -1 : 1));
@@ -490,6 +553,7 @@ function dashboardRoutes(config) {
     try {
       const { rows } = await pool.query(
         `SELECT u.username AS name,
+                u.is_admin AS is_admin,
                 COUNT(cs.id)::int AS sessions,
                 COUNT(*) FILTER (WHERE cs.pr_number IS NOT NULL)::int AS produced_pr,
                 COUNT(*) FILTER (WHERE cs.promoted_at IS NOT NULL
@@ -598,17 +662,27 @@ function dashboardRoutes(config) {
            )::date AS day
          ),
          agg AS (
-           SELECT date AS day,
-                  SUM(total_cost_cents) AS platform_cents,
-                  SUM(byok_cost_cents)  AS user_key_cents
-           FROM llm_usage
-           WHERE date >= CURRENT_DATE - 29
-             ${adminFilter('user_id', includeAdmins)}
-           GROUP BY date
+           SELECT lu.date AS day,
+                  SUM(lu.total_cost_cents) AS platform_cents,
+                  SUM(lu.byok_cost_cents)  AS user_key_cents,
+                  -- Admin-attributed portion of each day's spend. The client
+                  -- stacks this as an amber segment on top of the non-admin
+                  -- remainder (the bar's total height stays the full value) and
+                  -- also lists it as the "of which admin" tooltip line. 0 when
+                  -- the box is off (adminFilter has dropped all admin rows).
+                  SUM(lu.total_cost_cents) FILTER (WHERE COALESCE(u.is_admin, FALSE)) AS platform_cents_admin,
+                  SUM(lu.byok_cost_cents)  FILTER (WHERE COALESCE(u.is_admin, FALSE)) AS user_key_cents_admin
+           FROM llm_usage lu
+           LEFT JOIN users u ON u.id = lu.user_id
+           WHERE lu.date >= CURRENT_DATE - 29
+             ${adminFilter('lu.user_id', includeAdmins)}
+           GROUP BY lu.date
          )
          SELECT to_char(s.day, 'YYYY-MM-DD') AS day,
                 COALESCE(a.platform_cents, 0)::float AS platform_cents,
-                COALESCE(a.user_key_cents, 0)::float AS user_key_cents
+                COALESCE(a.user_key_cents, 0)::float AS user_key_cents,
+                COALESCE(a.platform_cents_admin, 0)::float AS platform_cents_admin,
+                COALESCE(a.user_key_cents_admin, 0)::float AS user_key_cents_admin
          FROM spine s
          LEFT JOIN agg a ON a.day = s.day
          ORDER BY s.day`
@@ -630,6 +704,7 @@ function dashboardRoutes(config) {
     try {
       const { rows } = await pool.query(
         `SELECT u.username AS name,
+                u.is_admin AS is_admin,
                 COALESCE(SUM(lu.total_cost_cents), 0)::float AS platform_cents,
                 COALESCE(SUM(lu.byok_cost_cents), 0)::float  AS user_key_cents
            FROM users u

@@ -314,11 +314,11 @@ CREATE INDEX IF NOT EXISTS chat_sessions_activity_idx ON chat_sessions(status, l
 --                            dev chat was cloned from (many clones per source).
 --   created_from_issue_number = #287: on ORDINARY sessions, the GitHub issue
 --                            this dev chat was started for via the issue row's
---                            "Create PR" button. Recorded at creation time (not
+--                            start-work button. Recorded at creation time (not
 --                            the async, Mayor-declared `linked_issues`) so the
---                            row can deterministically swap "Create PR" →
---                            "Open Session" for the owning viewer. NULL on the
---                            generic "+ New chat" path and on headless rows.
+--                            row can deterministically swap "Create proposal" →
+--                            "Create new proposal" for the owning viewer. NULL on
+--                            the generic "+ New chat" path and on headless rows.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS is_headless BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS headless_status VARCHAR(20);
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS headless_issue_number INTEGER;
