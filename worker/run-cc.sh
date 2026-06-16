@@ -108,6 +108,13 @@ if [ "$MODE" = "sync" ]; then
     exit 0
   fi
 
+  # #361: comma-delimited list of files that conflicted on this sync.
+  # Captured at conflict-detection time (below) and surfaced on every
+  # __USERNODE_RESULT__ line so the platform can persist which files
+  # conflicted — even on the resolved path, where the index is clean by
+  # the time we emit. Empty for a clean merge.
+  CONFLICT_FILES_CSV=""
+
   echo "__USERNODE_PHASE__ sync_merge"
   # `git merge origin/main` produces a merge commit on clean success
   # and leaves the tree dirty on conflict. We let it fail-non-zero
@@ -119,6 +126,9 @@ if [ "$MODE" = "sync" ]; then
     # Conflict path. Hand off to CC.
     echo "__USERNODE_PHASE__ sync_conflict_cc"
     CONFLICT_FILES=$(git diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')
+    # Comma-delimited (no spaces) so it rides cleanly on the
+    # space-delimited __USERNODE_RESULT__ key/value line.
+    CONFLICT_FILES_CSV=$(git diff --name-only --diff-filter=U 2>/dev/null | paste -sd, - | sed 's/,$//')
     SYNC_PROMPT="A merge of origin/main into branch '$BRANCH' produced conflicts. The conflict markers (<<<<<<<, =======, >>>>>>>) are in the working tree.
 
 Conflicted files: $CONFLICT_FILES
@@ -143,7 +153,7 @@ Do not run git commands. I will commit and push for you after you finish editing
       AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
       BEHIND=$(git rev-list --count "HEAD..origin/main" 2>/dev/null || echo 0)
       SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
-      echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=0 mode=sync sync_result=conflict"
+      echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=0 mode=sync sync_result=conflict conflict_files=$CONFLICT_FILES_CSV"
       exit 0
     fi
 
@@ -154,7 +164,7 @@ Do not run git commands. I will commit and push for you after you finish editing
     if ! git commit -m "Merge origin/main via Usernode sync (Claude-resolved)" 2>&1; then
       echo "__USERNODE_WARN__ commit failed after conflict resolution"
       git merge --abort 2>&1 || true
-      echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=$BEHIND_NOW sha= push_ok=0 mode=sync sync_result=conflict"
+      echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=$BEHIND_NOW sha= push_ok=0 mode=sync sync_result=conflict conflict_files=$CONFLICT_FILES_CSV"
       exit 0
     fi
     SYNC_RESULT="resolved"
@@ -174,7 +184,7 @@ Do not run git commands. I will commit and push for you after you finish editing
   AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
   BEHIND=$(git rev-list --count "HEAD..origin/main" 2>/dev/null || echo 0)
   SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
-  echo "__USERNODE_RESULT__ cc_exit=0 ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=sync sync_result=$SYNC_RESULT"
+  echo "__USERNODE_RESULT__ cc_exit=0 ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=sync sync_result=$SYNC_RESULT conflict_files=$CONFLICT_FILES_CSV"
   exit 0
 fi
 # ── end MODE=sync ─────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 const log = require('./logger');
 const github = require('./github');
 const limits = require('./limits');
-const { runSyncMain } = require('./sync-main');
+const { runSyncMain, persistConflictState } = require('./sync-main');
 const { getPool } = require('../db/pool');
 
 // GitHub computes PR mergeability asynchronously: for a few seconds
@@ -198,11 +198,18 @@ async function resolveAndMaybeRetry(config, target) {
     if (!result || !result.appSlug) return;
     try {
       const { pushVoteUpdate } = require('./ws');
+      const outcome = resolutionOutcomeFor(result.reason);
+      // #361: map the terminal resolve outcome onto the persisted
+      // merge-conflict snapshot so open cards update their badge without
+      // a refetch. 'failed' covers every still-broken exit; 'merged'/
+      // 'synced'/'noop' all leave the branch clean.
+      const mergeConflictState = outcome === 'failed' ? 'failed' : 'clean';
       pushVoteUpdate({
         sessionId: result.sessionId != null ? result.sessionId : sessionId,
         appSlug: result.appSlug,
         resolving: false,
-        resolutionOutcome: resolutionOutcomeFor(result.reason),
+        resolutionOutcome: outcome,
+        mergeConflictState,
         selfHosted: !!result.selfHosted,
       });
     } catch (_) { /* ws non-fatal */ }
@@ -256,6 +263,17 @@ async function resolveWithSession(config, pool, session) {
   const behind = session.behind_main || 0;
   const needsSync = behind > 0 || mergeable0 === false;
 
+  // #361: persist a derived merge-conflict snapshot so proposal cards
+  // reflect drift/conflict state even before (or independently of) a
+  // resolve. A real GitHub conflict → 'conflict'; clean-but-behind →
+  // 'behind'; clean and even → 'clean'. The 'resolving'/'failed'
+  // transitions are written below / by sync-main as the turn runs.
+  if (mergeable0 === false) {
+    await persistConflictState(pool, session, { state: 'conflict', files: [] });
+  } else if (mergeable0 === true) {
+    await persistConflictState(pool, session, { state: behind > 0 ? 'behind' : 'clean', files: [] });
+  }
+
   let didSync = false;
   let syncResult = null;
 
@@ -264,20 +282,18 @@ async function resolveWithSession(config, pool, session) {
       sessionId: session.id, pr: session.pr_number, behind, mergeable0,
     });
 
-    // The worker sync charges the session owner, limit-first (#212):
-    // their daily allowance while it has headroom, then their BYOK key
-    // once it's exhausted (runSyncMain resolves the same way at turn
-    // time — mirrors the gate order in POST /chat and the headless
-    // route). Skip — and surface it in group chat — only when the owner
-    // is over the cap AND has no key on file, so a runaway conflict
-    // loop can't blow the shared budget.
-    const billing = await limits.resolveBillingPath(pool, config.jwtSecret, session.user_id);
-    if (billing.error) {
-      log.info('conflict', 'Skipped — session owner over daily cap with no BYOK key', {
-        sessionId: session.id, ownerId: session.user_id, reason: billing.error,
+    // #361: the worker sync draws from the dedicated "system tokens"
+    // budget (platform housekeeping, not the owner's spend). Skip — and
+    // surface it in group chat — when that budget is exhausted, so a
+    // runaway conflict loop can't blow past the system cap. runSyncMain
+    // re-checks the same gate at turn time.
+    const sysBudget = await limits.checkSystemBudget(pool);
+    if (sysBudget.error) {
+      log.info('conflict', 'Skipped — system token budget exhausted', {
+        sessionId: session.id, reason: sysBudget.error,
       });
       await postGroupMessage(pool, session,
-        `Auto-conflict-resolution skipped on PR #${session.pr_number}: the PR owner has hit their daily LLM limit. Resolve manually via "Sync with main" or wait for the cap to reset.`
+        `Auto-conflict-resolution skipped on PR #${session.pr_number}: the system token budget is exhausted — resolve manually via "Sync with main" or wait for the midnight-UTC reset.`
       );
       return { ok: false, reason: 'over_budget' };
     }
@@ -288,12 +304,16 @@ async function resolveWithSession(config, pool, session) {
     // flash the resolving banner. Clients arm the non-blocking
     // "resolving merge conflicts" banner (self-hosted) and the
     // vote-panel badge off this.
+    // #361: snapshot the in-flight state so a reload (or a card rendered
+    // mid-resolve) shows the animated "Resolving conflicts…" badge.
+    await persistConflictState(pool, session, { state: 'resolving', files: session.conflict_files || [] });
     try {
       const { pushVoteUpdate } = require('./ws');
       pushVoteUpdate({
         sessionId: session.id,
         appSlug: session.app_slug,
         resolving: true,
+        mergeConflictState: 'resolving',
         selfHosted: !!session.app_self_hosted,
       });
     } catch (_) { /* ws non-fatal */ }

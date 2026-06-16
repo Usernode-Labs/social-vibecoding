@@ -94,6 +94,7 @@ function handler(sql) {
     return { rows: [{
       day: '2026-06-16', platform_cents: 420, user_key_cents: 90,
       platform_cents_admin: 60, user_key_cents_admin: 10,
+      system_cents: 175,
     }] };
   }
   return { rows: [] };
@@ -174,6 +175,24 @@ test('spend: each day carries the admin-portion breakout columns', async () => {
   // renderSpend client guard below), so the payload totals stay the full value.
   assert.equal(day.platform_cents, 420);
   assert.equal(day.platform_cents_admin, 60);
+});
+
+test('spend: each day carries a system_cents series (#361)', async () => {
+  const d = await get('/api/admin/analytics/spend?includeAdmins=true');
+  const day = d.days[0];
+  assert.ok('system_cents' in day, 'system_cents column must be returned');
+  assert.equal(day.system_cents, 175);
+});
+
+test('spend: the system aggregate ignores the includeAdmins filter (#361)', async () => {
+  lastQueries = [];
+  await get('/api/admin/analytics/spend?includeAdmins=false');
+  const sql = lastQueries.find((s) => /system_token_usage/.test(s));
+  assert.ok(sql, 'the spend query must aggregate system_token_usage');
+  // The sys CTE must not carry the per-user admin NOT-IN gate.
+  const sysCte = sql.slice(sql.indexOf('sys AS'));
+  assert.doesNotMatch(sysCte, /NOT IN \(SELECT id FROM users WHERE is_admin\)/,
+    'system spend is not user-attributed, so the admin filter must not apply to it');
 });
 
 test('includeAdmins gates the SQL: NOT-IN admin filter present when off, dropped when on', async () => {

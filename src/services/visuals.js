@@ -357,6 +357,15 @@ const _inFlight = new Set();
 // `send` (optional) is the turn's SSE/bus emitter; when absent (promote
 // path) we publish straight to the session bus + global WS so open
 // clients still upgrade in place.
+// Resolve the capture pixel density from an apps row (issue #360).
+// 1 only when the app explicitly opted out via dapp.json's
+// `screenshot.deviceScaleFactor: 1` (persisted on
+// apps.screenshot_device_scale); everything else — including a missing
+// row/column — defaults to 2× (HiDPI).
+function resolveCaptureScale(row) {
+  return row && row.screenshot_device_scale === 1 ? 1 : 2;
+}
+
 async function captureForSession(config, session, app, commitHash, stagingResult, { send } = {}) {
   if (_inFlight.has(session.id)) {
     log.info('visuals', 'Capture already in flight — skipping', { sessionId: session.id });
@@ -515,9 +524,27 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       };
     });
 
+    // Pixel density for the shots (issue #360). Default 2× (HiDPI), with
+    // a per-app 1× opt-out persisted on apps.screenshot_device_scale by
+    // the deploy-time reconcile (app-manifest.reconcileAppScreenshot).
+    // Read fresh from the DB so we don't depend on the width of the `app`
+    // row the caller happened to pass; an unreadable/absent value falls
+    // back to 2× (the capture container also defaults to 2× regardless).
+    let deviceScaleFactor = 2;
+    try {
+      const { rows } = await pool.query(
+        'SELECT screenshot_device_scale FROM apps WHERE id = $1', [app.id]
+      );
+      deviceScaleFactor = resolveCaptureScale(rows[0]);
+    } catch (err) {
+      log.warn('visuals', 'Screenshot-scale lookup failed — defaulting to 2×', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+
     log.info('visuals', 'Starting capture', {
       sessionId: session.id, slug: app.slug, before: prodRunning, paths: capturePaths,
-      authenticated: !!captureToken, selfApp: isSelfApp,
+      authenticated: !!captureToken, selfApp: isSelfApp, deviceScaleFactor,
     });
     let stdout;
     try {
@@ -541,6 +568,9 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           BEFORE_FALLBACK_URL: targets[0].beforeFallbackUrl,
           BEFORE_COOKIE: targets[0].beforeCookie,
           AFTER_COOKIE: '',
+          // Pixel density (#360). Global to the run — all of a proposal's
+          // screens share one density, matching the single shared viewport.
+          DEVICE_SCALE_FACTOR: String(deviceScaleFactor),
         },
         timeoutMs: RUN_TIMEOUT_MS,
         maxBuffer: RUN_MAX_BUFFER,
@@ -623,5 +653,6 @@ module.exports = {
   withToken,
   selfAppHashPath,
   beforeContainerName,
+  resolveCaptureScale,
   CAPTURE_IMAGE,
 };

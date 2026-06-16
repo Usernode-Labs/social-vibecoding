@@ -714,6 +714,10 @@ const DevChat = {
             m._estimateRemaining = m.metadata.estimate.remainingSeconds == null
               ? null
               : m.metadata.estimate.remainingSeconds;
+            // #359: re-anchor the count-down from load time. metadata.estimate
+            // carries no "estimated-at" stamp, so this reads slightly high; the
+            // next live cc_estimate corrects it within ~a minute.
+            m._countdownTo = DevChat._countdownTarget(m._estimateRemaining);
           }
           // Spec preview cards: scout dispatches persist these on the
           // status row so a refresh re-renders the same inline card the
@@ -1898,14 +1902,27 @@ const DevChat = {
   // The server only emits cc_estimate when the user's toggle is ON, so
   // with the toggle off this never runs and the line is pixel-identical
   // to before.
-  // The trailing "· ~X left" numeric suffix (#50 follow-up). remainingSeconds
-  // is the model's seconds-remaining guess, or null/absent when it declined
-  // a number — in which case the phrase renders alone, exactly as before.
-  _estimateSuffix(remainingSeconds) {
-    if (remainingSeconds == null || typeof formatElapsed !== 'function') return '';
+  // #359: turn the latest remaining-seconds guess into an absolute target
+  // end-timestamp the shared 1s ticker can count down from. Returns null
+  // when the model declined a number (remainingSeconds == null/invalid) so
+  // the phrase renders alone, exactly as before #50's "phrase only" path.
+  _countdownTarget(remainingSeconds) {
+    if (remainingSeconds == null) return null;
     const n = Number(remainingSeconds);
-    if (!Number.isFinite(n) || n < 0) return '';
-    return ` · ~${formatElapsed(n * 1000)} left`;
+    if (!Number.isFinite(n) || n < 0) return null;
+    return Date.now() + n * 1000;
+  },
+
+  // The trailing live count-down span (#359, replacing the static "· ~X
+  // left" suffix from #50). Carries an absolute `data-countdown-to`
+  // end-timestamp that _tickElapsed recomputes each second; empty (no span)
+  // when there's no numeric guess to count down from. The initial
+  // textContent is filled here so the span isn't blank for the up-to-1s
+  // before the first tick.
+  _countdownSpanHtml(countdownTo) {
+    if (countdownTo == null || typeof formatCountdown !== 'function') return '';
+    const initial = formatCountdown(countdownTo, Date.now());
+    return `<span class="dc-cc-countdown" data-countdown-to="${countdownTo}">${initial}</span>`;
   },
 
   _applyEstimate(text, remainingSeconds) {
@@ -1927,6 +1944,9 @@ const DevChat = {
     DevChat._pendingEstimate = null;
     target._estimate = clean;
     target._estimateRemaining = remaining;
+    // #359: re-anchor the count-down to this fresh guess (or clear it when
+    // the model declined a number) so the next tick counts from here.
+    target._countdownTo = DevChat._countdownTarget(remaining);
     // Patch in place within THIS run's own DOM node (keyed by persist-id)
     // rather than the last estimate span on the page, so a prior collapsed
     // run's span can't be mis-targeted (#323).
@@ -1938,7 +1958,9 @@ const DevChat = {
       const spans = document.querySelectorAll('#dc-messages .dc-cc-estimate');
       span = spans.length ? spans[spans.length - 1] : null;
     }
-    if (span) span.textContent = `· ✦ AI guess: ${clean}${DevChat._estimateSuffix(remaining)}`;
+    // innerHTML (not textContent): the count-down lives in a child span the
+    // ticker patches in place. The phrase is escaped because it's model output.
+    if (span) span.innerHTML = `· ✦ AI guess: ${escapeHtml(clean)}${DevChat._countdownSpanHtml(target._countdownTo)}`;
   },
 
   // ── #50: elapsed-time ticker ────────────────────────────────
@@ -1951,32 +1973,47 @@ const DevChat = {
   _elapsedTimer: null,
 
   _syncElapsedTicker() {
-    const any = document.querySelector('#dc-messages [data-elapsed-since]');
+    // #359: the same 1s heartbeat now also drives the AI-estimate
+    // count-down span, so the predicate matches either kind of ticking span.
+    const any = document.querySelector('#dc-messages [data-elapsed-since], #dc-messages [data-countdown-to]');
     if (any && !DevChat._elapsedTimer) {
       DevChat._elapsedTimer = setInterval(() => DevChat._tickElapsed(), 1000);
     } else if (!any && DevChat._elapsedTimer) {
       clearInterval(DevChat._elapsedTimer);
       DevChat._elapsedTimer = null;
     }
-    // Fill immediately so the span isn't blank until the first tick.
+    // Fill immediately so the spans aren't blank until the first tick.
     if (any) DevChat._tickElapsed();
   },
 
   _tickElapsed() {
     const els = document.querySelectorAll('#dc-messages [data-elapsed-since]');
-    if (!els.length) {
+    // #359: count-down spans share this loop — anchored to an absolute
+    // target end-timestamp and clamped at "due now" (formatCountdown), so a
+    // late-firing tick under tab throttling still shows the right value.
+    const downs = document.querySelectorAll('#dc-messages [data-countdown-to]');
+    if (!els.length && !downs.length) {
       if (DevChat._elapsedTimer) {
         clearInterval(DevChat._elapsedTimer);
         DevChat._elapsedTimer = null;
       }
       return;
     }
-    if (typeof formatElapsed !== 'function') return;
-    els.forEach((el) => {
-      const since = parseInt(el.dataset.elapsedSince, 10);
-      if (!Number.isFinite(since)) return;
-      el.textContent = formatElapsed(Math.max(0, Date.now() - since));
-    });
+    const now = Date.now();
+    if (typeof formatElapsed === 'function') {
+      els.forEach((el) => {
+        const since = parseInt(el.dataset.elapsedSince, 10);
+        if (!Number.isFinite(since)) return;
+        el.textContent = formatElapsed(Math.max(0, now - since));
+      });
+    }
+    if (typeof formatCountdown === 'function') {
+      downs.forEach((el) => {
+        const to = parseInt(el.dataset.countdownTo, 10);
+        if (!Number.isFinite(to)) return;
+        el.textContent = formatCountdown(to, now);
+      });
+    }
   },
 
   // The elapsed/duration suffix for a system status row:
@@ -2018,8 +2055,10 @@ const DevChat = {
           }
         }
         // Experimental AI estimate: a finished/stopped step never shows a
-        // guess — the real duration replaces it.
+        // guess — the real duration replaces it. Clear the count-down anchor
+        // too (#359) so a stale target can't be re-rendered.
         delete m._estimate;
+        delete m._countdownTo;
         break;
       }
     }
@@ -2090,6 +2129,8 @@ const DevChat = {
         if (m.role === 'system' && m._active) {
           m._estimate = DevChat._pendingEstimate.text;
           m._estimateRemaining = DevChat._pendingEstimate.remainingSeconds;
+          // #359: anchor the count-down for the drained pending estimate too.
+          m._countdownTo = DevChat._countdownTarget(m._estimateRemaining);
           DevChat._pendingEstimate = null;
           break;
         }
@@ -2329,7 +2370,10 @@ const DevChat = {
           // Experimental AI progress estimate: rendered unconditionally
           // (even empty) so _applyEstimate can patch it in place; only
           // populated while the server emits cc_estimate for this run.
-          const estimateSpan = `<span class="dc-cc-estimate" title="Experimental: a small AI model's rough guess from the progress log. May be wrong.">${msg._estimate ? `· ✦ AI guess: ${escapeHtml(msg._estimate)}${escapeHtml(DevChat._estimateSuffix(msg._estimateRemaining))}` : ''}</span>`;
+          // #359: the remaining-time portion is a live count-down child span
+          // (data-countdown-to) the shared ticker decrements; the phrase stays
+          // plain escaped text. Empty when there's no numeric guess.
+          const estimateSpan = `<span class="dc-cc-estimate" title="Experimental: a small AI model's rough guess from the progress log. May be wrong.">${msg._estimate ? `· ✦ AI guess: ${escapeHtml(msg._estimate)}${DevChat._countdownSpanHtml(msg._countdownTo)}` : ''}</span>`;
           return `<details class="dc-cc-attached" data-persist-id="${outerPid}" data-default-open="1" open><summary class="${sumClass}">${iconHtml} ${msg.content}${currentSpan}${stepsSpan}${estimateSpan}${elapsedHtml}${chevron}${tsSpan}</summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
         }
 

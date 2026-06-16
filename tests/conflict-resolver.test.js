@@ -78,8 +78,11 @@ function loadResolverWithGithub(mergeableSequence) {
     getOctokit: fakeOctokit,
     getInstallationOctokit: fakeOctokit,
   });
-  stub(ids.limits, { resolveBillingPath: async () => ({ apiKey: null, byok: false }) });
-  stub(ids.syncMain, { runSyncMain: async () => ({ ok: true, syncResult: 'clean', behind: 0 }) });
+  stub(ids.limits, { checkSystemBudget: async () => ({ ok: true, remaining: 2500 }) });
+  stub(ids.syncMain, {
+    runSyncMain: async () => ({ ok: true, syncResult: 'clean', behind: 0 }),
+    persistConflictState: async () => {},
+  });
   stub(ids.pool, { getPool: () => makePool([]) });
 
   delete require.cache[ids.subject];
@@ -222,10 +225,9 @@ test('runSyncMain: conflict outcome reports not-ok and still avoids vote deletio
 function loadResolverForCoalesce({
   runSyncMainImpl,
   mergeableSeq = [false, true, true, true],
-  // Limit-first (#212): default to "allowance has headroom" so existing
-  // tests keep gating through the platform path; over-budget cases
-  // override this with a BYOK spillover or an error.
-  limitsImpl = { resolveBillingPath: async () => ({ apiKey: null, byok: false }) },
+  // #361: the sync draws from the system-token budget. Default to "system
+  // budget has headroom"; the exhausted case overrides this with an error.
+  limitsImpl = { checkSystemBudget: async () => ({ ok: true, remaining: 2500 }) },
   onSystemMessage = null,
   // #239: the retried merge's result drives the terminal
   // resolutionOutcome (merged vs synced_awaiting_votes).
@@ -268,7 +270,7 @@ function loadResolverForCoalesce({
     getInstallationOctokit: fakeOctokit,
   });
   stub(ids.limits, limitsImpl);
-  stub(ids.syncMain, { runSyncMain: runSyncMainImpl });
+  stub(ids.syncMain, { runSyncMain: runSyncMainImpl, persistConflictState: async () => {} });
   stub(ids.pool, {
     getPool: () => makePool([[/SELECT cs\.\*, a\.slug/, [sessionRow]]]),
   });
@@ -339,16 +341,16 @@ test('resolveAndMaybeRetry: a later, non-overlapping resolve runs a fresh worker
   }
 });
 
-// ── Limit-first billing gate (#212) ─────────────────────────────────────
-// The sync charges the owner's daily allowance first; once exhausted it
-// falls back to their BYOK key. Only over-budget AND key-less owners are
-// skipped (with the group-chat breadcrumb).
+// ── System-token budget gate (#361) ─────────────────────────────────────
+// The sync draws from the dedicated system-token budget — never a user's
+// allowance or BYOK key. While the budget has headroom the resolve
+// proceeds; only an exhausted system budget skips (with the group-chat
+// breadcrumb).
 
-test('resolveAndMaybeRetry: over-budget owner WITH a BYOK key syncs on the key instead of skipping', async () => {
+test('resolveAndMaybeRetry: system budget with headroom proceeds with the sync', async () => {
   let syncCalls = 0;
   const { subject, restore } = loadResolverForCoalesce({
-    // Allowance exhausted, key on file → spillover path.
-    limitsImpl: { resolveBillingPath: async () => ({ apiKey: 'sk-ant-test', byok: true }) },
+    limitsImpl: { checkSystemBudget: async () => ({ ok: true, remaining: 1500 }) },
     runSyncMainImpl: async () => {
       syncCalls += 1;
       return { ok: true, syncResult: 'resolved', behind: 0 };
@@ -356,7 +358,7 @@ test('resolveAndMaybeRetry: over-budget owner WITH a BYOK key syncs on the key i
   });
   try {
     const r = await subject.resolveAndMaybeRetry({ jwtSecret: 's' }, { sessionId: 7 });
-    assert.equal(syncCalls, 1, 'the sync must proceed on the owner key, not skip');
+    assert.equal(syncCalls, 1, 'the sync proceeds against the system budget');
     assert.equal(r.reason, 'synced_and_merged');
   } finally {
     restore();
@@ -454,13 +456,13 @@ test('lifecycle: unresolved conflict → resolutionOutcome failed (after a start
 test('lifecycle: over-budget skip → resolutionOutcome failed with NO start broadcast', async () => {
   const { subject, voteUpdates, restore } = loadResolverForCoalesce({
     mergeableSeq: [false],
-    limitsImpl: { resolveBillingPath: async () => ({ error: 'Daily limit reached.' }) },
+    limitsImpl: { checkSystemBudget: async () => ({ error: 'System token budget reached ($25.00). Resets at midnight UTC.' }) },
     runSyncMainImpl: async () => ({ ok: true, syncResult: 'resolved', behind: 0 }),
   });
   try {
     const r = await subject.resolveAndMaybeRetry({ jwtSecret: 's' }, { sessionId: 7 });
     assert.equal(r.reason, 'over_budget');
-    assert.equal(startEvents(voteUpdates).length, 0, 'billing gate fires before the start broadcast');
+    assert.equal(startEvents(voteUpdates).length, 0, 'budget gate fires before the start broadcast');
     const terminals = terminalEvents(voteUpdates);
     assert.equal(terminals.length, 1);
     assert.equal(terminals[0].resolutionOutcome, 'failed');
@@ -506,12 +508,12 @@ test('isResolving: true while the deduped promise is in flight, false after it s
   }
 });
 
-test('resolveAndMaybeRetry: over-budget owner with NO key skips and posts the group-chat message', async () => {
+test('resolveAndMaybeRetry: exhausted system budget skips and posts the group-chat message', async () => {
   let syncCalls = 0;
   const messages = [];
   const { subject, restore } = loadResolverForCoalesce({
     mergeableSeq: [false],
-    limitsImpl: { resolveBillingPath: async () => ({ error: 'Daily limit reached ($25.00). Resets at midnight UTC.' }) },
+    limitsImpl: { checkSystemBudget: async () => ({ error: 'System token budget reached ($25.00). Resets at midnight UTC.' }) },
     runSyncMainImpl: async () => {
       syncCalls += 1;
       return { ok: true, syncResult: 'resolved', behind: 0 };
@@ -522,9 +524,9 @@ test('resolveAndMaybeRetry: over-budget owner with NO key skips and posts the gr
     const r = await subject.resolveAndMaybeRetry({ jwtSecret: 's' }, { sessionId: 7 });
     assert.equal(r.ok, false);
     assert.equal(r.reason, 'over_budget');
-    assert.equal(syncCalls, 0, 'no worker turn may run for an over-budget key-less owner');
-    assert.ok(messages.some((m) => /daily LLM limit/.test(m)),
-      'the owner is told in group chat why the auto-resolve was skipped');
+    assert.equal(syncCalls, 0, 'no worker turn may run when the system budget is exhausted');
+    assert.ok(messages.some((m) => /system token budget is exhausted/.test(m)),
+      'the group chat explains the system token budget was exhausted');
   } finally {
     restore();
   }

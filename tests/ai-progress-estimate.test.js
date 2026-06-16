@@ -201,16 +201,37 @@ test('sessions route persists each estimate and backfills the actual outcome', (
   );
 });
 
-test('dev-chat renders the numeric ~X left suffix', () => {
+test('dev-chat renders a live count-down for the remaining-time guess (#359)', () => {
   const devChat = read('public/js/dev-chat.js');
-  assert.match(devChat, /_estimateSuffix/, 'a helper must build the numeric remaining-time suffix');
-  assert.match(devChat, /~\$\{formatElapsed/, 'suffix must use formatElapsed to render ~X left');
-  assert.match(devChat, /left/, 'suffix must read "~X left"');
+  // The numeric guess is now an absolute target end-timestamp the shared 1s
+  // ticker counts down from, rendered as a data-countdown-to child span.
+  assert.match(devChat, /_countdownTo\s*=\s*DevChat\._countdownTarget/,
+    'apply/hydrate/pending must anchor _countdownTo from remainingSeconds');
+  assert.match(devChat, /data-countdown-to="\$\{countdownTo\}"/,
+    'the estimate span must render a data-countdown-to child span');
+  assert.match(devChat, /class="dc-cc-countdown"/,
+    'the count-down lives in its own .dc-cc-countdown span');
+  // Both ticker hooks must know about the count-down span so the single
+  // shared DevChat._elapsedTimer drives it.
+  assert.match(devChat, /\[data-countdown-to\]/,
+    '_syncElapsedTicker / _tickElapsed must reference data-countdown-to');
+  assert.match(devChat, /formatCountdown/,
+    'the count-down text must come from formatCountdown');
   assert.match(
     devChat,
     /_applyEstimate\(data\.text, data\.remainingSeconds\)/,
     'cc_estimate handlers must pass remainingSeconds through'
   );
+});
+
+test('dev-chat clears the count-down anchor when a step finishes (#359)', () => {
+  const devChat = read('public/js/dev-chat.js');
+  const fnStart = devChat.indexOf('_deactivateLastStatus() {');
+  assert.ok(fnStart !== -1, '_deactivateLastStatus must exist');
+  const fnBody = devChat.slice(fnStart, fnStart + 1400);
+  assert.match(fnBody, /delete m\._estimate/, 'finished step must drop the guess');
+  assert.match(fnBody, /delete m\._countdownTo/,
+    'finished step must also drop the count-down anchor');
 });
 
 test('cc_estimate SSE payload carries remainingSeconds', () => {
