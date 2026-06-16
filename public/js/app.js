@@ -22,6 +22,9 @@ const App = {
   // three top-level screens, and they're mutually exclusive. Flipped
   // by navigateToLeaderboard() / _exitLeaderboard() / navigateHome().
   _inLeaderboard: false,
+  // Tracks whether the #store-screen is visible. Sibling to
+  // _inLeaderboard — all top-level screens are mutually exclusive.
+  _inStore: false,
 
   // Set to true while restoreFromHash() is applying a URL (e.g. on
   // popstate/hashchange) so that the navigation helpers it calls
@@ -1597,6 +1600,10 @@ const App = {
         App.navigateToLeaderboard(parts[1], profileUser);
         return;
       }
+      if (parts[0] === 'store') {
+        App.navigateToStore();
+        return;
+      }
       if (parts[0] === 'app' && parts[1]) {
         const slug = parts[1];
         // Card-list hashes (#194 revision): app/{slug}/app,
@@ -1657,6 +1664,7 @@ const App = {
         }
       } else {
         if (App._inLeaderboard) App._exitLeaderboard();
+        if (App._inStore) App._exitStore();
         App.setHeaderTitle('dApps');
         Home.load();
       }
@@ -1676,6 +1684,7 @@ const App = {
       App.currentApp = null;
       document.getElementById('app-view').classList.add('hidden');
     }
+    if (App._inStore) App._exitStore();
     document.getElementById('home-screen').classList.add('hidden');
     const screen = document.getElementById('leaderboard-screen');
     if (screen) screen.classList.remove('hidden');
@@ -1707,6 +1716,38 @@ const App = {
     const screen = document.getElementById('leaderboard-screen');
     if (screen) screen.classList.add('hidden');
     if (window.Leaderboard?.close) Leaderboard.close();
+  },
+
+  // Show the Game Store screen. Sibling to navigateToLeaderboard —
+  // hides home + app, reveals #store-screen, lets the Store module
+  // render itself into #store-root.
+  navigateToStore() {
+    if (App.currentApp) {
+      AppView.close();
+      App.currentApp = null;
+      document.getElementById('app-view').classList.add('hidden');
+    }
+    if (App._inLeaderboard) App._exitLeaderboard();
+    document.getElementById('home-screen').classList.add('hidden');
+    const screen = document.getElementById('store-screen');
+    if (screen) screen.classList.remove('hidden');
+    document.getElementById('back-btn').classList.remove('hidden');
+    const _drg = document.getElementById('drawer-row-github');
+    const _drs = document.getElementById('drawer-row-share');
+    const _drm = document.getElementById('drawer-row-members');
+    if (_drg) _drg.classList.add('hidden');
+    if (_drs) _drs.classList.add('hidden');
+    if (_drm) _drm.classList.add('hidden');
+    App.setHeaderTitle('Game Store');
+    App._inStore = true;
+    if (window.Store?.open) Store.open();
+  },
+
+  _exitStore() {
+    App._inStore = false;
+    const screen = document.getElementById('store-screen');
+    if (screen) screen.classList.add('hidden');
+    if (window.Store?.close) Store.close();
   },
 
   // Push a new history entry on real screen transitions (entering an
@@ -1990,6 +2031,7 @@ const App = {
     }
     App.currentApp = slug;
     if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inStore) App._exitStore();
     document.getElementById('home-screen').classList.add('hidden');
     document.getElementById('app-view').classList.remove('hidden');
     document.getElementById('back-btn').classList.remove('hidden');
@@ -2061,6 +2103,7 @@ const App = {
     App.currentApp = null;
     document.getElementById('app-view').classList.add('hidden');
     if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inStore) App._exitStore();
     document.getElementById('home-screen').classList.remove('hidden');
     document.getElementById('back-btn').classList.add('hidden');
     const _drgH = document.getElementById('drawer-row-github');

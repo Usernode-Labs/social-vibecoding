@@ -104,6 +104,10 @@
     <!-- Kudos leaderboard entry point. Mirrors the bell/settings icons
          visually; links straight to the #leaderboard hash route which
          public/js/leaderboard.js handles. -->
+    <!-- Game Store entry point. Navigates to #store. -->
+    <a id="store-btn" href="#store" class="text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Game Store" title="Game Store">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"/></svg>
+    </a>
     <a id="leaderboard-btn" href="#leaderboard" class="text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Kudos leaderboard" title="Kudos leaderboard">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 11V3H8v8M5 7H3v4a2 2 0 002 2h3M19 7h2v4a2 2 0 01-2 2h-3M8 15a4 4 0 008 0h-8z M12 15v3m-3 3h6"/></svg>
     </a>
@@ -263,6 +267,13 @@
        the others. -->
   <main id="leaderboard-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
     <div id="leaderboard-root" class="max-w-3xl mx-auto p-4"></div>
+  </main>
+
+  <!-- Game Store screen (hidden by default). Populated by
+       public/js/store.js. Sits alongside #home-screen and
+       #leaderboard-screen as a mutually exclusive top-level view. -->
+  <main id="store-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
+    <div id="store-root" class="max-w-5xl mx-auto p-4"></div>
   </main>
 
   <!-- App view (hidden by default) -->
@@ -903,6 +914,7 @@
        Loaded BEFORE app-view.js so the panel renderer can use
        Kudos.renderButton directly. -->
   <script src="/js/kudos.js"></script>
+  <script src="/js/store.js"></script>
   <script src="/js/leaderboard.js"></script>
   <script src="/js/proposal-discuss.js"></script>
   <script src="/js/app-view.js"></script>

@@ -49,6 +49,7 @@ async function migrate(config) {
   await seedStagingSyncActivity(pool, config);
   await seedStagingChatEditFixtures(pool, config);
   await seedStagingLlmUsage(pool);
+  await seedStagingGameStore(pool);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
   // Must run BEFORE backfillOrphanedSpecDrafts: unwrapping spec_md after that
@@ -3279,6 +3280,49 @@ async function migrateAppDbsToPerRole(pool, config) {
         });
       }
     }
+  }
+}
+
+// Staging seed for the Game Store. Populates store_games with 8 fictional
+// listings and gives every existing user a 50 UNT starting balance so
+// testers can immediately browse and purchase. All tables are public by
+// design (no staging:private comment), so this seed only needs to run
+// once per new staging boot — both INSERT blocks are ON CONFLICT DO NOTHING.
+async function seedStagingGameStore(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    const games = [
+      { slug: 'nova-drift',     title: 'Nova Drift',       description: 'A fast-paced space strategy game where you build fleets and conquer star systems.',       genre_tags: ['Strategy', 'Space'],          price_unt: 15, cover_color: '#7c3aed' },
+      { slug: 'pixel-kingdoms', title: 'Pixel Kingdoms',   description: 'Build your fantasy kingdom one pixel at a time in this charming RPG adventure.',         genre_tags: ['RPG', 'Fantasy'],             price_unt: 20, cover_color: '#059669' },
+      { slug: 'chain-racer',    title: 'Chain Racer',      description: 'Breakneck arcade racing on procedurally generated tracks — no two races are alike.',      genre_tags: ['Racing', 'Arcade'],           price_unt: 10, cover_color: '#d97706' },
+      { slug: 'block-puzzle-dx',title: 'Block Puzzle DX',  description: 'The definitive block-dropping puzzle experience with 200+ hand-crafted levels.',          genre_tags: ['Puzzle'],                     price_unt: 5,  cover_color: '#0891b2' },
+      { slug: 'star-forge',     title: 'Star Forge',       description: 'Mine asteroids, craft starships, and defend your colony against alien incursions.',        genre_tags: ['Strategy', 'Sci-Fi'],         price_unt: 25, cover_color: '#be185d' },
+      { slug: 'rogue-node',     title: 'Rogue Node',       description: 'Hack through procedurally generated dungeons in this action-packed roguelite.',           genre_tags: ['Roguelite', 'Action'],        price_unt: 18, cover_color: '#4338ca' },
+      { slug: 'farm-chain',     title: 'Farm Chain',       description: 'Grow crops, raise animals, and trade with neighbours in this cosy farming sim.',          genre_tags: ['Simulation'],                 price_unt: 8,  cover_color: '#65a30d' },
+      { slug: 'hex-wars',       title: 'Hex Wars',         description: 'Classic hexagonal turn-based strategy: capture territories and outsmart your rivals.',    genre_tags: ['Turn-based', 'Strategy'],     price_unt: 22, cover_color: '#b45309' },
+    ];
+
+    for (const g of games) {
+      await pool.query(
+        `INSERT INTO store_games (slug, title, description, genre_tags, price_unt, cover_color)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (slug) DO NOTHING`,
+        [g.slug, g.title, g.description, g.genre_tags, g.price_unt, g.cover_color]
+      );
+    }
+
+    // Give every existing user a 50 UNT starting balance so they can
+    // immediately try buying games without needing the top-up button.
+    await pool.query(
+      `INSERT INTO unt_balances (user_id, balance)
+       SELECT id, 50 FROM users
+       ON CONFLICT (user_id) DO NOTHING`
+    );
+
+    log.info('db', 'Staging game-store fixtures seeded', { games: games.length });
+  } catch (err) {
+    log.warn('db', 'Staging game-store seed failed', { err: err.message });
   }
 }
 

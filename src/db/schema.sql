@@ -1106,3 +1106,36 @@ CREATE TABLE IF NOT EXISTS proposal_ai_messages (
 CREATE INDEX IF NOT EXISTS idx_proposal_ai_messages_convo
   ON proposal_ai_messages (app_id, proposal_kind, proposal_ref, user_id, id);
 COMMENT ON TABLE proposal_ai_messages IS 'staging:private';
+
+-- Game Store. Three tables, all PUBLIC (no staging:private comment) —
+-- game listings, UNT balances, and purchase records are toy/reference
+-- data with no per-row secrets. Per the platform convention,
+-- public-by-default applies.
+
+CREATE TABLE IF NOT EXISTS store_games (
+  id          SERIAL PRIMARY KEY,
+  slug        VARCHAR(64) UNIQUE NOT NULL,
+  title       VARCHAR(255) NOT NULL,
+  description TEXT NOT NULL,
+  genre_tags  TEXT[] NOT NULL DEFAULT '{}',
+  price_unt   INTEGER NOT NULL,
+  cover_color VARCHAR(16) NOT NULL DEFAULT '#6d28d9',
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS unt_balances (
+  user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  balance    INTEGER NOT NULL DEFAULT 0 CHECK (balance >= 0),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS game_purchases (
+  id           SERIAL PRIMARY KEY,
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  game_id      INTEGER NOT NULL REFERENCES store_games(id) ON DELETE CASCADE,
+  price_paid   INTEGER NOT NULL,
+  purchased_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(user_id, game_id)
+);
+CREATE INDEX IF NOT EXISTS idx_game_purchases_user ON game_purchases(user_id);
+CREATE INDEX IF NOT EXISTS idx_game_purchases_game ON game_purchases(game_id);
