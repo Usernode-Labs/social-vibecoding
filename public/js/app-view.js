@@ -1088,7 +1088,7 @@ const AppView = {
               <form id="gc-form" class="flex gap-2 items-end">
                 <textarea
                   id="gc-input"
-                  maxlength="2000"
+                  maxlength="${typeof GC_MAX_MESSAGE_LEN !== 'undefined' ? GC_MAX_MESSAGE_LEN : 8000}"
                   rows="1"
                   placeholder="Type a message..."
                   autocomplete="off"

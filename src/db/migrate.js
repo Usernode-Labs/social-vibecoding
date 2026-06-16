@@ -944,10 +944,35 @@ async function seedStagingChatEditFixtures(pool, config) {
   // 2) Already-edited message (shows the "edited" marker + tooltip).
   const edited = '[staging fixture] This message was edited — hover the “edited” marker by the timestamp to see when.';
 
+  // 3) #328: markdown demo. Exercises the full supported subset in one body —
+  //    bold/italic/strikethrough, inline + fenced code, a bullet list, an
+  //    https link — alongside an @mention and PR#/#N refs (which must still
+  //    decorate atop the rendered markdown), plus an inert <script> tag and a
+  //    javascript: link to confirm sanitization renders them harmless. Stored
+  //    as raw markdown source; formatting is applied only on display.
+  const markdown = [
+    `[staging fixture] Markdown demo for @${author.username}:`,
+    '',
+    'Shows **bold**, *italic*, ~~strikethrough~~ and `inline code`.',
+    '',
+    '- first bullet',
+    '- second bullet with a [link](https://example.com)',
+    '',
+    'A fenced code block:',
+    '```',
+    'function hi() { return 42; }',
+    '```',
+    '',
+    'Refs stay clickable atop markdown: see PR#1 and issue #1.',
+    '',
+    'Safety check (must render inert): <script>alert(1)</script> and [bad](javascript:alert(2)).',
+  ].join('\n');
+
   let inserted = 0;
   for (const fixture of [
     { content: multiline, createdMinutesAgo: 8, editedMinutesAgo: null },
     { content: edited, createdMinutesAgo: 7, editedMinutesAgo: 5 },
+    { content: markdown, createdMinutesAgo: 6, editedMinutesAgo: null },
   ]) {
     const { rows: existing } = await pool.query(
       'SELECT id FROM chat_messages WHERE app_id = $1 AND content = $2 LIMIT 1',

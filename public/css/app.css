@@ -981,8 +981,43 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   word-break: break-word;
   /* Honor the user's own line breaks in multi-line messages (general chat
      and threads share this class). overflow-wrap/word-break above still
-     wrap long unbroken runs. */
+     wrap long unbroken runs. This is the FALLBACK path (renderMessageBody
+     -> renderWithMentions): plain escaped text + mention/ref spans, no block
+     children, so pre-wrap preserves the user's newlines. The markdown path
+     overrides this below via :has(). */
   white-space: pre-wrap;
+}
+
+/* #328: markdown-rendered message bodies. When DevChat.renderMarkdown is
+   available, renderMessageBody produces block-level children (<p>/<ul>/<pre>
+   …) that manage their own spacing and carry the dev-chat `dc-*` classes.
+   marked emits literal newlines between those block tags, so leave the
+   container on pre-wrap and they'd render as extra blank lines — switch to
+   normal whitespace whenever block markdown is present. The :has() guard
+   keeps the inline-only fallback path (above) on pre-wrap. */
+.gc-msg-content:has(.dc-p, .dc-ul, .dc-ol, .dc-blockquote, .dc-code-block,
+                    .dc-table, .dc-h3, .dc-h4, .dc-h5) {
+  white-space: normal;
+}
+
+/* Tighten the spec-viewer markdown rhythm for the narrower chat bubble: a
+   single-paragraph message must not gain vertical padding (overrides the
+   global `.dc-p { margin-top: .5em }`), stacked blocks get a compact gap,
+   and code blocks / tables can't overflow the bubble width. */
+.gc-msg-content .dc-p { margin: 0; }
+.gc-msg-content .dc-ul,
+.gc-msg-content .dc-ol,
+.gc-msg-content .dc-blockquote { margin: 4px 0; }
+.gc-msg-content .dc-code-block { margin: 4px 0; max-width: 100%; }
+.gc-msg-content .dc-table { margin: 4px 0; }
+.gc-msg-content > :first-child { margin-top: 0; }
+.gc-msg-content > :last-child { margin-bottom: 0; }
+.gc-msg-content
+  :is(.dc-p, .dc-ul, .dc-ol, .dc-blockquote, .dc-code-block, .dc-table,
+      .dc-h3, .dc-h4, .dc-h5)
+  + :is(.dc-p, .dc-ul, .dc-ol, .dc-blockquote, .dc-code-block, .dc-table,
+        .dc-h3, .dc-h4, .dc-h5) {
+  margin-top: 6px;
 }
 
 /* "edited" marker shown next to a message's timestamp once it has been
