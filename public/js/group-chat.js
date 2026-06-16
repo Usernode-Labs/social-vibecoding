@@ -2099,7 +2099,9 @@ function renderRefChips(html) {
 // #328: the authoritative renderer for a USER message body. Renders a safe
 // markdown subset via the shared DevChat.renderMarkdown (marked + DOMPurify,
 // strict allowlist, https-only links, raw HTML escaped) and then layers the
-// existing @mention + PR/issue-ref decoration on top.
+// existing @mention + PR/issue-ref decoration on top. All three message
+// surfaces (main chat, thread replies, inline edit) funnel through here so
+// they format identically — keep new call sites pointed at this function.
 //
 // Why a DOM walk and not another regex pass: renderWithMentions runs its
 // regexes over *escaped text*. After markdown the body is *sanitized HTML*,
