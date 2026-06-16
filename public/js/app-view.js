@@ -1085,15 +1085,15 @@ const AppView = {
               <!-- #15: "Replying to …" preview chip; populated by
                    GroupChat._renderQuotePreview when a quote is staged. -->
               <div id="gc-reply-preview" class="hidden"></div>
-              <form id="gc-form" class="flex gap-2">
-                <input
+              <form id="gc-form" class="flex gap-2 items-end">
+                <textarea
                   id="gc-input"
-                  type="text"
                   maxlength="2000"
+                  rows="1"
                   placeholder="Type a message..."
                   autocomplete="off"
-                  class="flex-1 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-                >
+                  class="gc-composer-input flex-1 min-w-0 resize-none overflow-y-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                ></textarea>
                 <button type="submit" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors shrink-0">Send</button>
               </form>
             </div>
@@ -1127,19 +1127,41 @@ const AppView = {
       const saved = GroupChat.getDraft(slugForDraft);
       if (saved) gcInput.value = saved;
     }
+    // Size the (now multi-line) composer to its restored draft, then back
+    // to one row after a send.
+    GroupChat._autoGrowTextarea(gcInput);
 
-    document.getElementById('gc-form').addEventListener('submit', (e) => {
-      e.preventDefault();
+    const submitGeneral = () => {
       const content = gcInput.value.trim();
       if (!content) return;
       GroupChat.send(content);
       gcInput.value = '';
       if (slugForDraft) GroupChat.setDraft(slugForDraft, '');
+      GroupChat._autoGrowTextarea(gcInput);
+    };
+
+    document.getElementById('gc-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      submitGeneral();
     });
 
     gcInput.addEventListener('input', () => {
       if (slugForDraft) GroupChat.setDraft(slugForDraft, gcInput.value);
+      GroupChat._autoGrowTextarea(gcInput);
       GroupChat.sendTyping();
+    });
+
+    // Multi-line submit semantics: a <textarea> doesn't auto-submit on
+    // Enter, so we drive it here. Enter (no Shift) sends; Shift+Enter
+    // inserts a newline (default). On touch the on-screen return key
+    // always inserts a newline (no Shift chord there) — the Send button is
+    // the reliable send action. Bubble phase, so the autocomplete's
+    // capture-phase keydown still owns Enter while its dropdown is open.
+    gcInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey && !GroupChat._isTouch()) {
+        e.preventDefault();
+        submitGeneral();
+      }
     });
 
     // #87: @mention autocomplete. Re-attaches on every tab mount (the
