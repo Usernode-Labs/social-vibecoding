@@ -681,7 +681,10 @@ const AppView = {
       bodyHtml = AppView._issueBodyHtml(item);
     } else if (t.kind === 'proposal') {
       cardHtml = AppView._renderProposalCard(item, { noNav: true });
-      bodyHtml = AppView._proposalDetailsHtml(item);
+      // Plain-language summary (when one was generated) sits at the very top
+      // of the proposal body region, above proposer / linked issues / roster
+      // and the discussion thread — mirroring _issueBodyHtml for issues.
+      bodyHtml = AppView._proposalSummaryHtml(item) + AppView._proposalDetailsHtml(item);
     } else {
       cardHtml = AppView._renderGovCard(item, { noNav: true });
       bodyHtml = item.description
@@ -1634,6 +1637,22 @@ const AppView = {
     return issue && issue.body && issue.body.trim()
       ? `<div class="dev-issue-body text-xs text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 mt-2">${renderMd(issue.body)}</div>`
       : '';
+  },
+
+  // The proposal's plain-language summary (pr_summary_md), rendered at the
+  // top of the proposal topic sub-view above the proposer/linked-issues/
+  // roster details. Mirrors _issueBodyHtml: light markdown through the same
+  // DevChat.renderMarkdown (marked + DOMPurify) pipeline, same styled
+  // container. Empty string when no summary was generated (legacy proposals,
+  // or an LLM-unavailable turn) so nothing renders and the rest of the view
+  // is unchanged.
+  _proposalSummaryHtml(pr) {
+    const md = pr && typeof pr.pr_summary_md === 'string' ? pr.pr_summary_md.trim() : '';
+    if (!md) return '';
+    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
+      ? (s) => DevChat.renderMarkdown(s)
+      : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
+    return `<div class="dev-issue-body text-xs text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 mt-2">${renderMd(md)}</div>`;
   },
 
   // One PR-proposal card: line 1 is identity + info (icon chip, title,

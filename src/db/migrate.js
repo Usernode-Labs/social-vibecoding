@@ -1173,13 +1173,14 @@ async function seedStagingMergedPrs(pool, config) {
     } else {
       const { rows } = await pool.query(
         `INSERT INTO chat_sessions
-           (app_id, user_id, branch_name, pr_number, pr_title, status,
+           (app_id, user_id, branch_name, pr_number, pr_title, pr_summary_md, status,
             votes_required, active_users_at_merge, created_at)
          VALUES
-           ($1, $2, $3, $4, $5, 'merged', $6, $7,
-            NOW() - ($8::int * INTERVAL '1 hour'))
+           ($1, $2, $3, $4, $5, $6, 'merged', $7, $8,
+            NOW() - ($9::int * INTERVAL '1 hour'))
          RETURNING id`,
         [appId, author.id, branch, 9100 + i, `[staging fixture] ${f.title}`,
+         'In plain terms: this completed change improves the app for everyone who uses it, with no extra steps needed on your part.',
          Math.max(1, Math.ceil(users.length / 2)), users.length, f.hoursAgo]
       );
       sessionId = rows[0].id;
@@ -2393,12 +2394,13 @@ async function seedStagingDemoProposal(pool, config) {
 
   const { rows: sessionRows } = await pool.query(
     `INSERT INTO chat_sessions
-       (app_id, user_id, branch_name, pr_title, status, spec_md, created_at)
+       (app_id, user_id, branch_name, pr_title, pr_summary_md, status, spec_md, created_at)
      VALUES
-       ($1, $2, $3, '[staging fixture] Staging demo proposal', 'active', $4,
+       ($1, $2, $3, '[staging fixture] Staging demo proposal', $5, 'active', $4,
         NOW() - INTERVAL '45 minutes')
      RETURNING id`,
-    [appId, owner.id, fixtureBranch, specMd]
+    [appId, owner.id, fixtureBranch, specMd,
+     'In plain terms: this proposal adds a small demo widget to the app so people have one more handy thing to interact with.']
   );
   const sessionId = sessionRows[0].id;
 
@@ -2743,13 +2745,14 @@ async function seedStagingMyOpenPr(pool, config) {
   } else {
     const { rows } = await pool.query(
       `INSERT INTO chat_sessions
-         (app_id, user_id, branch_name, pr_number, pr_title, status,
+         (app_id, user_id, branch_name, pr_number, pr_title, pr_summary_md, status,
           votes_required, created_at)
        VALUES
          ($1, $2, $3, 9200, '[staging fixture] My open PR — awaiting votes',
-          'promoted', $4, NOW() - INTERVAL '15 minutes')
+          $5, 'promoted', $4, NOW() - INTERVAL '15 minutes')
        RETURNING id`,
-      [appId, target.id, branch, Math.max(1, Math.ceil(users.length / 2))]
+      [appId, target.id, branch, Math.max(1, Math.ceil(users.length / 2)),
+       'In plain terms: this proposed change makes the app a little nicer to use. Open it to read the details and cast your vote.']
     );
     sessionId = rows[0].id;
   }
@@ -2885,14 +2888,15 @@ async function seedStagingOtherUserProposal(pool, config) {
   } else {
     const { rows } = await pool.query(
       `INSERT INTO chat_sessions
-         (app_id, user_id, branch_name, pr_number, pr_title, status,
+         (app_id, user_id, branch_name, pr_number, pr_title, pr_summary_md, status,
           votes_required, created_at)
        VALUES
          ($1, $2, $3, 9300,
           '[staging fixture] Another user''s proposal — Ask AI about it',
-          'promoted', $4, NOW() - INTERVAL '20 minutes')
+          $5, 'promoted', $4, NOW() - INTERVAL '20 minutes')
        RETURNING id`,
-      [appId, owner.id, branch, Math.max(1, Math.ceil(users.length / 2))]
+      [appId, owner.id, branch, Math.max(1, Math.ceil(users.length / 2)),
+       'In plain terms: another collaborator proposed a small improvement to the app. This summary explains what it does for users before you vote.']
     );
     sessionId = rows[0].id;
   }

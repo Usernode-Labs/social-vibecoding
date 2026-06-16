@@ -31,6 +31,9 @@ function stagingMockProposals() {
     pr_number: prNumber,
     pr_url: null,
     pr_title: title,
+    pr_summary_md: 'This is a sample plain-language summary so testers can see '
+      + 'the new explanation that now appears at the top of a proposal — written '
+      + 'in everyday words, with no technical jargon.',
     staging_url: null,
     testing_md: null,
     testing_path: null,
@@ -94,6 +97,9 @@ function stagingMockMerged() {
     pr_number: prNumber,
     pr_url: null,
     pr_title: title,
+    pr_summary_md: 'This is a sample plain-language summary so testers can see '
+      + 'the new explanation at the top of a completed proposal — in everyday '
+      + 'words, with no technical jargon.',
     user_id: 0,
     status: 'merged',
     linked_issues: null,
@@ -619,7 +625,7 @@ function voteRoutes(config) {
       // majority threshold is crossed and only reappears in the "merged"
       // list at the very end, making it look like the vote was lost.
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
+        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') as yes_count,
            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'no') as no_count,
            (SELECT vote FROM pr_votes WHERE session_id = cs.id AND user_id = $2) as my_vote,
@@ -747,7 +753,7 @@ function voteRoutes(config) {
       // (Undo is now a single direct action that opens a revert PR, so
       // there are no separate undo-vote tallies to surface.)
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
+        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
            cs.revert_of_session_id,
            -- #58: the vote threshold + active-user count snapshotted at merge
            -- time. The merged-PR pill renders against votes_required (falling
