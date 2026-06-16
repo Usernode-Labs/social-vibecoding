@@ -23,18 +23,42 @@ const log = require('../services/logger');
 // The events table is what a future, richer analytics layer reads; these
 // endpoints intentionally stay on the primary tables for fidelity.
 
+// Admin-exclusion predicate (dashboard checkbox #1). When `includeAdmins`
+// is false (the default) every analytics query drops rows attributed to
+// an admin account (users.is_admin = TRUE — view-only admins included).
+// `col` is the user-id column to test in the calling query. Returns a
+// fragment that begins with the given keyword (AND by default) so it can
+// be spliced into an existing WHERE clause or stand alone.
+function adminFilter(col, includeAdmins, keyword = 'AND') {
+  if (includeAdmins) return '';
+  return `${keyword} ${col} NOT IN (SELECT id FROM users WHERE is_admin)`;
+}
+
+// Read the ?includeAdmins= query param. Anything but the literal 'true'
+// means exclude admins (matches the unchecked-by-default checkbox).
+function wantsAdmins(req) {
+  return req.query.includeAdmins === 'true';
+}
+
 // "Active" surface: one row per (user, day) the user did anything we
 // count as activity. Reused by retention + WAU/MAU. `day` is a DATE.
-const ACTIVITY_DAYS_SQL = `
-  SELECT user_id, date AS day FROM app_activity WHERE user_id IS NOT NULL
+// Built per-request so the admin-exclusion filter can be woven into each
+// UNION arm (each already constrains user_id IS NOT NULL).
+function activityDaysSql(includeAdmins) {
+  const aa = adminFilter('user_id', includeAdmins);
+  const cm = adminFilter('user_id', includeAdmins);
+  const cs = adminFilter('cs.user_id', includeAdmins);
+  return `
+  SELECT user_id, date AS day FROM app_activity WHERE user_id IS NOT NULL ${aa}
   UNION
-  SELECT user_id, created_at::date AS day FROM chat_messages WHERE user_id IS NOT NULL
+  SELECT user_id, created_at::date AS day FROM chat_messages WHERE user_id IS NOT NULL ${cm}
   UNION
   SELECT cs.user_id, csm.created_at::date AS day
     FROM chat_session_messages csm
     JOIN chat_sessions cs ON cs.id = csm.session_id
-   WHERE cs.user_id IS NOT NULL AND csm.role = 'user'
+   WHERE cs.user_id IS NOT NULL AND csm.role = 'user' ${cs}
 `;
+}
 
 // Map the ?cohort= query param to a created_at lower bound (or null for
 // "all time"). Used to scope the funnels to recent signups so lifetime
@@ -56,7 +80,8 @@ function dashboardRoutes(config) {
   router.use('/api/admin/analytics', adminMiddleware);
 
   // ── Overview counters ──────────────────────────────────────
-  router.get('/api/admin/analytics/overview', async (_req, res) => {
+  router.get('/api/admin/analytics/overview', async (req, res) => {
+    const includeAdmins = wantsAdmins(req);
     try {
       const [users, apps, prs, active, llm, kudos] = await Promise.all([
         pool.query(
@@ -64,11 +89,13 @@ function dashboardRoutes(config) {
              COUNT(*)::int AS total,
              COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')::int  AS new_week,
              COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days')::int AS new_month
-           FROM users`
+           FROM users
+           WHERE TRUE ${adminFilter('id', includeAdmins)}`
         ),
         pool.query(
           `SELECT COUNT(*)::int AS total
-           FROM apps WHERE COALESCE(self_hosted, FALSE) = FALSE AND status <> 'deleted'`
+           FROM apps WHERE COALESCE(self_hosted, FALSE) = FALSE AND status <> 'deleted'
+             ${adminFilter('created_by', includeAdmins)}`
         ),
         // promoted        — sessions in the promoted/merging state RIGHT NOW
         //                   (a live snapshot; merged sessions have left this bucket).
@@ -83,10 +110,11 @@ function dashboardRoutes(config) {
              COUNT(*) FILTER (WHERE status IN ('promoted','merging'))::int AS promoted,
              COUNT(*) FILTER (WHERE promoted_at IS NOT NULL)::int          AS promoted_all_time,
              COUNT(*) FILTER (WHERE status = 'merged')::int                AS merged
-           FROM chat_sessions`
+           FROM chat_sessions
+           WHERE TRUE ${adminFilter('user_id', includeAdmins)}`
         ),
         pool.query(
-          `WITH activity AS (${ACTIVITY_DAYS_SQL})
+          `WITH activity AS (${activityDaysSql(includeAdmins)})
            SELECT
              COUNT(DISTINCT user_id) FILTER (WHERE day >= CURRENT_DATE - 6)::int  AS wau,
              COUNT(DISTINCT user_id) FILTER (WHERE day >= CURRENT_DATE - 29)::int AS mau
@@ -94,9 +122,13 @@ function dashboardRoutes(config) {
         ),
         pool.query(
           `SELECT COALESCE(SUM(total_cost_cents), 0)::float AS cents
-           FROM llm_usage WHERE date = CURRENT_DATE`
+           FROM llm_usage WHERE date = CURRENT_DATE
+             ${adminFilter('user_id', includeAdmins)}`
         ),
-        pool.query(`SELECT COUNT(*)::int AS total FROM pr_kudos`),
+        pool.query(
+          `SELECT COUNT(*)::int AS total FROM pr_kudos
+           WHERE TRUE ${adminFilter('giver_user_id', includeAdmins)}`
+        ),
       ]);
 
       res.json({
@@ -123,6 +155,7 @@ function dashboardRoutes(config) {
   // the step-over-step conversion.
   router.get('/api/admin/analytics/funnels', async (req, res) => {
     const since = cohortSince(req.query.cohort);
+    const includeAdmins = wantsAdmins(req);
     // Build a reusable "user is in cohort" predicate. When all-time,
     // it's just TRUE so the SQL stays uniform.
     const userCohort = since ? `u.created_at >= ${since}` : 'TRUE';
@@ -132,7 +165,8 @@ function dashboardRoutes(config) {
       // Dapp-usage funnel — distinct users reaching each milestone.
       const dapp = await pool.query(
         `WITH base AS (
-           SELECT u.id AS user_id FROM users u WHERE ${userCohort}
+           SELECT u.id AS user_id FROM users u
+            WHERE ${userCohort} ${adminFilter('u.id', includeAdmins)}
          )
          SELECT
            (SELECT COUNT(*)::int FROM base) AS signed_up,
@@ -156,7 +190,7 @@ function dashboardRoutes(config) {
       // sessions) plus distinct-user reach at each step. Reverts inserted
       // directly as 'promoted' have no promoted_at, so the promoted test
       // also accepts the terminal statuses.
-      const sessWhere = since ? `WHERE cs.created_at >= ${since}` : '';
+      const sessCohort = since ? `cs.created_at >= ${since}` : 'TRUE';
       const sessions = await pool.query(
         `SELECT
            COUNT(*)::int AS started,
@@ -166,7 +200,7 @@ function dashboardRoutes(config) {
            COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM pr_votes pv WHERE pv.session_id = cs.id))::int AS received_vote,
            COUNT(*) FILTER (WHERE cs.status = 'merged')::int AS merged
          FROM chat_sessions cs
-         ${sessWhere}`
+         WHERE ${sessCohort} ${adminFilter('cs.user_id', includeAdmins)}`
       );
 
       const usersReach = await pool.query(
@@ -178,7 +212,7 @@ function dashboardRoutes(config) {
            COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status = 'merged')::int AS merged
          FROM chat_sessions cs
          JOIN users usr ON usr.id = cs.user_id
-         WHERE ${sessUserCohort}`
+         WHERE ${sessUserCohort} ${adminFilter('usr.id', includeAdmins)}`
       );
 
       res.json({
@@ -199,7 +233,8 @@ function dashboardRoutes(config) {
   // generate_series spine guarantees a continuous x-axis (no gaps for
   // quiet weeks). Merges use merged_at (exact going forward) and fall
   // back to promoted_at for pre-migration rows that never recorded one.
-  router.get('/api/admin/analytics/growth', async (_req, res) => {
+  router.get('/api/admin/analytics/growth', async (req, res) => {
+    const includeAdmins = wantsAdmins(req);
     try {
       const { rows } = await pool.query(
         `WITH spine AS (
@@ -214,20 +249,23 @@ function dashboardRoutes(config) {
          ),
          u AS (
            SELECT date_trunc('week', created_at)::date AS wk, COUNT(*)::int AS n
-           FROM users GROUP BY 1
+           FROM users WHERE TRUE ${adminFilter('id', includeAdmins)} GROUP BY 1
          ),
          a AS (
            SELECT date_trunc('week', created_at)::date AS wk, COUNT(*)::int AS n
-           FROM apps WHERE COALESCE(self_hosted, FALSE) = FALSE GROUP BY 1
+           FROM apps WHERE COALESCE(self_hosted, FALSE) = FALSE
+             ${adminFilter('created_by', includeAdmins)} GROUP BY 1
          ),
          pr AS (
            SELECT date_trunc('week', promoted_at)::date AS wk, COUNT(*)::int AS n
-           FROM chat_sessions WHERE promoted_at IS NOT NULL GROUP BY 1
+           FROM chat_sessions WHERE promoted_at IS NOT NULL
+             ${adminFilter('user_id', includeAdmins)} GROUP BY 1
          ),
          mg AS (
            SELECT date_trunc('week', COALESCE(merged_at, promoted_at, created_at))::date AS wk,
                   COUNT(*)::int AS n
-           FROM chat_sessions WHERE status = 'merged' GROUP BY 1
+           FROM chat_sessions WHERE status = 'merged'
+             ${adminFilter('user_id', includeAdmins)} GROUP BY 1
          )
          SELECT to_char(s.wk, 'YYYY-MM-DD') AS wk,
                 COALESCE(u.n, 0)  AS new_users,
@@ -257,14 +295,15 @@ function dashboardRoutes(config) {
   //      action). Capped to the most recent 12 cohorts for readability.
   //   2. stickiness — per-week WAU and trailing-28-day MAU for the last
   //      12 weeks, so the WAU/MAU ratio can be charted.
-  router.get('/api/admin/analytics/retention', async (_req, res) => {
+  router.get('/api/admin/analytics/retention', async (req, res) => {
+    const includeAdmins = wantsAdmins(req);
     try {
       const cohorts = await pool.query(
         `WITH cohorts AS (
            SELECT id AS user_id, date_trunc('week', created_at)::date AS cohort_wk
-           FROM users
+           FROM users WHERE TRUE ${adminFilter('id', includeAdmins)}
          ),
-         activity AS (${ACTIVITY_DAYS_SQL}),
+         activity AS (${activityDaysSql(includeAdmins)}),
          active_weeks AS (
            SELECT DISTINCT user_id, date_trunc('week', day::timestamptz)::date AS wk
            FROM activity
@@ -303,7 +342,7 @@ function dashboardRoutes(config) {
            )::date AS wk
          ),
          activity AS (
-           SELECT DISTINCT user_id, day FROM (${ACTIVITY_DAYS_SQL}) a
+           SELECT DISTINCT user_id, day FROM (${activityDaysSql(includeAdmins)}) a
          )
          SELECT to_char(w.wk, 'YYYY-MM-DD') AS wk,
                 COUNT(DISTINCT a.user_id) FILTER (
@@ -361,7 +400,8 @@ function dashboardRoutes(config) {
   // "Distinct calendar days" means multiple apps used on the same day
   // collapse to one — hence COUNT(DISTINCT ...::date) rather than COUNT(*)
   // over the per-(app, day) dapp_active_day events.
-  router.get('/api/admin/analytics/engagement', async (_req, res) => {
+  router.get('/api/admin/analytics/engagement', async (req, res) => {
+    const includeAdmins = wantsAdmins(req);
     try {
       const dau = await pool.query(
         `WITH weeks AS (
@@ -379,6 +419,7 @@ function dashboardRoutes(config) {
            FROM events
            WHERE user_id IS NOT NULL
              AND event_type IN ('dapp_active_day', 'pr_promoted')
+             ${adminFilter('user_id', includeAdmins)}
            GROUP BY user_id, date_trunc('week', created_at)::date
          )
          SELECT to_char(w.wk, 'YYYY-MM-DD') AS wk,
@@ -403,6 +444,7 @@ function dashboardRoutes(config) {
            SELECT user_id, created_at::date AS day
            FROM events
            WHERE event_type = 'dapp_active_day' AND user_id IS NOT NULL
+             ${adminFilter('user_id', includeAdmins)}
          ),
          qualifying AS (
            -- A user counts for week w if they used a dapp on >= 2 distinct
@@ -443,7 +485,8 @@ function dashboardRoutes(config) {
   // (chat_sessions rows) they started. Session-level, so a user who
   // started many sessions ranks high regardless of outcome. Rendered as
   // a descending left-to-right bar chart on the dashboard.
-  router.get('/api/admin/analytics/top-users', async (_req, res) => {
+  router.get('/api/admin/analytics/top-users', async (req, res) => {
+    const includeAdmins = wantsAdmins(req);
     try {
       const { rows } = await pool.query(
         `SELECT u.username AS name,
@@ -456,6 +499,7 @@ function dashboardRoutes(config) {
                 COUNT(*) FILTER (WHERE cs.status = 'merged')::int AS merged
            FROM users u
            JOIN chat_sessions cs ON cs.user_id = u.id
+          WHERE TRUE ${adminFilter('u.id', includeAdmins)}
           GROUP BY u.id, u.username
           ORDER BY sessions DESC, u.username
           LIMIT 30`
@@ -478,7 +522,8 @@ function dashboardRoutes(config) {
   // end who didn't give a kudos that week — i.e. cumulative user base minus
   // that week's distinct givers. That's what makes this a participation /
   // "survival" view rather than just a raw count of kudos given.
-  router.get('/api/admin/analytics/kudos', async (_req, res) => {
+  router.get('/api/admin/analytics/kudos', async (req, res) => {
+    const includeAdmins = wantsAdmins(req);
     try {
       const { rows } = await pool.query(
         `WITH weeks AS (
@@ -491,6 +536,7 @@ function dashboardRoutes(config) {
          per_giver AS (
            SELECT week_start AS wk, giver_user_id, COUNT(*)::int AS k
            FROM pr_kudos
+           WHERE TRUE ${adminFilter('giver_user_id', includeAdmins)}
            GROUP BY week_start, giver_user_id
          ),
          buckets AS (
@@ -506,7 +552,9 @@ function dashboardRoutes(config) {
          ),
          pop AS (
            SELECT w.wk,
-                  (SELECT COUNT(*) FROM users u WHERE u.created_at < w.wk + 7)::int AS users
+                  (SELECT COUNT(*) FROM users u
+                    WHERE u.created_at < w.wk + 7
+                      ${adminFilter('u.id', includeAdmins)})::int AS users
            FROM weeks w
          )
          SELECT to_char(b.wk, 'YYYY-MM-DD') AS wk,
@@ -534,8 +582,13 @@ function dashboardRoutes(config) {
   // sub-cent precision); summed to a float here and formatted as dollars
   // client-side. `date` is bucketed by CURRENT_DATE at write time, so the
   // window comparison uses CURRENT_DATE too.
-  router.get('/api/admin/analytics/spend', async (_req, res) => {
+  router.get('/api/admin/analytics/spend', async (req, res) => {
+    const includeAdmins = wantsAdmins(req);
     try {
+      // Return platform-key spend (total_cost_cents — drives the daily
+      // caps) and user-key/BYOK spend (byok_cost_cents — display only)
+      // separately per day. The dashboard's three-way toggle decides
+      // which to chart; doing it client-side means no refetch on switch.
       const { rows } = await pool.query(
         `WITH spine AS (
            SELECT generate_series(
@@ -545,13 +598,17 @@ function dashboardRoutes(config) {
            )::date AS day
          ),
          agg AS (
-           SELECT date AS day, SUM(total_cost_cents) AS cents
+           SELECT date AS day,
+                  SUM(total_cost_cents) AS platform_cents,
+                  SUM(byok_cost_cents)  AS user_key_cents
            FROM llm_usage
            WHERE date >= CURRENT_DATE - 29
+             ${adminFilter('user_id', includeAdmins)}
            GROUP BY date
          )
          SELECT to_char(s.day, 'YYYY-MM-DD') AS day,
-                COALESCE(a.cents, 0)::float AS cents
+                COALESCE(a.platform_cents, 0)::float AS platform_cents,
+                COALESCE(a.user_key_cents, 0)::float AS user_key_cents
          FROM spine s
          LEFT JOIN agg a ON a.day = s.day
          ORDER BY s.day`
@@ -559,6 +616,32 @@ function dashboardRoutes(config) {
       res.json({ days: rows });
     } catch (err) {
       log.error('dashboard', 'spend failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Spend by builder (top 30) ──────────────────────────────
+  //
+  // Lifetime LLM spend per user, split platform-key vs user-key, for the
+  // 30 biggest spenders. Ordered by total here; the client re-sorts by
+  // the selected toggle mode so the bars stay descending in every mode.
+  router.get('/api/admin/analytics/spend-by-builder', async (req, res) => {
+    const includeAdmins = wantsAdmins(req);
+    try {
+      const { rows } = await pool.query(
+        `SELECT u.username AS name,
+                COALESCE(SUM(lu.total_cost_cents), 0)::float AS platform_cents,
+                COALESCE(SUM(lu.byok_cost_cents), 0)::float  AS user_key_cents
+           FROM users u
+           JOIN llm_usage lu ON lu.user_id = u.id
+          WHERE TRUE ${adminFilter('u.id', includeAdmins)}
+          GROUP BY u.id, u.username
+          ORDER BY (SUM(lu.total_cost_cents) + SUM(lu.byok_cost_cents)) DESC, u.username
+          LIMIT 30`
+      );
+      res.json({ builders: rows });
+    } catch (err) {
+      log.error('dashboard', 'spend-by-builder failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
