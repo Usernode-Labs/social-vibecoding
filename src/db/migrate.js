@@ -29,6 +29,7 @@ async function migrate(config) {
   await seedStagingMyOpenPr(pool, config);
   await seedStagingProposalDiscussion(pool, config);
   await seedStagingOtherUserProposal(pool, config);
+  await seedStagingTopicScrollThreads(pool, config);
   await seedStagingArchiveProposalFixtures(pool, config);
   await seedStagingActiveSessions(pool, config);
   await seedStagingCcProgressRun(pool, config);
@@ -3164,6 +3165,124 @@ async function seedStagingProposalDiscussion(pool, config) {
   }
 
   log.info('db', 'Staging proposal-discuss fixture seeded', { appId, proposalRef, userId });
+}
+
+// #363: the topic sub-view (issue / PR proposal / governance proposal) now
+// scrolls as ONE region — the topic card/body and the discussion share a
+// single scroller, with only the back bar and composer pinned. That unified
+// scroll is only visible when a topic carries enough content to overflow one
+// screen, so seed a long human discussion thread for one topic of EACH kind:
+//
+//   - a GitHub issue   → thread_type 'issue',      ref = mock issue #900001
+//   - a PR proposal    → thread_type 'session',    ref = the open-PR fixture
+//   - a governance prop → thread_type 'governance', ref = the env-var fixture
+//
+// Idempotent: each row is keyed on (app_id, thread_type, thread_ref, content)
+// and skipped if already present (chat_messages.id is SERIAL, so we don't pin
+// ids). Strictly a no-op outside staging. Anchors are the fixtures seeded
+// earlier in this run; any missing anchor is skipped with a warning.
+async function seedStagingTopicScrollThreads(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging topic-scroll threads skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  // A few authors so the thread reads like a real back-and-forth. Falls back
+  // to a single author when staging has only one user.
+  const { rows: userRows } = await pool.query(
+    `SELECT id FROM users ORDER BY is_admin DESC, id ASC LIMIT 3`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging topic-scroll threads skipped: no users');
+    return;
+  }
+  const authorIds = userRows.map((u) => u.id);
+
+  // Resolve the PR-proposal anchor (the open-PR fixture session).
+  const { rows: sessRows } = await pool.query(
+    `SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1`,
+    [appId, 'staging-fixture/my-open-pr']
+  );
+  const sessionRef = sessRows[0]?.id || null;
+
+  // Resolve the governance anchor (the env-var change proposal fixture).
+  const { rows: govRows } = await pool.query(
+    `SELECT id FROM issues WHERE app_id = $1 AND title = $2 LIMIT 1`,
+    [appId, 'Set secret "STAGING_DEMO_KEY"']
+  );
+  const govRef = govRows[0]?.id || null;
+
+  // The GitHub-issue anchor: mock issue #900001, always served in staging by
+  // the mock-issues fallback in routes/issues.js. Thread ref = issue number.
+  const issueRef = 900001;
+
+  // 18 human turns — long enough that header + messages overflow one screen
+  // and the single scroller is genuinely exercised on every preview.
+  const bodies = [
+    'Kicking off the discussion here — does the proposed direction match what we agreed in the last round?',
+    'I think it does, but I want to double-check the edge cases before we commit.',
+    'Good point. The main risk I see is the narrow-phone layout — has anyone tried it at 360px?',
+    'Tried it on my end; the action row wraps cleanly now, no overflow past the card edge.',
+    'Nice. What about dark mode — does the contrast still pass on the muted text?',
+    'Contrast is fine in dark mode. Light mode the secondary text is a touch low but acceptable.',
+    'Can we keep the change scoped? I’d rather not expand into a full redesign in one pass.',
+    'Agreed, let’s keep it tight. Follow-ups can be their own proposals.',
+    'One more thing: how does this behave when the body is really long?',
+    'That’s exactly the case we’re testing — the whole thing should scroll as one continuous area.',
+    'So the header and the conversation move together, and only the reply box stays put?',
+    'Right, only the back bar at the top and the composer at the bottom are pinned.',
+    'That matches the main group chat, which is what people kept asking for.',
+    'Reading from the top down feels much more natural than two boxes fighting for space.',
+    'Did the vote roster and the Ask-AI button survive the move into the scroll area?',
+    'They did — still interactive, they just scroll up with the rest of the header now.',
+    'Great. I’m comfortable voting this through once the preview looks right.',
+    'Same here. Scroll all the way down to confirm the composer never gets pushed off-screen.',
+  ];
+
+  const seedThread = async (threadType, threadRef, label) => {
+    if (!threadRef) {
+      log.warn('db', 'Staging topic-scroll thread skipped: missing anchor', { threadType });
+      return 0;
+    }
+    let inserted = 0;
+    for (let i = 0; i < bodies.length; i++) {
+      // Prefix makes each row's content unique per thread, which doubles as
+      // the idempotency key and an obviously-fake "Staging demo" marker.
+      const content = `[Staging demo] ${label} #${i + 1}: ${bodies[i]}`;
+      const { rows: existing } = await pool.query(
+        `SELECT 1 FROM chat_messages
+          WHERE app_id = $1 AND thread_type = $2 AND thread_ref = $3 AND content = $4
+          LIMIT 1`,
+        [appId, threadType, threadRef, content]
+      );
+      if (existing.length) continue;
+      const minutesAgo = (bodies.length - i) * 4; // oldest first, newest last
+      await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, created_at)
+         VALUES ($1, $2, $3, 'message', $4, $5, NOW() - ($6::int * INTERVAL '1 minute'))`,
+        [appId, authorIds[i % authorIds.length], content, threadType, threadRef, minutesAgo]
+      );
+      inserted++;
+    }
+    return inserted;
+  };
+
+  const n1 = await seedThread('issue', issueRef, 'issue thread');
+  const n2 = await seedThread('session', sessionRef, 'proposal thread');
+  const n3 = await seedThread('governance', govRef, 'governance thread');
+
+  log.info('db', 'Staging topic-scroll threads seeded', {
+    appId, issueRef, sessionRef, govRef, inserted: n1 + n2 + n3,
+  });
 }
 
 // #313/#321: a PROMOTED proposal owned by a user OTHER than the tester, so
