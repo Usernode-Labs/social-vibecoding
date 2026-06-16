@@ -2125,9 +2125,11 @@ const AppView = {
   },
 
   // One issue row for the forum feed, with everything the old Open
-  // Issues section rendered per row (bounty/kudos, Create PR, the
+  // Issues section rendered per row (bounty/kudos, Create proposal, the
   // Generate-proposal state machine, Preview, creator attribution) plus the
   // accordion expansion into the issue body + thread chat.
+  // The middle "start work" button reads "Create proposal" (no session yet)
+  // or "Create new proposal" (viewer already has one) — see createBtn below.
   _renderIssueRow(issue, opts) {
     const noNav = !!(opts && opts.noNav);
     const meta = AppView._ghIssuesMeta || {};
@@ -2150,16 +2152,18 @@ const AppView = {
       ? 'You already placed a bounty on this issue'
       : (budgetSpent ? 'Weekly kudos allowance spent' : 'Pledge a kudos bounty — paid to whoever\'s merged PR closes this issue');
     const kudosBtn = `<button class="gc-vote-btn"${kudosDisabled ? ' disabled' : ''} title="${kudosTitle}" onclick="AppView.giveIssueBounty(${n})">${issue.my_bounty ? '&#9733; Bountied' : 'Pledge kudos'}</button>`;
-    // #287: once the viewer has started a Create-PR dev chat for this issue
-    // (myPrSessionId, from /github-issues), the "Create PR" button is
-    // replaced — for them — with "Open Session", which reopens that chat.
-    // Strictly per-viewer and reverts to "Create PR" once the session is
-    // archived (server filters archived rows out of myPrSessionId). This is
+    // #287: once the viewer has started a proposal dev chat for this issue
+    // (myPrSessionId, from /github-issues), the "Create proposal" button is
+    // replaced — for them — with "Create new proposal", which starts another
+    // fresh dev chat (a second attempt) rather than reopening the first.
+    // Strictly per-viewer and reverts to "Create proposal" once the session
+    // is archived (server filters archived rows out of myPrSessionId). This is
     // independent of the headless Generate-proposal path below — both can
-    // show on the same row.
+    // show on the same row. The viewer's existing session is still reachable
+    // from the Dev Chat tab.
     const createBtn = issue.myPrSessionId
-      ? `<button class="gc-vote-btn" title="Open the dev chat you started for this issue" onclick="AppView.openIssuePrSession(${issue.myPrSessionId})">Open Session</button>`
-      : `<button class="gc-vote-btn" title="Start a dev chat to solve this issue" onclick="AppView.createPrForIssue(${n})">Create PR</button>`;
+      ? `<button class="gc-vote-btn" title="Start another dev chat for this issue" onclick="AppView.createPrForIssue(${n})">Create new proposal</button>`
+      : `<button class="gc-vote-btn" title="Start a dev chat to solve this issue" onclick="AppView.createPrForIssue(${n})">Create proposal</button>`;
     // #155: headless auto-session button. Four states driven by the
     // issue's `headless` field from /github-issues:
     //   none/failed → "Generate proposal" (opens the confirm + model popup)
@@ -2408,22 +2412,25 @@ const AppView = {
     }
   },
 
-  // "Create PR" — spin up a fresh dev chat for this issue and seed the first
-  // turn with the issue's number/title/body so the Mayor links it
-  // (addresses_issues → linked_issues → `Closes #N`) and solves it. Mirrors
-  // DevChat.startNewChange's create→open→render flow, then sends the seed.
+  // "Create proposal" / "Create new proposal" — spin up a fresh dev chat for
+  // this issue and seed the first turn with the issue's number/title/body so
+  // the Mayor links it (addresses_issues → linked_issues → `Closes #N`) and
+  // solves it. Mirrors DevChat.startNewChange's create→open→render flow, then
+  // sends the seed. Safe to call from either button state — each call spawns a
+  // brand-new session.
   async createPrForIssue(issueNumber) {
     const slug = AppView.appData && AppView.appData.slug;
     if (!slug || typeof DevChat === 'undefined') return;
     const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
 
     // #287: pass the issue number so the session is persistently linked
-    // (created_from_issue_number) and the row can swap to "Open Session".
+    // (created_from_issue_number) and the row keeps the has-session state.
     const session = await DevChat.createSession(slug, issueNumber);
     if (!session) return; // createSession already alerts (cap reached / error)
 
-    // #287: optimistically swap "Create PR" → "Open Session" right away,
-    // before the next /github-issues load confirms the link server-side.
+    // #287: optimistically move the row into the has-session state right away
+    // ("Create proposal" → "Create new proposal"), before the next
+    // /github-issues load confirms the link server-side.
     if (issue) {
       issue.myPrSessionId = session.id;
       if (typeof AppView._rerenderFeed === 'function') AppView._rerenderFeed();
@@ -2606,9 +2613,11 @@ const AppView = {
     }
   },
 
-  // #287: "Open Session" — the viewer already started a Create-PR dev chat
-  // for this issue, so reopen it instead of spinning up another. Same
-  // navigation as goToAutoSessionClone; the switchTab path reloads the
+  // #287: reopen the viewer's existing proposal dev chat for an issue. No
+  // longer wired to the start-work button (which now always creates a new
+  // proposal via createPrForIssue — see _renderIssueRow); retained for the
+  // deferred "keep both buttons" variant that would re-add a one-tap reopen.
+  // Same navigation as goToAutoSessionClone; the switchTab path reloads the
   // session list before opening the session.
   async openIssuePrSession(sessionId) {
     if (typeof DevChat === 'undefined') return;

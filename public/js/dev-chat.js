@@ -465,9 +465,9 @@ const DevChat = {
   },
 
   // #287: an optional issueNumber links the new session back to the issue
-  // row's "Create PR" button (created_from_issue_number) so the row can
-  // swap to "Open Session". Omitted on the generic "+ New chat" path, which
-  // sends no body and stores NULL.
+  // row's start-work button (created_from_issue_number) so the row can
+  // swap "Create proposal" → "Create new proposal". Omitted on the generic
+  // "+ New chat" path, which sends no body and stores NULL.
   async createSession(appSlug, issueNumber) {
     try {
       const hasIssue = Number.isInteger(issueNumber) && issueNumber > 0;
