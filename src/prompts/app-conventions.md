@@ -776,6 +776,49 @@ and uncaught errors and forwards them via `postMessage` so the
 platform's developer console can surface them. Don't remove or
 modify that block when editing the HTML shell.
 
+## Rendering invariants — opt-in self-checks
+
+The bridge (see "Bridge") exposes an **opt-in** API for registering
+cheap correctness checks that run in the live preview and report
+failures into the same developer console as `console.error`. It is
+fully **no-op by default**: an app that registers nothing behaves
+exactly as before. Use it to catch *structural* rendering bugs that a
+screenshot might not make obvious — the canonical example being a
+canvas that should exactly fill its window but renders at the wrong
+pixel density on HiDPI screens.
+
+A check is a function returning a truthy value when the invariant
+holds, or `false` / a string reason when it's violated. Register it
+once the bridge is loaded:
+
+```js
+usernode.invariants.register('canvas-fills-window', function () {
+  var c = document.querySelector('canvas');
+  if (!c) return true; // nothing to check yet
+  var expectedW = Math.round(window.innerWidth * window.devicePixelRatio);
+  var expectedH = Math.round(window.innerHeight * window.devicePixelRatio);
+  if (c.width !== expectedW || c.height !== expectedH) {
+    return 'canvas ' + c.width + 'x' + c.height +
+           ' != window ' + expectedW + 'x' + expectedH;
+  }
+  return true;
+});
+```
+
+Behaviour:
+
+- Registered checks run on `resize` / `orientationchange` and once
+  immediately at registration (so an already-violated invariant
+  reports without waiting for a resize).
+- A violation posts an `error`-level entry (kind `invariant`) to the
+  dev console — it badges red like any other error. A check that
+  throws is reported, never propagated.
+- Failures are **debounced**: a check reports once when it starts
+  failing and once when it recovers, not every tick.
+- Requires the hosted bridge `<script>` (it lives in the bridge, not
+  the vendored forwarder, so there's nothing to re-vendor). Add the
+  bridge tag if your shell doesn't already load it.
+
 ## Outputting file edits
 
 When Claude Code outputs updated file contents, use the standard

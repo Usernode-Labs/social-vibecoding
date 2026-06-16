@@ -161,15 +161,46 @@ function readLlm(parsed) {
   return out;
 }
 
+// Allowed device-scale values for the optional top-level `screenshot`
+// block (issue #360). The platform's before/after preview screenshots
+// default to 2× (HiDPI/retina); an app declares `1` to opt its previews
+// back to standard density (pixel art, deliberately low-res canvases).
+const SCREENSHOT_SCALE_VALUES = new Set([1, 2]);
+const DEFAULT_SCREENSHOT_SCALE = 2;
+
+// Normalize the optional top-level `screenshot` block:
+//   "screenshot": { "deviceScaleFactor": 1 }
+// Resolves to a `{ deviceScaleFactor: 1 | 2 }` object. Default is 2×
+// (HiDPI) for everything that says nothing — a non-object block, an
+// absent/garbage `deviceScaleFactor`, or any value other than 1/2 drops
+// to 2 (with a warn for an explicitly-invalid value). Always returns an
+// object so the deploy-time reconcile always has a concrete scale to
+// write. Lenient like the rest of the reader; never throws.
+function readScreenshot(parsed) {
+  const raw = parsed?.screenshot;
+  if (raw == null) return { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE };
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    log.warn('app-manifest', 'Ignoring non-object screenshot block');
+    return { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE };
+  }
+  const v = raw.deviceScaleFactor;
+  if (v == null) return { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE };
+  if (typeof v === 'number' && SCREENSHOT_SCALE_VALUES.has(v)) {
+    return { deviceScaleFactor: v };
+  }
+  log.warn('app-manifest', 'Ignoring invalid screenshot.deviceScaleFactor', { value: v });
+  return { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE };
+}
+
 function read(cloneDir) {
   const filePath = path.join(cloneDir, MANIFEST_FILENAME);
   let raw;
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
-    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null, visibility: null };
+    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE } };
     log.warn('app-manifest', 'Read failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, visibility: null };
+    return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE } };
   }
 
   let parsed;
@@ -177,7 +208,7 @@ function read(cloneDir) {
     parsed = JSON.parse(raw);
   } catch (err) {
     log.warn('app-manifest', 'Parse failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, visibility: null };
+    return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE } };
   }
 
   const secretsIn = Array.isArray(parsed?.secrets) ? parsed.secrets : [];
@@ -218,6 +249,7 @@ function read(cloneDir) {
     secrets,
     llm: readLlm(parsed),
     visibility: readVisibility(parsed),
+    screenshot: readScreenshot(parsed),
   };
 }
 
@@ -399,14 +431,49 @@ async function reconcileAppVisibility(pool, app, manifest) {
   return true;
 }
 
+/**
+ * Deploy-time screenshot-scale reconcile (issue #360) — sibling of
+ * reconcileAppName / reconcileAppVisibility. The manifest's optional
+ * top-level `screenshot.deviceScaleFactor` is the source of truth for
+ * the density the platform captures this app's before/after preview
+ * shots at; it persists into apps.screenshot_device_scale so the
+ * capture orchestrator (visuals.captureForSession) can read it without
+ * re-cloning. readScreenshot always returns a concrete scale (default
+ * 2), so this writes on every deploy and no-ops only when the stored
+ * value already matches.
+ *
+ * Best-effort like its siblings: callers fire-and-log; a failure here
+ * must never fail the deploy.
+ */
+async function reconcileAppScreenshot(pool, app, manifest) {
+  const scale = manifest?.screenshot?.deviceScaleFactor;
+  if (scale !== 1 && scale !== 2) return false;
+
+  const { rows } = await pool.query(
+    'SELECT screenshot_device_scale FROM apps WHERE id = $1', [app.id]
+  );
+  if (!rows.length) return false;
+  if (rows[0].screenshot_device_scale === scale) return false;
+
+  await pool.query(
+    'UPDATE apps SET screenshot_device_scale = $1 WHERE id = $2', [scale, app.id]
+  );
+  log.info('app-manifest', 'Reconciled screenshot scale from dapp.json', {
+    appId: app.id, slug: app.slug, deviceScaleFactor: scale,
+  });
+  return true;
+}
+
 module.exports = {
   read,
   readName,
   readLlm,
   readVisibility,
+  readScreenshot,
   describeVisibility,
   reconcileAppName,
   reconcileAppVisibility,
+  reconcileAppScreenshot,
   applyVisibilityChange,
   RESERVED_KEYS,
   RESERVED_KEY_PREFIXES,

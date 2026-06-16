@@ -368,6 +368,12 @@ async function rebuildProductionInner(config, app) {
     // best-effort so it never fails the rebuild.
     await appManifest.reconcileAppVisibility(prodPool, app, manifest)
       .catch((err) => log.warn('staging', 'Visibility reconcile failed', { app: app.slug, err: err.message }));
+    // And the manifest's `screenshot.deviceScaleFactor` (issue #360): a
+    // merged PR that toggles the capture density applies here on the
+    // rebuild it triggered. readScreenshot defaults to 2×, so this keeps
+    // apps.screenshot_device_scale current on every prod rebuild.
+    await appManifest.reconcileAppScreenshot(prodPool, app, manifest)
+      .catch((err) => log.warn('staging', 'Screenshot reconcile failed', { app: app.slug, err: err.message }));
     const stored = await appSecrets.getRawValues(prodPool, app.id, config.jwtSecret);
     const merge = appSecrets.mergeForDeploy(
       manifest, stored, appSecrets.platformDefaultsFromEnv()
