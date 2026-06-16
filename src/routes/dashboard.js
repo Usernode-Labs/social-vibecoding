@@ -665,9 +665,10 @@ function dashboardRoutes(config) {
            SELECT lu.date AS day,
                   SUM(lu.total_cost_cents) AS platform_cents,
                   SUM(lu.byok_cost_cents)  AS user_key_cents,
-                  -- Admin-attributed portion of each day's spend, surfaced in
-                  -- the tooltip only (#341 — Daily spend keeps its colours;
-                  -- the bar stays the full total so it looks unchanged). 0 when
+                  -- Admin-attributed portion of each day's spend. The client
+                  -- stacks this as an amber segment on top of the non-admin
+                  -- remainder (the bar's total height stays the full value) and
+                  -- also lists it as the "of which admin" tooltip line. 0 when
                   -- the box is off (adminFilter has dropped all admin rows).
                   SUM(lu.total_cost_cents) FILTER (WHERE COALESCE(u.is_admin, FALSE)) AS platform_cents_admin,
                   SUM(lu.byok_cost_cents)  FILTER (WHERE COALESCE(u.is_admin, FALSE)) AS user_key_cents_admin
