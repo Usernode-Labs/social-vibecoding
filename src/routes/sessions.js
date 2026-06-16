@@ -4444,6 +4444,17 @@ path: /another/changed/view
     e.g. a new nav item plus the page it opens. Each becomes its own
     labelled before/after row. The FIRST path is also the deep link the
     "Test this change" button jumps to.
+  - SELF-APP (social-vibecoding) ONLY: this app is a hash-routed SPA — its
+    internal screens live in the URL fragment ("#app/<slug>/dev/...",
+    "#leaderboard"), NOT in the server pathname. Write the "path:" using
+    the in-app route segments exactly as they appear after the "#"
+    (e.g. "path: /app/<self-slug>/dev/proposals/<id>" or
+    "path: /leaderboard") — the platform moves it into the fragment when
+    capturing screenshots and when the "Test this change" button opens the
+    preview, so the shot lands on the changed screen instead of the home
+    feed. Standalone server pages ("/dashboard", "/admin", "/status",
+    "/node-status") stay as plain pathnames. (This only applies to the
+    self-app; ordinary apps are path-routed and need no special handling.)
   - The steps are short markdown (numbered list preferred), written for a
     non-technical tester looking at a staging preview seeded with a copy of
     production data.

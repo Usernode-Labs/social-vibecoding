@@ -79,9 +79,44 @@ const RUN_MAX_BUFFER = 128 * 1024 * 1024;
 // legitimately carry its own query string (e.g. `/board?demo-pr=1`, see
 // testing-notes.js), so the join must pick '?' vs '&'. An empty token
 // returns the URL unchanged (unauthenticated capture — current behaviour).
+//
+// Fragment-safe (#353): a self-app deep link carries a `#app/...` hash
+// (the SPA routes off location.hash), and a query param MUST sit before
+// the fragment or it never reaches the server. So split off any `#...`
+// tail, splice `token=` onto the path+query part, then re-attach the
+// fragment. Plain pathname URLs (no `#`) are byte-identical to the old
+// concat behaviour.
 function withToken(url, token) {
   if (!token) return url;
-  return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token);
+  const hashAt = url.indexOf('#');
+  const base = hashAt === -1 ? url : url.slice(0, hashAt);
+  const frag = hashAt === -1 ? '' : url.slice(hashAt);
+  return base + (base.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token) + frag;
+}
+
+// The self-app is a hash-routed SPA (#353): App.restoreFromHash() in
+// public/js/app.js reads location.hash, so its internal screens are
+// addressed by fragment (`#app/<slug>/...`, `#leaderboard`, ...), NOT by
+// server pathname. A testing path joined as a pathname loads index.html
+// with an empty hash → the home feed, for both "before" and "after".
+//
+// Normalise a self-app testing path into the form the SPA actually
+// routes off: if its first segment is one of the SPA hash routes, move
+// the whole path into the URL fragment (pathname stays '/'). Anything
+// else — the bare '/', a path already written as a fragment ('/#...'),
+// or a standalone server-rendered page (/dashboard, /admin, /status,
+// /node-status, /login, /register) — is left exactly as-is so those
+// real routes still resolve. Only applied for the self-app; child apps
+// are genuinely path-routed and pass through untouched.
+const SELF_APP_HASH_ROUTES = new Set([
+  'app', 'leaderboard', 'group-chat', 'individual-chat',
+]);
+function selfAppHashPath(p) {
+  const path = typeof p === 'string' ? p : '/';
+  if (!path.startsWith('/') || path.startsWith('/#')) return path;
+  const firstSeg = path.slice(1).split(/[/?#]/)[0];
+  if (!SELF_APP_HASH_ROUTES.has(firstSeg)) return path;
+  return '/#' + path.slice(1);
 }
 
 // "Before" (production) target container for an app. Child apps run as
@@ -450,16 +485,24 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // to '/' (capture.js retries) — "before" shows the prior root state
     // rather than an error page. Child-app prod verifies the query token
     // directly (scaffold middleware); the self-app uses the minted cookie.
+    //
+    // Self-app (#353): the visited path is normalised into a `#`-fragment
+    // deep link so the hash-routed SPA renders the changed screen instead
+    // of the home feed. For a fragment target the server pathname is
+    // always '/', so prod never 404s on a deep page — the '/' fallback is
+    // moot and skipped (the bare-'/' and standalone-page cases keep it).
     const targets = capturePaths.map((p, index) => {
-      const afterUrl = withToken(`http://${stagingName}:3000${p}`, captureToken);
+      const visitPath = isSelfApp ? selfAppHashPath(p) : p;
+      const isFragmentTarget = visitPath.startsWith('/#');
+      const afterUrl = withToken(`http://${stagingName}:3000${visitPath}`, captureToken);
       let beforeUrl = '';
       let beforeFallbackUrl = '';
       if (prodRunning) {
         if (isSelfApp) {
-          beforeUrl = `http://${prodName}:3000${p}`;
-          if (p !== '/') beforeFallbackUrl = `http://${prodName}:3000/`;
+          beforeUrl = `http://${prodName}:3000${visitPath}`;
+          if (p !== '/' && !isFragmentTarget) beforeFallbackUrl = `http://${prodName}:3000/`;
         } else {
-          beforeUrl = withToken(`http://${prodName}:3000${p}`, captureToken);
+          beforeUrl = withToken(`http://${prodName}:3000${visitPath}`, captureToken);
           if (p !== '/') beforeFallbackUrl = withToken(`http://${prodName}:3000/`, captureToken);
         }
       }
@@ -578,6 +621,7 @@ module.exports = {
   isUiAffecting,
   parseShots,
   withToken,
+  selfAppHashPath,
   beforeContainerName,
   CAPTURE_IMAGE,
 };

@@ -1806,36 +1806,56 @@ async function seedStagingViewOnlyAdmin(pool) {
 async function seedStagingVisuals(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
-  // 1x1 transparent PNG — valid image bytes for the <img>/embed surfaces.
+  // 1x1 transparent PNG — valid image bytes for the <img>/embed surfaces
+  // and the <video> poster.
   const PNG_1X1 = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
     'base64'
   );
+  // Tiny placeholder webm: enough to exercise the comparison overlay's
+  // <video> branch (#353). It isn't a decodable clip — the point is that
+  // the renderer picks the webm and falls back to the PNG poster — so QA
+  // can confirm the video tile/column renders without a real recording.
+  const WEBM_PLACEHOLDER = Buffer.from(
+    'GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQRChYECGFOAZwEAAAAAAAAR',
+    'base64'
+  );
+  const CT = { png: 'image/png', webm: 'video/webm', gif: 'image/gif' };
   const DEMO_SESSION_ID = 900001;
   // 32-hex ids (match the /^[a-f0-9]{32}$/ token the renderers validate).
+  // Group 2 (#353) uses a self-app hash deep-link path so the captured
+  // path label + the hash-route normalisation are visible/testable in
+  // staging, and carries a webm (+ PNG poster) per side so the comparison
+  // overlay's video branch is exercised too.
+  const SELF_APP_DEEP_PATH = '/app/social-vibecoding/dev/proposals/900301';
   const rows = [
-    { id: 'a'.repeat(32), kind: 'before', media: 'png', idx: 0, path: '/' },
-    { id: 'b'.repeat(32), kind: 'after',  media: 'png', idx: 0, path: '/' },
-    { id: 'c'.repeat(32), kind: 'before', media: 'png', idx: 1, path: '/board' },
-    { id: 'd'.repeat(32), kind: 'after',  media: 'png', idx: 1, path: '/board' },
+    { id: 'a'.repeat(32), kind: 'before', media: 'png',  idx: 0, path: '/' },
+    { id: 'b'.repeat(32), kind: 'after',  media: 'png',  idx: 0, path: '/' },
+    { id: 'c'.repeat(32), kind: 'before', media: 'png',  idx: 1, path: '/board' },
+    { id: 'd'.repeat(32), kind: 'after',  media: 'png',  idx: 1, path: '/board' },
+    { id: 'e'.repeat(32), kind: 'before', media: 'png',  idx: 2, path: SELF_APP_DEEP_PATH },
+    { id: 'f'.repeat(32), kind: 'before', media: 'webm', idx: 2, path: SELF_APP_DEEP_PATH },
+    { id: '0'.repeat(32), kind: 'after',  media: 'png',  idx: 2, path: SELF_APP_DEEP_PATH },
+    { id: '1'.repeat(32), kind: 'after',  media: 'webm', idx: 2, path: SELF_APP_DEEP_PATH },
   ];
 
   try {
-    // Point the demo session's testing_paths at the two captured routes so
-    // the persisted annotation matches the seeded capture groups.
+    // Point the demo session's testing_paths at the captured routes so the
+    // persisted annotation matches the seeded capture groups.
     await pool.query(
       `UPDATE chat_sessions SET testing_paths = $1::jsonb
          WHERE id = $2 AND testing_paths IS NULL`,
-      [JSON.stringify(['/', '/board']), DEMO_SESSION_ID]
+      [JSON.stringify(['/', '/board', SELF_APP_DEEP_PATH]), DEMO_SESSION_ID]
     );
     for (const r of rows) {
+      const data = r.media === 'webm' ? WEBM_PLACEHOLDER : PNG_1X1;
       await pool.query(
         `INSERT INTO session_visuals
            (id, session_id, commit_hash, kind, media, content_type, data, captured_path, capture_index)
-         SELECT $1, $2, NULL, $3, $4, 'image/png', $5, $6, $7
+         SELECT $1, $2, NULL, $3, $4, $5, $6, $7, $8
           WHERE EXISTS (SELECT 1 FROM chat_sessions WHERE id = $2)
          ON CONFLICT (id) DO NOTHING`,
-        [r.id, DEMO_SESSION_ID, r.kind, r.media, PNG_1X1, r.path, r.idx]
+        [r.id, DEMO_SESSION_ID, r.kind, r.media, CT[r.media], data, r.path, r.idx]
       );
     }
     log.info('db', 'Staging multi-path visuals fixtures seeded', { sessionId: DEMO_SESSION_ID });

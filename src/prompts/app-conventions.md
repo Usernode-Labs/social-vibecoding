@@ -175,6 +175,33 @@ Tie-in with testing instructions: the testing steps you emit must
 reference the seeded entities by name ("Open the thread 'Staging demo
 thread' and …"), so a tester knows exactly what they should be seeing.
 
+### Testing `path:` for a hash-routed SPA (the self-app)
+
+The before/after screenshots and the "Test this change" button visit the
+testing block's `path:` joined onto the staging origin. Most apps are
+path-routed, so a plain pathname (`/board`, `/settings?demo=1`) lands on
+the right screen.
+
+**The self-app (social-vibecoding) is a hash-routed single-page app**:
+its internal screens are addressed by the URL **fragment**
+(`#app/<slug>/dev/proposals/<id>`, `#leaderboard`,
+`#app/<slug>/dev/sessions/<id>`, …), never by server pathname — a
+pathname just loads `index.html`, which boots to the home feed. So when
+your change is to a self-app screen, write the `path:` using the in-app
+route segments exactly as they appear after the `#`, with a leading
+slash:
+
+- `path: /app/<self-slug>/dev/proposals/<id>`
+- `path: /leaderboard`
+
+The platform recognises these self-app routes and moves them into the
+fragment when capturing and when previewing, so the shot shows the
+changed screen instead of the homepage. Standalone server-rendered pages
+(`/dashboard`, `/admin`, `/status`, `/node-status`) stay as plain
+pathnames. **Always point a deep `path:` at the specific changed
+self-app screen** — omitting it defaults to `/` (the home feed), which
+no capture fix can rescue.
+
 ## Public vs private tables — **IMPORTANT**
 
 Staging containers get a **copy of the production database** so PRs
