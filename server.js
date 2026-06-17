@@ -26,6 +26,7 @@ const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
 const appLlmProxyRoutes = require('./src/routes/app-llm-proxy');
 const { llmGrantsRoutes } = require('./src/routes/llm-grants');
 const { proposalDiscussRoutes } = require('./src/routes/proposal-discuss');
+const { topicAttributeRoutes } = require('./src/routes/topic-attributes');
 const github = require('./src/services/github');
 const llm = require('./src/services/llm');
 const worker = require('./src/services/worker');
@@ -299,6 +300,7 @@ app.use(notificationsRoutes(config));
 app.use(collaboratorRoutes(config));
 app.use(llmGrantsRoutes(config));
 app.use(proposalDiscussRoutes(config));
+app.use(topicAttributeRoutes(config));
 
 app.get('/api/iframe-token', async (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Not authenticated' });

@@ -13,6 +13,7 @@ const { issueCreateLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 const { weekStartUtc, countWeeklyAllowanceUsed, WEEKLY_KUDOS_LIMIT } = require('./kudos');
 const appAccess = require('../services/app-access');
+const topicAttrs = require('../services/topic-attributes');
 
 // Pull owner/repo out of a stored repo_url. Same shape used across the
 // codebase (e.g. the rename-apply path below, routes/votes.js).
@@ -654,6 +655,45 @@ function issueRoutes(config) {
         for (const issue of issues) {
           if (issue.number === 900007 && !issue.myPrSessionId) {
             issue.myPrSessionId = issue.number;
+          }
+        }
+      }
+
+      // Community-voted priority + assigned-person summary per issue (the
+      // chip top value + count + the viewer's pick), keyed by GitHub issue
+      // number — mirroring the bounty enrichment above. The dropdown's full
+      // tally lazy-loads from /api/apps/:slug/topics/issue/:n/attributes.
+      const attrByNumber = await topicAttrs.summarizeForTargets(
+        pool, app.id, 'issue', issues.map((i) => i.number), req.user.id
+      );
+      for (const issue of issues) {
+        const s = attrByNumber.get(issue.number) || topicAttrs.emptySummary();
+        issue.priority = s.priority;
+        issue.assignee = s.assignee;
+      }
+      // Staging: the [Mock] rows have no topic_attribute_votes, so seed a
+      // synthetic summary onto a few so the chips' states are reviewable in
+      // a preview — a clear leader, a tie, and an untouched (placeholder)
+      // row. Only where the real query found nothing. No-op in production.
+      if (IS_STAGING) {
+        const mockAttrs = new Map([
+          // Clear leader on both fields.
+          [900001, {
+            priority: { top: 'high', count: 3, myValue: null },
+            assignee: { top: 'staging-tester', count: 2, myValue: null },
+          }],
+          // A tie (count 1 vs 1) — the earlier-suggested value wins the chip.
+          [900003, {
+            priority: { top: 'low', count: 1, myValue: null },
+            assignee: { top: 'staging-demo-user', count: 1, myValue: null },
+          }],
+          // 900002 deliberately left untouched → muted "Set priority" / "Assign".
+        ]);
+        for (const issue of issues) {
+          const m = mockAttrs.get(issue.number);
+          if (m && (!issue.priority || !issue.priority.top) && (!issue.assignee || !issue.assignee.top)) {
+            issue.priority = m.priority;
+            issue.assignee = m.assignee;
           }
         }
       }

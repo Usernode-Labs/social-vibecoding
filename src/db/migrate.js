@@ -54,6 +54,7 @@ async function migrate(config) {
   await seedStagingCapReached(pool, config);
   await seedStagingSystemTokenUsage(pool);
   await seedStagingDashboardAdminSplit(pool);
+  await seedStagingTopicAttributes(pool, config);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
   // Must run BEFORE backfillOrphanedSpecDrafts: unwrapping spec_md after that
@@ -3402,6 +3403,71 @@ async function seedStagingRestartEligibleMerge(pool, config) {
   log.info('db', 'Staging restart-eligible-merge fixtures seeded', {
     appId, eligibleId, mergingId, votesRequired,
   });
+}
+
+// Community-voted priority + assigned-person votes on the staging
+// my-open-PR fixture proposal, so a prod-cloned staging preview shows the
+// chips backed by REAL topic_attribute_votes rows — a clear winner, more
+// than one voter, and the viewer's own pick highlighted in the dropdown
+// (the admin/target user votes, and the admin is who staging logs in as).
+// Idempotent via the UNIQUE(app_id, target_type, target_ref, field,
+// user_id) constraint. No-op outside staging.
+async function seedStagingTopicAttributes(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) return;
+
+  const { rows: sessRows } = await pool.query(
+    `SELECT id FROM chat_sessions
+      WHERE app_id = $1 AND branch_name = $2 LIMIT 1`,
+    [appId, 'staging-fixture/my-open-pr']
+  );
+  if (!sessRows.length) {
+    log.warn('db', 'Staging topic-attribute fixture skipped: open-PR fixture missing');
+    return;
+  }
+  const sessionId = sessRows[0].id;
+
+  const { rows: users } = await pool.query(
+    `SELECT id, username FROM users ORDER BY is_admin DESC, id ASC LIMIT 3`
+  );
+  if (!users.length) return;
+  const u0 = users[0];
+  const u1 = users[1] || users[0];
+  const u2 = users[2] || users[0];
+
+  // priority: u0 + u1 → 'high' (clear winner, includes the viewer), u2 → 'low'.
+  // assignee: u0 + u1 → @<u1.username> (winner), u2 → @<u0.username>.
+  const votes = [
+    ['priority', 'high', u0.id, "NOW() - INTERVAL '30 minutes'"],
+    ['priority', 'high', u1.id, "NOW() - INTERVAL '25 minutes'"],
+    ['priority', 'low', u2.id, "NOW() - INTERVAL '20 minutes'"],
+    ['assignee', u1.username, u0.id, "NOW() - INTERVAL '28 minutes'"],
+    ['assignee', u1.username, u1.id, "NOW() - INTERVAL '24 minutes'"],
+    ['assignee', u0.username, u2.id, "NOW() - INTERVAL '22 minutes'"],
+  ];
+  // De-dup the per-user upserts when the staging DB has fewer than 3 users
+  // (u1/u2 collapse onto u0): keep the first vote seen per (field, user).
+  const seen = new Set();
+  for (const [field, value, uid, when] of votes) {
+    const key = `${field}:${uid}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    await pool.query(
+      `INSERT INTO topic_attribute_votes
+         (app_id, target_type, target_ref, field, value, user_id, created_at)
+       VALUES ($1, 'proposal', $2, $3, $4, $5, ${when})
+       ON CONFLICT (app_id, target_type, target_ref, field, user_id) DO NOTHING`,
+      [appId, sessionId, field, value, uid]
+    );
+  }
+
+  log.info('db', 'Staging topic-attribute votes seeded', { appId, sessionId });
 }
 
 // #297: seed a short "Ask AI" advisor conversation on the staging
