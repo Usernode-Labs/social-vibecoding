@@ -769,6 +769,62 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .gc-vote-voted-box-yes { color: #22c55e; }
 .gc-vote-voted-box-no { color: #ef4444; }
 
+/* #404: primary action — one filled accent button per card, so the main
+ * action reads at a glance instead of competing with the outline pills.
+ * Built on .gc-vote-btn; only the colours change (fill instead of ghost). */
+.gc-vote-btn-primary {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.gc-vote-btn-primary:hover {
+  background: var(--accent-light);
+  border-color: var(--accent-light);
+  color: #fff;
+}
+.gc-vote-btn-primary:disabled {
+  opacity: 0.5;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* #404: the overflow "⋯" trigger collapses a card's less-frequent actions
+ * behind a single kebab. It's a normal .gc-vote-btn pill; the wrapper is the
+ * positioning anchor for the menu that drops out of it. */
+.gc-overflow-wrap { position: relative; display: inline-flex; }
+.gc-overflow-btn { font-weight: 700; letter-spacing: 1px; line-height: 1; }
+
+/* #404: the dropdown the ⋯ opens. position:fixed (coords set in JS from the
+ * trigger rect) so it escapes any card overflow clipping — same approach as
+ * the attr-popover chip dropdown. Stacks its actions as full-width rows. */
+.gc-action-menu {
+  position: fixed;
+  z-index: 2000;
+  min-width: 168px;
+  max-width: 260px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.gc-action-menu.hidden { display: none; }
+/* The buckets reuse the existing pill buttons verbatim (same classes,
+ * tooltips, handlers); inside the menu they render as full-width left-aligned
+ * rows rather than rounded pills. */
+.gc-action-menu .gc-vote-btn {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+  border-radius: 8px;
+}
+
 /* Inline vote buttons rendered on a "promoted / voted" group-chat
  * activity row. Sits right after the row text; wraps onto its own line
  * on narrow screens. Empty (no buttons) once the PR leaves the votable

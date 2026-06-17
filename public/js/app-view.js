@@ -568,6 +568,7 @@ const AppView = {
     AppView._wirePlusMenu(content);
     AppView._wireViewToggle(content);
     AppView._attrInit();
+    AppView._actionMenuInit();
     document.getElementById('dev-chat-card').addEventListener('click', () => {
       App.switchTab('dev', null, 'chat');
     });
@@ -822,6 +823,96 @@ const AppView = {
   _askAiCardBtnHtml(pr) {
     return `<button type="button" class="gc-vote-btn gc-ask-ai-btn" data-proposal-id="${pr.id}"
       title="Ask AI about this proposal (private to you)"><span aria-hidden="true">✨</span> Ask AI</button>`;
+  },
+
+  // #404: promote a button-HTML string to the filled "primary" style by
+  // adding gc-vote-btn-primary to its class list. Every card button starts
+  // with `class="gc-vote-btn`, so a single targeted splice is enough — the
+  // label, tooltip, and onclick are untouched. No-op on falsy input.
+  _asPrimary(html) {
+    return html ? html.replace('class="gc-vote-btn', 'class="gc-vote-btn gc-vote-btn-primary') : html;
+  },
+
+  // #404: assemble a card's action row from three buckets of button-HTML
+  // strings — primary (emphasized, first), secondary (inline outline pills),
+  // and overflow (the long tail, tucked behind a "⋯" menu). Falsy entries are
+  // dropped. Single-item overflow rule: one leftover action renders inline
+  // rather than behind a one-item menu. Returns '' when there's nothing to
+  // show, so callers can drop the row entirely.
+  _cardActionsHtml(buckets) {
+    const b = buckets || {};
+    const primary = (b.primary || []).filter(Boolean);
+    const secondary = (b.secondary || []).filter(Boolean);
+    let overflow = (b.overflow || []).filter(Boolean);
+    if (overflow.length === 1) {
+      secondary.push(overflow[0]);
+      overflow = [];
+    }
+    let overflowHtml = '';
+    if (overflow.length) {
+      overflowHtml = `<span class="gc-overflow-wrap"><button type="button" class="gc-vote-btn gc-overflow-btn" aria-haspopup="menu" aria-expanded="false" aria-label="More actions" title="More actions">&middot;&middot;&middot;</button><div class="gc-action-menu hidden" role="menu">${overflow.join('')}</div></span>`;
+    }
+    const inner = primary.concat(secondary).join('') + overflowHtml;
+    return inner ? `<div class="flex flex-wrap items-center gap-1.5 mt-1.5">${inner}</div>` : '';
+  },
+
+  // Install the one-time document-level handlers that open / close the
+  // overflow "⋯" menus. Idempotent. Card click-navigation already ignores
+  // any click landing inside a <button> (see the dev-body delegate), so the
+  // trigger and the menu's action buttons never open the topic by accident.
+  _actionMenuInit() {
+    if (AppView._actionMenuInited) return;
+    AppView._actionMenuInited = true;
+    document.addEventListener('click', (e) => {
+      const trigger = e.target.closest('.gc-overflow-btn');
+      if (trigger) {
+        e.preventDefault();
+        e.stopPropagation();
+        AppView._toggleActionMenu(trigger);
+        return;
+      }
+      // A click on an action inside the open menu: let that button's own
+      // handler run (it bubbled first), then close the menu.
+      if (e.target.closest('.gc-action-menu')) {
+        AppView._closeActionMenu();
+        return;
+      }
+      // Anywhere else closes it.
+      AppView._closeActionMenu();
+    });
+    // The menu is position:fixed off the trigger rect, so any scroll/resize
+    // would leave it stranded — close it instead of chasing the anchor.
+    window.addEventListener('resize', () => AppView._closeActionMenu());
+    document.addEventListener('scroll', () => AppView._closeActionMenu(), true);
+  },
+
+  _closeActionMenu() {
+    const m = AppView._openActionMenuEl;
+    if (m) {
+      m.classList.add('hidden');
+      const btn = m.parentElement && m.parentElement.querySelector('.gc-overflow-btn');
+      if (btn) btn.setAttribute('aria-expanded', 'false');
+    }
+    AppView._openActionMenuEl = null;
+  },
+
+  // Toggle the menu owned by `btn` (its sibling under .gc-overflow-wrap),
+  // clamped into the viewport just below-right of the trigger.
+  _toggleActionMenu(btn) {
+    const menu = btn.parentElement && btn.parentElement.querySelector('.gc-action-menu');
+    if (!menu) return;
+    const wasOpen = !menu.classList.contains('hidden');
+    AppView._closeActionMenu();
+    if (wasOpen) return; // re-clicking the open menu's trigger closes it
+    menu.classList.remove('hidden');
+    btn.setAttribute('aria-expanded', 'true');
+    AppView._openActionMenuEl = menu;
+    const r = btn.getBoundingClientRect();
+    const menuW = menu.offsetWidth || 200;
+    let left = Math.round(r.right - menuW);
+    left = Math.max(8, Math.min(left, window.innerWidth - menuW - 8));
+    menu.style.top = `${Math.round(r.bottom + 4)}px`;
+    menu.style.left = `${left}px`;
   },
 
   // Open the private read-only advisor for a card's proposal, resolving
@@ -2110,12 +2201,25 @@ const AppView = {
       ? `<template class="usn-visuals-tpl">${visualTiles}</template><div class="usn-visuals-body">${visualsOpen ? visualTiles : ''}</div>`
       : '';
 
+    // #404: consolidate into primary / secondary / overflow. Vote pair is
+    // primary (keeps its own yes/no colours — not the violet fill); Preview +
+    // kudos sit inline; the power/owner/advisor actions tuck behind "⋯".
     // Merged proposals (topic-view fallback) drop the live vote buttons —
     // the vote is settled; kudos stays open.
-    const actions = (isMerged
-      ? [kudosBtn, sessionBtn, askAiBtn, visualsBtn]
-      : [AppView.voteButtonsHtml(pr), kudosBtn, sessionBtn, archiveBtn, askAiBtn, visualsBtn]
-    ).filter(Boolean).join('');
+    let actions;
+    if (isMerged) {
+      actions = AppView._cardActionsHtml({
+        secondary: [kudosBtn],
+        overflow: [sessionBtn, askAiBtn, visualsBtn],
+      });
+    } else {
+      const vp = AppView._voteButtonParts(pr);
+      actions = AppView._cardActionsHtml({
+        primary: [vp.yes, vp.no],
+        secondary: [vp.preview, kudosBtn],
+        overflow: [vp.admin, sessionBtn, archiveBtn, askAiBtn, visualsBtn],
+      });
+    }
 
     return `
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}"${visualTiles ? ' data-visuals-scope="1"' : ''}${noNav ? '' : ` data-proposal-row="${pr.id}" title="Open this proposal's discussion"`}>
@@ -2134,7 +2238,7 @@ const AppView = {
             ${AppView._attrChipsHtml('proposal', pr.id, pr, { readonly: isMerged })}
             ${AppView._devChatBadge(chatN)}
           </div>
-          ${actions ? `<div class="flex flex-wrap items-center gap-1.5 mt-1.5">${actions}</div>` : ''}
+          ${actions}
           ${visualsBlock}
         </div>
         ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
@@ -2348,12 +2452,7 @@ const AppView = {
             ${tallyPill}
             ${AppView._devChatBadge(govChatN)}
           </div>
-          <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
-            ${yesBtn}
-            ${noBtn}
-            ${adminBtn}
-            ${withdrawBtn}
-          </div>
+          ${AppView._cardActionsHtml({ primary: [yesBtn, noBtn], overflow: [adminBtn, withdrawBtn] })}
         </div>
         ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
       </div>`;
@@ -2999,7 +3098,8 @@ const AppView = {
     // independent of the headless Generate-proposal path below — both can
     // show on the same row. The viewer's existing session is still reachable
     // from the Dev Chat tab.
-    const createBtn = issue.myPrSessionId
+    const hasMySession = !!issue.myPrSessionId;
+    const createBtn = hasMySession
       ? `<button class="gc-vote-btn" title="Start another dev chat for this issue" onclick="AppView.createPrForIssue(${n})">Create new proposal</button>`
       : `<button class="gc-vote-btn" title="Start a dev chat to solve this issue" onclick="AppView.createPrForIssue(${n})">Create proposal</button>`;
     // #155: headless auto-session button. Four states driven by the
@@ -3012,10 +3112,17 @@ const AppView = {
     //   ready + viewer already cloned (mySessionId, #172) → "Go to
     //                 session", navigating to their derived session
     //                 instead of offering a second clone
+    // #404: build the pieces separately so the consolidated row can bucket
+    // them — the contextual ready label is the card's primary action, the
+    // Preview / Generate(…ing) buttons are inline secondary, and the
+    // question-rerun "Generate proposal" tucks into the overflow menu.
     const h = issue.headless;
-    let autoBtn;
+    let readyMain = '';   // contextual "ready" label → primary
+    let previewBtn = '';  // staging preview for a ready run → secondary
+    let genBtn = '';      // Generate proposal / Generating… → secondary
+    let rerunBtn = '';    // question-outcome rerun → overflow
     if (h && h.status === 'generating') {
-      autoBtn = `<button class="gc-vote-btn" disabled title="A headless AI session is working on this issue${h.username ? ` (started by ${escapeAttr(h.username)})` : ''}">Generating proposal&hellip;</button>`;
+      genBtn = `<button class="gc-vote-btn" disabled title="A headless AI session is working on this issue${h.username ? ` (started by ${escapeAttr(h.username)})` : ''}">Generating proposal&hellip;</button>`;
     } else if (h && h.status === 'ready') {
       // #183: a code/spec_code run with a live preview gets the
       // changes-ready treatment — label + a Preview button that opens
@@ -3023,11 +3130,11 @@ const AppView = {
       // stagingUrl is nulled when the preview is GC'd, so the row
       // degrades back to the plain outcome wording.
       const hasPreview = !!h.stagingUrl && (h.outcome === 'code' || h.outcome === 'spec_code');
-      const previewBtn = hasPreview
+      previewBtn = hasPreview
         ? `<button class="gc-vote-btn gc-vote-btn-preview" title="Open the proposal's staging preview" onclick="AppView.swapToStagingForSession(${h.sessionId}, '${h.stagingUrl}')">Preview</button>`
         : '';
       if (h.mySessionId) {
-        autoBtn = `${previewBtn}<button class="gc-vote-btn" title="You already started a session from this proposal — open it" onclick="AppView.goToAutoSessionClone(${h.mySessionId})">Go to session</button>`;
+        readyMain = `<button class="gc-vote-btn" title="You already started a session from this proposal — open it" onclick="AppView.goToAutoSessionClone(${h.mySessionId})">Go to session</button>`;
       } else {
         const outcomeNote = h.outcome === 'spec' ? 'it drafted a spec'
           : h.outcome === 'code' ? 'it pushed a code change'
@@ -3038,22 +3145,42 @@ const AppView = {
           : h.outcome === 'code' ? 'Review solution &amp; start session'
           : h.outcome === 'question' ? 'Answer question &amp; start session'
           : 'Start session from proposal';
-        autoBtn = `${previewBtn}<button class="gc-vote-btn" title="Clone the finished proposal (${outcomeNote}) into your own dev chat — others can clone it too" onclick="AppView.startFromAutoSession(${h.sessionId})">${autoLabel}</button>`;
+        readyMain = `<button class="gc-vote-btn" title="Clone the finished proposal (${outcomeNote}) into your own dev chat — others can clone it too" onclick="AppView.startFromAutoSession(${h.sessionId})">${autoLabel}</button>`;
       }
       // #150: a question outcome doesn't block re-running — answer the
       // questions on the issue, then press Generate proposal again and
       // the new run reads the answers. But only offer this when the viewer
       // has NOT already cloned the run: once h.mySessionId is set the row
-      // shows "Go to session", and appending "Generate proposal" there
+      // shows "Go to session", and offering "Generate proposal" there
       // produces two competing actions for a proposal that already exists.
       // Gate on !h.mySessionId so the rerun affordance stays only on the
       // no-session path (where "Go to session" never appears).
       if (h.outcome === 'question' && !h.mySessionId) {
-        autoBtn += `<button class="gc-vote-btn" title="Questions were posted on the issue — answer them, then generate a proposal again" onclick="AppView.confirmAutoSession(${n})">Generate proposal</button>`;
+        rerunBtn = `<button class="gc-vote-btn" title="Questions were posted on the issue — answer them, then generate a proposal again" onclick="AppView.confirmAutoSession(${n})">Generate proposal</button>`;
       }
     } else {
-      autoBtn = `<button class="gc-vote-btn" title="Spin up a headless AI session that starts solving this issue on its own — uses your credits" onclick="AppView.confirmAutoSession(${n})">Generate proposal</button>`;
+      genBtn = `<button class="gc-vote-btn" title="Spin up a headless AI session that starts solving this issue on its own — uses your credits" onclick="AppView.confirmAutoSession(${n})">Generate proposal</button>`;
     }
+    // #404: assign the pieces to buckets. The single emphasized primary is
+    // the ready-label when present, otherwise "Create proposal" on a fresh
+    // issue. "Create new proposal" (a second attempt) and the kudos bounty
+    // are long-tail actions, so they ride in the overflow menu.
+    const issuePrimary = [];
+    const issueSecondary = [];
+    const issueOverflow = [];
+    if (readyMain) {
+      issuePrimary.push(AppView._asPrimary(readyMain));
+      if (hasMySession) issueOverflow.push(createBtn);
+      else issueSecondary.push(createBtn);
+    } else if (!hasMySession) {
+      issuePrimary.push(AppView._asPrimary(createBtn));
+    } else {
+      issueOverflow.push(createBtn);
+    }
+    if (previewBtn) issueSecondary.push(previewBtn);
+    if (genBtn) issueSecondary.push(genBtn);
+    if (rerunBtn) issueOverflow.push(rerunBtn);
+    issueOverflow.push(kudosBtn);
     // #250: the chip icon mirrors the auto-solve state so proposal issues
     // read at a glance — pulsing sky document while generating, steady sky
     // document once ready (any outcome, question included: there's something
@@ -3090,11 +3217,7 @@ const AppView = {
             ${AppView._attrChipsHtml('issue', n, issue)}
             ${AppView._devChatBadge(issue.chatCount)}
           </div>
-          <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
-            ${kudosBtn}
-            ${createBtn}
-            ${autoBtn}
-          </div>
+          ${AppView._cardActionsHtml({ primary: issuePrimary, secondary: issueSecondary, overflow: issueOverflow })}
         </div>
         ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
       </div>`;
@@ -3169,13 +3292,17 @@ const AppView = {
     //   - revert_session_id (from the LEFT JOIN) means a revert
     //     PR already exists pointing at this row — show its
     //     status as a label instead.
-    let undoUI = '';
+    // #404: split the revert affordance into the actual "Undo" action (→
+    // overflow menu) vs the read-only revert-status text/link (→ stays inline
+    // alongside the card's badges, since it's informational, not an action).
+    let undoBtn = '';
+    let revertStatus = '';
     if (pr.revert_of_session_id) {
       // This row is a revert PR. (Shouldn't appear in the
       // merged list often — revert PRs are short-lived in
       // 'promoted' before they themselves merge — but show a
       // breadcrumb if they do.)
-      undoUI = `<span class="text-xs text-zinc-500" title="This PR is itself a revert">↩ revert</span>`;
+      revertStatus = `<span class="text-xs text-zinc-500" title="This PR is itself a revert">↩ revert</span>`;
     } else if (pr.revert_session_id) {
       const rs = pr.revert_status;
       const rpr = pr.revert_pr_number || pr.revert_session_id;
@@ -3185,13 +3312,14 @@ const AppView = {
           ? `Revert merging (PR#${rpr})`
           : `Revert in vote · PR#${rpr}`;
       const linkHref = pr.revert_pr_url || '#';
-      undoUI = `<a href="${linkHref}" target="_blank" class="text-xs text-amber-500 hover:text-amber-400 font-medium">${label}</a>`;
+      revertStatus = `<a href="${linkHref}" target="_blank" class="text-xs text-amber-500 hover:text-amber-400 font-medium">${label}</a>`;
     } else {
-      undoUI = `
-        <button class="gc-vote-btn gc-vote-btn-undo"
-          title="Open a revert PR for this merge. It still needs a merge vote to land."
-          onclick="AppView.undoPr(${pr.id})">Undo</button>`;
+      undoBtn = `<button class="gc-vote-btn gc-vote-btn-undo" title="Open a revert PR for this merge. It still needs a merge vote to land." onclick="AppView.undoPr(${pr.id})">Undo</button>`;
     }
+
+    // #404: the "You voted X" indicator moves up to the badge row (the vote is
+    // settled, so it reads as a status, not an action).
+    const votedBox = AppView.voteButtonsHtml(pr, { collapseVoted: true });
 
     return `
         <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-ref-pr="${pr.pr_number || pr.id}" data-proposal-row="${pr.id}" title="Open this proposal's discussion">
@@ -3203,15 +3331,11 @@ const AppView = {
                 <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta"><a href="${pr.pr_url || '#'}" target="_blank" rel="noopener" class="font-mono text-emerald-400 hover:underline">PR#${pr.pr_number || pr.id}</a> · ${date}${AppView.closesPillHtml(pr) ? ` ${AppView.closesPillHtml(pr)}` : ''}</div>
               </div>
               ${AppView.voteCountPill(pr, maj)}
+              ${votedBox}
               ${AppView._attrChipsHtml('proposal', pr.id, pr, { readonly: true })}
               ${AppView._devChatBadge(parseInt(pr.chat_count) || 0)}
             </div>
-            <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
-              ${AppView.voteButtonsHtml(pr, { collapseVoted: true })}
-              ${undoUI}
-              ${kudosBtn}
-              ${askAiBtn}
-            </div>
+            ${AppView._cardActionsHtml({ secondary: [revertStatus, kudosBtn], overflow: [undoBtn, askAiBtn] })}
           </div>
           ${AppView.DEV_CARD_CHEVRON}
         </div>`;
@@ -3954,11 +4078,21 @@ const AppView = {
     // (now no-op) Yes/No buttons for someone who never voted; the pill +
     // status badge already convey the outcome.
     if (opts && opts.collapseVoted && pr.status !== 'promoted') return '';
+    const { preview, yes, no, admin } = AppView._voteButtonParts(pr);
+    return preview + yes + no + admin;
+  },
+
+  // #404: the vote-row buttons as separate pieces, so the consolidated card
+  // layout can place Preview / Yes / No vs Admin-merge into different buckets
+  // (Yes/No primary, Preview secondary, Admin-merge overflow). voteButtonsHtml
+  // above still concatenates them for the group-chat inline rows. The testing
+  // stash (#127) lives here so it runs on whichever path renders the buttons.
+  _voteButtonParts(pr) {
+    if (!pr) return { preview: '', yes: '', no: '', admin: '' };
     // #127: stash the PR's testing guidance in the by-session registry so
     // the Preview onclick passes it to the overlay (which renders its own
     // "Test this change" button + instructions panel) without the markdown
-    // ever transiting an HTML attribute. No new button here — the row is
-    // already dense.
+    // ever transiting an HTML attribute.
     if (pr.testing_md || pr.testing_path) {
       AppView._sessionTesting[pr.id] = { md: pr.testing_md || null, path: pr.testing_path || null };
     } else {
@@ -3967,12 +4101,12 @@ const AppView = {
     const preview = pr.staging_url
       ? `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStagingForSession(${pr.id}, '${pr.staging_url}')">Preview</button>`
       : '';
-    const adminMerge = App.user?.canAdminWrite
+    const admin = App.user?.canAdminWrite
       ? `<button class="gc-vote-btn gc-vote-btn-admin" title="Admin: merge this PR right now, bypassing the vote majority" onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
       : '';
-    const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}" onclick="AppView.castVote(${pr.id}, 'yes')">Yes (${pr.yes_count})</button>`;
-    const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}" onclick="AppView.castVote(${pr.id}, 'no')">No (${pr.no_count})</button>`;
-    return preview + yesBtn + noBtn + adminMerge;
+    const yes = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}" onclick="AppView.castVote(${pr.id}, 'yes')">Yes (${pr.yes_count})</button>`;
+    const no = `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}" onclick="AppView.castVote(${pr.id}, 'no')">No (${pr.no_count})</button>`;
+    return { preview, yes, no, admin };
   },
 
   // Admin force-merge: bypass the active-user vote majority entirely
