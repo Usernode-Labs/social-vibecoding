@@ -137,12 +137,13 @@ test('_renderMergedInner hides the 💬 badge when chat_count is 0', () => {
   assert.match(badge, /\bhidden\b/, 'empty badge is hidden');
 });
 
-test('#gc-merged tap opens the proposal topic on a bare-row click', async () => {
+test('#dev-body tap opens the proposal topic on a bare merged-row click', async () => {
   const { AppView, els } = makeAppView();
   // Stub the heavyweight bits renderDevView reaches so only the handler
   // wiring runs.
   AppView._saveFeedScroll = () => {};
   AppView._wirePlusMenu = () => {};
+  AppView._wireViewToggle = () => {};
   AppView._loadChatCardPreview = () => {};
   AppView._renderSessionsStrip = () => {};
   AppView._syncStripPolling = () => {};
@@ -153,8 +154,10 @@ test('#gc-merged tap opens the proposal topic on a bare-row click', async () => 
 
   await AppView.renderDevView(undefined, null);
 
-  const handler = els['gc-merged']._handlers.click;
-  assert.equal(typeof handler, 'function', 'gc-merged click handler bound');
+  // The card-open handler is now delegated on the stable #dev-body wrapper,
+  // covering merged rows (data-proposal-row) alongside feed and kanban cards.
+  const handler = els['dev-body']._handlers.click;
+  assert.equal(typeof handler, 'function', 'dev-body click handler bound');
 
   // Bare-row tap → opens the proposal.
   handler({ target: makeTarget({ '[data-proposal-row]': { dataset: { proposalRow: '55' } } }) });
