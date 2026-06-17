@@ -2,6 +2,7 @@ const log = require('./logger');
 const github = require('./github');
 const limits = require('./limits');
 const { runSyncMain, persistConflictState } = require('./sync-main');
+const { getActiveUserStats } = require('./active-users');
 const { getPool } = require('../db/pool');
 
 // GitHub computes PR mergeability asynchronously: for a few seconds
@@ -104,37 +105,46 @@ async function loadSession(pool, sessionId) {
   return rows[0] || null;
 }
 
-// Post-merge sweep: sync ONLY the single promoted PR that is next in line
-// to merge (the "front-runner") with main (worker git-merge +
-// Claude-on-markers) and, if it's already approved, retry the merge.
-// Fired (un-awaited) from checkAndMerge after a successful merge, and from
-// the drift poller after an out-of-band main move.
+// Post-merge sweep: sync ONLY a single promoted PR that has ALREADY reached
+// the merge vote threshold (the highest-voted such sibling) with main
+// (worker git-merge + Claude-on-markers) and, if it's clean, retry the
+// merge. Fired (un-awaited) from checkAndMerge after a successful merge, and
+// from the drift poller after an out-of-band main move.
 //
 // #380: previously this swept EVERY other promoted PR, spinning a worker
 // conflict-resolution turn for each — including PRs with barely any votes
-// that won't merge for a long time (if ever). That burned the system-token
-// budget on speculative work. Merges here are vote-driven, not
-// position-driven (a PR merges the instant it crosses the majority
-// threshold regardless of promotion order), so "next in line" is the
-// promoted PR with the MOST yes votes — closest to crossing the threshold.
-// We resolve only that one; the rest are healed lazily when they reach
-// majority (checkAndMerge's behind_main path), and the cascade re-runs this
-// sweep after every merge / drift redeploy to pick the new front-runner.
+// that won't merge for a long time (if ever) — which burned the system-token
+// budget on speculative work. The policy is now strictly on-demand: resolve
+// conflicts ONLY for a PR that can actually merge right now, i.e. one whose
+// yes-vote count already meets the per-app majority threshold. PRs short of
+// the threshold are never pre-emptively resolved; they're healed lazily when
+// a vote pushes them over (checkAndMerge's behind_main path), and this sweep
+// re-runs after every merge / drift redeploy to drain the eligible PRs one
+// at a time. Among multiple already-eligible PRs we pick the highest-voted
+// (longest-waiting on a tie); the cascade handles the rest.
 async function checkAndResolveConflicts(config, mergedSession) {
   const pool = getPool(config);
 
-  // Rank promoted siblings by closeness-to-merge and take the front-runner
-  // only: most yes votes first, then longest-waiting (earliest promoted_at,
-  // NULLS LAST), then earliest created_at as a final deterministic tiebreak
-  // so repeated sweeps don't oscillate between equally-voted PRs.
+  // The eligibility bar is the same active-user majority checkAndMerge gates
+  // the actual merge on (routes/votes.js), so the sweep only ever touches a
+  // PR that is genuinely ready to merge.
+  const { majority } = await getActiveUserStats(pool, mergedSession.app_id);
+
+  // Select only promoted siblings whose yes-vote count already meets the
+  // threshold, highest-voted first; tie-break longest-waiting (earliest
+  // promoted_at, NULLS LAST) then earliest created_at for determinism. The
+  // ordering only disambiguates among already-eligible PRs — the WHERE clause
+  // guarantees a below-threshold PR is never picked, so nothing is resolved
+  // pre-emptively.
   const { rows: conflictCandidates } = await pool.query(
     `SELECT cs.id,
             (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count
      FROM chat_sessions cs
      WHERE cs.app_id = $1 AND cs.status = 'promoted' AND cs.id != $2
+       AND (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') >= $3
      ORDER BY yes_count DESC, cs.promoted_at ASC NULLS LAST, cs.created_at ASC
      LIMIT 1`,
-    [mergedSession.app_id, mergedSession.id || 0]
+    [mergedSession.app_id, mergedSession.id || 0, majority]
   );
 
   if (!conflictCandidates.length) return;

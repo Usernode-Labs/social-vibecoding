@@ -532,20 +532,24 @@ test('resolveAndMaybeRetry: exhausted system budget skips and posts the group-ch
   }
 });
 
-// ── #380: checkAndResolveConflicts resolves only the front-runner ───────────
+// ── #380: checkAndResolveConflicts resolves only an at-threshold PR ──────────
 // The post-merge / post-drift sweep used to fan a worker conflict-resolution
-// turn across EVERY promoted sibling. It now selects a single front-runner —
-// the promoted PR with the most yes votes (closest to the majority
-// threshold), tie-broken by earliest promoted_at then created_at — and
-// resolves only that one. The rest are healed lazily when they reach
-// majority. These tests drive checkAndResolveConflicts directly against a
-// mock pool that emulates the candidate query's ORDER BY / LIMIT 1.
-function loadResolverForSweep({ siblings }) {
+// turn across EVERY promoted sibling. The policy is now strictly on-demand:
+// it resolves at most ONE sibling, and only one whose yes-vote count already
+// meets the per-app majority threshold (the same bar checkAndMerge gates the
+// actual merge on). Among multiple already-eligible PRs it picks the
+// highest-voted (longest-waiting on a tie). A PR short of the threshold is
+// never pre-emptively resolved. These tests drive checkAndResolveConflicts
+// directly against a mock pool that emulates the candidate query's threshold
+// filter + ORDER BY / LIMIT 1, with getActiveUserStats stubbed to a fixed
+// majority.
+function loadResolverForSweep({ siblings, majority = 2 }) {
   const ids = {
     logger: require.resolve('../src/services/logger'),
     github: require.resolve('../src/services/github'),
     limits: require.resolve('../src/services/limits'),
     syncMain: require.resolve('../src/services/sync-main'),
+    activeUsers: require.resolve('../src/services/active-users'),
     pool: require.resolve('../src/db/pool'),
     votes: require.resolve('../src/routes/votes'),
     ws: require.resolve('../src/services/ws'),
@@ -570,11 +574,14 @@ function loadResolverForSweep({ siblings }) {
     runSyncMain: async () => { throw new Error('runSyncMain must not run on the no_conflict path'); },
     persistConflictState: async () => {},
   });
+  // The eligibility gate reads majority from here.
+  stub(ids.activeUsers, { getActiveUserStats: async () => ({ active: 3, majority }) });
   stub(ids.votes, { checkAndMerge: async () => { throw new Error('checkAndMerge must not run on the no_conflict path'); } });
   stub(ids.ws, { pushVoteUpdate() {}, sendSystemMessage: async () => {} });
 
-  // Emulate the candidate query's SQL ordering so the mock returns the row
-  // Postgres would: yes_count DESC, promoted_at ASC NULLS LAST, created_at ASC.
+  // Emulate the candidate query's SQL: keep only at-threshold rows
+  // (yes_count >= majority), then order yes_count DESC, promoted_at ASC
+  // NULLS LAST, created_at ASC, LIMIT 1.
   const rank = (a, b) => {
     if (b.yes_count !== a.yes_count) return b.yes_count - a.yes_count;
     const ap = a.promoted_at, bp = b.promoted_at;
@@ -583,15 +590,16 @@ function loadResolverForSweep({ siblings }) {
     if (ap != null && bp != null && ap !== bp) return ap - bp; // ASC
     return a.created_at - b.created_at;           // ASC
   };
-  const frontRunner = () => {
-    if (!siblings.length) return [];
-    const sorted = [...siblings].sort(rank);
+  const eligibleFrontRunner = () => {
+    const eligible = siblings.filter((s) => s.yes_count >= majority);
+    if (!eligible.length) return [];
+    const sorted = [...eligible].sort(rank);
     return [{ id: sorted[0].id, yes_count: sorted[0].yes_count }];
   };
 
   const pool = makePool([
-    // Candidate (front-runner) query — distinctive `yes_count` projection.
-    [/SELECT cs\.id,[\s\S]*yes_count[\s\S]*LIMIT 1/, () => frontRunner()],
+    // Candidate query — distinctive `yes_count` projection.
+    [/SELECT cs\.id,[\s\S]*yes_count[\s\S]*LIMIT 1/, () => eligibleFrontRunner()],
     // loadSession — return a promoted session row for the requested id.
     [/SELECT cs\.\*, a\.slug/, (params) => {
       const sid = params[0];
@@ -618,32 +626,70 @@ function loadResolverForSweep({ siblings }) {
   return { subject, pool, loadedIds, restore };
 }
 
-test('checkAndResolveConflicts: resolves only the highest-yes-vote front-runner', async () => {
+test('checkAndResolveConflicts: resolves the eligible at-threshold sibling', async () => {
   const { subject, pool, loadedIds, restore } = loadResolverForSweep({
+    majority: 2,
     siblings: [
-      { id: 11, yes_count: 0, promoted_at: 100, created_at: 100 },
-      { id: 12, yes_count: 3, promoted_at: 200, created_at: 200 }, // front-runner
-      { id: 13, yes_count: 1, promoted_at: 50, created_at: 50 },
+      { id: 11, yes_count: 0, promoted_at: 100, created_at: 100 }, // below threshold
+      { id: 12, yes_count: 3, promoted_at: 200, created_at: 200 }, // eligible
+      { id: 13, yes_count: 1, promoted_at: 50, created_at: 50 },   // below threshold
     ],
   });
   try {
     await subject.checkAndResolveConflicts({ jwtSecret: 's' }, { app_id: 5, id: 9 });
-    // The candidate query asks for a single row, ordered by yes votes.
+    // The candidate query gates on the threshold and asks for a single row.
     const candidate = pool.calls.find((c) => /SELECT cs\.id,[\s\S]*yes_count/.test(c.sql));
-    assert.ok(candidate, 'the front-runner candidate query was issued');
-    assert.match(candidate.sql, /LIMIT 1/, 'only the front-runner is selected');
+    assert.ok(candidate, 'the candidate query was issued');
+    assert.match(candidate.sql, />= \$3/, 'gates on the per-app majority threshold');
+    assert.match(candidate.sql, /LIMIT 1/, 'only one sibling is selected');
     assert.match(candidate.sql, /yes_count DESC/, 'ranked by yes votes first');
     assert.match(candidate.sql, /promoted_at ASC NULLS LAST/, 'longest-waiting tiebreak');
     assert.match(candidate.sql, /created_at ASC/, 'deterministic final tiebreak');
-    // Exactly one resolve cycle, for the highest-yes-vote sibling only.
-    assert.deepEqual(loadedIds(), [12], 'only the front-runner is resolved, not the others');
+    // majority is passed as the third bind param.
+    assert.equal(candidate.params[2], 2, 'majority threshold is bound into the query');
+    // Exactly one resolve cycle, for the eligible sibling only.
+    assert.deepEqual(loadedIds(), [12], 'only the at-threshold sibling is resolved');
   } finally {
     restore();
   }
 });
 
-test('checkAndResolveConflicts: ties on yes votes resolve the earlier-promoted PR', async () => {
+test('checkAndResolveConflicts: resolves nothing when every sibling is below threshold', async () => {
   const { subject, loadedIds, restore } = loadResolverForSweep({
+    majority: 2,
+    siblings: [
+      { id: 31, yes_count: 1, promoted_at: 100, created_at: 100 },
+      { id: 32, yes_count: 0, promoted_at: 200, created_at: 200 },
+    ],
+  });
+  try {
+    await subject.checkAndResolveConflicts({ jwtSecret: 's' }, { app_id: 5, id: 9 });
+    assert.deepEqual(loadedIds(), [], 'no pre-emptive resolution for below-threshold PRs');
+  } finally {
+    restore();
+  }
+});
+
+test('checkAndResolveConflicts: picks the highest-voted among multiple eligible PRs', async () => {
+  const { subject, loadedIds, restore } = loadResolverForSweep({
+    majority: 2,
+    siblings: [
+      { id: 41, yes_count: 2, promoted_at: 100, created_at: 100 }, // eligible
+      { id: 42, yes_count: 4, promoted_at: 200, created_at: 200 }, // eligible, most votes
+      { id: 43, yes_count: 3, promoted_at: 50, created_at: 50 },   // eligible
+    ],
+  });
+  try {
+    await subject.checkAndResolveConflicts({ jwtSecret: 's' }, { app_id: 5, id: 9 });
+    assert.deepEqual(loadedIds(), [42], 'the most-voted eligible PR is resolved first');
+  } finally {
+    restore();
+  }
+});
+
+test('checkAndResolveConflicts: ties among eligible PRs resolve the earlier-promoted one', async () => {
+  const { subject, loadedIds, restore } = loadResolverForSweep({
+    majority: 2,
     siblings: [
       { id: 21, yes_count: 2, promoted_at: 300, created_at: 300 },
       { id: 22, yes_count: 2, promoted_at: 100, created_at: 100 }, // earlier promoted → wins
@@ -652,7 +698,7 @@ test('checkAndResolveConflicts: ties on yes votes resolve the earlier-promoted P
   });
   try {
     await subject.checkAndResolveConflicts({ jwtSecret: 's' }, { app_id: 5, id: 9 });
-    assert.deepEqual(loadedIds(), [22], 'the longest-waiting of the tied PRs is the front-runner');
+    assert.deepEqual(loadedIds(), [22], 'the longest-waiting of the tied eligible PRs is chosen');
   } finally {
     restore();
   }
