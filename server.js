@@ -479,9 +479,21 @@ async function start() {
   // stay 'promoted' and keep showing as "up for voting" forever — and
   // demotes 'merging' rows GitHub never merged (crash mid-merge) back to
   // 'promoted' so the next vote/retry can redrive. See the function body.
-  recoverStuckMerges(config).catch((err) => {
-    log.warn('server', 'Stuck-merge recovery failed', { err: err.message });
-  });
+  // #390: after the GitHub-state reconcile completes (which demotes
+  // crash-stuck 'merging' rows back to 'promoted' so they're eligible
+  // again this same boot), re-drive the per-app drain for every app with
+  // open proposals so any PR that crossed the vote-majority threshold
+  // while the process was down — or whose background merge was lost to the
+  // restart — actually merges now instead of waiting for a fresh vote.
+  // Both stay off the critical path so the server still comes up
+  // immediately, like the other recovery steps below.
+  recoverStuckMerges(config)
+    .then(() => reconcileEligibleMerges(config))
+    .catch((err) => {
+      log.warn('server', 'Stuck-merge recovery / eligible-merge reconcile failed', {
+        err: err.message,
+      });
+    });
 
   // #144: re-arm post-merge issue-close watches a restart killed. The
   // watcher (services/issue-close-watcher.js) is fired-and-forgotten
@@ -526,8 +538,9 @@ if (require.main === module) {
 // Test-only surface (#183): the orphan-adoption + recovered-turn finalize
 // internals, so the headless-recovery guards stay covered by node --test.
 // `recoverStuckMerges` rides along so the GitHub-reconciliation sweep stays
-// covered too. Not used by any runtime caller.
-module.exports = { adoptOrphanWorker, finalizeRecoveredTurn, recoverStuckMerges };
+// covered too, and `reconcileEligibleMerges` (#390) so the boot-time
+// auto-merge eligibility sweep is covered. Not used by any runtime caller.
+module.exports = { adoptOrphanWorker, finalizeRecoveredTurn, recoverStuckMerges, reconcileEligibleMerges };
 
 // Scan existing imported apps for privacy violations. Usernode workers
 // run with zero GitHub credentials and rely on unauthenticated public
@@ -735,6 +748,88 @@ async function recoverStuckMerges(config) {
   }
   log.info('server', 'PR session reconciliation complete', {
     scanned: rows.length, healed, demoted, errors,
+  });
+}
+
+// Boot-time auto-merge reconcile sweep (#390). recoverStuckMerges above
+// reconciles each open session's status against GitHub's actual merge
+// state, but it deliberately leaves genuinely-open 'promoted' rows alone
+// (see its body: "Not merged + 'promoted' == genuinely open proposal:
+// leave alone"). It never re-checks whether a proposal has crossed the
+// vote-majority threshold.
+//
+// Auto-merge is otherwise PURELY event-driven: a merge is only attempted
+// in the background of a live vote (routes/votes.js fires checkAndMerge
+// fire-and-forget). So a proposal that crossed threshold while the process
+// was down — or whose background merge was lost to a restart mid-flight,
+// or that became eligible because the active-user count (and thus the
+// majority) dropped — sits in the Dev vote panel forever until someone
+// happens to cast a fresh vote. That is the "auto-merge stops after
+// restart/update" bug.
+//
+// The fix re-drives the existing per-app drain (checkAndResolveConflicts →
+// drainApp) once at boot for every app that has any open proposal. The
+// drain re-reads everything from Postgres, only ever touches PRs already
+// at/above the active-user majority (the same bar checkAndMerge gates on,
+// so nothing below threshold is resolved pre-emptively — #380), merges
+// them in the normal priority order, and inherits the normal single-flight
+// + Phase 1/Phase 2 conflict handling. It is idempotent and safe to run on
+// every boot. Bounded cross-app concurrency keeps a many-app fleet from
+// fanning out unbounded GitHub calls; per-app work is already serialized
+// by the drain's own single-flight.
+async function reconcileEligibleMerges(config) {
+  const github = require('./src/services/github');
+  // Without GitHub auth the drain's per-session resolve is a no-op
+  // (github_disabled_or_no_pr merges nothing), so skip the work entirely —
+  // matches the no-auth short-circuit in recoverStuckMerges above.
+  if (!github.isEnabled()) return;
+
+  const { getPool } = require('./src/db/pool');
+  const { checkAndResolveConflicts } = require('./src/services/conflict-resolver');
+  const pool = getPool(config);
+
+  let rows;
+  try {
+    ({ rows } = await pool.query(
+      `SELECT DISTINCT app_id FROM chat_sessions WHERE status = 'promoted'`
+    ));
+  } catch (err) {
+    log.warn('server', 'reconcileEligibleMerges query failed', { err: err.message });
+    return;
+  }
+  if (!rows.length) return;
+
+  log.info('server', 'Reconciling eligible auto-merges on startup', { apps: rows.length });
+
+  const CONCURRENCY = 4;
+  const queue = rows.slice();
+  let drained = 0;
+  let errors = 0;
+
+  async function worker() {
+    while (queue.length) {
+      const { app_id: appId } = queue.shift();
+      try {
+        await checkAndResolveConflicts(config, { app_id: appId });
+        drained++;
+      } catch (err) {
+        // checkAndResolveConflicts swallows drainApp errors internally, so
+        // this is belt-and-braces; never let one app's failure abort the rest.
+        errors++;
+        log.warn('server', 'reconcileEligibleMerges: drain failed', {
+          appId, err: err.message,
+        });
+      }
+    }
+  }
+
+  try {
+    await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+  } catch (err) {
+    log.warn('server', 'reconcileEligibleMerges sweep failed', { err: err.message });
+  }
+  log.info('server', 'Eligible auto-merge reconciliation complete', {
+    apps: rows.length, drained, errors,
   });
 }
 
