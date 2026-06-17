@@ -1375,19 +1375,26 @@ const AppView = {
     }
     for (const pr of AppView._proposals || []) {
       items.push({
-        kind: 'proposal', id: pr.id, item: pr, r: 0,
+        // #388: pin PRs in the merge pipeline to the top of the proposal
+        // group — _proposalPinRank mirrors the badge precedence (merging >
+        // resolving > conflict-failed > normal), reusing the per-group `r`
+        // slot just like _headlessRank does for issues.
+        kind: 'proposal', id: pr.id, item: pr, r: AppView._proposalPinRank(pr),
         t: Math.max(ts(pr.promoted_at || pr.created_at), ts(pr.last_message_at)),
       });
     }
     for (const g of AppView._govProposals || []) {
       items.push({
-        kind: 'gov', id: g.id, item: g, r: 0,
+        // Governance proposals have no merge/conflict state, so they sort
+        // in the normal (unpinned) tier alongside non-pipeline PRs (#388).
+        kind: 'gov', id: g.id, item: g, r: 3,
         t: Math.max(ts(g.created_at), ts(g.last_message_at)),
       });
     }
     // Array.prototype.sort is stable, so equal keys keep source order.
-    // Rank only competes within the issues group — proposals/gov all
-    // carry r: 0 and never share a group with issues.
+    // Rank competes only within a group: the headless rank (0-2) inside
+    // the issues group, the merge-pipeline pin rank (0-3) inside the
+    // proposal group — the two never interleave because GROUP dominates.
     return items.sort((a, b) =>
       (GROUP[a.kind] - GROUP[b.kind]) || (a.r - b.r) || (b.t - a.t));
   },
@@ -2232,6 +2239,29 @@ const AppView = {
   _headlessRank(issue) {
     const s = issue.headless && issue.headless.status;
     return s === 'generating' ? 0 : s === 'ready' ? 1 : 2;
+  },
+
+  // #388: merge-pipeline pin rank for the feed sort. Lower renders first
+  // within the proposal group, so a PR actually being merged (or having
+  // its conflicts resolved) surfaces at the top of the stack instead of
+  // sinking under proposals with newer chatter — "it's obvious it's the
+  // next one to merge". The precedence deliberately matches the card's
+  // state-badge precedence (#361/#386: merging > resolving > failed) so
+  // the list position always agrees with the badge the user sees:
+  //   0 — 'merging'  ("Merging…")            being merged right now
+  //   1 — resolving  ("Resolving conflicts…")  auto-resolver sync in flight
+  //   2 — merge_conflict_state 'failed'        ("⚠ Conflict resolution failed")
+  //   3 — everything else (normal, by recency)
+  // A bare 'behind'/'conflict' snapshot is NOT pinned: both render as the
+  // neutral "Behind main · N" badge (a fresh 'conflict' bumps behind_main
+  // and flips `resolving` true shortly after, at which point rank 1 takes
+  // over), and many PRs can be behind main.
+  _proposalPinRank(pr) {
+    if (!pr) return 3;
+    if (pr.status === 'merging') return 0;
+    if (pr.resolving) return 1;
+    if (pr.merge_conflict_state === 'failed') return 2;
+    return 3;
   },
 
   // The Open Issues list exactly as rendered: env-var-proposal twins
