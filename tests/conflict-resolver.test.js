@@ -232,6 +232,10 @@ function loadResolverForCoalesce({
   // #239: the retried merge's result drives the terminal
   // resolutionOutcome (merged vs synced_awaiting_votes).
   checkAndMergeImpl = async () => ({ merged: true }),
+  // #384: tests can swap in a spy to assert WHICH merge_conflict_state
+  // snapshots the resolver persists (e.g. that it never writes 'conflict'
+  // off a mergeability check). Defaults to the no-op the other cases use.
+  persistConflictStateImpl = async () => {},
 }) {
   const ids = {
     logger: require.resolve('../src/services/logger'),
@@ -270,7 +274,7 @@ function loadResolverForCoalesce({
     getInstallationOctokit: fakeOctokit,
   });
   stub(ids.limits, limitsImpl);
-  stub(ids.syncMain, { runSyncMain: runSyncMainImpl, persistConflictState: async () => {} });
+  stub(ids.syncMain, { runSyncMain: runSyncMainImpl, persistConflictState: persistConflictStateImpl });
   stub(ids.pool, {
     getPool: () => makePool([[/SELECT cs\.\*, a\.slug/, [sessionRow]]]),
   });
@@ -360,6 +364,48 @@ test('resolveAndMaybeRetry: system budget with headroom proceeds with the sync',
     const r = await subject.resolveAndMaybeRetry({ jwtSecret: 's' }, { sessionId: 7 });
     assert.equal(syncCalls, 1, 'the sync proceeds against the system budget');
     assert.equal(r.reason, 'synced_and_merged');
+  } finally {
+    restore();
+  }
+});
+
+// ── #384: no speculative 'conflict' snapshot off a mergeability check ───
+// A `mergeable0 === false` poll means GitHub thinks the branch would not
+// merge cleanly — but the platform has NOT attempted an auto-merge yet.
+// The resolver must NOT persist merge_conflict_state='conflict' off that
+// check (that's the speculative ⚠ warning #384 removes). It still drives
+// needsSync off the same value, writes 'resolving' before the sync, and
+// lets sync-main own the terminal 'failed'/'clean' snapshot.
+
+test('#384: a mergeable0===false check never persists a speculative conflict snapshot', async () => {
+  const persistCalls = [];
+  let syncCalls = 0;
+  const { subject, restore } = loadResolverForCoalesce({
+    // mergeable: false on the first (pollMergeable) read forces needsSync;
+    // true thereafter so the post-sync gate lets the retried merge proceed.
+    mergeableSeq: [false, true, true, true],
+    persistConflictStateImpl: async (_pool, _session, snapshot) => {
+      persistCalls.push(snapshot);
+    },
+    runSyncMainImpl: async () => {
+      syncCalls += 1;
+      return { ok: true, syncResult: 'resolved', behind: 0 };
+    },
+  });
+  try {
+    const r = await subject.resolveAndMaybeRetry({ jwtSecret: 's' }, { sessionId: 7 });
+    assert.equal(syncCalls, 1, 'needsSync is still driven off mergeable0===false');
+    assert.equal(r.reason, 'synced_and_merged');
+
+    const states = persistCalls.map((s) => s.state);
+    assert.ok(
+      !states.includes('conflict'),
+      `resolver must not persist a speculative 'conflict' snapshot; saw: ${JSON.stringify(states)}`
+    );
+    assert.ok(
+      states.includes('resolving'),
+      'the in-flight resolve still snapshots a resolving state before the sync'
+    );
   } finally {
     restore();
   }

@@ -287,14 +287,18 @@ async function resolveWithSession(config, pool, session) {
   const behind = session.behind_main || 0;
   const needsSync = behind > 0 || mergeable0 === false;
 
-  // #361: persist a derived merge-conflict snapshot so proposal cards
-  // reflect drift/conflict state even before (or independently of) a
-  // resolve. A real GitHub conflict → 'conflict'; clean-but-behind →
-  // 'behind'; clean and even → 'clean'. The 'resolving'/'failed'
-  // transitions are written below / by sync-main as the turn runs.
-  if (mergeable0 === false) {
-    await persistConflictState(pool, session, { state: 'conflict', files: [] });
-  } else if (mergeable0 === true) {
+  // #361/#384: persist a derived merge-conflict snapshot so proposal
+  // cards reflect drift state. We deliberately do NOT write 'conflict'
+  // here off a `mergeable0 === false` mergeability *check* — that's
+  // speculative (no auto-merge was attempted), and #384 requires the
+  // ⚠ warning to appear only after a real attempt failed. The 'conflict'
+  // state is owned by the merge-time 405 path (routes/votes.js), and
+  // 'failed' by an actual auto-resolve failure (services/sync-main.js);
+  // the 'resolving' transition is written below as the turn runs. When
+  // GitHub confirms the branch is mergeable we still record 'behind'
+  // (informational, no warning) / 'clean', which also clears any stale
+  // 'conflict'/'failed' snapshot once the branch merges again.
+  if (mergeable0 === true) {
     await persistConflictState(pool, session, { state: behind > 0 ? 'behind' : 'clean', files: [] });
   }
 

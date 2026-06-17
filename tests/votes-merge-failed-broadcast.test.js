@@ -138,6 +138,37 @@ test('checkAndMerge catch: 405 conflict failure broadcasts mergeFailed with reso
   }
 });
 
+// #384: the ⚠ "Conflicts" badge is only honest if the 'conflict'
+// snapshot is written by a REAL auto-merge attempt that failed. This is
+// the one legitimate writer (the speculative mergeability-check writer in
+// conflict-resolver.js was removed), so guard that it keeps persisting
+// merge_conflict_state='conflict' on a 405 conflict failure.
+test('#384: checkAndMerge catch persists merge_conflict_state=conflict on a 405 conflict failure', async () => {
+  const err = Object.assign(new Error('Pull Request is not mergeable'), { status: 405 });
+  const { subject, restore } = loadVotesWithFailingMerge(err);
+  try {
+    const calls = [];
+    const recordingPool = {
+      async query(sql, params) {
+        calls.push({ sql, params });
+        if (/SET behind_main = GREATEST/.test(sql)) return { rows: [{ behind_main: 1 }] };
+        if (/SET status = 'merging'/.test(sql)) return { rows: [{ id: 7 }] };
+        if (/SELECT COUNT\(\*\) as cnt FROM pr_votes/.test(sql)) return { rows: [{ cnt: '1' }] };
+        return { rows: [] };
+      },
+    };
+    const r = await subject.checkAndMerge({ jwtSecret: 's' }, recordingPool, { ...session }, { force: true });
+    assert.equal(r.conflict, true);
+
+    const bump = calls.find((c) => /SET behind_main = GREATEST/.test(c.sql));
+    assert.ok(bump, 'the conflict path issues the behind_main/merge_conflict_state bump');
+    assert.match(bump.sql, /merge_conflict_state = 'conflict'/,
+      'the real merge-time conflict still records the conflict snapshot');
+  } finally {
+    restore();
+  }
+});
+
 test('checkAndMerge catch: generic failure broadcasts mergeFailed with resolving:false', async () => {
   const { subject, voteUpdates, resolverCalls, restore } =
     loadVotesWithFailingMerge(new Error('secondary rate limit'));
