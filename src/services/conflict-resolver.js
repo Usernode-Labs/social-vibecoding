@@ -159,22 +159,35 @@ async function checkAndResolveConflicts(config, trigger) {
   return run;
 }
 
-// Resolve eligible promoted PRs for one app sequentially — highest-voted
-// first, ONE at a time — until none remain. Each successful resolve+merge
-// re-fires checkAndResolveConflicts (routes/votes.js); because a drain is
-// already running that just flags a re-kick, and this loop's next pass
-// picks the next eligible sibling. A PR that does NOT merge this pass
-// (unresolved conflict, awaiting GitHub recompute, over budget) is recorded
-// in `attempted` so the loop moves on instead of re-picking it forever;
-// it's healed by the next externally-triggered drain (a fresh vote / drift
+// Resolve eligible promoted PRs for one app sequentially — ONE at a time —
+// until none remain. Each successful resolve+merge re-fires
+// checkAndResolveConflicts (routes/votes.js); because a drain is already
+// running that just flags a re-kick, and this loop's next pass picks the
+// next eligible sibling. A PR that does NOT merge this pass (unresolved
+// conflict, awaiting GitHub recompute, over budget) is recorded in
+// `attempted` so the loop moves on instead of re-picking it forever; it's
+// healed by the next externally-triggered drain (a fresh vote / drift
 // redeploy). The eligibility bar is the same active-user majority
 // checkAndMerge gates the actual merge on, so we only ever touch a PR that
 // is genuinely ready to merge — nothing below threshold is resolved
 // pre-emptively (#380).
+//
+// #391: the drain runs in TWO phases so a blocked PR never holds up clean
+// siblings behind it. Phase 1 merges every directly-mergeable eligible PR
+// first (vote-priority order); a PR that needs a worker sync is set aside
+// (`mergeOnly:true` → 'deferred_needs_sync') instead of syncing inline.
+// Phase 2 then resolves those deferred (blocked) PRs — sync allowed — in
+// the order Phase 1 visited them. Before #391 the highest-voted PR was
+// always attempted first AND its (potentially minutes-long) worker sync ran
+// inline inside the single-flight drain, freezing clean lower-voted PRs
+// behind it.
 async function drainApp(config, appId, excludeId) {
   const pool = getPool(config);
   const attempted = [];
+  const deferred = [];
 
+  // Phase 1: merge directly-mergeable eligible PRs, never running a worker
+  // sync.
   // eslint-disable-next-line no-constant-condition
   while (true) {
     _appRekick.delete(appId);
@@ -183,7 +196,11 @@ async function drainApp(config, appId, excludeId) {
     // Highest-voted eligible promoted sibling, excluding the just-merged
     // trigger ($2) and any PR already attempted this drain ($4); tie-break
     // longest-waiting (promoted_at ASC NULLS LAST) then created_at for
-    // determinism.
+    // determinism. #391: a leading sort key floats PRs the DB already knows
+    // are unblocked (behind_main = 0 AND no conflict/failed/resolving
+    // snapshot) ahead of known-blocked ones, so clean PRs are attempted —
+    // and merged — before any blocked sibling is even touched. NULL
+    // merge_conflict_state (never checked) counts as clean.
     const { rows } = await pool.query(
       `SELECT cs.id,
               (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count
@@ -191,7 +208,8 @@ async function drainApp(config, appId, excludeId) {
        WHERE cs.app_id = $1 AND cs.status = 'promoted' AND cs.id != $2
          AND (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') >= $3
          AND NOT (cs.id = ANY($4::int[]))
-       ORDER BY yes_count DESC, cs.promoted_at ASC NULLS LAST, cs.created_at ASC
+       ORDER BY (cs.behind_main = 0 AND COALESCE(cs.merge_conflict_state, 'clean') NOT IN ('conflict', 'failed', 'resolving')) DESC,
+                yes_count DESC, cs.promoted_at ASC NULLS LAST, cs.created_at ASC
        LIMIT 1`,
       [appId, excludeId, majority, attempted]
     );
@@ -199,9 +217,9 @@ async function drainApp(config, appId, excludeId) {
     if (!rows.length) {
       // Nothing eligible right now. If a trigger arrived mid-pass (e.g. a
       // vote just pushed a sibling over threshold) loop again to pick it up;
-      // otherwise the drain is complete.
+      // otherwise Phase 1 is complete.
       if (_appRekick.has(appId)) continue;
-      return;
+      break;
     }
 
     const { id } = rows[0];
@@ -209,9 +227,24 @@ async function drainApp(config, appId, excludeId) {
     // it from 'promoted'; a non-merge means it's stuck for now.
     attempted.push(id);
     try {
-      await resolveAndMaybeRetry(config, { sessionId: id });
+      const result = await resolveAndMaybeRetry(config, { sessionId: id }, { mergeOnly: true });
+      // #391: needs a worker sync — set it aside for Phase 2 so it doesn't
+      // block clean siblings still queued behind it.
+      if (result && result.reason === 'deferred_needs_sync') deferred.push(id);
     } catch (err) {
-      log.error('conflict', 'resolveAndMaybeRetry failed', { sessionId: id, err: err.message });
+      log.error('conflict', 'resolveAndMaybeRetry (phase 1) failed', { sessionId: id, err: err.message });
+    }
+  }
+
+  // Phase 2: every directly-mergeable PR is merged; now resolve the deferred
+  // (blocked) PRs with the worker sync allowed, in Phase 1's visit order
+  // (vote-priority). A PR that still can't merge stays 'promoted' and is
+  // healed by the next externally-triggered drain (fresh vote / drift sweep).
+  for (const id of deferred) {
+    try {
+      await resolveAndMaybeRetry(config, { sessionId: id }, { mergeOnly: false });
+    } catch (err) {
+      log.error('conflict', 'resolveAndMaybeRetry (phase 2) failed', { sessionId: id, err: err.message });
     }
   }
 }
@@ -259,12 +292,12 @@ function resolutionOutcomeFor(reason) {
   return 'noop';
 }
 
-async function resolveAndMaybeRetry(config, target) {
+async function resolveAndMaybeRetry(config, target, options = {}) {
   const sessionId = target.sessionId != null ? target.sessionId : target.session?.id;
   if (sessionId != null && _inFlightResolves.has(sessionId)) {
     return _inFlightResolves.get(sessionId);
   }
-  const p = resolveAndMaybeRetryInner(config, target);
+  const p = resolveAndMaybeRetryInner(config, target, options);
   if (sessionId != null) {
     _inFlightResolves.set(sessionId, p);
     p.finally(() => {
@@ -279,6 +312,10 @@ async function resolveAndMaybeRetry(config, target) {
   // banner / vote-panel badge.
   p.then((result) => {
     if (!result || !result.appSlug) return;
+    // #391: a Phase-1 mergeOnly deferral did no work and changed no state —
+    // stay silent so it can't flash a stale badge. Phase 2 re-runs this same
+    // session with sync allowed and owns its lifecycle broadcasts.
+    if (result.reason === 'deferred_needs_sync') return;
     try {
       const { pushVoteUpdate } = require('./ws');
       const outcome = resolutionOutcomeFor(result.reason);
@@ -300,14 +337,14 @@ async function resolveAndMaybeRetry(config, target) {
   return p;
 }
 
-async function resolveAndMaybeRetryInner(config, target) {
+async function resolveAndMaybeRetryInner(config, target, options = {}) {
   const pool = getPool(config);
   let session = target.session || null;
   if (!session) {
     session = await loadSession(pool, target.sessionId);
     if (!session) return { ok: false, reason: 'session_not_found' };
   }
-  const result = await resolveWithSession(config, pool, session);
+  const result = await resolveWithSession(config, pool, session, options);
   // #239: decorate every loaded-session exit with the fields the
   // wrapper's terminal broadcast needs. Pre-loaded sessions from
   // checkAndMerge already carry app_slug / app_self_hosted; loadSession
@@ -320,7 +357,12 @@ async function resolveAndMaybeRetryInner(config, target) {
   };
 }
 
-async function resolveWithSession(config, pool, session) {
+async function resolveWithSession(config, pool, session, options = {}) {
+  // #391: `mergeOnly` (Phase 1 of the drain) merges a PR only if it's
+  // directly mergeable; one that needs a worker sync is deferred (no sync
+  // run, no state change) so it can't block clean siblings. Phase 2 re-runs
+  // with mergeOnly:false to actually resolve it.
+  const { mergeOnly = false } = options;
   if (!github.isEnabled() || !session.repo_url || !session.pr_number) {
     return { ok: false, reason: 'github_disabled_or_no_pr' };
   }
@@ -359,6 +401,16 @@ async function resolveWithSession(config, pool, session) {
   // 'conflict'/'failed' snapshot once the branch merges again.
   if (mergeable0 === true) {
     await persistConflictState(pool, session, { state: behind > 0 ? 'behind' : 'clean', files: [] });
+  }
+
+  // #391: Phase 1 only merges directly-mergeable PRs. If this one needs a
+  // worker sync, defer it WITHOUT touching GitHub, the worker, the budget,
+  // any snapshot, or any broadcast — Phase 2 owns all of that. We do this
+  // after the mergeable0===true snapshot above (a clean/behind 'clean'
+  // write is correct and cheap) but before the sync gate, so a blocked PR
+  // never holds a single-flight drain hostage to its sync.
+  if (mergeOnly && needsSync) {
+    return { ok: true, reason: 'deferred_needs_sync' };
   }
 
   let didSync = false;
