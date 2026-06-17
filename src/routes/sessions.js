@@ -1226,15 +1226,30 @@ function sessionRoutes(config) {
       let eventSeq = 0;
       // Event types that are ONLY meaningful on the active SSE stream. They
       // must not also be broadcast on the global WebSocket because both
-      // channels share a _seq-based dedup on the client: if a token arrived
-      // first on the WS (which has no 'token' handler) it would be silently
-      // swallowed, and the matching SSE delivery would then be deduped-skipped
-      // — the mayor's response would be written to the DB but never appear in
-      // the live UI until the user refreshes.
-      // 'suggestions' (#32) follows mayor_reasoning's posture: SSE +
-      // session bus only — a refresh restores chips from the assistant
-      // row's metadata, so the global WS adds nothing but dedup risk.
-      const SSE_ONLY = new Set(['token', 'usage', 'error', 'mayor_reasoning', 'suggestions', 'quick_replies']);
+      // channels share a _seq-based dedup on the client: if such an event
+      // arrived first on the WS (which has NO handler for it) it would be
+      // silently swallowed, and the matching SSE delivery would then be
+      // deduped-skipped — the mayor's response would be written to the DB
+      // but never appear in the live UI until the user refreshes.
+      //
+      // 'token' stays SSE-only: it is high-frequency streaming and is fully
+      // recovered by the single full-text 'mayor_reasoning' event, so
+      // broadcasting every token on the WS buys nothing.
+      // 'suggestions'/'quick_replies' stay SSE-only too: a refresh restores
+      // them from the assistant row's metadata, so the WS adds only dedup risk.
+      //
+      // 'mayor_reasoning' is NO LONGER SSE-only (#394). It is the authoritative
+      // full-text wrap-up the Mayor posts after a scout/spec or build turn, and
+      // it must survive a dropped POST SSE: a long scout run often kills the
+      // POST stream before phase-2, leaving the summary only on the session bus
+      // — and the global-WS 'done' (which IS broadcast) races ahead and tears
+      // down streaming before the resumable EventSource can replay it, so the
+      // summary lands in the DB but never live. Broadcasting it on the WS is
+      // safe now because (a) App.handleSessionEvent has a dedicated
+      // 'mayor_reasoning' case (no "swallowed then deduped" problem) and (b) it
+      // carries the COMPLETE text and is applied idempotently / last-write-wins,
+      // so overlap with the SSE/bus copy reconciles to the same result.
+      const SSE_ONLY = new Set(['token', 'usage', 'error', 'suggestions', 'quick_replies']);
       const send = (type, data) => {
         const seq = `${seqPrefix}-${++eventSeq}`;
         const event = { type, _seq: seq, ...data };
