@@ -4,7 +4,7 @@ const log = require('../services/logger');
 const github = require('../services/github');
 const staging = require('../services/staging');
 const docker = require('../services/docker');
-const { checkAndResolveConflicts, resolveAndMaybeRetry, isResolving } = require('../services/conflict-resolver');
+const { checkAndResolveConflicts, isResolving } = require('../services/conflict-resolver');
 const { sendSystemMessage, pushNotificationToUser } = require('../services/ws');
 const { getActiveUserStats, isUserActive } = require('../services/active-users');
 const notifications = require('../services/notifications');
@@ -1082,7 +1082,11 @@ async function checkAndMerge(config, pool, session, options = {}) {
       // dev-turn path. Fire-and-forget so the voter's request returns
       // immediately.
       if (autoResolve) {
-        resolveAndMaybeRetry(config, { session }).catch((err) => {
+        // Funnel through the app-level drain so this vote-triggered resolve
+        // is serialized with any other in-flight resolve for the app —
+        // only one proposal per app resolves+merges at a time, highest-
+        // voted first (this PR is eligible, so it's in that queue).
+        checkAndResolveConflicts(config, { app_id: session.app_id }).catch((err) => {
           log.error('votes', 'Auto-resolve (behind_main) failed', {
             sessionId: session.id, err: err.message,
           });
@@ -1397,8 +1401,11 @@ async function checkAndMerge(config, pool, session, options = {}) {
       'system', null, { type: 'session', ref: session.id }
     ).catch(() => {});
 
-    // Check for conflicts on other promoted PRs and resolve them
-    checkAndResolveConflicts(config, session).catch((err) => {
+    // Cascade: drain the next eligible promoted PR for this app. The
+    // app-level drain serializes this with any vote-triggered resolves so
+    // only one PR per app resolves+merges at a time. Exclude the session we
+    // just merged so it's never re-picked.
+    checkAndResolveConflicts(config, { app_id: session.app_id, excludeSessionId: session.id }).catch((err) => {
       log.error('votes', 'Conflict resolution check failed', { err: err.message });
     });
 
@@ -1561,7 +1568,9 @@ async function checkAndMerge(config, pool, session, options = {}) {
       // autoResolve guards against the resolver's own retry re-entering
       // this path (it calls checkAndMerge with autoResolve:false).
       if (autoResolve) {
-        resolveAndMaybeRetry(config, { session }).catch((e) => {
+        // Same app-level drain as the behind_main path — serialized,
+        // one-proposal-at-a-time-per-app resolution.
+        checkAndResolveConflicts(config, { app_id: session.app_id }).catch((e) => {
           log.error('votes', 'Auto-resolve (merge conflict) failed', {
             sessionId: session.id, err: e.message,
           });

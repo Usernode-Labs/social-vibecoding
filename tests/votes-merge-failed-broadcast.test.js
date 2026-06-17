@@ -77,8 +77,11 @@ function loadVotesWithFailingMerge(mergeError) {
   stub(ids.staging, {});
   stub(ids.docker, {});
   stub(ids.resolver, {
-    checkAndResolveConflicts: async () => {},
-    resolveAndMaybeRetry: async (...args) => { resolverCalls.push(args); return { ok: true }; },
+    // The conflict / behind_main auto-resolve paths now funnel through the
+    // app-level drain (checkAndResolveConflicts) so resolves are serialized
+    // one-per-app, rather than firing a per-session resolveAndMaybeRetry.
+    checkAndResolveConflicts: async (...args) => { resolverCalls.push(args); return undefined; },
+    resolveAndMaybeRetry: async () => ({ ok: true }),
     isResolving: () => false,
   });
   stub(ids.ws, {

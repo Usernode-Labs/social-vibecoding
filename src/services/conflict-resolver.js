@@ -105,55 +105,114 @@ async function loadSession(pool, sessionId) {
   return rows[0] || null;
 }
 
-// Post-merge sweep: sync ONLY a single promoted PR that has ALREADY reached
-// the merge vote threshold (the highest-voted such sibling) with main
-// (worker git-merge + Claude-on-markers) and, if it's clean, retry the
-// merge. Fired (un-awaited) from checkAndMerge after a successful merge, and
-// from the drift poller after an out-of-band main move.
-//
-// #380: previously this swept EVERY other promoted PR, spinning a worker
-// conflict-resolution turn for each — including PRs with barely any votes
-// that won't merge for a long time (if ever) — which burned the system-token
-// budget on speculative work. The policy is now strictly on-demand: resolve
-// conflicts ONLY for a PR that can actually merge right now, i.e. one whose
-// yes-vote count already meets the per-app majority threshold. PRs short of
-// the threshold are never pre-emptively resolved; they're healed lazily when
-// a vote pushes them over (checkAndMerge's behind_main path), and this sweep
-// re-runs after every merge / drift redeploy to drain the eligible PRs one
-// at a time. Among multiple already-eligible PRs we pick the highest-voted
-// (longest-waiting on a tie); the cascade handles the rest.
-async function checkAndResolveConflicts(config, mergedSession) {
+// App-level single-flight: at most ONE resolve+merge runs per app at a
+// time. Direct votes (routes/votes.js behind_main / conflict paths), the
+// post-merge sibling sweep, and the drift poller ALL funnel through here,
+// so concurrent triggers for the same app coalesce into one sequential
+// drain instead of spinning up N parallel worker syncs against the same
+// main. That parallelism was both a budget sink (N concurrent system-token
+// syncs) and wasted work — the instant one PR merges, the others are
+// behind again and their just-finished sync is stale. Serializing here is
+// what makes "one proposal at a time per app" actually hold across every
+// trigger, not just the post-merge cascade.
+const _appDraining = new Map(); // appId -> Promise (in-flight drain)
+const _appRekick = new Set();   // appId -> a re-evaluation was requested mid-drain
+
+// True while a resolve/merge drain is running for the app. Per-session
+// state still lives in isResolving / _inFlightResolves.
+function isAppResolving(appId) {
+  return _appDraining.has(appId);
+}
+
+// Entry point for every resolve trigger. `trigger.app_id` is required;
+// `trigger.excludeSessionId` (or legacy `trigger.id`) skips the just-merged
+// session so the post-merge sweep never re-picks it. If a drain is already
+// running for the app we flag a re-kick (the running drain re-queries each
+// pass and the teardown re-fires if a trigger raced in) and return its
+// promise rather than starting a concurrent resolve.
+async function checkAndResolveConflicts(config, trigger) {
+  const appId = trigger && trigger.app_id;
+  if (appId == null) return;
+
+  if (_appDraining.has(appId)) {
+    _appRekick.add(appId);
+    return _appDraining.get(appId);
+  }
+
+  const excludeId = trigger.excludeSessionId != null
+    ? trigger.excludeSessionId
+    : (trigger.id || 0);
+
+  const run = drainApp(config, appId, excludeId)
+    .catch((err) => log.error('conflict', 'drainApp threw', { appId, err: err.message }))
+    .finally(() => {
+      _appDraining.delete(appId);
+      // A trigger that raced in during teardown starts a fresh drain so it
+      // isn't dropped.
+      if (_appRekick.delete(appId)) {
+        checkAndResolveConflicts(config, { app_id: appId }).catch((err) => {
+          log.error('conflict', 'drain re-kick failed', { appId, err: err.message });
+        });
+      }
+    });
+  _appDraining.set(appId, run);
+  return run;
+}
+
+// Resolve eligible promoted PRs for one app sequentially — highest-voted
+// first, ONE at a time — until none remain. Each successful resolve+merge
+// re-fires checkAndResolveConflicts (routes/votes.js); because a drain is
+// already running that just flags a re-kick, and this loop's next pass
+// picks the next eligible sibling. A PR that does NOT merge this pass
+// (unresolved conflict, awaiting GitHub recompute, over budget) is recorded
+// in `attempted` so the loop moves on instead of re-picking it forever;
+// it's healed by the next externally-triggered drain (a fresh vote / drift
+// redeploy). The eligibility bar is the same active-user majority
+// checkAndMerge gates the actual merge on, so we only ever touch a PR that
+// is genuinely ready to merge — nothing below threshold is resolved
+// pre-emptively (#380).
+async function drainApp(config, appId, excludeId) {
   const pool = getPool(config);
+  const attempted = [];
 
-  // The eligibility bar is the same active-user majority checkAndMerge gates
-  // the actual merge on (routes/votes.js), so the sweep only ever touches a
-  // PR that is genuinely ready to merge.
-  const { majority } = await getActiveUserStats(pool, mergedSession.app_id);
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    _appRekick.delete(appId);
 
-  // Select only promoted siblings whose yes-vote count already meets the
-  // threshold, highest-voted first; tie-break longest-waiting (earliest
-  // promoted_at, NULLS LAST) then earliest created_at for determinism. The
-  // ordering only disambiguates among already-eligible PRs — the WHERE clause
-  // guarantees a below-threshold PR is never picked, so nothing is resolved
-  // pre-emptively.
-  const { rows: conflictCandidates } = await pool.query(
-    `SELECT cs.id,
-            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count
-     FROM chat_sessions cs
-     WHERE cs.app_id = $1 AND cs.status = 'promoted' AND cs.id != $2
-       AND (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') >= $3
-     ORDER BY yes_count DESC, cs.promoted_at ASC NULLS LAST, cs.created_at ASC
-     LIMIT 1`,
-    [mergedSession.app_id, mergedSession.id || 0, majority]
-  );
+    const { majority } = await getActiveUserStats(pool, appId);
+    // Highest-voted eligible promoted sibling, excluding the just-merged
+    // trigger ($2) and any PR already attempted this drain ($4); tie-break
+    // longest-waiting (promoted_at ASC NULLS LAST) then created_at for
+    // determinism.
+    const { rows } = await pool.query(
+      `SELECT cs.id,
+              (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count
+       FROM chat_sessions cs
+       WHERE cs.app_id = $1 AND cs.status = 'promoted' AND cs.id != $2
+         AND (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') >= $3
+         AND NOT (cs.id = ANY($4::int[]))
+       ORDER BY yes_count DESC, cs.promoted_at ASC NULLS LAST, cs.created_at ASC
+       LIMIT 1`,
+      [appId, excludeId, majority, attempted]
+    );
 
-  if (!conflictCandidates.length) return;
+    if (!rows.length) {
+      // Nothing eligible right now. If a trigger arrived mid-pass (e.g. a
+      // vote just pushed a sibling over threshold) loop again to pick it up;
+      // otherwise the drain is complete.
+      if (_appRekick.has(appId)) continue;
+      return;
+    }
 
-  const { id } = conflictCandidates[0];
-  try {
-    await resolveAndMaybeRetry(config, { sessionId: id });
-  } catch (err) {
-    log.error('conflict', 'resolveAndMaybeRetry failed', { sessionId: id, err: err.message });
+    const { id } = rows[0];
+    // Don't re-pick this PR this pass regardless of outcome: a merge removes
+    // it from 'promoted'; a non-merge means it's stuck for now.
+    attempted.push(id);
+    try {
+      await resolveAndMaybeRetry(config, { sessionId: id });
+    } catch (err) {
+      log.error('conflict', 'resolveAndMaybeRetry failed', { sessionId: id, err: err.message });
+    }
   }
 }
 
@@ -451,4 +510,4 @@ async function postGroupMessage(pool, session, content) {
   }
 }
 
-module.exports = { checkAndResolveConflicts, resolveAndMaybeRetry, pollMergeable, isResolving };
+module.exports = { checkAndResolveConflicts, resolveAndMaybeRetry, pollMergeable, isResolving, isAppResolving };

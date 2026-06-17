@@ -578,15 +578,15 @@ test('resolveAndMaybeRetry: exhausted system budget skips and posts the group-ch
   }
 });
 
-// ── #380: checkAndResolveConflicts resolves only an at-threshold PR ──────────
+// ── #380 + app-level drain: checkAndResolveConflicts only at-threshold PRs ────
 // The post-merge / post-drift sweep used to fan a worker conflict-resolution
-// turn across EVERY promoted sibling. The policy is now strictly on-demand:
-// it resolves at most ONE sibling, and only one whose yes-vote count already
-// meets the per-app majority threshold (the same bar checkAndMerge gates the
-// actual merge on). Among multiple already-eligible PRs it picks the
-// highest-voted (longest-waiting on a tie). A PR short of the threshold is
-// never pre-emptively resolved. These tests drive checkAndResolveConflicts
-// directly against a mock pool that emulates the candidate query's threshold
+// turn across EVERY promoted sibling. The policy is on-demand AND serialized
+// per app: it resolves only PRs whose yes-vote count already meets the
+// per-app majority threshold (the same bar checkAndMerge gates the actual
+// merge on), one at a time, draining them highest-voted first (longest-
+// waiting on a tie). A PR short of the threshold is never pre-emptively
+// resolved. These tests drive checkAndResolveConflicts directly against a
+// mock pool that emulates the candidate query's threshold + attempted-set
 // filter + ORDER BY / LIMIT 1, with getActiveUserStats stubbed to a fixed
 // majority.
 function loadResolverForSweep({ siblings, majority = 2 }) {
@@ -636,8 +636,16 @@ function loadResolverForSweep({ siblings, majority = 2 }) {
     if (ap != null && bp != null && ap !== bp) return ap - bp; // ASC
     return a.created_at - b.created_at;           // ASC
   };
-  const eligibleFrontRunner = () => {
-    const eligible = siblings.filter((s) => s.yes_count >= majority);
+  // The drain loops, excluding the just-merged trigger ($2) and every PR
+  // already attempted this drain ($4), so model both exclusions or the loop
+  // never terminates. resolveWithSession bails at 'no_conflict' (mergeable
+  // null) without merging, so a resolved sibling stays 'promoted' and is
+  // re-offered unless we honor the attempted-set exclusion.
+  const eligibleFrontRunner = (params) => {
+    const excluded = new Set();
+    if (params && params[1]) excluded.add(params[1]);
+    for (const a of (params && params[3]) || []) excluded.add(a);
+    const eligible = siblings.filter((s) => s.yes_count >= majority && !excluded.has(s.id));
     if (!eligible.length) return [];
     const sorted = [...eligible].sort(rank);
     return [{ id: sorted[0].id, yes_count: sorted[0].yes_count }];
@@ -645,7 +653,7 @@ function loadResolverForSweep({ siblings, majority = 2 }) {
 
   const pool = makePool([
     // Candidate query — distinctive `yes_count` projection.
-    [/SELECT cs\.id,[\s\S]*yes_count[\s\S]*LIMIT 1/, () => eligibleFrontRunner()],
+    [/SELECT cs\.id,[\s\S]*yes_count[\s\S]*LIMIT 1/, (params) => eligibleFrontRunner(params)],
     // loadSession — return a promoted session row for the requested id.
     [/SELECT cs\.\*, a\.slug/, (params) => {
       const sid = params[0];
@@ -716,7 +724,7 @@ test('checkAndResolveConflicts: resolves nothing when every sibling is below thr
   }
 });
 
-test('checkAndResolveConflicts: picks the highest-voted among multiple eligible PRs', async () => {
+test('checkAndResolveConflicts: drains eligible PRs highest-voted first, one at a time', async () => {
   const { subject, loadedIds, restore } = loadResolverForSweep({
     majority: 2,
     siblings: [
@@ -727,24 +735,27 @@ test('checkAndResolveConflicts: picks the highest-voted among multiple eligible 
   });
   try {
     await subject.checkAndResolveConflicts({ jwtSecret: 's' }, { app_id: 5, id: 9 });
-    assert.deepEqual(loadedIds(), [42], 'the most-voted eligible PR is resolved first');
+    // The app-level drain resolves every eligible sibling sequentially in
+    // priority order (most votes first), not just the front-runner.
+    assert.deepEqual(loadedIds(), [42, 43, 41], 'drains all eligible, most-voted first');
   } finally {
     restore();
   }
 });
 
-test('checkAndResolveConflicts: ties among eligible PRs resolve the earlier-promoted one', async () => {
+test('checkAndResolveConflicts: ties drain earlier-promoted first', async () => {
   const { subject, loadedIds, restore } = loadResolverForSweep({
     majority: 2,
     siblings: [
       { id: 21, yes_count: 2, promoted_at: 300, created_at: 300 },
-      { id: 22, yes_count: 2, promoted_at: 100, created_at: 100 }, // earlier promoted → wins
+      { id: 22, yes_count: 2, promoted_at: 100, created_at: 100 }, // earlier promoted → first
       { id: 23, yes_count: 2, promoted_at: 200, created_at: 200 },
     ],
   });
   try {
     await subject.checkAndResolveConflicts({ jwtSecret: 's' }, { app_id: 5, id: 9 });
-    assert.deepEqual(loadedIds(), [22], 'the longest-waiting of the tied eligible PRs is chosen');
+    // All tied on votes → longest-waiting (earliest promoted_at) drains first.
+    assert.deepEqual(loadedIds(), [22, 23, 21], 'tied eligible PRs drain longest-waiting first');
   } finally {
     restore();
   }
@@ -755,6 +766,52 @@ test('checkAndResolveConflicts: empty queue returns without resolving anything',
   try {
     await subject.checkAndResolveConflicts({ jwtSecret: 's' }, { app_id: 5, id: 9 });
     assert.deepEqual(loadedIds(), [], 'no promoted siblings → no resolve cycles');
+  } finally {
+    restore();
+  }
+});
+
+// ── app-level single-flight: only one drain per app at a time ────────────────
+// This is the fix for "multiple proposals resolving conflicts at once": every
+// resolve trigger (direct vote, post-merge sweep, drift poller) funnels through
+// checkAndResolveConflicts, which serializes per app. Concurrent triggers for
+// the same app must NOT spin up parallel resolves — the second joins the
+// in-flight drain.
+test('checkAndResolveConflicts: concurrent triggers for one app coalesce into a single drain', async () => {
+  const { subject, loadedIds, restore } = loadResolverForSweep({
+    majority: 2,
+    siblings: [
+      { id: 12, yes_count: 3, promoted_at: 100, created_at: 100 }, // single eligible
+    ],
+  });
+  try {
+    // Fire two triggers for the same app before awaiting either. The second
+    // must join the running drain rather than start a parallel one — so the
+    // single eligible PR is resolved exactly once, not once per trigger.
+    // (Promise identity isn't asserted: checkAndResolveConflicts is an async
+    // function, so each call returns a distinct wrapper promise even though
+    // both await the same underlying drain.)
+    const p1 = subject.checkAndResolveConflicts({ jwtSecret: 's' }, { app_id: 5 });
+    const p2 = subject.checkAndResolveConflicts({ jwtSecret: 's' }, { app_id: 5 });
+    await Promise.all([p1, p2]);
+    assert.deepEqual(loadedIds(), [12], 'the eligible PR is resolved once, not once per trigger');
+  } finally {
+    restore();
+  }
+});
+
+test('isAppResolving: true while a drain runs, false once it settles', async () => {
+  const { subject, restore } = loadResolverForSweep({
+    majority: 2,
+    siblings: [{ id: 12, yes_count: 3, promoted_at: 100, created_at: 100 }],
+  });
+  try {
+    assert.equal(subject.isAppResolving(5), false, 'idle before any drain');
+    const p = subject.checkAndResolveConflicts({ jwtSecret: 's' }, { app_id: 5 });
+    assert.equal(subject.isAppResolving(5), true, 'in flight while the drain runs');
+    assert.equal(subject.isAppResolving(99), false, 'scoped per app');
+    await p;
+    assert.equal(subject.isAppResolving(5), false, 'cleared once the drain settles');
   } finally {
     restore();
   }
