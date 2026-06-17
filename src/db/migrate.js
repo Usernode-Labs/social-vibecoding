@@ -27,6 +27,7 @@ async function migrate(config) {
   await seedStagingEnvProposal(pool, config);
   await seedStagingMergedPrs(pool, config);
   await seedStagingMyOpenPr(pool, config);
+  await seedStagingRestartEligibleMerge(pool, config);
   await seedStagingProposalDiscussion(pool, config);
   await seedStagingOtherUserProposal(pool, config);
   await seedStagingTopicScrollThreads(pool, config);
@@ -53,6 +54,7 @@ async function migrate(config) {
   await seedStagingCapReached(pool, config);
   await seedStagingSystemTokenUsage(pool);
   await seedStagingDashboardAdminSplit(pool);
+  await seedStagingTopicAttributes(pool, config);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
   // Must run BEFORE backfillOrphanedSpecDrafts: unwrapping spec_md after that
@@ -3282,6 +3284,190 @@ async function seedStagingMyOpenPr(pool, config) {
     targetUser: target.username,
     sessionId,
   });
+}
+
+// #390: fixtures for the boot-time auto-merge reconcile sweep. Auto-merge
+// used to fire only in the background of a live vote, so a proposal that
+// crossed the vote-majority threshold while the platform was down stayed
+// stuck "up for voting" forever. The boot sweep (reconcileEligibleMerges in
+// server.js) now re-evaluates every open proposal at startup and merges the
+// eligible ones. These fixtures make that scenario visible in the Dev vote
+// panel without live voting:
+//
+//   1. An OVER-THRESHOLD promoted proposal (more yes votes than the active-
+//      user majority, clean/no-conflict, no merged_at) — "approved while the
+//      platform was down". This is what the boot sweep would merge.
+//   2. A BELOW-THRESHOLD promoted proposal (no yes votes) — must be left
+//      untouched by the sweep (the #380 "no pre-emptive resolution" bar).
+//   3. A row stuck in 'merging' with no real GitHub merge (crash mid-merge).
+//      recoverStuckMerges demotes it back to 'promoted' on boot, then the
+//      reconcile sweep re-evaluates it — demonstrating the chained ordering.
+//
+// All three use fake high pr_numbers and obviously-fake "[staging fixture]"
+// titles, keyed off their unique branch names for idempotency. The 'merging'
+// row is reset to 'merging' on each seed run (it runs during migrate, before
+// recoverStuckMerges) so the ordering is re-demonstrated on every boot. A
+// strict no-op outside staging.
+async function seedStagingRestartEligibleMerge(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging restart-eligible-merge fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: users } = await pool.query(
+    `SELECT id, username FROM users ORDER BY is_admin DESC, id ASC LIMIT 3`
+  );
+  if (!users.length) {
+    log.warn('db', 'Staging restart-eligible-merge fixture skipped: no users');
+    return;
+  }
+  const votesRequired = Math.max(1, Math.ceil(users.length / 2));
+
+  // Helper: ensure a promoted fixture session exists for a branch, returning
+  // its id. Clean (behind_main = 0, no conflict snapshot) so it reads as
+  // directly mergeable.
+  const ensureSession = async (branch, prNumber, title, status) => {
+    const { rows: have } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, branch]
+    );
+    if (have.length) {
+      // Keep the 'merging' fixture pinned to 'merging' on each boot so the
+      // recoverStuckMerges → reconcile ordering is re-demonstrated; leave the
+      // promoted fixtures as-is (a real merge during testing should stick).
+      if (status === 'merging') {
+        await pool.query(
+          `UPDATE chat_sessions SET status = 'merging' WHERE id = $1 AND status <> 'merged'`,
+          [have[0].id]
+        );
+      }
+      return have[0].id;
+    }
+    const { rows } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_number, pr_title, pr_summary_md, status,
+          votes_required, behind_main, merge_conflict_state, conflict_checked_at, created_at)
+       VALUES
+         ($1, $2, $3, $4, $5,
+          'In plain terms: a seeded demo proposal used to exercise the boot-time auto-merge sweep.',
+          $6, $7, 0, 'clean', NOW(), NOW() - INTERVAL '40 minutes')
+       RETURNING id`,
+      [appId, users[0].id, branch, prNumber, title, status, votesRequired]
+    );
+    return rows[0].id;
+  };
+
+  const addYesVote = async (sessionId, userId, minutesAgo) => {
+    await pool.query(
+      `INSERT INTO pr_votes (session_id, user_id, vote, created_at)
+       VALUES ($1, $2, 'yes', NOW() - ($3::int * INTERVAL '1 minute'))
+       ON CONFLICT (session_id, user_id) DO NOTHING`,
+      [sessionId, userId, minutesAgo]
+    );
+  };
+
+  // 1. Over-threshold "approved while the platform was down" proposal: every
+  //    available user (up to 3) has voted yes, comfortably past the majority.
+  const eligibleId = await ensureSession(
+    'staging-fixture/restart-eligible-merge', 9210,
+    '[staging fixture] Approved while platform was down — should auto-merge on boot',
+    'promoted'
+  );
+  for (let i = 0; i < users.length; i++) await addYesVote(eligibleId, users[i].id, 38 - i);
+
+  // 2. Below-threshold proposal: no yes votes, so the sweep must skip it.
+  await ensureSession(
+    'staging-fixture/restart-below-threshold', 9211,
+    '[staging fixture] Not enough votes yet — must NOT auto-merge',
+    'promoted'
+  );
+
+  // 3. Crash-mid-merge row: stuck in 'merging' with a fake PR. recoverStuckMerges
+  //    demotes it to 'promoted' on boot; the reconcile sweep then re-evaluates it.
+  const mergingId = await ensureSession(
+    'staging-fixture/restart-stuck-merging', 9212,
+    '[staging fixture] Stuck mid-merge across a restart — should recover',
+    'merging'
+  );
+  for (let i = 0; i < users.length; i++) await addYesVote(mergingId, users[i].id, 36 - i);
+
+  log.info('db', 'Staging restart-eligible-merge fixtures seeded', {
+    appId, eligibleId, mergingId, votesRequired,
+  });
+}
+
+// Community-voted priority + assigned-person votes on the staging
+// my-open-PR fixture proposal, so a prod-cloned staging preview shows the
+// chips backed by REAL topic_attribute_votes rows — a clear winner, more
+// than one voter, and the viewer's own pick highlighted in the dropdown
+// (the admin/target user votes, and the admin is who staging logs in as).
+// Idempotent via the UNIQUE(app_id, target_type, target_ref, field,
+// user_id) constraint. No-op outside staging.
+async function seedStagingTopicAttributes(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) return;
+
+  const { rows: sessRows } = await pool.query(
+    `SELECT id FROM chat_sessions
+      WHERE app_id = $1 AND branch_name = $2 LIMIT 1`,
+    [appId, 'staging-fixture/my-open-pr']
+  );
+  if (!sessRows.length) {
+    log.warn('db', 'Staging topic-attribute fixture skipped: open-PR fixture missing');
+    return;
+  }
+  const sessionId = sessRows[0].id;
+
+  const { rows: users } = await pool.query(
+    `SELECT id, username FROM users ORDER BY is_admin DESC, id ASC LIMIT 3`
+  );
+  if (!users.length) return;
+  const u0 = users[0];
+  const u1 = users[1] || users[0];
+  const u2 = users[2] || users[0];
+
+  // priority: u0 + u1 → 'high' (clear winner, includes the viewer), u2 → 'low'.
+  // assignee: u0 + u1 → @<u1.username> (winner), u2 → @<u0.username>.
+  const votes = [
+    ['priority', 'high', u0.id, "NOW() - INTERVAL '30 minutes'"],
+    ['priority', 'high', u1.id, "NOW() - INTERVAL '25 minutes'"],
+    ['priority', 'low', u2.id, "NOW() - INTERVAL '20 minutes'"],
+    ['assignee', u1.username, u0.id, "NOW() - INTERVAL '28 minutes'"],
+    ['assignee', u1.username, u1.id, "NOW() - INTERVAL '24 minutes'"],
+    ['assignee', u0.username, u2.id, "NOW() - INTERVAL '22 minutes'"],
+  ];
+  // De-dup the per-user upserts when the staging DB has fewer than 3 users
+  // (u1/u2 collapse onto u0): keep the first vote seen per (field, user).
+  const seen = new Set();
+  for (const [field, value, uid, when] of votes) {
+    const key = `${field}:${uid}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    await pool.query(
+      `INSERT INTO topic_attribute_votes
+         (app_id, target_type, target_ref, field, value, user_id, created_at)
+       VALUES ($1, 'proposal', $2, $3, $4, $5, ${when})
+       ON CONFLICT (app_id, target_type, target_ref, field, user_id) DO NOTHING`,
+      [appId, sessionId, field, value, uid]
+    );
+  }
+
+  log.info('db', 'Staging topic-attribute votes seeded', { appId, sessionId });
 }
 
 // #297: seed a short "Ask AI" advisor conversation on the staging

@@ -1226,15 +1226,30 @@ function sessionRoutes(config) {
       let eventSeq = 0;
       // Event types that are ONLY meaningful on the active SSE stream. They
       // must not also be broadcast on the global WebSocket because both
-      // channels share a _seq-based dedup on the client: if a token arrived
-      // first on the WS (which has no 'token' handler) it would be silently
-      // swallowed, and the matching SSE delivery would then be deduped-skipped
-      // — the mayor's response would be written to the DB but never appear in
-      // the live UI until the user refreshes.
-      // 'suggestions' (#32) follows mayor_reasoning's posture: SSE +
-      // session bus only — a refresh restores chips from the assistant
-      // row's metadata, so the global WS adds nothing but dedup risk.
-      const SSE_ONLY = new Set(['token', 'usage', 'error', 'mayor_reasoning', 'suggestions', 'quick_replies']);
+      // channels share a _seq-based dedup on the client: if such an event
+      // arrived first on the WS (which has NO handler for it) it would be
+      // silently swallowed, and the matching SSE delivery would then be
+      // deduped-skipped — the mayor's response would be written to the DB
+      // but never appear in the live UI until the user refreshes.
+      //
+      // 'token' stays SSE-only: it is high-frequency streaming and is fully
+      // recovered by the single full-text 'mayor_reasoning' event, so
+      // broadcasting every token on the WS buys nothing.
+      // 'suggestions'/'quick_replies' stay SSE-only too: a refresh restores
+      // them from the assistant row's metadata, so the WS adds only dedup risk.
+      //
+      // 'mayor_reasoning' is NO LONGER SSE-only (#394). It is the authoritative
+      // full-text wrap-up the Mayor posts after a scout/spec or build turn, and
+      // it must survive a dropped POST SSE: a long scout run often kills the
+      // POST stream before phase-2, leaving the summary only on the session bus
+      // — and the global-WS 'done' (which IS broadcast) races ahead and tears
+      // down streaming before the resumable EventSource can replay it, so the
+      // summary lands in the DB but never live. Broadcasting it on the WS is
+      // safe now because (a) App.handleSessionEvent has a dedicated
+      // 'mayor_reasoning' case (no "swallowed then deduped" problem) and (b) it
+      // carries the COMPLETE text and is applied idempotently / last-write-wins,
+      // so overlap with the SSE/bus copy reconciles to the same result.
+      const SSE_ONLY = new Set(['token', 'usage', 'error', 'suggestions', 'quick_replies']);
       const send = (type, data) => {
         const seq = `${seqPrefix}-${++eventSeq}`;
         const event = { type, _seq: seq, ...data };
@@ -3681,7 +3696,7 @@ const LIST_GITHUB_ISSUES_TOOL = {
     "List the OPEN GitHub issues on this app's repository (read-only). "
     + 'Returns JSON `{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }` — '
     + 'pull requests are excluded and long bodies are clipped with an explicit '
-    + '"[truncated — use get_github_issue(N) for full text]" marker; call get_github_issue for the full body. '
+    + '"[truncated — use get_github_issue(N) for full text]" marker; call get_github_issue for the full body AND the issue\'s comment thread. '
     + 'Call this when the user mentions the issue tracker, asks what issues or bugs are filed, '
     + 'or when planning work that may already be reported, so your reply is grounded in real issues. '
     + 'It only READS issues — it cannot create, comment on, edit, or close them. Takes no input.',
@@ -3699,12 +3714,15 @@ const LIST_GITHUB_ISSUES_TOOL = {
 const GET_GITHUB_ISSUE_TOOL = {
   name: 'get_github_issue',
   description:
-    "Fetch ONE GitHub issue from this app's repository with its FULL, untruncated body (read-only). "
-    + 'Returns JSON `{ issue: { number, title, body, labels, updatedAt, htmlUrl } }`, or '
-    + '`{ issue: null, note }` when it cannot be resolved. '
+    "Fetch ONE GitHub issue from this app's repository with its FULL, untruncated body AND its comment thread (read-only). "
+    + 'Returns JSON `{ issue: { number, title, body, labels, updatedAt, htmlUrl }, comments: [{ author, body, createdAt }], commentsTruncated }`, or '
+    + '`{ issue: null, comments: [], note }` when it cannot be resolved. '
+    + 'Comments are oldest-first; long threads keep the most recent ones with `commentsTruncated: true`, and very long '
+    + 'comment bodies end with a "[truncated]" marker. Read the comments to catch clarifications, decisions, and answers '
+    + 'the reporter left after the original post. '
     + 'Use it when a body from list_github_issues ends with a "[truncated …]" marker and you need the rest, '
-    + 'or when the user asks about a specific issue number. Also resolves recently-closed issues. '
-    + 'It only READS the issue — it cannot create, comment on, edit, or close it.',
+    + 'when you need the discussion on an issue, or when the user asks about a specific issue number. Also resolves recently-closed issues. '
+    + 'It only READS the issue and its comments — it cannot create, comment on, edit, or close anything.',
   input_schema: {
     type: 'object',
     properties: {
@@ -3936,13 +3954,28 @@ async function resolveGithubIssuesToolResult(repoOwner, repoName) {
   return JSON.stringify(github.truncateIssueBodies(result, (n) => `get_github_issue(${n})`));
 }
 
-// Resolve a get_github_issue tool call: ONE issue, FULL body (#158).
-// github.fetchPublicIssue never throws and validates the number itself.
+// Resolve a get_github_issue tool call: ONE issue, FULL body (#158), plus
+// its comment thread (#396). Calls both fetchPublicIssue and
+// fetchIssueComments (mirroring the headless seed) and merges them — the
+// thread is clipped via clipIssueComments so a chatty issue can't blow up
+// the turn's context. Both fetchers never throw; `comments` is always an
+// array and `commentsNote` carries a comment-fetch failure independently of
+// the issue's own `note`. `commentsTruncated` is true when older comments
+// were omitted (long thread or kept-count cap).
 async function resolveGithubIssueToolResult(repoOwner, repoName, number) {
   if (!repoOwner || !repoName) {
-    return JSON.stringify({ issue: null, note: 'no repo' });
+    return JSON.stringify({ issue: null, comments: [], commentsTruncated: false, note: 'no repo' });
   }
-  return JSON.stringify(await github.fetchPublicIssue(repoOwner, repoName, number));
+  const { issue, note } = await github.fetchPublicIssue(repoOwner, repoName, number);
+  const raw = await github.fetchIssueComments(repoOwner, repoName, number);
+  const { comments, truncated } = github.clipIssueComments(raw.comments, { wasTruncated: raw.truncated });
+  return JSON.stringify({
+    issue,
+    comments,
+    commentsTruncated: truncated,
+    ...(note ? { note } : {}),
+    ...(raw.note ? { commentsNote: raw.note } : {}),
+  });
 }
 
 // Resolve a web_fetch tool call (#30). webFetch.fetchUrl never throws —

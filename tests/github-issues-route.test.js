@@ -401,3 +401,101 @@ test('production never synthesizes headless state', async () => {
     server.close();
   }
 });
+
+// ── #396: GET /api/apps/:slug/github-issues/:number/comments ─────────────
+//
+// The lazy, collab-gated comment-thread endpoint for the Dev topic view.
+// It calls github.fetchIssueComments + clipIssueComments and returns
+// { comments, truncated, note? }. In staging an empty/unavailable live
+// thread falls back to stagingMockIssueComments so the section is
+// reviewable. The module-level fetch stub above answers api.github.com
+// list calls; these tests override global.fetch to shape the COMMENTS
+// response, restoring it afterwards.
+
+const baselineFetch = global.fetch;
+
+test('comments endpoint returns the clipped live thread (collab-gated, merged shape)', async () => {
+  global.fetch = async (url, opts) => {
+    if (String(url).includes('api.github.com') && String(url).includes('/comments')) {
+      return {
+        ok: true, status: 200, headers: { get: () => null },
+        json: async () => [
+          { user: { login: 'reporter' }, body: 'It only happens on mobile.', created_at: '2026-06-10T00:00:00Z' },
+          { user: { login: 'usernode-bot' }, body: 'Per-device, then?', created_at: '2026-06-11T00:00:00Z' },
+        ],
+      };
+    }
+    return baselineFetch(url, opts);
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/142/comments`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.strictEqual(body.comments.length, 2);
+    assert.strictEqual(body.comments[0].author, 'reporter');
+    assert.strictEqual(body.comments[1].author, 'usernode-bot');
+    assert.strictEqual(body.truncated, false);
+  } finally {
+    global.fetch = baselineFetch;
+    server.close();
+  }
+});
+
+test('comments endpoint 404s when the app is not accessible to the viewer', async () => {
+  const prev = appAccess.getAppForUser;
+  appAccess.getAppForUser = async () => null;
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/142/comments`);
+    assert.strictEqual(res.status, 404);
+  } finally {
+    appAccess.getAppForUser = prev;
+    server.close();
+  }
+});
+
+test('staging comments endpoint serves mock thread (with a bot comment) on an empty live fetch', async () => {
+  // Live thread comes back empty → staging falls back to the mocks.
+  global.fetch = async (url, opts) => {
+    if (String(url).includes('api.github.com') && String(url).includes('/comments')) {
+      return { ok: true, status: 200, headers: { get: () => null }, json: async () => [] };
+    }
+    return baselineFetch(url, opts);
+  };
+  const server = await startStagingServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/900001/comments?demo=1`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.strictEqual(body.comments.length, 3, 'mock 900001 thread has 3 comments');
+    assert.ok(body.comments.some((c) => c.author === 'usernode-bot'), 'includes a bot-authored comment');
+  } finally {
+    global.fetch = baselineFetch;
+    server.close();
+  }
+});
+
+test('production comments endpoint never substitutes mocks (empty stays empty)', async () => {
+  global.fetch = async (url, opts) => {
+    if (String(url).includes('api.github.com') && String(url).includes('/comments')) {
+      return { ok: true, status: 200, headers: { get: () => null }, json: async () => [] };
+    }
+    return baselineFetch(url, opts);
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/900001/comments`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.deepStrictEqual(body.comments, []);
+    assert.strictEqual(body.truncated, false);
+  } finally {
+    global.fetch = baselineFetch;
+    server.close();
+  }
+});

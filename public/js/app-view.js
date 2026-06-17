@@ -13,6 +13,12 @@ const AppView = {
   _ghIssuesMeta: { truncatedList: false, note: null, repoUrl: null, myRemaining: null },
   _bountyInFlight: new Set(),
 
+  // #396: per-issue-number cache of the GitHub comment thread fetched
+  // lazily when an issue topic opens, so _renderTopicHead's live-refreshes
+  // (WS-driven) reuse it instead of refetching. Each entry is
+  // `{ comments, truncated }`; absent means "not loaded yet".
+  _ghComments: {},
+
   // Scroll-position memory for the Dev card list, keyed by app slug
   // (`App.currentApp`). In-memory only — reset on a full page reload by
   // design, so a hard refresh starts at the top. Mirrors the
@@ -109,6 +115,25 @@ const AppView = {
   // topic sub-view below) tracks the open topic for hash deep links.
   // How many feed items are visible (the rest sit behind "Show more").
   _feedShown: 20,
+
+  // ── Dev view mode (list ↔ kanban) ─────────────────────────────────
+  // A personal display preference, persisted to localStorage and shared
+  // across every app's Dev view (same pattern as DevConsole's MODE_KEY
+  // and the "view as non-admin" toggle). 'list' is the default and the
+  // historical behaviour; 'kanban' lays the same cached topics out in
+  // four lifecycle columns. Read/written only through the two helpers
+  // below so the localStorage access stays guarded in one place.
+  VIEW_MODE_KEY: 'devViewMode',
+  _getViewMode() {
+    try {
+      return window.localStorage.getItem(AppView.VIEW_MODE_KEY) === 'kanban'
+        ? 'kanban' : 'list';
+    } catch { return 'list'; }
+  },
+  _setViewMode(mode) {
+    const next = mode === 'kanban' ? 'kanban' : 'list';
+    try { window.localStorage.setItem(AppView.VIEW_MODE_KEY, next); } catch {}
+  },
   // Refresh timer for the Your-sessions strip's busy indicators;
   // self-clears when the strip leaves the DOM.
   _stripTimer: null,
@@ -488,9 +513,10 @@ const AppView = {
 
     content.innerHTML = `
       <div class="flex flex-col h-full min-h-0">
-        <!-- Header bar: title + the "+" menu (top right). -->
+        <!-- Header bar: title + view-mode toggle + the "+" menu (top right). -->
         <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
           <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider flex-1">Dev</span>
+          ${AppView._renderViewToggle()}
           <div class="relative">
             <button id="dev-plus-btn" aria-haspopup="true" aria-expanded="false"
               class="rounded-lg bg-violet-600 hover:bg-violet-500 w-7 h-7 flex items-center justify-center text-base font-bold leading-none text-white transition-colors"
@@ -528,7 +554,11 @@ const AppView = {
             </button>
           </div>
           <div id="dev-sessions-strip" class="px-3 pt-2"></div>
-          <div class="px-3 py-2">
+          <!-- Body region: list mode mounts #dev-feed + #gc-merged here;
+               kanban mode mounts #dev-kanban. _repaintDevBody() owns the
+               swap. The wrapper node is stable across mode switches so the
+               delegated card-open handler (bound below) survives both. -->
+          <div id="dev-body" class="px-3 py-2">
             <div id="dev-feed"><div class="text-xs text-zinc-500 dark:text-zinc-400">Loading…</div></div>
             <div id="gc-merged" class="mt-4"></div>
           </div>
@@ -536,6 +566,8 @@ const AppView = {
       </div>`;
 
     AppView._wirePlusMenu(content);
+    AppView._wireViewToggle(content);
+    AppView._attrInit();
     document.getElementById('dev-chat-card').addEventListener('click', () => {
       App.switchTab('dev', null, 'chat');
     });
@@ -543,10 +575,14 @@ const AppView = {
 
     // Delegated card-open handler: tapping a topic card anywhere except
     // its links/pills opens that topic full-screen. Bound on the stable
-    // #dev-feed container (its innerHTML re-renders, the node itself
-    // survives until the next renderDevView).
-    const feedEl = document.getElementById('dev-feed');
-    feedEl.addEventListener('click', (e) => {
+    // #dev-body wrapper (its innerHTML re-renders on every repaint and
+    // mode switch, but the node itself survives until the next
+    // renderDevView). One handler covers issue / proposal / gov rows in
+    // the list feed, merged rows in the Completed block, and every card
+    // in the kanban columns — they all carry the same
+    // data-issue-row / data-proposal-row / data-gov-row hooks.
+    const bodyEl = document.getElementById('dev-body');
+    bodyEl.addEventListener('click', (e) => {
       // #313: the card-level "Ask AI" button is a <button>, so the guard
       // below would swallow it — handle it first, then bail.
       const askBtn = e.target.closest('.gc-ask-ai-btn');
@@ -565,21 +601,6 @@ const AppView = {
       const govRow = e.target.closest('[data-gov-row]');
       if (govRow) AppView.openTopic('gov', parseInt(govRow.dataset.govRow, 10));
     });
-
-    // Completed (merged) proposals live in a sibling container with its own
-    // bespoke layout; bind the same tap-to-open behaviour here so merged
-    // rows open their (still-live) discussion thread full-screen. The node
-    // is stable across toggleMergedPrs()/_loadDevFeed() innerHTML rewrites.
-    const mergedEl = document.getElementById('gc-merged');
-    if (mergedEl) {
-      mergedEl.addEventListener('click', (e) => {
-        const askBtn = e.target.closest('.gc-ask-ai-btn');
-        if (askBtn) { AppView._openAskAiFromCard(askBtn.dataset.proposalId); return; }
-        if (e.target.closest('a, button, input, form')) return;
-        const prRow = e.target.closest('[data-proposal-row]');
-        if (prRow) AppView.openTopic('proposal', parseInt(prRow.dataset.proposalRow, 10));
-      });
-    }
 
     AppView._renderSessionsStrip();
     AppView._syncStripPolling();
@@ -683,7 +704,12 @@ const AppView = {
     let bodyHtml;
     if (t.kind === 'issue') {
       cardHtml = AppView._renderIssueRow(item, { noNav: true });
-      bodyHtml = AppView._issueBodyHtml(item);
+      // #396: the issue body, then a placeholder for the GitHub comment
+      // thread. The thread is fetched lazily (after paint) and rendered
+      // into the placeholder, so a cached (or empty) result reuses what's
+      // already there across WS-driven _renderTopicHead refreshes.
+      bodyHtml = AppView._issueBodyHtml(item)
+        + '<div id="dev-issue-comments" class="mt-2"></div>';
     } else if (t.kind === 'proposal') {
       cardHtml = AppView._renderProposalCard(item, { noNav: true });
       // Plain-language summary (when one was generated) sits at the very top
@@ -718,6 +744,7 @@ const AppView = {
 
     head.innerHTML = cardHtml + bodyHtml + askAiHtml;
     if (window.Kudos) Kudos.attach(head);
+    if (t.kind === 'issue') AppView._loadIssueComments(item);
     if (t.kind === 'proposal' && item.status !== 'merged') AppView._loadVoteRoster(item.id);
 
     // #321: wire the kept card pill in the topic head. Unlike the feed and
@@ -953,6 +980,51 @@ const AppView = {
       AppView.promptRename();
     });
     AppView.refreshDevChatSecretsState();
+  },
+
+  // ── View-mode toggle (list ↔ kanban) ─────────────────────────────────
+  // A two-button segmented control sitting to the LEFT of the "+" button.
+  // Mirrors the existing inline-SVG icon convention used throughout this
+  // file. The active button is tinted violet; both reflect their state
+  // via aria-pressed for assistive tech.
+  _viewToggleBtnCls(active) {
+    return 'dev-view-btn w-7 h-7 flex items-center justify-center transition-colors '
+      + (active
+        ? 'bg-violet-600 text-white'
+        : 'text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800');
+  },
+  _renderViewToggle() {
+    const mode = AppView._getViewMode();
+    // List-lines icon (three rows) and a board/columns icon.
+    const listSvg = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>';
+    const boardSvg = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z"/></svg>';
+    return `
+      <div class="inline-flex items-center rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden mr-1" role="group" aria-label="Dev view mode">
+        <button id="dev-view-list" data-view="list" class="${AppView._viewToggleBtnCls(mode === 'list')}" aria-pressed="${mode === 'list'}" title="List view" aria-label="List view">${listSvg}</button>
+        <button id="dev-view-kanban" data-view="kanban" class="${AppView._viewToggleBtnCls(mode === 'kanban')}" aria-pressed="${mode === 'kanban'}" title="Kanban view" aria-label="Kanban view">${boardSvg}</button>
+      </div>`;
+  },
+  _wireViewToggle(content) {
+    content.querySelectorAll('.dev-view-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const mode = btn.dataset.view === 'kanban' ? 'kanban' : 'list';
+        if (mode === AppView._getViewMode()) return;
+        AppView._setViewMode(mode);
+        AppView._updateViewToggleUI();
+        // Re-flow the already-cached data into the new layout. No refetch.
+        AppView._repaintDevBody();
+      });
+    });
+  },
+  // Swap the active/inactive styling + aria-pressed on the two toggle
+  // buttons in place, so switching modes doesn't re-render the header bar.
+  _updateViewToggleUI() {
+    const mode = AppView._getViewMode();
+    document.querySelectorAll('.dev-view-btn').forEach((btn) => {
+      const active = btn.dataset.view === mode;
+      btn.className = AppView._viewToggleBtnCls(active);
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
   },
 
   // ── "+" menu ────────────────────────────────────────────────────────
@@ -1255,7 +1327,11 @@ const AppView = {
         fetch(`/api/apps/${slug}/github-issues${AppView._demoQS()}`),
         fetch(`/api/apps/${slug}/issues`),
         fetch(`/api/apps/${slug}/promoted${AppView._demoQS()}`),
-        fetch(`/api/apps/${slug}/merged`),
+        // Forward ?demo=1 to /merged too so the kanban "Done" column (and
+        // the list's Completed block) populate in a staging ?demo=1 preview.
+        // Server-side the demo append is gated on IS_STAGING, so this is a
+        // no-op in production. votes.js stagingMockMerged() supplies the rows.
+        fetch(`/api/apps/${slug}/merged${AppView._demoQS()}`),
       ]);
       const ghData = ghRes.ok ? await ghRes.json() : { issues: [] };
       const issuesData = issuesRes.ok ? await issuesRes.json() : { issues: [] };
@@ -1319,13 +1395,37 @@ const AppView = {
 
   async _loadDevFeed() {
     const ok = await AppView._loadDevData();
-    const feedEl = document.getElementById('dev-feed');
-    if (!feedEl) return;
+    const body = document.getElementById('dev-body');
+    if (!body) return;
     if (!ok) {
-      feedEl.innerHTML = '<div class="text-xs text-zinc-500 dark:text-zinc-400">Couldn&#39;t load the feed right now.</div>';
+      body.innerHTML = '<div class="text-xs text-zinc-500 dark:text-zinc-400">Couldn&#39;t load the feed right now.</div>';
       return;
     }
     AppView._renderLockedNotice();
+    AppView._repaintDevBody();
+  },
+
+  // Paint #dev-body for the current view mode from cached data only (no
+  // refetch). Mode-aware so every caller — the initial load, WS-driven
+  // refreshes, the toggle, and optimistic card-action repaints — routes
+  // through one place. No-ops when #dev-body isn't mounted (topic / chat
+  // / settings sub-views), matching the old _rerenderFeed guard.
+  _repaintDevBody() {
+    const body = document.getElementById('dev-body');
+    if (!body) return;
+    if (AppView._getViewMode() === 'kanban') {
+      body.innerHTML = AppView._renderKanbanInner();
+      // The headless-state poller is keyed off whatever issue rows are on
+      // screen (generating spinners), same as the list feed.
+      AppView._syncHeadlessPolling();
+      if (window.Kudos) Kudos.attach(body);
+      AppView._applyAskAiCardAvailability(body);
+      return;
+    }
+    // List mode: rebuild the two-container shell, then fill it exactly as
+    // before. _rerenderFeed targets #dev-feed and re-attaches kudos/ask-AI
+    // there; the Completed block is filled + wired here.
+    body.innerHTML = '<div id="dev-feed"></div><div id="gc-merged" class="mt-4"></div>';
     AppView._rerenderFeed();
     const mergedEl = document.getElementById('gc-merged');
     if (mergedEl) {
@@ -1457,7 +1557,9 @@ const AppView = {
   // whichever surface is mounted, purely from cache — no _loadDevData — so the
   // just-set optimistic state isn't clobbered by a slower/racing refetch.
   _repaintCards() {
-    AppView._rerenderFeed();
+    // Repaint whichever Dev body is mounted (list feed or kanban board) —
+    // _repaintDevBody no-ops when #dev-body is absent (topic view).
+    AppView._repaintDevBody();
     if (typeof App !== 'undefined' && App.currentSubTab === 'topic'
         && document.getElementById('gc-thread-head')) {
       AppView._renderTopicHead();
@@ -1467,6 +1569,136 @@ const AppView = {
   showMoreFeed() {
     AppView._feedShown = (AppView._feedShown || 20) + 10;
     AppView._rerenderFeed();
+  },
+
+  // ── Kanban view ──────────────────────────────────────────────────────
+  //
+  // Pure bucketing of the cached dev data into the four lifecycle columns.
+  // No DOM, no AppView state reads — everything comes in via `data` — so it
+  // is unit-testable in isolation (see tests/dev-kanban-buckets.test.js).
+  //
+  //   data = { issues, proposals, gov, merged }
+  //     issues    — visible GitHub issues (already env-twin-filtered)
+  //     proposals — promoted/merging PR sessions (carry linked_issues[])
+  //     gov       — governance proposals (secret_change / rename)
+  //     merged    — merged PR sessions
+  //
+  // Returns { issues, inProgress, inReview, done }:
+  //   issues     — open issues with no proposal yet (headless none/failed/
+  //                absent) AND not linked to any open promoted proposal
+  //   inProgress — open issues whose headless proposal is generating/ready
+  //                (work started, not yet up for a vote), same dedup
+  //   inReview   — [{kind:'proposal'|'gov', item}] sorted by pin-rank then
+  //                recency, exactly as the list feed's proposal group
+  //   done       — merged proposals, most-recent-activity first
+  _bucketDevItems(data) {
+    const d = data || {};
+    const issues = Array.isArray(d.issues) ? d.issues : [];
+    const proposals = Array.isArray(d.proposals) ? d.proposals : [];
+    const gov = Array.isArray(d.gov) ? d.gov : [];
+    const merged = Array.isArray(d.merged) ? d.merged : [];
+
+    const ts = (v) => {
+      const t = Date.parse(v || '');
+      return Number.isFinite(t) ? t : 0;
+    };
+    const issueT = (i) => Math.max(ts(i.updatedAt), ts(i.lastMessageAt));
+    const prT = (p) => Math.max(ts(p.promoted_at || p.created_at), ts(p.last_message_at));
+    const govT = (g) => Math.max(ts(g.created_at), ts(g.last_message_at));
+    const mergedT = (m) => Math.max(ts(m.created_at), ts(m.last_message_at));
+    // Mirror of _proposalPinRank, inlined to keep this helper self-contained
+    // (merging > resolving > conflict-failed > normal).
+    const pinRank = (pr) => {
+      if (!pr) return 3;
+      if (pr.status === 'merging') return 0;
+      if (pr.resolving) return 1;
+      if (pr.merge_conflict_state === 'failed') return 2;
+      return 3;
+    };
+
+    // Issue numbers already represented by an open promoted proposal card
+    // (Column 3) — kept out of the issue columns so they don't double up.
+    const linked = new Set();
+    for (const p of proposals) {
+      const arr = Array.isArray(p.linked_issues) ? p.linked_issues : [];
+      for (const n of arr) {
+        const num = parseInt(n, 10);
+        if (Number.isFinite(num)) linked.add(num);
+      }
+    }
+
+    const col1 = [];
+    const col2 = [];
+    for (const i of issues) {
+      if (linked.has(i.number)) continue;
+      const s = i.headless && i.headless.status;
+      if (s === 'generating' || s === 'ready') col2.push(i);
+      else col1.push(i);
+    }
+    col1.sort((a, b) => issueT(b) - issueT(a));
+    col2.sort((a, b) => issueT(b) - issueT(a));
+
+    const review = [];
+    for (const p of proposals) review.push({ kind: 'proposal', item: p, _r: pinRank(p), _t: prT(p) });
+    for (const g of gov) review.push({ kind: 'gov', item: g, _r: 3, _t: govT(g) });
+    review.sort((a, b) => (a._r - b._r) || (b._t - a._t));
+
+    const done = merged.slice().sort((a, b) => mergedT(b) - mergedT(a));
+
+    return {
+      issues: col1,
+      inProgress: col2,
+      inReview: review.map((x) => ({ kind: x.kind, item: x.item })),
+      done,
+    };
+  },
+
+  // Render the kanban board (inner HTML for #dev-body) from cached data.
+  // Reuses the exact per-card renderers the list mode uses, so every card
+  // keeps its buttons, badges, and data-*-row open hooks.
+  _renderKanbanInner() {
+    const buckets = AppView._bucketDevItems({
+      issues: AppView._visibleGhIssues(),
+      proposals: AppView._proposals || [],
+      gov: AppView._govProposals || [],
+      merged: AppView._merged || [],
+    });
+    const meta = AppView._ghIssuesMeta || {};
+
+    // "More open issues on GitHub" link — the Issues column inherits the
+    // list footer's GitHub link when the repo has more open issues than
+    // the fetch ceiling, so the cap is never silent.
+    let issuesFooter = '';
+    if (meta.truncatedList && meta.repoUrl) {
+      const issuesUrl = `${meta.repoUrl.replace(/\.git$/, '').replace(/\/$/, '')}/issues`;
+      issuesFooter = `<a href="${issuesUrl}" target="_blank" rel="noopener" class="text-xs text-violet-400 hover:underline">More open issues on GitHub &rarr;</a>`;
+    }
+
+    const cols = [
+      { title: 'Issues', items: buckets.issues, render: (i) => AppView._renderIssueRow(i), footer: issuesFooter },
+      { title: 'In progress', items: buckets.inProgress, render: (i) => AppView._renderIssueRow(i) },
+      { title: 'In review', items: buckets.inReview, render: (x) => (x.kind === 'proposal' ? AppView._renderProposalCard(x.item) : AppView._renderGovCard(x.item)) },
+      { title: 'Done', items: buckets.done, render: (m) => AppView._renderMergedCard(m) },
+    ];
+
+    let html = '<div id="dev-kanban" class="flex gap-3 overflow-x-auto pb-2">';
+    for (const col of cols) {
+      const count = col.items.length;
+      const cards = count
+        ? `<div class="space-y-2">${col.items.map(col.render).join('')}</div>`
+        : '<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">Nothing here yet</div>';
+      const footer = col.footer ? `<div class="mt-2">${col.footer}</div>` : '';
+      html += `
+        <div class="dev-kanban-col flex-1 basis-0 min-w-[16rem]">
+          <div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-2 px-0.5">
+            ${escapeHtml(col.title)} <span class="text-zinc-400 dark:text-zinc-500 font-mono">· ${count}</span>
+          </div>
+          ${cards}
+          ${footer}
+        </div>`;
+    }
+    html += '</div>';
+    return html;
   },
 
   // ── Your-sessions strip ─────────────────────────────────────────────
@@ -1679,6 +1911,100 @@ const AppView = {
       : '';
   },
 
+  // #396: is this comment author the platform bot? GitHub App actors
+  // comment as `<name>[bot]`; the platform bot account is `usernode-bot`.
+  // Tolerant of both so the bot's earlier auto-proposal questions are
+  // labelled distinctly from the reporter's replies. Mirrors the bot
+  // detection in buildHeadlessSeed (server-side).
+  _isBotCommentAuthor(author) {
+    const a = (author || '').toString().toLowerCase();
+    return /\[bot\]$/.test(a) || a === 'usernode-bot' || a.endsWith('-bot');
+  },
+
+  // #396: the GitHub comment thread for an issue, rendered beneath the
+  // issue body in the topic sub-view. One row per comment (author + date +
+  // markdown body), with bot comments tagged. When `truncated`, a final
+  // line notes older comments were omitted and links out to the full
+  // thread on GitHub. Returns '' when there are no comments so nothing
+  // renders. Markdown goes through the same DevChat.renderMarkdown pipeline
+  // as the body.
+  _issueCommentsHtml(comments, truncated, htmlUrl) {
+    const list = Array.isArray(comments) ? comments : [];
+    if (!list.length) return '';
+    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
+      ? (s) => DevChat.renderMarkdown(s)
+      : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
+
+    const rows = list.map((c) => {
+      const isBot = AppView._isBotCommentAuthor(c.author);
+      const author = c.author ? escapeHtml(c.author) : 'unknown';
+      const date = (c.createdAt || '').slice(0, 10);
+      const botTag = isBot
+        ? ' <span class="text-[10px] uppercase tracking-wide text-sky-600 dark:text-sky-400">bot</span>'
+        : '';
+      return `<div class="dev-issue-comment border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs font-medium text-zinc-700 dark:text-zinc-200">${author}</span>${botTag}
+            ${date ? `<span class="text-[10px] text-zinc-400 dark:text-zinc-500">${escapeHtml(date)}</span>` : ''}
+          </div>
+          <div class="text-xs text-zinc-600 dark:text-zinc-300">${renderMd(c.body || '')}</div>
+        </div>`;
+    });
+
+    const omitted = truncated
+      ? `<div class="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">Earlier comments omitted — ${
+          htmlUrl
+            ? `<a href="${escapeHtml(htmlUrl)}" target="_blank" rel="noopener" class="underline hover:text-zinc-600 dark:hover:text-zinc-300">view the full thread on GitHub</a>`
+            : 'view the full thread on GitHub'
+        }.</div>`
+      : '';
+
+    return `<div class="flex flex-col gap-2 mt-2">
+        <div class="text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500 px-1">Discussion</div>
+        ${omitted}
+        ${rows.join('')}
+      </div>`;
+  },
+
+  // #396: lazily fetch + render an issue's GitHub comment thread into the
+  // #dev-issue-comments placeholder. Cached per issue number in _ghComments
+  // so WS-driven _renderTopicHead refreshes paint from cache without a
+  // refetch. Best-effort: a failed fetch leaves the placeholder empty (the
+  // issue body still renders). Re-resolves the placeholder after the await
+  // since _renderTopicHead may have repainted, and bails if the user
+  // navigated away from this issue.
+  async _loadIssueComments(item) {
+    if (!item || item.number == null) return;
+    const number = item.number;
+
+    const paint = (data) => {
+      const t = AppView._devTopic;
+      if (!t || t.kind !== 'issue' || t.id !== number) return;
+      const slot = document.getElementById('dev-issue-comments');
+      if (!slot) return;
+      slot.innerHTML = AppView._issueCommentsHtml(data.comments, data.truncated, item.htmlUrl);
+    };
+
+    const cached = AppView._ghComments[number];
+    if (cached) { paint(cached); return; }
+
+    try {
+      const slug = AppView.appData && AppView.appData.slug;
+      if (!slug) return;
+      const res = await fetch(
+        `/api/apps/${slug}/github-issues/${number}/comments${AppView._demoQS()}`
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      const entry = {
+        comments: Array.isArray(data.comments) ? data.comments : [],
+        truncated: !!data.truncated,
+      };
+      AppView._ghComments[number] = entry;
+      paint(entry);
+    } catch (_) { /* best-effort: leave the placeholder empty */ }
+  },
+
   // The proposal's plain-language summary (pr_summary_md), rendered at the
   // top of the proposal topic sub-view above the proposer/linked-issues/
   // roster details. Mirrors _issueBodyHtml: light markdown through the same
@@ -1804,6 +2130,8 @@ const AppView = {
             ${AppView.voteCountPill(pr, majority)}
             ${stateBadge}
             ${AppView.checksBadgeHtml(pr)}
+            ${AppView.consoleWarningBadgeHtml(pr)}
+            ${AppView._attrChipsHtml('proposal', pr.id, pr, { readonly: isMerged })}
             ${AppView._devChatBadge(chatN)}
           </div>
           ${actions ? `<div class="flex flex-wrap items-center gap-1.5 mt-1.5">${actions}</div>` : ''}
@@ -2158,6 +2486,289 @@ const AppView = {
     return `<span class="dev-chat-badge inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded ${n ? 'bg-violet-500/10 text-violet-400' : 'hidden bg-zinc-500/10 text-zinc-500'}" data-count="${n}" title="Messages in this thread">&#128172; ${n}</span>`;
   },
 
+  // ── Community-voted priority + assigned-person chips ─────────────────
+  // Two chips per issue / proposal card: the top-voted priority and the
+  // top-voted assignee. Clicking a chip opens a dropdown (see _attrInit /
+  // _openAttrPopover) to vote for an existing option or suggest a new one.
+  // Anyone may vote (including the filer / proposer / yourself); the chip
+  // shows whichever value currently leads. A social signal only — no feed
+  // re-sort, no notification, no merge-rule impact.
+  ATTR_PRIORITY_VALUES: ['low', 'medium', 'high'],
+
+  // Display label + colour classes for a priority value. Mirrors the
+  // existing badge palette (zinc/amber/red) used elsewhere on the cards.
+  // `cls` is the static two-tone tint (matching the 💬/★/#N pills); `hover`
+  // deepens that same tint to /20 on the interactive chip — the exact
+  // hover the linked-issue pills use, never a brightness filter.
+  _priorityMeta(value) {
+    switch (value) {
+      case 'high': return { label: 'High', cls: 'bg-red-500/10 text-red-500', hover: 'hover:bg-red-500/20' };
+      case 'medium': return { label: 'Medium', cls: 'bg-amber-500/10 text-amber-500', hover: 'hover:bg-amber-500/20' };
+      case 'low': return { label: 'Low', cls: 'bg-sky-500/10 text-sky-500', hover: 'hover:bg-sky-500/20' };
+      default: return null;
+    }
+  },
+
+  // One chip. `summary` is { top, count, myValue } as the feed routes
+  // attach it. Both the interactive <button> and the read-only (merged)
+  // <span> reuse the SAME pill recipe the sibling card badges use
+  // (text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-<c>-500/10
+  // text-<c>-500), leading with a single glyph like 💬/★ — so the chips
+  // are pixel-consistent with the other badges. The button-only `.attr-chip`
+  // CSS reset (app.css) strips UA chrome so it matches the span's height.
+  _attrChipHtml(field, targetType, targetRef, summary, readonly) {
+    const s = summary || { top: null, count: 0, myValue: null };
+    const count = parseInt(s.count) || 0;
+    let label;
+    let cls;
+    let hover;
+    if (field === 'priority') {
+      const meta = AppView._priorityMeta(s.top);
+      if (meta) { label = `&#9873; ${meta.label}`; cls = meta.cls; hover = meta.hover; }
+      else { label = '&#9873; Set priority'; cls = 'bg-zinc-500/10 text-zinc-500'; hover = 'hover:bg-zinc-500/20'; }
+    } else {
+      if (s.top) { label = `&#128100; @${escapeHtml(s.top)}`; cls = 'bg-violet-500/10 text-violet-400'; hover = 'hover:bg-violet-500/20'; }
+      else { label = '&#128100; Assign'; cls = 'bg-zinc-500/10 text-zinc-500'; hover = 'hover:bg-zinc-500/20'; }
+    }
+    // Faint trailing count, matching how the ★ bounty pill shows its number.
+    const countHtml = count > 1 ? ` <span class="opacity-60">&middot;${count}</span>` : '';
+    const base = 'attr-chip inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded';
+    const title = field === 'priority'
+      ? 'Vote on this card\'s priority'
+      : 'Suggest or vote on who should take this';
+    if (readonly) {
+      return `<span class="${base} ${cls}">${label}${countHtml}</span>`;
+    }
+    return `<button type="button" class="${base} ${cls} ${hover}" data-attr-chip data-attr-field="${field}" data-attr-target-type="${targetType}" data-attr-target-ref="${targetRef}" title="${escapeAttr(title)}">${label}${countHtml}</button>`;
+  },
+
+  // Both chips for a card, in the badge row. opts.readonly drops the
+  // dropdown (used on merged/completed proposals).
+  _attrChipsHtml(targetType, targetRef, item, opts) {
+    const readonly = !!(opts && opts.readonly);
+    return AppView._attrChipHtml('priority', targetType, targetRef, item && item.priority, readonly)
+      + AppView._attrChipHtml('assignee', targetType, targetRef, item && item.assignee, readonly);
+  },
+
+  // Install the one-time document-level handlers that open / close the
+  // chip dropdown. Idempotent — safe to call on every renderDevView.
+  _attrInit() {
+    if (AppView._attrInited) return;
+    AppView._attrInited = true;
+    document.addEventListener('click', (e) => {
+      const chip = e.target.closest('[data-attr-chip]');
+      if (chip) {
+        // Don't let the card's open-discussion handler fire.
+        e.preventDefault();
+        e.stopPropagation();
+        AppView._openAttrPopover(chip);
+        return;
+      }
+      // A click anywhere outside the open popover closes it.
+      if (!e.target.closest('#attr-popover')) AppView._closeAttrPopover();
+    });
+    // Reposition / close on scroll + resize so the popover never drifts
+    // away from its chip.
+    window.addEventListener('resize', () => AppView._closeAttrPopover());
+    document.addEventListener('scroll', () => AppView._closeAttrPopover(), true);
+  },
+
+  _closeAttrPopover() {
+    const el = document.getElementById('attr-popover');
+    if (el) el.remove();
+    AppView._attrPopover = null;
+  },
+
+  // Open the dropdown anchored under `chip`, fetch its full option tally,
+  // and render it. Re-clicking the same chip toggles it closed.
+  async _openAttrPopover(chip) {
+    const field = chip.dataset.attrField;
+    const targetType = chip.dataset.attrTargetType;
+    const targetRef = parseInt(chip.dataset.attrTargetRef, 10);
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug || !field || !targetType || !targetRef) return;
+
+    // Toggle: clicking the chip that owns the open popover closes it.
+    const open = AppView._attrPopover;
+    if (open && open.field === field && open.targetType === targetType && open.targetRef === targetRef) {
+      AppView._closeAttrPopover();
+      return;
+    }
+    AppView._closeAttrPopover();
+
+    const pop = document.createElement('div');
+    pop.id = 'attr-popover';
+    pop.className = 'attr-popover';
+    pop.innerHTML = '<div class="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400">Loading…</div>';
+    document.body.appendChild(pop);
+    AppView._attrPopover = { field, targetType, targetRef, slug };
+
+    // Position under the chip, clamped to the viewport.
+    const r = chip.getBoundingClientRect();
+    pop.style.position = 'fixed';
+    pop.style.top = `${Math.round(r.bottom + 4)}px`;
+    const left = Math.min(Math.round(r.left), window.innerWidth - 240);
+    pop.style.left = `${Math.max(8, left)}px`;
+
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/topics/${targetType}/${targetRef}/attributes?field=${field}`);
+      if (!res.ok) throw new Error('load failed');
+      const data = await res.json();
+      // The popover may have been closed/replaced while the fetch was in flight.
+      if (AppView._attrPopover && AppView._attrPopover.field === field
+          && AppView._attrPopover.targetRef === targetRef) {
+        AppView._renderAttrPopoverBody(data);
+      }
+    } catch {
+      const live = document.getElementById('attr-popover');
+      if (live) live.innerHTML = '<div class="px-3 py-2 text-xs text-red-500">Couldn\'t load options.</div>';
+    }
+  },
+
+  // Render the popover contents from a { field, options, myValue } payload
+  // and wire its controls. Re-run after each vote so counts/checks update
+  // in place without closing the dropdown.
+  _renderAttrPopoverBody(data) {
+    const pop = document.getElementById('attr-popover');
+    if (!pop) return;
+    const field = data.field;
+    const check = '<svg class="w-3.5 h-3.5 text-violet-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>';
+
+    const optRow = (label, value, count, mine) =>
+      `<button type="button" class="attr-opt" data-attr-opt-value="${escapeAttr(value)}">
+        <span class="attr-opt-label">${label}</span>
+        <span class="attr-opt-right">${count ? `<span class="attr-opt-count">${count}</span>` : ''}${mine ? check : ''}</span>
+      </button>`;
+
+    let inner = '';
+    if (field === 'priority') {
+      const byVal = new Map((data.options || []).map((o) => [o.value, o]));
+      inner += '<div class="attr-pop-head">Priority</div>';
+      for (const v of AppView.ATTR_PRIORITY_VALUES) {
+        const o = byVal.get(v);
+        const meta = AppView._priorityMeta(v);
+        inner += optRow(`<span class="attr-dot ${meta.cls}"></span>${meta.label}`, v, o ? o.count : 0, !!(o && o.mine));
+      }
+    } else {
+      inner += '<div class="attr-pop-head">Assigned person</div>';
+      const opts = data.options || [];
+      if (opts.length) {
+        for (const o of opts) {
+          inner += optRow(`@${escapeHtml(o.value)}`, o.value, o.count, !!o.mine);
+        }
+      } else {
+        inner += '<div class="px-3 py-1.5 text-xs text-zinc-400 dark:text-zinc-500">No suggestions yet.</div>';
+      }
+      inner += `<div class="attr-pop-add">
+        <input type="text" id="attr-assignee-input" class="attr-pop-input" placeholder="Type a name…" autocomplete="off" maxlength="64" />
+        <div id="attr-assignee-suggest" class="attr-pop-suggest hidden"></div>
+        <button type="button" id="attr-assignee-add" class="attr-pop-addbtn">Add</button>
+      </div>`;
+    }
+
+    pop.innerHTML = inner;
+
+    // Vote on an existing option.
+    pop.querySelectorAll('.attr-opt').forEach((b) => {
+      b.addEventListener('click', () => AppView._castAttrVote(b.dataset.attrOptValue));
+    });
+
+    if (field === 'assignee') {
+      const input = pop.querySelector('#attr-assignee-input');
+      const addBtn = pop.querySelector('#attr-assignee-add');
+      const suggest = pop.querySelector('#attr-assignee-suggest');
+      const submit = () => {
+        const v = (input.value || '').trim();
+        if (v) AppView._castAttrVote(v);
+      };
+      addBtn.addEventListener('click', submit);
+      input.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') { ev.preventDefault(); submit(); }
+      });
+      // Username typeahead off /api/users/search (same endpoint the invite
+      // typeahead uses). Free text is still allowed — these are hints only.
+      input.addEventListener('input', () => {
+        const q = (input.value || '').trim();
+        clearTimeout(AppView._attrSuggestTimer);
+        if (!q) { suggest.classList.add('hidden'); suggest.innerHTML = ''; return; }
+        AppView._attrSuggestTimer = setTimeout(async () => {
+          try {
+            const res = await fetch(`/api/users/search?q=${encodeURIComponent(q)}`);
+            if (!res.ok) return;
+            const { users } = await res.json();
+            if (!users || !users.length) { suggest.classList.add('hidden'); suggest.innerHTML = ''; return; }
+            suggest.innerHTML = users.map((u) =>
+              `<button type="button" class="attr-suggest-item" data-attr-suggest="${escapeAttr(u.username)}">@${escapeHtml(u.username)}</button>`).join('');
+            suggest.classList.remove('hidden');
+            suggest.querySelectorAll('[data-attr-suggest]').forEach((it) => {
+              it.addEventListener('click', () => AppView._castAttrVote(it.dataset.attrSuggest));
+            });
+          } catch { /* ignore */ }
+        }, 200);
+      });
+      input.focus();
+    }
+  },
+
+  // POST the caller's vote for `value`, then repaint the on-card chips and
+  // the open popover from the refreshed tally the server returns.
+  async _castAttrVote(value) {
+    const ctx = AppView._attrPopover;
+    if (!ctx || !value) return;
+    const { field, targetType, targetRef, slug } = ctx;
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/topics/${targetType}/${targetRef}/attributes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ field, value }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { alert(data.error || 'Could not save your vote.'); return; }
+      // Update the cached item's summary so re-renders show the new leader.
+      AppView._applyAttrSummary(targetType, targetRef, field, data);
+      // Repaint cards (feed if mounted, topic head if open) and the popover.
+      AppView._refreshAttrCards();
+      if (AppView._attrPopover && AppView._attrPopover.field === field
+          && AppView._attrPopover.targetRef === targetRef) {
+        AppView._renderAttrPopoverBody(data);
+      }
+    } catch (err) {
+      alert(`Could not save your vote: ${err.message}`);
+    }
+  },
+
+  // Find the cached issue / proposal object a chip refers to and write the
+  // new { top, count, myValue } summary onto it. options[0] is the leader
+  // (the server sorts the list), so the chip reads straight off it.
+  _applyAttrSummary(targetType, targetRef, field, data) {
+    const top = (data.options && data.options[0]) || null;
+    const summary = { top: top ? top.value : null, count: top ? top.count : 0, myValue: data.myValue || null };
+    let item = null;
+    if (targetType === 'issue') {
+      item = (AppView._ghIssues || []).find((i) => i.number === targetRef);
+    } else {
+      item = (AppView._proposals || []).find((p) => p.id === targetRef)
+        || (AppView._merged || []).find((p) => p.id === targetRef);
+    }
+    if (item) item[field] = summary;
+  },
+
+  // Repaint surfaces that show chips, without disturbing the popover (which
+  // lives on <body>, positioned by coordinates).
+  _refreshAttrCards() {
+    if (document.getElementById('dev-feed')) AppView._rerenderFeed();
+    if (typeof App !== 'undefined' && App.currentSubTab === 'topic'
+        && document.getElementById('gc-thread-head')) {
+      AppView._renderTopicHead();
+    }
+    const mergedEl = document.getElementById('gc-merged');
+    if (mergedEl && (AppView._merged || []).length) {
+      mergedEl.innerHTML = AppView._renderMergedInner();
+      if (window.Kudos) Kudos.attach(mergedEl);
+      AppView._applyAskAiCardAvailability(mergedEl);
+    }
+  },
+
   // Live badge bump for a thread the viewer doesn't have open (called
   // from GroupChat when a threaded message arrives).
   bumpThreadBadge(type, ref) {
@@ -2476,6 +3087,7 @@ const AppView = {
               <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta"><a href="${href}" target="_blank" rel="noopener" class="font-mono text-violet-400 hover:underline">#${n}</a>${issue.created_by_username ? ` · ${escapeHtml(issue.created_by_username)}` : ''}</div>
             </div>
             ${bountyPill}
+            ${AppView._attrChipsHtml('issue', n, issue)}
             ${AppView._devChatBadge(issue.chatCount)}
           </div>
           <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
@@ -2508,79 +3120,7 @@ const AppView = {
 
     let html = `<div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-1">Completed</div><div class="space-y-2">`;
     for (let i = 0; i < shown; i++) {
-      const pr = merged[i];
-      const date = new Date(pr.created_at).toLocaleDateString();
-      const mergedLabel = pr.pr_title
-        ? `${escapeHtml(pr.pr_title)} <span class="text-zinc-500">· ${escapeHtml(pr.username)}</span>`
-        : `by ${escapeHtml(pr.username)}`;
-      const mergedQuoteTitle = pr.pr_title || `PR #${pr.pr_number || pr.id}`;
-      // Merged PRs are still eligible for kudos (promoted + merging
-      // + merged) — that's intentional. People often come back to
-      // a recently-merged PR and want to thank the author.
-      const kudosBtn = window.Kudos
-        ? Kudos.renderButton(pr, { compact: true })
-        : '';
-      // #313: Ask AI on the Completed list too, for proposals the viewer
-      // does not own (parallel to the live feed cards).
-      const mine = !!(App.user && pr.user_id === App.user.id);
-      const askAiBtn = !mine ? AppView._askAiCardBtnHtml(pr) : '';
-
-      // #16: undo is a single direct action — clicking Undo opens a
-      // revert PR (like proposing a change) which then needs the
-      // normal merge vote to land. The button only renders on
-      // ordinary merged PRs that don't already have a revert in
-      // flight or merged:
-      //   - revert_of_session_id != null on this row means this
-      //     row IS itself a revert PR; undoing a revert would
-      //     create an infinite undo-undo loop.
-      //   - revert_session_id (from the LEFT JOIN) means a revert
-      //     PR already exists pointing at this row — show its
-      //     status as a label instead.
-      let undoUI = '';
-      if (pr.revert_of_session_id) {
-        // This row is a revert PR. (Shouldn't appear in the
-        // merged list often — revert PRs are short-lived in
-        // 'promoted' before they themselves merge — but show a
-        // breadcrumb if they do.)
-        undoUI = `<span class="text-xs text-zinc-500" title="This PR is itself a revert">↩ revert</span>`;
-      } else if (pr.revert_session_id) {
-        const rs = pr.revert_status;
-        const rpr = pr.revert_pr_number || pr.revert_session_id;
-        const label = rs === 'merged'
-          ? `Undone by PR#${rpr}`
-          : rs === 'merging'
-            ? `Revert merging (PR#${rpr})`
-            : `Revert in vote · PR#${rpr}`;
-        const linkHref = pr.revert_pr_url || '#';
-        undoUI = `<a href="${linkHref}" target="_blank" class="text-xs text-amber-500 hover:text-amber-400 font-medium">${label}</a>`;
-      } else {
-        undoUI = `
-          <button class="gc-vote-btn gc-vote-btn-undo"
-            title="Open a revert PR for this merge. It still needs a merge vote to land."
-            onclick="AppView.undoPr(${pr.id})">Undo</button>`;
-      }
-
-      html += `
-        <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-ref-pr="${pr.pr_number || pr.id}" data-proposal-row="${pr.id}" title="Open this proposal's discussion">
-          ${AppView._devCardIcon('done')}
-          <div class="flex-1 min-w-0">
-            <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <div class="dev-card-headline">
-                <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words" title="${escapeHtml(mergedQuoteTitle)}">${mergedLabel}</div>
-                <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta"><a href="${pr.pr_url || '#'}" target="_blank" rel="noopener" class="font-mono text-emerald-400 hover:underline">PR#${pr.pr_number || pr.id}</a> · ${date}${AppView.closesPillHtml(pr) ? ` ${AppView.closesPillHtml(pr)}` : ''}</div>
-              </div>
-              ${AppView.voteCountPill(pr, majority)}
-              ${AppView._devChatBadge(parseInt(pr.chat_count) || 0)}
-            </div>
-            <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
-              ${AppView.voteButtonsHtml(pr, { collapseVoted: true })}
-              ${undoUI}
-              ${kudosBtn}
-              ${askAiBtn}
-            </div>
-          </div>
-          ${AppView.DEV_CARD_CHEVRON}
-        </div>`;
+      html += AppView._renderMergedCard(merged[i], majority);
     }
     html += '</div>';
 
@@ -2592,6 +3132,89 @@ const AppView = {
       html += `<div class="mt-1"><button class="gc-vote-btn" onclick="AppView.toggleMergedPrs()">${label}</button></div>`;
     }
     return html;
+  },
+
+  // One merged ("Completed") proposal card. Extracted from
+  // _renderMergedInner so the kanban "Done" column can render the same
+  // markup per row without the section header / show-more footer.
+  // `majority` defaults to the cached merged context.
+  _renderMergedCard(pr, majority) {
+    const maj = majority != null
+      ? majority
+      : ((AppView._mergedCtx && AppView._mergedCtx.majority) || 1);
+    const date = new Date(pr.created_at).toLocaleDateString();
+    const mergedLabel = pr.pr_title
+      ? `${escapeHtml(pr.pr_title)} <span class="text-zinc-500">· ${escapeHtml(pr.username)}</span>`
+      : `by ${escapeHtml(pr.username)}`;
+    const mergedQuoteTitle = pr.pr_title || `PR #${pr.pr_number || pr.id}`;
+    // Merged PRs are still eligible for kudos (promoted + merging
+    // + merged) — that's intentional. People often come back to
+    // a recently-merged PR and want to thank the author.
+    const kudosBtn = window.Kudos
+      ? Kudos.renderButton(pr, { compact: true })
+      : '';
+    // #313: Ask AI on the Completed list too, for proposals the viewer
+    // does not own (parallel to the live feed cards).
+    const mine = !!(App.user && pr.user_id === App.user.id);
+    const askAiBtn = !mine ? AppView._askAiCardBtnHtml(pr) : '';
+
+    // #16: undo is a single direct action — clicking Undo opens a
+    // revert PR (like proposing a change) which then needs the
+    // normal merge vote to land. The button only renders on
+    // ordinary merged PRs that don't already have a revert in
+    // flight or merged:
+    //   - revert_of_session_id != null on this row means this
+    //     row IS itself a revert PR; undoing a revert would
+    //     create an infinite undo-undo loop.
+    //   - revert_session_id (from the LEFT JOIN) means a revert
+    //     PR already exists pointing at this row — show its
+    //     status as a label instead.
+    let undoUI = '';
+    if (pr.revert_of_session_id) {
+      // This row is a revert PR. (Shouldn't appear in the
+      // merged list often — revert PRs are short-lived in
+      // 'promoted' before they themselves merge — but show a
+      // breadcrumb if they do.)
+      undoUI = `<span class="text-xs text-zinc-500" title="This PR is itself a revert">↩ revert</span>`;
+    } else if (pr.revert_session_id) {
+      const rs = pr.revert_status;
+      const rpr = pr.revert_pr_number || pr.revert_session_id;
+      const label = rs === 'merged'
+        ? `Undone by PR#${rpr}`
+        : rs === 'merging'
+          ? `Revert merging (PR#${rpr})`
+          : `Revert in vote · PR#${rpr}`;
+      const linkHref = pr.revert_pr_url || '#';
+      undoUI = `<a href="${linkHref}" target="_blank" class="text-xs text-amber-500 hover:text-amber-400 font-medium">${label}</a>`;
+    } else {
+      undoUI = `
+        <button class="gc-vote-btn gc-vote-btn-undo"
+          title="Open a revert PR for this merge. It still needs a merge vote to land."
+          onclick="AppView.undoPr(${pr.id})">Undo</button>`;
+    }
+
+    return `
+        <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-ref-pr="${pr.pr_number || pr.id}" data-proposal-row="${pr.id}" title="Open this proposal's discussion">
+          ${AppView._devCardIcon('done')}
+          <div class="flex-1 min-w-0">
+            <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <div class="dev-card-headline">
+                <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words" title="${escapeHtml(mergedQuoteTitle)}">${mergedLabel}</div>
+                <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta"><a href="${pr.pr_url || '#'}" target="_blank" rel="noopener" class="font-mono text-emerald-400 hover:underline">PR#${pr.pr_number || pr.id}</a> · ${date}${AppView.closesPillHtml(pr) ? ` ${AppView.closesPillHtml(pr)}` : ''}</div>
+              </div>
+              ${AppView.voteCountPill(pr, maj)}
+              ${AppView._attrChipsHtml('proposal', pr.id, pr, { readonly: true })}
+              ${AppView._devChatBadge(parseInt(pr.chat_count) || 0)}
+            </div>
+            <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
+              ${AppView.voteButtonsHtml(pr, { collapseVoted: true })}
+              ${undoUI}
+              ${kudosBtn}
+              ${askAiBtn}
+            </div>
+          </div>
+          ${AppView.DEV_CARD_CHEVRON}
+        </div>`;
   },
 
   // Expand / collapse the Merged section in place (no panel reload).
@@ -2874,11 +3497,13 @@ const AppView = {
     if (AppView._headlessPollTimer) return;
     AppView._headlessPollTimer = setInterval(async () => {
       const slug = AppView.appData && AppView.appData.slug;
-      // Stop only when the user has actually left the Dev area — i.e. neither
-      // the feed list nor the opened-topic card surface is mounted. Keying on
-      // #dev-feed alone would kill polling for a run watched from the opened
-      // topic view (#gc-thread-head), where the feed isn't present.
+      // Stop only when the user has actually left the Dev area — i.e. none
+      // of the card surfaces are mounted. Keying on #dev-feed alone would
+      // kill polling for a run watched from the opened topic view
+      // (#gc-thread-head, where the feed isn't present) or from the kanban
+      // board (#dev-kanban, where issue rows live in the columns instead).
       const mounted = document.getElementById('dev-feed')
+        || document.getElementById('dev-kanban')
         || document.getElementById('gc-thread-head');
       if (!slug || !mounted) {
         clearInterval(AppView._headlessPollTimer);

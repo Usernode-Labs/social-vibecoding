@@ -937,12 +937,26 @@ const App = {
     }
 
     switch (data.event) {
-      case 'status':
+      case 'status': {
         DevChat._deactivateLastStatus();
-        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
+        // A status line always closes the current streaming bubble (#99 /
+        // #394): when the WS is the only channel that delivered the Mayor's
+        // phase-1 preamble (POST SSE dropped), seal it here so the phase-2
+        // 'mayor_reasoning' summary opens a fresh bubble below the status row
+        // instead of overwriting the preamble. Mirrors the POST-SSE and
+        // resumable status handlers (dev-chat.js).
+        for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+          if (DevChat.messages[i].role === 'assistant') { DevChat.messages[i]._finalized = true; break; }
+        }
+        // Carry the scout spec-preview card fields (#394) so the inline card
+        // renders live when the scout's final status arrives via the WS after
+        // a POST-SSE drop — parity with the POST-SSE (sessions.js) and
+        // resumable (_handleResumedEvent) status handlers.
+        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, scoutOutput: data.scoutOutput, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;
+      }
       case 'staging_ready':
         DevChat._deactivateLastStatus();
         DevChat.messages.push({ role: 'system', content: 'Staging deployed!', stagingUrl: data.url, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8) });
@@ -1011,6 +1025,52 @@ const App = {
           DevChat._startProgressPolling(data.sessionId, []);
         }
         break;
+      case 'mayor_reasoning': {
+        // #394: the Mayor's authoritative full-text reply (phase-1 preamble or
+        // phase-2 wrap-up summary). Broadcast on the WS now so the post-spec
+        // summary survives a dropped POST SSE — the global-WS 'done' used to
+        // tear down streaming before the resumable stream could replay it, so
+        // the summary only appeared after a manual refresh. Mirrors
+        // DevChat._handleResumedEvent's 'mayor_reasoning' branch. The _seq
+        // dedup above already skipped this if the POST SSE delivered it first.
+        if (!data.text) break;
+        let am = null;
+        for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+          if (DevChat.messages[i].role === 'assistant') { am = DevChat.messages[i]; break; }
+        }
+        // No live bubble yet (or the last one is sealed — phase-2 after a
+        // status row) → push a fresh bubble. Otherwise reconcile the existing
+        // live bubble to the server's authoritative text whenever it differs
+        // (the server may have shortened it by scrubbing a fake completion
+        // marker), patching the content node in place when present.
+        if (!am || am._finalized) {
+          DevChat.messages.push({ role: 'assistant', content: data.text, created_at: new Date().toISOString() });
+          DevChat.renderMessages();
+        } else if (am.content !== data.text) {
+          am.content = data.text;
+          const displayContent = am.content.replace(/^\[CHAT_ONLY\]\s*/i, '');
+          const els = document.querySelectorAll('#dc-messages .dc-msg-assistant .dc-msg-content');
+          const el = els[els.length - 1];
+          if (el && typeof DevChat._renderStreamingMarkdown === 'function') {
+            DevChat._renderStreamingMarkdown(el, displayContent);
+          } else {
+            DevChat.renderMessages();
+          }
+        }
+        DevChat.scrollToBottom();
+        break;
+      }
+      case 'assistant_message_end': {
+        // #394: seal the current assistant bubble so a subsequent
+        // 'mayor_reasoning' / token starts a fresh one. Already broadcast on
+        // the WS but previously ignored here; mirrors the POST-SSE and
+        // resumable handlers (dev-chat.js).
+        if (typeof DevChat._flushStreamingFinal === 'function') DevChat._flushStreamingFinal();
+        for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+          if (DevChat.messages[i].role === 'assistant') { DevChat.messages[i]._finalized = true; break; }
+        }
+        break;
+      }
       case 'done':
         DevChat._deactivateLastStatus();
         DevChat._finishStreaming();
