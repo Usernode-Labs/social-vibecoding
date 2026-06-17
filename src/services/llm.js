@@ -384,7 +384,10 @@ function parseSessionTitleText(text) {
   title = title
     .replace(/\s+/g, ' ')
     .trim()
-    .replace(/^[“'””]+|[“'””]+$/g, '')
+    // Strip surrounding quotes (straight + curly, single + double) then a
+    // trailing period — the LLM often wraps a plain-text title in quotes
+    // and/or ends it with a sentence period.
+    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, '')
     .replace(/\.+$/, '')
     .trim();
   if (!title) throw new Error('Empty session title from LLM');
