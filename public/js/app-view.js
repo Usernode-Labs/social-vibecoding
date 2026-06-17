@@ -1728,15 +1728,20 @@ const AppView = {
     // merge pipeline states outrank the resolver's. No opacity-70 fade
     // and no disabled vote controls: voting during resolution is valid.
     // #361: priority order merging > merged > resolving > failed >
-    // conflict > behind > none. The first three outrank the persisted
-    // merge-conflict snapshot (an active merge/resolve is the live truth).
+    // behind > none. The first three outrank the persisted merge-conflict
+    // snapshot (an active merge/resolve is the live truth).
+    // #386: the red conflict affordance is gated on 'failed' ONLY — i.e.
+    // an auto-resolve attempt actually ran and could not fix the conflict.
+    // A fresh 'conflict' snapshot (set the instant a merge 405s, before
+    // the auto-fix has reported back) is NOT a warning: that path always
+    // bumps behind_main >= 1, so it falls through to the neutral amber
+    // "Behind main · N" badge while the auto-resolver runs.
     const mcs = pr.merge_conflict_state;
     const stateBadge = isMerging ? AppView.mergingBadgeHtml()
       : isMerged ? AppView.mergedBadgeHtml()
       : pr.resolving ? AppView.resolvingBadgeHtml()
       : mcs === 'failed' ? AppView.conflictFailedBadgeHtml()
-      : mcs === 'conflict' ? AppView.conflictBadgeHtml(pr)
-      : (mcs === 'behind' || (parseInt(pr.behind_main, 10) || 0) > 0) ? AppView.behindBadgeHtml(pr)
+      : (mcs === 'behind' || mcs === 'conflict' || (parseInt(pr.behind_main, 10) || 0) > 0) ? AppView.behindBadgeHtml(pr)
       : '';
     // Sessions are owner-scoped (GET /api/sessions/:id), so the session
     // button only renders for the proposer.
@@ -1835,15 +1840,16 @@ const AppView = {
   // #361: expanded merge-conflict detail for the proposal detail screen.
   // Lists the conflicting file paths and when the snapshot was last
   // checked, plus the standing guidance to run "Sync with main" from the
-  // session's dev-chat. Only renders for the conflict/failed states; a
-  // clean/behind proposal shows nothing here (the card badge is enough).
+  // session's dev-chat.
+  // #386: only renders for the 'failed' state — an auto-resolve attempt
+  // actually ran and could not fix the conflict. A pre-attempt 'conflict'
+  // snapshot (or a clean/behind proposal) shows nothing here; the neutral
+  // card badge is enough while the auto-resolver does its work.
   _mergeConflictDetailHtml(pr) {
     const mcs = pr.merge_conflict_state;
-    if (mcs !== 'conflict' && mcs !== 'failed') return '';
+    if (mcs !== 'failed') return '';
     const files = Array.isArray(pr.conflict_files) ? pr.conflict_files : [];
-    const heading = mcs === 'failed'
-      ? 'Automatic conflict resolution failed.'
-      : 'This proposal conflicts with main.';
+    const heading = 'Automatic conflict resolution failed.';
     const fileList = files.length
       ? `<div class="mt-1">Conflicting files:</div>
          <ul class="mt-0.5 ml-3 list-disc space-y-0.5">${files.map((f) =>
@@ -2830,16 +2836,13 @@ const AppView = {
   // #361: persistent merge-status badges. Unlike the transient
   // resolving/merging badges these reflect the proposal's recorded
   // relationship to main (merge_conflict_state + behind_main from
-  // GET /api/apps/:slug/promoted). Red "Conflicts · N files" when the
-  // branch genuinely conflicts; red "Conflict resolution failed" when
-  // the last auto-resolve couldn't fix it; amber "Behind main · N" when
-  // it's stale but still merges cleanly.
-  conflictBadgeHtml(pr) {
-    const files = Array.isArray(pr.conflict_files) ? pr.conflict_files : [];
-    const n = files.length;
-    const label = n ? `Conflicts · ${n} file${n === 1 ? '' : 's'}` : 'Conflicts';
-    return `<span class="gc-conflict-badge" title="This proposal conflicts with main">⚠ ${escapeHtml(label)}</span>`;
-  },
+  // GET /api/apps/:slug/promoted). Red "Conflict resolution failed" when
+  // an auto-resolve attempt ran and couldn't fix it; amber "Behind main ·
+  // N" when it's stale (or conflicting + auto-resolving) but no manual
+  // action is needed yet.
+  // #386: the speculative "Conflicts · N files" badge was removed — the
+  // red affordance now fires only on the 'failed' state, so a fresh
+  // 'conflict' snapshot renders as "Behind main" via behindBadgeHtml.
   conflictFailedBadgeHtml() {
     return `<span class="gc-conflict-badge" title="The last automatic conflict resolution failed — the owner needs to resolve manually">⚠ Conflict resolution failed</span>`;
   },

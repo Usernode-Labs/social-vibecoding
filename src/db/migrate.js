@@ -3200,16 +3200,19 @@ async function seedStagingMyOpenPr(pool, config) {
     );
   }
 
-  // #361/#384: give the main fixture a real "Conflicts · 2 files" badge so
-  // the card + detail block render in staging (idempotent UPDATE on
-  // re-runs). Post-#384 the 'conflict' state means "an auto-merge was
-  // attempted and GitHub rejected it for a real conflict" — it is no longer
-  // written speculatively off a mergeability check, so this fixture stands
-  // in for that genuine post-attempt state.
+  // #361/#384/#386: give the main fixture the 'conflict' state (idempotent
+  // UPDATE on re-runs). Post-#384 'conflict' means "an auto-merge was
+  // attempted, GitHub rejected it for a real conflict, and the auto-
+  // resolver is now running" — and post-#386 that no longer paints the red
+  // warning. With behind_main = 2 it falls through to the neutral amber
+  // "Behind main · 2" badge, which is exactly what this fixture should
+  // demonstrate (the 'failed' sibling below is the one that shows the red
+  // affordance).
   await pool.query(
     `UPDATE chat_sessions
         SET merge_conflict_state = 'conflict',
             conflict_files = '["src/app.js","public/index.html"]'::jsonb,
+            behind_main = 2,
             conflict_checked_at = NOW()
       WHERE id = $1`,
     [sessionId]
