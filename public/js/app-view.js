@@ -567,6 +567,7 @@ const AppView = {
 
     AppView._wirePlusMenu(content);
     AppView._wireViewToggle(content);
+    AppView._attrInit();
     document.getElementById('dev-chat-card').addEventListener('click', () => {
       App.switchTab('dev', null, 'chat');
     });
@@ -1688,7 +1689,7 @@ const AppView = {
         : '<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">Nothing here yet</div>';
       const footer = col.footer ? `<div class="mt-2">${col.footer}</div>` : '';
       html += `
-        <div class="dev-kanban-col shrink-0 w-72 min-w-[16rem]">
+        <div class="dev-kanban-col flex-1 basis-0 min-w-[16rem]">
           <div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-2 px-0.5">
             ${escapeHtml(col.title)} <span class="text-zinc-400 dark:text-zinc-500 font-mono">· ${count}</span>
           </div>
@@ -2129,6 +2130,7 @@ const AppView = {
             ${AppView.voteCountPill(pr, majority)}
             ${stateBadge}
             ${AppView.consoleWarningBadgeHtml(pr)}
+            ${AppView._attrChipsHtml('proposal', pr.id, pr, { readonly: isMerged })}
             ${AppView._devChatBadge(chatN)}
           </div>
           ${actions ? `<div class="flex flex-wrap items-center gap-1.5 mt-1.5">${actions}</div>` : ''}
@@ -2411,6 +2413,289 @@ const AppView = {
   _devChatBadge(count) {
     const n = parseInt(count) || 0;
     return `<span class="dev-chat-badge inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded ${n ? 'bg-violet-500/10 text-violet-400' : 'hidden bg-zinc-500/10 text-zinc-500'}" data-count="${n}" title="Messages in this thread">&#128172; ${n}</span>`;
+  },
+
+  // ── Community-voted priority + assigned-person chips ─────────────────
+  // Two chips per issue / proposal card: the top-voted priority and the
+  // top-voted assignee. Clicking a chip opens a dropdown (see _attrInit /
+  // _openAttrPopover) to vote for an existing option or suggest a new one.
+  // Anyone may vote (including the filer / proposer / yourself); the chip
+  // shows whichever value currently leads. A social signal only — no feed
+  // re-sort, no notification, no merge-rule impact.
+  ATTR_PRIORITY_VALUES: ['low', 'medium', 'high'],
+
+  // Display label + colour classes for a priority value. Mirrors the
+  // existing badge palette (zinc/amber/red) used elsewhere on the cards.
+  // `cls` is the static two-tone tint (matching the 💬/★/#N pills); `hover`
+  // deepens that same tint to /20 on the interactive chip — the exact
+  // hover the linked-issue pills use, never a brightness filter.
+  _priorityMeta(value) {
+    switch (value) {
+      case 'high': return { label: 'High', cls: 'bg-red-500/10 text-red-500', hover: 'hover:bg-red-500/20' };
+      case 'medium': return { label: 'Medium', cls: 'bg-amber-500/10 text-amber-500', hover: 'hover:bg-amber-500/20' };
+      case 'low': return { label: 'Low', cls: 'bg-sky-500/10 text-sky-500', hover: 'hover:bg-sky-500/20' };
+      default: return null;
+    }
+  },
+
+  // One chip. `summary` is { top, count, myValue } as the feed routes
+  // attach it. Both the interactive <button> and the read-only (merged)
+  // <span> reuse the SAME pill recipe the sibling card badges use
+  // (text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-<c>-500/10
+  // text-<c>-500), leading with a single glyph like 💬/★ — so the chips
+  // are pixel-consistent with the other badges. The button-only `.attr-chip`
+  // CSS reset (app.css) strips UA chrome so it matches the span's height.
+  _attrChipHtml(field, targetType, targetRef, summary, readonly) {
+    const s = summary || { top: null, count: 0, myValue: null };
+    const count = parseInt(s.count) || 0;
+    let label;
+    let cls;
+    let hover;
+    if (field === 'priority') {
+      const meta = AppView._priorityMeta(s.top);
+      if (meta) { label = `&#9873; ${meta.label}`; cls = meta.cls; hover = meta.hover; }
+      else { label = '&#9873; Set priority'; cls = 'bg-zinc-500/10 text-zinc-500'; hover = 'hover:bg-zinc-500/20'; }
+    } else {
+      if (s.top) { label = `&#128100; @${escapeHtml(s.top)}`; cls = 'bg-violet-500/10 text-violet-400'; hover = 'hover:bg-violet-500/20'; }
+      else { label = '&#128100; Assign'; cls = 'bg-zinc-500/10 text-zinc-500'; hover = 'hover:bg-zinc-500/20'; }
+    }
+    // Faint trailing count, matching how the ★ bounty pill shows its number.
+    const countHtml = count > 1 ? ` <span class="opacity-60">&middot;${count}</span>` : '';
+    const base = 'attr-chip inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded';
+    const title = field === 'priority'
+      ? 'Vote on this card\'s priority'
+      : 'Suggest or vote on who should take this';
+    if (readonly) {
+      return `<span class="${base} ${cls}">${label}${countHtml}</span>`;
+    }
+    return `<button type="button" class="${base} ${cls} ${hover}" data-attr-chip data-attr-field="${field}" data-attr-target-type="${targetType}" data-attr-target-ref="${targetRef}" title="${escapeAttr(title)}">${label}${countHtml}</button>`;
+  },
+
+  // Both chips for a card, in the badge row. opts.readonly drops the
+  // dropdown (used on merged/completed proposals).
+  _attrChipsHtml(targetType, targetRef, item, opts) {
+    const readonly = !!(opts && opts.readonly);
+    return AppView._attrChipHtml('priority', targetType, targetRef, item && item.priority, readonly)
+      + AppView._attrChipHtml('assignee', targetType, targetRef, item && item.assignee, readonly);
+  },
+
+  // Install the one-time document-level handlers that open / close the
+  // chip dropdown. Idempotent — safe to call on every renderDevView.
+  _attrInit() {
+    if (AppView._attrInited) return;
+    AppView._attrInited = true;
+    document.addEventListener('click', (e) => {
+      const chip = e.target.closest('[data-attr-chip]');
+      if (chip) {
+        // Don't let the card's open-discussion handler fire.
+        e.preventDefault();
+        e.stopPropagation();
+        AppView._openAttrPopover(chip);
+        return;
+      }
+      // A click anywhere outside the open popover closes it.
+      if (!e.target.closest('#attr-popover')) AppView._closeAttrPopover();
+    });
+    // Reposition / close on scroll + resize so the popover never drifts
+    // away from its chip.
+    window.addEventListener('resize', () => AppView._closeAttrPopover());
+    document.addEventListener('scroll', () => AppView._closeAttrPopover(), true);
+  },
+
+  _closeAttrPopover() {
+    const el = document.getElementById('attr-popover');
+    if (el) el.remove();
+    AppView._attrPopover = null;
+  },
+
+  // Open the dropdown anchored under `chip`, fetch its full option tally,
+  // and render it. Re-clicking the same chip toggles it closed.
+  async _openAttrPopover(chip) {
+    const field = chip.dataset.attrField;
+    const targetType = chip.dataset.attrTargetType;
+    const targetRef = parseInt(chip.dataset.attrTargetRef, 10);
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug || !field || !targetType || !targetRef) return;
+
+    // Toggle: clicking the chip that owns the open popover closes it.
+    const open = AppView._attrPopover;
+    if (open && open.field === field && open.targetType === targetType && open.targetRef === targetRef) {
+      AppView._closeAttrPopover();
+      return;
+    }
+    AppView._closeAttrPopover();
+
+    const pop = document.createElement('div');
+    pop.id = 'attr-popover';
+    pop.className = 'attr-popover';
+    pop.innerHTML = '<div class="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400">Loading…</div>';
+    document.body.appendChild(pop);
+    AppView._attrPopover = { field, targetType, targetRef, slug };
+
+    // Position under the chip, clamped to the viewport.
+    const r = chip.getBoundingClientRect();
+    pop.style.position = 'fixed';
+    pop.style.top = `${Math.round(r.bottom + 4)}px`;
+    const left = Math.min(Math.round(r.left), window.innerWidth - 240);
+    pop.style.left = `${Math.max(8, left)}px`;
+
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/topics/${targetType}/${targetRef}/attributes?field=${field}`);
+      if (!res.ok) throw new Error('load failed');
+      const data = await res.json();
+      // The popover may have been closed/replaced while the fetch was in flight.
+      if (AppView._attrPopover && AppView._attrPopover.field === field
+          && AppView._attrPopover.targetRef === targetRef) {
+        AppView._renderAttrPopoverBody(data);
+      }
+    } catch {
+      const live = document.getElementById('attr-popover');
+      if (live) live.innerHTML = '<div class="px-3 py-2 text-xs text-red-500">Couldn\'t load options.</div>';
+    }
+  },
+
+  // Render the popover contents from a { field, options, myValue } payload
+  // and wire its controls. Re-run after each vote so counts/checks update
+  // in place without closing the dropdown.
+  _renderAttrPopoverBody(data) {
+    const pop = document.getElementById('attr-popover');
+    if (!pop) return;
+    const field = data.field;
+    const check = '<svg class="w-3.5 h-3.5 text-violet-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>';
+
+    const optRow = (label, value, count, mine) =>
+      `<button type="button" class="attr-opt" data-attr-opt-value="${escapeAttr(value)}">
+        <span class="attr-opt-label">${label}</span>
+        <span class="attr-opt-right">${count ? `<span class="attr-opt-count">${count}</span>` : ''}${mine ? check : ''}</span>
+      </button>`;
+
+    let inner = '';
+    if (field === 'priority') {
+      const byVal = new Map((data.options || []).map((o) => [o.value, o]));
+      inner += '<div class="attr-pop-head">Priority</div>';
+      for (const v of AppView.ATTR_PRIORITY_VALUES) {
+        const o = byVal.get(v);
+        const meta = AppView._priorityMeta(v);
+        inner += optRow(`<span class="attr-dot ${meta.cls}"></span>${meta.label}`, v, o ? o.count : 0, !!(o && o.mine));
+      }
+    } else {
+      inner += '<div class="attr-pop-head">Assigned person</div>';
+      const opts = data.options || [];
+      if (opts.length) {
+        for (const o of opts) {
+          inner += optRow(`@${escapeHtml(o.value)}`, o.value, o.count, !!o.mine);
+        }
+      } else {
+        inner += '<div class="px-3 py-1.5 text-xs text-zinc-400 dark:text-zinc-500">No suggestions yet.</div>';
+      }
+      inner += `<div class="attr-pop-add">
+        <input type="text" id="attr-assignee-input" class="attr-pop-input" placeholder="Type a name…" autocomplete="off" maxlength="64" />
+        <div id="attr-assignee-suggest" class="attr-pop-suggest hidden"></div>
+        <button type="button" id="attr-assignee-add" class="attr-pop-addbtn">Add</button>
+      </div>`;
+    }
+
+    pop.innerHTML = inner;
+
+    // Vote on an existing option.
+    pop.querySelectorAll('.attr-opt').forEach((b) => {
+      b.addEventListener('click', () => AppView._castAttrVote(b.dataset.attrOptValue));
+    });
+
+    if (field === 'assignee') {
+      const input = pop.querySelector('#attr-assignee-input');
+      const addBtn = pop.querySelector('#attr-assignee-add');
+      const suggest = pop.querySelector('#attr-assignee-suggest');
+      const submit = () => {
+        const v = (input.value || '').trim();
+        if (v) AppView._castAttrVote(v);
+      };
+      addBtn.addEventListener('click', submit);
+      input.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') { ev.preventDefault(); submit(); }
+      });
+      // Username typeahead off /api/users/search (same endpoint the invite
+      // typeahead uses). Free text is still allowed — these are hints only.
+      input.addEventListener('input', () => {
+        const q = (input.value || '').trim();
+        clearTimeout(AppView._attrSuggestTimer);
+        if (!q) { suggest.classList.add('hidden'); suggest.innerHTML = ''; return; }
+        AppView._attrSuggestTimer = setTimeout(async () => {
+          try {
+            const res = await fetch(`/api/users/search?q=${encodeURIComponent(q)}`);
+            if (!res.ok) return;
+            const { users } = await res.json();
+            if (!users || !users.length) { suggest.classList.add('hidden'); suggest.innerHTML = ''; return; }
+            suggest.innerHTML = users.map((u) =>
+              `<button type="button" class="attr-suggest-item" data-attr-suggest="${escapeAttr(u.username)}">@${escapeHtml(u.username)}</button>`).join('');
+            suggest.classList.remove('hidden');
+            suggest.querySelectorAll('[data-attr-suggest]').forEach((it) => {
+              it.addEventListener('click', () => AppView._castAttrVote(it.dataset.attrSuggest));
+            });
+          } catch { /* ignore */ }
+        }, 200);
+      });
+      input.focus();
+    }
+  },
+
+  // POST the caller's vote for `value`, then repaint the on-card chips and
+  // the open popover from the refreshed tally the server returns.
+  async _castAttrVote(value) {
+    const ctx = AppView._attrPopover;
+    if (!ctx || !value) return;
+    const { field, targetType, targetRef, slug } = ctx;
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/topics/${targetType}/${targetRef}/attributes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ field, value }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { alert(data.error || 'Could not save your vote.'); return; }
+      // Update the cached item's summary so re-renders show the new leader.
+      AppView._applyAttrSummary(targetType, targetRef, field, data);
+      // Repaint cards (feed if mounted, topic head if open) and the popover.
+      AppView._refreshAttrCards();
+      if (AppView._attrPopover && AppView._attrPopover.field === field
+          && AppView._attrPopover.targetRef === targetRef) {
+        AppView._renderAttrPopoverBody(data);
+      }
+    } catch (err) {
+      alert(`Could not save your vote: ${err.message}`);
+    }
+  },
+
+  // Find the cached issue / proposal object a chip refers to and write the
+  // new { top, count, myValue } summary onto it. options[0] is the leader
+  // (the server sorts the list), so the chip reads straight off it.
+  _applyAttrSummary(targetType, targetRef, field, data) {
+    const top = (data.options && data.options[0]) || null;
+    const summary = { top: top ? top.value : null, count: top ? top.count : 0, myValue: data.myValue || null };
+    let item = null;
+    if (targetType === 'issue') {
+      item = (AppView._ghIssues || []).find((i) => i.number === targetRef);
+    } else {
+      item = (AppView._proposals || []).find((p) => p.id === targetRef)
+        || (AppView._merged || []).find((p) => p.id === targetRef);
+    }
+    if (item) item[field] = summary;
+  },
+
+  // Repaint surfaces that show chips, without disturbing the popover (which
+  // lives on <body>, positioned by coordinates).
+  _refreshAttrCards() {
+    if (document.getElementById('dev-feed')) AppView._rerenderFeed();
+    if (typeof App !== 'undefined' && App.currentSubTab === 'topic'
+        && document.getElementById('gc-thread-head')) {
+      AppView._renderTopicHead();
+    }
+    const mergedEl = document.getElementById('gc-merged');
+    if (mergedEl && (AppView._merged || []).length) {
+      mergedEl.innerHTML = AppView._renderMergedInner();
+      if (window.Kudos) Kudos.attach(mergedEl);
+      AppView._applyAskAiCardAvailability(mergedEl);
+    }
   },
 
   // Live badge bump for a thread the viewer doesn't have open (called
@@ -2727,6 +3012,7 @@ const AppView = {
               <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta"><a href="${href}" target="_blank" rel="noopener" class="font-mono text-violet-400 hover:underline">#${n}</a>${issue.created_by_username ? ` · ${escapeHtml(issue.created_by_username)}` : ''}</div>
             </div>
             ${bountyPill}
+            ${AppView._attrChipsHtml('issue', n, issue)}
             ${AppView._devChatBadge(issue.chatCount)}
           </div>
           <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
@@ -2842,6 +3128,7 @@ const AppView = {
                 <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta"><a href="${pr.pr_url || '#'}" target="_blank" rel="noopener" class="font-mono text-emerald-400 hover:underline">PR#${pr.pr_number || pr.id}</a> · ${date}${AppView.closesPillHtml(pr) ? ` ${AppView.closesPillHtml(pr)}` : ''}</div>
               </div>
               ${AppView.voteCountPill(pr, maj)}
+              ${AppView._attrChipsHtml('proposal', pr.id, pr, { readonly: true })}
               ${AppView._devChatBadge(parseInt(pr.chat_count) || 0)}
             </div>
             <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
