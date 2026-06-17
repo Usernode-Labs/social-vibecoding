@@ -4428,4 +4428,8 @@ function relTime(iso) {
 // see `window.AppView === undefined` and never call openMembersModal /
 // openShareModal — the drawer closed but no panel ever opened. (Found via the
 // staging debug overlay: "drawer-row-members CLICK fired → window.AppView MISSING".)
-window.AppView = AppView;
+// Guarded so requiring this file in node (for the pure-helper unit tests,
+// see the module.exports block above) doesn't crash on a missing `window`.
+if (typeof window !== 'undefined') {
+  window.AppView = AppView;
+}
