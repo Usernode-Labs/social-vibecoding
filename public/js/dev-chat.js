@@ -341,7 +341,14 @@ const DevChat = {
       let statusClass;
       let dotTitle;
       if (s.status === 'paused') { statusClass = 'dc-active-dot-paused'; dotTitle = 'Paused'; }
-      else if (s.status === 'promoted') { statusClass = 'dc-active-dot-promoted'; dotTitle = s.busy ? 'Claude is running (promoted)' : 'Promoted (merged)'; }
+      else if (s.status === 'promoted') {
+        statusClass = 'dc-active-dot-promoted';
+        // #405: "Promoted (merged)" was ambiguous (a promoted PR is in a
+        // vote, NOT merged). Use the canonical lifecycle label instead.
+        const pLife = (window.MergeStatus && MergeStatus.lifecycle) ? MergeStatus.lifecycle(s) : null;
+        const pLabel = (pLife && pLife.label) || 'Proposed';
+        dotTitle = s.busy ? `Claude is running · ${pLabel}` : pLabel;
+      }
       else { statusClass = 'dc-active-dot-active'; dotTitle = s.busy ? 'Claude is running' : 'Active'; }
       const busyClass = s.busy ? ' dc-active-dot-busy' : '';
       const isPaused = s.status === 'paused';
@@ -2376,6 +2383,20 @@ const DevChat = {
             }
             if (latestStagingMsg === msg && msg.stagingUrl) visualsHtml = AppView.visualsTilesHtml(session.visuals);
           }
+          // #405: the change card's status used to freeze on "Proposed!"
+          // and never reflect the later merge stages. Drive it from the
+          // shared lifecycle helper so it tracks In vote → Passed → Merging…
+          // → ✓ Merged; the merged case gets a friendlier, self-explanatory
+          // label that doubles as the reason the preview link is gone.
+          let cardStatusHtml = '';
+          if (session && session.status !== 'active' && window.MergeStatus && MergeStatus.lifecycle) {
+            const cardLife = MergeStatus.lifecycle(session);
+            if (cardLife && cardLife.key === 'merged') {
+              cardStatusHtml = '<span class="ms-badge ms-badge-violet" title="This change is merged and now live in the app.">✓ Merged — now live in the app</span>';
+            } else if (cardLife && cardLife.label) {
+              cardStatusHtml = MergeStatus.badgeHtml(cardLife);
+            }
+          }
           return `
             <div class="dc-status-line"><span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span> ${msg.content} <span style="font-size:9px;opacity:0.4;margin-left:auto">${stgId} ${stgTs}</span></div>
             <div class="dc-pr-card" id="dc-pr-card">
@@ -2391,7 +2412,7 @@ const DevChat = {
                 ${testBtn}
                 ${prUrl ? `<a href="${prUrl}" target="_blank" class="dc-pr-btn dc-pr-btn-preview" style="text-decoration:none">View on GitHub</a>` : ''}
                 ${session?.status === 'active' ? `<button class="dc-pr-btn dc-pr-btn-promote" onclick="DevChat.promotePR()">Propose to group</button>` : ''}
-                ${session?.status === 'promoted' ? '<span class="text-xs" style="color:var(--accent)">Proposed!</span>' : ''}
+                ${cardStatusHtml}
               </div>
               ${previewNote}
             </div>`;
@@ -3295,6 +3316,68 @@ const DevChat = {
     return Number(st.sessionId) === Number(session.id) ? st : null;
   },
 
+  // #405: the session header's merge-lifecycle pill. Mirrors the canonical
+  // state shown on the proposal feed card / home strip so the user no longer
+  // has to leave the session to learn where it is — Draft → In vote →
+  // Checks running → Behind → Resolving → Passed → Merging… → ✓ Merged. The
+  // session payload (GET /api/sessions/:id) carries status / check_state /
+  // merge_conflict_state / behind_main, plus yes_count + majority (added for
+  // this feature) so the in-vote tally and the "Passed — merging shortly"
+  // state resolve exactly as on the feed.
+  _renderHeaderStatusPill(session) {
+    return `<span id="dc-status-pill">${DevChat._statusPillInnerHtml(session)}</span>`;
+  },
+
+  _statusPillInnerHtml(session) {
+    if (!session || !(window.MergeStatus && MergeStatus.lifecycle)) return '';
+    const life = MergeStatus.lifecycle(session);
+    if (!life || !life.label) return '';
+    return MergeStatus.pillHtml(life);
+  },
+
+  // #405: patch the header pill in place (used while a turn is streaming, so
+  // we don't re-render the whole view and disrupt the live message stream).
+  _patchHeaderStatusPill() {
+    const el = document.getElementById('dc-status-pill');
+    if (!el) return;
+    el.innerHTML = DevChat._statusPillInnerHtml(DevChat.currentSession);
+  },
+
+  // #405: re-read the open session's lifecycle fields after a vote_update /
+  // app_version_changed WS event so the header pill + change card advance
+  // live (In vote → Passed → Merging… → ✓ Merged) without a manual reload.
+  // No-op unless the event pertains to the session currently open. A full
+  // re-render repaints the change card too; while a chat turn is streaming
+  // we only patch the header pill to avoid disturbing the live stream.
+  async refreshCurrentSessionStatus(sessionId) {
+    const cur = DevChat.currentSession;
+    if (!cur) return;
+    if (sessionId != null && Number(sessionId) !== Number(cur.id)) return;
+    if (!document.getElementById('dc-view')) return;
+    try {
+      const res = await fetch(`/api/sessions/${cur.id}`);
+      if (!res.ok) return;
+      const { session } = await res.json();
+      if (!session || !DevChat.currentSession
+          || Number(DevChat.currentSession.id) !== Number(session.id)) return;
+      // Lifecycle-relevant scalars decide whether anything visible changed;
+      // copy them onto the live row either way.
+      const watch = ['status', 'check_state', 'merge_conflict_state', 'behind_main',
+                     'yes_count', 'no_count', 'majority', 'merged_at'];
+      let changed = false;
+      for (const k of watch) {
+        if (session[k] !== undefined && DevChat.currentSession[k] !== session[k]) changed = true;
+        if (session[k] !== undefined) DevChat.currentSession[k] = session[k];
+      }
+      // Arrays/objects the card reads are refreshed unconditionally.
+      if (session.test_results !== undefined) DevChat.currentSession.test_results = session.test_results;
+      if (session.conflict_files !== undefined) DevChat.currentSession.conflict_files = session.conflict_files;
+      if (!changed) return;
+      if (DevChat.isStreaming) DevChat._patchHeaderStatusPill();
+      else DevChat.renderChatView();
+    } catch { /* network blip — ignore, next event/reload reconciles */ }
+  },
+
   _renderSyncBannerHtml(session) {
     const behind = session && Number(session.behind_main) || 0;
     const sync = DevChat._syncStateFor(session);
@@ -3635,6 +3718,7 @@ const DevChat = {
         ${DevChat.currentSession.pr_number
           ? `<button id="dc-pr-header-link" class="text-xs text-violet-400 hover:text-violet-300" title="This session's pull request — every change in this chat goes to PR #${DevChat.currentSession.pr_number}. Use “Start a new change” for separate work.">PR #${DevChat.currentSession.pr_number}</button>`
           : '<span class="text-xs text-zinc-500" title="This chat is one change → one pull request. A PR opens after the first build.">New change</span>'}
+        ${DevChat._renderHeaderStatusPill(DevChat.currentSession)}
       </div>
       ${DevChat._renderSyncBannerHtml(DevChat.currentSession)}
       ${DevChat._renderNewChangeBannerHtml(DevChat.currentSession)}

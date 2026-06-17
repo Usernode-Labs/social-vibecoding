@@ -180,6 +180,14 @@ function stagingMockProposals() {
       check_state: 'error',
       test_results: [],
     },
+    // #405: a proposal that PASSED the vote with green checks and is not
+    // behind — eligible and queued to merge. Verifies the new green
+    // "Passed — merging shortly" badge on the feed card + home strip via
+    // ?demo=1. yes_count is set well above any plausible staging majority so
+    // the row reliably reads as past-threshold (the vote pill fills green).
+    mk(9000010, 900110,
+      '[Mock] Ready-to-merge test: votes passed and checks are green — queued to merge',
+      4, 9, 0, 3),
   ];
 }
 
@@ -706,12 +714,52 @@ function voteRoutes(config) {
         statsByApp[appId] = await getActiveUserStats(pool, appId);
       }
 
+      const proposals = sessions.map((s) => ({
+        ...s,
+        majority: statsByApp[s.app_id]?.majority || 1,
+        activeUsers: statsByApp[s.app_id]?.active || 1,
+      }));
+
+      // #405: staging-only demo rows (?demo=1) so the home "Your proposals"
+      // strip's canonical merge-lifecycle chips — In vote, Behind, Resolving
+      // conflicts…, Checks running…, Passed — merging shortly, Merging… — are
+      // all reviewable against a prod-cloned DB. Reuses the same fixtures the
+      // proposal feed uses (stagingMockProposals), mapped into this endpoint's
+      // shape with a fixed demo majority of 3 so the tally-dependent states
+      // (in-vote vs. ready) resolve deterministically regardless of the
+      // staging app's live active-user count. Gated on IS_STAGING — a no-op
+      // in production.
+      if (IS_STAGING && req.query.demo === '1') {
+        const have = new Set(proposals.map((p) => p.id));
+        const DEMO_MAJORITY = 3;
+        const demoRows = stagingMockProposals()
+          .filter((m) => (m.status === 'promoted' || m.status === 'merging') && !have.has(m.id))
+          .map((m) => ({
+            id: m.id,
+            pr_number: m.pr_number,
+            pr_url: m.pr_url,
+            pr_title: m.pr_title,
+            status: m.status,
+            created_at: m.created_at,
+            promoted_at: m.promoted_at,
+            merge_conflict_state: m.merge_conflict_state || null,
+            behind_main: m.behind_main || 0,
+            check_state: m.check_state || null,
+            test_results: m.test_results || [],
+            resolving: m.resolving || false,
+            app_id: 0,
+            app_slug: 'staging-demo',
+            app_name: 'Staging demo app',
+            yes_count: m.yes_count,
+            no_count: m.no_count,
+            majority: DEMO_MAJORITY,
+            activeUsers: DEMO_MAJORITY,
+          }));
+        proposals.push(...demoRows);
+      }
+
       res.json({
-        proposals: sessions.map((s) => ({
-          ...s,
-          majority: statsByApp[s.app_id]?.majority || 1,
-          activeUsers: statsByApp[s.app_id]?.active || 1,
-        })),
+        proposals,
         governance: governance.map((g) => ({
           ...g,
           majority: statsByApp[g.app_id]?.majority || 1,

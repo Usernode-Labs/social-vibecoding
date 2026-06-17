@@ -21,9 +21,13 @@ const Home = {
       // #194: the viewer's own open proposals ride along with the app
       // grid, and the viewer's own active dev sessions ride along the
       // same way. Both non-fatal — a failure just hides the section.
+      // #405: forward ?demo=1 (preserved on the page URL) so the "Your
+      // proposals" strip's canonical merge-lifecycle chips populate from the
+      // staging demo fixtures. No-op outside a ?demo=1 staging preview.
+      const demoQS = new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
       const [res, proposalsRes, sessionsRes] = await Promise.all([
         fetch('/api/apps'),
-        fetch('/api/me/proposals').catch(() => null),
+        fetch(`/api/me/proposals${demoQS}`).catch(() => null),
         fetch('/api/me/active-sessions').catch(() => null),
       ]);
       if (!res.ok) throw new Error('Failed to load apps');
@@ -290,60 +294,29 @@ const Home = {
       return `<span class="inline-flex items-center text-[0.7rem] font-mono font-medium px-1.5 py-0.5 rounded ${cls}">${yes} / ${majority}</span>`;
     };
 
-    // #361: compact merge-status badge from the persisted snapshot
-    // (merge_conflict_state + behind_main). Only the badge + count — the
-    // file list lives on the proposal detail screen. Mirrors the card's
-    // priority order, minus the merging/merged/resolving states the
-    // home strip doesn't surface.
-    // #386: the red warning fires only on 'failed' (an auto-resolve
-    // attempt ran and couldn't fix it). A pre-attempt 'conflict' snapshot
-    // always carries behind_main >= 1, so it falls through to the neutral
-    // amber "Behind" chip rather than a red "Conflicts" warning.
-    const mergeBadge = (p) => {
-      const mcs = p.merge_conflict_state;
-      if (mcs === 'failed') {
-        return '<span class="text-[0.65rem] font-medium text-red-500 uppercase shrink-0" title="Automatic conflict resolution failed">⚠ Failed</span>';
-      }
-      const behind = parseInt(p.behind_main, 10) || 0;
-      if (mcs === 'behind' || mcs === 'conflict' || behind > 0) {
-        return `<span class="text-[0.65rem] font-medium text-amber-500 uppercase shrink-0" title="Behind main">Behind${behind ? ` · ${behind}` : ''}</span>`;
-      }
-      return '';
-    };
-
-    // #47: compact "CI for proposals" checks chip from the persisted
-    // check_state. A non-passing proposal can't merge yet, so the home
-    // strip flags it: amber when failing, grey when still running, red when
-    // the run broke. A passing/legacy-null proposal shows nothing (the
-    // absence is the "all good" signal, like the merge badge above).
-    const checksBadge = (p) => {
-      switch (p.check_state) {
-        case 'failing':
-          return '<span class="text-[0.65rem] font-medium text-amber-500 uppercase shrink-0" title="Automated tests are failing — merge is blocked">⚠ Checks</span>';
-        case 'error':
-          return "<span class=\"text-[0.65rem] font-medium text-red-500 uppercase shrink-0\" title=\"Checks couldn't run — merge is blocked\">⚠ Checks</span>";
-        case 'pending':
-          return '<span class="text-[0.65rem] font-medium text-zinc-400 uppercase shrink-0" title="Checks are still running — merge is blocked until they pass">Checks…</span>';
-        default:
-          return '';
-      }
+    // #405: the merge-status chip is now driven by the shared MergeStatus
+    // lifecycle helper so the home strip surfaces the SAME canonical states
+    // as the proposal feed card and the dev session header — including the
+    // resolving / "Passed — merging shortly" / merging states the bespoke
+    // chips here used to drop. The vote pill still carries the tally, so the
+    // in-vote/draft states render no extra chip (the pill already says it).
+    const lifeChip = (p) => {
+      if (!(window.MergeStatus && MergeStatus.lifecycle)) return '';
+      const life = MergeStatus.lifecycle(p);
+      if (!life || ['in_vote', 'draft', 'none'].indexOf(life.key) !== -1) return '';
+      return `<span class="shrink-0">${MergeStatus.badgeHtml(life)}</span>`;
     };
 
     let rows = '';
     for (const p of prs) {
       const title = p.pr_title || `PR #${p.pr_number || p.id}`;
-      const status = p.status === 'merging'
-        ? '<span class="text-[0.65rem] font-medium text-amber-500 uppercase">Merging</span>'
-        : '<span class="text-[0.65rem] font-medium text-violet-400 uppercase">In vote</span>';
       rows += `
         <a href="#app/${esc(p.app_slug)}/dev/proposals/${p.id}"
            class="col-span-full flex items-center gap-2 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-violet-500/50 transition-colors">
           <span class="text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0 max-w-[30%] truncate">${esc(p.app_name)}</span>
           <span class="text-sm text-zinc-800 dark:text-zinc-200 flex-1 min-w-0 truncate">${esc(title)}</span>
-          ${checksBadge(p)}
-          ${mergeBadge(p)}
+          ${lifeChip(p)}
           ${pill(parseInt(p.yes_count) || 0, p.majority || 1, p.status)}
-          ${status}
         </a>`;
     }
     for (const g of govs) {

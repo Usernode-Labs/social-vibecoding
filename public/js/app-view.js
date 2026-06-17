@@ -2057,24 +2057,20 @@ const AppView = {
     const unvotedBadge = isUnvoted
       ? '<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 shrink-0" title="You haven\'t voted on this yet"><span class="relative flex h-1.5 w-1.5"><span class="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75 animate-ping"></span><span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-violet-500"></span></span>Vote</span>'
       : '';
-    // #239: resolving badge only when not already merging/merged — the
-    // merge pipeline states outrank the resolver's. No opacity-70 fade
-    // and no disabled vote controls: voting during resolution is valid.
-    // #361: priority order merging > merged > resolving > failed >
-    // behind > none. The first three outrank the persisted merge-conflict
-    // snapshot (an active merge/resolve is the live truth).
-    // #386: the red conflict affordance is gated on 'failed' ONLY — i.e.
-    // an auto-resolve attempt actually ran and could not fix the conflict.
-    // A fresh 'conflict' snapshot (set the instant a merge 405s, before
-    // the auto-fix has reported back) is NOT a warning: that path always
-    // bumps behind_main >= 1, so it falls through to the neutral amber
-    // "Behind main · N" badge while the auto-resolver runs.
-    const mcs = pr.merge_conflict_state;
-    const stateBadge = isMerging ? AppView.mergingBadgeHtml()
-      : isMerged ? AppView.mergedBadgeHtml()
-      : pr.resolving ? AppView.resolvingBadgeHtml()
-      : mcs === 'failed' ? AppView.conflictFailedBadgeHtml()
-      : (mcs === 'behind' || mcs === 'conflict' || (parseInt(pr.behind_main, 10) || 0) > 0) ? AppView.behindBadgeHtml(pr)
+    // #405: the merge-state slot is now driven by the shared MergeStatus
+    // lifecycle helper so labels/colours match the home strip and the dev
+    // session header exactly. It renders the merge-pipeline / conflict /
+    // ready states (merging > merged > resolving > conflict_failed > behind >
+    // ready); checks states keep their own detailed badge (checksBadgeHtml,
+    // with per-test counts) and in-vote/draft are conveyed by the vote pill.
+    // The lifecycle precedence preserves the prior priority order and adds
+    // the new "Passed — merging shortly" (ready) state for an eligible
+    // proposal that's past threshold + green-checks but not yet claimed.
+    const life = (window.MergeStatus && MergeStatus.lifecycle)
+      ? MergeStatus.lifecycle(pr, { majority, locked: ctx.locked })
+      : null;
+    const stateBadge = (life && MergeStatus.STATE_BADGE_KEYS.indexOf(life.key) !== -1)
+      ? MergeStatus.badgeHtml(life)
       : '';
     // Sessions are owner-scoped (GET /api/sessions/:id), so the session
     // button only renders for the proposer.
@@ -3660,8 +3656,10 @@ const AppView = {
     if (state === 'error') {
       return `<span class="gc-conflict-badge" title="The staging build or the test run itself broke, so the platform can't confirm the app works — merge is blocked until checks pass.">⚠ Checks couldn't run</span>`;
     }
-    // 'pending' (or anything else): tests are still running.
-    return `<span class="gc-merging-badge" title="Automated tests are still running on the staging build — merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks running…</span>`;
+    // 'pending' (or anything else): tests are still running. #405: grey
+    // (gc-checks-running-badge), not amber, so a not-yet-started check is
+    // visibly distinct from the amber in-flight merge stages.
+    return `<span class="gc-checks-running-badge" title="Automated tests are still running on the staging build — merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks running…</span>`;
   },
 
   // #195/#270: before/after visual tiles for a session's stored capture

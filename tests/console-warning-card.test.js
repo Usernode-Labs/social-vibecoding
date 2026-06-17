@@ -16,6 +16,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+// #405: the proposal card's merge-state badge is driven by window.MergeStatus;
+// load it into the sandbox first (mirrors index.html's load order).
+const MERGE_STATUS_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'public', 'js', 'merge-status.js'),
+  'utf8'
+);
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
   'utf8'
@@ -45,7 +51,7 @@ function makeAppView(userId) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
+  vm.runInContext(`${MERGE_STATUS_SRC}\n${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = { majority: 1 };
   AppView._visualsOpen = new Set();

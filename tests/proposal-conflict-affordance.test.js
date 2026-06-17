@@ -25,6 +25,13 @@ const HOME_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'home.js'),
   'utf8'
 );
+// #405: the proposal card / home strip now derive their merge-state badge
+// from window.MergeStatus, so load it into the sandbox first (mirrors the
+// real page load order in index.html).
+const MERGE_STATUS_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'public', 'js', 'merge-status.js'),
+  'utf8'
+);
 
 function makeAppView(userId) {
   const sandbox = {
@@ -50,7 +57,7 @@ function makeAppView(userId) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
+  vm.runInContext(`${MERGE_STATUS_SRC}\n${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = { majority: 1 };
   AppView._visualsOpen = new Set();
@@ -135,7 +142,7 @@ function makeHome() {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
+  vm.runInContext(`${MERGE_STATUS_SRC}\n${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
   return sandbox.__Home;
 }
 
@@ -149,13 +156,16 @@ test("home strip: a 'conflict' proposal shows the amber Behind chip, not a red C
   const Home = makeHome();
   Home._myProposals = { proposals: [homeProposal({ merge_conflict_state: 'conflict', behind_main: 2 })], governance: [] };
   const html = Home.renderMyProposalsSection();
-  assert.match(html, /Behind · 2/, "renders the neutral 'Behind' chip");
+  // #405: the home strip now uses the canonical "Behind main · N" label.
+  assert.match(html, /Behind main · 2/, "renders the neutral 'Behind main' chip");
   assert.doesNotMatch(html, /⚠ Conflicts/, "no pre-emptive red 'Conflicts' chip");
+  assert.doesNotMatch(html, /Conflict resolution failed/, 'no failed affordance pre-attempt');
 });
 
 test("home strip: a 'failed' proposal shows the red Failed chip", () => {
   const Home = makeHome();
   Home._myProposals = { proposals: [homeProposal({ merge_conflict_state: 'failed', behind_main: 1 })], governance: [] };
   const html = Home.renderMyProposalsSection();
-  assert.match(html, /⚠ Failed/, 'red Failed chip present after a failed attempt');
+  // #405: canonical red "Conflict resolution failed" label (was "⚠ Failed").
+  assert.match(html, /Conflict resolution failed/, 'red failed chip present after a failed attempt');
 });
