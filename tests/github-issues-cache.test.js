@@ -571,3 +571,141 @@ test('refreshPublicIssues bypasses a valid cache TTL, caches the result, then ho
     global.fetch = origFetch;
   }
 });
+
+// ── #396: issue comment threads ─────────────────────────────────────────
+// fetchIssueComments follows the Link header (oldest-first), caps at
+// ISSUE_COMMENTS_MAX_PAGES, and flags `truncated`; clipIssueComments keeps
+// the most-recent N and clips long bodies.
+
+function fakeComment(id) {
+  return {
+    user: { login: `commenter-${id}` },
+    body: `comment ${id}`,
+    created_at: `2026-06-${String((id % 28) + 1).padStart(2, '0')}T00:00:00Z`,
+  };
+}
+
+// Stub fetch with a page sequence. Each entry is { body, next } — `next`
+// becomes the Link header's rel="next" URL (null = last page). Records the
+// URLs requested so we can assert pagination stopped at the ceiling.
+function stubCommentPages(pages) {
+  const calls = [];
+  let i = 0;
+  global.fetch = async (url) => {
+    calls.push(String(url));
+    const page = pages[i] || { body: [], next: null };
+    i += 1;
+    return {
+      ok: true,
+      status: 200,
+      headers: {
+        get: (h) => (h && h.toLowerCase() === 'link' && page.next
+          ? `<${page.next}>; rel="next"`
+          : null),
+      },
+      json: async () => page.body,
+    };
+  };
+  return calls;
+}
+
+test('fetchIssueComments follows Link pages oldest-first and caps at the page ceiling', async () => {
+  const origFetch = global.fetch;
+  try {
+    // 4 pages of 100 available, but ISSUE_COMMENTS_MAX_PAGES is 3 → stop
+    // after 3 pages with a next link still pending → truncated.
+    const mk = (start) => Array.from({ length: 100 }, (_, k) => fakeComment(start + k));
+    const calls = stubCommentPages([
+      { body: mk(0), next: 'https://api.github.com/p2' },
+      { body: mk(100), next: 'https://api.github.com/p3' },
+      { body: mk(200), next: 'https://api.github.com/p4' },
+      { body: mk(300), next: null },
+    ]);
+    const res = await github.fetchIssueComments('O', 'r', 7);
+    assert.strictEqual(calls.length, 3, 'must stop at ISSUE_COMMENTS_MAX_PAGES');
+    assert.strictEqual(res.comments.length, 300);
+    assert.strictEqual(res.truncated, true);
+    // Oldest-first, normalized shape.
+    assert.strictEqual(res.comments[0].author, 'commenter-0');
+    assert.deepStrictEqual(Object.keys(res.comments[0]).sort(), ['author', 'body', 'createdAt']);
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('fetchIssueComments returns a short thread without truncation', async () => {
+  const origFetch = global.fetch;
+  try {
+    const calls = stubCommentPages([
+      { body: [fakeComment(1), fakeComment(2), fakeComment(3)], next: null },
+    ]);
+    const res = await github.fetchIssueComments('O', 'r', 8);
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(res.comments.length, 3);
+    assert.strictEqual(res.truncated, false);
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('fetchIssueComments maps rate-limit, 404, non-array, and bad input to empty + note', async () => {
+  const origFetch = global.fetch;
+  try {
+    global.fetch = async () => ({
+      ok: false, status: 403,
+      headers: { get: (h) => (h === 'x-ratelimit-remaining' ? '0' : null) },
+      json: async () => [],
+    });
+    assert.deepStrictEqual(
+      await github.fetchIssueComments('O', 'r', 1),
+      { comments: [], truncated: false, note: 'rate limited' }
+    );
+
+    global.fetch = async () => ({ ok: false, status: 404, headers: { get: () => null }, json: async () => ({}) });
+    assert.deepStrictEqual(
+      await github.fetchIssueComments('O', 'r', 1),
+      { comments: [], truncated: false, note: 'not found' }
+    );
+
+    global.fetch = async () => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => ({ not: 'an array' }) });
+    assert.deepStrictEqual(
+      await github.fetchIssueComments('O', 'r', 1),
+      { comments: [], truncated: false, note: 'fetch failed' }
+    );
+
+    // Bad input never touches the network.
+    assert.deepStrictEqual(
+      await github.fetchIssueComments('O', 'r', 'junk'),
+      { comments: [], truncated: false, note: 'bad issue number' }
+    );
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('clipIssueComments keeps the most-recent max, clips long bodies, and flags truncation', () => {
+  const comments = Array.from({ length: 40 }, (_, k) => ({
+    author: `u${k}`, body: 'x'.repeat(k === 39 ? 5000 : 10), createdAt: `2026-06-01T00:00:0${k % 10}Z`,
+  }));
+  const { comments: kept, truncated } = github.clipIssueComments(comments, { max: 30, bodyMax: 2000 });
+  assert.strictEqual(kept.length, 30, 'keeps at most max');
+  assert.strictEqual(kept[0].author, 'u10', 'keeps the TAIL (most recent)');
+  assert.strictEqual(truncated, true, 'older comments were dropped');
+  // The long last body is clipped with the marker.
+  const last = kept[kept.length - 1];
+  assert.ok(last.body.endsWith('… [truncated]'));
+  assert.ok(last.body.length <= 2000 + '… [truncated]'.length);
+});
+
+test('clipIssueComments carries through upstream truncation even under the keep cap', () => {
+  const { truncated } = github.clipIssueComments(
+    [{ author: 'a', body: 'short', createdAt: '' }],
+    { max: 30, wasTruncated: true }
+  );
+  assert.strictEqual(truncated, true);
+});
+
+test('clipIssueComments on an empty/absent thread is a clean no-op', () => {
+  assert.deepStrictEqual(github.clipIssueComments([]), { comments: [], truncated: false });
+  assert.deepStrictEqual(github.clipIssueComments(undefined), { comments: [], truncated: false });
+});

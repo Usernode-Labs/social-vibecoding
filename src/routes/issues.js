@@ -135,6 +135,33 @@ function stagingMockIssues(repoUrl) {
   ];
 }
 
+// #396: staging-only mock comment threads for the topic view's GitHub
+// comment section, served by GET /api/apps/:slug/github-issues/:number/
+// comments when the live fetch is empty/unavailable. Keyed by the mock
+// issue numbers above; obviously-fake "[Mock]" bodies, oldest-first (the
+// same order fetchIssueComments returns), and at least one BOT-authored
+// comment (`usernode-bot`) so the bot-labelling renders. Returns [] for
+// numbers without a mock thread. Strictly a no-op in production.
+function stagingMockIssueComments(number) {
+  const n = Number(number);
+  const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
+  const threads = {
+    900001: [
+      { author: 'staging-tester', body: '[Mock] I can reproduce this every time on Firefox — the toggle flips back to light as soon as I reload.', createdAt: hoursAgo(40) },
+      { author: 'usernode-bot', body: '[Mock] Thanks for the report. Is the preference meant to persist per-device or per-account? Defaulting to per-device unless you say otherwise.', createdAt: hoursAgo(36) },
+      { author: 'staging-tester', body: '[Mock] Per-device is fine — just make it survive a refresh.', createdAt: hoursAgo(30) },
+    ],
+    900002: [
+      { author: 'another-tester', body: '[Mock] +1, Y/N shortcuts would be a huge time-saver during a voting spree.', createdAt: hoursAgo(20) },
+      { author: 'usernode-bot', body: '[Mock] Should the shortcut act on the focused card only, or the top card in the list? Going with the focused card.', createdAt: hoursAgo(18) },
+    ],
+    900003: [
+      { author: 'staging-tester', body: '[Mock] Happens on my iPhone SE in portrait — the Vote and Preview buttons spill off the right edge.', createdAt: hoursAgo(28) },
+    ],
+  };
+  return threads[n] || [];
+}
+
 function issueRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -713,6 +740,61 @@ function issueRoutes(config) {
       });
     } catch (err) {
       log.error('issues', 'Failed to list GitHub issues', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ----------------------------------------------------------------
+  // GET /api/apps/:slug/github-issues/:number/comments
+  //
+  // #396: the GitHub comment thread for ONE issue, for the Dev topic
+  // view's comment section. Lazy — fetched only when a viewer opens an
+  // issue topic, never as part of the list payload, so the panel's
+  // rate-limit cost is unchanged. Collab-gated like the list route above.
+  // Returns `{ comments: [{ author, body, createdAt }], truncated, note? }`;
+  // github.fetchIssueComments never throws (failures degrade to an empty
+  // list with a note). In staging the thread is backed by mock comments
+  // when the live fetch is empty/unavailable, so the section is reviewable.
+  // ----------------------------------------------------------------
+  router.get('/api/apps/:slug/github-issues/:number/comments', async (req, res) => {
+    try {
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab', `${appAccess.ACCESS_COLUMNS}, repo_url`
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+
+      const number = parseInt(req.params.number, 10);
+      const parsed = parseOwnerRepo(app.repo_url);
+
+      if (!github.isEnabled() || !parsed || !Number.isFinite(number)) {
+        if (!IS_STAGING) {
+          return res.json({ comments: [], truncated: false, note: 'unavailable' });
+        }
+        const mocks = stagingMockIssueComments(number);
+        const clipped = github.clipIssueComments(mocks);
+        return res.json({ comments: clipped.comments, truncated: clipped.truncated });
+      }
+
+      const raw = await github.fetchIssueComments(parsed.owner, parsed.repo, number);
+      let { comments, truncated } = github.clipIssueComments(raw.comments, { wasTruncated: raw.truncated });
+
+      // Staging-only fallback: an empty (or degraded) live thread would
+      // render nothing in the preview — substitute mocks so the section is
+      // reviewable. Strictly a no-op in production.
+      if (IS_STAGING && comments.length === 0) {
+        const clipped = github.clipIssueComments(stagingMockIssueComments(number));
+        comments = clipped.comments;
+        truncated = clipped.truncated;
+        return res.json({ comments, truncated });
+      }
+
+      return res.json({
+        comments,
+        truncated,
+        ...(raw.note ? { note: raw.note } : {}),
+      });
+    } catch (err) {
+      log.error('issues', 'Failed to fetch GitHub issue comments', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
