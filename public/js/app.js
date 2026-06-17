@@ -918,6 +918,15 @@ const App = {
 
   handleSessionEvent(data) {
     console.log('[ws] session_event', data.event, data.sessionId, data._seq);
+    // #47: the checks badge can change on any open proposal, not just the
+    // dev session the viewer happens to have focused — refresh the vote
+    // panel + home strip globally before the currentSession early-return.
+    if (data.event === 'checks_ready') {
+      if (App.currentTab === 'dev' && App.currentSubTab !== 'sessions') {
+        AppView.refreshDevData('session');
+      }
+      App.refreshHomeProposals();
+    }
     if (!DevChat.currentSession || DevChat.currentSession.id !== data.sessionId) return;
     // Dedup by sequence number
     if (data._seq && DevChat._seenSeqs?.has(data._seq)) return;

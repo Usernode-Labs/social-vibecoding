@@ -311,6 +311,24 @@ const Home = {
       return '';
     };
 
+    // #47: compact "CI for proposals" checks chip from the persisted
+    // check_state. A non-passing proposal can't merge yet, so the home
+    // strip flags it: amber when failing, grey when still running, red when
+    // the run broke. A passing/legacy-null proposal shows nothing (the
+    // absence is the "all good" signal, like the merge badge above).
+    const checksBadge = (p) => {
+      switch (p.check_state) {
+        case 'failing':
+          return '<span class="text-[0.65rem] font-medium text-amber-500 uppercase shrink-0" title="Automated tests are failing — merge is blocked">⚠ Checks</span>';
+        case 'error':
+          return "<span class=\"text-[0.65rem] font-medium text-red-500 uppercase shrink-0\" title=\"Checks couldn't run — merge is blocked\">⚠ Checks</span>";
+        case 'pending':
+          return '<span class="text-[0.65rem] font-medium text-zinc-400 uppercase shrink-0" title="Checks are still running — merge is blocked until they pass">Checks…</span>';
+        default:
+          return '';
+      }
+    };
+
     let rows = '';
     for (const p of prs) {
       const title = p.pr_title || `PR #${p.pr_number || p.id}`;
@@ -322,6 +340,7 @@ const Home = {
            class="col-span-full flex items-center gap-2 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-violet-500/50 transition-colors">
           <span class="text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0 max-w-[30%] truncate">${esc(p.app_name)}</span>
           <span class="text-sm text-zinc-800 dark:text-zinc-200 flex-1 min-w-0 truncate">${esc(title)}</span>
+          ${checksBadge(p)}
           ${mergeBadge(p)}
           ${pill(parseInt(p.yes_count) || 0, p.majority || 1, p.status)}
           ${status}

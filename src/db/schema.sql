@@ -255,6 +255,32 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS conflict_checked_at 
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS console_check_state TEXT;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS console_errors JSONB NOT NULL DEFAULT '[]';
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS console_checked_at TIMESTAMPTZ;
+-- #47: "CI for proposals". The console-error check above is now the
+-- built-in baseline of a general "tests run against staging" framework: a
+-- proposal carries automated headless-browser tests (declared in the app's
+-- dapp.json `tests` array, accumulating across proposals like CI in a
+-- GitHub repo), each navigating one staging route and asserting the page
+-- loads, throws no console errors, and (optionally) shows an expected
+-- selector/text. After every staging build services/visuals.js runs them
+-- (captureForSession → storeChecks) and records the outcome here, latest
+-- run only.
+--   check_state       : 'passing' | 'failing' | 'pending' | 'error' |
+--                       'unknown' (NULL until the first run). 'pending' is
+--                       set the moment a (re)build starts so a stale pass
+--                       can't slip through; 'error'/'unknown' mean the
+--                       staging build or capture run itself broke.
+--   test_results      : array of { name, path, status:'pass'|'fail',
+--                       consoleErrors:[{kind,message,source}], failureReason }
+--   checks_commit_sha : the commit the results describe (staleness signal).
+--   checks_checked_at : when the suite last ran.
+-- Unlike the advisory console columns above, check_state GATES merge:
+-- routes/votes.js checkAndMerge blocks a non-'passing' proposal (admin
+-- force-merge still bypasses). The console_* columns are kept written in
+-- parallel for one release so a rolling deploy's old readers still work.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_state TEXT;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS test_results JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS checks_commit_sha VARCHAR(40);
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS checks_checked_at TIMESTAMPTZ;
 -- #11: vote-to-undo a merged PR. When the undo majority is reached we
 -- open a `git revert <merge_commit_sha>` PR and insert a new
 -- chat_sessions row pointing back here via revert_of_session_id.
