@@ -2129,6 +2129,7 @@ const AppView = {
             ${unvotedBadge}
             ${AppView.voteCountPill(pr, majority)}
             ${stateBadge}
+            ${AppView.checksBadgeHtml(pr)}
             ${AppView.consoleWarningBadgeHtml(pr)}
             ${AppView._attrChipsHtml('proposal', pr.id, pr, { readonly: isMerged })}
             ${AppView._devChatBadge(chatN)}
@@ -2167,9 +2168,79 @@ const AppView = {
         <div>${details.join(' · ')}</div>
         ${chips ? `<div class="mt-1 flex flex-wrap gap-1 items-center"><span>Linked issues:</span> ${chips}</div>` : ''}
         ${AppView._mergeConflictDetailHtml(pr)}
-        ${AppView._consoleCheckDetailHtml(pr)}
+        ${AppView._checksDetailHtml(pr)}
         ${roster}
         ${lockedNote}
+      </div>`;
+  },
+
+  // #47: expanded per-test detail for the proposal detail screen — the
+  // structured replacement for the old flat console-error list. Renders a
+  // green-tick / red-cross row per test with the screen it checked and, for
+  // a failure, the reason (failed load, missing element, or the console
+  // errors that fired). Only renders once a run exists with results; a
+  // passing/empty/legacy-null state falls back to the advisory console
+  // detail so mid-rollout proposals still surface something.
+  _checksDetailHtml(pr) {
+    if (!pr) return '';
+    const state = pr.check_state;
+    if (!state) return AppView._consoleCheckDetailHtml(pr);
+    const results = Array.isArray(pr.test_results) ? pr.test_results : [];
+
+    if (state === 'pending') {
+      return `
+        <div class="mt-2 rounded border border-zinc-300/40 dark:border-zinc-700/60 bg-zinc-500/5 px-2 py-1.5 text-zinc-600 dark:text-zinc-400">
+          <div class="font-medium">Checks are still running…</div>
+          <div class="mt-0.5 opacity-90">The staging build is being tested. Merge is blocked until all tests pass.</div>
+        </div>`;
+    }
+    if (state === 'error') {
+      return `
+        <div class="mt-2 rounded border border-red-500/30 bg-red-500/5 px-2 py-1.5 text-red-500">
+          <div class="font-medium">⚠ Checks couldn't run.</div>
+          <div class="mt-0.5 opacity-90">The staging build or the test run itself broke, so the platform can't confirm the app works. Merge is blocked until checks pass.</div>
+          <div class="mt-1 opacity-80">Pushing a fix rebuilds the preview and re-runs the checks.</div>
+        </div>`;
+    }
+    if (!results.length) return ''; // 'passing' with no detail to show — the green badge is enough.
+
+    const rows = results.map((r) => {
+      const pass = r && r.status === 'pass';
+      const icon = pass ? '✓' : '✗';
+      const iconCls = pass ? 'text-emerald-500' : 'text-red-500';
+      const name = escapeHtml(String((r && r.name) || 'test'));
+      const path = (r && r.path) ? `<span class="opacity-60 font-mono">${escapeHtml(String(r.path))}</span>` : '';
+      let detail = '';
+      if (!pass) {
+        const reason = (r && r.failureReason) ? escapeHtml(String(r.failureReason).slice(0, 500)) : 'failed';
+        const errs = Array.isArray(r && r.consoleErrors) ? r.consoleErrors : [];
+        const errItems = errs.map((e) => {
+          const msg = escapeHtml(String((e && e.message) || '').slice(0, 500));
+          const src = (e && e.source) ? escapeHtml(String(e.source).slice(0, 200)) : '';
+          const kind = (e && e.kind) ? escapeHtml(String(e.kind)) : 'console';
+          return `<li class="font-mono text-[0.7rem] break-all opacity-90"><span class="opacity-70">[${kind}]</span> ${msg}${src ? ` <span class="opacity-60">(${src})</span>` : ''}</li>`;
+        }).join('');
+        detail = `<div class="ml-4 opacity-90">${reason}</div>${errItems ? `<ul class="ml-6 list-disc space-y-0.5">${errItems}</ul>` : ''}`;
+      }
+      return `<li><span class="${iconCls} font-medium">${icon}</span> ${name} ${path}</li>${detail}`;
+    }).join('');
+
+    const failing = state === 'failing';
+    const wrapCls = failing
+      ? 'border-amber-500/30 bg-amber-500/5 text-amber-600 dark:text-amber-500'
+      : 'border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-500';
+    const heading = failing
+      ? '⚠ Some checks failed — merge is blocked until they pass.'
+      : '✓ All checks passed on the staging build.';
+    const checked = pr.checks_checked_at
+      ? `<div class="mt-1 opacity-80">Last checked ${escapeHtml(relTime(pr.checks_checked_at))}.</div>`
+      : '';
+    return `
+      <div class="mt-2 rounded border px-2 py-1.5 ${wrapCls}">
+        <div class="font-medium">${heading}</div>
+        <ul class="mt-1 ml-1 space-y-0.5">${rows}</ul>
+        ${checked}
+        ${failing ? '<div class="mt-1 opacity-80">Pushing a fix rebuilds the preview and re-runs the checks — the block clears when they pass.</div>' : ''}
       </div>`;
   },
 
@@ -2867,11 +2938,15 @@ const AppView = {
   // and flips `resolving` true shortly after, at which point rank 1 takes
   // over), and many PRs can be behind main.
   _proposalPinRank(pr) {
-    if (!pr) return 3;
+    if (!pr) return 4;
     if (pr.status === 'merging') return 0;
     if (pr.resolving) return 1;
     if (pr.merge_conflict_state === 'failed') return 2;
-    return 3;
+    // #47: a proposal whose checks failed / couldn't run blocks merge and
+    // needs the owner's attention — pin it just below the conflict-failed
+    // affordance so it stays visible above ordinary chatter.
+    if (pr.check_state === 'failing' || pr.check_state === 'error') return 3;
+    return 4;
   },
 
   // The Open Issues list exactly as rendered: env-var-proposal twins
@@ -3552,6 +3627,41 @@ const AppView = {
       ? `The staging preview logged ${n} console error${n === 1 ? '' : 's'} — this change may break the app. Open the discussion to see them.`
       : 'The staging preview logged console errors — this change may break the app.';
     return `<span class="gc-warning-badge" title="${escapeHtml(title)}">⚠ ${escapeHtml(label)}</span>`;
+  },
+
+  // #47: "CI for proposals" checks badge — the pass/fail status of the
+  // proposal's automated tests against its staging build (check_state from
+  // GET /api/apps/:slug/promoted). Unlike the advisory console badge this
+  // mirrors a real merge gate (votes.checkAndMerge blocks a non-'passing'
+  // proposal), so the badge is the user-facing signal for "can this land".
+  //   passing → green ✓        failing → amber ⚠ · N
+  //   pending → grey spinner    error  → red ⚠ couldn't run
+  // Legacy rows with no check_state fall back to the advisory console badge
+  // so a mid-rollout proposal still shows something useful.
+  checksBadgeHtml(pr) {
+    if (!pr) return '';
+    // A merged proposal passed the gate by definition — the "✓ Merged"
+    // badge says it all; don't stack a redundant "✓ Checks passing".
+    if (pr.status === 'merged') return '';
+    const state = pr.check_state;
+    if (!state) return AppView.consoleWarningBadgeHtml(pr);
+    if (state === 'passing') {
+      return `<span class="gc-merged-badge" title="All automated tests passed on the staging build">✓ Checks passing</span>`;
+    }
+    if (state === 'failing') {
+      const n = Array.isArray(pr.test_results)
+        ? pr.test_results.filter((r) => r && r.status !== 'pass').length : 0;
+      const label = n ? `Checks failing · ${n}` : 'Checks failing';
+      const title = n
+        ? `${n} automated test${n === 1 ? '' : 's'} failed on the staging build — merge is blocked until checks pass. Open the discussion to see them.`
+        : 'Automated tests failed on the staging build — merge is blocked until checks pass.';
+      return `<span class="gc-warning-badge" title="${escapeHtml(title)}">⚠ ${escapeHtml(label)}</span>`;
+    }
+    if (state === 'error') {
+      return `<span class="gc-conflict-badge" title="The staging build or the test run itself broke, so the platform can't confirm the app works — merge is blocked until checks pass.">⚠ Checks couldn't run</span>`;
+    }
+    // 'pending' (or anything else): tests are still running.
+    return `<span class="gc-merging-badge" title="Automated tests are still running on the staging build — merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks running…</span>`;
   },
 
   // #195/#270: before/after visual tiles for a session's stored capture

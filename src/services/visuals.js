@@ -27,6 +27,7 @@ const github = require('./github');
 const caddy = require('./caddy');
 const prMetadata = require('./pr-metadata');
 const sessionBus = require('./session-bus');
+const appManifest = require('./app-manifest');
 const { CAPTURE_MAX_PATHS } = require('./testing-notes');
 const { getPool } = require('../db/pool');
 
@@ -276,6 +277,118 @@ async function storeConsoleCheck(pool, sessionId, result) {
   );
 }
 
+// ── Test suite (#47, "CI for proposals") ─────────────────────────────────
+// capture.js emits one frame per declared test:
+//   __USERNODE_TEST__ index=<n> status=<pass|fail> loadStatus=<n>
+//   <base64 JSON { name, path, consoleErrors:[...], failureReason }>
+//   __USERNODE_TEST_END__
+// Parse them into one record per index (latest wins on a dup index).
+const TEST_MAX_RESULTS = 20;
+
+function parseTests(stdout) {
+  const byIndex = new Map();
+  const lines = String(stdout || '').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.startsWith('__USERNODE_TEST__ ')) continue;
+    const attrs = {};
+    for (const m of line.matchAll(/(\w+)=(\S+)/g)) attrs[m[1]] = m[2];
+    const payloadLine = lines[i + 1] || '';
+    if (lines[i + 2] !== '__USERNODE_TEST_END__') continue;
+    const index = parseInt(attrs.index, 10) || 0;
+    const status = attrs.status === 'pass' ? 'pass' : 'fail';
+    const loadStatus = parseInt(attrs.loadStatus, 10) || 0;
+    let payload = {};
+    try {
+      const parsed = JSON.parse(Buffer.from(payloadLine, 'base64').toString('utf8'));
+      if (parsed && typeof parsed === 'object') payload = parsed;
+    } catch { /* malformed — keep the status from the header line */ }
+    byIndex.set(index, {
+      index,
+      name: typeof payload.name === 'string' ? payload.name : `test ${index + 1}`,
+      path: typeof payload.path === 'string' ? payload.path : '',
+      status,
+      loadStatus,
+      consoleErrors: Array.isArray(payload.consoleErrors) ? payload.consoleErrors : [],
+      failureReason: typeof payload.failureReason === 'string' ? payload.failureReason : '',
+    });
+    i += 2;
+  }
+  return Array.from(byIndex.values()).sort((a, b) => a.index - b.index);
+}
+
+// Classify the parsed test frames into the persisted snapshot:
+//   'passing' — at least one test ran and ALL passed
+//   'failing' — at least one test failed an assertion / had console errors
+//   'error'   — tests were expected but NONE produced a parseable frame
+//               (capture container crashed / staging unreachable) → the
+//               gate blocks fail-closed, the UI shows "couldn't run"
+// `expectedCount` is how many tests the orchestrator dispatched, so a
+// partial run (some frames missing) is treated as 'error' not 'passing'.
+function classifyTests(frames, expectedCount) {
+  const results = (Array.isArray(frames) ? frames : []).slice(0, TEST_MAX_RESULTS).map((f) => ({
+    name: String(f.name || '').slice(0, CONSOLE_MAX_MSG_LEN),
+    path: String(f.path || '').slice(0, CONSOLE_MAX_MSG_LEN),
+    status: f.status === 'pass' ? 'pass' : 'fail',
+    consoleErrors: (Array.isArray(f.consoleErrors) ? f.consoleErrors : [])
+      .slice(0, CONSOLE_MAX_ERRORS)
+      .map((e) => ({
+        kind: (e && typeof e.kind === 'string') ? e.kind : 'console',
+        message: String((e && e.message) || '').slice(0, CONSOLE_MAX_MSG_LEN),
+        source: (e && e.source) ? String(e.source).slice(0, CONSOLE_MAX_MSG_LEN) : '',
+      })),
+    failureReason: String(f.failureReason || '').slice(0, CONSOLE_MAX_MSG_LEN),
+  }));
+  const expected = Number.isInteger(expectedCount) ? expectedCount : results.length;
+  if (!results.length) return { state: 'error', results: [] };
+  if (expected > 0 && results.length < expected) return { state: 'error', results };
+  const anyFail = results.some((r) => r.status !== 'pass');
+  return { state: anyFail ? 'failing' : 'passing', results };
+}
+
+// Latest-only checks snapshot, tied to the commit it describes (staleness
+// signal for the merge gate). The console_* columns are kept written in
+// parallel (deriving an advisory clean/errors/unknown from the same run)
+// for one release so a rolling deploy's old readers don't break.
+async function storeChecks(pool, sessionId, commitSha, result) {
+  await pool.query(
+    `UPDATE chat_sessions
+       SET check_state = $1, test_results = $2, checks_commit_sha = $3, checks_checked_at = NOW()
+     WHERE id = $4`,
+    [result.state, JSON.stringify(result.results || []), commitSha || null, sessionId]
+  );
+}
+
+// Set 'pending' the instant a (re)check starts so a stale 'passing' can't
+// slip through the merge gate while the fresh build is being tested.
+async function setChecksPending(pool, sessionId, commitSha) {
+  await pool.query(
+    `UPDATE chat_sessions
+       SET check_state = 'pending', checks_commit_sha = $2, checks_checked_at = NOW()
+     WHERE id = $1`,
+    [sessionId, commitSha || null]
+  );
+}
+
+// Map the structured test result onto the legacy advisory console snapshot
+// so the dual-written console_* columns stay coherent for one release.
+function consoleSnapshotFromTests(result) {
+  if (!result || result.state === 'error') return { state: 'unknown', errors: [] };
+  const seen = new Set();
+  const errors = [];
+  for (const r of (result.results || [])) {
+    for (const e of (Array.isArray(r.consoleErrors) ? r.consoleErrors : [])) {
+      const message = String((e && e.message) || '').slice(0, CONSOLE_MAX_MSG_LEN);
+      if (!message || seen.has(message)) continue;
+      seen.add(message);
+      errors.push({ kind: e.kind || 'console', message, source: e.source || '' });
+      if (errors.length >= CONSOLE_MAX_ERRORS) break;
+    }
+    if (errors.length >= CONSOLE_MAX_ERRORS) break;
+  }
+  return { state: errors.length ? 'errors' : 'clean', errors };
+}
+
 // ── Storage ────────────────────────────────────────────────────────────
 // Client shape (#270): an ordered list of capture groups —
 //   { captures: [ { index, path, before: {png,webm,gif}, after: {...} } ] }
@@ -442,9 +555,16 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     return;
   }
   _inFlight.add(session.id);
+  const pool = getPool(config);
   try {
-    const pool = getPool(config);
     const [, repoOwner, repoName] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+
+    // #47: mark the checks 'pending' for this commit the moment the run
+    // starts, so the merge gate (votes.checkAndMerge) can't act on a stale
+    // 'passing' while the fresh build is being tested. Best-effort.
+    await setChecksPending(pool, session.id, commitHash).catch((err) => {
+      log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message });
+    });
 
     // Heuristic gate. If the compare call fails, default to capturing —
     // staging exists, and a wasted screenshot is cheaper than a missed one.
@@ -618,9 +738,34 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       });
     }
 
+    // #47: resolve the proposal's automated test suite. Declared tests live
+    // in the branch's dapp.json `tests` array (fetched from GitHub so we
+    // don't depend on the now-deleted staging clone). When none are
+    // declared we synthesize the baseline — one "loads with no console
+    // errors" test per capture path — so every proposal gets at least the
+    // #381 coverage. Each test's route is resolved to the same staging
+    // origin + token (and self-app hash normalisation) as the after target.
+    const declaredTests = await resolveDeclaredTests(repoOwner, repoName, session.branch_name);
+    const tests = (declaredTests.length
+      ? declaredTests
+      : capturePaths.map((p) => ({ name: `Loads ${p}`, path: p, expectSelector: '', expectText: '', allowConsoleErrors: false }))
+    ).map((t, index) => {
+      const visitPath = isSelfApp ? selfAppHashPath(t.path) : t.path;
+      return {
+        index,
+        name: t.name,
+        path: t.path,
+        url: withToken(`http://${stagingName}:3000${visitPath}`, captureToken),
+        expectSelector: t.expectSelector || '',
+        expectText: t.expectText || '',
+        allowConsoleErrors: !!t.allowConsoleErrors,
+      };
+    });
+
     log.info('visuals', 'Starting capture', {
       sessionId: session.id, slug: app.slug, before: media && prodRunning, paths: capturePaths,
       authenticated: !!captureToken, selfApp: isSelfApp, deviceScaleFactor, media,
+      tests: tests.length, declaredTests: declaredTests.length,
     });
     let stdout;
     try {
@@ -650,6 +795,10 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           // #381: MEDIA=0 → console-only run (no screenshots/recordings,
           // no prod "before"). The console-error check still runs.
           MEDIA: media ? '1' : '0',
+          // #47: the proposal's automated test suite (each entry pre-resolved
+          // to a staging url + assertions). The container runs these and
+          // emits one __USERNODE_TEST__ frame each.
+          TESTS: JSON.stringify(tests),
         },
         timeoutMs: RUN_TIMEOUT_MS,
         maxBuffer: RUN_MAX_BUFFER,
@@ -668,19 +817,24 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       log.warn('visuals', 'Capture frame failed', { sessionId: session.id, ...f });
     }
 
-    // #381: console-error check is stored FIRST so it lands even on the
-    // console-only path (where there are no media artifacts and the
-    // storeArtifacts branch below returns early). Best-effort: a parse
-    // miss degrades to 'unknown' (no badge), never throws.
-    const consoleResult = classifyConsole(parseConsole(stdout));
+    // #47: the test suite result is stored FIRST so it lands even on the
+    // console-only path (no media artifacts; storeArtifacts returns early).
+    // Best-effort: a missing/partial set degrades to 'error' (the gate
+    // blocks fail-closed, the card shows "couldn't run"), never throws.
+    // The advisory console_* columns are dual-written from the same run for
+    // one release so a rolling deploy's old readers stay coherent.
+    const checksResult = classifyTests(parseTests(stdout), tests.length);
     try {
-      await storeConsoleCheck(pool, session.id, consoleResult);
-      log.info('visuals', 'Console check stored', {
-        sessionId: session.id, state: consoleResult.state, errors: consoleResult.errors.length,
+      await storeChecks(pool, session.id, commitHash, checksResult);
+      await storeConsoleCheck(pool, session.id, consoleSnapshotFromTests(checksResult));
+      log.info('visuals', 'Checks stored', {
+        sessionId: session.id, state: checksResult.state,
+        tests: checksResult.results.length,
+        failing: checksResult.results.filter((r) => r.status !== 'pass').length,
       });
-      notifyConsoleCheck(session.id, consoleResult, send);
+      notifyChecks(session.id, checksResult, commitHash, send);
     } catch (err) {
-      log.warn('visuals', 'Console-check store failed (non-fatal)', {
+      log.warn('visuals', 'Checks store failed (non-fatal)', {
         sessionId: session.id, err: err.message,
       });
     }
@@ -712,8 +866,36 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     });
   } catch (err) {
     log.warn('visuals', 'Capture failed (non-fatal)', { sessionId: session.id, err: err.message });
+    // #47: the capture/test pipeline broke before it could record a
+    // verdict. Don't leave the proposal stuck 'pending' forever — record
+    // 'error' so the gate blocks fail-closed with a visible "couldn't run"
+    // rather than an indefinite spinner. Best-effort.
+    try {
+      await storeChecks(pool, session.id, commitHash, { state: 'error', results: [] });
+      notifyChecks(session.id, { state: 'error', results: [] }, commitHash, send);
+    } catch { /* nothing more we can do */ }
   } finally {
     _inFlight.delete(session.id);
+  }
+}
+
+// #47: fetch the proposal branch's declared dapp.json `tests` from GitHub
+// (the staging clone is gone by now) and normalise via the manifest
+// reader. Returns [] when GitHub is disabled, the file is absent, or
+// anything goes wrong — the caller then synthesizes the baseline suite.
+async function resolveDeclaredTests(repoOwner, repoName, branch) {
+  if (!github.isEnabled() || !repoOwner || !repoName || !branch) return [];
+  try {
+    const raw = await github.getFileContent(repoOwner, repoName, appManifest.MANIFEST_FILENAME, branch);
+    if (!raw) return [];
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch { return []; }
+    return appManifest.readTests(parsed);
+  } catch (err) {
+    log.warn('visuals', 'Declared-test fetch failed — using baseline', {
+      repo: `${repoOwner}/${repoName}`, branch, err: err.message,
+    });
+    return [];
   }
 }
 
@@ -738,26 +920,32 @@ function notifyVisualsReady(sessionId, visuals, send) {
   }
 }
 
-// #381: tell open clients the console check landed so the warning badge
-// upgrades in place without a full panel reload. Same emit strategy as
+// #47: the per-check WS push lives in notifyChecks below. (The #381
+// console-only `console_check_ready` notifier was retired when the
+// console check became one test in the suite — clients now listen for
+// `checks_ready`.)
+
+// #47: tell open clients the checks landed so the checks badge upgrades in
+// place without a full panel reload. Same emit strategy as
 // notifyVisualsReady — prefer the turn's `send`, else bus + global WS.
-function notifyConsoleCheck(sessionId, result, send) {
+function notifyChecks(sessionId, result, commitSha, send) {
   const data = {
     sessionId,
-    consoleCheckState: result.state,
-    errorCount: (result.errors || []).length,
+    checkState: result.state,
+    failingCount: (result.results || []).filter((r) => r.status !== 'pass').length,
+    commitSha: commitSha || null,
   };
   try {
     if (send) {
-      send('console_check_ready', data);
+      send('checks_ready', data);
       return;
     }
-    const event = { type: 'console_check_ready', _seq: `cc${Date.now().toString(36)}-${++_notifySeq}`, ...data };
+    const event = { type: 'checks_ready', _seq: `chk${Date.now().toString(36)}-${++_notifySeq}`, ...data };
     sessionBus.publish(sessionId, event);
     const { broadcastGlobal } = require('./ws');
-    broadcastGlobal({ type: 'session_event', sessionId, event: 'console_check_ready', ...event });
+    broadcastGlobal({ type: 'session_event', sessionId, event: 'checks_ready', ...event });
   } catch (err) {
-    log.warn('visuals', 'console_check_ready notify failed', { sessionId, err: err.message });
+    log.warn('visuals', 'checks_ready notify failed', { sessionId, err: err.message });
   }
 }
 
@@ -769,6 +957,12 @@ module.exports = {
   parseConsole,
   classifyConsole,
   storeConsoleCheck,
+  parseTests,
+  classifyTests,
+  storeChecks,
+  setChecksPending,
+  consoleSnapshotFromTests,
+  resolveDeclaredTests,
   isFrontendFile,
   isUiAffecting,
   parseShots,

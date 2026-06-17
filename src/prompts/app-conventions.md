@@ -202,6 +202,60 @@ pathnames. **Always point a deep `path:` at the specific changed
 self-app screen** — omitting it defaults to `/` (the home feed), which
 no capture fix can rescue.
 
+## Proposal tests — "CI for proposals"
+
+Every proposal carries a **checks** status: after each staging build the
+platform runs a set of automated headless-browser tests against the
+proposal's staging preview and records a pass/fail result. **A proposal
+whose checks are not passing — failing, still running, or couldn't run —
+is BLOCKED from merging even with a winning vote** (admins can still
+force-merge). This is the platform's safeguard against merges that break
+the app.
+
+A **test** navigates one staging route and asserts that the page loads
+(HTTP < 400), throws no console errors / uncaught exceptions, and —
+optionally — that an expected element or text is present. The
+console-error check is the built-in baseline: every proposal gets a
+"loads with no console errors" test on its routes for free, even with no
+tests declared.
+
+Declare tests in a top-level `tests` array in `dapp.json`. They live in
+the repo and **accumulate across proposals** — once a proposal merges, its
+tests run on every future proposal, exactly like CI tests in a GitHub
+repo. Shape:
+
+```json
+{
+  "tests": [
+    { "name": "Board renders", "path": "/board?demo=1", "expectSelector": ".board" },
+    { "name": "Settings opens", "path": "/settings", "expectText": "Preferences" }
+  ]
+}
+```
+
+Per-test fields:
+
+- `path` — **required.** A relative route within the app (same rules as a
+  testing-block `path:`: starts with a single `/`, no scheme/host). For
+  the hash-routed self-app, use the in-app route segments (e.g.
+  `/leaderboard`) — the platform normalises them into the fragment.
+- `name` — short label shown in the checks detail. Defaults to the path.
+- `expectSelector` — optional CSS selector that must be present after the
+  page settles.
+- `expectText` — optional text that must appear in the page body.
+- `allowConsoleErrors` — set `true` only for a route that legitimately
+  logs errors; it opts that one test out of the baseline no-console-errors
+  rule.
+
+When you add or change a user-visible screen, **add or extend a test for
+it** in the same commit, pointing it at the same route(s) you put in the
+TESTING block's `path:` lines. The test's route renders against a FRESH,
+EMPTY staging database, so seed any data the route needs per "Staging mock
+data" above (a blank page usually means missing seed data, not a bug). A
+test that depends on missing seed data will fail and block your merge.
+Because checks gate merge, verify your declared tests pass (use the in-loop
+browser on a build turn) before you commit.
+
 ## Public vs private tables — **IMPORTANT**
 
 Staging containers get a **copy of the production database** so PRs

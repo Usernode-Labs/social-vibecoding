@@ -45,8 +45,62 @@
 const fs = require('fs');
 const path = require('path');
 const log = require('./logger');
+const { validatePath } = require('./testing-notes');
 
 const MANIFEST_FILENAME = 'dapp.json';
+
+// #47: per-app automated tests (the "CI for proposals" framework). Bounds
+// mirror the testing-block path cap so a proposal can't queue an unbounded
+// suite against the time-boxed capture container. Each test navigates one
+// staging route and asserts load + no-console-errors (+ optional
+// selector/text). Extras over the cap are dropped and logged, never
+// silently truncated.
+const MAX_TESTS = 10;
+const MAX_TEST_NAME_LEN = 120;
+const MAX_TEST_SELECTOR_LEN = 256;
+const MAX_TEST_TEXT_LEN = 256;
+
+// Normalize the optional top-level `tests` array. Each entry must carry a
+// valid `path` (same rules as a testing-block path: relative, single
+// leading slash, no scheme/whitespace/markup). `name` falls back to the
+// path. `expectSelector` / `expectText` are optional presence assertions;
+// `allowConsoleErrors` opts a test out of the baseline no-console-errors
+// rule (for a route that legitimately logs errors). Invalid entries are
+// dropped, duplicate (name+path) pairs collapse, the list is capped. A
+// non-array / absent block resolves to [] — exactly the legacy behaviour
+// (no declared tests → the orchestrator synthesizes the baseline). Never
+// throws.
+function readTests(parsed) {
+  const raw = Array.isArray(parsed?.tests) ? parsed.tests : [];
+  const out = [];
+  const seen = new Set();
+  let dropped = 0;
+  for (const t of raw) {
+    if (!t || typeof t !== 'object') { dropped++; continue; }
+    const p = validatePath(t.path);
+    if (!p) { dropped++; continue; }
+    const name = (typeof t.name === 'string' && t.name.trim())
+      ? t.name.trim().slice(0, MAX_TEST_NAME_LEN)
+      : p;
+    const dedupeKey = `${name}${p}`;
+    if (seen.has(dedupeKey)) continue;
+    if (out.length >= MAX_TESTS) { dropped++; continue; }
+    seen.add(dedupeKey);
+    out.push({
+      name,
+      path: p,
+      expectSelector: typeof t.expectSelector === 'string' && t.expectSelector.trim()
+        ? t.expectSelector.trim().slice(0, MAX_TEST_SELECTOR_LEN) : null,
+      expectText: typeof t.expectText === 'string' && t.expectText.trim()
+        ? t.expectText.trim().slice(0, MAX_TEST_TEXT_LEN) : null,
+      allowConsoleErrors: !!t.allowConsoleErrors,
+    });
+  }
+  if (dropped > 0) {
+    log.warn('app-manifest', 'Dropped invalid/over-cap test entries', { dropped, kept: out.length, cap: MAX_TESTS });
+  }
+  return out;
+}
 
 // Reserved keys the platform owns. A manifest entry using one of these
 // is rejected on read so a dapp can't shadow / spoof the platform-injected
@@ -198,9 +252,9 @@ function read(cloneDir) {
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
-    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE } };
+    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [] };
     log.warn('app-manifest', 'Read failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE } };
+    return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [] };
   }
 
   let parsed;
@@ -208,7 +262,7 @@ function read(cloneDir) {
     parsed = JSON.parse(raw);
   } catch (err) {
     log.warn('app-manifest', 'Parse failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE } };
+    return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [] };
   }
 
   const secretsIn = Array.isArray(parsed?.secrets) ? parsed.secrets : [];
@@ -250,6 +304,7 @@ function read(cloneDir) {
     llm: readLlm(parsed),
     visibility: readVisibility(parsed),
     screenshot: readScreenshot(parsed),
+    tests: readTests(parsed),
   };
 }
 
@@ -470,6 +525,8 @@ module.exports = {
   readLlm,
   readVisibility,
   readScreenshot,
+  readTests,
+  MAX_TESTS,
   describeVisibility,
   reconcileAppName,
   reconcileAppVisibility,

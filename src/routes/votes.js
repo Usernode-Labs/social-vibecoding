@@ -63,6 +63,14 @@ function stagingMockProposals() {
     console_check_state: 'clean',
     console_errors: [],
     console_checked_at: hoursAgo(hours),
+    // #47: "CI for proposals" check snapshot. Passing by default; the
+    // dedicated failing/pending/error mocks below override these so every
+    // checks-badge variant + the per-test detail are reviewable via ?demo=1.
+    check_state: 'passing',
+    test_results: [
+      { name: 'Home loads', path: '/', status: 'pass', consoleErrors: [], failureReason: '' },
+    ],
+    checks_checked_at: hoursAgo(hours),
     // Community-voted priority + assignee chips. Populated so both card
     // states are reviewable on staging via ?demo=1.
     priority: { top: 'high', count: 2, myValue: null },
@@ -131,6 +139,46 @@ function stagingMockProposals() {
         { kind: 'pageerror', message: "TypeError: Cannot read properties of undefined (reading 'map')", source: 'app.js:142' },
         { kind: 'console', message: 'Failed to load resource: the server responded with a status of 500 (Internal Server Error)', source: '/api/feed:0' },
       ],
+      // #47: same proposal fails its checks — the amber "⚠ Checks failing"
+      // badge + the per-test detail (a console-error failure plus a
+      // missing-selector failure) are reviewable via ?demo=1, and the gate
+      // would block this merge.
+      check_state: 'failing',
+      test_results: [
+        { name: 'Home loads', path: '/', status: 'pass', consoleErrors: [], failureReason: '' },
+        {
+          name: 'Feed renders', path: '/#/feed', status: 'fail',
+          consoleErrors: [
+            { kind: 'pageerror', message: "TypeError: Cannot read properties of undefined (reading 'map')", source: 'app.js:142' },
+          ],
+          failureReason: '1 console error on load',
+        },
+        {
+          name: 'Composer is visible', path: '/#/feed', status: 'fail',
+          consoleErrors: [],
+          failureReason: 'Expected element ".composer" was not found',
+        },
+      ],
+    },
+    // #47: a proposal still running its checks — the grey "Checks running…"
+    // spinner badge is reviewable via ?demo=1, and the gate would block the
+    // merge until the run reports.
+    {
+      ...mk(9000008, 900108,
+        '[Mock] Checks-pending test: tests are still running on the staging build',
+        5, 2, 0, 1),
+      check_state: 'pending',
+      test_results: [],
+    },
+    // #47: a proposal whose checks could not run (staging build / capture
+    // broke) — the red "⚠ Checks couldn't run" badge is reviewable via
+    // ?demo=1, and the gate blocks fail-closed.
+    {
+      ...mk(9000009, 900109,
+        '[Mock] Checks-error test: the staging build or test run itself broke',
+        6, 1, 0, 0),
+      check_state: 'error',
+      test_results: [],
     },
   ];
 }
@@ -175,6 +223,12 @@ function stagingMockMerged() {
     console_check_state: 'clean',
     console_errors: [],
     console_checked_at: daysAgo(days),
+    // #47: a merged proposal passed its checks by definition of the gate.
+    check_state: 'passing',
+    test_results: [
+      { name: 'Home loads', path: '/', status: 'pass', consoleErrors: [], failureReason: '' },
+    ],
+    checks_checked_at: daysAgo(days),
     // Read-only priority + assignee chips persist on completed proposals.
     priority: { top: 'medium', count: 2, myValue: null },
     assignee: { top: 'staging-tester', count: 2, myValue: null },
@@ -621,6 +675,7 @@ function voteRoutes(config) {
         `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status,
                 cs.created_at, cs.promoted_at,
                 cs.merge_conflict_state, cs.behind_main,
+                cs.check_state,
                 a.id AS app_id, a.slug AS app_slug, a.name AS app_name,
                 (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count,
                 (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'no') AS no_count
@@ -692,6 +747,10 @@ function voteRoutes(config) {
            -- #381: console-error check snapshot for the "may break the app"
            -- warning badge + detail block (advisory, never gates the vote).
            cs.console_check_state, cs.console_errors, cs.console_checked_at,
+           -- #47: "CI for proposals" check snapshot for the checks badge +
+           -- per-test detail block. Unlike the console snapshot this GATES
+           -- merge (checkAndMerge blocks a non-'passing' proposal).
+           cs.check_state, cs.test_results, cs.checks_checked_at,
            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') as yes_count,
            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'no') as no_count,
            (SELECT vote FROM pr_votes WHERE session_id = cs.id AND user_id = $2) as my_vote,
@@ -837,6 +896,9 @@ function voteRoutes(config) {
            -- #381: console-error check snapshot so the warning + detail
            -- block stay visible on a merged proposal for post-hoc review.
            cs.console_check_state, cs.console_errors, cs.console_checked_at,
+           -- #47: checks snapshot, kept visible on merged proposals for
+           -- post-hoc review (a merged proposal passed, by the gate).
+           cs.check_state, cs.test_results, cs.checks_checked_at,
            -- #58: the vote threshold + active-user count snapshotted at merge
            -- time. The merged-PR pill renders against votes_required (falling
            -- back to the live majority for legacy rows where it's NULL), and a
@@ -1182,6 +1244,45 @@ async function checkAndMerge(config, pool, session, options = {}) {
         });
       }
       return { merged: false, yesCount, needed: majority, behindMain: session.behind_main };
+    }
+
+    // #47: "CI for proposals" gate. A proposal merges only when its
+    // automated tests (the dapp.json `tests` suite, run against the staging
+    // build by services/visuals.js — see check_state) are PASSING. Anything
+    // else blocks fail-closed: 'failing' (a test broke), 'pending' (the
+    // check is still running, or a fresh commit reset it and the rebuild
+    // hasn't reported yet), 'error' ("couldn't run"), or NULL (never
+    // checked). This is the answer to "everything got super broken" (#47).
+    // Re-read fresh: the in-memory `session` row can predate the latest
+    // build's verdict. Admin force-merge bypasses (skipped under !force).
+    const { rows: checkRows } = await pool.query(
+      `SELECT check_state, test_results FROM chat_sessions WHERE id = $1`,
+      [session.id]
+    );
+    const checkState = checkRows[0]?.check_state || null;
+    if (checkState !== 'passing') {
+      const failingCount = Array.isArray(checkRows[0]?.test_results)
+        ? checkRows[0].test_results.filter((r) => r && r.status !== 'pass').length
+        : 0;
+      const label = session.pr_title
+        ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+        : `PR #${session.pr_number || session.id}`;
+      const reason = checkState === 'failing'
+        ? `has ${failingCount || 'failing'} test${failingCount === 1 ? '' : 's'} failing`
+        : checkState === 'error'
+          ? "couldn't run its tests"
+          : 'is still running its tests';
+      const blockMsg = `${label} reached the vote threshold but ${reason} — merge is blocked until checks pass. The proposal's tests re-run automatically when its owner pushes a fix.`;
+      await sendSystemMessage(pool, session.app_id, blockMsg, 'system').catch(() => {});
+      await sendSystemMessage(pool, session.app_id, blockMsg, 'system',
+        null, { type: 'session', ref: session.id }).catch(() => {});
+      log.info('votes', 'Merge blocked: checks not passing', {
+        sessionId: session.id, checkState, failingCount,
+      });
+      return {
+        merged: false, yesCount, needed: majority,
+        checksBlocked: true, checkState: checkState || 'pending', failingCount,
+      };
     }
   }
   // For admin force-merge we deliberately skip the behind_main pre-check

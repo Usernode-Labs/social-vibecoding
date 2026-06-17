@@ -208,7 +208,8 @@ async function drainApp(config, appId, excludeId) {
        WHERE cs.app_id = $1 AND cs.status = 'promoted' AND cs.id != $2
          AND (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') >= $3
          AND NOT (cs.id = ANY($4::int[]))
-       ORDER BY (cs.behind_main = 0 AND COALESCE(cs.merge_conflict_state, 'clean') NOT IN ('conflict', 'failed', 'resolving')) DESC,
+       ORDER BY (cs.behind_main = 0 AND COALESCE(cs.merge_conflict_state, 'clean') NOT IN ('conflict', 'failed', 'resolving')
+                  AND COALESCE(cs.check_state, '') = 'passing') DESC,
                 yes_count DESC, cs.promoted_at ASC NULLS LAST, cs.created_at ASC
        LIMIT 1`,
       [appId, excludeId, majority, attempted]

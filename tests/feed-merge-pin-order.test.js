@@ -80,11 +80,14 @@ test('_proposalPinRank: maps each state to the badge-matching tier', () => {
   assert.equal(AppView._proposalPinRank({ status: 'merging' }), 0, 'merging → 0');
   assert.equal(AppView._proposalPinRank({ status: 'promoted', resolving: true }), 1, 'resolving → 1');
   assert.equal(AppView._proposalPinRank({ status: 'promoted', merge_conflict_state: 'failed' }), 2, 'failed → 2');
-  assert.equal(AppView._proposalPinRank({ status: 'promoted' }), 3, 'plain promoted → 3');
+  // #47: failing / error checks pin at tier 3, just below conflict-failed.
+  assert.equal(AppView._proposalPinRank({ status: 'promoted', check_state: 'failing' }), 3, 'checks failing → 3');
+  assert.equal(AppView._proposalPinRank({ status: 'promoted', check_state: 'error' }), 3, 'checks error → 3');
+  assert.equal(AppView._proposalPinRank({ status: 'promoted' }), 4, 'plain promoted → 4');
   // Precedence: merging outranks a stale resolving/failed snapshot on the same row.
   assert.equal(AppView._proposalPinRank({ status: 'merging', resolving: true, merge_conflict_state: 'failed' }), 0);
   assert.equal(AppView._proposalPinRank({ status: 'promoted', resolving: true, merge_conflict_state: 'failed' }), 1);
-  assert.equal(AppView._proposalPinRank(null), 3, 'null guard → normal tier');
+  assert.equal(AppView._proposalPinRank(null), 4, 'null guard → normal tier');
 });
 
 test('feed: merging → resolving → failed → normal, regardless of recency', () => {

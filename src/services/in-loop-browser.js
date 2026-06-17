@@ -83,7 +83,18 @@ const IN_LOOP_BROWSER_GUIDANCE = `- OPTIONAL in-loop browser (encouraged, NOT re
     minute or two of wall-clock. If the app won't boot (no local Postgres,
     missing required secrets, crash on start), DON'T fight it — note that you
     skipped the visual check and commit your work anyway. The in-loop browser
-    must never block or fail the turn.`;
+    must never block or fail the turn.
+  - PROPOSAL CHECKS ("CI for proposals"): the platform runs automated
+    headless-browser tests against your staging build, and a proposal whose
+    checks aren't passing is BLOCKED from merging. Tests are declared in
+    \`dapp.json\`'s \`tests\` array (each navigates a route and asserts it
+    loads with no console errors, plus optional selector/text); every
+    proposal also gets the baseline "loads with no console errors" check for
+    free. When you add/change a user-visible screen, add or extend a test for
+    it in the same commit, reusing the route(s) you put in the TESTING block's
+    \`path:\` lines, and seed any data that route needs (an empty staging DB
+    makes a route fail). Use this in-loop browser to confirm your declared
+    tests pass before you commit — a failing test blocks the merge.`;
 
 module.exports = {
   INLOOP_PORT,
