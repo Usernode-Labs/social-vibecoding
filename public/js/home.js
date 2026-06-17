@@ -295,16 +295,17 @@ const Home = {
     // file list lives on the proposal detail screen. Mirrors the card's
     // priority order, minus the merging/merged/resolving states the
     // home strip doesn't surface.
+    // #386: the red warning fires only on 'failed' (an auto-resolve
+    // attempt ran and couldn't fix it). A pre-attempt 'conflict' snapshot
+    // always carries behind_main >= 1, so it falls through to the neutral
+    // amber "Behind" chip rather than a red "Conflicts" warning.
     const mergeBadge = (p) => {
       const mcs = p.merge_conflict_state;
       if (mcs === 'failed') {
         return '<span class="text-[0.65rem] font-medium text-red-500 uppercase shrink-0" title="Automatic conflict resolution failed">⚠ Failed</span>';
       }
-      if (mcs === 'conflict') {
-        return '<span class="text-[0.65rem] font-medium text-red-500 uppercase shrink-0" title="Conflicts with main">⚠ Conflicts</span>';
-      }
       const behind = parseInt(p.behind_main, 10) || 0;
-      if (mcs === 'behind' || behind > 0) {
+      if (mcs === 'behind' || mcs === 'conflict' || behind > 0) {
         return `<span class="text-[0.65rem] font-medium text-amber-500 uppercase shrink-0" title="Behind main">Behind${behind ? ` · ${behind}` : ''}</span>`;
       }
       return '';
