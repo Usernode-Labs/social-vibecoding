@@ -11,6 +11,7 @@ const notifications = require('../services/notifications');
 const { isAppLocked, hasAdminYesVote } = require('../services/admin-approval');
 const events = require('../services/events');
 const appAccess = require('../services/app-access');
+const topicAttrs = require('../services/topic-attributes');
 
 // Staging-only mock PR proposals for GET /api/apps/:slug/promoted,
 // appended only when the request carries ?demo=1 (forwarded from the
@@ -62,6 +63,10 @@ function stagingMockProposals() {
     console_check_state: 'clean',
     console_errors: [],
     console_checked_at: hoursAgo(hours),
+    // Community-voted priority + assignee chips. Populated so both card
+    // states are reviewable on staging via ?demo=1.
+    priority: { top: 'high', count: 2, myValue: null },
+    assignee: { top: 'staging-tester', count: 3, myValue: null },
   });
   return [
     mk(9000001, 900101,
@@ -170,6 +175,9 @@ function stagingMockMerged() {
     console_check_state: 'clean',
     console_errors: [],
     console_checked_at: daysAgo(days),
+    // Read-only priority + assignee chips persist on completed proposals.
+    priority: { top: 'medium', count: 2, myValue: null },
+    assignee: { top: 'staging-tester', count: 2, myValue: null },
   });
   return [
     mk(9100001, 910101,
@@ -755,6 +763,19 @@ function voteRoutes(config) {
         row.resolving = isResolving(row.id);
       }
 
+      // Community-voted priority + assigned-person summary per proposal,
+      // keyed by session id (target_type='proposal'). Same minimal shape
+      // the issue feed attaches; the dropdown lazy-loads the full tally
+      // from /api/apps/:slug/topics/proposal/:id/attributes.
+      const promotedAttrs = await topicAttrs.summarizeForTargets(
+        pool, appRows[0].id, 'proposal', rows.map((r) => r.id), userId
+      );
+      for (const row of rows) {
+        const s = promotedAttrs.get(row.id) || topicAttrs.emptySummary();
+        row.priority = s.priority;
+        row.assignee = s.assignee;
+      }
+
       // Staging-only demo mode (?demo=1): append long-title mock
       // proposals for layout verification. The id check keeps the
       // append idempotent should a mock id ever materialize in the
@@ -864,6 +885,17 @@ function voteRoutes(config) {
          LIMIT 20`,
         [appRows[0].id, userId]
       );
+
+      // Same priority + assigned-person summary on completed proposals, so
+      // the read-only chips stay visible after a PR merges.
+      const mergedAttrs = await topicAttrs.summarizeForTargets(
+        pool, appRows[0].id, 'proposal', rows.map((r) => r.id), userId
+      );
+      for (const row of rows) {
+        const s = mergedAttrs.get(row.id) || topicAttrs.emptySummary();
+        row.priority = s.priority;
+        row.assignee = s.assignee;
+      }
 
       // Staging-only demo mode (?demo=1): append mock merged rows so the
       // clickable Completed list + 💬 badge are verifiable against a

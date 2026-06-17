@@ -100,4 +100,15 @@ const proposalDiscussLimiter = makeLimiter({
   message: 'Too many messages — slow down for a minute.',
 });
 
-module.exports = { authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, chatLimiter, proposalDiscussLimiter };
+// Priority / assignee attribute votes: 60 / minute / user. Loose enough
+// that switching your pick a few times never bumps it, tight enough to
+// stop a scripted vote-spam loop. Per-user keyed for shared-NAT fairness.
+const attributeVoteLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 60,
+  name: 'attribute-vote',
+  keyByUser: true,
+  message: 'Too many updates — slow down for a minute.',
+});
+
+module.exports = { authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, chatLimiter, proposalDiscussLimiter, attributeVoteLimiter };
