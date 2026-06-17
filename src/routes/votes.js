@@ -56,6 +56,12 @@ function stagingMockProposals() {
     last_message_at: chat ? hoursAgo(Math.max(0, hours - 1)) : null,
     visuals: null,
     resolving: false,
+    // #381: console-error check snapshot. Clean by default; the dedicated
+    // error mock below overrides these so the warning badge + detail block
+    // are reviewable on staging via ?demo=1.
+    console_check_state: 'clean',
+    console_errors: [],
+    console_checked_at: hoursAgo(hours),
   });
   return [
     mk(9000001, 900101,
@@ -81,6 +87,19 @@ function stagingMockProposals() {
     mk(9000004, 900104,
       '[Mock] Make this app invite-only build, public to view',
       2, 1, 0, 1),
+    // #381: a proposal whose staging preview logged console errors, so the
+    // amber "⚠ Console errors" badge and the expanded error list in the
+    // detail view are reviewable on staging via ?demo=1.
+    {
+      ...mk(9000005, 900105,
+        '[Mock] Console-error test: refactor the feed renderer (logs errors on load)',
+        4, 1, 0, 3),
+      console_check_state: 'errors',
+      console_errors: [
+        { kind: 'pageerror', message: "TypeError: Cannot read properties of undefined (reading 'map')", source: 'app.js:142' },
+        { kind: 'console', message: 'Failed to load resource: the server responded with a status of 500 (Internal Server Error)', source: '/api/feed:0' },
+      ],
+    },
   ];
 }
 
@@ -119,6 +138,11 @@ function stagingMockMerged() {
     revert_pr_number: null,
     revert_pr_url: null,
     revert_status: null,
+    // #381: merged mocks are clean by default (the warning is reviewable on
+    // the promoted list); these keep the detail view from reading undefined.
+    console_check_state: 'clean',
+    console_errors: [],
+    console_checked_at: daysAgo(days),
   });
   return [
     mk(9100001, 910101,
@@ -630,6 +654,9 @@ function voteRoutes(config) {
            -- #361: persisted merge-conflict snapshot for the card badge +
            -- detail block (state, conflicting file paths, last-checked).
            cs.merge_conflict_state, cs.behind_main, cs.conflict_files, cs.conflict_checked_at,
+           -- #381: console-error check snapshot for the "may break the app"
+           -- warning badge + detail block (advisory, never gates the vote).
+           cs.console_check_state, cs.console_errors, cs.console_checked_at,
            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') as yes_count,
            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'no') as no_count,
            (SELECT vote FROM pr_votes WHERE session_id = cs.id AND user_id = $2) as my_vote,
@@ -759,6 +786,9 @@ function voteRoutes(config) {
       const { rows } = await pool.query(
         `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
            cs.revert_of_session_id,
+           -- #381: console-error check snapshot so the warning + detail
+           -- block stay visible on a merged proposal for post-hoc review.
+           cs.console_check_state, cs.console_errors, cs.console_checked_at,
            -- #58: the vote threshold + active-user count snapshotted at merge
            -- time. The merged-PR pill renders against votes_required (falling
            -- back to the live majority for legacy rows where it's NULL), and a
