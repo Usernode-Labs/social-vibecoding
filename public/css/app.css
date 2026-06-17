@@ -868,6 +868,18 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   color: #f59e0b;
   white-space: nowrap;
 }
+/* #381: advisory "may break the app" / console-error warning. Same slot
+   treatment as the merge-status badges; amber (like behind) rather than
+   red (conflict) because it never blocks the vote — it's a heads-up. */
+.gc-warning-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #f59e0b;
+  white-space: nowrap;
+}
 /* Settled "✓ Merged" badge — same slot as the merging badge, shown after a
    PR lands so the row's voting info stays put. */
 .gc-merged-badge {

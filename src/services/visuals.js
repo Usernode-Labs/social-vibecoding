@@ -206,6 +206,76 @@ function parseShots(stdout) {
   return { shots, failures };
 }
 
+// ── Console-error check (#381) ───────────────────────────────────────────
+// capture.js emits one console frame per "after" target:
+//   __USERNODE_CONSOLE__ index=<n> errors=<count> loadStatus=<n>
+//   <base64 JSON array of { kind, message, source }>
+//   __USERNODE_CONSOLE_END__
+// Parse them into one frame per capture index (latest wins on a dup index).
+const CONSOLE_MAX_ERRORS = 20;
+const CONSOLE_MAX_MSG_LEN = 500;
+
+function parseConsole(stdout) {
+  const byIndex = new Map();
+  const lines = String(stdout || '').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.startsWith('__USERNODE_CONSOLE__ ')) continue;
+    const attrs = {};
+    for (const m of line.matchAll(/(\w+)=(\S+)/g)) attrs[m[1]] = m[2];
+    const payload = lines[i + 1] || '';
+    if (lines[i + 2] !== '__USERNODE_CONSOLE_END__') continue;
+    const index = parseInt(attrs.index, 10) || 0;
+    const loadStatus = parseInt(attrs.loadStatus, 10) || 0;
+    let errors = [];
+    try {
+      const parsed = JSON.parse(Buffer.from(payload, 'base64').toString('utf8'));
+      if (Array.isArray(parsed)) errors = parsed;
+    } catch { /* malformed base64/JSON — treat the frame as no parsed errors */ }
+    byIndex.set(index, { index, loadStatus, errors });
+    i += 2;
+  }
+  return Array.from(byIndex.values()).sort((a, b) => a.index - b.index);
+}
+
+// Classify the parsed frames into the persisted snapshot:
+//   'errors'  — at least one console error / page error / failed load
+//   'clean'   — every checked target navigated OK with no error output
+//   'unknown' — nothing to classify (no frame parsed: container crashed,
+//               no staging "after" reachable, …) → no badge
+// The flattened error list is deduped by message and capped, matching the
+// capture-side caps so a runaway app can't bloat the row.
+function classifyConsole(frames) {
+  if (!Array.isArray(frames) || !frames.length) return { state: 'unknown', errors: [] };
+  const seen = new Set();
+  const errors = [];
+  for (const f of frames) {
+    for (const e of (Array.isArray(f.errors) ? f.errors : [])) {
+      const message = String((e && e.message) || '').slice(0, CONSOLE_MAX_MSG_LEN);
+      if (!message || seen.has(message)) continue;
+      seen.add(message);
+      errors.push({
+        kind: (e && typeof e.kind === 'string') ? e.kind : 'console',
+        message,
+        source: (e && e.source) ? String(e.source).slice(0, CONSOLE_MAX_MSG_LEN) : '',
+      });
+      if (errors.length >= CONSOLE_MAX_ERRORS) break;
+    }
+    if (errors.length >= CONSOLE_MAX_ERRORS) break;
+  }
+  return { state: errors.length ? 'errors' : 'clean', errors };
+}
+
+// Latest-only snapshot on the session, mirroring the merge-conflict trio.
+async function storeConsoleCheck(pool, sessionId, result) {
+  await pool.query(
+    `UPDATE chat_sessions
+       SET console_check_state = $1, console_errors = $2, console_checked_at = NOW()
+     WHERE id = $3`,
+    [result.state, JSON.stringify(result.errors || []), sessionId]
+  );
+}
+
 // ── Storage ────────────────────────────────────────────────────────────
 // Client shape (#270): an ordered list of capture groups —
 //   { captures: [ { index, path, before: {png,webm,gif}, after: {...} } ] }
@@ -391,11 +461,17 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         });
       }
     }
-    if (!uiAffecting) {
-      log.info('visuals', 'Skipping capture — no frontend files in commit range', {
+    // #381: the headless run now ALWAYS happens so every proposal gets a
+    // console-error check. The UI-affecting heuristic only decides whether
+    // to also shoot the before/after media (the expensive part) — when
+    // it's false we run a lightweight console-only pass (MEDIA=0): navigate
+    // just the staging "after" target(s), collect console errors, skip
+    // screenshots/recordings and the prod "before" leg.
+    const media = uiAffecting;
+    if (!media) {
+      log.info('visuals', 'No frontend files in commit range — console-only check', {
         sessionId: session.id, branch: session.branch_name,
       });
-      return;
     }
 
     await ensureCaptureImage();
@@ -472,7 +548,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // short expiry as the backstop if the process dies.
     let beforeCookie = '';
     let beforeSessionToken = '';
-    if (prodRunning && isSelfApp && captureUser) {
+    if (media && prodRunning && isSelfApp && captureUser) {
       try {
         beforeSessionToken = crypto.randomBytes(32).toString('hex');
         await pool.query(
@@ -506,7 +582,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       const afterUrl = withToken(`http://${stagingName}:3000${visitPath}`, captureToken);
       let beforeUrl = '';
       let beforeFallbackUrl = '';
-      if (prodRunning) {
+      if (media && prodRunning) {
         if (isSelfApp) {
           beforeUrl = `http://${prodName}:3000${visitPath}`;
           if (p !== '/' && !isFragmentTarget) beforeFallbackUrl = `http://${prodName}:3000/`;
@@ -543,8 +619,8 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     }
 
     log.info('visuals', 'Starting capture', {
-      sessionId: session.id, slug: app.slug, before: prodRunning, paths: capturePaths,
-      authenticated: !!captureToken, selfApp: isSelfApp, deviceScaleFactor,
+      sessionId: session.id, slug: app.slug, before: media && prodRunning, paths: capturePaths,
+      authenticated: !!captureToken, selfApp: isSelfApp, deviceScaleFactor, media,
     });
     let stdout;
     try {
@@ -571,6 +647,9 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           // Pixel density (#360). Global to the run — all of a proposal's
           // screens share one density, matching the single shared viewport.
           DEVICE_SCALE_FACTOR: String(deviceScaleFactor),
+          // #381: MEDIA=0 → console-only run (no screenshots/recordings,
+          // no prod "before"). The console-error check still runs.
+          MEDIA: media ? '1' : '0',
         },
         timeoutMs: RUN_TIMEOUT_MS,
         maxBuffer: RUN_MAX_BUFFER,
@@ -589,9 +668,26 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       log.warn('visuals', 'Capture frame failed', { sessionId: session.id, ...f });
     }
 
+    // #381: console-error check is stored FIRST so it lands even on the
+    // console-only path (where there are no media artifacts and the
+    // storeArtifacts branch below returns early). Best-effort: a parse
+    // miss degrades to 'unknown' (no badge), never throws.
+    const consoleResult = classifyConsole(parseConsole(stdout));
+    try {
+      await storeConsoleCheck(pool, session.id, consoleResult);
+      log.info('visuals', 'Console check stored', {
+        sessionId: session.id, state: consoleResult.state, errors: consoleResult.errors.length,
+      });
+      notifyConsoleCheck(session.id, consoleResult, send);
+    } catch (err) {
+      log.warn('visuals', 'Console-check store failed (non-fatal)', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+
     const stored = await storeArtifacts(pool, session.id, commitHash, targets, shots);
     if (!stored) {
-      log.warn('visuals', 'No usable "after" artifact — nothing stored', { sessionId: session.id });
+      if (media) log.warn('visuals', 'No usable "after" artifact — nothing stored', { sessionId: session.id });
       return;
     }
 
@@ -642,11 +738,37 @@ function notifyVisualsReady(sessionId, visuals, send) {
   }
 }
 
+// #381: tell open clients the console check landed so the warning badge
+// upgrades in place without a full panel reload. Same emit strategy as
+// notifyVisualsReady — prefer the turn's `send`, else bus + global WS.
+function notifyConsoleCheck(sessionId, result, send) {
+  const data = {
+    sessionId,
+    consoleCheckState: result.state,
+    errorCount: (result.errors || []).length,
+  };
+  try {
+    if (send) {
+      send('console_check_ready', data);
+      return;
+    }
+    const event = { type: 'console_check_ready', _seq: `cc${Date.now().toString(36)}-${++_notifySeq}`, ...data };
+    sessionBus.publish(sessionId, event);
+    const { broadcastGlobal } = require('./ws');
+    broadcastGlobal({ type: 'session_event', sessionId, event: 'console_check_ready', ...event });
+  } catch (err) {
+    log.warn('visuals', 'console_check_ready notify failed', { sessionId, err: err.message });
+  }
+}
+
 module.exports = {
   captureForSession,
   storeArtifacts,
   getForSession,
   shapeAgg,
+  parseConsole,
+  classifyConsole,
+  storeConsoleCheck,
   isFrontendFile,
   isUiAffecting,
   parseShots,

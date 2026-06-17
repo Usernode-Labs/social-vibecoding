@@ -1796,6 +1796,7 @@ const AppView = {
             ${unvotedBadge}
             ${AppView.voteCountPill(pr, majority)}
             ${stateBadge}
+            ${AppView.consoleWarningBadgeHtml(pr)}
             ${AppView._devChatBadge(chatN)}
           </div>
           ${actions ? `<div class="flex flex-wrap items-center gap-1.5 mt-1.5">${actions}</div>` : ''}
@@ -1832,8 +1833,40 @@ const AppView = {
         <div>${details.join(' · ')}</div>
         ${chips ? `<div class="mt-1 flex flex-wrap gap-1 items-center"><span>Linked issues:</span> ${chips}</div>` : ''}
         ${AppView._mergeConflictDetailHtml(pr)}
+        ${AppView._consoleCheckDetailHtml(pr)}
         ${roster}
         ${lockedNote}
+      </div>`;
+  },
+
+  // #381: expanded console-error detail for the proposal detail screen.
+  // Lists the error messages the staging preview's headless browser
+  // captured, when it last ran, and the standing remediation (push a fix
+  // → rebuild → the check re-runs and clears the warning). Only renders for
+  // the 'errors' state; clean/unknown proposals show nothing (the absence
+  // of a badge is enough). Advisory — no vote/merge implications.
+  _consoleCheckDetailHtml(pr) {
+    if (!pr || pr.console_check_state !== 'errors') return '';
+    const errors = Array.isArray(pr.console_errors) ? pr.console_errors : [];
+    const items = errors.map((e) => {
+      const msg = escapeHtml(String((e && e.message) || '').slice(0, 500));
+      const src = (e && e.source) ? escapeHtml(String(e.source).slice(0, 200)) : '';
+      const kind = (e && e.kind) ? escapeHtml(String(e.kind)) : 'console';
+      return `<li class="font-mono text-[0.7rem] break-all"><span class="opacity-70">[${kind}]</span> ${msg}${src ? ` <span class="opacity-60">(${src})</span>` : ''}</li>`;
+    }).join('');
+    const list = items
+      ? `<ul class="mt-1 ml-3 list-disc space-y-0.5">${items}</ul>`
+      : '<div class="mt-1">Console errors were detected on the staging preview.</div>';
+    const checked = pr.console_checked_at
+      ? `<div class="mt-1 opacity-80">Last checked ${escapeHtml(relTime(pr.console_checked_at))}.</div>`
+      : '';
+    return `
+      <div class="mt-2 rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-amber-600 dark:text-amber-500">
+        <div class="font-medium">⚠ This change may break the app.</div>
+        <div class="mt-0.5 opacity-90">The staging preview logged these console errors when it loaded:</div>
+        ${list}
+        ${checked}
+        <div class="mt-1 opacity-80">Pushing a fix rebuilds the preview and re-runs the check — the warning clears if the errors are gone.</div>
       </div>`;
   },
 
@@ -2850,6 +2883,21 @@ const AppView = {
     const n = parseInt(pr.behind_main, 10) || 0;
     const label = n ? `Behind main · ${n}` : 'Behind main';
     return `<span class="gc-behind-badge" title="This proposal is behind main but still merges cleanly">${escapeHtml(label)}</span>`;
+  },
+
+  // #381: advisory "may break the app" warning. Shown alongside (not
+  // instead of) the merge-state badge when the proposal's staging preview
+  // logged console errors / uncaught exceptions / a failed load. Amber, not
+  // red — it never blocks the vote (parallels "Behind main"). Only the
+  // 'errors' state badges; 'clean'/'unknown'/missing render nothing.
+  consoleWarningBadgeHtml(pr) {
+    if (!pr || pr.console_check_state !== 'errors') return '';
+    const n = Array.isArray(pr.console_errors) ? pr.console_errors.length : 0;
+    const label = n ? `Console errors · ${n}` : 'Console errors';
+    const title = n
+      ? `The staging preview logged ${n} console error${n === 1 ? '' : 's'} — this change may break the app. Open the discussion to see them.`
+      : 'The staging preview logged console errors — this change may break the app.';
+    return `<span class="gc-warning-badge" title="${escapeHtml(title)}">⚠ ${escapeHtml(label)}</span>`;
   },
 
   // #195/#270: before/after visual tiles for a session's stored capture
@@ -4383,4 +4431,8 @@ function relTime(iso) {
 // see `window.AppView === undefined` and never call openMembersModal /
 // openShareModal — the drawer closed but no panel ever opened. (Found via the
 // staging debug overlay: "drawer-row-members CLICK fired → window.AppView MISSING".)
-window.AppView = AppView;
+// Guarded so requiring this file in node (for the pure-helper unit tests,
+// see the module.exports block above) doesn't crash on a missing `window`.
+if (typeof window !== 'undefined') {
+  window.AppView = AppView;
+}

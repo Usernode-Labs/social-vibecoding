@@ -397,3 +397,80 @@ test('resolveTargets falls back to scalars on unparseable TARGETS', () => {
   assert.equal(t.length, 1);
   assert.equal(t[0].afterUrl, 'http://a/');
 });
+
+// ── console-error check: parseConsole + classifyConsole (#381) ──────────
+
+const { mediaEnabled } = require('../capture/capture');
+
+function consoleFrame(index, errors, loadStatus) {
+  const payload = Buffer.from(JSON.stringify(errors), 'utf8').toString('base64');
+  return `__USERNODE_CONSOLE__ index=${index} errors=${errors.length} loadStatus=${loadStatus}\n${payload}\n__USERNODE_CONSOLE_END__\n`;
+}
+
+test('parseConsole reads a well-formed frame into errors + loadStatus', () => {
+  const errs = [{ kind: 'pageerror', message: 'boom', source: 'app.js:1' }];
+  const frames = visuals.parseConsole(consoleFrame(0, errs, 200));
+  assert.equal(frames.length, 1);
+  assert.equal(frames[0].index, 0);
+  assert.equal(frames[0].loadStatus, 200);
+  assert.deepEqual(frames[0].errors, errs);
+});
+
+test('parseConsole ignores a frame missing its END delimiter', () => {
+  const payload = Buffer.from(JSON.stringify([{ message: 'x' }])).toString('base64');
+  const stdout = `__USERNODE_CONSOLE__ index=0 errors=1 loadStatus=200\n${payload}\n`; // no END
+  assert.equal(visuals.parseConsole(stdout).length, 0);
+});
+
+test('parseConsole treats malformed base64/JSON as an empty error list', () => {
+  const stdout = '__USERNODE_CONSOLE__ index=0 errors=1 loadStatus=200\n!!!not base64!!!\n__USERNODE_CONSOLE_END__\n';
+  const frames = visuals.parseConsole(stdout);
+  assert.equal(frames.length, 1);
+  assert.deepEqual(frames[0].errors, []);
+});
+
+test('parseConsole returns frames ordered by index', () => {
+  const stdout = consoleFrame(2, [{ message: 'b' }], 200) + consoleFrame(0, [{ message: 'a' }], 200);
+  const frames = visuals.parseConsole(stdout);
+  assert.deepEqual(frames.map((f) => f.index), [0, 2]);
+});
+
+test('classifyConsole → errors when any frame carries errors', () => {
+  const r = visuals.classifyConsole([{ index: 0, loadStatus: 200, errors: [{ kind: 'console', message: 'oops' }] }]);
+  assert.equal(r.state, 'errors');
+  assert.equal(r.errors.length, 1);
+  assert.equal(r.errors[0].kind, 'console');
+});
+
+test('classifyConsole → clean when frames present but no errors', () => {
+  const r = visuals.classifyConsole([{ index: 0, loadStatus: 200, errors: [] }]);
+  assert.equal(r.state, 'clean');
+  assert.equal(r.errors.length, 0);
+});
+
+test('classifyConsole → unknown when there are no frames at all', () => {
+  assert.equal(visuals.classifyConsole([]).state, 'unknown');
+  assert.equal(visuals.classifyConsole(undefined).state, 'unknown');
+});
+
+test('classifyConsole dedupes by message and caps the list at 20', () => {
+  const dup = visuals.classifyConsole([{ errors: [{ message: 'same' }, { message: 'same' }] }]);
+  assert.equal(dup.errors.length, 1);
+  const many = Array.from({ length: 50 }, (_, i) => ({ message: `e${i}` }));
+  const capped = visuals.classifyConsole([{ errors: many }]);
+  assert.equal(capped.errors.length, 20);
+});
+
+test('a failed-load error (kind=load) classifies as errors', () => {
+  const frames = visuals.parseConsole(consoleFrame(0, [{ kind: 'load', message: 'navigation failed: timeout' }], 0));
+  assert.equal(visuals.classifyConsole(frames).state, 'errors');
+});
+
+// ── capture.js MEDIA flag (#381) ────────────────────────────────────────
+
+test('mediaEnabled is true unless MEDIA is exactly "0"', () => {
+  assert.equal(mediaEnabled({}), true);
+  assert.equal(mediaEnabled({ MEDIA: '1' }), true);
+  assert.equal(mediaEnabled(undefined), true);
+  assert.equal(mediaEnabled({ MEDIA: '0' }), false);
+});
