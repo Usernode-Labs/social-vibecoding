@@ -262,3 +262,22 @@ test('card renderer emits the two chips', () => {
   assert.match(fe, /_attrChipsHtml\('proposal'/, 'proposal cards render chips');
   assert.match(fe, /data-attr-chip/, 'chip carries the delegated-click hook');
 });
+
+// Style guard: the chips must reuse the shared card-badge pill recipe and
+// must NOT drift into a bespoke look (e.g. the old brightness-filter hover).
+test('chips reuse the sibling-badge pill recipe + tint-deepening hover', () => {
+  const fe = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf-8');
+  // Same recipe as _devChatBadge / bounty pill / #N chip.
+  assert.match(fe, /attr-chip inline-flex items-center text-\[0\.65rem\] font-medium px-1\.5 py-0\.5 rounded/,
+    'chip base uses the shared pill utility recipe');
+  assert.match(fe, /bg-zinc-500\/10 text-zinc-500/, 'muted placeholder uses the badge muted tint');
+  // Hover deepens the same tint (like the linked-issue pills), not a filter.
+  assert.match(fe, /hover:bg-(red|amber|sky|violet|zinc)-500\/20/, 'interactive chip uses tint-deepening hover');
+  assert.doesNotMatch(fe, /hover:brightness-110/, 'no leftover brightness-filter hover');
+
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf-8');
+  const block = css.slice(css.indexOf('.attr-chip {'), css.indexOf('button.attr-chip'));
+  assert.match(block, /font:\s*inherit/, '.attr-chip inherits the surrounding font');
+  assert.match(block, /appearance:\s*none/, '.attr-chip strips native button appearance');
+  assert.doesNotMatch(block, /line-height/, 'no line-height override (heights drift otherwise)');
+});

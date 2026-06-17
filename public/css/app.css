@@ -2700,10 +2700,19 @@ html.in-native-webview #header-title {
 @keyframes import-spin { to { transform: rotate(360deg); } }
 
 /* ── Priority / assigned-person chips + dropdown (community-voted) ───── */
+/* Strip the <button> UA chrome so an interactive chip is pixel-identical
+   to the sibling <span> badge pills (💬 / ★ / #N): inherit the surrounding
+   font (a <button> otherwise brings its own family + baseline), drop the
+   native appearance/border, and let `items-center` flexbox handle vertical
+   centring (no line-height override — that drifted the chip's height). The
+   utility `bg-…` class supplies the tint, so background stays none here. */
 .attr-chip {
   cursor: default;
+  font: inherit;
+  appearance: none;
+  -webkit-appearance: none;
   border: 0;
-  line-height: 1.1;
+  background: none;
 }
 button.attr-chip { cursor: pointer; }
 

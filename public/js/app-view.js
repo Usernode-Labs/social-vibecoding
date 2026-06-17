@@ -2101,39 +2101,49 @@ const AppView = {
 
   // Display label + colour classes for a priority value. Mirrors the
   // existing badge palette (zinc/amber/red) used elsewhere on the cards.
+  // `cls` is the static two-tone tint (matching the 💬/★/#N pills); `hover`
+  // deepens that same tint to /20 on the interactive chip — the exact
+  // hover the linked-issue pills use, never a brightness filter.
   _priorityMeta(value) {
     switch (value) {
-      case 'high': return { label: 'High', cls: 'bg-red-500/10 text-red-500' };
-      case 'medium': return { label: 'Medium', cls: 'bg-amber-500/10 text-amber-500' };
-      case 'low': return { label: 'Low', cls: 'bg-sky-500/10 text-sky-500' };
+      case 'high': return { label: 'High', cls: 'bg-red-500/10 text-red-500', hover: 'hover:bg-red-500/20' };
+      case 'medium': return { label: 'Medium', cls: 'bg-amber-500/10 text-amber-500', hover: 'hover:bg-amber-500/20' };
+      case 'low': return { label: 'Low', cls: 'bg-sky-500/10 text-sky-500', hover: 'hover:bg-sky-500/20' };
       default: return null;
     }
   },
 
-  // One chip button. `summary` is { top, count, myValue } as the feed
-  // routes attach it. Readonly (merged proposals) renders a non-interactive
-  // span so the settled vote still shows but can't be changed.
+  // One chip. `summary` is { top, count, myValue } as the feed routes
+  // attach it. Both the interactive <button> and the read-only (merged)
+  // <span> reuse the SAME pill recipe the sibling card badges use
+  // (text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-<c>-500/10
+  // text-<c>-500), leading with a single glyph like 💬/★ — so the chips
+  // are pixel-consistent with the other badges. The button-only `.attr-chip`
+  // CSS reset (app.css) strips UA chrome so it matches the span's height.
   _attrChipHtml(field, targetType, targetRef, summary, readonly) {
     const s = summary || { top: null, count: 0, myValue: null };
     const count = parseInt(s.count) || 0;
     let label;
     let cls;
+    let hover;
     if (field === 'priority') {
       const meta = AppView._priorityMeta(s.top);
-      if (meta) { label = `&#9873; ${meta.label}`; cls = meta.cls; }
-      else { label = '&#9873; Set priority'; cls = 'bg-zinc-500/10 text-zinc-500'; }
+      if (meta) { label = `&#9873; ${meta.label}`; cls = meta.cls; hover = meta.hover; }
+      else { label = '&#9873; Set priority'; cls = 'bg-zinc-500/10 text-zinc-500'; hover = 'hover:bg-zinc-500/20'; }
     } else {
-      if (s.top) { label = `&#128100; @${escapeHtml(s.top)}`; cls = 'bg-violet-500/10 text-violet-400'; }
-      else { label = '&#128100; Assign'; cls = 'bg-zinc-500/10 text-zinc-500'; }
+      if (s.top) { label = `&#128100; @${escapeHtml(s.top)}`; cls = 'bg-violet-500/10 text-violet-400'; hover = 'hover:bg-violet-500/20'; }
+      else { label = '&#128100; Assign'; cls = 'bg-zinc-500/10 text-zinc-500'; hover = 'hover:bg-zinc-500/20'; }
     }
-    const countHtml = count > 1 ? ` <span class="opacity-70">&middot;${count}</span>` : '';
+    // Faint trailing count, matching how the ★ bounty pill shows its number.
+    const countHtml = count > 1 ? ` <span class="opacity-60">&middot;${count}</span>` : '';
+    const base = 'attr-chip inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded';
     const title = field === 'priority'
       ? 'Vote on this card\'s priority'
       : 'Suggest or vote on who should take this';
     if (readonly) {
-      return `<span class="attr-chip inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded ${cls}">${label}${countHtml}</span>`;
+      return `<span class="${base} ${cls}">${label}${countHtml}</span>`;
     }
-    return `<button type="button" class="attr-chip inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded ${cls} hover:brightness-110" data-attr-chip data-attr-field="${field}" data-attr-target-type="${targetType}" data-attr-target-ref="${targetRef}" title="${escapeAttr(title)}">${label}${countHtml}</button>`;
+    return `<button type="button" class="${base} ${cls} ${hover}" data-attr-chip data-attr-field="${field}" data-attr-target-type="${targetType}" data-attr-target-ref="${targetRef}" title="${escapeAttr(title)}">${label}${countHtml}</button>`;
   },
 
   // Both chips for a card, in the badge row. opts.readonly drops the
