@@ -109,6 +109,25 @@ const AppView = {
   // topic sub-view below) tracks the open topic for hash deep links.
   // How many feed items are visible (the rest sit behind "Show more").
   _feedShown: 20,
+
+  // ── Dev view mode (list ↔ kanban) ─────────────────────────────────
+  // A personal display preference, persisted to localStorage and shared
+  // across every app's Dev view (same pattern as DevConsole's MODE_KEY
+  // and the "view as non-admin" toggle). 'list' is the default and the
+  // historical behaviour; 'kanban' lays the same cached topics out in
+  // four lifecycle columns. Read/written only through the two helpers
+  // below so the localStorage access stays guarded in one place.
+  VIEW_MODE_KEY: 'devViewMode',
+  _getViewMode() {
+    try {
+      return window.localStorage.getItem(AppView.VIEW_MODE_KEY) === 'kanban'
+        ? 'kanban' : 'list';
+    } catch { return 'list'; }
+  },
+  _setViewMode(mode) {
+    const next = mode === 'kanban' ? 'kanban' : 'list';
+    try { window.localStorage.setItem(AppView.VIEW_MODE_KEY, next); } catch {}
+  },
   // Refresh timer for the Your-sessions strip's busy indicators;
   // self-clears when the strip leaves the DOM.
   _stripTimer: null,
@@ -488,9 +507,10 @@ const AppView = {
 
     content.innerHTML = `
       <div class="flex flex-col h-full min-h-0">
-        <!-- Header bar: title + the "+" menu (top right). -->
+        <!-- Header bar: title + view-mode toggle + the "+" menu (top right). -->
         <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
           <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider flex-1">Dev</span>
+          ${AppView._renderViewToggle()}
           <div class="relative">
             <button id="dev-plus-btn" aria-haspopup="true" aria-expanded="false"
               class="rounded-lg bg-violet-600 hover:bg-violet-500 w-7 h-7 flex items-center justify-center text-base font-bold leading-none text-white transition-colors"
@@ -528,7 +548,11 @@ const AppView = {
             </button>
           </div>
           <div id="dev-sessions-strip" class="px-3 pt-2"></div>
-          <div class="px-3 py-2">
+          <!-- Body region: list mode mounts #dev-feed + #gc-merged here;
+               kanban mode mounts #dev-kanban. _repaintDevBody() owns the
+               swap. The wrapper node is stable across mode switches so the
+               delegated card-open handler (bound below) survives both. -->
+          <div id="dev-body" class="px-3 py-2">
             <div id="dev-feed"><div class="text-xs text-zinc-500 dark:text-zinc-400">Loading…</div></div>
             <div id="gc-merged" class="mt-4"></div>
           </div>
@@ -536,6 +560,7 @@ const AppView = {
       </div>`;
 
     AppView._wirePlusMenu(content);
+    AppView._wireViewToggle(content);
     AppView._attrInit();
     document.getElementById('dev-chat-card').addEventListener('click', () => {
       App.switchTab('dev', null, 'chat');
@@ -544,10 +569,14 @@ const AppView = {
 
     // Delegated card-open handler: tapping a topic card anywhere except
     // its links/pills opens that topic full-screen. Bound on the stable
-    // #dev-feed container (its innerHTML re-renders, the node itself
-    // survives until the next renderDevView).
-    const feedEl = document.getElementById('dev-feed');
-    feedEl.addEventListener('click', (e) => {
+    // #dev-body wrapper (its innerHTML re-renders on every repaint and
+    // mode switch, but the node itself survives until the next
+    // renderDevView). One handler covers issue / proposal / gov rows in
+    // the list feed, merged rows in the Completed block, and every card
+    // in the kanban columns — they all carry the same
+    // data-issue-row / data-proposal-row / data-gov-row hooks.
+    const bodyEl = document.getElementById('dev-body');
+    bodyEl.addEventListener('click', (e) => {
       // #313: the card-level "Ask AI" button is a <button>, so the guard
       // below would swallow it — handle it first, then bail.
       const askBtn = e.target.closest('.gc-ask-ai-btn');
@@ -566,21 +595,6 @@ const AppView = {
       const govRow = e.target.closest('[data-gov-row]');
       if (govRow) AppView.openTopic('gov', parseInt(govRow.dataset.govRow, 10));
     });
-
-    // Completed (merged) proposals live in a sibling container with its own
-    // bespoke layout; bind the same tap-to-open behaviour here so merged
-    // rows open their (still-live) discussion thread full-screen. The node
-    // is stable across toggleMergedPrs()/_loadDevFeed() innerHTML rewrites.
-    const mergedEl = document.getElementById('gc-merged');
-    if (mergedEl) {
-      mergedEl.addEventListener('click', (e) => {
-        const askBtn = e.target.closest('.gc-ask-ai-btn');
-        if (askBtn) { AppView._openAskAiFromCard(askBtn.dataset.proposalId); return; }
-        if (e.target.closest('a, button, input, form')) return;
-        const prRow = e.target.closest('[data-proposal-row]');
-        if (prRow) AppView.openTopic('proposal', parseInt(prRow.dataset.proposalRow, 10));
-      });
-    }
 
     AppView._renderSessionsStrip();
     AppView._syncStripPolling();
@@ -956,6 +970,51 @@ const AppView = {
     AppView.refreshDevChatSecretsState();
   },
 
+  // ── View-mode toggle (list ↔ kanban) ─────────────────────────────────
+  // A two-button segmented control sitting to the LEFT of the "+" button.
+  // Mirrors the existing inline-SVG icon convention used throughout this
+  // file. The active button is tinted violet; both reflect their state
+  // via aria-pressed for assistive tech.
+  _viewToggleBtnCls(active) {
+    return 'dev-view-btn w-7 h-7 flex items-center justify-center transition-colors '
+      + (active
+        ? 'bg-violet-600 text-white'
+        : 'text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800');
+  },
+  _renderViewToggle() {
+    const mode = AppView._getViewMode();
+    // List-lines icon (three rows) and a board/columns icon.
+    const listSvg = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>';
+    const boardSvg = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z"/></svg>';
+    return `
+      <div class="inline-flex items-center rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden mr-1" role="group" aria-label="Dev view mode">
+        <button id="dev-view-list" data-view="list" class="${AppView._viewToggleBtnCls(mode === 'list')}" aria-pressed="${mode === 'list'}" title="List view" aria-label="List view">${listSvg}</button>
+        <button id="dev-view-kanban" data-view="kanban" class="${AppView._viewToggleBtnCls(mode === 'kanban')}" aria-pressed="${mode === 'kanban'}" title="Kanban view" aria-label="Kanban view">${boardSvg}</button>
+      </div>`;
+  },
+  _wireViewToggle(content) {
+    content.querySelectorAll('.dev-view-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const mode = btn.dataset.view === 'kanban' ? 'kanban' : 'list';
+        if (mode === AppView._getViewMode()) return;
+        AppView._setViewMode(mode);
+        AppView._updateViewToggleUI();
+        // Re-flow the already-cached data into the new layout. No refetch.
+        AppView._repaintDevBody();
+      });
+    });
+  },
+  // Swap the active/inactive styling + aria-pressed on the two toggle
+  // buttons in place, so switching modes doesn't re-render the header bar.
+  _updateViewToggleUI() {
+    const mode = AppView._getViewMode();
+    document.querySelectorAll('.dev-view-btn').forEach((btn) => {
+      const active = btn.dataset.view === mode;
+      btn.className = AppView._viewToggleBtnCls(active);
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+  },
+
   // ── "+" menu ────────────────────────────────────────────────────────
   _wirePlusMenu(content) {
     const btn = document.getElementById('dev-plus-btn');
@@ -1256,7 +1315,11 @@ const AppView = {
         fetch(`/api/apps/${slug}/github-issues${AppView._demoQS()}`),
         fetch(`/api/apps/${slug}/issues`),
         fetch(`/api/apps/${slug}/promoted${AppView._demoQS()}`),
-        fetch(`/api/apps/${slug}/merged`),
+        // Forward ?demo=1 to /merged too so the kanban "Done" column (and
+        // the list's Completed block) populate in a staging ?demo=1 preview.
+        // Server-side the demo append is gated on IS_STAGING, so this is a
+        // no-op in production. votes.js stagingMockMerged() supplies the rows.
+        fetch(`/api/apps/${slug}/merged${AppView._demoQS()}`),
       ]);
       const ghData = ghRes.ok ? await ghRes.json() : { issues: [] };
       const issuesData = issuesRes.ok ? await issuesRes.json() : { issues: [] };
@@ -1320,13 +1383,37 @@ const AppView = {
 
   async _loadDevFeed() {
     const ok = await AppView._loadDevData();
-    const feedEl = document.getElementById('dev-feed');
-    if (!feedEl) return;
+    const body = document.getElementById('dev-body');
+    if (!body) return;
     if (!ok) {
-      feedEl.innerHTML = '<div class="text-xs text-zinc-500 dark:text-zinc-400">Couldn&#39;t load the feed right now.</div>';
+      body.innerHTML = '<div class="text-xs text-zinc-500 dark:text-zinc-400">Couldn&#39;t load the feed right now.</div>';
       return;
     }
     AppView._renderLockedNotice();
+    AppView._repaintDevBody();
+  },
+
+  // Paint #dev-body for the current view mode from cached data only (no
+  // refetch). Mode-aware so every caller — the initial load, WS-driven
+  // refreshes, the toggle, and optimistic card-action repaints — routes
+  // through one place. No-ops when #dev-body isn't mounted (topic / chat
+  // / settings sub-views), matching the old _rerenderFeed guard.
+  _repaintDevBody() {
+    const body = document.getElementById('dev-body');
+    if (!body) return;
+    if (AppView._getViewMode() === 'kanban') {
+      body.innerHTML = AppView._renderKanbanInner();
+      // The headless-state poller is keyed off whatever issue rows are on
+      // screen (generating spinners), same as the list feed.
+      AppView._syncHeadlessPolling();
+      if (window.Kudos) Kudos.attach(body);
+      AppView._applyAskAiCardAvailability(body);
+      return;
+    }
+    // List mode: rebuild the two-container shell, then fill it exactly as
+    // before. _rerenderFeed targets #dev-feed and re-attaches kudos/ask-AI
+    // there; the Completed block is filled + wired here.
+    body.innerHTML = '<div id="dev-feed"></div><div id="gc-merged" class="mt-4"></div>';
     AppView._rerenderFeed();
     const mergedEl = document.getElementById('gc-merged');
     if (mergedEl) {
@@ -1458,7 +1545,9 @@ const AppView = {
   // whichever surface is mounted, purely from cache — no _loadDevData — so the
   // just-set optimistic state isn't clobbered by a slower/racing refetch.
   _repaintCards() {
-    AppView._rerenderFeed();
+    // Repaint whichever Dev body is mounted (list feed or kanban board) —
+    // _repaintDevBody no-ops when #dev-body is absent (topic view).
+    AppView._repaintDevBody();
     if (typeof App !== 'undefined' && App.currentSubTab === 'topic'
         && document.getElementById('gc-thread-head')) {
       AppView._renderTopicHead();
@@ -1468,6 +1557,136 @@ const AppView = {
   showMoreFeed() {
     AppView._feedShown = (AppView._feedShown || 20) + 10;
     AppView._rerenderFeed();
+  },
+
+  // ── Kanban view ──────────────────────────────────────────────────────
+  //
+  // Pure bucketing of the cached dev data into the four lifecycle columns.
+  // No DOM, no AppView state reads — everything comes in via `data` — so it
+  // is unit-testable in isolation (see tests/dev-kanban-buckets.test.js).
+  //
+  //   data = { issues, proposals, gov, merged }
+  //     issues    — visible GitHub issues (already env-twin-filtered)
+  //     proposals — promoted/merging PR sessions (carry linked_issues[])
+  //     gov       — governance proposals (secret_change / rename)
+  //     merged    — merged PR sessions
+  //
+  // Returns { issues, inProgress, inReview, done }:
+  //   issues     — open issues with no proposal yet (headless none/failed/
+  //                absent) AND not linked to any open promoted proposal
+  //   inProgress — open issues whose headless proposal is generating/ready
+  //                (work started, not yet up for a vote), same dedup
+  //   inReview   — [{kind:'proposal'|'gov', item}] sorted by pin-rank then
+  //                recency, exactly as the list feed's proposal group
+  //   done       — merged proposals, most-recent-activity first
+  _bucketDevItems(data) {
+    const d = data || {};
+    const issues = Array.isArray(d.issues) ? d.issues : [];
+    const proposals = Array.isArray(d.proposals) ? d.proposals : [];
+    const gov = Array.isArray(d.gov) ? d.gov : [];
+    const merged = Array.isArray(d.merged) ? d.merged : [];
+
+    const ts = (v) => {
+      const t = Date.parse(v || '');
+      return Number.isFinite(t) ? t : 0;
+    };
+    const issueT = (i) => Math.max(ts(i.updatedAt), ts(i.lastMessageAt));
+    const prT = (p) => Math.max(ts(p.promoted_at || p.created_at), ts(p.last_message_at));
+    const govT = (g) => Math.max(ts(g.created_at), ts(g.last_message_at));
+    const mergedT = (m) => Math.max(ts(m.created_at), ts(m.last_message_at));
+    // Mirror of _proposalPinRank, inlined to keep this helper self-contained
+    // (merging > resolving > conflict-failed > normal).
+    const pinRank = (pr) => {
+      if (!pr) return 3;
+      if (pr.status === 'merging') return 0;
+      if (pr.resolving) return 1;
+      if (pr.merge_conflict_state === 'failed') return 2;
+      return 3;
+    };
+
+    // Issue numbers already represented by an open promoted proposal card
+    // (Column 3) — kept out of the issue columns so they don't double up.
+    const linked = new Set();
+    for (const p of proposals) {
+      const arr = Array.isArray(p.linked_issues) ? p.linked_issues : [];
+      for (const n of arr) {
+        const num = parseInt(n, 10);
+        if (Number.isFinite(num)) linked.add(num);
+      }
+    }
+
+    const col1 = [];
+    const col2 = [];
+    for (const i of issues) {
+      if (linked.has(i.number)) continue;
+      const s = i.headless && i.headless.status;
+      if (s === 'generating' || s === 'ready') col2.push(i);
+      else col1.push(i);
+    }
+    col1.sort((a, b) => issueT(b) - issueT(a));
+    col2.sort((a, b) => issueT(b) - issueT(a));
+
+    const review = [];
+    for (const p of proposals) review.push({ kind: 'proposal', item: p, _r: pinRank(p), _t: prT(p) });
+    for (const g of gov) review.push({ kind: 'gov', item: g, _r: 3, _t: govT(g) });
+    review.sort((a, b) => (a._r - b._r) || (b._t - a._t));
+
+    const done = merged.slice().sort((a, b) => mergedT(b) - mergedT(a));
+
+    return {
+      issues: col1,
+      inProgress: col2,
+      inReview: review.map((x) => ({ kind: x.kind, item: x.item })),
+      done,
+    };
+  },
+
+  // Render the kanban board (inner HTML for #dev-body) from cached data.
+  // Reuses the exact per-card renderers the list mode uses, so every card
+  // keeps its buttons, badges, and data-*-row open hooks.
+  _renderKanbanInner() {
+    const buckets = AppView._bucketDevItems({
+      issues: AppView._visibleGhIssues(),
+      proposals: AppView._proposals || [],
+      gov: AppView._govProposals || [],
+      merged: AppView._merged || [],
+    });
+    const meta = AppView._ghIssuesMeta || {};
+
+    // "More open issues on GitHub" link — the Issues column inherits the
+    // list footer's GitHub link when the repo has more open issues than
+    // the fetch ceiling, so the cap is never silent.
+    let issuesFooter = '';
+    if (meta.truncatedList && meta.repoUrl) {
+      const issuesUrl = `${meta.repoUrl.replace(/\.git$/, '').replace(/\/$/, '')}/issues`;
+      issuesFooter = `<a href="${issuesUrl}" target="_blank" rel="noopener" class="text-xs text-violet-400 hover:underline">More open issues on GitHub &rarr;</a>`;
+    }
+
+    const cols = [
+      { title: 'Issues', items: buckets.issues, render: (i) => AppView._renderIssueRow(i), footer: issuesFooter },
+      { title: 'In progress', items: buckets.inProgress, render: (i) => AppView._renderIssueRow(i) },
+      { title: 'In review', items: buckets.inReview, render: (x) => (x.kind === 'proposal' ? AppView._renderProposalCard(x.item) : AppView._renderGovCard(x.item)) },
+      { title: 'Done', items: buckets.done, render: (m) => AppView._renderMergedCard(m) },
+    ];
+
+    let html = '<div id="dev-kanban" class="flex gap-3 overflow-x-auto pb-2">';
+    for (const col of cols) {
+      const count = col.items.length;
+      const cards = count
+        ? `<div class="space-y-2">${col.items.map(col.render).join('')}</div>`
+        : '<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">Nothing here yet</div>';
+      const footer = col.footer ? `<div class="mt-2">${col.footer}</div>` : '';
+      html += `
+        <div class="dev-kanban-col flex-1 basis-0 min-w-[16rem]">
+          <div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-2 px-0.5">
+            ${escapeHtml(col.title)} <span class="text-zinc-400 dark:text-zinc-500 font-mono">· ${count}</span>
+          </div>
+          ${cards}
+          ${footer}
+        </div>`;
+    }
+    html += '</div>';
+    return html;
   },
 
   // ── Your-sessions strip ─────────────────────────────────────────────
@@ -2720,59 +2939,80 @@ const AppView = {
 
     let html = `<div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-1">Completed</div><div class="space-y-2">`;
     for (let i = 0; i < shown; i++) {
-      const pr = merged[i];
-      const date = new Date(pr.created_at).toLocaleDateString();
-      const mergedLabel = pr.pr_title
-        ? `${escapeHtml(pr.pr_title)} <span class="text-zinc-500">· ${escapeHtml(pr.username)}</span>`
-        : `by ${escapeHtml(pr.username)}`;
-      const mergedQuoteTitle = pr.pr_title || `PR #${pr.pr_number || pr.id}`;
-      // Merged PRs are still eligible for kudos (promoted + merging
-      // + merged) — that's intentional. People often come back to
-      // a recently-merged PR and want to thank the author.
-      const kudosBtn = window.Kudos
-        ? Kudos.renderButton(pr, { compact: true })
-        : '';
-      // #313: Ask AI on the Completed list too, for proposals the viewer
-      // does not own (parallel to the live feed cards).
-      const mine = !!(App.user && pr.user_id === App.user.id);
-      const askAiBtn = !mine ? AppView._askAiCardBtnHtml(pr) : '';
+      html += AppView._renderMergedCard(merged[i], majority);
+    }
+    html += '</div>';
 
-      // #16: undo is a single direct action — clicking Undo opens a
-      // revert PR (like proposing a change) which then needs the
-      // normal merge vote to land. The button only renders on
-      // ordinary merged PRs that don't already have a revert in
-      // flight or merged:
-      //   - revert_of_session_id != null on this row means this
-      //     row IS itself a revert PR; undoing a revert would
-      //     create an infinite undo-undo loop.
-      //   - revert_session_id (from the LEFT JOIN) means a revert
-      //     PR already exists pointing at this row — show its
-      //     status as a label instead.
-      let undoUI = '';
-      if (pr.revert_of_session_id) {
-        // This row is a revert PR. (Shouldn't appear in the
-        // merged list often — revert PRs are short-lived in
-        // 'promoted' before they themselves merge — but show a
-        // breadcrumb if they do.)
-        undoUI = `<span class="text-xs text-zinc-500" title="This PR is itself a revert">↩ revert</span>`;
-      } else if (pr.revert_session_id) {
-        const rs = pr.revert_status;
-        const rpr = pr.revert_pr_number || pr.revert_session_id;
-        const label = rs === 'merged'
-          ? `Undone by PR#${rpr}`
-          : rs === 'merging'
-            ? `Revert merging (PR#${rpr})`
-            : `Revert in vote · PR#${rpr}`;
-        const linkHref = pr.revert_pr_url || '#';
-        undoUI = `<a href="${linkHref}" target="_blank" class="text-xs text-amber-500 hover:text-amber-400 font-medium">${label}</a>`;
-      } else {
-        undoUI = `
-          <button class="gc-vote-btn gc-vote-btn-undo"
-            title="Open a revert PR for this merge. It still needs a merge vote to land."
-            onclick="AppView.undoPr(${pr.id})">Undo</button>`;
-      }
+    // Show-more / show-less footer, same styling as the Open Issues pager.
+    if (merged.length > AppView._mergedShownDefault) {
+      const label = AppView._mergedExpanded
+        ? 'Show less'
+        : `Show ${merged.length - shown} more`;
+      html += `<div class="mt-1"><button class="gc-vote-btn" onclick="AppView.toggleMergedPrs()">${label}</button></div>`;
+    }
+    return html;
+  },
 
-      html += `
+  // One merged ("Completed") proposal card. Extracted from
+  // _renderMergedInner so the kanban "Done" column can render the same
+  // markup per row without the section header / show-more footer.
+  // `majority` defaults to the cached merged context.
+  _renderMergedCard(pr, majority) {
+    const maj = majority != null
+      ? majority
+      : ((AppView._mergedCtx && AppView._mergedCtx.majority) || 1);
+    const date = new Date(pr.created_at).toLocaleDateString();
+    const mergedLabel = pr.pr_title
+      ? `${escapeHtml(pr.pr_title)} <span class="text-zinc-500">· ${escapeHtml(pr.username)}</span>`
+      : `by ${escapeHtml(pr.username)}`;
+    const mergedQuoteTitle = pr.pr_title || `PR #${pr.pr_number || pr.id}`;
+    // Merged PRs are still eligible for kudos (promoted + merging
+    // + merged) — that's intentional. People often come back to
+    // a recently-merged PR and want to thank the author.
+    const kudosBtn = window.Kudos
+      ? Kudos.renderButton(pr, { compact: true })
+      : '';
+    // #313: Ask AI on the Completed list too, for proposals the viewer
+    // does not own (parallel to the live feed cards).
+    const mine = !!(App.user && pr.user_id === App.user.id);
+    const askAiBtn = !mine ? AppView._askAiCardBtnHtml(pr) : '';
+
+    // #16: undo is a single direct action — clicking Undo opens a
+    // revert PR (like proposing a change) which then needs the
+    // normal merge vote to land. The button only renders on
+    // ordinary merged PRs that don't already have a revert in
+    // flight or merged:
+    //   - revert_of_session_id != null on this row means this
+    //     row IS itself a revert PR; undoing a revert would
+    //     create an infinite undo-undo loop.
+    //   - revert_session_id (from the LEFT JOIN) means a revert
+    //     PR already exists pointing at this row — show its
+    //     status as a label instead.
+    let undoUI = '';
+    if (pr.revert_of_session_id) {
+      // This row is a revert PR. (Shouldn't appear in the
+      // merged list often — revert PRs are short-lived in
+      // 'promoted' before they themselves merge — but show a
+      // breadcrumb if they do.)
+      undoUI = `<span class="text-xs text-zinc-500" title="This PR is itself a revert">↩ revert</span>`;
+    } else if (pr.revert_session_id) {
+      const rs = pr.revert_status;
+      const rpr = pr.revert_pr_number || pr.revert_session_id;
+      const label = rs === 'merged'
+        ? `Undone by PR#${rpr}`
+        : rs === 'merging'
+          ? `Revert merging (PR#${rpr})`
+          : `Revert in vote · PR#${rpr}`;
+      const linkHref = pr.revert_pr_url || '#';
+      undoUI = `<a href="${linkHref}" target="_blank" class="text-xs text-amber-500 hover:text-amber-400 font-medium">${label}</a>`;
+    } else {
+      undoUI = `
+        <button class="gc-vote-btn gc-vote-btn-undo"
+          title="Open a revert PR for this merge. It still needs a merge vote to land."
+          onclick="AppView.undoPr(${pr.id})">Undo</button>`;
+    }
+
+    return `
         <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-ref-pr="${pr.pr_number || pr.id}" data-proposal-row="${pr.id}" title="Open this proposal's discussion">
           ${AppView._devCardIcon('done')}
           <div class="flex-1 min-w-0">
@@ -2781,7 +3021,7 @@ const AppView = {
                 <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words" title="${escapeHtml(mergedQuoteTitle)}">${mergedLabel}</div>
                 <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta"><a href="${pr.pr_url || '#'}" target="_blank" rel="noopener" class="font-mono text-emerald-400 hover:underline">PR#${pr.pr_number || pr.id}</a> · ${date}${AppView.closesPillHtml(pr) ? ` ${AppView.closesPillHtml(pr)}` : ''}</div>
               </div>
-              ${AppView.voteCountPill(pr, majority)}
+              ${AppView.voteCountPill(pr, maj)}
               ${AppView._attrChipsHtml('proposal', pr.id, pr, { readonly: true })}
               ${AppView._devChatBadge(parseInt(pr.chat_count) || 0)}
             </div>
@@ -2794,17 +3034,6 @@ const AppView = {
           </div>
           ${AppView.DEV_CARD_CHEVRON}
         </div>`;
-    }
-    html += '</div>';
-
-    // Show-more / show-less footer, same styling as the Open Issues pager.
-    if (merged.length > AppView._mergedShownDefault) {
-      const label = AppView._mergedExpanded
-        ? 'Show less'
-        : `Show ${merged.length - shown} more`;
-      html += `<div class="mt-1"><button class="gc-vote-btn" onclick="AppView.toggleMergedPrs()">${label}</button></div>`;
-    }
-    return html;
   },
 
   // Expand / collapse the Merged section in place (no panel reload).
@@ -3087,11 +3316,13 @@ const AppView = {
     if (AppView._headlessPollTimer) return;
     AppView._headlessPollTimer = setInterval(async () => {
       const slug = AppView.appData && AppView.appData.slug;
-      // Stop only when the user has actually left the Dev area — i.e. neither
-      // the feed list nor the opened-topic card surface is mounted. Keying on
-      // #dev-feed alone would kill polling for a run watched from the opened
-      // topic view (#gc-thread-head), where the feed isn't present.
+      // Stop only when the user has actually left the Dev area — i.e. none
+      // of the card surfaces are mounted. Keying on #dev-feed alone would
+      // kill polling for a run watched from the opened topic view
+      // (#gc-thread-head, where the feed isn't present) or from the kanban
+      // board (#dev-kanban, where issue rows live in the columns instead).
       const mounted = document.getElementById('dev-feed')
+        || document.getElementById('dev-kanban')
         || document.getElementById('gc-thread-head');
       if (!slug || !mounted) {
         clearInterval(AppView._headlessPollTimer);
