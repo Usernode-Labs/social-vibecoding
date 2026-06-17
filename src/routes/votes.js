@@ -72,14 +72,41 @@ function stagingMockProposals() {
       '[Mock] Long-title test: walk brand-new collaborators through '
       + 'voting, kudos and dev sessions step by step',
       11, 0, 1, 0),
-    // #239: a row mid-auto-conflict-resolution so the "Resolving
+    // #239/#388: a row mid-auto-conflict-resolution so the "Resolving
     // conflicts…" badge is verifiable on staging via ?demo=1 without
-    // manufacturing a real merge conflict.
+    // manufacturing a real merge conflict. Aged to ~10h so that, without
+    // the #388 merge-pipeline pin, recency alone would sink it down the
+    // list — making the pin (which lifts it near the top) obvious.
     {
       ...mk(9000003, 900103,
         '[Mock] Resolving-state test: add a dark-mode toggle to the settings drawer',
-        1, 2, 0, 2),
+        10, 2, 0, 2),
       resolving: true,
+    },
+    // #388: a row in the GitHub merge pipeline ('merging') so the
+    // "Merging…" badge — and the top-of-stack pin — are verifiable on
+    // staging via ?demo=1. Deliberately the OLDEST mock (~13h) so without
+    // the pin it would sort dead last; the pin must lift it to rank 0,
+    // above every other proposal.
+    {
+      ...mk(9000006, 900106,
+        '[Mock] Merging-state test: this PR is mid-merge and should pin to the very top',
+        13, 4, 0, 5),
+      status: 'merging',
+    },
+    // #388: a row whose automatic conflict resolution failed
+    // (merge_conflict_state 'failed') so the "⚠ Conflict resolution
+    // failed" badge, the expanded conflicting-file list, and the pin
+    // (just below merging + resolving) are verifiable via ?demo=1. Aged
+    // ~12h so recency alone wouldn't float it.
+    {
+      ...mk(9000007, 900107,
+        '[Mock] Conflict-failed test: auto-resolve could not finish; owner must fix it',
+        12, 3, 1, 2),
+      merge_conflict_state: 'failed',
+      behind_main: 2,
+      conflict_files: ['src/app.js', 'public/index.html'],
+      conflict_checked_at: hoursAgo(11),
     },
     // #124: a visibility-change proposal (a dapp.json PR opened by the
     // Members & visibility modal) so its self-describing card is
