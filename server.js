@@ -41,6 +41,13 @@ const statusService = require('./src/services/status');
 const { getActiveWorkerCount } = require('./src/routes/sessions');
 const { sweepStuckCreatingApps } = require('./src/routes/apps');
 const { getPool } = require('./src/db/pool');
+const { createLeadership, withMigrationLock } = require('./src/services/leadership');
+
+// Leader-election coordinator for blue-green deploys (assigned in start()).
+// During a rollout both colors serve HTTP, but singleton background work
+// (worker adoption, headless resume, recovery, sweepers, drift poller) is
+// gated to the leader so it never double-runs. See services/leadership.js.
+let leadership = null;
 
 const config = loadConfig();
 log.setLevel(config.logLevel);
@@ -368,10 +375,16 @@ app.get('*', (req, res) => {
   }
 });
 
-async function start() {
-  await migrate(config);
-  await github.init(config);
-  await llm.init(config);
+// Leader-only singleton work. Runs exactly once per cluster — at boot for the
+// leader / single-instance case, or at promotion for a follower whose old
+// leader has exited (blue-green handoff). EVERYTHING here mutates shared
+// cluster state (worker containers, PR/merge rows, staging) or is a singleton
+// poller/sweeper that must never double-run across the two colors. Keep this
+// in sync with cleanup(), which tears the sweepers back down.
+async function becomeLeader() {
+  log.info('server', 'Running leader duties (recovery + sweepers)', {
+    identity: leadership && leadership.identity,
+  });
 
   // Any app stuck in 'creating' from a previous process crash gets flipped
   // to 'error' so the creator can retry instead of staring at a spinner.
@@ -405,22 +418,6 @@ async function start() {
     log.warn('server', 'rename-issue migration failed', { err: err.message });
   });
 
-  worker.ensureWorkerImage().catch((err) => {
-    log.warn('server', 'Worker image build deferred', { err: err.message });
-  });
-
-  const server = app.listen(config.port, () => {
-    log.info('server', `Listening on :${config.port}`);
-  });
-
-  ws.attach(server, config);
-  chainPoller.start(config);
-  genesisAccounts.start();
-  nodeStatus.start({ nodeRpcUrl: process.env.NODE_RPC_URL });
-  // Warm the /api/status cache so the first dashboard load doesn't have
-  // to wait 1-2s on `docker stats`. Subsequent loads are served from
-  // cache via stale-while-revalidate (see services/status.js).
-  statusService.start(config);
   // Periodically check imported / bot-owned repos for new commits on
   // `main` we didn't make ourselves and redeploy via the same path
   // that the dev-chat merge flow uses. See main-drift-poller.js.
@@ -429,8 +426,8 @@ async function start() {
   // Adopt any worker containers left over from a previous server run —
   // either still executing or already exited but un-finalized. These
   // orphans are a feature, not a bug: workers are intentionally detached
-  // from the server lifecycle so `node --watch` restarts don't interrupt
-  // in-flight Claude Code sessions.
+  // from the server lifecycle so `node --watch` restarts (and blue-green
+  // color handoffs) don't interrupt in-flight Claude Code sessions.
   recoverActiveWorkers(config)
     .catch((err) => {
       log.warn('server', 'Worker adoption failed', { err: err.message });
@@ -499,6 +496,47 @@ async function start() {
   // pre-autonomous-worker run), complete the PR + staging tail.
   recoverSessions(config).catch((err) => {
     log.warn('server', 'Session recovery failed', { err: err.message });
+  });
+}
+
+async function start() {
+  // Schema migration is serialized across colors (advisory lock) so two
+  // booting platform containers can't run DDL concurrently during a
+  // blue-green rollout. No-op lock wrapper in single-instance mode.
+  await withMigrationLock(getPool(config), () => migrate(config));
+  await github.init(config);
+  await llm.init(config);
+
+  worker.ensureWorkerImage().catch((err) => {
+    log.warn('server', 'Worker image build deferred', { err: err.message });
+  });
+
+  // ── Per-instance services ──────────────────────────────────────────
+  // Started on EVERY color so a follower can serve traffic the moment the
+  // deploy cuts over to it. These are request-serving / in-memory read
+  // caches — safe (just mildly redundant) to run in both colors briefly.
+  const server = app.listen(config.port, () => {
+    log.info('server', `Listening on :${config.port}`);
+  });
+
+  ws.attach(server, config);
+  chainPoller.start(config);
+  genesisAccounts.start();
+  nodeStatus.start({ nodeRpcUrl: process.env.NODE_RPC_URL });
+  // Warm the /api/status cache so the first dashboard load doesn't have
+  // to wait 1-2s on `docker stats`. Subsequent loads are served from
+  // cache via stale-while-revalidate (see services/status.js).
+  statusService.start(config);
+
+  // ── Leader-only singleton work ─────────────────────────────────────
+  // Elect a single leader across the colors. The leader runs becomeLeader()
+  // immediately; a follower serves HTTP now and runs it later, once the old
+  // leader exits and frees the advisory lock. Single-instance / dev / tests
+  // (PLATFORM_LEADER_LOCK unset) become leader instantly — identical to the
+  // pre-blue-green boot path.
+  leadership = createLeadership({ databaseUrl: config.databaseUrl });
+  leadership.start(becomeLeader).catch((err) => {
+    log.error('server', 'Leadership coordinator failed', { err: err.message });
   });
 
   return server;
@@ -1835,6 +1873,15 @@ async function cleanup() {
     });
   } else if (startingCount > 0) {
     log.info('server', 'All handlers drained; worker containers persist across restart');
+  }
+
+  // Release the leader advisory lock LAST — only after draining — so the
+  // standby color promotes and runs recovery (incl. orphan worker adoption)
+  // against a quiesced cluster, not while this process is still finishing a
+  // turn. (Process exit would release the session lock anyway; doing it
+  // explicitly just hands off promptly.)
+  if (leadership) {
+    await leadership.stop().catch(() => {});
   }
 
   process.exit(0);

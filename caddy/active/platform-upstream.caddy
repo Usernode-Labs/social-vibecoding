@@ -1,0 +1,22 @@
+# Active blue/green platform color for the apex + access-gate upstreams.
+#
+# MANAGED FILE — rewritten by scripts/platform-rollout.sh on every
+# zero-downtime deploy, then picked up via a graceful `caddy reload`. The
+# committed value (blue) is only the bootstrap default for a cold start /
+# local use; in production the rollout always writes the color it just cut
+# over to before reloading Caddy.
+#
+# Why these two upstreams flip here (and not via the shared `usernode`
+# network alias that the wildcard `default` + PLATFORM_INTERNAL_URL use):
+# the apex site and the per-app access gate carry turn-scoped SSE / WebSocket
+# streams, so they need an all-or-nothing cutover to one color rather than
+# DNS round-robin across both during the rollout overlap.
+(platform_upstream) {
+	reverse_proxy usernode-blue:3000
+}
+
+(platform_gate) {
+	forward_auth usernode-blue:3000 {
+		uri /__caddy/access
+	}
+}

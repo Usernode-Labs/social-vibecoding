@@ -69,11 +69,18 @@
 	}
 }
 
+# Active blue/green platform color for the apex + access-gate upstreams.
+# Defines the (platform_upstream) and (platform_gate) snippets used below.
+# This file is rewritten + reloaded on every zero-downtime deploy so the
+# apex/gate cut over cleanly to the new color. See
+# scripts/platform-rollout.sh and the file's own header.
+import /etc/caddy/active/platform-upstream.caddy
+
 # ── Main platform ────────────────────────────────────────────────
 {$USERNODE_DOMAIN} {
 	import acmedns_tls
 
-	reverse_proxy usernode:3000
+	import platform_upstream
 
 	encode gzip
 
@@ -124,9 +131,11 @@
 	# 502s every WebSocket behind this wildcard. Keep that in mind before
 	# "simplifying" either side; tests/ws-upgrade-redispatch.test.js
 	# guards the platform half.
-	forward_auth usernode:3000 {
-		uri /__caddy/access
-	}
+	#
+	# Upstream is the active blue/green color (import platform_gate, from
+	# caddy/active/platform-upstream.caddy) so the gate flips together with
+	# the apex on a zero-downtime deploy.
+	import platform_gate
 
 	reverse_proxy {upstream}:3000
 

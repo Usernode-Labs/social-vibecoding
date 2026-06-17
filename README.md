@@ -26,9 +26,10 @@ Mayor / Claude Code pipeline that produces real PRs.
 This code ships in two shapes:
 
 1. **Standalone** (this repo's `docker-compose.yml` + GitHub Actions
-   workflow) — a self-contained three-service stack (Caddy + usernode
-   + Postgres) that runs on a dedicated VPS. This is the intended
-   long-term home and the target of Phase 3 of `EXTRACT-PLAN.md`.
+   workflow) — a self-contained stack (Caddy, the platform itself as
+   blue/green colors, Postgres, the sidecar chain node, and acme-dns)
+   that runs on a dedicated VPS. This is the intended long-term home
+   and the target of Phase 3 of `EXTRACT-PLAN.md`.
 2. **Legacy, in the `evanshapi.ro` monorepo** — consumed as a git
    submodule by the `evanshapi.ro` orchestrator, which generates a
    combined compose file covering all its projects and a shared Caddy.
@@ -88,12 +89,39 @@ In the repo's Settings → Secrets and variables → Actions:
 ### First deploy
 
 Actions tab → **Deploy** → Run workflow. The workflow rsyncs code to
-`/opt/usernode` on the VPS, writes `.env` from the secrets above, and
-runs `docker compose up -d --build`. Caddy auto-issues TLS on the
-first HTTPS request.
+`/opt/usernode` on the VPS, writes `.env` from the secrets above, brings
+up the infra services (Caddy, Postgres, sidecar node, acme-dns), then
+runs the blue-green rollout (`scripts/platform-rollout.sh`) to start the
+platform. Caddy auto-issues TLS on the first HTTPS request.
 
 Once the first run is green end-to-end, uncomment the `push`-on-main
 trigger in `.github/workflows/deploy.yml` to enable auto-deploy.
+
+### Zero-downtime deploys (blue-green)
+
+The platform runs as two interchangeable colors, `usernode-blue` and
+`usernode-green` (one YAML anchor in `docker-compose.yml`; they differ
+only in name). Exactly one color serves the apex + per-app access-gate
+vhosts at a time. A deploy builds the new image, starts the *idle* color,
+waits for it to pass `/health`, flips Caddy's active-color import file
+(`caddy/active/platform-upstream.caddy`) to it via a graceful `caddy
+reload`, then drains and stops the old color — see
+`scripts/platform-rollout.sh`.
+
+HTTP handling is stateless against the shared Postgres, so both colors
+can serve during the brief cutover overlap. The singleton background work
+(worker adoption, headless resume, recovery, sweepers, the main-drift
+poller) is gated behind a Postgres advisory lock
+(`src/services/leadership.js`): the old color stays leader until it stops
+and releases the lock, then the new color promotes itself. That ordering
+is why traffic flips *before* the old color stops. `PLATFORM_LEADER_LOCK`
+toggles the gate — set in compose for prod; unset in local dev/tests, so
+a single instance is leader immediately and behaves exactly as before.
+
+The very first blue-green deploy (cutting over from the old single
+`usernode` container) has a brief apex blip while the first color boots,
+since the container name changes; every deploy after that is
+zero-downtime.
 
 ### Recovery (rollback to a known-good SHA)
 
@@ -112,16 +140,20 @@ then SSH in and run:
 ssh deploy@<DEPLOY_HOST>
 # Optional sanity checks first:
 grep ^GIT_SHA= /opt/usernode/.env       # what's running now
-docker logs usernode --tail 50          # what's broken
+docker logs usernode-blue --tail 50     # what's broken (or -green; the
+                                        # live color is whichever is up)
 
 /opt/usernode-tools/rollback.sh <sha>
 ```
 
 The script clones the target SHA into `/tmp`, rsyncs over
 `/opt/usernode/` (preserving `.env`, `runtime/`, `data/`), updates
-`GIT_SHA` in `.env`, and runs `docker compose up -d --build`.
-Named volumes (Postgres data, Caddy state, sidecar archive)
-persist across rollback.
+`GIT_SHA` in `.env`, and brings the harness back up. It detects the
+shape of the rolled-back tree: a blue-green tree gets infra up + the
+`platform-rollout.sh` cutover (one color), while a pre-blue-green tree
+falls back to the old single-container `docker compose up -d --build`.
+Named volumes (Postgres data, Caddy state, sidecar archive) persist
+across rollback.
 
 The script is auto-deployed by the Deploy workflow — every deploy
 copies the latest version of `scripts/rollback.sh` into

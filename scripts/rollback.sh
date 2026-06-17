@@ -25,7 +25,8 @@
 #
 # Quick checks before rolling:
 #   grep ^GIT_SHA= /opt/usernode/.env       # current SHA
-#   docker logs usernode --tail 50          # what's broken
+#   docker logs usernode-blue --tail 50     # what's broken (or -green; the
+#                                           # live color is whichever is up)
 #
 # Caveats:
 #   - Schema migrations are forward-only. If the rolled-back code can't
@@ -54,7 +55,8 @@ Find a known-good SHA at:
 
 Quick checks before rolling:
   grep ^GIT_SHA= /opt/usernode/.env       # current SHA
-  docker logs usernode --tail 50          # what's broken
+  docker logs usernode-blue --tail 50     # what's broken (or -green; the
+                                          # live color is whichever is up)
 USAGE
   exit 1
 fi
@@ -129,7 +131,30 @@ echo "==> Building and bringing up the harness..."
 cd "$DEPLOY_DIR"
 # Build is required because the platform image bakes in `COPY . .`,
 # so the only way new code gets in is a rebuild.
-docker compose up -d --build
+#
+# Two shapes of target tree, detected from the rolled-back compose file:
+#
+#   - Blue-green (defines usernode-blue): bring up infra, then drive the
+#     rolled-back tree's own platform-rollout.sh so exactly one color comes
+#     up and Caddy is flipped to it. A bare `compose up` would start BOTH
+#     colors, which is exactly what we must not do.
+#   - Pre-blue-green (single `usernode` service): the old `compose up -d
+#     --build` path. First force-remove any color containers a newer deploy
+#     left behind so they don't linger as orphans / a second leader.
+#
+# We deliberately key off the ON-DISK (target) compose file, not this
+# script's vintage: rollback.sh runs from /opt/usernode-tools (current), but
+# operates on the tree it just rsynced into /opt/usernode (the target SHA).
+if grep -q 'usernode-blue' docker-compose.yml 2>/dev/null \
+   && [ -f scripts/platform-rollout.sh ]; then
+  echo "==> Blue-green tree detected — infra up, then platform rollout"
+  docker compose up -d --build caddy usernode-db usernode-node acme-dns
+  bash scripts/platform-rollout.sh
+else
+  echo "==> Pre-blue-green tree — single-container bring-up"
+  docker rm -f usernode-blue usernode-green 2>/dev/null || true
+  docker compose up -d --build --remove-orphans
+fi
 
 echo
 echo "==> Rollback complete. Now running on $TARGET_SHA."

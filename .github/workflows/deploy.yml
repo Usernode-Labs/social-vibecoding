@@ -162,9 +162,10 @@ jobs:
             # ----------------------------------------------------------
             # Pull non-buildable images first so we can detect upstream
             # node image bumps. `--ignore-buildable` skips services with
-            # a build context (the platform `usernode` image), so this
-            # only pulls caddy / postgres / usernode-node. The platform
-            # image is rebuilt below by `up -d --build`.
+            # a build context (the platform color images + caddy), so this
+            # only pulls postgres / usernode-node. The platform image is
+            # built by scripts/platform-rollout.sh (blue-green) below; caddy
+            # is rebuilt by the infra `up -d --build`.
             #
             # We capture usernodelabs/usernode's image ID before+after
             # so the gating block below can treat an upstream bump as
@@ -416,7 +417,13 @@ jobs:
                 # SRC_DB between the dump and the cutover. Caddy will
                 # 502 the platform vhost during this window; child apps
                 # are unaffected (they don't traverse the harness).
-                docker compose stop usernode
+                # Stop every platform identity: the blue/green colors and
+                # the legacy pre-blue-green `usernode` container (the latter
+                # only on a not-yet-migrated host). `|| true` so a missing
+                # one isn't fatal — this one-time rename predates a normal
+                # rollout, so any subset may be present.
+                docker compose stop usernode-blue usernode-green 2>/dev/null || true
+                docker rm -f usernode 2>/dev/null || true
 
                 TS=$(date -u +%Y%m%dT%H%M%SZ)
                 DUMP_PATH="/tmp/usernode-pre-rename-$TS.sql"
@@ -460,21 +467,34 @@ jobs:
               fi
             fi
 
-            # Bring everything up. Build is required on every deploy —
-            # the platform usernode image bakes in `COPY . .` so a
-            # rebuild is how new code gets in. If the conditional
-            # archive-refresh branch above already force-recreated
-            # usernode-node, this `up -d` is a no-op for that service.
-            # If the migration block above stopped usernode, this
-            # restarts it pointed at the new DB.
-            docker compose up -d --build --remove-orphans
+            # ── Infra up, then blue-green platform rollout ──────────────
+            # Bring up the non-platform infra the ordinary way. The platform
+            # COLORS (usernode-blue / usernode-green) are deliberately NOT in
+            # this list: a bare `compose up` would start BOTH at once, which is
+            # exactly what blue-green avoids. Their lifecycle is owned by
+            # scripts/platform-rollout.sh below. caddy is rebuilt + recreated
+            # here so the new ./caddy/active bind mount and any Caddyfile
+            # changes are in place before the rollout reloads Caddy to flip the
+            # color. If the archive-refresh branch above already recreated
+            # usernode-node, this is a no-op for it.
+            #
+            # No --remove-orphans here: on the first blue-green deploy the
+            # legacy single `usernode` container is still serving, and removing
+            # it now (before a color is up) would black out the apex for the
+            # whole image build. platform-rollout.sh removes it instead — after
+            # the build, right before the new color comes up — so the legacy
+            # container keeps serving until the last moment.
+            docker compose up -d --build \
+              caddy usernode-db usernode-node acme-dns
 
-            # Caddyfile is a read-only mount, so a rebuild of usernode
-            # alone won't restart caddy. Force a config reload so any
-            # Caddyfile changes from this deploy take effect. `|| true`
-            # because on the very first deploy caddy may not be fully
-            # up yet (it's racing with TLS issuance).
-            docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile || true
+            # Zero-downtime platform cutover: build the new image, start the
+            # idle color, wait for it to pass /health, flip Caddy's
+            # active-color import + graceful reload, then drain the old color.
+            # Also performs the Caddy reload that used to live here (it reloads
+            # the Caddyfile, which imports caddy/active/platform-upstream.caddy),
+            # so a standalone reload is no longer needed. Self-contained and
+            # re-runnable — see the script header.
+            bash scripts/platform-rollout.sh
 
       # Always clear the deploy-in-progress flag so the /status banner goes
       # away even when the deploy itself failed or was cancelled.
