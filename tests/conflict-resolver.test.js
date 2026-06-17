@@ -816,3 +816,251 @@ test('isAppResolving: true while a drain runs, false once it settles', async () 
     restore();
   }
 });
+
+// ── #391: two-phase drain — merge clean first, resolve blocked last ──────────
+// Before #391 the drain attempted the highest-voted PR first and ran its
+// (minutes-long) worker sync inline inside the single-flight drain, freezing
+// clean lower-voted siblings behind it. The drain now runs in two phases:
+// Phase 1 merges every directly-mergeable eligible PR (vote priority) without
+// ever syncing — a PR that needs a sync is deferred — and Phase 2 then
+// resolves the deferred (blocked) PRs. These tests drive the real drainApp
+// (via checkAndResolveConflicts) against a model pool/github/worker so we can
+// assert the ORDER of merges vs. worker syncs.
+//
+// Each sibling carries live state the candidate query reads: yes_count,
+// promoted_at, created_at, behind_main, merge_conflict_state, status, and the
+// `mergeable` value GitHub reports for its PR (pr_number === 100 + id). A
+// blocked PR is one with behind_main > 0 and/or mergeable === false; its
+// runSyncMain outcome is configurable ('resolved' clears the block, 'conflict'
+// leaves it stuck).
+function loadResolverForPhases({ siblings, majority = 2 }) {
+  const ids = {
+    logger: require.resolve('../src/services/logger'),
+    github: require.resolve('../src/services/github'),
+    limits: require.resolve('../src/services/limits'),
+    syncMain: require.resolve('../src/services/sync-main'),
+    activeUsers: require.resolve('../src/services/active-users'),
+    pool: require.resolve('../src/db/pool'),
+    votes: require.resolve('../src/routes/votes'),
+    ws: require.resolve('../src/services/ws'),
+    subject: require.resolve('../src/services/conflict-resolver'),
+  };
+  const orig = {};
+  for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
+
+  // Live sibling table, keyed by id. Defaults: clean & directly mergeable.
+  const byId = new Map();
+  for (const s of siblings) {
+    byId.set(s.id, {
+      id: s.id,
+      yes_count: s.yes_count,
+      promoted_at: s.promoted_at,
+      created_at: s.created_at,
+      behind_main: s.behind_main || 0,
+      merge_conflict_state: s.merge_conflict_state || null,
+      status: 'promoted',
+      mergeable: s.mergeable === undefined ? true : s.mergeable,
+      syncOutcome: s.syncOutcome || 'resolved', // 'resolved' | 'conflict'
+    });
+  }
+  const byPr = (pr) => [...byId.values()].find((s) => 100 + s.id === pr);
+
+  // Ordered event log: ['merge', id] and ['sync', id] in call order.
+  const events = [];
+  const voteUpdates = [];
+  const sysMessages = [];
+
+  stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
+
+  // GitHub: report each PR's current mergeable. pollMergeable /
+  // waitForMergeableTrue both read this; a 'resolved' sync flips it true.
+  const fakeOctokit = async () => ({
+    request: async (_route, params) => {
+      const s = byPr(params.pull_number);
+      return { data: { mergeable: s ? s.mergeable : null } };
+    },
+  });
+  stub(ids.github, { isEnabled: () => true, getOctokit: fakeOctokit, getInstallationOctokit: fakeOctokit });
+  stub(ids.limits, { checkSystemBudget: async () => ({ ok: true, remaining: 2500 }) });
+
+  // Worker sync: record the call, then apply the configured outcome.
+  stub(ids.syncMain, {
+    runSyncMain: async (_config, _pool, sessionId) => {
+      events.push(['sync', sessionId]);
+      const s = byId.get(sessionId);
+      if (s && s.syncOutcome === 'resolved') {
+        s.behind_main = 0;
+        s.mergeable = true;
+        return { ok: true, syncResult: 'resolved', behind: 0 };
+      }
+      return { ok: true, syncResult: 'conflict', behind: s ? s.behind_main : 0 };
+    },
+    // Keep the model's merge_conflict_state in step with what the resolver
+    // persists so the candidate query's blocked/unblocked sort key is honest.
+    persistConflictState: async (_pool, session, { state }) => {
+      const s = byId.get(session.id);
+      if (s) s.merge_conflict_state = state;
+    },
+  });
+
+  stub(ids.activeUsers, { getActiveUserStats: async () => ({ active: 3, majority }) });
+
+  // checkAndMerge: by the time the resolver calls it the branch is mergeable,
+  // so record the merge and drop the PR out of 'promoted'.
+  stub(ids.votes, {
+    checkAndMerge: async (_config, _pool, fresh) => {
+      events.push(['merge', fresh.id]);
+      const s = byId.get(fresh.id);
+      if (s) s.status = 'merged';
+      return { merged: true };
+    },
+  });
+  stub(ids.ws, {
+    pushVoteUpdate(data) { voteUpdates.push(data); },
+    sendSystemMessage: async (_pool, _appId, content) => { sysMessages.push(content); },
+  });
+
+  // Candidate query: live filter (promoted + at-threshold + exclusions) and
+  // the #391 sort (known-unblocked first, then yes DESC, promoted ASC NULLS
+  // LAST, created ASC), LIMIT 1.
+  const blocked = (s) => !(s.behind_main === 0
+    && !['conflict', 'failed', 'resolving'].includes(s.merge_conflict_state || 'clean'));
+  const rank = (a, b) => {
+    if (blocked(a) !== blocked(b)) return blocked(a) ? 1 : -1; // unblocked first
+    if (b.yes_count !== a.yes_count) return b.yes_count - a.yes_count;
+    const ap = a.promoted_at, bp = b.promoted_at;
+    if (ap == null && bp != null) return 1;
+    if (ap != null && bp == null) return -1;
+    if (ap != null && bp != null && ap !== bp) return ap - bp;
+    return a.created_at - b.created_at;
+  };
+  const candidate = (params) => {
+    const excluded = new Set();
+    if (params && params[1]) excluded.add(params[1]);
+    for (const a of (params && params[3]) || []) excluded.add(a);
+    const eligible = [...byId.values()].filter(
+      (s) => s.status === 'promoted' && s.yes_count >= majority && !excluded.has(s.id)
+    );
+    if (!eligible.length) return [];
+    const top = [...eligible].sort(rank)[0];
+    return [{ id: top.id, yes_count: top.yes_count }];
+  };
+
+  const pool = makePool([
+    [/SELECT cs\.id,[\s\S]*yes_count[\s\S]*LIMIT 1/, candidate],
+    [/SELECT cs\.\*, a\.slug/, (params) => {
+      const s = byId.get(params[0]);
+      if (!s) return [];
+      return [{
+        ...s, repo_url: 'https://github.com/acme/widget', pr_number: 100 + s.id,
+        user_id: 1, app_id: 5, app_slug: 'widget', app_name: 'Widget',
+        app_self_hosted: false, conflict_files: [],
+      }];
+    }],
+  ]);
+  stub(ids.pool, { getPool: () => pool });
+
+  delete require.cache[ids.subject];
+  const subject = require(ids.subject);
+  const restore = () => {
+    for (const [k, id] of Object.entries(ids)) {
+      if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
+    }
+  };
+  return { subject, events, voteUpdates, sysMessages, restore };
+}
+
+test('#391: a blocked top-voted PR does not block clean siblings — they merge before any sync', async () => {
+  const { subject, events, restore } = loadResolverForPhases({
+    majority: 2,
+    siblings: [
+      // Most votes but behind main (blocked) — would freeze the queue pre-#391.
+      { id: 51, yes_count: 5, promoted_at: 100, created_at: 100, behind_main: 2 },
+      { id: 52, yes_count: 3, promoted_at: 200, created_at: 200 }, // clean
+      { id: 53, yes_count: 2, promoted_at: 300, created_at: 300 }, // clean
+    ],
+  });
+  try {
+    await subject.checkAndResolveConflicts({ jwtSecret: 's' }, { app_id: 5, id: 9 });
+    // Both clean PRs merge first (vote order), THEN the blocked one is synced
+    // and merged in Phase 2.
+    assert.deepEqual(events, [['merge', 52], ['merge', 53], ['sync', 51], ['merge', 51]],
+      'clean PRs merge before the blocked PR is ever synced');
+    const firstSync = events.findIndex((e) => e[0] === 'sync');
+    const cleanMerges = events
+      .map((e, i) => ({ e, i }))
+      .filter(({ e }) => e[0] === 'merge' && (e[1] === 52 || e[1] === 53));
+    assert.ok(cleanMerges.every(({ i }) => i < firstSync),
+      'no worker sync runs until every clean merge is done');
+  } finally {
+    restore();
+  }
+});
+
+test('#391: a blocked PR whose sync fails stays stuck but never blocks the clean merge', async () => {
+  const { subject, events, voteUpdates, sysMessages, restore } = loadResolverForPhases({
+    majority: 2,
+    siblings: [
+      // Real conflict that the worker cannot resolve.
+      { id: 61, yes_count: 5, promoted_at: 100, created_at: 100, behind_main: 2, mergeable: false, syncOutcome: 'conflict' },
+      { id: 62, yes_count: 3, promoted_at: 200, created_at: 200 }, // clean
+    ],
+  });
+  try {
+    await subject.checkAndResolveConflicts({ jwtSecret: 's' }, { app_id: 5, id: 9 });
+    // Clean PR merged in Phase 1; blocked PR synced in Phase 2 but never merged.
+    assert.deepEqual(events, [['merge', 62], ['sync', 61]],
+      'the clean PR merges, the blocked PR is synced but does not merge');
+    // Terminal broadcast for the failed resolve surfaces the 'failed' snapshot.
+    const failed = voteUpdates.find((u) => u.sessionId === 61 && u.resolving === false);
+    assert.ok(failed, 'a terminal (resolving:false) broadcast fired for the blocked PR');
+    assert.equal(failed.resolutionOutcome, 'failed', 'outcome is failed');
+    assert.equal(failed.mergeConflictState, 'failed', 'persisted snapshot is failed');
+    // The owner is told to resolve it by hand.
+    assert.ok(sysMessages.some((m) => /61/.test(m) && /resolve/i.test(m)),
+      'a group-chat message asks the owner to resolve the conflict');
+  } finally {
+    restore();
+  }
+});
+
+test('#391 regression: an all-clean queue drains highest-voted first with no syncs', async () => {
+  const { subject, events, restore } = loadResolverForPhases({
+    majority: 2,
+    siblings: [
+      { id: 71, yes_count: 2, promoted_at: 100, created_at: 100 },
+      { id: 72, yes_count: 4, promoted_at: 200, created_at: 200 }, // most votes
+      { id: 73, yes_count: 3, promoted_at: 50, created_at: 50 },
+    ],
+  });
+  try {
+    await subject.checkAndResolveConflicts({ jwtSecret: 's' }, { app_id: 5, id: 9 });
+    assert.deepEqual(events, [['merge', 72], ['merge', 73], ['merge', 71]],
+      'clean PRs merge highest-voted first');
+    assert.equal(events.some((e) => e[0] === 'sync'), false, 'no worker sync ever runs');
+  } finally {
+    restore();
+  }
+});
+
+test('#391 regression: an all-blocked queue still resolves every PR, highest-voted first', async () => {
+  const { subject, events, restore } = loadResolverForPhases({
+    majority: 2,
+    siblings: [
+      { id: 81, yes_count: 2, promoted_at: 100, created_at: 100, behind_main: 1 },
+      { id: 82, yes_count: 4, promoted_at: 200, created_at: 200, behind_main: 1 }, // most votes
+      { id: 83, yes_count: 3, promoted_at: 50, created_at: 50, behind_main: 1 },
+    ],
+  });
+  try {
+    await subject.checkAndResolveConflicts({ jwtSecret: 's' }, { app_id: 5, id: 9 });
+    // No clean PRs to merge in Phase 1; Phase 2 resolves them in vote priority.
+    const syncs = events.filter((e) => e[0] === 'sync').map((e) => e[1]);
+    assert.deepEqual(syncs, [82, 83, 81], 'every blocked PR is synced, highest-voted first');
+    // Each resolved sync then merges.
+    assert.deepEqual(events.filter((e) => e[0] === 'merge').map((e) => e[1]).sort(), [81, 82, 83],
+      'every resolved PR merges');
+  } finally {
+    restore();
+  }
+});
