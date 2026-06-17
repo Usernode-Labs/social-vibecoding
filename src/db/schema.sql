@@ -244,6 +244,17 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS behind_main INTEGER 
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS merge_conflict_state TEXT;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS conflict_files JSONB NOT NULL DEFAULT '[]';
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS conflict_checked_at TIMESTAMPTZ;
+-- #381: console-error "may break the app" check. After each staging build
+-- the capture pipeline's headless browser records console errors / uncaught
+-- exceptions / failed loads on the staging "after" target(s). Written by
+-- services/visuals.js (captureForSession → storeConsoleCheck), latest run
+-- only. console_check_state is 'clean' | 'errors' | 'unknown' (NULL until
+-- the first check); console_errors is the captured {kind,message,source}
+-- list; console_checked_at is when it last ran. Advisory only — never gates
+-- voting or merge.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS console_check_state TEXT;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS console_errors JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS console_checked_at TIMESTAMPTZ;
 -- #11: vote-to-undo a merged PR. When the undo majority is reached we
 -- open a `git revert <merge_commit_sha>` PR and insert a new
 -- chat_sessions row pointing back here via revert_of_session_id.
