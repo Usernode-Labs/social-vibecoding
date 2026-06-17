@@ -13,6 +13,12 @@ const AppView = {
   _ghIssuesMeta: { truncatedList: false, note: null, repoUrl: null, myRemaining: null },
   _bountyInFlight: new Set(),
 
+  // #396: per-issue-number cache of the GitHub comment thread fetched
+  // lazily when an issue topic opens, so _renderTopicHead's live-refreshes
+  // (WS-driven) reuse it instead of refetching. Each entry is
+  // `{ comments, truncated }`; absent means "not loaded yet".
+  _ghComments: {},
+
   // Scroll-position memory for the Dev card list, keyed by app slug
   // (`App.currentApp`). In-memory only — reset on a full page reload by
   // design, so a hard refresh starts at the top. Mirrors the
@@ -697,7 +703,12 @@ const AppView = {
     let bodyHtml;
     if (t.kind === 'issue') {
       cardHtml = AppView._renderIssueRow(item, { noNav: true });
-      bodyHtml = AppView._issueBodyHtml(item);
+      // #396: the issue body, then a placeholder for the GitHub comment
+      // thread. The thread is fetched lazily (after paint) and rendered
+      // into the placeholder, so a cached (or empty) result reuses what's
+      // already there across WS-driven _renderTopicHead refreshes.
+      bodyHtml = AppView._issueBodyHtml(item)
+        + '<div id="dev-issue-comments" class="mt-2"></div>';
     } else if (t.kind === 'proposal') {
       cardHtml = AppView._renderProposalCard(item, { noNav: true });
       // Plain-language summary (when one was generated) sits at the very top
@@ -732,6 +743,7 @@ const AppView = {
 
     head.innerHTML = cardHtml + bodyHtml + askAiHtml;
     if (window.Kudos) Kudos.attach(head);
+    if (t.kind === 'issue') AppView._loadIssueComments(item);
     if (t.kind === 'proposal' && item.status !== 'merged') AppView._loadVoteRoster(item.id);
 
     // #321: wire the kept card pill in the topic head. Unlike the feed and
@@ -1896,6 +1908,100 @@ const AppView = {
     return issue && issue.body && issue.body.trim()
       ? `<div class="dev-issue-body text-xs text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 mt-2">${renderMd(issue.body)}</div>`
       : '';
+  },
+
+  // #396: is this comment author the platform bot? GitHub App actors
+  // comment as `<name>[bot]`; the platform bot account is `usernode-bot`.
+  // Tolerant of both so the bot's earlier auto-proposal questions are
+  // labelled distinctly from the reporter's replies. Mirrors the bot
+  // detection in buildHeadlessSeed (server-side).
+  _isBotCommentAuthor(author) {
+    const a = (author || '').toString().toLowerCase();
+    return /\[bot\]$/.test(a) || a === 'usernode-bot' || a.endsWith('-bot');
+  },
+
+  // #396: the GitHub comment thread for an issue, rendered beneath the
+  // issue body in the topic sub-view. One row per comment (author + date +
+  // markdown body), with bot comments tagged. When `truncated`, a final
+  // line notes older comments were omitted and links out to the full
+  // thread on GitHub. Returns '' when there are no comments so nothing
+  // renders. Markdown goes through the same DevChat.renderMarkdown pipeline
+  // as the body.
+  _issueCommentsHtml(comments, truncated, htmlUrl) {
+    const list = Array.isArray(comments) ? comments : [];
+    if (!list.length) return '';
+    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
+      ? (s) => DevChat.renderMarkdown(s)
+      : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
+
+    const rows = list.map((c) => {
+      const isBot = AppView._isBotCommentAuthor(c.author);
+      const author = c.author ? escapeHtml(c.author) : 'unknown';
+      const date = (c.createdAt || '').slice(0, 10);
+      const botTag = isBot
+        ? ' <span class="text-[10px] uppercase tracking-wide text-sky-600 dark:text-sky-400">bot</span>'
+        : '';
+      return `<div class="dev-issue-comment border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs font-medium text-zinc-700 dark:text-zinc-200">${author}</span>${botTag}
+            ${date ? `<span class="text-[10px] text-zinc-400 dark:text-zinc-500">${escapeHtml(date)}</span>` : ''}
+          </div>
+          <div class="text-xs text-zinc-600 dark:text-zinc-300">${renderMd(c.body || '')}</div>
+        </div>`;
+    });
+
+    const omitted = truncated
+      ? `<div class="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">Earlier comments omitted — ${
+          htmlUrl
+            ? `<a href="${escapeHtml(htmlUrl)}" target="_blank" rel="noopener" class="underline hover:text-zinc-600 dark:hover:text-zinc-300">view the full thread on GitHub</a>`
+            : 'view the full thread on GitHub'
+        }.</div>`
+      : '';
+
+    return `<div class="flex flex-col gap-2 mt-2">
+        <div class="text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500 px-1">Discussion</div>
+        ${omitted}
+        ${rows.join('')}
+      </div>`;
+  },
+
+  // #396: lazily fetch + render an issue's GitHub comment thread into the
+  // #dev-issue-comments placeholder. Cached per issue number in _ghComments
+  // so WS-driven _renderTopicHead refreshes paint from cache without a
+  // refetch. Best-effort: a failed fetch leaves the placeholder empty (the
+  // issue body still renders). Re-resolves the placeholder after the await
+  // since _renderTopicHead may have repainted, and bails if the user
+  // navigated away from this issue.
+  async _loadIssueComments(item) {
+    if (!item || item.number == null) return;
+    const number = item.number;
+
+    const paint = (data) => {
+      const t = AppView._devTopic;
+      if (!t || t.kind !== 'issue' || t.id !== number) return;
+      const slot = document.getElementById('dev-issue-comments');
+      if (!slot) return;
+      slot.innerHTML = AppView._issueCommentsHtml(data.comments, data.truncated, item.htmlUrl);
+    };
+
+    const cached = AppView._ghComments[number];
+    if (cached) { paint(cached); return; }
+
+    try {
+      const slug = AppView.appData && AppView.appData.slug;
+      if (!slug) return;
+      const res = await fetch(
+        `/api/apps/${slug}/github-issues/${number}/comments${AppView._demoQS()}`
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      const entry = {
+        comments: Array.isArray(data.comments) ? data.comments : [],
+        truncated: !!data.truncated,
+      };
+      AppView._ghComments[number] = entry;
+      paint(entry);
+    } catch (_) { /* best-effort: leave the placeholder empty */ }
   },
 
   // The proposal's plain-language summary (pr_summary_md), rendered at the

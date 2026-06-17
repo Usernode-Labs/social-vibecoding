@@ -3681,7 +3681,7 @@ const LIST_GITHUB_ISSUES_TOOL = {
     "List the OPEN GitHub issues on this app's repository (read-only). "
     + 'Returns JSON `{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }` — '
     + 'pull requests are excluded and long bodies are clipped with an explicit '
-    + '"[truncated — use get_github_issue(N) for full text]" marker; call get_github_issue for the full body. '
+    + '"[truncated — use get_github_issue(N) for full text]" marker; call get_github_issue for the full body AND the issue\'s comment thread. '
     + 'Call this when the user mentions the issue tracker, asks what issues or bugs are filed, '
     + 'or when planning work that may already be reported, so your reply is grounded in real issues. '
     + 'It only READS issues — it cannot create, comment on, edit, or close them. Takes no input.',
@@ -3699,12 +3699,15 @@ const LIST_GITHUB_ISSUES_TOOL = {
 const GET_GITHUB_ISSUE_TOOL = {
   name: 'get_github_issue',
   description:
-    "Fetch ONE GitHub issue from this app's repository with its FULL, untruncated body (read-only). "
-    + 'Returns JSON `{ issue: { number, title, body, labels, updatedAt, htmlUrl } }`, or '
-    + '`{ issue: null, note }` when it cannot be resolved. '
+    "Fetch ONE GitHub issue from this app's repository with its FULL, untruncated body AND its comment thread (read-only). "
+    + 'Returns JSON `{ issue: { number, title, body, labels, updatedAt, htmlUrl }, comments: [{ author, body, createdAt }], commentsTruncated }`, or '
+    + '`{ issue: null, comments: [], note }` when it cannot be resolved. '
+    + 'Comments are oldest-first; long threads keep the most recent ones with `commentsTruncated: true`, and very long '
+    + 'comment bodies end with a "[truncated]" marker. Read the comments to catch clarifications, decisions, and answers '
+    + 'the reporter left after the original post. '
     + 'Use it when a body from list_github_issues ends with a "[truncated …]" marker and you need the rest, '
-    + 'or when the user asks about a specific issue number. Also resolves recently-closed issues. '
-    + 'It only READS the issue — it cannot create, comment on, edit, or close it.',
+    + 'when you need the discussion on an issue, or when the user asks about a specific issue number. Also resolves recently-closed issues. '
+    + 'It only READS the issue and its comments — it cannot create, comment on, edit, or close anything.',
   input_schema: {
     type: 'object',
     properties: {
@@ -3936,13 +3939,28 @@ async function resolveGithubIssuesToolResult(repoOwner, repoName) {
   return JSON.stringify(github.truncateIssueBodies(result, (n) => `get_github_issue(${n})`));
 }
 
-// Resolve a get_github_issue tool call: ONE issue, FULL body (#158).
-// github.fetchPublicIssue never throws and validates the number itself.
+// Resolve a get_github_issue tool call: ONE issue, FULL body (#158), plus
+// its comment thread (#396). Calls both fetchPublicIssue and
+// fetchIssueComments (mirroring the headless seed) and merges them — the
+// thread is clipped via clipIssueComments so a chatty issue can't blow up
+// the turn's context. Both fetchers never throw; `comments` is always an
+// array and `commentsNote` carries a comment-fetch failure independently of
+// the issue's own `note`. `commentsTruncated` is true when older comments
+// were omitted (long thread or kept-count cap).
 async function resolveGithubIssueToolResult(repoOwner, repoName, number) {
   if (!repoOwner || !repoName) {
-    return JSON.stringify({ issue: null, note: 'no repo' });
+    return JSON.stringify({ issue: null, comments: [], commentsTruncated: false, note: 'no repo' });
   }
-  return JSON.stringify(await github.fetchPublicIssue(repoOwner, repoName, number));
+  const { issue, note } = await github.fetchPublicIssue(repoOwner, repoName, number);
+  const raw = await github.fetchIssueComments(repoOwner, repoName, number);
+  const { comments, truncated } = github.clipIssueComments(raw.comments, { wasTruncated: raw.truncated });
+  return JSON.stringify({
+    issue,
+    comments,
+    commentsTruncated: truncated,
+    ...(note ? { note } : {}),
+    ...(raw.note ? { commentsNote: raw.note } : {}),
+  });
 }
 
 // Resolve a web_fetch tool call (#30). webFetch.fetchUrl never throws —

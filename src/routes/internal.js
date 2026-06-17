@@ -406,14 +406,15 @@ function internalRoutes(_config) {
     }
   );
 
-  // Read-only: fetch ONE GitHub issue with its FULL (untruncated) body.
-  // Backs the worker's `usernode-issues <number>` CLI form — the escape
-  // hatch for bodies the list route clips (#158). Same auth posture as
+  // Read-only: fetch ONE GitHub issue with its FULL (untruncated) body and
+  // its comment thread (#396). Backs the worker's `usernode-issues <number>`
+  // CLI form — the escape hatch for bodies the list route clips (#158) and
+  // the discussion the original post doesn't carry. Same auth posture as
   // the list route (session-scoped ISSUES_JWT, both scout and build).
-  // Always 200 with `{ ok: true, issue, note? }` once the session checks
-  // pass — github.fetchPublicIssue never throws and resolves every
-  // failure to `{ issue: null, note }`, so the CLI always prints
-  // parseable JSON.
+  // Always 200 with `{ ok: true, issue, comments, commentsTruncated, note?,
+  // commentsNote? }` once the session checks pass — both fetchers never
+  // throw and resolve every failure to a well-formed shape, so the CLI
+  // always prints parseable JSON.
   router.get(
     '/api/internal/sessions/:sessionId/issues/:number',
     internalAuth,
@@ -454,8 +455,23 @@ function internalRoutes(_config) {
       }
       const [, owner, repo] = parsed;
       // fetchPublicIssue validates the number itself ('bad issue number').
-      const result = await github.fetchPublicIssue(owner, repo, req.params.number);
-      return res.json({ ok: true, ...result });
+      // #396: merge the issue's comment thread (clipped) so the worker CLI
+      // surfaces the discussion, not just the body. Both fetchers never
+      // throw; `comments` is always an array and `commentsNote` carries a
+      // comment-fetch failure independently of the issue's own `note`.
+      const { issue, note } = await github.fetchPublicIssue(owner, repo, req.params.number);
+      const rawComments = await github.fetchIssueComments(owner, repo, req.params.number);
+      const { comments, truncated } = github.clipIssueComments(
+        rawComments.comments, { wasTruncated: rawComments.truncated }
+      );
+      return res.json({
+        ok: true,
+        issue,
+        comments,
+        commentsTruncated: truncated,
+        ...(note ? { note } : {}),
+        ...(rawComments.note ? { commentsNote: rawComments.note } : {}),
+      });
     }
   );
 

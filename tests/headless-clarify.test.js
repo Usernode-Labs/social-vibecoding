@@ -55,7 +55,7 @@ function loadSessions(mockPool, overrides = {}) {
   const githubStub = {
     isEnabled: () => true,
     fetchPublicIssue: async () => ({ issue: { number: 5, title: 'Make it better', body: 'please' } }),
-    fetchIssueComments: async () => ({ comments: [] }),
+    fetchIssueComments: async () => ({ comments: [], truncated: false }),
     getBotUsername: async () => 'usernode-bot',
     createBranch: async () => {},
     createIssueComment: async () => {},
@@ -393,6 +393,7 @@ test('pure-text phase-1 turn posts the questions to the issue exactly once', asy
           { author: 'usernode-bot', body: 'Old question?', createdAt: '2026-06-01T00:00:00Z' },
           { author: 'reporter', body: 'An answer.', createdAt: '2026-06-02T00:00:00Z' },
         ],
+        truncated: false,
       }),
       createIssueComment: async (owner, repo, issueNumber, body) => {
         commentCalls.push({ owner, repo, issueNumber, body });

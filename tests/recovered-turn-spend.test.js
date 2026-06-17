@@ -66,7 +66,7 @@ function loadSessions(mockPool, { recoveredResult, userKeyEnc, billing } = {}) {
       isEnabled: () => true,
       safeMention: (s) => s,
       fetchPublicIssue: async () => ({ issue: { number: 5, title: 'T', body: 'B' } }),
-      fetchIssueComments: async () => ({ comments: [] }),
+      fetchIssueComments: async () => ({ comments: [], truncated: false }),
       getBotUsername: async () => 'usernode-bot',
       createIssueComment: async () => {},
     })],
