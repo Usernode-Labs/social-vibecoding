@@ -2698,3 +2698,102 @@ html.in-native-webview #header-title {
   vertical-align: -2px;
 }
 @keyframes import-spin { to { transform: rotate(360deg); } }
+
+/* ── Priority / assigned-person chips + dropdown (community-voted) ───── */
+.attr-chip {
+  cursor: default;
+  border: 0;
+  line-height: 1.1;
+}
+button.attr-chip { cursor: pointer; }
+
+/* Floating dropdown anchored under a chip. Body-mounted + position:fixed
+   so it escapes the card's overflow clipping and survives feed re-renders. */
+.attr-popover {
+  z-index: 2000;
+  min-width: 200px;
+  max-width: 260px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+}
+.attr-pop-head {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  padding: 4px 8px 2px;
+}
+.attr-opt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.attr-opt:hover { background: var(--accent-tint); }
+.attr-opt-label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.attr-opt-right { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.attr-opt-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border-radius: 9999px;
+  padding: 0 6px;
+}
+.attr-dot { width: 8px; height: 8px; border-radius: 9999px; display: inline-block; }
+.attr-pop-add { position: relative; padding: 6px; border-top: 1px solid var(--border-light); margin-top: 4px; }
+.attr-pop-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+}
+.attr-pop-addbtn {
+  margin-top: 6px;
+  width: 100%;
+  padding: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+.attr-pop-addbtn:hover { background: var(--accent-light); }
+.attr-pop-suggest {
+  margin-top: 4px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.attr-suggest-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 5px 8px;
+  font-size: 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.attr-suggest-item:hover { background: var(--accent-tint); }
