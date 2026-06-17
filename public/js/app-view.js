@@ -1676,7 +1676,7 @@ const AppView = {
         : '<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">Nothing here yet</div>';
       const footer = col.footer ? `<div class="mt-2">${col.footer}</div>` : '';
       html += `
-        <div class="dev-kanban-col shrink-0 w-72 min-w-[16rem]">
+        <div class="dev-kanban-col flex-1 basis-0 min-w-[16rem]">
           <div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-2 px-0.5">
             ${escapeHtml(col.title)} <span class="text-zinc-400 dark:text-zinc-500 font-mono">· ${count}</span>
           </div>
