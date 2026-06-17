@@ -531,3 +531,139 @@ test('resolveAndMaybeRetry: exhausted system budget skips and posts the group-ch
     restore();
   }
 });
+
+// ── #380: checkAndResolveConflicts resolves only the front-runner ───────────
+// The post-merge / post-drift sweep used to fan a worker conflict-resolution
+// turn across EVERY promoted sibling. It now selects a single front-runner —
+// the promoted PR with the most yes votes (closest to the majority
+// threshold), tie-broken by earliest promoted_at then created_at — and
+// resolves only that one. The rest are healed lazily when they reach
+// majority. These tests drive checkAndResolveConflicts directly against a
+// mock pool that emulates the candidate query's ORDER BY / LIMIT 1.
+function loadResolverForSweep({ siblings }) {
+  const ids = {
+    logger: require.resolve('../src/services/logger'),
+    github: require.resolve('../src/services/github'),
+    limits: require.resolve('../src/services/limits'),
+    syncMain: require.resolve('../src/services/sync-main'),
+    pool: require.resolve('../src/db/pool'),
+    votes: require.resolve('../src/routes/votes'),
+    ws: require.resolve('../src/services/ws'),
+    subject: require.resolve('../src/services/conflict-resolver'),
+  };
+  const orig = {};
+  for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
+
+  stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
+  // mergeable: null forever → pollMergeable returns null, needsSync stays
+  // false, and resolveWithSession bails at 'no_conflict' WITHOUT a second
+  // (fresh) load — so each resolve issues exactly one loadSession call,
+  // letting us count resolve cycles by counting those loads.
+  const fakeOctokit = async () => ({ request: async () => ({ data: { mergeable: null } }) });
+  stub(ids.github, {
+    isEnabled: () => true,
+    getOctokit: fakeOctokit,
+    getInstallationOctokit: fakeOctokit,
+  });
+  stub(ids.limits, { checkSystemBudget: async () => ({ ok: true, remaining: 2500 }) });
+  stub(ids.syncMain, {
+    runSyncMain: async () => { throw new Error('runSyncMain must not run on the no_conflict path'); },
+    persistConflictState: async () => {},
+  });
+  stub(ids.votes, { checkAndMerge: async () => { throw new Error('checkAndMerge must not run on the no_conflict path'); } });
+  stub(ids.ws, { pushVoteUpdate() {}, sendSystemMessage: async () => {} });
+
+  // Emulate the candidate query's SQL ordering so the mock returns the row
+  // Postgres would: yes_count DESC, promoted_at ASC NULLS LAST, created_at ASC.
+  const rank = (a, b) => {
+    if (b.yes_count !== a.yes_count) return b.yes_count - a.yes_count;
+    const ap = a.promoted_at, bp = b.promoted_at;
+    if (ap == null && bp != null) return 1;      // NULLS LAST
+    if (ap != null && bp == null) return -1;
+    if (ap != null && bp != null && ap !== bp) return ap - bp; // ASC
+    return a.created_at - b.created_at;           // ASC
+  };
+  const frontRunner = () => {
+    if (!siblings.length) return [];
+    const sorted = [...siblings].sort(rank);
+    return [{ id: sorted[0].id, yes_count: sorted[0].yes_count }];
+  };
+
+  const pool = makePool([
+    // Candidate (front-runner) query — distinctive `yes_count` projection.
+    [/SELECT cs\.id,[\s\S]*yes_count[\s\S]*LIMIT 1/, () => frontRunner()],
+    // loadSession — return a promoted session row for the requested id.
+    [/SELECT cs\.\*, a\.slug/, (params) => {
+      const sid = params[0];
+      return [{
+        id: sid, status: 'promoted', repo_url: 'https://github.com/acme/widget',
+        pr_number: 100 + sid, behind_main: 0, user_id: 1, app_id: 5,
+        app_slug: 'widget', app_name: 'Widget', app_self_hosted: false,
+      }];
+    }],
+  ]);
+  stub(ids.pool, { getPool: () => pool });
+
+  delete require.cache[ids.subject];
+  const subject = require(ids.subject);
+  const restore = () => {
+    for (const [k, id] of Object.entries(ids)) {
+      if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
+    }
+  };
+  // Ids actually loaded (one loadSession call per resolve cycle).
+  const loadedIds = () => pool.calls
+    .filter((c) => /SELECT cs\.\*, a\.slug/.test(c.sql))
+    .map((c) => c.params[0]);
+  return { subject, pool, loadedIds, restore };
+}
+
+test('checkAndResolveConflicts: resolves only the highest-yes-vote front-runner', async () => {
+  const { subject, pool, loadedIds, restore } = loadResolverForSweep({
+    siblings: [
+      { id: 11, yes_count: 0, promoted_at: 100, created_at: 100 },
+      { id: 12, yes_count: 3, promoted_at: 200, created_at: 200 }, // front-runner
+      { id: 13, yes_count: 1, promoted_at: 50, created_at: 50 },
+    ],
+  });
+  try {
+    await subject.checkAndResolveConflicts({ jwtSecret: 's' }, { app_id: 5, id: 9 });
+    // The candidate query asks for a single row, ordered by yes votes.
+    const candidate = pool.calls.find((c) => /SELECT cs\.id,[\s\S]*yes_count/.test(c.sql));
+    assert.ok(candidate, 'the front-runner candidate query was issued');
+    assert.match(candidate.sql, /LIMIT 1/, 'only the front-runner is selected');
+    assert.match(candidate.sql, /yes_count DESC/, 'ranked by yes votes first');
+    assert.match(candidate.sql, /promoted_at ASC NULLS LAST/, 'longest-waiting tiebreak');
+    assert.match(candidate.sql, /created_at ASC/, 'deterministic final tiebreak');
+    // Exactly one resolve cycle, for the highest-yes-vote sibling only.
+    assert.deepEqual(loadedIds(), [12], 'only the front-runner is resolved, not the others');
+  } finally {
+    restore();
+  }
+});
+
+test('checkAndResolveConflicts: ties on yes votes resolve the earlier-promoted PR', async () => {
+  const { subject, loadedIds, restore } = loadResolverForSweep({
+    siblings: [
+      { id: 21, yes_count: 2, promoted_at: 300, created_at: 300 },
+      { id: 22, yes_count: 2, promoted_at: 100, created_at: 100 }, // earlier promoted → wins
+      { id: 23, yes_count: 2, promoted_at: 200, created_at: 200 },
+    ],
+  });
+  try {
+    await subject.checkAndResolveConflicts({ jwtSecret: 's' }, { app_id: 5, id: 9 });
+    assert.deepEqual(loadedIds(), [22], 'the longest-waiting of the tied PRs is the front-runner');
+  } finally {
+    restore();
+  }
+});
+
+test('checkAndResolveConflicts: empty queue returns without resolving anything', async () => {
+  const { subject, loadedIds, restore } = loadResolverForSweep({ siblings: [] });
+  try {
+    await subject.checkAndResolveConflicts({ jwtSecret: 's' }, { app_id: 5, id: 9 });
+    assert.deepEqual(loadedIds(), [], 'no promoted siblings → no resolve cycles');
+  } finally {
+    restore();
+  }
+});

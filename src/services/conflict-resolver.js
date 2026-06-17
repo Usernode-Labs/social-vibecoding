@@ -104,32 +104,46 @@ async function loadSession(pool, sessionId) {
   return rows[0] || null;
 }
 
-// Post-merge sweep: for every OTHER promoted PR on the same app, sync it
-// with main (worker git-merge + Claude-on-markers) and, if it's already
-// approved, retry the merge. Fired (un-awaited) from checkAndMerge after
-// a successful merge, and from the drift poller after an out-of-band
-// main move.
+// Post-merge sweep: sync ONLY the single promoted PR that is next in line
+// to merge (the "front-runner") with main (worker git-merge +
+// Claude-on-markers) and, if it's already approved, retry the merge.
+// Fired (un-awaited) from checkAndMerge after a successful merge, and from
+// the drift poller after an out-of-band main move.
+//
+// #380: previously this swept EVERY other promoted PR, spinning a worker
+// conflict-resolution turn for each — including PRs with barely any votes
+// that won't merge for a long time (if ever). That burned the system-token
+// budget on speculative work. Merges here are vote-driven, not
+// position-driven (a PR merges the instant it crosses the majority
+// threshold regardless of promotion order), so "next in line" is the
+// promoted PR with the MOST yes votes — closest to crossing the threshold.
+// We resolve only that one; the rest are healed lazily when they reach
+// majority (checkAndMerge's behind_main path), and the cascade re-runs this
+// sweep after every merge / drift redeploy to pick the new front-runner.
 async function checkAndResolveConflicts(config, mergedSession) {
   const pool = getPool(config);
 
+  // Rank promoted siblings by closeness-to-merge and take the front-runner
+  // only: most yes votes first, then longest-waiting (earliest promoted_at,
+  // NULLS LAST), then earliest created_at as a final deterministic tiebreak
+  // so repeated sweeps don't oscillate between equally-voted PRs.
   const { rows: conflictCandidates } = await pool.query(
-    `SELECT cs.id
+    `SELECT cs.id,
+            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count
      FROM chat_sessions cs
-     WHERE cs.app_id = $1 AND cs.status = 'promoted' AND cs.id != $2`,
+     WHERE cs.app_id = $1 AND cs.status = 'promoted' AND cs.id != $2
+     ORDER BY yes_count DESC, cs.promoted_at ASC NULLS LAST, cs.created_at ASC
+     LIMIT 1`,
     [mergedSession.app_id, mergedSession.id || 0]
   );
 
   if (!conflictCandidates.length) return;
 
-  // Sequential: each candidate may spin a worker (real git merge). Doing
-  // them in parallel would stampede the docker host the same way the
-  // drift poller avoids.
-  for (const { id } of conflictCandidates) {
-    try {
-      await resolveAndMaybeRetry(config, { sessionId: id });
-    } catch (err) {
-      log.error('conflict', 'resolveAndMaybeRetry failed', { sessionId: id, err: err.message });
-    }
+  const { id } = conflictCandidates[0];
+  try {
+    await resolveAndMaybeRetry(config, { sessionId: id });
+  } catch (err) {
+    log.error('conflict', 'resolveAndMaybeRetry failed', { sessionId: id, err: err.message });
   }
 }
 
