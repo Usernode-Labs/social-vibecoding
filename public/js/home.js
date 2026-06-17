@@ -290,6 +290,27 @@ const Home = {
       return `<span class="inline-flex items-center text-[0.7rem] font-mono font-medium px-1.5 py-0.5 rounded ${cls}">${yes} / ${majority}</span>`;
     };
 
+    // #361: compact merge-status badge from the persisted snapshot
+    // (merge_conflict_state + behind_main). Only the badge + count — the
+    // file list lives on the proposal detail screen. Mirrors the card's
+    // priority order, minus the merging/merged/resolving states the
+    // home strip doesn't surface.
+    // #386: the red warning fires only on 'failed' (an auto-resolve
+    // attempt ran and couldn't fix it). A pre-attempt 'conflict' snapshot
+    // always carries behind_main >= 1, so it falls through to the neutral
+    // amber "Behind" chip rather than a red "Conflicts" warning.
+    const mergeBadge = (p) => {
+      const mcs = p.merge_conflict_state;
+      if (mcs === 'failed') {
+        return '<span class="text-[0.65rem] font-medium text-red-500 uppercase shrink-0" title="Automatic conflict resolution failed">⚠ Failed</span>';
+      }
+      const behind = parseInt(p.behind_main, 10) || 0;
+      if (mcs === 'behind' || mcs === 'conflict' || behind > 0) {
+        return `<span class="text-[0.65rem] font-medium text-amber-500 uppercase shrink-0" title="Behind main">Behind${behind ? ` · ${behind}` : ''}</span>`;
+      }
+      return '';
+    };
+
     let rows = '';
     for (const p of prs) {
       const title = p.pr_title || `PR #${p.pr_number || p.id}`;
@@ -301,6 +322,7 @@ const Home = {
            class="col-span-full flex items-center gap-2 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-violet-500/50 transition-colors">
           <span class="text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0 max-w-[30%] truncate">${esc(p.app_name)}</span>
           <span class="text-sm text-zinc-800 dark:text-zinc-200 flex-1 min-w-0 truncate">${esc(title)}</span>
+          ${mergeBadge(p)}
           ${pill(parseInt(p.yes_count) || 0, p.majority || 1, p.status)}
           ${status}
         </a>`;
@@ -547,10 +569,12 @@ const Home = {
     // is rendered conditionally so we don't reserve right padding on
     // tiles that have no buttons there at all.
     const isFavorited = !!app.is_favorited;
-    const showRetry = isError && (App.user?.isAdmin || App.user?.id === app.created_by);
-    const showCheck = App.user?.isAdmin && app.repo_url && isRunning && !app.self_hosted;
-    const showDelete = !!App.user?.isAdmin;
-    const showLock = !!App.user?.isAdmin;
+    // Mutating controls gate on canAdminWrite (full admin) — view-only
+    // admins don't get them (issue #311). Retry stays creator-or-full-admin.
+    const showRetry = isError && (App.user?.canAdminWrite || App.user?.id === app.created_by);
+    const showCheck = App.user?.canAdminWrite && app.repo_url && isRunning && !app.self_hosted;
+    const showDelete = !!App.user?.canAdminWrite;
+    const showLock = !!App.user?.canAdminWrite;
     const isLocked = !!app.locked;
     const hasCornerBtns = true;
     // `Retry` is text rather than a glyph so we widen the title-row's

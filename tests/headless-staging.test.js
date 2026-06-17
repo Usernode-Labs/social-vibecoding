@@ -318,6 +318,9 @@ test('headless code outcome builds staging (no PR) and persists the stagingUrl c
     );
     assert.ok(cardMsg, 'stagingUrl-bearing system message persisted');
     assert.equal(cardMsg.metadata.stagingUrl, 'https://stg-test.example');
+    // #361: the explicit marker rides alongside the URL so the card is
+    // driven by `changesReady`, not incidentally by `stagingUrl`.
+    assert.equal(cardMsg.metadata.changesReady, true, 'success card carries changesReady');
 
     // No PR: nothing ever wrote pr_number.
     assert.ok(
@@ -349,9 +352,17 @@ test('headless staging build failure is non-fatal — run still finalizes ready/
 
     // The failure was surfaced as a status message, and no staging columns
     // (and no PR) were written.
-    assert.ok(pool.state.messages.some(
-      (m) => /Staging preview failed to build/.test(m.content || '')
-    ));
+    const failMsg = pool.state.messages.find(
+      (m) => m.role === 'system' && /Staging build failed/.test(m.content || '')
+    );
+    assert.ok(failMsg, 'a staging-failed status message was persisted');
+    // #361: the failure branch persists the staging-independent marker so a
+    // clone still renders the "Changes ready" card (with a disabled Preview)
+    // instead of a card-less line. The pushed commit is the deliverable.
+    assert.equal(failMsg.metadata.changesReady, true, 'failure card carries changesReady');
+    assert.equal(failMsg.metadata.stagingFailed, true, 'metadata flags the staging failure');
+    assert.equal(failMsg.metadata.stagingErrorName, 'Error', 'error name persisted for the hint');
+    assert.deepEqual(failMsg.metadata.stagingMissingKeys, [], 'missing keys persisted (empty here)');
     assert.ok(!pool.calls.some((c) => /SET staging_container_id/i.test(c.sql)));
     assert.ok(!pool.calls.some((c) => /SET pr_number/i.test(c.sql)));
   } finally {

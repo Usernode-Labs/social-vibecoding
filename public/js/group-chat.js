@@ -1,3 +1,10 @@
+// #328: max characters in a single group-chat message. Raised from 2000 to
+// 8000 to give room for markdown-formatted messages (code samples, lists).
+// Kept in sync with the server-side cap in src/services/ws.js — both ends
+// must agree or a message that passes the composer would be silently
+// truncated on insert. Drives every composer/edit `maxlength` below.
+const GC_MAX_MESSAGE_LEN = 8000;
+
 const GroupChat = {
   ws: null,
   appSlug: null,
@@ -29,8 +36,8 @@ const GroupChat = {
   //                        a long-offline session can't grow
   //                        unbounded; oldest entries are dropped
   //                        first when full (rare in practice; the
-  //                        2000-char-per-message * 50 ceiling is
-  //                        ~100KB which is fine to hold in RAM).
+  //                        8000-char-per-message * 50 ceiling is
+  //                        ~400KB which is fine to hold in RAM).
   _reconnectAttempts: 0,
   _reconnectTimer: null,
   _pendingOutgoing: [],
@@ -401,6 +408,12 @@ const GroupChat = {
         GroupChat._updateMessageReactions(msg.messageId, msg.reactions || []);
         break;
       }
+      case 'chat_edit': {
+        // Author edited a message — patch content + the "edited" marker in
+        // place (preserves scroll, reactions, and the row's quote block).
+        GroupChat._applyEdit(msg);
+        break;
+      }
       case 'typing': {
         // #194: thread typing renders inside the mounted thread only;
         // general typing keeps the original #gc-typing slot.
@@ -431,9 +444,15 @@ const GroupChat = {
     const a = GroupChat.activeThread;
     if (a && a.type === type && Number(a.ref) === Number(ref)) {
       const el = document.getElementById('gc-thread-messages');
-      if (el) {
+      const scroll = GroupChat._threadScrollEl();
+      if (el && scroll) {
+        // #363: only stick to the newest message when the reader is already
+        // near the bottom — otherwise a live message would yank someone who
+        // has scrolled up to read the topic body or older replies.
+        const nearBottom =
+          scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
         el.insertAdjacentHTML('beforeend', GroupChat.renderMessageHtml(msg));
-        el.scrollTop = el.scrollHeight;
+        if (nearBottom) scroll.scrollTop = scroll.scrollHeight;
         return;
       }
     }
@@ -560,20 +579,36 @@ const GroupChat = {
     // the same input/Send sizing — instead of the boxed inline 40vh layout
     // kept for any legacy (non-fullHeight) caller.
     const fill = !!opts.fullHeight;
+    // #363: in fill (topic) mode, the caller can ask for an in-scroll header
+    // slot so the topic card/body and the discussion share ONE scroll region
+    // (the topic sub-view paints into #gc-thread-head after mount). Off by
+    // default, so the general-chat path and any legacy caller are unaffected.
+    const withHeader = fill && !!opts.withHeader;
     const composerHtml = opts.readOnly
       ? `<div class="px-3 py-2 text-xs text-zinc-500 border-t border-zinc-200 dark:border-zinc-800 shrink-0">${escapeHtml(opts.notice || 'This thread is read-only.')}</div>`
       : `<div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2">
           <div id="gc-thread-reply-preview" class="hidden"></div>
-          <form id="gc-thread-form" class="flex gap-2">
-            <input id="gc-thread-input" type="text" maxlength="2000" autocomplete="off"
+          <form id="gc-thread-form" class="flex gap-2 items-end">
+            <textarea id="gc-thread-input" maxlength="${GC_MAX_MESSAGE_LEN}" rows="1" autocomplete="off"
               placeholder="${escapeHtml(opts.placeholder || 'Reply in thread…')}"
-              class="flex-1 min-w-0 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 ${fill ? 'py-2' : 'py-1.5'} text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent">
+              class="gc-composer-input flex-1 min-w-0 resize-none overflow-y-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 ${fill ? 'py-2' : 'py-1.5'} text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"></textarea>
             <button type="submit" class="rounded-lg bg-violet-600 hover:bg-violet-500 ${fill ? 'px-4 py-2' : 'px-3 py-1.5'} text-sm font-medium text-white transition-colors shrink-0">Send</button>
           </form>
         </div>`;
+    // #363: fill mode wraps an optional header slot + the messages list in a
+    // SINGLE scroll container (#gc-thread-scroll), so a topic's card/body and
+    // its discussion scroll as one area (matching the general chat, where only
+    // the composer is pinned). The messages list itself no longer scrolls; the
+    // typing slot and composer stay as pinned shrink-0 siblings outside the
+    // scroller. The legacy (non-fill) boxed layout keeps the messages list as
+    // its own 40vh scroller.
+    const headSlot = withHeader ? '<div id="gc-thread-head"></div>' : '';
     container.innerHTML = fill
       ? `<div class="dev-thread flex flex-col h-full min-h-0">
-          <div id="gc-thread-messages" class="overflow-y-auto py-2 space-y-0.5 flex-1 min-h-0"></div>
+          <div id="gc-thread-scroll" class="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3">
+            ${headSlot}
+            <div id="gc-thread-messages" class="py-2 space-y-0.5"></div>
+          </div>
           <div id="gc-thread-typing" class="px-3 text-xs text-zinc-500 h-5 shrink-0"></div>
           ${composerHtml}
         </div>`
@@ -593,17 +628,33 @@ const GroupChat = {
     if (form && input) {
       const saved = GroupChat.getDraft(slug, threadKey);
       if (saved) input.value = saved;
-      form.addEventListener('submit', (e) => {
-        e.preventDefault();
+      GroupChat._autoGrowTextarea(input);
+      const submitThread = () => {
         const content = input.value.trim();
         if (!content) return;
         GroupChat.send(content, { type, ref });
         input.value = '';
         GroupChat.setDraft(slug, '', threadKey);
+        GroupChat._autoGrowTextarea(input);
+      };
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        submitThread();
       });
       input.addEventListener('input', () => {
         GroupChat.setDraft(slug, input.value, threadKey);
+        GroupChat._autoGrowTextarea(input);
         GroupChat.sendTyping({ type, ref });
+      });
+      // Multi-line submit semantics, same as the general composer: Enter
+      // sends, Shift+Enter inserts a newline, touch keyboards always insert
+      // a newline (Send button sends). Bubble phase so the autocomplete's
+      // capture-phase Enter handling wins while its dropdown is open.
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey && !GroupChat._isTouch()) {
+          e.preventDefault();
+          submitThread();
+        }
       });
       // #87/#130 parity with the general composer: @mention and #/PR#
       // reference autocomplete on the thread input.
@@ -667,15 +718,27 @@ const GroupChat = {
     } catch { /* transient — re-open retries */ }
   },
 
+  // #363: the element that actually scrolls a mounted thread. In the unified
+  // topic layout it's the wrapper holding the header + messages; in the legacy
+  // boxed layout the messages list is itself the scroller.
+  _threadScrollEl() {
+    return document.getElementById('gc-thread-scroll')
+      || document.getElementById('gc-thread-messages');
+  },
+
   // Paint the active thread's cached messages into #gc-thread-messages.
   renderThread() {
     const a = GroupChat.activeThread;
     const el = document.getElementById('gc-thread-messages');
     if (!a || !el) return;
+    const scroll = GroupChat._threadScrollEl();
+    // Unified topic layout: header + messages share #gc-thread-scroll.
+    const unified = !!scroll && scroll.id === 'gc-thread-scroll';
     const st = GroupChat._threadState(a.type, a.ref);
-    // Preserve the reading position across "Load earlier" prepends.
-    const prevHeight = el.scrollHeight;
-    const prevTop = el.scrollTop;
+    // Preserve the reading position across "Load earlier" prepends. Read/write
+    // scroll on the scroll container, not the (now non-scrolling) message list.
+    const prevHeight = scroll ? scroll.scrollHeight : 0;
+    const prevTop = scroll ? scroll.scrollTop : 0;
     const wasLoaded = el.dataset.loaded === '1';
 
     const earlier = (st.loaded && st.hasMore && st.messages.length)
@@ -690,10 +753,15 @@ const GroupChat = {
     const btn = document.getElementById('gc-thread-earlier');
     if (btn) btn.addEventListener('click', () => GroupChat.loadThreadHistory(a.type, a.ref));
 
+    if (!scroll) return;
     if (wasLoaded) {
-      el.scrollTop = prevTop + (el.scrollHeight - prevHeight);
+      scroll.scrollTop = prevTop + (scroll.scrollHeight - prevHeight);
+    } else if (unified) {
+      // #363: open a topic at the TOP so its card/body reads first; the user
+      // scrolls down into the discussion (general chat lands at the bottom).
+      scroll.scrollTop = 0;
     } else {
-      el.scrollTop = el.scrollHeight;
+      scroll.scrollTop = scroll.scrollHeight;
     }
   },
 
@@ -742,7 +810,7 @@ const GroupChat = {
     const label = q.source === 'pr'
       ? `PR #${q.prNumber || ''}`.trim()
       : (q.author ? `@${q.author}` : 'message');
-    const snippet = (q.snippet || '').slice(0, 120);
+    const snippet = GroupChat._collapseSnippet(q.snippet).slice(0, 120);
     el.classList.remove('hidden');
     el.innerHTML =
       `<div class="gc-reply-preview-inner">` +
@@ -767,6 +835,12 @@ const GroupChat = {
     return true;
   },
 
+  // Collapse all whitespace runs (including the newlines of a multi-line
+  // message) to single spaces, so quote snippets stay tidy and single-line.
+  _collapseSnippet(text) {
+    return (text || '').replace(/\s+/g, ' ').trim();
+  },
+
   // Build a quote object from a tapped chat row (message / event / spec).
   _quoteFromRow(row) {
     const id = parseInt(row.dataset.msgId || '', 10) || null;
@@ -781,13 +855,15 @@ const GroupChat = {
     if (row.classList.contains('gc-msg-system')) {
       const textEl = row.querySelector('.gc-msg-system-text');
       const text = (textEl ? textEl.textContent : row.textContent) || '';
-      return { source: 'event', refMsgId: id, author: null, snippet: text.trim() };
+      return { source: 'event', refMsgId: id, author: null, snippet: GroupChat._collapseSnippet(text) };
     }
     const body = row.querySelector('.gc-msg-content');
     return {
       source: 'message', refMsgId: id,
       author: row.dataset.username || null,
-      snippet: (body ? body.textContent : '').trim(),
+      // Collapse newlines (multi-line messages render with pre-wrap) so the
+      // quote chip stays single-line.
+      snippet: GroupChat._collapseSnippet(body ? body.textContent : ''),
     };
   },
 
@@ -880,6 +956,21 @@ const GroupChat = {
         if (id) GroupChat.sendReact(id, pill.dataset.emoji);
         return;
       }
+      // Edit button (own ordinary messages) → swap the row into an inline
+      // editor. Handled before tap-to-quote so the click doesn't also stage
+      // a reply.
+      const editBtn = e.target.closest('.gc-msg-edit');
+      if (editBtn) {
+        const row = editBtn.closest('[data-msg-id]');
+        const id = row && parseInt(row.dataset.msgId || '', 10);
+        if (id) GroupChat._startEdit(id);
+        return;
+      }
+      // Clicks inside an open inline editor (textarea, notice span, or any
+      // other non-button descendant) belong to the editor — it manages its
+      // own behaviour through the listeners attached in _startEdit. Handled
+      // before tap-to-quote so the click doesn't also stage a reply.
+      if (e.target.closest('.gc-edit')) return;
       // Hover react button (desktop) → open the bar for this row.
       const addBtn = e.target.closest('.gc-react-add');
       if (addBtn) {
@@ -1013,6 +1104,186 @@ const GroupChat = {
     GroupChat._closeReactionBar();
   },
 
+  // ── message editing ─────────────────────────────────────────────────
+
+  // Auto-grow a composer / inline-editor <textarea>: reset to one row then
+  // expand to fit its content, capped at MAX so it scrolls internally
+  // instead of taking over the screen. Idempotent — safe to call on every
+  // input event, draft restore, and after a send (value='' shrinks back).
+  _COMPOSER_MAX_PX: 140, // ~5–6 lines before it scrolls
+  _autoGrowTextarea(el) {
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, GroupChat._COMPOSER_MAX_PX)}px`;
+  },
+
+  // Touch devices have no Shift+Enter chord, so Enter inserts a newline and
+  // the Send button is the send action (composer) / Save button (editor).
+  _isTouch() {
+    return !!(window.matchMedia && window.matchMedia('(hover: none)').matches);
+  },
+
+  // Full-precision timestamp for the "edited" marker's tooltip, e.g.
+  // "edited Jun 16, 2026, 2:41 PM". Reuses the same locale approach as the
+  // per-message time.
+  _editedTitle(ts) {
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return 'edited';
+    const date = d.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+    const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return `edited ${date}, ${time}`;
+  },
+
+  // Hover affordance (desktop) to edit own message. Hidden on touch via CSS
+  // (long-press bar carries the Edit action there), mirroring gc-react-add.
+  _renderEditBtn(_msg) {
+    return `<button class="gc-msg-edit" title="Edit" aria-label="Edit message" tabindex="-1">✏️</button>`;
+  },
+
+  // Locate a message (and its containing thread state, if any) by id across
+  // the general stream and every cached thread.
+  _findMessage(id) {
+    let msg = GroupChat.messages.find((m) => String(m.id) === String(id));
+    if (msg) return msg;
+    for (const st of GroupChat.threads.values()) {
+      msg = st.messages.find((m) => String(m.id) === String(id));
+      if (msg) return msg;
+    }
+    return null;
+  },
+
+  // Find the rendered row for a message in whichever list it's shown in.
+  _findRow(id) {
+    return document.querySelector(
+      `#gc-messages .gc-msg[data-msg-id="${id}"], #gc-thread-messages .gc-msg[data-msg-id="${id}"]`
+    );
+  },
+
+  // Send an edit over the WS (fire-and-forget; the authoritative update
+  // arrives via the 'chat_edit' broadcast — mirrors sendReact). Returns
+  // false when the socket isn't open so the caller can keep the editor up.
+  // Edits are deliberately NOT queued like sends: a stale edit replayed
+  // after a reconnect is more surprising than a no-op.
+  sendEdit(messageId, content) {
+    if (!(GroupChat.ws && GroupChat.ws.readyState === 1)) return false;
+    GroupChat.ws.send(JSON.stringify({ type: 'edit', messageId, content }));
+    return true;
+  },
+
+  // Turn a message row into an inline editor pre-filled with its raw
+  // content. No-op for rows already being edited (just refocus).
+  _startEdit(id) {
+    const row = GroupChat._findRow(id);
+    if (!row) return;
+    if (row.dataset.editing === '1') {
+      const ta = row.querySelector('.gc-edit-textarea');
+      if (ta) ta.focus();
+      return;
+    }
+    const msg = GroupChat._findMessage(id);
+    const contentEl = row.querySelector('.gc-msg-content');
+    if (!msg || !contentEl) return;
+
+    const editor = document.createElement('div');
+    editor.className = 'gc-edit';
+    editor.innerHTML =
+      `<textarea class="gc-edit-textarea gc-composer-input" maxlength="${GC_MAX_MESSAGE_LEN}" rows="1"></textarea>` +
+      `<div class="gc-edit-actions">` +
+        `<button type="button" class="gc-edit-save">Save</button>` +
+        `<button type="button" class="gc-edit-cancel">Cancel</button>` +
+        `<span class="gc-edit-notice" hidden></span>` +
+      `</div>`;
+    const ta = editor.querySelector('.gc-edit-textarea');
+    ta.value = msg.content || '';
+    contentEl.style.display = 'none';
+    contentEl.insertAdjacentElement('afterend', editor);
+    row.dataset.editing = '1';
+
+    GroupChat._autoGrowTextarea(ta);
+    ta.focus();
+    try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch {}
+
+    ta.addEventListener('input', () => GroupChat._autoGrowTextarea(ta));
+    ta.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); GroupChat._cancelEdit(row); return; }
+      // Enter saves, Shift+Enter adds a newline (touch: newline only — Save
+      // button saves).
+      if (e.key === 'Enter' && !e.shiftKey && !GroupChat._isTouch()) {
+        e.preventDefault();
+        GroupChat._saveEdit(id, row, ta);
+      }
+    });
+    editor.querySelector('.gc-edit-save').addEventListener('click', () => GroupChat._saveEdit(id, row, ta));
+    editor.querySelector('.gc-edit-cancel').addEventListener('click', () => GroupChat._cancelEdit(row));
+  },
+
+  // Tear down the inline editor and restore the (possibly already-patched)
+  // content node.
+  _cancelEdit(row) {
+    if (!row || row.dataset.editing !== '1') return;
+    const editor = row.querySelector('.gc-edit');
+    if (editor) editor.remove();
+    const contentEl = row.querySelector('.gc-msg-content');
+    if (contentEl) contentEl.style.display = '';
+    delete row.dataset.editing;
+  },
+
+  // Commit an inline edit. Empty content cancels (editing is not a delete
+  // path). If the socket is down, surface a notice and keep the editor open
+  // rather than dropping or queueing the edit.
+  _saveEdit(id, row, ta) {
+    const content = ta.value.trim();
+    if (!content) { GroupChat._cancelEdit(row); return; }
+    if (!GroupChat.sendEdit(id, content)) {
+      const notice = row.querySelector('.gc-edit-notice');
+      if (notice) {
+        notice.hidden = false;
+        notice.textContent = 'Not connected — your edit wasn’t sent. Try again in a moment.';
+      }
+      return;
+    }
+    // Optimistically paint the new content so there's no flash; the
+    // authoritative content + "edited" marker arrive via the broadcast.
+    const contentEl = row.querySelector('.gc-msg-content');
+    if (contentEl) contentEl.innerHTML = renderMessageBody(content);
+    GroupChat._cancelEdit(row);
+  },
+
+  // Apply an incoming 'chat_edit' broadcast: update cached state and patch
+  // the row in place (content + "edited" marker) without re-rendering the
+  // list, so scroll position and reaction pills are preserved.
+  _applyEdit(data) {
+    const { messageId, content, editedAt } = data || {};
+    if (messageId == null) return;
+    const msg = GroupChat._findMessage(messageId);
+    if (msg) { msg.content = content; msg.editedAt = editedAt; }
+    const row = GroupChat._findRow(messageId);
+    if (!row) return;
+    // If the author had this open in an editor, close it — the broadcast is
+    // authoritative.
+    GroupChat._cancelEdit(row);
+    const contentEl = row.querySelector('.gc-msg-content');
+    if (contentEl) contentEl.innerHTML = renderMessageBody(content);
+    GroupChat._patchEditedMarker(row, editedAt);
+  },
+
+  // Insert or refresh the "edited" marker after a row's timestamp.
+  _patchEditedMarker(row, editedAt) {
+    if (!editedAt) return;
+    const timeEl = row.querySelector('.gc-msg-header .gc-msg-time');
+    if (!timeEl) return;
+    const title = GroupChat._editedTitle(editedAt);
+    let marker = row.querySelector('.gc-msg-header .gc-msg-edited');
+    if (marker) {
+      marker.title = title;
+    } else {
+      timeEl.insertAdjacentHTML(
+        'afterend',
+        `<span class="gc-msg-edited" title="${escapeHtml(title)}">edited</span>`
+      );
+    }
+  },
+
   // ── #25: reaction bar (WhatsApp-style quick row + curated grid) ──────
 
   _ensureReactionBar() {
@@ -1029,11 +1300,20 @@ const GroupChat = {
     bar.innerHTML =
       `<div class="gc-react-bar-quick">${quick}` +
         `<button class="gc-react-bar-more" aria-label="More emoji">\uFF0B</button>` +
+        // Touch-only Edit action for own ordinary messages (desktop uses the
+        // hover pencil). Visibility is toggled per-row in _openReactionBar.
+        `<button class="gc-react-bar-edit hidden" aria-label="Edit message">\u270F\uFE0F</button>` +
       `</div>` +
       `<div class="gc-react-bar-grid hidden">${grid}</div>`;
     bar.addEventListener('click', (e) => {
       const em = e.target.closest('.gc-react-bar-emoji');
       if (em) { GroupChat._reactFromBar(em.dataset.emoji); return; }
+      if (e.target.closest('.gc-react-bar-edit')) {
+        const id = parseInt(bar.dataset.msgId || '', 10);
+        GroupChat._closeReactionBar();
+        if (id) GroupChat._startEdit(id);
+        return;
+      }
       if (e.target.closest('.gc-react-bar-more')) {
         bar.querySelector('.gc-react-bar-grid').classList.toggle('hidden');
       }
@@ -1049,6 +1329,10 @@ const GroupChat = {
     const bar = GroupChat._ensureReactionBar();
     bar.dataset.msgId = String(id);
     bar.querySelector('.gc-react-bar-grid').classList.add('hidden');
+    // Offer Edit only on the viewer's own ordinary messages.
+    const editable = row.classList.contains('gc-msg') && row.classList.contains('gc-msg-self');
+    const editBtn = bar.querySelector('.gc-react-bar-edit');
+    if (editBtn) editBtn.classList.toggle('hidden', !editable);
     bar.classList.remove('hidden');
     GroupChat._reactBarOpenedAt = Date.now();
 
@@ -1079,8 +1363,13 @@ const GroupChat = {
     setTimeout(() => {
       document.addEventListener('click', GroupChat._reactBarDismiss, true);
       document.addEventListener('keydown', GroupChat._reactBarDismiss, true);
+      // #363: dismiss on scroll of whichever stream is mounted — the general
+      // chat (#gc-messages) or a topic thread's unified scroller
+      // (#gc-thread-scroll).
       const msgs = document.getElementById('gc-messages');
       if (msgs) msgs.addEventListener('scroll', GroupChat._reactBarDismiss, true);
+      const tscroll = document.getElementById('gc-thread-scroll');
+      if (tscroll) tscroll.addEventListener('scroll', GroupChat._reactBarDismiss, true);
     }, 0);
   },
 
@@ -1092,6 +1381,8 @@ const GroupChat = {
       document.removeEventListener('keydown', GroupChat._reactBarDismiss, true);
       const msgs = document.getElementById('gc-messages');
       if (msgs) msgs.removeEventListener('scroll', GroupChat._reactBarDismiss, true);
+      const tscroll = document.getElementById('gc-thread-scroll');
+      if (tscroll) tscroll.removeEventListener('scroll', GroupChat._reactBarDismiss, true);
     }
   },
 
@@ -1212,16 +1503,26 @@ const GroupChat = {
     // quoted block above the content; data-msg-id lets a reply elsewhere
     // scroll back to this row. #25: reactions + the hover react button.
     const quotedHtml = GroupChat._renderQuotedBlock(msg.metadata || msg.meta);
+    // Editing: an "edited" marker (with the full edit timestamp in its
+    // tooltip) once edited_at is set, and an Edit affordance on the user's
+    // OWN ordinary messages (hover on desktop; long-press bar on touch).
+    const editedAt = msg.editedAt || msg.edited_at;
+    const editedMarker = editedAt
+      ? `<span class="gc-msg-edited" title="${escapeHtml(GroupChat._editedTitle(editedAt))}">edited</span>`
+      : '';
+    const editBtn = isSelf ? GroupChat._renderEditBtn(msg) : '';
     return `
       <div class="gc-msg ${isSelf ? 'gc-msg-self' : ''}" data-msg-id="${msg.id || ''}" data-username="${escapeHtml(username)}">
         <div class="gc-msg-header">
           ${GroupChat._unreadDotHtml(msg)}
           <span class="gc-msg-username ${isSelf ? 'gc-msg-username-self' : ''}">${escapeHtml(username)}</span>
           <span class="gc-msg-time">${time}</span>
+          ${editedMarker}
+          ${editBtn}
           ${GroupChat._renderReactAddBtn(msg)}
         </div>
         ${quotedHtml}
-        <div class="gc-msg-content">${renderWithMentions(msg.content)}</div>
+        <div class="gc-msg-content">${renderMessageBody(msg.content)}</div>
         ${GroupChat._renderReactionsHtml(msg)}
       </div>`;
   },
@@ -1328,7 +1629,7 @@ const GroupChat = {
     const who = q.author
       ? escapeHtml(q.author)
       : (q.source === 'pr' ? `PR #${q.prNumber || ''}`.trim() : 'system');
-    const snippet = escapeHtml((q.snippet || '').slice(0, 160));
+    const snippet = escapeHtml(GroupChat._collapseSnippet(q.snippet).slice(0, 160));
     const icon = q.source === 'pr' ? '\u{1F500}' : (q.source === 'spec' ? '\u{1F4CB}' : '\u21A9');
     const data = q.source === 'pr'
       ? `data-quote-source="pr" data-quote-href="${escapeHtml(q.href || '')}"`
@@ -1844,6 +2145,128 @@ function renderRefChips(html) {
     const label = isPr ? `PR#${num}` : `#${num}`;
     return `${pre}<span class="${cls}" data-ref-type="${type}" data-ref-number="${num}" role="link" tabindex="0">${label}</span>`;
   });
+}
+
+// #328: the authoritative renderer for a USER message body. Renders a safe
+// markdown subset via the shared DevChat.renderMarkdown (marked + DOMPurify,
+// strict allowlist, https-only links, raw HTML escaped) and then layers the
+// existing @mention + PR/issue-ref decoration on top. All three message
+// surfaces (main chat, thread replies, inline edit) funnel through here so
+// they format identically — keep new call sites pointed at this function.
+//
+// Why a DOM walk and not another regex pass: renderWithMentions runs its
+// regexes over *escaped text*. After markdown the body is *sanitized HTML*,
+// so a string regex could match inside an <a href> attribute, inside a
+// <code>/<pre> literal, or straddle a tag — reintroducing exactly the
+// injection the sanitizer just removed. Instead we parse the sanitized HTML
+// and walk TEXT NODES ONLY, skipping anything inside <a>/<code>/<pre>, and
+// build the mention/ref <span>s via DOM APIs (textContent / setAttribute) so
+// no unsanitized HTML is ever re-created. Message content stays plain
+// markdown source on the wire and in the DB — this is display-only.
+//
+// Falls back to the plain renderWithMentions path when the markdown libs /
+// DevChat aren't available (CDN blocked, native shell, the test sandbox).
+function renderMessageBody(raw) {
+  const text = raw == null ? '' : String(raw);
+  const renderMd = typeof DevChat !== 'undefined' && DevChat.renderMarkdown;
+  if (!renderMd || typeof document === 'undefined' || !document.createElement) {
+    return renderWithMentions(text);
+  }
+  let html;
+  try {
+    html = DevChat.renderMarkdown(text, { breaks: true });
+  } catch {
+    return renderWithMentions(text);
+  }
+  const root = document.createElement('div');
+  root.innerHTML = html;
+  decorateMentionsAndRefs(root);
+  return root.innerHTML;
+}
+
+// Tags whose text content must stay literal: links (don't rewrite hrefs or
+// double-link), and code spans/blocks (a `@name` or `#5` in code is source,
+// not a mention/ref).
+const GC_DECORATE_SKIP = new Set(['A', 'CODE', 'PRE']);
+
+// Recursively walk `node`'s subtree, decorating eligible text nodes in place.
+// Snapshots childNodes first because decorateTextNode mutates the list.
+function decorateMentionsAndRefs(node) {
+  const children = node.childNodes ? Array.prototype.slice.call(node.childNodes) : [];
+  for (const child of children) {
+    if (child.nodeType === 3) { // text node
+      decorateTextNode(child);
+    } else if (child.nodeType === 1) { // element
+      const tag = (child.tagName || '').toUpperCase();
+      if (GC_DECORATE_SKIP.has(tag)) continue;
+      decorateMentionsAndRefs(child);
+    }
+  }
+}
+
+// Replace one text node with [text, <span class="gc-mention">…</span>,
+// <span class="gc-ref">…</span>, …] when it contains mentions/refs.
+function decorateTextNode(textNode) {
+  const value = textNode.nodeValue != null ? textNode.nodeValue : (textNode.textContent || '');
+  const me = (typeof App !== 'undefined' && App.user && App.user.username
+    ? App.user.username : '').toLowerCase();
+  const segs = tokenizeMentionsAndRefs(value, me);
+  if (segs.length === 1 && segs[0].type === 'text') return; // nothing to decorate
+  const parent = textNode.parentNode;
+  if (!parent) return;
+  const frag = document.createDocumentFragment();
+  for (const seg of segs) {
+    if (seg.type === 'text') {
+      frag.appendChild(document.createTextNode(seg.value));
+    } else if (seg.type === 'mention') {
+      const span = document.createElement('span');
+      span.className = seg.isSelf ? 'gc-mention gc-mention-self' : 'gc-mention';
+      span.textContent = `@${seg.name}`;
+      frag.appendChild(span);
+    } else { // ref
+      const span = document.createElement('span');
+      span.className = seg.isPr ? 'gc-ref gc-ref-pr' : 'gc-ref gc-ref-issue';
+      span.setAttribute('data-ref-type', seg.isPr ? 'pr' : 'issue');
+      span.setAttribute('data-ref-number', seg.num);
+      span.setAttribute('role', 'link');
+      span.setAttribute('tabindex', '0');
+      span.textContent = seg.isPr ? `PR#${seg.num}` : `#${seg.num}`;
+      frag.appendChild(span);
+    }
+  }
+  parent.replaceChild(frag, textNode);
+}
+
+// Pure tokenizer (no DOM): split a raw text run into ordered segments of
+// plain text, @mentions, and PR/issue refs. Mirrors the boundary + char-class
+// rules of renderWithMentions/renderRefChips so behaviour matches the string
+// path and the server-side mention parser (MENTION_CHARS, length 1..32). The
+// leading boundary char each pattern requires is preserved as text. One
+// combined regex so `PR#12` is never half-consumed by the bare `#N` pattern.
+function tokenizeMentionsAndRefs(text, me) {
+  const RE = /(^|[^\w])(@([A-Za-z0-9_]{1,32})|(pr ?#|#)(\d{1,7})(?!\w))/gi;
+  const segs = [];
+  let pos = 0;
+  let m;
+  const pushText = (s) => {
+    if (!s) return;
+    const last = segs[segs.length - 1];
+    if (last && last.type === 'text') last.value += s;
+    else segs.push({ type: 'text', value: s });
+  };
+  while ((m = RE.exec(text)) !== null) {
+    pushText(text.slice(pos, m.index));
+    pushText(m[1]); // boundary char (start-of-string is '')
+    if (m[3] != null) {
+      segs.push({ type: 'mention', name: m[3], isSelf: m[3].toLowerCase() === me });
+    } else {
+      segs.push({ type: 'ref', isPr: m[4].trim().length > 1, num: m[5] });
+    }
+    pos = m.index + m[0].length;
+  }
+  pushText(text.slice(pos));
+  if (segs.length === 0) segs.push({ type: 'text', value: '' });
+  return segs;
 }
 
 // ── #87: @mention autocomplete ─────────────────────────────────────────

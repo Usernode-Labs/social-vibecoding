@@ -158,6 +158,29 @@ function estimateCostCents(usage, model) {
 // Returns `{ title, body }` or throws on failure — callers MUST catch
 // and fall back to the old template ("<user>'s changes") rather than
 // blocking PR creation on LLM downtime.
+// Parse + sanitize the model's PR-metadata response into {title, body,
+// summary}. Tolerates light fencing / chatter around the JSON even though
+// we asked for none — LLMs occasionally add ```json wrappers — by matching
+// the first {...} object. `title` is REQUIRED (throws when empty, hard-capped
+// at 200 chars). `body` and `summary` are OPTIONAL (empty string when
+// missing/malformed) so a short or absent value never blocks PR creation;
+// `summary` is the plain-language, user-facing blurb (1-3 sentences) and is
+// length-capped defensively so a verbose model response can't dominate the
+// proposal view. Exported pure for tests.
+function parsePrMetadataText(text) {
+  const match = String(text || '').match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('No JSON object in PR metadata response');
+  const parsed = JSON.parse(match[0]);
+
+  let title = typeof parsed.title === 'string' ? parsed.title.trim() : '';
+  const body = typeof parsed.body === 'string' ? parsed.body.trim() : '';
+  let summary = typeof parsed.summary === 'string' ? parsed.summary.trim() : '';
+  if (summary.length > 600) summary = summary.slice(0, 600).trimEnd();
+  if (!title) throw new Error('Empty PR title from LLM');
+  if (title.length > 200) title = title.slice(0, 200);
+  return { title, body, summary };
+}
+
 async function generatePrMetadata({ userRequest, ccSummary, requests, summaries, specs, username, apiKey }) {
   const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
   if (!activeClient) throw new Error('LLM not initialized');
@@ -187,10 +210,11 @@ async function generatePrMetadata({ userRequest, ccSummary, requests, summaries,
 A pull request may bundle several updates made over multiple turns. You are given the FULL history of the user's requests and the coding agent's summaries for this PR, and possibly the session's spec doc(s). Produce metadata that reflects ALL the changes in the PR, not just the latest update:
 - A title (max 72 chars, imperative mood, no trailing period, no PR #) that captures the overall scope of the PR. If the updates are related, summarize them as one theme; if they are distinct, lead with the most significant change.
 - A short markdown description (2-6 lines): 1 sentence of context, then bullet points covering the concrete changes across all updates. Keep it tight; no filler.
+- A summary: 1-3 short sentences in plain, everyday English describing what this change does for the people who USE the app. No file names, no code, no technical jargon, no developer terms — just what changes for a user. This is read by non-technical voters deciding on the change, so contrast it with the developer-oriented description above.
 
 The SPEC section (when present) describes the intended scope and overall theme — useful for framing — but it may describe work that isn't built yet, so base the concrete changes on the requests and coding-agent summaries, not the spec alone.
 
-Respond with ONLY a JSON object: {"title": "...", "body": "..."}. No prose before or after.`;
+Respond with ONLY a JSON object: {"title": "...", "body": "...", "summary": "..."}. No prose before or after.`;
 
   const reqBlock = reqList.length
     ? reqList.map((r, i) => (multi ? `${i + 1}. ${r.slice(0, 1000)}` : r.slice(0, 2000))).join('\n')
@@ -219,20 +243,11 @@ Author: ${username || 'unknown'}`;
   });
 
   const text = (resp.content || []).find((b) => b.type === 'text')?.text || '';
-  // Tolerate light fencing / chatter around the JSON even though we
-  // asked for none — LLMs occasionally add ```json wrappers.
-  const match = text.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error('No JSON object in PR metadata response');
-  const parsed = JSON.parse(match[0]);
-
-  let title = typeof parsed.title === 'string' ? parsed.title.trim() : '';
-  let body = typeof parsed.body === 'string' ? parsed.body.trim() : '';
-  if (!title) throw new Error('Empty PR title from LLM');
-  if (title.length > 200) title = title.slice(0, 200);
+  const { title, body, summary } = parsePrMetadataText(text);
   // Surface usage so callers (pr-metadata.js) can debit the user
   // who triggered the PR. May be undefined if the SDK strips it on
   // some response shapes; callers must tolerate that.
-  return { title, body, usage: resp.usage, model };
+  return { title, body, summary, usage: resp.usage, model };
 }
 
 // Clamp an estimate phrase to something safe to inline in the dev-chat
@@ -255,6 +270,24 @@ function sanitizeRemainingSeconds(v) {
   if (!Number.isFinite(n) || n < 0) return null;
   return Math.min(7200, n);
 }
+
+// Structured-outputs schema for estimateRunProgress (#323). Constrains Haiku
+// to emit JSON matching exactly the keys the parser reads — `estimate` (the
+// vague phrase) and `remaining_seconds` (a nullable integer). Top-level object
+// with additionalProperties:false and both keys required; nullability of
+// remaining_seconds is carried by the ["integer","null"] type union, not by
+// omitting it from `required`. Numeric range bounds are intentionally absent —
+// structured outputs does not enforce minimum/maximum, so the [0,7200] clamp
+// and the 90-char cap stay in sanitizeRemainingSeconds / sanitizeEstimate.
+const ESTIMATE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    estimate: { type: 'string' },
+    remaining_seconds: { type: ['integer', 'null'] },
+  },
+  required: ['estimate', 'remaining_seconds'],
+};
 
 // Experimental (#50 follow-up): vague progress/time-remaining guess for an
 // in-flight Claude Code run, generated by Haiku from the tail of the
@@ -297,9 +330,29 @@ ${tail || '(no output yet)'}`;
     max_tokens: 120,
     system,
     messages: [{ role: 'user', content: user }],
+    // Structured outputs (#323): force Haiku to emit schema-matching JSON so
+    // the JSON.parse / fence / smart-quote failure class can't occur for normal
+    // completions. claude-haiku-4-5 supports structured outputs, and
+    // @anthropic-ai/sdk 0.89 accepts output_config.format on messages.create().
+    // The schema guarantees type + presence only; the brace-extraction +
+    // sanitize path below stays as a defensive fallback for off-schema output
+    // (refusal / max_tokens truncation / older models).
+    output_config: { format: { type: 'json_schema', schema: ESTIMATE_SCHEMA } },
   });
 
-  const text = (resp.content || []).find((b) => b.type === 'text')?.text || '';
+  const raw = (resp.content || []).find((b) => b.type === 'text')?.text || '';
+  // Defensive fallback parse before throwing (#323): with structured outputs
+  // the text block normally already holds clean schema-matching JSON, but a
+  // refusal, a max_tokens truncation, or an older model can still yield
+  // off-schema text — Haiku occasionally wraps the JSON in a ```json code fence
+  // or echoes the smart quotes from the system prompt, both of which break a
+  // naive JSON.parse. Strip fences and normalise curly quotes to straight ones
+  // first; only genuinely unparseable output throws (the caller backs off and
+  // retries on the next tick).
+  const text = raw
+    .replace(/```(?:json)?/gi, '')
+    .replace(/[“”]/g, '"')   // “ ” → "
+    .replace(/[‘’]/g, "'");  // ‘ ’ → '
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) throw new Error('No JSON object in progress estimate response');
   const parsed = JSON.parse(match[0]);
@@ -331,7 +384,10 @@ function parseSessionTitleText(text) {
   title = title
     .replace(/\s+/g, ' ')
     .trim()
-    .replace(/^[“'””]+|[“'””]+$/g, '')
+    // Strip surrounding quotes (straight + curly, single + double) then a
+    // trailing period — the LLM often wraps a plain-text title in quotes
+    // and/or ends it with a sentence period.
+    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, '')
     .replace(/\.+$/, '')
     .trim();
   if (!title) throw new Error('Empty session title from LLM');
@@ -391,4 +447,4 @@ Respond with ONLY a JSON object: {“title”: “...”}. No prose before or af
   return { title, usage: resp.usage, model };
 }
 
-module.exports = { init, isEnabled, getSystemPrompt, streamChat, estimateCostCents, generatePrMetadata, generateSessionTitle, parseSessionTitleText, estimateRunProgress, sanitizeEstimate, sanitizeRemainingSeconds, DEFAULT_MODEL };
+module.exports = { init, isEnabled, getSystemPrompt, streamChat, estimateCostCents, generatePrMetadata, parsePrMetadataText, generateSessionTitle, parseSessionTitleText, estimateRunProgress, sanitizeEstimate, sanitizeRemainingSeconds, DEFAULT_MODEL };

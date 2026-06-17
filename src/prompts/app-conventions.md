@@ -175,6 +175,33 @@ Tie-in with testing instructions: the testing steps you emit must
 reference the seeded entities by name ("Open the thread 'Staging demo
 thread' and …"), so a tester knows exactly what they should be seeing.
 
+### Testing `path:` for a hash-routed SPA (the self-app)
+
+The before/after screenshots and the "Test this change" button visit the
+testing block's `path:` joined onto the staging origin. Most apps are
+path-routed, so a plain pathname (`/board`, `/settings?demo=1`) lands on
+the right screen.
+
+**The self-app (social-vibecoding) is a hash-routed single-page app**:
+its internal screens are addressed by the URL **fragment**
+(`#app/<slug>/dev/proposals/<id>`, `#leaderboard`,
+`#app/<slug>/dev/sessions/<id>`, …), never by server pathname — a
+pathname just loads `index.html`, which boots to the home feed. So when
+your change is to a self-app screen, write the `path:` using the in-app
+route segments exactly as they appear after the `#`, with a leading
+slash:
+
+- `path: /app/<self-slug>/dev/proposals/<id>`
+- `path: /leaderboard`
+
+The platform recognises these self-app routes and moves them into the
+fragment when capturing and when previewing, so the shot shows the
+changed screen instead of the homepage. Standalone server-rendered pages
+(`/dashboard`, `/admin`, `/status`, `/node-status`) stay as plain
+pathnames. **Always point a deep `path:` at the specific changed
+self-app screen** — omitting it defaults to `/` (the home feed), which
+no capture fix can rescue.
+
 ## Public vs private tables — **IMPORTANT**
 
 Staging containers get a **copy of the production database** so PRs
@@ -748,6 +775,95 @@ tagged `// usernode-dev-console@1`. It captures `console.*` output
 and uncaught errors and forwards them via `postMessage` so the
 platform's developer console can surface them. Don't remove or
 modify that block when editing the HTML shell.
+
+## Rendering invariants — opt-in self-checks
+
+The bridge (see "Bridge") exposes an **opt-in** API for registering
+cheap correctness checks that run in the live preview and report
+failures into the same developer console as `console.error`. It is
+fully **no-op by default**: an app that registers nothing behaves
+exactly as before. Use it to catch *structural* rendering bugs that a
+screenshot might not make obvious — the canonical example being a
+canvas that should exactly fill its window but renders at the wrong
+pixel density on HiDPI screens.
+
+A check is a function returning a truthy value when the invariant
+holds, or `false` / a string reason when it's violated. Register it
+once the bridge is loaded:
+
+```js
+usernode.invariants.register('canvas-fills-window', function () {
+  var c = document.querySelector('canvas');
+  if (!c) return true; // nothing to check yet
+  var expectedW = Math.round(window.innerWidth * window.devicePixelRatio);
+  var expectedH = Math.round(window.innerHeight * window.devicePixelRatio);
+  if (c.width !== expectedW || c.height !== expectedH) {
+    return 'canvas ' + c.width + 'x' + c.height +
+           ' != window ' + expectedW + 'x' + expectedH;
+  }
+  return true;
+});
+```
+
+Behaviour:
+
+- Registered checks run on `resize` / `orientationchange` and once
+  immediately at registration (so an already-violated invariant
+  reports without waiting for a resize).
+- A violation posts an `error`-level entry (kind `invariant`) to the
+  dev console — it badges red like any other error. A check that
+  throws is reported, never propagated.
+- Failures are **debounced**: a check reports once when it starts
+  failing and once when it recovers, not every tick.
+- Requires the hosted bridge `<script>` (it lives in the bridge, not
+  the vendored forwarder, so there's nothing to re-vendor). Add the
+  bridge tag if your shell doesn't already load it.
+
+## In-loop browser (build turns) — optional, encouraged
+
+On a **build** turn (not scout/sync) Claude Code has a headless browser
+available through the **Playwright MCP server** — `browser_navigate`,
+`browser_console_messages`, `browser_take_screenshot`, and friends. It
+lets the agent load the app it just edited and *see* the result —
+catching a blank page, a JS crash on load, a broken layout, or a failing
+API call that source-reading alone would miss — and fix it before
+committing.
+
+It is **optional and encouraged, never a gate.** Reach for it when a
+change is user-visible and a visual check is genuinely informative; skip
+it for backend-only / refactor / docs work where rendering tells you
+nothing. Turns that don't use it behave exactly as before, and Chromium
+only launches on the first browser tool call, so there's no cost when
+it's unused. Scout and sync turns have no browser at all.
+
+### Launch contract
+
+The app must actually be running for the browser to load it. Boot it
+locally inside the worker the same way a staging container does:
+
+- **`USERNODE_ENV=staging`** against a **fresh, empty local database** —
+  the build turn exposes `INLOOP_ENV`, `INLOOP_PORT`, and
+  `INLOOP_DATABASE_URL` for exactly this. Typical launch:
+  `USERNODE_ENV=$INLOOP_ENV PORT=$INLOOP_PORT DATABASE_URL=$INLOOP_DATABASE_URL node server.js &`
+  (or this app's declared `dapp.json` entrypoint).
+- Private secrets resolve from the manifest's `staging_default` /
+  `default` only, same as a real staging build — never the prod store.
+- Navigate to `http://127.0.0.1:$INLOOP_PORT` joined with the SAME
+  route(s) you put in the TESTING block's `path:` lines. For the
+  hash-routed self-app, put the route after the `#`.
+- A **blank or empty page usually means missing seed data, not a bug** —
+  the local DB starts empty. Add the `IS_STAGING` seed (or a `?demo=1`
+  route) per "Staging mock data" and re-check, rather than "fixing"
+  code that already works.
+- Keep it tight (a couple of launch→check→fix cycles, a minute or two).
+  **If the app won't boot** — no local Postgres, a missing required
+  secret, a crash on start — don't fight it: note that you skipped the
+  visual check and commit anyway. The in-loop browser must never block
+  or fail the turn.
+
+This is an agent-facing quality aid. The before/after screenshots and
+the "Test this change" button (driven by the TESTING block) remain the
+reviewer-facing tools and are unchanged.
 
 ## Outputting file edits
 

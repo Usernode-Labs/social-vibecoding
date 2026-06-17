@@ -79,9 +79,44 @@ const RUN_MAX_BUFFER = 128 * 1024 * 1024;
 // legitimately carry its own query string (e.g. `/board?demo-pr=1`, see
 // testing-notes.js), so the join must pick '?' vs '&'. An empty token
 // returns the URL unchanged (unauthenticated capture — current behaviour).
+//
+// Fragment-safe (#353): a self-app deep link carries a `#app/...` hash
+// (the SPA routes off location.hash), and a query param MUST sit before
+// the fragment or it never reaches the server. So split off any `#...`
+// tail, splice `token=` onto the path+query part, then re-attach the
+// fragment. Plain pathname URLs (no `#`) are byte-identical to the old
+// concat behaviour.
 function withToken(url, token) {
   if (!token) return url;
-  return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token);
+  const hashAt = url.indexOf('#');
+  const base = hashAt === -1 ? url : url.slice(0, hashAt);
+  const frag = hashAt === -1 ? '' : url.slice(hashAt);
+  return base + (base.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token) + frag;
+}
+
+// The self-app is a hash-routed SPA (#353): App.restoreFromHash() in
+// public/js/app.js reads location.hash, so its internal screens are
+// addressed by fragment (`#app/<slug>/...`, `#leaderboard`, ...), NOT by
+// server pathname. A testing path joined as a pathname loads index.html
+// with an empty hash → the home feed, for both "before" and "after".
+//
+// Normalise a self-app testing path into the form the SPA actually
+// routes off: if its first segment is one of the SPA hash routes, move
+// the whole path into the URL fragment (pathname stays '/'). Anything
+// else — the bare '/', a path already written as a fragment ('/#...'),
+// or a standalone server-rendered page (/dashboard, /admin, /status,
+// /node-status, /login, /register) — is left exactly as-is so those
+// real routes still resolve. Only applied for the self-app; child apps
+// are genuinely path-routed and pass through untouched.
+const SELF_APP_HASH_ROUTES = new Set([
+  'app', 'leaderboard', 'group-chat', 'individual-chat',
+]);
+function selfAppHashPath(p) {
+  const path = typeof p === 'string' ? p : '/';
+  if (!path.startsWith('/') || path.startsWith('/#')) return path;
+  const firstSeg = path.slice(1).split(/[/?#]/)[0];
+  if (!SELF_APP_HASH_ROUTES.has(firstSeg)) return path;
+  return '/#' + path.slice(1);
 }
 
 // "Before" (production) target container for an app. Child apps run as
@@ -169,6 +204,76 @@ function parseShots(stdout) {
     }
   }
   return { shots, failures };
+}
+
+// ── Console-error check (#381) ───────────────────────────────────────────
+// capture.js emits one console frame per "after" target:
+//   __USERNODE_CONSOLE__ index=<n> errors=<count> loadStatus=<n>
+//   <base64 JSON array of { kind, message, source }>
+//   __USERNODE_CONSOLE_END__
+// Parse them into one frame per capture index (latest wins on a dup index).
+const CONSOLE_MAX_ERRORS = 20;
+const CONSOLE_MAX_MSG_LEN = 500;
+
+function parseConsole(stdout) {
+  const byIndex = new Map();
+  const lines = String(stdout || '').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.startsWith('__USERNODE_CONSOLE__ ')) continue;
+    const attrs = {};
+    for (const m of line.matchAll(/(\w+)=(\S+)/g)) attrs[m[1]] = m[2];
+    const payload = lines[i + 1] || '';
+    if (lines[i + 2] !== '__USERNODE_CONSOLE_END__') continue;
+    const index = parseInt(attrs.index, 10) || 0;
+    const loadStatus = parseInt(attrs.loadStatus, 10) || 0;
+    let errors = [];
+    try {
+      const parsed = JSON.parse(Buffer.from(payload, 'base64').toString('utf8'));
+      if (Array.isArray(parsed)) errors = parsed;
+    } catch { /* malformed base64/JSON — treat the frame as no parsed errors */ }
+    byIndex.set(index, { index, loadStatus, errors });
+    i += 2;
+  }
+  return Array.from(byIndex.values()).sort((a, b) => a.index - b.index);
+}
+
+// Classify the parsed frames into the persisted snapshot:
+//   'errors'  — at least one console error / page error / failed load
+//   'clean'   — every checked target navigated OK with no error output
+//   'unknown' — nothing to classify (no frame parsed: container crashed,
+//               no staging "after" reachable, …) → no badge
+// The flattened error list is deduped by message and capped, matching the
+// capture-side caps so a runaway app can't bloat the row.
+function classifyConsole(frames) {
+  if (!Array.isArray(frames) || !frames.length) return { state: 'unknown', errors: [] };
+  const seen = new Set();
+  const errors = [];
+  for (const f of frames) {
+    for (const e of (Array.isArray(f.errors) ? f.errors : [])) {
+      const message = String((e && e.message) || '').slice(0, CONSOLE_MAX_MSG_LEN);
+      if (!message || seen.has(message)) continue;
+      seen.add(message);
+      errors.push({
+        kind: (e && typeof e.kind === 'string') ? e.kind : 'console',
+        message,
+        source: (e && e.source) ? String(e.source).slice(0, CONSOLE_MAX_MSG_LEN) : '',
+      });
+      if (errors.length >= CONSOLE_MAX_ERRORS) break;
+    }
+    if (errors.length >= CONSOLE_MAX_ERRORS) break;
+  }
+  return { state: errors.length ? 'errors' : 'clean', errors };
+}
+
+// Latest-only snapshot on the session, mirroring the merge-conflict trio.
+async function storeConsoleCheck(pool, sessionId, result) {
+  await pool.query(
+    `UPDATE chat_sessions
+       SET console_check_state = $1, console_errors = $2, console_checked_at = NOW()
+     WHERE id = $3`,
+    [result.state, JSON.stringify(result.errors || []), sessionId]
+  );
 }
 
 // ── Storage ────────────────────────────────────────────────────────────
@@ -322,6 +427,15 @@ const _inFlight = new Set();
 // `send` (optional) is the turn's SSE/bus emitter; when absent (promote
 // path) we publish straight to the session bus + global WS so open
 // clients still upgrade in place.
+// Resolve the capture pixel density from an apps row (issue #360).
+// 1 only when the app explicitly opted out via dapp.json's
+// `screenshot.deviceScaleFactor: 1` (persisted on
+// apps.screenshot_device_scale); everything else — including a missing
+// row/column — defaults to 2× (HiDPI).
+function resolveCaptureScale(row) {
+  return row && row.screenshot_device_scale === 1 ? 1 : 2;
+}
+
 async function captureForSession(config, session, app, commitHash, stagingResult, { send } = {}) {
   if (_inFlight.has(session.id)) {
     log.info('visuals', 'Capture already in flight — skipping', { sessionId: session.id });
@@ -347,11 +461,17 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         });
       }
     }
-    if (!uiAffecting) {
-      log.info('visuals', 'Skipping capture — no frontend files in commit range', {
+    // #381: the headless run now ALWAYS happens so every proposal gets a
+    // console-error check. The UI-affecting heuristic only decides whether
+    // to also shoot the before/after media (the expensive part) — when
+    // it's false we run a lightweight console-only pass (MEDIA=0): navigate
+    // just the staging "after" target(s), collect console errors, skip
+    // screenshots/recordings and the prod "before" leg.
+    const media = uiAffecting;
+    if (!media) {
+      log.info('visuals', 'No frontend files in commit range — console-only check', {
         sessionId: session.id, branch: session.branch_name,
       });
-      return;
     }
 
     await ensureCaptureImage();
@@ -428,7 +548,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // short expiry as the backstop if the process dies.
     let beforeCookie = '';
     let beforeSessionToken = '';
-    if (prodRunning && isSelfApp && captureUser) {
+    if (media && prodRunning && isSelfApp && captureUser) {
       try {
         beforeSessionToken = crypto.randomBytes(32).toString('hex');
         await pool.query(
@@ -450,16 +570,24 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // to '/' (capture.js retries) — "before" shows the prior root state
     // rather than an error page. Child-app prod verifies the query token
     // directly (scaffold middleware); the self-app uses the minted cookie.
+    //
+    // Self-app (#353): the visited path is normalised into a `#`-fragment
+    // deep link so the hash-routed SPA renders the changed screen instead
+    // of the home feed. For a fragment target the server pathname is
+    // always '/', so prod never 404s on a deep page — the '/' fallback is
+    // moot and skipped (the bare-'/' and standalone-page cases keep it).
     const targets = capturePaths.map((p, index) => {
-      const afterUrl = withToken(`http://${stagingName}:3000${p}`, captureToken);
+      const visitPath = isSelfApp ? selfAppHashPath(p) : p;
+      const isFragmentTarget = visitPath.startsWith('/#');
+      const afterUrl = withToken(`http://${stagingName}:3000${visitPath}`, captureToken);
       let beforeUrl = '';
       let beforeFallbackUrl = '';
-      if (prodRunning) {
+      if (media && prodRunning) {
         if (isSelfApp) {
-          beforeUrl = `http://${prodName}:3000${p}`;
-          if (p !== '/') beforeFallbackUrl = `http://${prodName}:3000/`;
+          beforeUrl = `http://${prodName}:3000${visitPath}`;
+          if (p !== '/' && !isFragmentTarget) beforeFallbackUrl = `http://${prodName}:3000/`;
         } else {
-          beforeUrl = withToken(`http://${prodName}:3000${p}`, captureToken);
+          beforeUrl = withToken(`http://${prodName}:3000${visitPath}`, captureToken);
           if (p !== '/') beforeFallbackUrl = withToken(`http://${prodName}:3000/`, captureToken);
         }
       }
@@ -472,9 +600,27 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       };
     });
 
+    // Pixel density for the shots (issue #360). Default 2× (HiDPI), with
+    // a per-app 1× opt-out persisted on apps.screenshot_device_scale by
+    // the deploy-time reconcile (app-manifest.reconcileAppScreenshot).
+    // Read fresh from the DB so we don't depend on the width of the `app`
+    // row the caller happened to pass; an unreadable/absent value falls
+    // back to 2× (the capture container also defaults to 2× regardless).
+    let deviceScaleFactor = 2;
+    try {
+      const { rows } = await pool.query(
+        'SELECT screenshot_device_scale FROM apps WHERE id = $1', [app.id]
+      );
+      deviceScaleFactor = resolveCaptureScale(rows[0]);
+    } catch (err) {
+      log.warn('visuals', 'Screenshot-scale lookup failed — defaulting to 2×', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+
     log.info('visuals', 'Starting capture', {
-      sessionId: session.id, slug: app.slug, before: prodRunning, paths: capturePaths,
-      authenticated: !!captureToken, selfApp: isSelfApp,
+      sessionId: session.id, slug: app.slug, before: media && prodRunning, paths: capturePaths,
+      authenticated: !!captureToken, selfApp: isSelfApp, deviceScaleFactor, media,
     });
     let stdout;
     try {
@@ -498,6 +644,12 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           BEFORE_FALLBACK_URL: targets[0].beforeFallbackUrl,
           BEFORE_COOKIE: targets[0].beforeCookie,
           AFTER_COOKIE: '',
+          // Pixel density (#360). Global to the run — all of a proposal's
+          // screens share one density, matching the single shared viewport.
+          DEVICE_SCALE_FACTOR: String(deviceScaleFactor),
+          // #381: MEDIA=0 → console-only run (no screenshots/recordings,
+          // no prod "before"). The console-error check still runs.
+          MEDIA: media ? '1' : '0',
         },
         timeoutMs: RUN_TIMEOUT_MS,
         maxBuffer: RUN_MAX_BUFFER,
@@ -516,9 +668,26 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       log.warn('visuals', 'Capture frame failed', { sessionId: session.id, ...f });
     }
 
+    // #381: console-error check is stored FIRST so it lands even on the
+    // console-only path (where there are no media artifacts and the
+    // storeArtifacts branch below returns early). Best-effort: a parse
+    // miss degrades to 'unknown' (no badge), never throws.
+    const consoleResult = classifyConsole(parseConsole(stdout));
+    try {
+      await storeConsoleCheck(pool, session.id, consoleResult);
+      log.info('visuals', 'Console check stored', {
+        sessionId: session.id, state: consoleResult.state, errors: consoleResult.errors.length,
+      });
+      notifyConsoleCheck(session.id, consoleResult, send);
+    } catch (err) {
+      log.warn('visuals', 'Console-check store failed (non-fatal)', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+
     const stored = await storeArtifacts(pool, session.id, commitHash, targets, shots);
     if (!stored) {
-      log.warn('visuals', 'No usable "after" artifact — nothing stored', { sessionId: session.id });
+      if (media) log.warn('visuals', 'No usable "after" artifact — nothing stored', { sessionId: session.id });
       return;
     }
 
@@ -569,15 +738,43 @@ function notifyVisualsReady(sessionId, visuals, send) {
   }
 }
 
+// #381: tell open clients the console check landed so the warning badge
+// upgrades in place without a full panel reload. Same emit strategy as
+// notifyVisualsReady — prefer the turn's `send`, else bus + global WS.
+function notifyConsoleCheck(sessionId, result, send) {
+  const data = {
+    sessionId,
+    consoleCheckState: result.state,
+    errorCount: (result.errors || []).length,
+  };
+  try {
+    if (send) {
+      send('console_check_ready', data);
+      return;
+    }
+    const event = { type: 'console_check_ready', _seq: `cc${Date.now().toString(36)}-${++_notifySeq}`, ...data };
+    sessionBus.publish(sessionId, event);
+    const { broadcastGlobal } = require('./ws');
+    broadcastGlobal({ type: 'session_event', sessionId, event: 'console_check_ready', ...event });
+  } catch (err) {
+    log.warn('visuals', 'console_check_ready notify failed', { sessionId, err: err.message });
+  }
+}
+
 module.exports = {
   captureForSession,
   storeArtifacts,
   getForSession,
   shapeAgg,
+  parseConsole,
+  classifyConsole,
+  storeConsoleCheck,
   isFrontendFile,
   isUiAffecting,
   parseShots,
   withToken,
+  selfAppHashPath,
   beforeContainerName,
+  resolveCaptureScale,
   CAPTURE_IMAGE,
 };

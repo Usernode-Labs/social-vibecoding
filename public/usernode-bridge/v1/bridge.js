@@ -3717,4 +3717,108 @@
       };
     }
   })();
+
+  // Rendering invariants (issue #360) — additive within v1.
+  //
+  // Opt-in, no-op-by-default self-checks an app registers to catch
+  // structural rendering bugs (e.g. "the canvas should exactly fill the
+  // window") in the live preview. A check is a function returning a
+  // truthy value when the invariant holds, or `false` / a string reason
+  // when it's violated. Violations are reported through the EXISTING
+  // dev-console postMessage pipe (the `__usernodeDevConsole` sentinel the
+  // platform shell's public/js/dev-console.js already listens for), so
+  // they surface in the in-app developer console — no new channel, no
+  // change to the vendored forwarder or the receiver.
+  //
+  // Nothing runs until at least one invariant is registered: an app that
+  // registers none behaves exactly as before, at zero cost.
+  /* __USERNODE_INVARIANTS_BEGIN__ */
+  (function () {
+    var DC_SENTINEL = "__usernodeDevConsole";
+    var _invariants = []; // each: { name, fn, failing }
+    var _wired = false;
+    var _rafPending = false;
+
+    function reportInvariant(level, name, reason) {
+      try {
+        if (!(window.parent && window.parent !== window)) return;
+        window.parent.postMessage({
+          sentinel: DC_SENTINEL,
+          level: level,
+          kind: "invariant",
+          args: [name + ": " + reason],
+          ts: Date.now(),
+          url: location.href,
+        }, "*");
+      } catch (_) {}
+    }
+
+    function evaluateAll() {
+      for (var i = 0; i < _invariants.length; i++) {
+        var inv = _invariants[i];
+        var ok = true;
+        var reason = "";
+        try {
+          var r = inv.fn();
+          // truthy non-string = pass; false = fail; string = fail w/ reason.
+          if (r === true || (r && typeof r !== "string")) {
+            ok = true;
+          } else {
+            ok = false;
+            reason = typeof r === "string" ? r : "invariant failed";
+          }
+        } catch (err) {
+          ok = false;
+          reason = (err && (err.stack || err.message)) || ("threw " + String(err));
+        }
+        // Debounce: report only on the transition INTO failure (level
+        // error → badges the dev console), and once again on recovery
+        // (level info → no red badge), instead of every tick. A
+        // persistently-broken invariant therefore logs once, not a flood.
+        if (!ok && !inv.failing) {
+          inv.failing = true;
+          reportInvariant("error", inv.name, reason);
+        } else if (ok && inv.failing) {
+          inv.failing = false;
+          reportInvariant("info", inv.name, "recovered");
+        }
+      }
+    }
+
+    function scheduleEval() {
+      if (_rafPending) return;
+      _rafPending = true;
+      var raf = window.requestAnimationFrame || function (cb) { return setTimeout(cb, 16); };
+      raf(function () {
+        _rafPending = false;
+        evaluateAll();
+      });
+    }
+
+    function wireOnce() {
+      if (_wired) return;
+      _wired = true;
+      // A "canvas fills the window" style check fires exactly when the
+      // window geometry changes; the rAF coalesces bursts of resizes.
+      window.addEventListener("resize", scheduleEval);
+      window.addEventListener("orientationchange", scheduleEval);
+    }
+
+    if (!window.usernode.invariants) {
+      window.usernode.invariants = {
+        register: function register(name, fn) {
+          if (typeof fn !== "function") {
+            throw new Error("usernode.invariants.register(name, fn): fn must be a function");
+          }
+          _invariants.push({ name: String(name || "invariant"), fn: fn, failing: false });
+          wireOnce();
+          // Evaluate now so an invariant already violated at registration
+          // time (the common case for a layout/canvas bug) reports without
+          // waiting for the first resize.
+          scheduleEval();
+        },
+      };
+    }
+  })();
+  /* __USERNODE_INVARIANTS_END__ */
 })();

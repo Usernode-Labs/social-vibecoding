@@ -8,8 +8,12 @@
 //
 // Semantics:
 //   - `isAppLocked(pool, appId)` — straight column read.
-//   - `hasAdminYesVote(pool, sessionId)` — at least one user with
-//     is_admin = TRUE has 'yes' in pr_votes for this PR.
+//   - `hasAdminYesVote(pool, sessionId)` — at least one FULL admin
+//     (is_admin = TRUE AND admin_readonly = FALSE) has 'yes' in pr_votes
+//     for this PR. A view-only admin's vote does NOT satisfy the lock
+//     (issue #311): the lock exists to require a trusted full admin to
+//     sign off, and a view-only admin is by definition not a privileged
+//     approver.
 //   - `hasAdminUpVote(pool, issueId)` — same shape for issue_votes
 //     ('up' instead of 'yes').
 //
@@ -32,6 +36,7 @@ async function hasAdminYesVote(pool, sessionId) {
       WHERE pv.session_id = $1
         AND pv.vote = 'yes'
         AND u.is_admin = TRUE
+        AND u.admin_readonly = FALSE
       LIMIT 1`,
     [sessionId]
   );
@@ -46,6 +51,7 @@ async function hasAdminUpVote(pool, issueId) {
       WHERE iv.issue_id = $1
         AND iv.vote = 'up'
         AND u.is_admin = TRUE
+        AND u.admin_readonly = FALSE
       LIMIT 1`,
     [issueId]
   );

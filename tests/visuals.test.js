@@ -69,6 +69,40 @@ test('withToken passes the URL through unchanged on an empty token', () => {
   assert.equal(visuals.withToken('http://x:3000/', null), 'http://x:3000/');
 });
 
+test('withToken places the token BEFORE a #fragment (#353)', () => {
+  // A self-app hash deep link: the token must reach the server, so it
+  // belongs in the query string, never inside the fragment.
+  assert.equal(
+    visuals.withToken('http://x:3000/#app/social/dev/proposals/5', 'tok'),
+    'http://x:3000/?token=tok#app/social/dev/proposals/5'
+  );
+});
+
+test('withToken keeps an existing query AND the fragment in order (#353)', () => {
+  assert.equal(
+    visuals.withToken('http://x:3000/?demo=1#leaderboard', 'tok'),
+    'http://x:3000/?demo=1&token=tok#leaderboard'
+  );
+});
+
+// ── selfAppHashPath (hash-route normalisation, #353) ───────────────────
+
+test('selfAppHashPath moves SPA hash routes into the fragment', () => {
+  assert.equal(visuals.selfAppHashPath('/app/social/dev/proposals/5'), '/#app/social/dev/proposals/5');
+  assert.equal(visuals.selfAppHashPath('/leaderboard'), '/#leaderboard');
+  assert.equal(visuals.selfAppHashPath('/group-chat'), '/#group-chat');
+  assert.equal(visuals.selfAppHashPath('/individual-chat/9'), '/#individual-chat/9');
+});
+
+test('selfAppHashPath leaves bare /, already-fragment, and server pages alone', () => {
+  assert.equal(visuals.selfAppHashPath('/'), '/');
+  assert.equal(visuals.selfAppHashPath('/#app/social/dev'), '/#app/social/dev');
+  assert.equal(visuals.selfAppHashPath('/dashboard'), '/dashboard');
+  assert.equal(visuals.selfAppHashPath('/admin'), '/admin');
+  assert.equal(visuals.selfAppHashPath('/status'), '/status');
+  assert.equal(visuals.selfAppHashPath('/node-status'), '/node-status');
+});
+
 // ── beforeContainerName ("before" target resolution) ───────────────────
 
 test('normal slugs resolve to usernode-app-<slug>', () => {
@@ -362,4 +396,81 @@ test('resolveTargets falls back to scalars on unparseable TARGETS', () => {
   const t = resolveTargets({ TARGETS: '{not json', AFTER_URL: 'http://a/' });
   assert.equal(t.length, 1);
   assert.equal(t[0].afterUrl, 'http://a/');
+});
+
+// ── console-error check: parseConsole + classifyConsole (#381) ──────────
+
+const { mediaEnabled } = require('../capture/capture');
+
+function consoleFrame(index, errors, loadStatus) {
+  const payload = Buffer.from(JSON.stringify(errors), 'utf8').toString('base64');
+  return `__USERNODE_CONSOLE__ index=${index} errors=${errors.length} loadStatus=${loadStatus}\n${payload}\n__USERNODE_CONSOLE_END__\n`;
+}
+
+test('parseConsole reads a well-formed frame into errors + loadStatus', () => {
+  const errs = [{ kind: 'pageerror', message: 'boom', source: 'app.js:1' }];
+  const frames = visuals.parseConsole(consoleFrame(0, errs, 200));
+  assert.equal(frames.length, 1);
+  assert.equal(frames[0].index, 0);
+  assert.equal(frames[0].loadStatus, 200);
+  assert.deepEqual(frames[0].errors, errs);
+});
+
+test('parseConsole ignores a frame missing its END delimiter', () => {
+  const payload = Buffer.from(JSON.stringify([{ message: 'x' }])).toString('base64');
+  const stdout = `__USERNODE_CONSOLE__ index=0 errors=1 loadStatus=200\n${payload}\n`; // no END
+  assert.equal(visuals.parseConsole(stdout).length, 0);
+});
+
+test('parseConsole treats malformed base64/JSON as an empty error list', () => {
+  const stdout = '__USERNODE_CONSOLE__ index=0 errors=1 loadStatus=200\n!!!not base64!!!\n__USERNODE_CONSOLE_END__\n';
+  const frames = visuals.parseConsole(stdout);
+  assert.equal(frames.length, 1);
+  assert.deepEqual(frames[0].errors, []);
+});
+
+test('parseConsole returns frames ordered by index', () => {
+  const stdout = consoleFrame(2, [{ message: 'b' }], 200) + consoleFrame(0, [{ message: 'a' }], 200);
+  const frames = visuals.parseConsole(stdout);
+  assert.deepEqual(frames.map((f) => f.index), [0, 2]);
+});
+
+test('classifyConsole → errors when any frame carries errors', () => {
+  const r = visuals.classifyConsole([{ index: 0, loadStatus: 200, errors: [{ kind: 'console', message: 'oops' }] }]);
+  assert.equal(r.state, 'errors');
+  assert.equal(r.errors.length, 1);
+  assert.equal(r.errors[0].kind, 'console');
+});
+
+test('classifyConsole → clean when frames present but no errors', () => {
+  const r = visuals.classifyConsole([{ index: 0, loadStatus: 200, errors: [] }]);
+  assert.equal(r.state, 'clean');
+  assert.equal(r.errors.length, 0);
+});
+
+test('classifyConsole → unknown when there are no frames at all', () => {
+  assert.equal(visuals.classifyConsole([]).state, 'unknown');
+  assert.equal(visuals.classifyConsole(undefined).state, 'unknown');
+});
+
+test('classifyConsole dedupes by message and caps the list at 20', () => {
+  const dup = visuals.classifyConsole([{ errors: [{ message: 'same' }, { message: 'same' }] }]);
+  assert.equal(dup.errors.length, 1);
+  const many = Array.from({ length: 50 }, (_, i) => ({ message: `e${i}` }));
+  const capped = visuals.classifyConsole([{ errors: many }]);
+  assert.equal(capped.errors.length, 20);
+});
+
+test('a failed-load error (kind=load) classifies as errors', () => {
+  const frames = visuals.parseConsole(consoleFrame(0, [{ kind: 'load', message: 'navigation failed: timeout' }], 0));
+  assert.equal(visuals.classifyConsole(frames).state, 'errors');
+});
+
+// ── capture.js MEDIA flag (#381) ────────────────────────────────────────
+
+test('mediaEnabled is true unless MEDIA is exactly "0"', () => {
+  assert.equal(mediaEnabled({}), true);
+  assert.equal(mediaEnabled({ MEDIA: '1' }), true);
+  assert.equal(mediaEnabled(undefined), true);
+  assert.equal(mediaEnabled({ MEDIA: '0' }), false);
 });

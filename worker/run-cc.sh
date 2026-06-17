@@ -61,6 +61,7 @@ die() {
 : "${COMMIT_MSG:=Changes via Usernode}"
 : "${PAT:=}"
 : "${CLAUDE_RESUME_SESSION_ID:=}"
+: "${BROWSER_MCP_CONFIG:=/home/node/.usernode-mcp.json}"
 
 cd /home/node/workspace || die "no /home/node/workspace"
 
@@ -108,6 +109,13 @@ if [ "$MODE" = "sync" ]; then
     exit 0
   fi
 
+  # #361: comma-delimited list of files that conflicted on this sync.
+  # Captured at conflict-detection time (below) and surfaced on every
+  # __USERNODE_RESULT__ line so the platform can persist which files
+  # conflicted — even on the resolved path, where the index is clean by
+  # the time we emit. Empty for a clean merge.
+  CONFLICT_FILES_CSV=""
+
   echo "__USERNODE_PHASE__ sync_merge"
   # `git merge origin/main` produces a merge commit on clean success
   # and leaves the tree dirty on conflict. We let it fail-non-zero
@@ -119,6 +127,9 @@ if [ "$MODE" = "sync" ]; then
     # Conflict path. Hand off to CC.
     echo "__USERNODE_PHASE__ sync_conflict_cc"
     CONFLICT_FILES=$(git diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')
+    # Comma-delimited (no spaces) so it rides cleanly on the
+    # space-delimited __USERNODE_RESULT__ key/value line.
+    CONFLICT_FILES_CSV=$(git diff --name-only --diff-filter=U 2>/dev/null | paste -sd, - | sed 's/,$//')
     SYNC_PROMPT="A merge of origin/main into branch '$BRANCH' produced conflicts. The conflict markers (<<<<<<<, =======, >>>>>>>) are in the working tree.
 
 Conflicted files: $CONFLICT_FILES
@@ -143,7 +154,7 @@ Do not run git commands. I will commit and push for you after you finish editing
       AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
       BEHIND=$(git rev-list --count "HEAD..origin/main" 2>/dev/null || echo 0)
       SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
-      echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=0 mode=sync sync_result=conflict"
+      echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=0 mode=sync sync_result=conflict conflict_files=$CONFLICT_FILES_CSV"
       exit 0
     fi
 
@@ -154,7 +165,7 @@ Do not run git commands. I will commit and push for you after you finish editing
     if ! git commit -m "Merge origin/main via Usernode sync (Claude-resolved)" 2>&1; then
       echo "__USERNODE_WARN__ commit failed after conflict resolution"
       git merge --abort 2>&1 || true
-      echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=$BEHIND_NOW sha= push_ok=0 mode=sync sync_result=conflict"
+      echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=$BEHIND_NOW sha= push_ok=0 mode=sync sync_result=conflict conflict_files=$CONFLICT_FILES_CSV"
       exit 0
     fi
     SYNC_RESULT="resolved"
@@ -174,7 +185,7 @@ Do not run git commands. I will commit and push for you after you finish editing
   AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
   BEHIND=$(git rev-list --count "HEAD..origin/main" 2>/dev/null || echo 0)
   SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
-  echo "__USERNODE_RESULT__ cc_exit=0 ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=sync sync_result=$SYNC_RESULT"
+  echo "__USERNODE_RESULT__ cc_exit=0 ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=sync sync_result=$SYNC_RESULT conflict_files=$CONFLICT_FILES_CSV"
   exit 0
 fi
 # ── end MODE=sync ─────────────────────────────────────────────────────
@@ -204,24 +215,40 @@ else
   PERMISSION_FLAGS="--dangerously-skip-permissions"
 fi
 
+# Optional in-loop browser: expose the pinned Playwright MCP server so a
+# BUILD turn CAN open the app it just edited in a headless browser to catch
+# render/JS errors before committing (see app-conventions.md, worker-run.sh).
+# `--strict-mcp-config` makes claude load ONLY this config — never a
+# `.mcp.json` an untrusted repo might carry, which under
+# --dangerously-skip-permissions would otherwise auto-start arbitrary
+# servers. Scout (read-only) and sync (bookkeeping) get NO browser tooling:
+# the flags stay empty, so their `claude` invocations are byte-for-byte as
+# before. The MCP server only spawns on claude startup; Chromium launches
+# lazily on the first browser tool call, so a build turn that never reaches
+# for it pays nothing.
+BROWSER_MCP_FLAGS=""
+if [ "$MODE" = "build" ] && [ -f "$BROWSER_MCP_CONFIG" ]; then
+  BROWSER_MCP_FLAGS="--mcp-config $BROWSER_MCP_CONFIG --strict-mcp-config"
+fi
+
 # stream-json emits one JSON object per line. The host parses this via
 # the docker-exec child's stdout (long-lived path) or `docker logs -f`
 # (legacy single-shot path) — same pipeline, different transport.
 if [ -n "$CLAUDE_RESUME_SESSION_ID" ]; then
   echo "__USERNODE_PHASE__ claude (resume $CLAUDE_RESUME_SESSION_ID, mode $MODE)"
-  claude --print $PERMISSION_FLAGS --verbose \
+  claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS --verbose \
     --resume "$CLAUDE_RESUME_SESSION_ID" \
     --model "$MODEL" --output-format stream-json -p "$PROMPT"
   CC_EXIT=$?
   if [ "$CC_EXIT" -ne 0 ]; then
     echo "__USERNODE_WARN__ resume failed (exit $CC_EXIT); retrying fresh"
-    claude --print $PERMISSION_FLAGS --verbose \
+    claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS --verbose \
       --model "$MODEL" --output-format stream-json -p "$PROMPT"
     CC_EXIT=$?
   fi
 else
   echo "__USERNODE_PHASE__ claude (mode $MODE)"
-  claude --print $PERMISSION_FLAGS --verbose \
+  claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS --verbose \
     --model "$MODEL" --output-format stream-json -p "$PROMPT"
   CC_EXIT=$?
 fi

@@ -4,7 +4,7 @@ const log = require('../services/logger');
 const github = require('../services/github');
 const staging = require('../services/staging');
 const docker = require('../services/docker');
-const { checkAndResolveConflicts, resolveAndMaybeRetry, isResolving } = require('../services/conflict-resolver');
+const { checkAndResolveConflicts, isResolving } = require('../services/conflict-resolver');
 const { sendSystemMessage, pushNotificationToUser } = require('../services/ws');
 const { getActiveUserStats, isUserActive } = require('../services/active-users');
 const notifications = require('../services/notifications');
@@ -31,6 +31,9 @@ function stagingMockProposals() {
     pr_number: prNumber,
     pr_url: null,
     pr_title: title,
+    pr_summary_md: 'This is a sample plain-language summary so testers can see '
+      + 'the new explanation that now appears at the top of a proposal — written '
+      + 'in everyday words, with no technical jargon.',
     staging_url: null,
     testing_md: null,
     testing_path: null,
@@ -53,6 +56,12 @@ function stagingMockProposals() {
     last_message_at: chat ? hoursAgo(Math.max(0, hours - 1)) : null,
     visuals: null,
     resolving: false,
+    // #381: console-error check snapshot. Clean by default; the dedicated
+    // error mock below overrides these so the warning badge + detail block
+    // are reviewable on staging via ?demo=1.
+    console_check_state: 'clean',
+    console_errors: [],
+    console_checked_at: hoursAgo(hours),
   });
   return [
     mk(9000001, 900101,
@@ -63,14 +72,41 @@ function stagingMockProposals() {
       '[Mock] Long-title test: walk brand-new collaborators through '
       + 'voting, kudos and dev sessions step by step',
       11, 0, 1, 0),
-    // #239: a row mid-auto-conflict-resolution so the "Resolving
+    // #239/#388: a row mid-auto-conflict-resolution so the "Resolving
     // conflicts…" badge is verifiable on staging via ?demo=1 without
-    // manufacturing a real merge conflict.
+    // manufacturing a real merge conflict. Aged to ~10h so that, without
+    // the #388 merge-pipeline pin, recency alone would sink it down the
+    // list — making the pin (which lifts it near the top) obvious.
     {
       ...mk(9000003, 900103,
         '[Mock] Resolving-state test: add a dark-mode toggle to the settings drawer',
-        1, 2, 0, 2),
+        10, 2, 0, 2),
       resolving: true,
+    },
+    // #388: a row in the GitHub merge pipeline ('merging') so the
+    // "Merging…" badge — and the top-of-stack pin — are verifiable on
+    // staging via ?demo=1. Deliberately the OLDEST mock (~13h) so without
+    // the pin it would sort dead last; the pin must lift it to rank 0,
+    // above every other proposal.
+    {
+      ...mk(9000006, 900106,
+        '[Mock] Merging-state test: this PR is mid-merge and should pin to the very top',
+        13, 4, 0, 5),
+      status: 'merging',
+    },
+    // #388: a row whose automatic conflict resolution failed
+    // (merge_conflict_state 'failed') so the "⚠ Conflict resolution
+    // failed" badge, the expanded conflicting-file list, and the pin
+    // (just below merging + resolving) are verifiable via ?demo=1. Aged
+    // ~12h so recency alone wouldn't float it.
+    {
+      ...mk(9000007, 900107,
+        '[Mock] Conflict-failed test: auto-resolve could not finish; owner must fix it',
+        12, 3, 1, 2),
+      merge_conflict_state: 'failed',
+      behind_main: 2,
+      conflict_files: ['src/app.js', 'public/index.html'],
+      conflict_checked_at: hoursAgo(11),
     },
     // #124: a visibility-change proposal (a dapp.json PR opened by the
     // Members & visibility modal) so its self-describing card is
@@ -78,6 +114,70 @@ function stagingMockProposals() {
     mk(9000004, 900104,
       '[Mock] Make this app invite-only build, public to view',
       2, 1, 0, 1),
+    // #381: a proposal whose staging preview logged console errors, so the
+    // amber "⚠ Console errors" badge and the expanded error list in the
+    // detail view are reviewable on staging via ?demo=1.
+    {
+      ...mk(9000005, 900105,
+        '[Mock] Console-error test: refactor the feed renderer (logs errors on load)',
+        4, 1, 0, 3),
+      console_check_state: 'errors',
+      console_errors: [
+        { kind: 'pageerror', message: "TypeError: Cannot read properties of undefined (reading 'map')", source: 'app.js:142' },
+        { kind: 'console', message: 'Failed to load resource: the server responded with a status of 500 (Internal Server Error)', source: '/api/feed:0' },
+      ],
+    },
+  ];
+}
+
+// #194: staging demo rows for the Completed (merged) list, mirroring
+// stagingMockProposals. Lets ?demo=1 verify the new clickable Completed
+// rows, the chevron/hover affordance, and the 💬 badge against a
+// prod-cloned DB. Caveat: these mock rows have NO backing chat_messages,
+// so opening one shows an empty (but still postable) thread — useful for
+// the card affordance + badge, not for existing-comment display.
+function stagingMockMerged() {
+  const daysAgo = (d) => new Date(Date.now() - d * 86400 * 1000).toISOString();
+  const mk = (id, prNumber, title, days, chat) => ({
+    id,
+    pr_number: prNumber,
+    pr_url: null,
+    pr_title: title,
+    pr_summary_md: 'This is a sample plain-language summary so testers can see '
+      + 'the new explanation at the top of a completed proposal — in everyday '
+      + 'words, with no technical jargon.',
+    user_id: 0,
+    status: 'merged',
+    linked_issues: null,
+    username: 'staging-tester',
+    created_at: daysAgo(days),
+    revert_of_session_id: null,
+    votes_required: 2,
+    active_users_at_merge: 3,
+    yes_count: 2,
+    no_count: 0,
+    my_vote: null,
+    kudos_count: 0,
+    my_kudos: false,
+    my_kudos_direct: false,
+    chat_count: chat,
+    revert_session_id: null,
+    revert_pr_number: null,
+    revert_pr_url: null,
+    revert_status: null,
+    // #381: merged mocks are clean by default (the warning is reviewable on
+    // the promoted list); these keep the detail view from reading undefined.
+    console_check_state: 'clean',
+    console_errors: [],
+    console_checked_at: daysAgo(days),
+  });
+  return [
+    mk(9100001, 910101,
+      '[Mock] Completed: tighten the empty-state copy on the dev forum',
+      1, 5),
+    mk(9100002, 910102,
+      '[Mock] Completed: bump the chat composer hit area on mobile',
+      4, 0),
   ];
 }
 
@@ -150,6 +250,7 @@ function voteRoutes(config) {
         );
         const prMetadata = require('../services/pr-metadata');
         let prResult = null;
+        let prError = null;
         try {
           prResult = await prMetadata.applyPrMetadata({
             pool, session, repoOwner, repoName,
@@ -159,12 +260,23 @@ function voteRoutes(config) {
             userId: req.user.id,
           });
         } catch (err) {
-          log.warn('votes', 'Lazy PR creation/backfill threw', { sessionId: session.id, backfill: isBackfill, err: err.message });
+          prError = err;
+          log.warn('votes', 'Lazy PR creation/backfill threw', { sessionId: session.id, backfill: isBackfill, err: err.message, code: err.code || null });
         }
         if (!isBackfill && (!prResult || !session.pr_number)) {
           // Refuse to promote PR-less — a vote with nothing to merge is a
-          // dead end. The user can retry; nothing was mutated yet.
-          return res.status(502).json({ error: 'Could not create the pull request for this change — try again in a moment.' });
+          // dead end. Nothing was mutated yet.
+          if (prError && prError.code === 'no_commits') {
+            // Permanent condition: the branch has no commits on GitHub
+            // (typically committed locally but never pushed). "Try again
+            // in a moment" would loop forever — tell the truth instead.
+            return res.status(409).json({
+              error: 'This change has no committed code on its branch yet, so there is nothing to open a pull request for. Re-run your request in the session so it produces and pushes a commit, then propose again.',
+            });
+          }
+          return res.status(502).json({
+            error: 'Could not create the pull request for this change. Please retry; if it keeps failing, re-run your request in the session.',
+          });
         }
       }
 
@@ -500,6 +612,7 @@ function voteRoutes(config) {
       const { rows: sessions } = await pool.query(
         `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status,
                 cs.created_at, cs.promoted_at,
+                cs.merge_conflict_state, cs.behind_main,
                 a.id AS app_id, a.slug AS app_slug, a.name AS app_name,
                 (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count,
                 (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'no') AS no_count
@@ -564,7 +677,13 @@ function voteRoutes(config) {
       // majority threshold is crossed and only reappears in the "merged"
       // list at the very end, making it look like the vote was lost.
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
+        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
+           -- #361: persisted merge-conflict snapshot for the card badge +
+           -- detail block (state, conflicting file paths, last-checked).
+           cs.merge_conflict_state, cs.behind_main, cs.conflict_files, cs.conflict_checked_at,
+           -- #381: console-error check snapshot for the "may break the app"
+           -- warning badge + detail block (advisory, never gates the vote).
+           cs.console_check_state, cs.console_errors, cs.console_checked_at,
            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') as yes_count,
            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'no') as no_count,
            (SELECT vote FROM pr_votes WHERE session_id = cs.id AND user_id = $2) as my_vote,
@@ -692,8 +811,11 @@ function voteRoutes(config) {
       // (Undo is now a single direct action that opens a revert PR, so
       // there are no separate undo-vote tallies to surface.)
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
+        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
            cs.revert_of_session_id,
+           -- #381: console-error check snapshot so the warning + detail
+           -- block stay visible on a merged proposal for post-hoc review.
+           cs.console_check_state, cs.console_errors, cs.console_checked_at,
            -- #58: the vote threshold + active-user count snapshotted at merge
            -- time. The merged-PR pill renders against votes_required (falling
            -- back to the live majority for legacy rows where it's NULL), and a
@@ -721,6 +843,14 @@ function voteRoutes(config) {
            (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)
                  OR EXISTS(SELECT 1 FROM issue_bounties WHERE awarded_session_id = cs.id AND status = 'awarded' AND giver_user_id = $2)) as my_kudos,
            (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)) as my_kudos_direct,
+           -- #194: per-proposal human-message count so the Completed list
+           -- renders the same 💬 badge as the active proposals (and signals
+           -- which merged proposals have a discussion worth opening). Counts
+           -- msg_type='message' only — matching the /promoted subquery — so
+           -- dual-posted lifecycle/vote system rows don't inflate the badge.
+           (SELECT COUNT(*)::int FROM chat_messages cm
+             WHERE cm.app_id = cs.app_id AND cm.thread_type = 'session' AND cm.thread_ref = cs.id
+               AND cm.msg_type = 'message') as chat_count,
            rv.id        as revert_session_id,
            rv.pr_number as revert_pr_number,
            rv.pr_url    as revert_pr_url,
@@ -734,6 +864,14 @@ function voteRoutes(config) {
          LIMIT 20`,
         [appRows[0].id, userId]
       );
+
+      // Staging-only demo mode (?demo=1): append mock merged rows so the
+      // clickable Completed list + 💬 badge are verifiable against a
+      // prod-cloned DB. Idempotent by id. See stagingMockMerged above.
+      if (IS_STAGING && req.query.demo === '1') {
+        const have = new Set(rows.map((r) => r.id));
+        rows.unshift(...stagingMockMerged().filter((m) => !have.has(m.id)));
+      }
 
       res.json({ merged: rows });
     } catch (err) {
@@ -836,8 +974,8 @@ function voteRoutes(config) {
   // distinguishes the override so users see who did it and why a PR
   // landed without the usual tally.
   router.post('/api/sessions/:id/admin-merge', async (req, res) => {
-    if (!req.user?.isAdmin) {
-      return res.status(403).json({ error: 'Admin access required' });
+    if (!req.user?.canAdminWrite) {
+      return res.status(403).json({ error: 'Full admin access required' });
     }
     try {
       const { rows } = await pool.query(
@@ -1001,7 +1139,11 @@ async function checkAndMerge(config, pool, session, options = {}) {
       // dev-turn path. Fire-and-forget so the voter's request returns
       // immediately.
       if (autoResolve) {
-        resolveAndMaybeRetry(config, { session }).catch((err) => {
+        // Funnel through the app-level drain so this vote-triggered resolve
+        // is serialized with any other in-flight resolve for the app —
+        // only one proposal per app resolves+merges at a time, highest-
+        // voted first (this PR is eligible, so it's in that queue).
+        checkAndResolveConflicts(config, { app_id: session.app_id }).catch((err) => {
           log.error('votes', 'Auto-resolve (behind_main) failed', {
             sessionId: session.id, err: err.message,
           });
@@ -1067,6 +1209,14 @@ async function checkAndMerge(config, pool, session, options = {}) {
     });
 
   let mergeCommitSha = null;
+  // Tracks whether the irreversible GitHub merge has already happened. Once
+  // it has, a failure in any LATER step (prod rebuild, staging teardown,
+  // bounty payout, …) must NOT roll the session back to 'promoted' — the PR
+  // is merged on GitHub and re-opening it for voting is the bug behind
+  // "merged PRs still show up for voting" (the rebuild can keep failing —
+  // e.g. a newly-required secret with no production value — yet the merge is
+  // done). See the catch block below.
+  let githubMerged = false;
 
   try {
     // Merge PR on GitHub
@@ -1078,6 +1228,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
         // can `git revert <sha>` against main. The Octokit `pulls.merge`
         // response shape is { sha, merged: true, message }.
         mergeCommitSha = mergeData?.sha || null;
+        githubMerged = true;
       }
     }
 
@@ -1307,14 +1458,71 @@ async function checkAndMerge(config, pool, session, options = {}) {
       'system', null, { type: 'session', ref: session.id }
     ).catch(() => {});
 
-    // Check for conflicts on other promoted PRs and resolve them
-    checkAndResolveConflicts(config, session).catch((err) => {
+    // Cascade: drain the next eligible promoted PR for this app. The
+    // app-level drain serializes this with any vote-triggered resolves so
+    // only one PR per app resolves+merges at a time. Exclude the session we
+    // just merged so it's never re-picked.
+    checkAndResolveConflicts(config, { app_id: session.app_id, excludeSessionId: session.id }).catch((err) => {
       log.error('votes', 'Conflict resolution check failed', { err: err.message });
     });
 
     return { merged: true };
   } catch (err) {
-    log.error('votes', 'Merge failed', { sessionId: session.id, err: err.message });
+    log.error('votes', 'Merge failed', { sessionId: session.id, err: err.message, githubMerged });
+
+    // The GitHub merge is irreversible. If it already succeeded and a
+    // LATER step threw (most commonly `staging.rebuildProduction` — e.g. a
+    // PR that introduces a new required secret with no production value
+    // raises MissingSecretsError, or two sibling rebuilds race on the
+    // container name), the PR *is* merged. Rolling the session back to
+    // 'promoted' here is exactly what left whiteboard PRs #41/#44/#52/#54
+    // showing "up for voting" forever: `GET /api/apps/:slug/promoted`
+    // returns `status IN ('promoted','merging')`, and any "retry" merge
+    // 405s because GitHub has nothing left to merge. Instead, record the
+    // merge and surface the deploy failure separately so an operator can
+    // fix the cause and re-run the rebuild ("Check for updates" / drift
+    // poller). The pre-merge conflict/behind_main handling further down is
+    // premised on the merge NOT having happened, so we return early.
+    if (githubMerged) {
+      await pool.query(
+        `UPDATE chat_sessions
+            SET status = 'merged',
+                merged_at = COALESCE(merged_at, NOW()),
+                merge_commit_sha = COALESCE(merge_commit_sha, $2),
+                votes_required = COALESCE(votes_required, $3),
+                active_users_at_merge = COALESCE(active_users_at_merge, $4)
+          WHERE id = $1 AND status IN ('merging', 'merged')`,
+        [session.id, mergeCommitSha, majority, activeCount]
+      ).catch((e) => log.error('votes',
+        'Failed to mark session merged after post-merge error', {
+          sessionId: session.id, err: e.message,
+        }));
+
+      const failLabel = session.pr_title
+        ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+        : `PR #${session.pr_number || session.id}`;
+      await sendSystemMessage(pool, session.app_id,
+        `${failLabel} merged on GitHub, but the production deploy failed: ${err.message}. ` +
+        `The change is on main; an operator can retry the deploy once the cause is resolved.`,
+        'system'
+      ).catch(() => {});
+
+      try {
+        const { pushVoteUpdate } = require('../services/ws');
+        pushVoteUpdate({
+          sessionId: session.id,
+          appSlug: session.app_slug,
+          merged: true,
+          merging: false,
+          deployFailed: true,
+          selfHosted: !!session.app_self_hosted,
+        });
+      } catch (_) { /* ws failures non-fatal */ }
+
+      return { merged: true, deployFailed: true, error: err.message };
+    }
+
+    // GitHub merge did NOT happen (conflict, auth, transient API error).
     // Release the 'merging' claim so a subsequent vote (or retry) can
     // try again. Without this the session would be stuck in 'merging'
     // forever on any transient failure.
@@ -1383,7 +1591,13 @@ async function checkAndMerge(config, pool, session, options = {}) {
     if (isConflict) {
       try {
         const { rows: bumpRows } = await pool.query(
-          `UPDATE chat_sessions SET behind_main = GREATEST(behind_main, 1)
+          `UPDATE chat_sessions
+             SET behind_main = GREATEST(behind_main, 1),
+                 -- #361: a real merge-time conflict — reflect it on the
+                 -- card immediately (conflict_files fills in on the next
+                 -- sync, which captures the --diff-filter=U set).
+                 merge_conflict_state = 'conflict',
+                 conflict_checked_at = NOW()
            WHERE id = $1 RETURNING behind_main`,
           [session.id]
         );
@@ -1411,7 +1625,9 @@ async function checkAndMerge(config, pool, session, options = {}) {
       // autoResolve guards against the resolver's own retry re-entering
       // this path (it calls checkAndMerge with autoResolve:false).
       if (autoResolve) {
-        resolveAndMaybeRetry(config, { session }).catch((e) => {
+        // Same app-level drain as the behind_main path — serialized,
+        // one-proposal-at-a-time-per-app resolution.
+        checkAndResolveConflicts(config, { app_id: session.app_id }).catch((e) => {
           log.error('votes', 'Auto-resolve (merge conflict) failed', {
             sessionId: session.id, err: e.message,
           });

@@ -112,6 +112,25 @@ function stagingMockIssues(repoUrl) {
       'Staging-only mock issue with a deliberately long title (~120 '
       + 'chars) for checking that dev-card titles wrap instead of '
       + 'truncating on narrow phone screens.', 14),
+    // #361: row for the headless `code` outcome — an auto-run that produced
+    // a reviewable commit. Its viewer-owned clones (seeded in migrate.js)
+    // demonstrate both "Changes ready" card variants (preview-OK and
+    // preview-failed).
+    mk(900006, '[Mock] Voting buttons need a clearer disabled state',
+      'Staging-only mock issue for previewing the headless "code" outcome.\n\n'
+      + 'When a proposal is closed, the Yes/No buttons stay full-colour but '
+      + 'do nothing on click. They should render visibly disabled (greyed '
+      + 'out, no hover) so it is obvious voting is over.', 11),
+    // #287: dedicated row for reviewing the has-session button state. The
+    // synthetic-myPrSessionId block below targets this number so the
+    // "Create new proposal" variant of the start-work button is reviewable
+    // in a staging preview.
+    mk(900007, '[Mock] issue with an in-progress proposal',
+      'Staging-only mock issue for previewing the "Create new proposal" '
+      + 'button state. A synthetic per-viewer session is attached to this '
+      + "row so the start-work button reads \"Create new proposal\" "
+      + 'instead of "Create proposal" — exactly what a viewer who already '
+      + 'started a dev chat on this issue would see.', 7),
   ];
 }
 
@@ -557,11 +576,11 @@ function issueRoutes(config) {
       }]));
 
       // #287: the viewer's own most recent non-archived dev chat started
-      // from each issue's "Create PR" button (created_from_issue_number),
-      // so the row can swap "Create PR" → "Open Session". Strictly
-      // per-viewer (sessions are owner-scoped — another user's session
-      // isn't navigable and must not hide the button) and 'archived' rows
-      // are excluded so the button reverts to "Create PR" after the viewer
+      // from each issue's start-work button (created_from_issue_number),
+      // so the row can swap "Create proposal" → "Create new proposal".
+      // Strictly per-viewer (sessions are owner-scoped — another user's
+      // session must not flip the label) and 'archived' rows are excluded
+      // so the button reverts to "Create proposal" after the viewer
       // abandons their session. Independent of the headless lookup above.
       const { rows: prSessionRows } = await pool.query(
         `SELECT DISTINCT ON (created_from_issue_number)
@@ -588,8 +607,8 @@ function issueRoutes(config) {
             || creatorFromSourceLine(issue.body)
             || ghLogin,
           headless: headlessByNumber.get(issue.number) || null,
-          // #287: per-viewer Create-PR session id, or null. Drives the
-          // "Create PR" → "Open Session" swap on the issue row.
+          // #287: per-viewer proposal session id, or null. Drives the
+          // "Create proposal" → "Create new proposal" swap on the issue row.
           myPrSessionId: myPrSessionByNumber.get(issue.number) || null,
           chatCount: chatByNumber.get(issue.number)?.cnt || 0,
           lastMessageAt: chatByNumber.get(issue.number)?.last_at || null,
@@ -624,15 +643,16 @@ function issueRoutes(config) {
           }
         }
         // #287: the staging mocks have no chat_sessions rows, so the
-        // "Open Session" variant of the Create-PR button would never
-        // render in a preview. Attach a synthetic myPrSessionId to one
-        // [Mock] row (900001) so the swapped button is reviewable — only
-        // where no real session already claimed it. The id is synthetic
-        // (the mock issue number), so clicking through in staging lands on
-        // a harmless "session not found"; this is for visual review of the
-        // button state only. Request-time, read-only, no-op in production.
+        // "Create new proposal" variant of the start-work button would
+        // never render in a preview. Attach a synthetic myPrSessionId to
+        // the dedicated [Mock] row (900007, "issue with an in-progress
+        // proposal") so the has-session button is reviewable — only where
+        // no real session already claimed it. The id is synthetic (the
+        // mock issue number); clicking "Create new proposal" still just
+        // spawns a fresh dev chat, so this is purely for visual review of
+        // the button label. Request-time, read-only, no-op in production.
         for (const issue of issues) {
-          if (issue.number === 900001 && !issue.myPrSessionId) {
+          if (issue.number === 900007 && !issue.myPrSessionId) {
             issue.myPrSessionId = issue.number;
           }
         }
@@ -788,8 +808,8 @@ function issueRoutes(config) {
   // the chat message + GitHub comment name the admin so the override
   // is never silent.
   router.post('/api/issues/:id/admin-apply', async (req, res) => {
-    if (!req.user?.isAdmin) {
-      return res.status(403).json({ error: 'Admin access required' });
+    if (!req.user?.canAdminWrite) {
+      return res.status(403).json({ error: 'Full admin access required' });
     }
     try {
       const { rows: issueRows } = await pool.query(
@@ -825,21 +845,76 @@ function issueRoutes(config) {
     }
   });
 
-  // Close an issue
+  // Withdraw a governance proposal (secret_change / legacy rename). This was
+  // originally an unguarded "close any issue" route with no caller; it is now
+  // the creator-gated self-service withdraw for governance proposals (the
+  // PR-proposal equivalent is POST /api/sessions/:id/archive). Only the
+  // proposal's creator may withdraw, and only while it is still open, so a
+  // stale double-tap or a race against a passing vote is a harmless no-op.
   router.post('/api/issues/:id/close', async (req, res) => {
     try {
-      const { rows } = await pool.query(
-        `UPDATE issues SET status = 'closed'
-         WHERE id = $1
-         RETURNING id, app_id,
-           (SELECT slug FROM apps WHERE apps.id = issues.app_id) AS app_slug`,
+      const { rows: issueRows } = await pool.query(
+        `SELECT i.*, a.slug AS app_slug, a.repo_url AS repo_url
+           FROM issues i JOIN apps a ON a.id = i.app_id
+          WHERE i.id = $1`,
         [req.params.id]
       );
-      if (!rows.length) return res.status(404).json({ error: 'Issue not found' });
-      pushIssueUpdate({ action: 'closed', appSlug: rows[0].app_slug, appId: rows[0].app_id, issueId: rows[0].id });
+      if (!issueRows.length) return res.status(404).json({ error: 'Issue not found' });
+      const issue = issueRows[0];
+
+      // Creator-only. (Admins already have other paths — admin merge / direct
+      // GitHub close — so the gate stays creator-scoped per the spec.)
+      if (!issue.created_by || issue.created_by !== req.user.id) {
+        return res.status(403).json({ error: 'Only the proposer can withdraw this proposal' });
+      }
+
+      // Restrict to open proposals: a withdraw that loses the race against a
+      // passing vote (which flips status to 'closed') simply no-ops here.
+      const auditPayload = {
+        ...(issue.payload || {}),
+        withdrawnAt: new Date().toISOString(),
+        withdrawnBy: req.user.username,
+      };
+      const { rows } = await pool.query(
+        `UPDATE issues SET status = 'closed', payload = $2
+          WHERE id = $1 AND status = 'open'
+          RETURNING id, app_id`,
+        [issue.id, JSON.stringify(auditPayload)]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Proposal not open' });
+
+      // Announce the withdrawal in group chat, and dual-post into the
+      // proposal's governance thread (mirrors the create path).
+      const withdrewMsg = `${req.user.username} withdrew their proposal: "${issue.title}"`;
+      await sendSystemMessage(pool, issue.app_id, withdrewMsg, 'system')
+        .catch((err) => log.warn('issues', 'Withdraw chat message failed', { err: err.message }));
+      await sendSystemMessage(pool, issue.app_id, withdrewMsg, 'system',
+        null, { type: 'governance', ref: issue.id }).catch(() => {});
+
+      // Best-effort close the GitHub twin (legacy renames carry one;
+      // secret_change proposals have no twin, so this is skipped silently).
+      if (issue.github_issue_number) {
+        const [, owner, repo] = (issue.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+        const pat = process.env.GITHUB_BOT_TOKEN;
+        if (owner && repo && pat) {
+          try {
+            const { Octokit } = await import('@octokit/rest');
+            const ok = new Octokit({ auth: pat });
+            await ok.rest.issues.update({
+              owner, repo, issue_number: issue.github_issue_number, state: 'closed',
+            });
+          } catch (err) {
+            log.warn('issues', 'GitHub issue close on withdraw failed', {
+              issue: issue.github_issue_number, status: err.status, err: err.message || '(empty)',
+            });
+          }
+        }
+      }
+
+      pushIssueUpdate({ action: 'closed', appSlug: issue.app_slug, appId: issue.app_id, issueId: issue.id });
       res.json({ ok: true });
     } catch (err) {
-      log.error('issues', 'Close failed', { message: err.message });
+      log.error('issues', 'Withdraw failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

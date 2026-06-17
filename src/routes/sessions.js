@@ -19,6 +19,7 @@ const sessionLifecycle = require('../services/session-lifecycle');
 const sessionBus = require('../services/session-bus');
 const { drainGuard } = require('../services/lifecycle');
 const { getAppConventions, getSelfHostedRefuseList } = require('../services/prompts');
+const { IN_LOOP_BROWSER_GUIDANCE } = require('../services/in-loop-browser');
 const models = require('../services/models');
 const limits = require('../services/limits');
 const events = require('../services/events');
@@ -99,17 +100,20 @@ function extractSpecSnippet(content, title) {
 // the require at the top of this file). They're re-exported below so
 // any external importer keeps working.
 
-// #161: if the session owner armed notify_on_done (they left while the
-// turn was running), atomically clear the flag and create + push a
-// session_done notification. Called fire-and-forget from the chat
-// handler's done hook — never throws into the SSE path. The UPDATE …
-// RETURNING makes the check-and-clear atomic, so concurrent done sites
-// (or a done racing the arm beacon) can't double-notify.
-async function notifySessionDoneIfArmed(pool, sessionId) {
+// #138: every interactive turn completion now creates + pushes a
+// session_done notification UNCONDITIONALLY (the persistent green bell
+// item the user can return to any time), not just when notify_on_done was
+// armed. createSessionDoneNotification's own unread-dedup (at most one
+// unread session_done per (user, session) via INSERT … WHERE NOT EXISTS)
+// collapses a back-and-forth conversation into a single pending item, so
+// this doesn't spam. We still clear notify_on_done for tidiness, but it no
+// longer gates creation. Called fire-and-forget from the chat handler's
+// done hook — never throws into the SSE path.
+async function notifySessionDone(pool, sessionId) {
   try {
     const { rows } = await pool.query(
       `UPDATE chat_sessions SET notify_on_done = FALSE
-       WHERE id = $1 AND notify_on_done = TRUE
+       WHERE id = $1
        RETURNING user_id, app_id`,
       [sessionId]
     );
@@ -442,8 +446,10 @@ function sessionRoutes(config) {
   // key when on file — the UI shows a confirmation warning + model
   // selector before calling this.
   //
-  // The run may create + push its branch, but never opens a PR and never
-  // builds a staging preview (see runClaudeCodeTool's `headless` flag).
+  // The run may create + push its branch and deliberately builds a staging
+  // preview, but never opens a PR — the PR is created lazily on a cloned
+  // session's branch at propose time (see runClaudeCodeTool's `headless`
+  // flag).
   router.post('/api/apps/:slug/issues/:number/headless-session', drainGuard, async (req, res) => {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
@@ -698,10 +704,37 @@ function sessionRoutes(config) {
 
       // The promised follow-up (#155): an assistant message telling the new
       // owner where the auto session left off and what to do next.
+      //
+      // #32: chips render only under the LAST non-system message, which is
+      // this follow-up. When the auto session ended in a question, look up
+      // the suggestions persisted on its question turn (the source's most
+      // recent assistant message with a non-empty metadata.suggestions) and
+      // forward them onto the follow-up so the answer chips render under it.
+      // spec/code/spec_code outcomes have no questions — they stay chip-free.
+      let followUpSuggestions = null;
+      if (src.headless_outcome === 'question') {
+        const { rows: suggRows } = await pool.query(
+          `SELECT metadata FROM chat_session_messages
+           WHERE session_id = $1 AND role = 'assistant'
+             AND jsonb_array_length(COALESCE(metadata->'suggestions', '[]'::jsonb)) > 0
+           ORDER BY id DESC LIMIT 1`,
+          [src.id]
+        );
+        if (suggRows.length) {
+          const s = suggRows[0].metadata && suggRows[0].metadata.suggestions;
+          if (Array.isArray(s) && s.length) followUpSuggestions = s;
+        }
+      }
+      // #330: spec/code/spec_code clones get static next-step pills (the
+      // question path stays pill-free — its answer chips take precedence).
+      const followUpQuickReplies = buildHeadlessFollowUpQuickReplies(src);
       const followUp = buildHeadlessFollowUpMessage(src);
       await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content) VALUES ($1, 'assistant', $2)`,
-        [session.id, followUp]
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'assistant', $2, $3)`,
+        [session.id, followUp, JSON.stringify({
+          ...(followUpSuggestions ? { suggestions: followUpSuggestions } : {}),
+          ...(followUpQuickReplies ? { quickReplies: followUpQuickReplies } : {}),
+        })]
       );
 
       events.record(pool, {
@@ -1221,7 +1254,7 @@ function sessionRoutes(config) {
         // — the main exit, the early returns, and the catch fallthrough —
         // so this is the one hook needed for the left-mid-turn completion
         // notification. Fire-and-forget; the helper swallows its errors.
-        if (type === 'done') notifySessionDoneIfArmed(pool, session.id);
+        if (type === 'done') notifySessionDone(pool, session.id);
       };
 
       // Locals used across multiple branches of the CC flow. Previously these
@@ -1540,16 +1573,16 @@ function sessionRoutes(config) {
         // it with a short note. The system prompt forbids this, but
         // models occasionally regress; without this check the user sees
         // a totally fabricated "fix summary" with no underlying commit.
-        const fakeMarker = mayorText1.includes('[CODING AGENT COMPLETED]');
-        const dispatched = mayor1.toolUses.some((t) => t.name === 'dispatch_claude_code');
-        if (fakeMarker && !dispatched) {
-          log.warn('sessions', 'Mayor wrote fake [CODING AGENT COMPLETED] without dispatching', {
-            sessionId: session.id,
-            preview: mayorText1.substring(0, 300),
-          });
-          mayorText1 = mayorText1
-            .replace(/\[CODING AGENT COMPLETED\][\s\S]*$/i, '')
-            .trim() || '(I described what should change, but didn\'t actually run the coding agent — try sending again.)';
+        // Strip unconditionally (#358): the marker is only ever produced by
+        // the harness (buildMayorMessages); an assistant turn must never
+        // carry it, whether or not a tool was also called. When the scrub
+        // empties the text, substitute an honest note.
+        {
+          const stripped = stripFakeCompletionMarker(mayorText1, { sessionId: session.id });
+          if (stripped !== mayorText1) {
+            mayorText1 = stripped
+              || '(I described what should change, but didn\'t actually run the coding agent — try sending again.)';
+          }
         }
 
         // Q/A mode (#32): suggested answers for clarifying questions.
@@ -1810,7 +1843,7 @@ function sessionRoutes(config) {
         // tool_use is terminal (end of turn) — no tool_result round-trip.
         const quickReplies2 = resolveQuickReplies(mayor2.toolUses);
 
-        let mayorText2 = mayor2.text;
+        let mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
         log.info('sessions', 'Mayor phase-2 response', {
           sessionId: session.id,
           textLen: mayorText2.length,
@@ -2383,12 +2416,18 @@ function sessionRoutes(config) {
         [req.user.id]
       );
       const byokSpentCents = parseFloat(byokRows[0]?.byok_cost_cents || 0);
+      // #297: surface AI availability so client chrome (the proposal
+      // "Ask AI" button) can disable itself with a tooltip when there's
+      // no usable LLM path — the platform key is unset AND the user has
+      // no BYOK key on file. Same degradation posture the dev chat takes.
+      const userApiKey = await limits.loadUserApiKey(pool, req.user.id, config.jwtSecret);
       res.json({
         spentCents: userSpent,
         limitCents: userLimit,
         globalSpentCents: globalSpent,
         globalLimitCents: globalLimit,
         byokSpentCents,
+        aiEnabled: llm.isEnabled() || !!userApiKey,
       });
     } catch (err) {
       log.error('sessions', 'Budget check failed', { message: err.message });
@@ -2485,12 +2524,39 @@ function buildHeadlessFollowUpMessage(src) {
     case 'spec':
       return `${intro}\n\nWhere things stand: the auto session investigated the repo and drafted a spec — open the spec viewer to review it. When you're happy with it, tell me to build it and I'll dispatch the coding agent (that turn also opens the PR and staging preview).`;
     case 'code':
-      return `${intro}\n\nWhere things stand: the code change is already committed and pushed on this branch, and a staging preview was built — see the "Changes ready" card above ("Preview staging" / "Test this change"). No PR exists yet. Review the change, iterate if you want, and when you're ready hit "Propose to group" on the card — that opens the PR on this branch and starts the vote (or just ask me).`;
+      return `${intro}\n\nWhere things stand: the code change is already committed and pushed on this branch — see the "Changes ready" card above. A staging preview may be shown there ("Preview staging" / "Test this change") if one built; if it didn't, the card still lets you propose and the preview is rebuilt then. No PR exists yet. Review the change, iterate if you want, and when you're ready hit "Propose to group" on the card — that opens the PR on this branch and starts the vote (or just ask me).`;
     case 'spec_code':
-      return `${intro}\n\nWhere things stand: the auto session drafted a spec (open the spec viewer to review it) AND implemented it — the change is committed and pushed on this branch, and a staging preview was built (see the "Changes ready" card above). No PR exists yet. Review the spec and the change, iterate if you want, and when you're ready hit "Propose to group" on the card — that opens the PR on this branch and starts the vote (or just ask me).`;
+      return `${intro}\n\nWhere things stand: the auto session drafted a spec (open the spec viewer to review it) AND implemented it — the change is committed and pushed on this branch. See the "Changes ready" card above; a staging preview may be shown there if one built, and either way the card lets you propose (the preview is rebuilt at propose time if needed). No PR exists yet. Review the spec and the change, iterate if you want, and when you're ready hit "Propose to group" on the card — that opens the PR on this branch and starts the vote (or just ask me).`;
     default:
       return `${intro}\n\nWhere things stand: the auto session ran into something that needs a human decision — see its last message above (the same questions were also posted as a comment on the GitHub issue). Answer here and we'll continue from where it left off.${(src.spec_md || '').trim() ? ' The auto session also drafted a spec — open the spec viewer to review it alongside the questions.' : ''}`;
   }
+}
+
+// #330: next-step quick-reply pills for the cloned follow-up message. The
+// auto-session clone produces no Mayor turn, so the follow-up would
+// otherwise land with an empty pill bar — leaving the user told to "build
+// it" with nothing to tap. Attach static, outcome-appropriate pills so the
+// above-box pill row is populated from the first screen. The 'question'
+// outcome returns null: it already forwards the question turn's answer
+// chips, and pills are mutually exclusive with chips (answers win). Routed
+// through sanitizeQuickReplies to keep the ≤3 / ≤80-char invariant shared
+// with the Mayor's suggest_replies path.
+function buildHeadlessFollowUpQuickReplies(src) {
+  let replies;
+  switch (src.headless_outcome) {
+    case 'spec':
+      replies = ['Build it', 'Revise the spec', 'What will this change?'];
+      break;
+    case 'code':
+      replies = ['Propose it to the group', 'Make a tweak', 'What did it change?'];
+      break;
+    case 'spec_code':
+      replies = ['Propose it to the group', 'Revise the spec', 'Make a tweak'];
+      break;
+    default:
+      return null;
+  }
+  return sanitizeQuickReplies({ replies });
 }
 
 // The unattended-mode addendum appended to the Mayor system prompt for
@@ -2503,7 +2569,7 @@ HEADLESS AUTO-SESSION MODE: you are running unattended on GitHub issue #${issueN
 1. FIRST apply the CLARITY GATE (above) to the issue, including any ISSUE COMMENTS included in the message — treat the reporter's comments as their input, and comments marked as earlier proposal questions as your own previous turn (answers to them may make the issue clear now). If the issue FAILS the gate, classify each blocking question you would ask:
    - REPO-ANSWERABLE: what exists in the app, where the relevant code lives, how a feature currently behaves, whether the report matches reality. Asking the reporter is a last resort — investigation comes first: these questions go to dispatch_scout (step 2), NOT to the reporter. In the scout prompt, enumerate the unresolved points and instruct it to settle them from the code, choose stated defaults where reasonable, and keep only the genuinely human-only blockers in a "Questions" section.
    - HUMAN-ONLY: what the reporter wants, product/priority choices, reproduction details only the reporter has — things no codebase can answer.
-   ONLY if EVERY blocking question is human-only: reply in plain text containing ONLY the numbered clarifying questions with your suggested defaults, and call no tool. Your reply will be posted verbatim as a comment on GitHub issue #${issueNumber} for the reporter to answer — write it for them (no greetings, no meta-talk about sessions or tools). Otherwise dispatch_scout per step 2.
+   ONLY if EVERY blocking question is human-only: reply in plain text containing ONLY the numbered clarifying questions with your suggested defaults, AND ALSO call suggest_answers for those questions. The suggest_answers call is metadata-only — it does NOT change the verbatim text posted to GitHub issue #${issueNumber}; it exists so the human who later starts a session from this proposal can tap the suggested answers. The visible text must still be ONLY the numbered questions with defaults. Your text reply will be posted verbatim as a comment on GitHub issue #${issueNumber} for the reporter to answer — write it for them (no greetings, no meta-talk about sessions or tools). Otherwise dispatch_scout per step 2.
 2. dispatch_scout when the issue passes the gate and needs investigation or design — OR when the gate failed for repo-answerable reasons (scouting is also the way to resolve ambiguity): produce a grounded spec a human will review later. Prefer this for anything non-trivial. After the scout returns you will get ONE follow-up decision turn where you may implement the spec immediately if it turned out straightforward — so scouting first never costs you the chance to ship; any questions surviving the scout's investigation will be posted to the issue from that decision turn, so failing the gate is not a reason to avoid scouting.
 3. dispatch_claude_code ONLY for small, unambiguous fixes the issue text fully specifies. The agent may commit and push its branch, and a staging preview is built from the pushed commit — but NO pull request is created in this mode; a human will start a session from this auto session later and propose the change (which opens the PR on their branch).
 Never promise future work and never ask for confirmation — state what you did and what the human reviewer should do next.`;
@@ -2519,11 +2585,11 @@ function buildHeadlessDecisionAddendum(issueNumber) {
   return `
 
 DECISION TURN: the scout's spec is now in your system prompt (CURRENT SPEC DOC). You get exactly ONE more action.
-If the spec contains a Questions section with decisions a human must make: do NOT dispatch. Reply in plain text containing ONLY those numbered questions with your suggested defaults, written for the issue reporter — your reply will be posted verbatim as a comment on GitHub issue #${issueNumber} (no greetings, no meta-talk about sessions or specs).
+If the spec contains a Questions section with decisions a human must make: do NOT dispatch. Reply in plain text containing ONLY those numbered questions with your suggested defaults, written for the issue reporter, AND ALSO call suggest_answers for those questions. The suggest_answers call is metadata-only — it does NOT change the verbatim text posted to GitHub issue #${issueNumber}; it exists so the human who later starts a session from this proposal can tap the suggested answers. The visible text must still be ONLY the numbered questions with defaults. Your text reply will be posted verbatim as a comment on GitHub issue #${issueNumber} (no greetings, no meta-talk about sessions or specs).
 Otherwise, dispatch dispatch_claude_code to implement the spec NOW only if ALL of these hold:
-- The spec has no "Questions" section, no open decisions, and no choices deferred to a human.
+- The spec has no **unresolved/blocking** questions — a "Questions" section that says "None" (or is empty) is NOT a blocker; proceed to build it. Only an open question that genuinely requires a human decision blocks the build.
 - It describes a small, bounded change with concrete file paths — roughly a handful of files, no broad refactor.
-- No database schema migrations, no destructive or irreversible operations, no changes to auth, billing, permissions, or security-sensitive code.
+- Database schema changes are allowed ONLY when they are append-only and forward-only: creating new tables (\`CREATE TABLE IF NOT EXISTS\`), adding new nullable columns (\`ADD COLUMN IF NOT EXISTS\`), and forward-only data backfills. Drops, renames, type changes, not-null tightenings, and any other destructive or irreversible database operation are NOT allowed — defer to a human when in doubt. Also no other destructive or irreversible operations, and no changes to auth, billing, permissions, or security-sensitive code.
 - No new external services, dependencies, or credentials.
 - The spec stays within what issue #${issueNumber} asked for (no scope expansion).
 If ANY criterion fails or you are unsure, reply in plain text instead — summarize the spec and stop; a human will review it. When you do dispatch, the prompt must tell the agent to implement the session's spec doc exactly as written and not redesign it. Remember: headless mode means commit + push + staging preview — no PR.`;
@@ -2576,14 +2642,63 @@ function shouldPostHeadlessQuestionComment({ outcome, dispatchedTool, mayorText 
   return outcome === 'question' && !dispatchedTool && !!(mayorText || '').trim();
 }
 
-// #178: does the spec still carry a blocking "Questions" section after the
-// scout's investigation? Keys on ATX headings whose text begins with
+// #178/#196: does the spec still carry a blocking "Questions" section after
+// the scout's investigation? Keys on ATX headings whose text begins with
 // "Question(s)" / "Open question(s)" — the exact section name the base
-// prompt and scout prompt mandate for blockers. A false positive merely
-// downgrades a buildable spec to a posted-questions round-trip; a false
-// negative reproduces the old park-for-human behavior. Exported for tests.
+// prompt and scout prompt mandate for blockers — then INSPECTS the section
+// body: a heading whose body is empty or only a "nothing here" marker
+// ("None", "N/A", …) is NOT a blocker, so a scout's habitual
+// "### Questions\nNone" no longer parks the run for a human. Only a section
+// with real residual content (a list item or sentence) blocks. A false
+// positive merely downgrades a buildable spec to a posted-questions
+// round-trip; a false negative reproduces the old park-for-human behavior.
+// Exported for tests.
+//
+// Recognized "nothing here" markers (case-insensitive, tolerating trailing
+// punctuation and a short trailing clause like "None — resolved from code.").
+const QUESTIONS_EMPTY_MARKER_RE = /^(?:none|n\/a|na|no\s+open\s+questions|no\s+questions|no\s+blocking\s+questions|none\s+blocking|nothing\s+blocking)\b/i;
+
 function specHasBlockingQuestions(specMd) {
-  return /^#{1,6}\s*(?:open\s+)?questions?\b/im.test(specMd || '');
+  const text = specMd || '';
+  // Match a Questions-style ATX heading, capturing its level (# count) so we
+  // can find where its section ends (next same-or-higher-level heading).
+  const headingRe = /^(#{1,6})\s*(?:open\s+)?questions?\b[^\n]*$/gim;
+  let m;
+  while ((m = headingRe.exec(text)) !== null) {
+    const level = m[1].length;
+    const bodyStart = m.index + m[0].length;
+    // Find the next heading whose level is <= this section's level (a sibling
+    // or higher heading); deeper sub-headings stay part of the section.
+    const rest = text.slice(bodyStart);
+    const stopRe = /^(#{1,6})\s/gm;
+    let stop;
+    let bodyEnd = rest.length;
+    while ((stop = stopRe.exec(rest)) !== null) {
+      if (stop[1].length <= level) { bodyEnd = stop.index; break; }
+    }
+    const body = rest.slice(0, bodyEnd);
+    if (questionsBodyHasContent(body)) return true;
+  }
+  return false;
+}
+
+// Strip markdown noise from a Questions section body and decide whether it
+// carries a real question (vs. empty or a "None"-style marker).
+function questionsBodyHasContent(body) {
+  const cleaned = (body || '')
+    .split('\n')
+    .map((line) => line
+      // drop leading list/quote markers
+      .replace(/^\s*(?:[-*>]\s*)+/, '')
+      // drop emphasis underscores/asterisks anywhere
+      .replace(/[_*]/g, '')
+      .trim())
+    .filter((line) => line.length > 0)
+    .join(' ')
+    .trim();
+  if (!cleaned) return false;
+  if (QUESTIONS_EMPTY_MARKER_RE.test(cleaned)) return false;
+  return true;
 }
 
 const HEADLESS_QUESTION_FOOTER = '\n\n— Posted by this issue\'s proposal session. '
@@ -2748,7 +2863,7 @@ async function runHeadlessSession({
       ];
     }
 
-    const mayorText1 = mayor1.text;
+    const mayorText1 = stripFakeCompletionMarker(mayor1.text, { sessionId: session.id });
     // Q/A mode (#32): same suggestion handling as the interactive route —
     // persisted on the assistant row so the cloned session a human picks
     // up renders the answer chips. Dropped if a dispatch co-occurred.
@@ -2869,7 +2984,7 @@ async function runHeadlessSession({
         });
         const buildCall = mayor2.toolUses.find((t) => t.name === 'dispatch_claude_code');
         const strayCalls = mayor2.toolUses.filter((t) => t.name !== 'dispatch_claude_code');
-        const mayorText2 = mayor2.text;
+        const mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
         const costCents2 = llm.estimateCostCents(mayor2.usage, selectedModel);
 
         if (!mayor2.toolUses.length) {
@@ -2986,9 +3101,20 @@ async function runHeadlessSession({
             ],
             systemPrompt: wrapPrompt,
             model: selectedModel,
+            // #32: on the rejected-build (question) path the wrap-up
+            // re-asks the human-only questions — expose suggest_answers so
+            // it can attach answer chips, mirroring the phase-1 question
+            // turn. Other wrap-up outcomes ignore the tool.
+            tools: [SUGGEST_ANSWERS_TOOL],
             apiKey: userApiKey,
           });
-          let mayorText3 = mayor3.text;
+          let mayorText3 = stripFakeCompletionMarker(mayor3.text, { sessionId: session.id });
+          // #32: persist suggestions only on the question outcome — that's
+          // the row a cloned session forwards onto its follow-up to render
+          // the answer chips. Non-question wrap-ups carry no metadata.
+          const { suggestions: decisionSuggestions } = outcome === 'question'
+            ? resolveSuggestedAnswers(mayor3.toolUses)
+            : { suggestions: null };
           // #178: on the rejected-build path the wrap-up text IS the
           // reporter-facing questions; blank text posts nothing (the spec
           // carries the questions for the human reviewer).
@@ -3003,9 +3129,10 @@ async function runHeadlessSession({
           send('mayor_reasoning', { text: mayorText3 });
           const costCents3 = llm.estimateCostCents(mayor3.usage, selectedModel);
           await pool.query(
-            `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
-             VALUES ($1, 'assistant', $2, $3, $4, $5)`,
-            [session.id, mayorText3, selectedModel, mayor3.usage.input_tokens + mayor3.usage.output_tokens, costCents3]
+            `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
+             VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
+            [session.id, mayorText3, selectedModel, mayor3.usage.input_tokens + mayor3.usage.output_tokens, costCents3,
+             JSON.stringify(decisionSuggestions ? { suggestions: decisionSuggestions } : {})]
           );
           await debitMayorUsage(mayor3.usage);
         }
@@ -3021,7 +3148,7 @@ async function runHeadlessSession({
           apiKey: userApiKey,
         });
 
-        let mayorText2 = mayor2.text;
+        let mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
         if (!mayorText2.trim()) {
           mayorText2 = toolResult.isError
             ? "_The auto session's dispatch didn't finish successfully — see the status above._"
@@ -3312,12 +3439,66 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
             'UPDATE chat_sessions SET testing_md = $1, testing_path = $2, testing_paths = $3 WHERE id = $4',
             [testing.testingMd, testing.testingPath, JSON.stringify(testing.testingPaths || []), session.id]
           ).catch(() => {});
+          session.testing_md = testing.testingMd;
+          session.testing_path = testing.testingPath;
+          session.testing_paths = testing.testingPaths || [];
         }
         outcome = session.spec_md ? 'spec_code' : 'code';
-        dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}. `
-          + 'Headless mode: no PR was opened and no staging preview was built.'
-          + (session.spec_md ? ' The change implements the spec drafted earlier this run (in the session spec doc).' : '')
-          + (testing.cleanedText ? `\n\nWhat the agent did:\n${testing.cleanedText.slice(0, 2000)}` : '');
+
+        // #361/#183 parity (chat 735 / issue #370): the LIVE headless path
+        // builds a staging preview and persists a `changesReady: true` system
+        // message — that marker is what makes a dev chat cloned from this auto
+        // session render the "Changes ready" card (Preview / Test / Propose),
+        // since the clone copies this session's messages verbatim. A
+        // restart-resumed run reaches the same committed-and-pushed state, so
+        // it must emit the same marker; without it, a proposal interrupted by
+        // a platform restart silently loses its card even though the branch
+        // has a reviewable commit. Build best-effort and persist the marker
+        // whether or not staging succeeds, exactly like the live path.
+        const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
+        let stagingResult = null;
+        let stagingErr = null;
+        try {
+          stagingResult = await staging.buildAndDeployStaging(config, session, app, result.sha);
+        } catch (e) {
+          stagingErr = e;
+        }
+        if (stagingResult) {
+          await pool.query(
+            'UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3',
+            [stagingResult.containerId, stagingResult.stagingUrl, session.id]
+          ).catch(() => {});
+          await staging.warmStagingCert(session, stagingResult.hostname, stagingResult.stagingUrl).catch(() => {});
+          await pool.query(
+            `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+             VALUES ($1, 'system', $2, $3)`,
+            [session.id, 'Staging preview built',
+              JSON.stringify({ stagingUrl: stagingResult.stagingUrl, changesReady: true, prNumber: null })]
+          ).catch(() => {});
+          // Before/after visuals: best-effort, never throws; there is no live
+          // client to stream to on a resumed run, so the no-op send is fine.
+          visuals.captureForSession(config, session, app, result.sha, stagingResult, { send: () => {} })
+            .catch((err) => log.warn('visuals', 'Resumed headless capture failed (non-fatal)', { sessionId: session.id, err: err.message }));
+          dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}, and a staging preview was built. `
+            + 'Headless mode: no PR was opened (it is created on a clone at propose time).'
+            + (session.spec_md ? ' The change implements the spec drafted earlier this run (in the session spec doc).' : '')
+            + (testing.cleanedText ? `\n\nWhat the agent did:\n${testing.cleanedText.slice(0, 2000)}` : '');
+        } else {
+          const { errMsg, errName, missingKeys } = describeStagingFailure(stagingErr);
+          await pool.query(
+            `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+             VALUES ($1, 'system', $2, $3)`,
+            [session.id, 'Staging build failed',
+              JSON.stringify({ error: errMsg, changesReady: true, stagingFailed: true, stagingErrorName: errName, stagingMissingKeys: missingKeys, prNumber: null })]
+          ).catch(() => {});
+          log.warn('staging', 'Resumed headless staging build failed (non-fatal — commit pushed)', {
+            sessionId: session.id, errName, err: errMsg, missingKeys,
+          });
+          dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}. `
+            + 'Headless mode: no PR was opened. The staging preview could not be built, but the commit is reviewable — the "Changes ready" card still appears on a clone.'
+            + (session.spec_md ? ' The change implements the spec drafted earlier this run (in the session spec doc).' : '')
+            + (testing.cleanedText ? `\n\nWhat the agent did:\n${testing.cleanedText.slice(0, 2000)}` : '');
+        }
       } else {
         outcome = session.spec_md ? 'spec' : 'question';
         dispatchSummary = (result.fatalError
@@ -3816,6 +3997,34 @@ function prettyModelLabel(modelId) {
   return modelId;
 }
 
+// The synthetic label the harness folds a REAL coding-agent run under
+// when replaying history into the Mayor's context (see buildMayorMessages
+// below). It is reserved for the harness — the system prompt forbids the
+// Mayor from ever typing it, and stripFakeCompletionMarker enforces that
+// server-side. Centralized so the generator, the scrub, and the system
+// prompt can't drift apart.
+const CODING_AGENT_COMPLETED_MARKER = '[CODING AGENT COMPLETED]';
+const COMPLETION_MARKER_RE = /\[CODING AGENT COMPLETED\][\s\S]*$/i;
+
+// Defense in depth (#358): remove a hallucinated completion marker (and
+// anything after it) from Mayor-authored text. The marker is ONLY ever
+// legitimately produced by buildMayorMessages from a ccOutput system row,
+// so it must never survive in a persisted assistant row — if the Mayor
+// reproduces it, it is faking a coding-agent run that never happened. Pure
+// + trims; returns the input unchanged when no marker is present. Pass
+// sessionId to have the (rare) regression logged.
+function stripFakeCompletionMarker(text, { sessionId } = {}) {
+  if (typeof text !== 'string') return '';
+  // Fast path: most Mayor turns never contain the marker, so bail early.
+  if (!COMPLETION_MARKER_RE.test(text)) return text;
+  if (sessionId) {
+    log.warn('sessions', 'Mayor wrote fake [CODING AGENT COMPLETED] without a real run — stripping', {
+      sessionId, preview: text.substring(0, 300),
+    });
+  }
+  return text.replace(COMPLETION_MARKER_RE, '').trim();
+}
+
 function buildMayorMessages(history) {
   const CC_SUMMARY_MAX = 2000;
   const messages = [];
@@ -3829,7 +4038,18 @@ function buildMayorMessages(history) {
   for (const row of history) {
     if (row.role === 'system' && row.metadata?.ccOutput) {
       const summary = String(row.metadata.ccOutput).slice(0, CC_SUMMARY_MAX);
-      pushAssistant(`[CODING AGENT COMPLETED]:\n${summary}`);
+      // Outcome-aware label (#358): only a run that actually changed code is
+      // folded under the "COMPLETED" marker. No-op / error runs carry a
+      // distinct label so the Mayor doesn't see (and imitate) a "completed"
+      // entry for work that never landed. Rows without ccOutcome — legacy
+      // history and the staging seeds — keep the legacy completed label.
+      const outcome = row.metadata.ccOutcome;
+      const label = outcome === 'no_changes'
+        ? '[CODING AGENT RAN — NO CHANGES]'
+        : outcome === 'error'
+          ? '[CODING AGENT FAILED]'
+          : CODING_AGENT_COMPLETED_MARKER;
+      pushAssistant(`${label}:\n${summary}`);
     } else if (row.role === 'assistant') {
       pushAssistant(row.content);
     } else if (row.role === 'user') {
@@ -3905,7 +4125,7 @@ Your job is to investigate this repo and produce a MARKDOWN SPEC for the change.
 
 The spec is rendered as markdown in a viewer that follows standard CommonMark fencing. If you include a fenced code block that ITSELF contains a triple-backtick fence (common when quoting markdown examples or the platform's \`\`\`filepath:...\`\`\` output convention), wrap the OUTER block in a four-backtick fence (\`\`\`\`) — a longer fence can safely contain shorter ones. Otherwise the inner \`\`\` closes the block early and the rest of the spec renders broken. When in doubt, prefer fewer/inline code samples over deeply nested fences.
 
-Do NOT pad the spec with open questions. Only include a "### Questions" subsection — placed at the END of the "User-facing changes" half, since questions are for the (possibly non-technical) requester — for things that genuinely BLOCK implementation: decisions the coding agent cannot reasonably make on its own and that would change what gets built. Make a sensible default choice wherever you can and state it, rather than asking. Non-blocking items — things worth noting but not required to answer before building — belong in the "Technical implementation" half under "### Considerations" (trade-offs, assumptions, things to keep in mind) or "### Deferred work" (out-of-scope or follow-up items), NOT as questions.
+Do NOT pad the spec with open questions. Only include a "### Questions" subsection — placed at the END of the "User-facing changes" half, since questions are for the (possibly non-technical) requester — for things that genuinely BLOCK implementation: decisions the coding agent cannot reasonably make on its own and that would change what gets built. Make a sensible default choice wherever you can and state it, rather than asking. Non-blocking items — things worth noting but not required to answer before building — belong in the "Technical implementation" half under "### Considerations" (trade-offs, assumptions, things to keep in mind) or "### Deferred work" (out-of-scope or follow-up items), NOT as questions. When there are no blockers, OMIT the "### Questions" subsection entirely — do NOT write "### Questions\nNone" or an empty section.
 
 Your final assistant message must be ONLY the markdown spec — no preamble, no "I'll investigate...", no "Here's the spec:". The host captures that final message verbatim and stores it as the session's spec doc.
 
@@ -4294,6 +4514,7 @@ INSTRUCTIONS:
 - After all changes are made, stage everything with "git add -A" and commit
   with a clear message describing what was built.
 - Do NOT ask questions or request clarification. Just build it.
+${IN_LOOP_BROWSER_GUIDANCE}
 - End your FINAL message with a testing block (optional, but strongly
   encouraged whenever the change is user-visible) so reviewers can try the
   change in the staging preview:
@@ -4320,6 +4541,17 @@ path: /another/changed/view
     e.g. a new nav item plus the page it opens. Each becomes its own
     labelled before/after row. The FIRST path is also the deep link the
     "Test this change" button jumps to.
+  - SELF-APP (social-vibecoding) ONLY: this app is a hash-routed SPA — its
+    internal screens live in the URL fragment ("#app/<slug>/dev/...",
+    "#leaderboard"), NOT in the server pathname. Write the "path:" using
+    the in-app route segments exactly as they appear after the "#"
+    (e.g. "path: /app/<self-slug>/dev/proposals/<id>" or
+    "path: /leaderboard") — the platform moves it into the fragment when
+    capturing screenshots and when the "Test this change" button opens the
+    preview, so the shot lands on the changed screen instead of the home
+    feed. Standalone server pages ("/dashboard", "/admin", "/status",
+    "/node-status") stay as plain pathnames. (This only applies to the
+    self-app; ordinary apps are path-routed and need no special handling.)
   - The steps are short markdown (numbered list preferred), written for a
     non-technical tester looking at a staging preview seeded with a copy of
     production data.
@@ -4392,46 +4624,105 @@ path: /another/changed/view
     const progressMsgId = progRows[0].id;
 
     // Experimental AI progress estimate: while the per-user toggle is ON,
-    // a 60s ticker asks Haiku to skim the progress-log tail and emits a
-    // vague "AI guess" via send('cc_estimate'). Gated hard: never for
+    // a 60s base ticker asks Haiku to skim the progress-log tail and emits
+    // a vague "AI guess" via send('cc_estimate'). Gated hard: never for
     // headless turns (no live watcher), never without an LLM client, and
     // the whole block is skipped when the toggle is off — degradation to
     // today's behavior is structural, not a runtime branch. Estimates are
     // ephemeral (in-memory + SSE only, never persisted).
+    //
+    // Reliability for long runs (#323): the estimator no longer dies
+    // permanently after a few failures or a flat emit count. Transient
+    // Haiku errors trigger a short tick-skip backoff that resets on the
+    // next success, and the cadence widens with elapsed time instead of
+    // stopping — so a 12+ minute run keeps getting refreshed guesses. The
+    // first guess fires even before any progress line lands, and the
+    // remaining-time countdown is re-asked on a wall-clock cadence so it
+    // never freezes during a long quiet phase (one slow command/edit).
     const estimatorEnabled = !headless && !!req?.user?.aiProgressEstimate
       && (llm.isEnabled() || !!userApiKey);
     const liveProgressLines = [];
     let estimator = null;
+    // Diagnose the silent-disable case: toggle ON + live turn but no LLM
+    // key path means the user sees nothing with no obvious reason (#323).
+    if (!headless && !!req?.user?.aiProgressEstimate && !estimatorEnabled) {
+      log.warn('chat', 'AI progress estimate skipped: no LLM key available', {
+        sessionId: session.id, userId: req.user.id,
+      });
+    }
     if (estimatorEnabled) {
+      log.info('chat', 'AI progress estimator started', { sessionId: session.id });
       let estimateInFlight = false;
       let linesAtLastEstimate = 0;
-      let estimateFailures = 0;
-      let estimateSuccesses = 0;
+      let consecutiveFailures = 0;   // drives the backoff window
+      let ticksToSkip = 0;           // remaining backoff ticks to wait out
+      let estimateSuccesses = 0;     // counted only for the runaway backstop
+      let lastEstimateAtMs = null;   // wall-clock of the last successful emit
+      let ceilingLogged = false;
+      // Runaway backstop only — with the widening cadence below this is
+      // reached around the ~2h mark, never by a normal long run.
+      const MAX_ESTIMATES = 60;
+      // After this much elapsed time the cadence widens (cost containment
+      // on genuinely long runs); below it we stay at the 60s base tick.
+      const WIDEN_AFTER_MS = 15 * 60_000;
+      const WIDE_SPACING_MS = 150_000;   // ~2.5 min minimum spacing late in a run
+      const IDLE_REFRESH_MS = 180_000;   // re-ask even with no new lines so ~X left moves
       const CC_ACTION_RE = /^(Reading |Writing |Editing |\$ |Using )/;
       estimator = setInterval(() => {
-        // Cost containment: one call in flight at a time; skip while the
-        // run is idle (no new lines — re-guessing identical input wastes
-        // money); stop for good after 3 consecutive failures or 20
-        // estimates (bounds a pathological multi-hour run).
+        // One call in flight at a time.
         if (estimateInFlight) return;
-        if (estimateFailures >= 3 || estimateSuccesses >= 20) {
+        // Runaway backstop: stop for good only on a pathological multi-hour
+        // run. Logged once so it's diagnosable, then the timer is torn down.
+        if (estimateSuccesses >= MAX_ESTIMATES) {
+          if (!ceilingLogged) {
+            ceilingLogged = true;
+            log.info('chat', 'AI progress estimator hit emit ceiling', {
+              sessionId: session.id, estimates: estimateSuccesses,
+            });
+          }
           clearInterval(estimator);
           return;
         }
-        if (liveProgressLines.length === linesAtLastEstimate) return;
+        // Backoff after failures: wait out the skip window, then retry. The
+        // counter resets on the next success so a transient blip can't
+        // disable estimates for the rest of a long run.
+        if (ticksToSkip > 0) { ticksToSkip--; return; }
+
+        const now = Date.now();
+        const elapsedMs = now - turnStartedMs;
+        const hasNewLines = liveProgressLines.length !== linesAtLastEstimate;
+        const sinceLastMs = lastEstimateAtMs == null ? Infinity : now - lastEstimateAtMs;
+        const minSpacingMs = elapsedMs >= WIDEN_AFTER_MS ? WIDE_SPACING_MS : 0;
+
+        // Decide whether to run this tick:
+        //  - first estimate ever: always (even with zero lines — the prompt
+        //    renders "(no output yet)" and answers "still early …");
+        //  - too soon under the widened late-run cadence: skip;
+        //  - new progress since last estimate: run;
+        //  - otherwise idle-refresh once enough wall-clock passed so the
+        //    remaining-time guess doesn't freeze during a quiet phase.
+        let shouldRun;
+        if (lastEstimateAtMs == null) shouldRun = true;
+        else if (sinceLastMs < minSpacingMs) shouldRun = false;
+        else if (hasNewLines) shouldRun = true;
+        else shouldRun = sinceLastMs >= IDLE_REFRESH_MS;
+        if (!shouldRun) return;
+
         estimateInFlight = true;
         const linesAtStart = liveProgressLines.length;
         llm.estimateRunProgress({
           userRequest: userMessage,
           progressTail: liveProgressLines,
-          elapsedMs: Date.now() - turnStartedMs,
+          elapsedMs,
           steps: liveProgressLines.filter((l) => CC_ACTION_RE.test(l)).length,
           apiKey: userApiKey || undefined,
         }).then(async ({ text, remainingSeconds, usage, model: estModel }) => {
-          estimateFailures = 0;
+          consecutiveFailures = 0;
+          ticksToSkip = 0;
           estimateSuccesses++;
           linesAtLastEstimate = linesAtStart;
-          const elapsedAtEstimate = Date.now() - turnStartedMs;
+          lastEstimateAtMs = Date.now();
+          const elapsedAtEstimate = lastEstimateAtMs - turnStartedMs;
           // A call resolving after the user hit stop is dropped — the
           // running line is already deactivated client-side.
           if (!(stopHandle && stopHandle.stopped)) {
@@ -4461,8 +4752,14 @@ path: /another/changed/view
             await limits.recordSpend(pool, req.user.id, cents, { byok: !!userApiKey });
           }
         }).catch((err) => {
-          estimateFailures++;
-          log.warn('chat', 'AI progress estimate failed', { sessionId: session.id, err: err.message });
+          // Self-healing backoff: skip up to 5 ticks (~5 min) after repeated
+          // failures, but never stop for good — the next success resets it.
+          consecutiveFailures++;
+          ticksToSkip = Math.min(consecutiveFailures, 5);
+          log.warn('chat', 'AI progress estimate failed; backing off', {
+            sessionId: session.id, err: err.message,
+            consecutiveFailures, ticksToSkip,
+          });
         }).finally(() => {
           estimateInFlight = false;
         });
@@ -4653,10 +4950,14 @@ path: /another/changed/view
         stagingUrl = stagingResult.stagingUrl;
         // The stagingUrl metadata is what makes this row render as the
         // "Changes ready" staging card (Preview / Test / Propose buttons)
-        // in every dev chat later cloned from this auto session.
-        await sendStatus('Staging preview built', { stagingUrl });
+        // in every dev chat later cloned from this auto session. The
+        // explicit `changesReady: true` flag is what now DRIVES the card
+        // (rather than incidentally `stagingUrl`), so the card renders the
+        // same whether or not staging succeeded — see the failure branch.
+        await sendStatus('Staging preview built', { stagingUrl, changesReady: true, prNumber: null });
         send('staging_ready', {
           url: stagingUrl,
+          changesReady: true,
           testingMd: session.testing_md || null,
           testingPath: session.testing_path || null,
         });
@@ -4678,8 +4979,26 @@ path: /another/changed/view
         // problems surface in the Mayor's wrap-up summary — but isError
         // stays false and the run's outcome is unchanged.
         const { fix, missingKeys, errMsg, errName } = describeStagingFailure(stagingErr);
-        await sendStatus('Staging preview failed to build — you can build one from a cloned session', { error: errMsg });
-        send('staging_failed', { error: errMsg, errorName: errName, missingKeys });
+        // The commit IS pushed and reviewable — `changesReady: true` makes
+        // the "Changes ready" card render (with a disabled Preview button +
+        // missing-secret hint) on any clone, exactly as the success branch
+        // does, instead of leaving a card-less "build failed" line. Headless
+        // never opens a PR, so prNumber/prUrl are null.
+        await sendStatus('Staging build failed', {
+          error: errMsg,
+          changesReady: true,
+          stagingFailed: true,
+          stagingErrorName: errName,
+          stagingMissingKeys: missingKeys,
+          prNumber: null,
+        });
+        send('staging_failed', {
+          error: errMsg,
+          errorName: errName,
+          missingKeys,
+          changesReady: true,
+          prNumber: null,
+        });
         summaryParts.push(
           `Staging preview failed to build (non-fatal — commit ${commitHash.substring(0, 8)} is pushed; `
           + `a preview can be built from a cloned session).\n\n${fix}`
@@ -4780,12 +5099,22 @@ path: /another/changed/view
         await staging.warmStagingCert(session, stagingResult.hostname, stagingResult.stagingUrl);
 
         stagingUrl = stagingResult.stagingUrl;
-        await sendStatus('Staging deployed!', { stagingUrl });
+        // `changesReady: true` is now what drives the "Changes ready" card
+        // (rather than incidentally `stagingUrl`), so the same card renders
+        // on the staging-failed branch below. prNumber/prUrl ride along so
+        // the card header + "View on GitHub" survive a reload from metadata.
+        await sendStatus('Staging deployed!', {
+          stagingUrl,
+          changesReady: true,
+          prNumber: session.pr_number || null,
+          prUrl: session.pr_url || null,
+        });
         // #127: ship the session's testing guidance (this turn's block, or
         // the kept-previous one off the session row) alongside the staging
         // URL so the client can offer "Test this change" without a refetch.
         send('staging_ready', {
           url: stagingUrl,
+          changesReady: true,
           testingMd: session.testing_md || null,
           testingPath: session.testing_path || null,
         });
@@ -4858,11 +5187,27 @@ path: /another/changed/view
           `. Only the staging preview container is missing — there is no preview URL for this commit.\n\n` +
           fix;
 
-        await sendStatus('Staging build failed', { error: errMsg });
+        // The commit (and PR, if any) already landed — `changesReady: true`
+        // keeps the "Changes ready" card + Propose button on screen (with a
+        // disabled Preview button and the missing-secret hint), so a failed
+        // preview no longer hides a perfectly proposable change. Propose
+        // rebuilds staging itself (routes/votes.js), so this stays usable.
+        await sendStatus('Staging build failed', {
+          error: errMsg,
+          changesReady: true,
+          stagingFailed: true,
+          stagingErrorName: errName,
+          stagingMissingKeys: missingKeys,
+          prNumber: session.pr_number || null,
+          prUrl: session.pr_url || null,
+        });
         send('staging_failed', {
           error: errMsg,
           errorName: errName,
           missingKeys,
+          changesReady: true,
+          prNumber: session.pr_number || null,
+          prUrl: session.pr_url || null,
         });
         summaryParts.push(message);
 
@@ -4892,7 +5237,21 @@ path: /another/changed/view
     }
 
     if (ccText) {
-      await sendStatus('Claude Code finished', { ccOutput: ccText, durationMs: Date.now() - turnStartedMs });
+      // Outcome-aware completion row (#358): the green "Claude Code finished"
+      // card + the [CODING AGENT COMPLETED] fold-in are reserved for runs
+      // that actually changed code. A run that committed nothing (no-op) or
+      // errored gets an honest header instead, and a ccOutcome discriminator
+      // so buildMayorMessages labels the Mayor's context accordingly — a
+      // no-op/failure must never masquerade as a completed build.
+      const ccOutcome = hasChanges
+        ? 'success'
+        : ((result.fatalError || result.ccIsError) ? 'error' : 'no_changes');
+      const statusText = ccOutcome === 'success'
+        ? 'Claude Code finished'
+        : ccOutcome === 'no_changes'
+          ? 'Claude Code made no changes'
+          : 'Claude Code did not complete';
+      await sendStatus(statusText, { ccOutput: ccText, ccOutcome, durationMs: Date.now() - turnStartedMs });
       // Prepend CC's own description so the Mayor leads with what was
       // actually built, with our outcome bullets as supplementary context.
       summaryParts.unshift(`What the agent did:\n${ccText}`);
@@ -4979,7 +5338,7 @@ THE SPEC DOC:
 Every session has a markdown SPEC DOC that the user can read in the dev-chat spec viewer (a side-panel they open via the spec preview cards in the chat). It is your collaborative working surface for planning before code is written. The current spec is included verbatim below in the CURRENT SPEC DOC block — refer to it whenever you discuss or summarize the spec. The viewer is read-only: the user cannot hand-edit the spec, so all revisions go through you — and YOU never edit the spec in-process either. ALL spec writing and revising, however small, is done by dispatching the scout (dispatch_scout), which reads the repo and rewrites the doc; you only relay what the user wants changed. When they're happy with the spec they'll ask you to dispatch the coding agent in chat — you don't need to call dispatch_claude_code just because the spec is done; the user owns that decision.
 
 SPEC QUESTIONS — KEEP THEM RARE:
-Do not pad the spec with open questions. Only include a "Questions" section for things that genuinely BLOCK implementation — decisions the coding agent cannot reasonably make on its own and that would change what gets built. Wherever you can, make a sensible default choice and state it instead of asking. Non-blocking items belong under "Considerations" (trade-offs, assumptions, things to keep in mind) or "Deferred work" (out-of-scope or follow-up items) — never phrase those as questions. When you instruct the scout to write or revise the spec, tell it to prefer decisions over questions.
+Do not pad the spec with open questions. Only include a "Questions" section for things that genuinely BLOCK implementation — decisions the coding agent cannot reasonably make on its own and that would change what gets built. Wherever you can, make a sensible default choice and state it instead of asking. Non-blocking items belong under "Considerations" (trade-offs, assumptions, things to keep in mind) or "Deferred work" (out-of-scope or follow-up items) — never phrase those as questions. When there are no blockers, OMIT the "Questions" section entirely rather than writing "None" or an empty section. When you instruct the scout to write or revise the spec, tell it to prefer decisions over questions.
 
 CLARITY GATE — ask before acting on unclear requests:
 Before dispatching any tool on a request or issue, check whether it is clear enough to act on. A request/issue is UNCLEAR when any of these hold:
@@ -5038,10 +5397,10 @@ A dispatch_claude_code tool_result may report that the commit/push/PR succeeded 
 For other staging failures (Docker build, network, image cache), explain briefly and offer to retry. Do NOT pretend a failed staging build succeeded — the user can see the build status in the chat.
 
 HISTORY CONTEXT:
-Some assistant turns in this conversation contain "[CODING AGENT COMPLETED]:" — that is a summary from a PAST coding-agent run, written by the system, not by you. You may reference it when the user asks an INFORMATIONAL question about a past turn (e.g. "what did you do?", "why did you change X?", "what files were touched?") — quote or paraphrase to answer.
+Some assistant turns in this conversation contain "${CODING_AGENT_COMPLETED_MARKER}:" — that is a summary from a PAST coding-agent run, written by the system, not by you. You may reference it when the user asks an INFORMATIONAL question about a past turn (e.g. "what did you do?", "why did you change X?", "what files were touched?") — quote or paraphrase to answer.
 
 You MUST NOT, under any circumstances:
-- Write the literal string "[CODING AGENT COMPLETED]" in your reply. That marker is reserved for the harness; emitting it yourself fakes a coding-agent run that never happened.
+- Write the literal string "${CODING_AGENT_COMPLETED_MARKER}" in your reply. That marker is reserved for the harness; emitting it yourself fakes a coding-agent run that never happened.
 - Paraphrase a past summary as a substitute for dispatching a new run. If the user reports a bug, regression, or "still not quite right" — even if a previous run targeted the same area — that is a NEW change request and you MUST call dispatch_claude_code (assuming the tool is available per STATUS). Past summaries are read-only history; they cannot fix new bugs.${toolNote}${conventionsBlock}${selfHosted ? getSelfHostedRefuseList() : ''}${prBlock}${openProposalsBlock || ''}${specBlock}`;
 }
 
@@ -5188,4 +5547,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDoneIfArmed, notifyAutoSolveDone, buildHeadlessSeed, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, describeMarkerlessExit, shouldRetryHeadlessTurn };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER };

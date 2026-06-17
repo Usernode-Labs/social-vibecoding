@@ -194,8 +194,8 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005 only', 
     const body = await res.json();
     const byNumber = new Map(body.issues.map((i) => [i.number, i]));
 
-    // 5 live issues + 5 appended mocks.
-    assert.strictEqual(body.issues.length, 10);
+    // 5 live issues + 7 appended mocks.
+    assert.strictEqual(body.issues.length, 12);
 
     const generating = byNumber.get(900003).headless;
     assert.ok(generating, '900003 carries synthetic headless state');
@@ -213,7 +213,7 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005 only', 
     assert.strictEqual(ready.sessionId, 900005);
 
     // The other mocks — and the live issues — stay plain.
-    for (const n of [900001, 900002, 900004, 1, 2, 3, 4, 5]) {
+    for (const n of [900001, 900002, 900004, 900006, 1, 2, 3, 4, 5]) {
       assert.strictEqual(byNumber.get(n).headless, null, `#${n} has no headless`);
     }
   } finally {
@@ -259,15 +259,15 @@ test('staging does not clobber a real headless row on a mock number', async () =
   }
 });
 
-// ── #287: per-viewer Create-PR session → "Open Session" swap ─────────────
+// ── #287: per-viewer proposal session → "Create new proposal" swap ───────
 //
 // GET /github-issues exposes myPrSessionId — the viewer's own most recent
-// non-archived dev chat started from each issue's "Create PR" button
-// (created_from_issue_number). The row swaps "Create PR" → "Open Session"
-// when it's set. The lookup must be per-viewer (user_id-scoped) and exclude
-// archived rows so the button reverts after abandonment.
+// non-archived dev chat started from each issue's start-work button
+// (created_from_issue_number). The row swaps "Create proposal" → "Create
+// new proposal" when it's set. The lookup must be per-viewer (user_id-scoped)
+// and exclude archived rows so the button reverts after abandonment.
 
-test('myPrSessionId is populated from the viewer Create-PR session lookup', async () => {
+test('myPrSessionId is populated from the viewer proposal session lookup', async () => {
   let prSql = null;
   let prParams = null;
   poolQueryHandler = async (sql, params) => {
@@ -320,7 +320,7 @@ test('myPrSessionId is null for every issue when the viewer has no session', asy
   }
 });
 
-test('staging synthesizes myPrSessionId on mock 900001 only', async () => {
+test('staging synthesizes myPrSessionId on mock 900007 only', async () => {
   const server = await startStagingServer();
   try {
     const port = server.address().port;
@@ -329,22 +329,26 @@ test('staging synthesizes myPrSessionId on mock 900001 only', async () => {
     const body = await res.json();
     const byNumber = new Map(body.issues.map((i) => [i.number, i]));
 
-    // 900001 gets a synthetic session id so the "Open Session" state renders.
-    assert.strictEqual(byNumber.get(900001).myPrSessionId, 900001);
-    // Every other mock and live issue stays on "Create PR".
-    for (const n of [900002, 900003, 900004, 900005, 1, 2, 3, 4, 5]) {
-      assert.strictEqual(byNumber.get(n).myPrSessionId, null, `#${n} stays Create PR`);
+    // Two-state label mapping (rendered in app-view.js _renderIssueRow):
+    //   myPrSessionId set  ⇒ "Create new proposal"
+    //   myPrSessionId null ⇒ "Create proposal"
+    // 900007 gets a synthetic session id so the "Create new proposal" state
+    // renders in a staging preview.
+    assert.strictEqual(byNumber.get(900007).myPrSessionId, 900007);
+    // Every other mock and live issue stays on "Create proposal".
+    for (const n of [900001, 900002, 900003, 900004, 900005, 1, 2, 3, 4, 5]) {
+      assert.strictEqual(byNumber.get(n).myPrSessionId, null, `#${n} stays Create proposal`);
     }
   } finally {
     server.close();
   }
 });
 
-test('staging does not clobber a real Create-PR session on mock 900001', async () => {
+test('staging does not clobber a real proposal session on mock 900007', async () => {
   poolQueryHandler = async (sql) => {
     const s = String(sql);
     if (/created_from_issue_number IS NOT NULL/.test(s)) {
-      return { rows: [{ n: 900001, id: 777 }] };
+      return { rows: [{ n: 900007, id: 777 }] };
     }
     return { rows: [] };
   };
@@ -356,7 +360,7 @@ test('staging does not clobber a real Create-PR session on mock 900001', async (
     const body = await res.json();
     const byNumber = new Map(body.issues.map((i) => [i.number, i]));
     // The real session id wins over the synthetic one.
-    assert.strictEqual(byNumber.get(900001).myPrSessionId, 777);
+    assert.strictEqual(byNumber.get(900007).myPrSessionId, 777);
   } finally {
     poolQueryHandler = async () => ({ rows: [] });
     server.close();

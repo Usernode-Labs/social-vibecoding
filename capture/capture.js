@@ -49,13 +49,48 @@
 const fs = require('fs');
 const { execFile } = require('child_process');
 
-const VIEWPORT = { width: 1280, height: 800, deviceScaleFactor: 1 };
+// Pixel density of the captured shots. Default 2× (HiDPI/retina) so the
+// whole class of "only broken on retina" bugs surfaces as a visible
+// before/after diff for free (#360). Apps that genuinely want 1× (pixel
+// art, deliberately low-res canvases) opt out via dapp.json's
+// `screenshot.deviceScaleFactor`, which the orchestrator plumbs in as
+// DEVICE_SCALE_FACTOR. Only 1 and 2 are accepted; anything else (unset,
+// garbage, out of range) falls back to 2 — so even an old orchestrator
+// that doesn't set the var still gets 2× from a freshly-built image.
+function resolveDeviceScaleFactor(raw) {
+  return parseInt(raw, 10) === 1 ? 1 : 2;
+}
+const VIEWPORT = {
+  width: 1280,
+  height: 800,
+  deviceScaleFactor: resolveDeviceScaleFactor(process.env.DEVICE_SCALE_FACTOR),
+};
 const NAV_TIMEOUT_MS = 30000;
 const SETTLE_MS = 500;
 const PRE_SCROLL_HOLD_MS = 1500;
 const SHORT_PAGE_HOLD_MS = 4000;
 const GIF_WIDTH = 640;
 const GIF_FPS = 10;
+
+// #381: console-error check. Listeners on the staging "after" page collect
+// console.error output, uncaught exceptions, unhandled rejections and
+// failed loads so the platform can flag a proposal that "may break the
+// app". The list is deduped by message, capped, and each message
+// truncated so a chatty app can't blow stdout. After a console-only run
+// (MEDIA=0) the page gets a little extra settle so deferred async errors
+// surface before we report.
+const MAX_CONSOLE_ERRORS = 20;
+const MAX_CONSOLE_MSG_LEN = 500;
+const CONSOLE_ONLY_SETTLE_MS = 1500;
+
+// Whether this run also produces the before/after media artifacts. The
+// orchestrator sets MEDIA=0 for the always-on console-only check on a
+// non-UI-affecting proposal (visuals.js) — the page is still navigated
+// and console errors still reported, but screenshots/recordings and the
+// prod "before" leg are skipped to keep the always-on cost to one load.
+function mediaEnabled(env) {
+  return (env || {}).MEDIA !== '0';
+}
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -86,6 +121,21 @@ function emit(kind, media, status, buf, index) {
 function emitFail(kind, media, reason, index) {
   const enc = encodeURIComponent(String(reason || 'unknown').slice(0, 300));
   process.stdout.write(`__USERNODE_SHOT_FAIL__ kind=${kind} media=${media} index=${index || 0} reason=${enc}\n`);
+}
+
+// #381: one console-result frame per "after" target, mirroring the shot
+// protocol. The error list is a single base64 JSON line so arbitrary
+// messages survive without colliding with the protocol delimiters.
+//   __USERNODE_CONSOLE__ index=<n> errors=<count> loadStatus=<n>
+//   <base64 JSON array of { kind, message, source }>
+//   __USERNODE_CONSOLE_END__
+function emitConsole(index, errors, loadStatus) {
+  const json = JSON.stringify(Array.isArray(errors) ? errors : []);
+  process.stdout.write(
+    `__USERNODE_CONSOLE__ index=${index || 0} errors=${(errors || []).length} loadStatus=${loadStatus || 0}\n`
+  );
+  process.stdout.write(Buffer.from(json, 'utf8').toString('base64'));
+  process.stdout.write('\n__USERNODE_CONSOLE_END__\n');
 }
 
 function execFileAsync(cmd, args, opts = {}) {
@@ -140,8 +190,48 @@ async function scrollPass(page) {
   }, SHORT_PAGE_HOLD_MS);
 }
 
-async function captureTarget(browser, kind, url, fallbackUrl, cookie, index) {
+async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opts = {}) {
+  // #381: media off → console-only mode (no screenshots/recordings). The
+  // console check only judges the staging build, so error collection is
+  // wired for the "after" target regardless of media.
+  const media = opts.media !== false;
+  const collectConsole = kind === 'after';
+  const consoleErrors = [];
+  const pushErr = (errKind, message, source) => {
+    if (consoleErrors.length >= MAX_CONSOLE_ERRORS) return;
+    const msg = String(message == null ? '' : message).slice(0, MAX_CONSOLE_MSG_LEN);
+    if (!msg) return;
+    if (consoleErrors.some((e) => e.message === msg)) return; // dedupe by message
+    consoleErrors.push({
+      kind: errKind,
+      message: msg,
+      source: source ? String(source).slice(0, MAX_CONSOLE_MSG_LEN) : '',
+    });
+  };
+
   const page = await browser.newPage();
+  if (collectConsole) {
+    // Native Chromium events catch errors whether or not the app embeds
+    // the dev-console forwarder (which only forwards via postMessage to a
+    // parent frame that doesn't exist headless). console 'error' covers
+    // console.error(); pageerror covers uncaught exceptions; Chromium
+    // surfaces unhandled rejections through pageerror too.
+    page.on('console', (msg) => {
+      try {
+        if (msg.type() !== 'error') return;
+        const loc = typeof msg.location === 'function' ? msg.location() : null;
+        const src = loc && loc.url
+          ? `${loc.url}${loc.lineNumber != null ? ':' + loc.lineNumber : ''}`
+          : '';
+        pushErr('console', msg.text(), src);
+      } catch { /* ignore a single malformed console message */ }
+    });
+    page.on('pageerror', (err) => {
+      try { pushErr('pageerror', (err && (err.stack || err.message)) || String(err), ''); }
+      catch { /* ignore */ }
+    });
+  }
+
   let navigated = false;
   let status = 200;
   try {
@@ -168,14 +258,37 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index) {
     }
     if (!navigated) throw new Error('navigation failed');
   } catch (err) {
-    emitFail(kind, 'png', err.message, index);
-    emitFail(kind, 'webm', err.message, index);
-    emitFail(kind, 'gif', err.message, index);
+    // A failed load is itself a "may break the app" signal — report it on
+    // the console frame (loadStatus 0) before the media-fail frames.
+    if (collectConsole) {
+      pushErr('load', `navigation failed: ${err.message}`, url);
+      emitConsole(index, consoleErrors, 0);
+    }
+    if (media) {
+      emitFail(kind, 'png', err.message, index);
+      emitFail(kind, 'webm', err.message, index);
+      emitFail(kind, 'gif', err.message, index);
+    }
     await page.close().catch(() => {});
     return;
   }
 
   await sleep(SETTLE_MS);
+
+  // An HTTP error status that still rendered a body is a failed load too.
+  if (collectConsole && status >= 400) {
+    pushErr('load', `page returned HTTP ${status}`, url);
+  }
+
+  // Console-only mode: give async errors a moment to fire, report, done.
+  if (!media) {
+    if (collectConsole) {
+      await sleep(CONSOLE_ONLY_SETTLE_MS);
+      emitConsole(index, consoleErrors, status);
+    }
+    await page.close().catch(() => {});
+    return;
+  }
 
   // 1. Still: viewport-only PNG of the loaded page.
   try {
@@ -218,6 +331,12 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index) {
     }
   } else {
     emitFail(kind, 'gif', 'no webm to transcode', index);
+  }
+
+  // #381: report console errors collected across the whole load + scroll
+  // lifecycle (errors can surface mid-scroll), after the media frames.
+  if (collectConsole) {
+    emitConsole(index, consoleErrors, status);
   }
 
   await page.close().catch(() => {});
@@ -292,13 +411,18 @@ async function main() {
     ],
   });
 
+  const media = mediaEnabled(process.env);
   try {
     // Sequential per target (a shared browser, one newPage per shot), and
     // before-then-after within each target so the per-target before/after
-    // pair lands together. Per-target failures stay independent.
+    // pair lands together. Per-target failures stay independent. In
+    // console-only mode (MEDIA=0, #381) the prod "before" leg is skipped —
+    // the console check only judges the staging "after" build.
     for (const t of targets) {
-      if (t.beforeUrl) await captureTarget(browser, 'before', t.beforeUrl, t.beforeFallbackUrl, t.beforeCookie, t.index);
-      if (t.afterUrl) await captureTarget(browser, 'after', t.afterUrl, '', t.afterCookie, t.index);
+      if (media && t.beforeUrl) {
+        await captureTarget(browser, 'before', t.beforeUrl, t.beforeFallbackUrl, t.beforeCookie, t.index, { media });
+      }
+      if (t.afterUrl) await captureTarget(browser, 'after', t.afterUrl, '', t.afterCookie, t.index, { media });
     }
   } finally {
     await browser.close().catch(() => {});
@@ -315,4 +439,4 @@ if (require.main === module) {
     .then(() => process.exit(0));
 }
 
-module.exports = { parseCookie, resolveTargets };
+module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, mediaEnabled };

@@ -4,7 +4,7 @@
 //   1. Route test for POST /api/sessions/:id/notify-on-done — the
 //      client's arm/disarm endpoint (owner-only, idempotent, 204).
 //   2. Unit tests for the sessions.js helpers behind the turn-completion
-//      hooks: notifySessionDoneIfArmed (armed → atomic clear + insert +
+//      hooks: notifySessionDone (#138 always clear + insert +
 //      WS push; not armed → nothing) and notifyAutoSolveDone (always
 //      insert + push; dedup'd insert → no push).
 //   3. Service tests for the notification creators' unread dedup and the
@@ -89,6 +89,13 @@ function makeMockPool(initial = {}) {
     if (/SET notify_on_done = FALSE\s+WHERE id = \$1 AND notify_on_done = TRUE\s+RETURNING/i.test(s)) {
       const row = state.sessions.get(Number(params[0]));
       if (!row || !row.notify_on_done) return { rows: [], rowCount: 0 };
+      row.notify_on_done = false;
+      return { rows: [{ user_id: row.user_id, app_id: row.app_id }], rowCount: 1 };
+    }
+    // #138 done hook: unconditional clear + RETURNING (always-create).
+    if (/SET notify_on_done = FALSE\s+WHERE id = \$1\s+RETURNING/i.test(s)) {
+      const row = state.sessions.get(Number(params[0]));
+      if (!row) return { rows: [], rowCount: 0 };
       row.notify_on_done = false;
       return { rows: [{ user_id: row.user_id, app_id: row.app_id }], rowCount: 1 };
     }
@@ -246,13 +253,13 @@ test('POST /notify-on-done 404s for a session the caller does not own', async ()
 
 // ── 2. Turn-completion helpers ──────────────────────────────────────────
 
-test('notifySessionDoneIfArmed: armed → clears flag, inserts session_done, pushes WS', async () => {
+test('notifySessionDone: armed → clears flag, inserts session_done, pushes WS', async () => {
   const pool = makeMockPool({
     sessions: [[10, { id: 10, user_id: 1, app_id: 5, notify_on_done: true }]],
   });
   const loaded = loadSessions(pool);
   try {
-    await loaded.subject.notifySessionDoneIfArmed(pool, 10);
+    await loaded.subject.notifySessionDone(pool, 10);
 
     assert.equal(pool.state.sessions.get(10).notify_on_done, false);
     const rows = pool.state.notifications.filter((n) => n.kind === 'session_done');
@@ -273,15 +280,40 @@ test('notifySessionDoneIfArmed: armed → clears flag, inserts session_done, pus
   }
 });
 
-test('notifySessionDoneIfArmed: not armed → no insert, no push', async () => {
+// #138: completions now ALWAYS create the persistent green bell item — the
+// done hook no longer gates on notify_on_done. An unarmed session still
+// produces exactly one session_done insert + WS push.
+test('notifySessionDone: unarmed → still creates session_done and pushes once', async () => {
   const pool = makeMockPool({
     sessions: [[10, { id: 10, user_id: 1, app_id: 5, notify_on_done: false }]],
   });
   const loaded = loadSessions(pool);
   try {
-    await loaded.subject.notifySessionDoneIfArmed(pool, 10);
-    assert.equal(pool.state.notifications.length, 0);
-    assert.equal(loaded.pushes.length, 0);
+    await loaded.subject.notifySessionDone(pool, 10);
+    const rows = pool.state.notifications.filter((n) => n.kind === 'session_done');
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].user_id, 1);
+    assert.equal(rows[0].session_id, 10);
+    assert.equal(loaded.pushes.length, 1);
+    assert.equal(loaded.pushes[0].payload.notification.kind, 'session_done');
+  } finally {
+    loaded.restore();
+  }
+});
+
+// Unread-dedup still collapses repeats: a second done for the same session
+// (while the first is unread) inserts nothing new and pushes nothing.
+test('notifySessionDone: repeat while unread → dedup, no second insert/push', async () => {
+  const pool = makeMockPool({
+    sessions: [[10, { id: 10, user_id: 1, app_id: 5, notify_on_done: false }]],
+  });
+  const loaded = loadSessions(pool);
+  try {
+    await loaded.subject.notifySessionDone(pool, 10);
+    await loaded.subject.notifySessionDone(pool, 10);
+    const rows = pool.state.notifications.filter((n) => n.kind === 'session_done');
+    assert.equal(rows.length, 1, 'unread-dedup keeps it to one row');
+    assert.equal(loaded.pushes.length, 1, 'only the first push fires');
   } finally {
     loaded.restore();
   }

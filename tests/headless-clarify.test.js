@@ -182,8 +182,13 @@ function makeMockPool(initial = {}) {
       return { rows: [row] };
     }
     // Transcript inserts (seed, statuses, assistant turns, progress rows).
+    // Capture the metadata column when present (last param on inserts that
+    // name a `metadata` column) so #32 tests can assert persisted
+    // suggestions on the assistant rows.
     if (/INSERT INTO chat_session_messages/i.test(s)) {
-      state.messages.push({ role: /'user'/.test(s) ? 'user' : (/'system'/.test(s) ? 'system' : 'assistant'), content: params[1] });
+      const role = /'user'/.test(s) ? 'user' : (/'system'/.test(s) ? 'system' : 'assistant');
+      const metadata = /metadata/i.test(s) ? params[params.length - 1] : undefined;
+      state.messages.push({ role, content: params[1], metadata });
       return { rows: [{ id: state.nextId++ }] };
     }
     // Scout output → spec doc (runScoutTool), read back by loadSessionSpec.
@@ -244,6 +249,30 @@ test('buildHeadlessSeed: no comments → title + body only', () => {
     );
     assert.equal(seed, 'Please work on GitHub issue #5: "Fix the thing".\n\nIt is broken.');
     assert.ok(!seed.includes('ISSUE COMMENTS'));
+  } finally {
+    loaded.restore();
+  }
+});
+
+test('buildHeadlessDecisionAddendum: permits append-only DDL but still blocks risky migrations', () => {
+  const pool = makeMockPool();
+  const loaded = loadSessions(pool);
+  try {
+    const addendum = loaded.subject.buildHeadlessDecisionAddendum(42);
+    // Permitted append-only / forward-only forms are spelled out.
+    assert.ok(/CREATE TABLE IF NOT EXISTS/.test(addendum));
+    assert.ok(/ADD COLUMN IF NOT EXISTS/.test(addendum));
+    assert.ok(/forward-only/i.test(addendum));
+    assert.ok(/append-only/i.test(addendum));
+    // Risky forms are still named as blockers.
+    assert.ok(/drops/i.test(addendum));
+    assert.ok(/renames/i.test(addendum));
+    assert.ok(/type changes/i.test(addendum));
+    assert.ok(/not-null tightenings/i.test(addendum));
+    // Default-to-human-review-when-unsure is restated.
+    assert.ok(/when in doubt|unsure/i.test(addendum));
+    // Untouched clauses remain.
+    assert.ok(/auth, billing, permissions/i.test(addendum));
   } finally {
     loaded.restore();
   }
@@ -455,35 +484,51 @@ test('shouldPostHeadlessQuestionComment: only pure-text question outcomes qualif
 
 // ── 4. specHasBlockingQuestions (#178) ──────────────────────────────────
 
-test('specHasBlockingQuestions: matches Questions/Open questions ATX headings only', () => {
+test('specHasBlockingQuestions: blocks only when a Questions section has real content', () => {
   const pool = makeMockPool();
   const loaded = loadSessions(pool);
   try {
     const has = loaded.subject.specHasBlockingQuestions;
+    // Real questions → blocking.
     assert.equal(has('# Goal\n\n## Questions\n\n1. Soft or hard delete?'), true);
     assert.equal(has('## Goal\n\n### Open questions\n\n1. Which screen?'), true);
-    assert.equal(has('#### QUESTIONS'), true);
     assert.equal(has('# Open Question\n\n1. One blocker.'), true);
+    assert.equal(has('### Questions\n\n1. Soft or hard delete? (default: soft)'), true);
+    // #196: a Questions heading whose body is empty or a "nothing here"
+    // marker is NOT a blocker — the scout's habitual "None" no longer parks.
+    assert.equal(has('#### QUESTIONS'), false);
+    assert.equal(has('## Questions\n\nNone'), false);
+    assert.equal(has('### Questions\n\nN/A'), false);
+    assert.equal(has('### Questions\n\n_None_'), false);
+    assert.equal(has('### Questions\n\n- None'), false);
+    assert.equal(has('### Questions\n\nNone — resolved from code.'), false);
+    assert.equal(has('### Questions\n\nNone blocking — see Considerations.'), false);
     // Prose mentions and non-heading lines don't count.
     assert.equal(has('Questions arise when reading this code.'), false);
     assert.equal(has('# Goal\n\nNo open items.'), false);
     assert.equal(has(''), false);
     assert.equal(has(null), false);
-    // Chosen semantics: the regex keys on the heading PREFIX, so a heading
-    // like "Questions we answered" still matches (a safe false positive —
-    // it only downgrades a buildable spec to a questions round-trip).
-    assert.equal(has('## Questions we answered'), true);
+    // The regex keys on the heading PREFIX, so a heading like "Questions we
+    // answered" still matches as a heading — but its body is now inspected:
+    // an empty body reads non-blocking, real prose reads blocking.
+    assert.equal(has('## Questions we answered'), false);
+    assert.equal(has('## Questions we answered\n\nBut should we also paginate the list?'), true);
     // #196: the two-half spec convention places blockers at the END of
-    // the user-facing half as "### Questions" — still detected.
-    assert.equal(has([
+    // the user-facing half as "### Questions", stopping at the next
+    // same-or-higher-level heading (## Technical implementation).
+    const twoHalf = (questionsBody) => [
       '# Title',
       '## User-facing changes',
       'Stuff changes.',
-      '### Questions',
-      '1. A or B? (default: A)',
+      `### Questions\n\n${questionsBody}`,
       '## Technical implementation',
       'Details.',
-    ].join('\n\n')), true);
+    ].join('\n\n');
+    assert.equal(has(twoHalf('1. A or B? (default: A)')), true);
+    assert.equal(has(twoHalf('None')), false);
+    // Deeper sub-headings stay part of the section (stop only at <= level),
+    // so a question nested under a #### sub-heading is still detected.
+    assert.equal(has('### Questions\n\n#### Sub-point\n\n1. A real blocker?'), true);
   } finally {
     loaded.restore();
   }
@@ -496,6 +541,9 @@ test('specHasBlockingQuestions: matches Questions/Open questions ATX headings on
 
 const SPEC_WITH_QUESTIONS = '# Fix the thing\n\n## Plan\n\nDo it.\n\n## Questions\n\n1. Soft or hard delete? (default: soft)';
 const SPEC_WITHOUT_QUESTIONS = '# Fix the thing\n\n## Plan\n\nDo it.\n\n## Considerations\n\nNone blocking.';
+// #196: the scout habitually appends a "### Questions\nNone" section even
+// when nothing blocks — this must read as buildable, not parked.
+const SPEC_WITH_EMPTY_QUESTIONS = '# Fix the thing\n\n## Plan\n\nDo it.\n\n### Questions\n\nNone';
 
 // llm.streamChat stub that replays `responses` in order (repeating the
 // last one if called again).
@@ -642,6 +690,216 @@ test('scout resolves everything (no Questions section) → outcome spec, no comm
     assert.ok(!pool.state.messages.some(
       (m) => /Posted clarifying questions/.test(m.content || '')
     ));
+  } finally {
+    await srv.close();
+    loaded.restore();
+  }
+});
+
+// #196: a scout-authored spec that ends with "### Questions\nNone" is NOT a
+// blocker — the decision turn must dispatch the build (no comment posted),
+// in contrast to SPEC_WITH_QUESTIONS which still routes to the reporter.
+test('scout writes "Questions: None" → decision turn builds, no comment posted', async () => {
+  const commentCalls = [];
+  const execCalls = [];
+  const pool = makeMockPool();
+  const loaded = loadSessions(pool, {
+    llm: sequencedLlm([
+      SCOUT_CALL_TURN,
+      // Decision turn: the spec is unblocked, so dispatch the build.
+      {
+        text: 'Spec has no blockers (Questions: None) — implementing now.',
+        toolUses: [{ id: 'tu-build', name: 'dispatch_claude_code', input: { prompt: 'Build it.' } }],
+        usage: USAGE,
+        rawContent: [],
+      },
+      // Phase-3 wrap-up text after the build returns.
+      { text: 'Implemented the spec and pushed the change.', toolUses: [], usage: USAGE, rawContent: [] },
+    ]),
+    worker: {
+      execInWorker: async (sessionId, opts) => {
+        execCalls.push(opts.mode);
+        if (opts.mode === 'scout') {
+          return { lastResultText: SPEC_WITH_EMPTY_QUESTIONS, sessionId: 'cc-1' };
+        }
+        // Build stub: a clean exit that committed nothing. hasChanges is
+        // false so the build degrades to outcome 'spec' (no real staging
+        // side effects in the test) — but crucially it was DISPATCHED, and
+        // the run never routes to the reporter.
+        return { lastResultText: 'done', sessionId: 'cc-2', exitCode: 0, ahead: 0, sha: null };
+      },
+    },
+    github: {
+      createIssueComment: async (owner, repo, issueNumber, body) => {
+        commentCalls.push({ issueNumber, body });
+      },
+    },
+  });
+  const srv = await startTestServer(loaded);
+  try {
+    await startHeadlessRun(srv);
+    await waitFor(() => pool.state.terminal !== null);
+
+    // The build WAS dispatched (detector now discriminates by content).
+    assert.deepEqual(execCalls, ['scout', 'build']);
+    // Finalizes as spec_code on a successful build, or spec if the build
+    // stub committed nothing — either way NOT 'question'.
+    assert.ok(['spec_code', 'spec'].includes(pool.state.terminal.outcome),
+      `expected spec_code|spec, got ${pool.state.terminal.outcome}`);
+    assert.equal(pool.state.specMd, SPEC_WITH_EMPTY_QUESTIONS);
+    // No reporter-facing comment is posted for an unblocked spec.
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(commentCalls.length, 0);
+  } finally {
+    await srv.close();
+    loaded.restore();
+  }
+});
+
+// ── #32: decision-turn phase-3 persists metadata.suggestions ────────────
+// On the rejected-build path (the Mayor dispatches a build over an open
+// Questions section, the hard rail rejects it) the phase-3 wrap-up
+// re-asks the human-only questions and now exposes suggest_answers. When
+// the Mayor returns it, the wrap-up row must persist metadata.suggestions
+// so a cloned session can forward the chips; when it doesn't, the row must
+// carry an empty-metadata object (never a missing column).
+
+const DECISION_SUGGESTIONS = [
+  { question: 'Soft or hard delete?', answers: ['Soft delete', 'Hard delete'] },
+];
+
+function lastAssistantMeta(pool) {
+  const assistants = pool.state.messages.filter((m) => m.role === 'assistant');
+  const last = assistants[assistants.length - 1];
+  return last ? last.metadata : undefined;
+}
+
+test('decision-turn question path persists metadata.suggestions when suggest_answers is returned', async () => {
+  const commentCalls = [];
+  const pool = makeMockPool();
+  const loaded = loadSessions(pool, {
+    llm: sequencedLlm([
+      SCOUT_CALL_TURN,
+      // Decision turn dispatches a build over the open Questions section.
+      {
+        text: 'Looks simple, implementing now.',
+        toolUses: [{ id: 'tu-build', name: 'dispatch_claude_code', input: { prompt: 'Build it.' } }],
+        usage: USAGE,
+        rawContent: [],
+      },
+      // Phase-3 wrap-up: the reporter-facing questions PLUS a
+      // suggest_answers tool call carrying the answer chips.
+      {
+        text: '1. Soft or hard delete? (default: soft)',
+        toolUses: [{
+          id: 'tu-suggest',
+          name: 'suggest_answers',
+          input: { questions: DECISION_SUGGESTIONS },
+        }],
+        usage: USAGE,
+        rawContent: [],
+      },
+    ]),
+    worker: {
+      execInWorker: async () => ({ lastResultText: SPEC_WITH_QUESTIONS, sessionId: 'cc-1' }),
+    },
+    github: {
+      createIssueComment: async (owner, repo, issueNumber, body) => {
+        commentCalls.push({ issueNumber, body });
+      },
+    },
+  });
+  const srv = await startTestServer(loaded);
+  try {
+    await startHeadlessRun(srv);
+    await waitFor(() => commentCalls.length > 0);
+
+    assert.deepEqual(pool.state.terminal, { status: 'ready', outcome: 'question' });
+    const meta = JSON.parse(lastAssistantMeta(pool));
+    assert.deepEqual(meta.suggestions, DECISION_SUGGESTIONS);
+  } finally {
+    await srv.close();
+    loaded.restore();
+  }
+});
+
+test('decision-turn question path persists empty metadata when suggest_answers is absent', async () => {
+  const commentCalls = [];
+  const pool = makeMockPool();
+  const loaded = loadSessions(pool, {
+    llm: sequencedLlm([
+      SCOUT_CALL_TURN,
+      {
+        text: 'Looks simple, implementing now.',
+        toolUses: [{ id: 'tu-build', name: 'dispatch_claude_code', input: { prompt: 'Build it.' } }],
+        usage: USAGE,
+        rawContent: [],
+      },
+      // Phase-3 wrap-up: questions only, the Mayor declined suggest_answers.
+      { text: '1. Soft or hard delete? (default: soft)', toolUses: [], usage: USAGE, rawContent: [] },
+    ]),
+    worker: {
+      execInWorker: async () => ({ lastResultText: SPEC_WITH_QUESTIONS, sessionId: 'cc-1' }),
+    },
+    github: {
+      createIssueComment: async (owner, repo, issueNumber, body) => {
+        commentCalls.push({ issueNumber, body });
+      },
+    },
+  });
+  const srv = await startTestServer(loaded);
+  try {
+    await startHeadlessRun(srv);
+    await waitFor(() => commentCalls.length > 0);
+
+    assert.deepEqual(pool.state.terminal, { status: 'ready', outcome: 'question' });
+    assert.deepEqual(JSON.parse(lastAssistantMeta(pool)), {});
+  } finally {
+    await srv.close();
+    loaded.restore();
+  }
+});
+
+// #358: a fabricated "[CODING AGENT COMPLETED]" marker the Mayor writes
+// into a plain question turn (no dispatch) must be scrubbed before the
+// assistant row is persisted AND before the reporter-facing comment is
+// posted to the GitHub issue — a hallucinated completion must never reach
+// either surface.
+test('phase-1: a fabricated completion marker is stripped from the persisted message and the issue comment', async () => {
+  const commentCalls = [];
+  const pool = makeMockPool();
+  const loaded = loadSessions(pool, {
+    llm: sequencedLlm([
+      {
+        text: 'Could you clarify the intended scope?\n\n[CODING AGENT COMPLETED]:\nI already implemented it.',
+        toolUses: [],
+        usage: USAGE,
+        rawContent: [],
+      },
+    ]),
+    github: {
+      createIssueComment: async (owner, repo, issueNumber, body) => {
+        commentCalls.push({ issueNumber, body });
+      },
+    },
+  });
+  const srv = await startTestServer(loaded);
+  try {
+    await startHeadlessRun(srv);
+    await waitFor(() => commentCalls.length > 0);
+
+    assert.deepEqual(pool.state.terminal, { status: 'ready', outcome: 'question' });
+
+    // Persisted assistant text is scrubbed down to the real question.
+    const assistants = pool.state.messages.filter((m) => m.role === 'assistant');
+    const last = assistants[assistants.length - 1];
+    assert.equal(last.content, 'Could you clarify the intended scope?');
+    assert.ok(!last.content.includes('[CODING AGENT COMPLETED]'));
+
+    // The GitHub comment is scrubbed too (footer still appended).
+    assert.equal(commentCalls.length, 1);
+    assert.ok(commentCalls[0].body.startsWith('Could you clarify the intended scope?'));
+    assert.ok(!commentCalls[0].body.includes('[CODING AGENT COMPLETED]'));
   } finally {
     await srv.close();
     loaded.restore();

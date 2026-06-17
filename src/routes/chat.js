@@ -65,7 +65,7 @@ function chatRoutes(config) {
 
       const query = `
         SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.metadata,
-               m.thread_type, m.thread_ref, m.created_at
+               m.thread_type, m.thread_ref, m.created_at, m.edited_at
         FROM chat_messages m
         LEFT JOIN users u ON m.user_id = u.id
         WHERE m.app_id = $1 AND ${threadClause}${beforeClause}
