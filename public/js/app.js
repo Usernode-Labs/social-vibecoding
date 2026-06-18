@@ -1636,6 +1636,7 @@ const App = {
       if (!hash) {
         if (App.currentApp) App.navigateHome();
         else if (App._inLeaderboard) App.navigateHome();
+        else if (App._inGame) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
           // navigateHome() — that would pushState, AppView.close(),
@@ -1664,6 +1665,12 @@ const App = {
           ? decodeURIComponent(parts[2])
           : null;
         App.navigateToLeaderboard(parts[1], profileUser);
+        return;
+      }
+      if (parts[0] === 'game') {
+        // #game → lobby; #game/<CODE> → auto-join that room's waiting room.
+        const code = parts[1] ? decodeURIComponent(parts[1]) : null;
+        App.navigateToGame(code);
         return;
       }
       if (parts[0] === 'app' && parts[1]) {
@@ -1714,6 +1721,7 @@ const App = {
           tab = 'app';
         }
         if (App._inLeaderboard) App._exitLeaderboard();
+        if (App._inGame) App._exitGame();
         if (App.currentApp !== slug) {
           App.navigateToApp(slug, tab, ref, subTab);
         } else if (App.currentTab !== tab
@@ -1726,6 +1734,7 @@ const App = {
         }
       } else {
         if (App._inLeaderboard) App._exitLeaderboard();
+        if (App._inGame) App._exitGame();
         App.setHeaderTitle('dApps');
         Home.load();
       }
@@ -1745,6 +1754,7 @@ const App = {
       App.currentApp = null;
       document.getElementById('app-view').classList.add('hidden');
     }
+    if (App._inGame) App._exitGame();
     document.getElementById('home-screen').classList.add('hidden');
     const screen = document.getElementById('leaderboard-screen');
     if (screen) screen.classList.remove('hidden');
@@ -1776,6 +1786,39 @@ const App = {
     const screen = document.getElementById('leaderboard-screen');
     if (screen) screen.classList.add('hidden');
     if (window.Leaderboard?.close) Leaderboard.close();
+  },
+
+  // Show the obstacle-race screen. Sibling to navigateToLeaderboard —
+  // hides home + app + leaderboard, reveals #game-screen, hands control to
+  // the Game module. `code` (from #game/<CODE>) deep-links straight into a
+  // room's waiting room; a bare #game shows the lobby.
+  navigateToGame(code) {
+    if (App.currentApp) {
+      AppView.close();
+      App.currentApp = null;
+      document.getElementById('app-view').classList.add('hidden');
+    }
+    if (App._inLeaderboard) App._exitLeaderboard();
+    document.getElementById('home-screen').classList.add('hidden');
+    const screen = document.getElementById('game-screen');
+    if (screen) screen.classList.remove('hidden');
+    document.getElementById('back-btn').classList.remove('hidden');
+    const _drg = document.getElementById('drawer-row-github');
+    const _drs = document.getElementById('drawer-row-share');
+    const _drm = document.getElementById('drawer-row-members');
+    if (_drg) _drg.classList.add('hidden');
+    if (_drs) _drs.classList.add('hidden');
+    if (_drm) _drm.classList.add('hidden');
+    App.setHeaderTitle('Obstacle race');
+    App._inGame = true;
+    if (window.Game?.open) Game.open(code || null);
+  },
+
+  _exitGame() {
+    App._inGame = false;
+    const screen = document.getElementById('game-screen');
+    if (screen) screen.classList.add('hidden');
+    if (window.Game?.close) Game.close();
   },
 
   // Push a new history entry on real screen transitions (entering an
@@ -2130,6 +2173,7 @@ const App = {
     App.currentApp = null;
     document.getElementById('app-view').classList.add('hidden');
     if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inGame) App._exitGame();
     document.getElementById('home-screen').classList.remove('hidden');
     document.getElementById('back-btn').classList.add('hidden');
     const _drgH = document.getElementById('drawer-row-github');
