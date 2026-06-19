@@ -693,6 +693,9 @@ function kudosRoutes(config) {
   //                                 regardless of window: chat_sessions has no
   //                                 merge timestamp, only a 'merged' status, so
   //                                 there's nothing to window it by.
+  //   issues_created              — count of issues the user filed (issues.created_by)
+  //                                 on public apps, window-filtered by created_at.
+  //                                 Display-only detail; NOT a sort key.
   // --------------------------------------------------------------
   router.get('/api/leaderboard/users', async (req, res) => {
     // Public endpoint (see PUBLIC_PATHS in middleware/auth.js) — no
@@ -713,11 +716,15 @@ function kudosRoutes(config) {
       // The awarded-bounty LATERAL (below) scopes by awarded_at, bucketed to
       // the same Monday-00:00-UTC week as weekStartUtc(), reusing the param.
       let bountyWindow = '';
+      // The issues-created LATERAL (below) scopes by created_at, bucketed to
+      // the same Monday-00:00-UTC week as weekStartUtc(), reusing the param.
+      let issuesWindow = '';
       if (windowArg === 'week') {
         params.push(weekStart);
         kudosWindow = `AND pk.week_start = $${params.length}`;
         givenWindow = `AND gk.week_start = $${params.length}`;
         bountyWindow = `AND date_trunc('week', ib.awarded_at AT TIME ZONE 'UTC')::date = $${params.length}`;
+        issuesWindow = `AND date_trunc('week', i.created_at AT TIME ZONE 'UTC')::date = $${params.length}`;
       }
       let limitClause = '';
       if (hasLimit) {
@@ -751,7 +758,8 @@ function kudosRoutes(config) {
                 COUNT(pk.id) FILTER (WHERE cs.status <> 'merged')::int AS kudos_received_prs_unmerged,
                 COUNT(DISTINCT cs.id) FILTER (WHERE cs.status = 'merged')::int AS prs_merged,
                 GREATEST(MAX(pk.created_at), ab.last_at) AS last_kudos_at,
-                kg.kudos_given
+                kg.kudos_given,
+                COALESCE(ic.cnt, 0)::int AS issues_created
            FROM users u
            LEFT JOIN chat_sessions cs ON cs.user_id = u.id
              AND EXISTS (SELECT 1 FROM apps ap
@@ -777,7 +785,14 @@ function kudosRoutes(config) {
                 AND EXISTS (SELECT 1 FROM apps ap
                             WHERE ap.id = ib.app_id AND ap.view_visibility = 'public')
            ) ab ON true
-           GROUP BY u.id, u.username, kg.kudos_given, ab.received, ab.last_at
+           LEFT JOIN LATERAL (
+             SELECT COUNT(*)::int AS cnt
+               FROM issues i
+              WHERE i.created_by = u.id ${issuesWindow}
+                AND EXISTS (SELECT 1 FROM apps ap
+                            WHERE ap.id = i.app_id AND ap.view_visibility = 'public')
+           ) ic ON true
+           GROUP BY u.id, u.username, kg.kudos_given, ab.received, ab.last_at, ic.cnt
            ORDER BY kudos_received_prs_merged DESC,
                     prs_merged DESC,
                     kudos_received DESC,

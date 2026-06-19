@@ -1972,6 +1972,33 @@ async function seedStagingLeaderboardProfile(pool) {
     );
   }
 
+  // Issues filed by the same two leaderboard users so the Top-users tab's
+  // new "N issues" chip is non-zero and differs between rows. created_at
+  // is a mix of this-week and older so the all-time and This-week windows
+  // show different counts: author = 3 all-time / 2 this week, giver = 1 in
+  // both. github_issue_number stays NULL (in-app proposals need no twin);
+  // kind/status take their table defaults. Idempotent on the fixed ids.
+  const demoIssues = [
+    { id: 9003001, by: AUTHOR_ID, daysAgo: 1,
+      title: '[Mock] Staging demo issue — persist dark-mode toggle' },
+    { id: 9003002, by: AUTHOR_ID, daysAgo: 3,
+      title: '[Mock] Staging demo issue — keyboard shortcut for voting' },
+    { id: 9003003, by: AUTHOR_ID, daysAgo: 20,
+      title: '[Mock] Staging demo issue — topic cards overflow on phones' },
+    { id: 9003004, by: GIVER_ID, daysAgo: 2,
+      title: '[Mock] Staging demo issue — debounce the search box' },
+  ];
+  for (const it of demoIssues) {
+    await pool.query(
+      `INSERT INTO issues (id, app_id, title, description, created_by, created_at)
+       VALUES ($1, $2, $3,
+               'Staging demo issue so the Top-users leaderboard issues chip has rows to count.',
+               $4, NOW() - ($5::int * INTERVAL '1 day'))
+       ON CONFLICT (id) DO NOTHING`,
+      [it.id, appId, it.title, it.by, it.daysAgo]
+    );
+  }
+
   log.info('db', 'Staging leaderboard-profile fixtures seeded', { appId });
 }
 

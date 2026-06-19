@@ -658,6 +658,13 @@ const Leaderboard = {
       const mergedMeta = (Leaderboard.window === 'all' && prsMerged > 0)
         ? `<span class="text-zinc-400">·</span><span>${prsMerged} merged</span>`
         : '';
+      // Issues this user filed (issues.created_by). Correctly windowed by
+      // created_at, so — unlike prs_merged — it's shown in both windows.
+      // Hidden at 0 to match the other optional detail chips.
+      const issuesCreated = row.issues_created || 0;
+      const issuesMeta = issuesCreated > 0
+        ? `<span class="text-zinc-400">·</span><span>${issuesCreated} issue${issuesCreated === 1 ? '' : 's'}</span>`
+        : '';
       // Footnote on the kudos badge: how many additional kudos sit on
       // PRs that haven't landed yet (and so don't count toward the
       // ranking score). Only meaningful when > 0.
@@ -674,6 +681,7 @@ const Leaderboard = {
             <div class="text-xs text-zinc-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
               <span>${row.prs_kudosed} PR${row.prs_kudosed === 1 ? '' : 's'} kudosed</span>
               ${mergedMeta}
+              ${issuesMeta}
             </div>
           </div>
           ${unmergedKudosNote}
