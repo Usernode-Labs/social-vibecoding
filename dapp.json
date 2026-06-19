@@ -70,5 +70,12 @@
       "private": true,
       "description": "Private counterpart to USERNODE_APP_PUBKEY. Pre-staged in deploy.yml so any future platform-originated wallet-send flow can use it without a redeploy — currently no runtime consumer reads it. Always set together with USERNODE_APP_PUBKEY. `private` blocks staging propagation: this key signs real on-chain transactions with real funds."
     }
+  ],
+  "tests": [
+    {
+      "name": "Leaderboard Top-users tab renders",
+      "path": "/leaderboard",
+      "expectText": "Top users"
+    }
   ]
 }
