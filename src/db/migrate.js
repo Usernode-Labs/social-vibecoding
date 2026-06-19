@@ -53,6 +53,7 @@ async function migrate(config) {
   await seedStagingChatEditFixtures(pool, config);
   await seedStagingLlmUsage(pool);
   await seedStagingCapReached(pool, config);
+  await seedStagingAppCapApps(pool, config);
   await seedStagingSystemTokenUsage(pool);
   await seedStagingDashboardAdminSplit(pool);
   await seedStagingTopicAttributes(pool, config);
@@ -2118,6 +2119,64 @@ async function seedStagingCapReached(pool, config) {
 
   log.info('db', 'Staging cap-reached fixture seeded', {
     appId, tester: tester.username,
+  });
+}
+
+// Seed ~29 synthetic non-errored app rows so the server-wide MAX_APPS
+// cap (default 30; src/config.js -> src/routes/apps.js) is observable on
+// a staging clone. With 29 fixture apps a tester can create one more
+// (reaching the cap) and then watch the next non-admin create attempt
+// get the "This server is at its app limit (30)…" message. Errored apps
+// don't count toward the cap, so every fixture is status 'deployed'.
+// Idempotent: rows are keyed off a fixed slug prefix and checked before
+// insert. Tagged "[staging fixture]" so they're never mistaken for real
+// apps. Strictly a no-op outside staging.
+async function seedStagingAppCapApps(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  // How close to the cap to fill. One below MAX_APPS so a tester can
+  // create exactly one app to hit the wall, without pre-tripping it.
+  const target = Math.max(0, (config.maxApps || 30) - 1);
+  if (target <= 0) {
+    log.info('db', 'Staging app-cap fixtures skipped (cap disabled or <= 1)');
+    return;
+  }
+
+  // Attribute the fixtures to some existing user (FK is ON DELETE SET
+  // NULL, so a null creator is fine too, but a real id keeps them
+  // realistic on the home cards).
+  const { rows: userRows } = await pool.query(
+    'SELECT id FROM users ORDER BY is_admin DESC, id ASC LIMIT 1'
+  );
+  const creatorId = userRows[0]?.id ?? null;
+
+  // Count apps that ALREADY count toward the cap (non-errored, including
+  // the self-app row) so we top up to `target` rather than blindly
+  // inserting `target` extra rows on top of real data.
+  const { rows: liveRows } = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM apps WHERE status <> 'error'`
+  );
+  const live = liveRows[0].n;
+
+  let inserted = 0;
+  for (let i = 1; i <= target; i++) {
+    if (live + inserted >= target) break;
+    const slug = `staging-fixture-cap-app-${String(i).padStart(2, '0')}`;
+    const { rows: existing } = await pool.query(
+      'SELECT id FROM apps WHERE slug = $1 LIMIT 1',
+      [slug]
+    );
+    if (existing.length) continue;
+    await pool.query(
+      `INSERT INTO apps (name, slug, status, created_by, created_at)
+       VALUES ($1, $2, 'deployed', $3, NOW() - ($4::int * INTERVAL '1 minute'))`,
+      [`[staging fixture] Cap filler app ${i}`, slug, creatorId, i]
+    );
+    inserted++;
+  }
+
+  log.info('db', 'Staging app-cap fixtures seeded', {
+    target, liveBefore: live, inserted,
   });
 }
 
