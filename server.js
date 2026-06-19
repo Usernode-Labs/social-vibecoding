@@ -28,6 +28,8 @@ const { llmGrantsRoutes } = require('./src/routes/llm-grants');
 const { gameRoutes } = require('./src/routes/game');
 const { proposalDiscussRoutes } = require('./src/routes/proposal-discuss');
 const { topicAttributeRoutes } = require('./src/routes/topic-attributes');
+const { storeRoutes } = require('./src/routes/store');
+const { profileRoutes } = require('./src/routes/profile');
 const github = require('./src/services/github');
 const llm = require('./src/services/llm');
 const worker = require('./src/services/worker');
@@ -303,6 +305,8 @@ app.use(llmGrantsRoutes(config));
 app.use(gameRoutes(config));
 app.use(proposalDiscussRoutes(config));
 app.use(topicAttributeRoutes(config));
+app.use(storeRoutes(config));
+app.use(profileRoutes(config));
 
 app.get('/api/iframe-token', async (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Not authenticated' });

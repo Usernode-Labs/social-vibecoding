@@ -1260,3 +1260,107 @@ CREATE TABLE IF NOT EXISTS proposal_ai_messages (
 CREATE INDEX IF NOT EXISTS idx_proposal_ai_messages_convo
   ON proposal_ai_messages (app_id, proposal_kind, proposal_ref, user_id, id);
 COMMENT ON TABLE proposal_ai_messages IS 'staging:private';
+
+-- ── Game Store ──────────────────────────────────────────────────────────────
+-- User profile extensions (display_name, bio, avatar color, library privacy).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name VARCHAR(100);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS bio VARCHAR(160);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_color VARCHAR(16) NOT NULL DEFAULT '#7c3aed';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS library_public BOOLEAN NOT NULL DEFAULT TRUE;
+
+-- Game catalog.
+CREATE TABLE IF NOT EXISTS store_games (
+  id           SERIAL PRIMARY KEY,
+  slug         VARCHAR(64) UNIQUE NOT NULL,
+  name         VARCHAR(100) NOT NULL,
+  description  TEXT,
+  genre        VARCHAR(64),
+  price_unt    INTEGER NOT NULL DEFAULT 0,
+  cover_color  VARCHAR(16) NOT NULL DEFAULT '#7c3aed',
+  active       BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Per-user UNT wallet balance.
+CREATE TABLE IF NOT EXISTS unt_balances (
+  user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  balance    INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Game purchase ledger.
+CREATE TABLE IF NOT EXISTS game_purchases (
+  id           SERIAL PRIMARY KEY,
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  game_id      INTEGER NOT NULL REFERENCES store_games(id) ON DELETE CASCADE,
+  price_paid   INTEGER NOT NULL DEFAULT 0,
+  purchased_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_played_at TIMESTAMPTZ,
+  UNIQUE(user_id, game_id)
+);
+CREATE INDEX IF NOT EXISTS idx_game_purchases_user ON game_purchases(user_id);
+CREATE INDEX IF NOT EXISTS idx_game_purchases_game ON game_purchases(game_id);
+
+-- Promo / discount codes.
+CREATE TABLE IF NOT EXISTS store_promo_codes (
+  id              SERIAL PRIMARY KEY,
+  code            VARCHAR(32) UNIQUE NOT NULL,
+  discount_pct    INTEGER NOT NULL DEFAULT 0,
+  max_uses        INTEGER,
+  used_count      INTEGER NOT NULL DEFAULT 0,
+  active          BOOLEAN NOT NULL DEFAULT TRUE,
+  expires_at      TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Per-user promo redemption log (one promo per purchase).
+CREATE TABLE IF NOT EXISTS store_promo_redemptions (
+  id          SERIAL PRIMARY KEY,
+  promo_id    INTEGER NOT NULL REFERENCES store_promo_codes(id) ON DELETE CASCADE,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  purchase_id INTEGER NOT NULL REFERENCES game_purchases(id) ON DELETE CASCADE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_store_promo_redemptions_promo ON store_promo_redemptions(promo_id);
+CREATE INDEX IF NOT EXISTS idx_store_promo_redemptions_user  ON store_promo_redemptions(user_id);
+
+-- Achievement catalog.
+CREATE TABLE IF NOT EXISTS store_achievements (
+  id          SERIAL PRIMARY KEY,
+  slug        VARCHAR(64) UNIQUE NOT NULL,
+  name        VARCHAR(100) NOT NULL,
+  description TEXT,
+  icon        VARCHAR(8) NOT NULL DEFAULT '🏆',
+  condition   JSONB NOT NULL DEFAULT '{}'
+);
+
+-- Per-user earned achievements.
+CREATE TABLE IF NOT EXISTS store_user_achievements (
+  id             SERIAL PRIMARY KEY,
+  user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  achievement_id INTEGER NOT NULL REFERENCES store_achievements(id) ON DELETE CASCADE,
+  earned_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(user_id, achievement_id)
+);
+CREATE INDEX IF NOT EXISTS idx_store_user_achievements_user ON store_user_achievements(user_id);
+
+-- Download/play tracking per purchase.
+CREATE TABLE IF NOT EXISTS game_downloads (
+  id          SERIAL PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  game_id     INTEGER NOT NULL REFERENCES store_games(id) ON DELETE CASCADE,
+  action      VARCHAR(16) NOT NULL DEFAULT 'play',
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_game_downloads_user_game ON game_downloads(user_id, game_id);
+
+-- Audit log for purchase + top-up transactions.
+CREATE TABLE IF NOT EXISTS store_audit_log (
+  id         BIGSERIAL PRIMARY KEY,
+  user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  action     VARCHAR(32) NOT NULL,
+  details    JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_store_audit_log_user ON store_audit_log(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_store_audit_log_action ON store_audit_log(action, created_at DESC);

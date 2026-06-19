@@ -34,6 +34,7 @@ const Leaderboard = {
   _cache: new Map(),
   _loadingKey: null,
   _moreLoading: false,
+  _storeProfile: null,   // cached result from GET /api/users/:username/profile
 
   isOpen() { return Leaderboard._open; },
 
@@ -235,10 +236,11 @@ const Leaderboard = {
         <header class="mb-4">
           <button data-lb-back class="text-sm font-medium text-violet-600 dark:text-violet-400 hover:underline mb-3">← Top users</button>
           <div class="flex items-center gap-3">
-            <div class="w-12 h-12 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-lg">${escapeHtml(initial)}</div>
+            <div id="lb-profile-avatar" class="w-12 h-12 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-lg">${escapeHtml(initial)}</div>
             <div class="min-w-0">
-              <h2 class="text-2xl font-bold text-zinc-900 dark:text-zinc-100 truncate">@${escapeHtml(who)}</h2>
+              <h2 id="lb-profile-displayname" class="text-2xl font-bold text-zinc-900 dark:text-zinc-100 truncate">@${escapeHtml(who)}</h2>
               <p class="text-sm text-zinc-500 dark:text-zinc-400">All PRs this user has proposed, newest first.</p>
+              <p id="lb-profile-bio" class="text-sm text-zinc-400 dark:text-zinc-500 mt-0.5 hidden"></p>
             </div>
           </div>
         </header>
@@ -249,7 +251,9 @@ const Leaderboard = {
         // hashchange route clears profileUser via _setSub('users').
         window.location.hash = '#leaderboard/users';
       });
+      Leaderboard._storeProfile = null;
       Leaderboard._renderBody();
+      Leaderboard._fetchStoreProfile(who);
       return;
     }
     const isHistory = Leaderboard.sub === 'history';
@@ -377,7 +381,8 @@ const Leaderboard = {
       listHtml = Leaderboard._renderProfilePrRows(items) + more;
     }
 
-    body.innerHTML = stats + listHtml;
+    const storeHtml = Leaderboard._renderStoreProfileSections();
+    body.innerHTML = stats + listHtml + storeHtml;
     const moreBtn = body.querySelector('[data-lb-more]');
     if (moreBtn) moreBtn.addEventListener('click', () => Leaderboard._loadMore());
     Leaderboard._wireRouteButtons(body);
@@ -386,6 +391,55 @@ const Leaderboard = {
     body.querySelectorAll('[data-lb-ext]').forEach((a) => {
       a.addEventListener('click', (e) => e.stopPropagation());
     });
+  },
+
+  _renderStoreProfileSections() {
+    const p = Leaderboard._storeProfile;
+    if (!p) return '';
+    let html = '';
+
+    // Games section
+    const gameCount = p.game_count || 0;
+    const games = Array.isArray(p.recent_games) ? p.recent_games : [];
+    if (gameCount > 0 || games.length > 0) {
+      const gameTiles = games.map((g) => {
+        const bg = g.cover_color || '#7c3aed';
+        const initial = (g.name || '?')[0].toUpperCase();
+        return `<div class="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-800" title="${escapeAttr(g.name || '')}">
+          <div class="w-7 h-7 rounded flex items-center justify-center text-white text-xs font-bold shrink-0" style="background:${escapeAttr(bg)}">${escapeHtml(initial)}</div>
+          <span class="text-xs text-zinc-700 dark:text-zinc-300 truncate">${escapeHtml(g.name || '')}</span>
+        </div>`;
+      }).join('');
+      html += `
+        <div class="mt-5 pt-4 border-t border-zinc-200 dark:border-zinc-800">
+          <h3 class="text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-2">
+            🎮 Games <span class="font-normal text-zinc-400">(${gameCount})</span>
+          </h3>
+          ${gameTiles ? `<div class="grid grid-cols-2 gap-1.5 sm:grid-cols-3">${gameTiles}</div>` : ''}
+        </div>`;
+    }
+
+    // Achievements section
+    const achievements = Array.isArray(p.achievements) ? p.achievements.filter((a) => a.earned) : [];
+    if (achievements.length > 0) {
+      const achHtml = achievements.map((a) => `
+        <div class="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700">
+          <span class="text-lg" aria-hidden="true">${escapeHtml(a.icon || '🏆')}</span>
+          <div class="min-w-0">
+            <div class="text-xs font-semibold text-amber-800 dark:text-amber-300 truncate">${escapeHtml(a.name || '')}</div>
+            ${a.description ? `<div class="text-[11px] text-amber-600 dark:text-amber-400 truncate">${escapeHtml(a.description)}</div>` : ''}
+          </div>
+        </div>`).join('');
+      html += `
+        <div class="mt-5 pt-4 border-t border-zinc-200 dark:border-zinc-800">
+          <h3 class="text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-2">
+            🏆 Achievements <span class="font-normal text-zinc-400">(${achievements.length})</span>
+          </h3>
+          <div class="grid grid-cols-1 gap-1.5 sm:grid-cols-2">${achHtml}</div>
+        </div>`;
+    }
+
+    return html;
   },
 
   _renderProfilePrRows(items) {
@@ -439,6 +493,38 @@ const Leaderboard = {
       return '<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">closed</span>';
     }
     return '<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">open</span>';
+  },
+
+  // Fetch extended profile (display_name, bio, avatar_color, store data)
+  // and patch the already-rendered header + re-render body with store sections.
+  async _fetchStoreProfile(username) {
+    try {
+      const res = await fetch(`/api/users/${encodeURIComponent(username)}/profile`, {
+        headers: window.Auth?.headers?.() || {},
+      });
+      if (!res.ok) return;
+      const p = await res.json();
+      // Guard: user may have navigated away
+      if (Leaderboard.profileUser !== username) return;
+      Leaderboard._storeProfile = p;
+      const avatar = document.getElementById('lb-profile-avatar');
+      if (avatar && p.avatar_color) {
+        avatar.style.background = p.avatar_color;
+        avatar.style.color = '#fff';
+      }
+      const dn = document.getElementById('lb-profile-displayname');
+      if (dn && p.display_name) {
+        dn.textContent = `${p.display_name} (@${username})`;
+      }
+      const bio = document.getElementById('lb-profile-bio');
+      if (bio && p.bio) {
+        bio.textContent = p.bio;
+        bio.classList.remove('hidden');
+      }
+      // Re-render body to add store sections below PR list
+      const body = document.getElementById('leaderboard-body');
+      if (body) Leaderboard._renderProfileBody(body);
+    } catch (_) { /* non-critical */ }
   },
 
   // Top-users rows route to the user's profile via a real hash change
