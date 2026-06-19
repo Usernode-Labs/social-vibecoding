@@ -532,6 +532,146 @@ function adminRoutes(config) {
     }
   });
 
+  // ── Store admin ────────────────────────────────────────────────────────────
+
+  router.get('/api/admin/store/stats', adminMiddleware, async (req, res) => {
+    try {
+      const { rows } = await pool.query(`
+        SELECT
+          (SELECT COUNT(*) FROM store_games)::int                     AS game_count,
+          (SELECT COUNT(*) FROM store_games WHERE active)::int        AS active_game_count,
+          (SELECT COUNT(*) FROM game_purchases)::int                  AS total_purchases,
+          (SELECT COALESCE(SUM(balance),0) FROM unt_balances)::int    AS total_unt_held,
+          (SELECT COUNT(*) FROM store_promo_codes WHERE active)::int  AS active_promos,
+          (SELECT COUNT(*) FROM store_user_achievements)::int         AS achievements_earned
+      `);
+      res.json(rows[0]);
+    } catch (err) {
+      log.error('admin', 'store stats failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.get('/api/admin/store/games', adminMiddleware, async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT sg.*, (SELECT COUNT(*) FROM game_purchases WHERE game_id = sg.id)::int AS purchase_count
+           FROM store_games sg ORDER BY sg.id`
+      );
+      res.json({ games: rows });
+    } catch (err) {
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/admin/store/games', adminMiddleware, async (req, res) => {
+    if (!req.user.canAdminWrite) return res.status(403).json({ error: 'Write admin required' });
+    const { slug, name, description, genre, price_unt, cover_color } = req.body;
+    if (!slug || !name || price_unt == null) return res.status(400).json({ error: 'Missing required fields' });
+    try {
+      const { rows } = await pool.query(
+        `INSERT INTO store_games (slug, name, description, genre, price_unt, cover_color)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        [slug, name, description || null, genre || null, parseInt(price_unt), cover_color || '#7c3aed']
+      );
+      res.status(201).json({ game: rows[0] });
+    } catch (err) {
+      if (err.code === '23505') return res.status(409).json({ error: 'Slug already exists' });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/admin/store/games/:id', adminMiddleware, async (req, res) => {
+    if (!req.user.canAdminWrite) return res.status(403).json({ error: 'Write admin required' });
+    const { name, description, genre, price_unt, cover_color, active } = req.body;
+    try {
+      const { rows } = await pool.query(
+        `UPDATE store_games SET
+           name        = COALESCE($1, name),
+           description = COALESCE($2, description),
+           genre       = COALESCE($3, genre),
+           price_unt   = COALESCE($4, price_unt),
+           cover_color = COALESCE($5, cover_color),
+           active      = COALESCE($6, active)
+         WHERE id = $7 RETURNING *`,
+        [name, description, genre, price_unt != null ? parseInt(price_unt) : null,
+         cover_color, active != null ? Boolean(active) : null, parseInt(req.params.id)]
+      );
+      if (!rows[0]) return res.status(404).json({ error: 'Not found' });
+      res.json({ game: rows[0] });
+    } catch (err) {
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.get('/api/admin/store/promo-codes', adminMiddleware, async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT * FROM store_promo_codes ORDER BY created_at DESC`
+      );
+      res.json({ promos: rows });
+    } catch (err) {
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/admin/store/promo-codes', adminMiddleware, async (req, res) => {
+    if (!req.user.canAdminWrite) return res.status(403).json({ error: 'Write admin required' });
+    const { code, discount_pct, max_uses, expires_at } = req.body;
+    if (!code || discount_pct == null) return res.status(400).json({ error: 'Missing required fields' });
+    try {
+      const { rows } = await pool.query(
+        `INSERT INTO store_promo_codes (code, discount_pct, max_uses, expires_at)
+         VALUES ($1, $2, $3, $4) RETURNING *`,
+        [code.trim().toUpperCase(), parseInt(discount_pct), max_uses ? parseInt(max_uses) : null, expires_at || null]
+      );
+      res.status(201).json({ promo: rows[0] });
+    } catch (err) {
+      if (err.code === '23505') return res.status(409).json({ error: 'Code already exists' });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/admin/store/promo-codes/:id', adminMiddleware, async (req, res) => {
+    if (!req.user.canAdminWrite) return res.status(403).json({ error: 'Write admin required' });
+    const { active, discount_pct, max_uses } = req.body;
+    try {
+      const { rows } = await pool.query(
+        `UPDATE store_promo_codes SET
+           active       = COALESCE($1, active),
+           discount_pct = COALESCE($2, discount_pct),
+           max_uses     = COALESCE($3, max_uses)
+         WHERE id = $4 RETURNING *`,
+        [active != null ? Boolean(active) : null,
+         discount_pct != null ? parseInt(discount_pct) : null,
+         max_uses != null ? parseInt(max_uses) : null,
+         parseInt(req.params.id)]
+      );
+      if (!rows[0]) return res.status(404).json({ error: 'Not found' });
+      res.json({ promo: rows[0] });
+    } catch (err) {
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.get('/api/admin/store/audit', adminMiddleware, async (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const offset = parseInt(req.query.offset) || 0;
+    try {
+      const { rows } = await pool.query(
+        `SELECT sal.*, u.username
+           FROM store_audit_log sal
+           LEFT JOIN users u ON u.id = sal.user_id
+          ORDER BY sal.created_at DESC
+          LIMIT $1 OFFSET $2`,
+        [limit, offset]
+      );
+      res.json({ entries: rows });
+    } catch (err) {
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   return router;
 }
 

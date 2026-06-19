@@ -76,6 +76,11 @@
       "name": "Leaderboard Top-users tab renders",
       "path": "/leaderboard",
       "expectText": "Top users"
+    },
+    {
+      "name": "Game Store renders",
+      "path": "/store",
+      "expectText": "Browse"
     }
   ]
 }

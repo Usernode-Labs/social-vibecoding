@@ -65,6 +65,8 @@ async function migrate(config) {
   await backfillOrphanedSpecDrafts(pool);
   await backfillLinkedIssuesFromPrBodies(pool);
   await failOrphanedHeadlessRuns(pool);
+  await seedStagingGameStore(pool);
+  await seedStagingStoreExtensions(pool);
   await migrateAppDbsToPerRole(pool, config);
 }
 
@@ -4080,6 +4082,131 @@ async function seedStagingGameFixtures(pool) {
     log.info('db', 'Staging obstacle-race fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging obstacle-race seeding failed', { message: err.message });
+  }
+}
+
+// Seed 8 catalog games + 50 UNT for every existing user.
+// Idempotent via ON CONFLICT DO NOTHING.
+async function seedStagingGameStore(pool) {
+  const IS_STAGING = process.env.IS_STAGING === 'true';
+  if (!IS_STAGING) return;
+  try {
+    const games = [
+      { slug: 'nova-drift',      name: 'Nova Drift',      description: 'A space shooter with roguelike elements.', genre: 'Shooter',  price: 15, color: '#7c3aed' },
+      { slug: 'pixel-kingdoms',  name: 'Pixel Kingdoms',  description: 'Build and battle in a pixelated fantasy world.', genre: 'Strategy', price: 20, color: '#059669' },
+      { slug: 'chain-racer',     name: 'Chain Racer',     description: 'High-speed blockchain-themed racing.',      genre: 'Racing',   price: 10, color: '#d97706' },
+      { slug: 'block-puzzle-dx', name: 'Block Puzzle DX', description: 'The ultimate block-stacking challenge.',    genre: 'Puzzle',   price:  5, color: '#0891b2' },
+      { slug: 'star-forge',      name: 'Star Forge',      description: 'Forge your destiny among the stars.',       genre: 'RPG',      price: 25, color: '#be185d' },
+      { slug: 'rogue-node',      name: 'Rogue Node',      description: 'A cyberpunk dungeon crawl experience.',     genre: 'Roguelike',price: 18, color: '#4338ca' },
+      { slug: 'farm-chain',      name: 'Farm Chain',      description: 'Harvest, trade, and grow your farm empire.', genre: 'Simulation',price: 8, color: '#65a30d' },
+      { slug: 'hex-wars',        name: 'Hex Wars',        description: 'Conquer hex-grid battlefields.',            genre: 'Strategy', price: 22, color: '#b45309' },
+    ];
+
+    for (const g of games) {
+      await pool.query(
+        `INSERT INTO store_games (slug, name, description, genre, price_unt, cover_color)
+         VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (slug) DO NOTHING`,
+        [g.slug, g.name, g.description, g.genre, g.price, g.color]
+      );
+    }
+
+    // Give every user 50 UNT starting balance
+    await pool.query(`
+      INSERT INTO unt_balances (user_id, balance)
+        SELECT id, 50 FROM users
+      ON CONFLICT (user_id) DO NOTHING
+    `);
+
+    log.info('db', 'Staging game store seeded');
+  } catch (err) {
+    log.warn('db', 'Staging game store seeding failed', { message: err.message });
+  }
+}
+
+// Seed achievements catalog, promo codes, demo user profiles, and
+// a sample purchase/achievement for the staging demo author.
+async function seedStagingStoreExtensions(pool) {
+  const IS_STAGING = process.env.IS_STAGING === 'true';
+  if (!IS_STAGING) return;
+  try {
+    const achievements = [
+      { id: 9100, slug: 'first-purchase', name: 'First Steps',    icon: '🎮', description: 'Purchase your first game.',          condition: { purchaseCount: 1 } },
+      { id: 9101, slug: 'three-games',    name: 'Growing Library',icon: '📚', description: 'Own 3 or more games.',                condition: { purchaseCount: 3 } },
+      { id: 9102, slug: 'collector',      name: 'Collector',      icon: '🏆', description: 'Own 5 or more games.',                condition: { purchaseCount: 5 } },
+      { id: 9103, slug: 'high-roller',    name: 'High Roller',    icon: '💸', description: 'Spend 50 or more UNT in total.',       condition: { untSpent: 50 } },
+      { id: 9104, slug: 'big-spender',    name: 'Big Spender',    icon: '🤑', description: 'Spend 100 or more UNT in total.',      condition: { untSpent: 100 } },
+    ];
+
+    for (const a of achievements) {
+      await pool.query(
+        `INSERT INTO store_achievements (id, slug, name, icon, description, condition)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (slug) DO NOTHING`,
+        [a.id, a.slug, a.name, a.icon, a.description, JSON.stringify(a.condition)]
+      );
+    }
+
+    // Promo codes
+    await pool.query(`
+      INSERT INTO store_promo_codes (code, discount_pct, max_uses)
+      VALUES ('LAUNCH20', 20, 100), ('PIXELDEAL', 10, NULL)
+      ON CONFLICT (code) DO NOTHING
+    `);
+
+    // Demo user profile metadata
+    await pool.query(`
+      UPDATE users SET
+        display_name  = COALESCE(display_name, username),
+        avatar_color  = COALESCE(avatar_color, '#7c3aed'),
+        library_public = TRUE
+      WHERE display_name IS NULL
+    `);
+
+    // Seed "First Steps" achievement for staging demo author (id 900001 if exists)
+    const { rows: demoUser } = await pool.query(
+      `SELECT id FROM users WHERE id = 900001 LIMIT 1`
+    );
+    if (demoUser[0]) {
+      const { rows: gameRows } = await pool.query(
+        `SELECT id FROM store_games WHERE slug = 'nova-drift' LIMIT 1`
+      );
+      if (gameRows[0]) {
+        const { rows: bal } = await pool.query(
+          `SELECT balance FROM unt_balances WHERE user_id = 900001`
+        );
+        if (bal[0] && bal[0].balance >= 15) {
+          await pool.query(
+            `INSERT INTO game_purchases (user_id, game_id, price_paid)
+             VALUES (900001, $1, 15) ON CONFLICT DO NOTHING`,
+            [gameRows[0].id]
+          );
+          await pool.query(
+            `UPDATE unt_balances SET balance = balance - 15 WHERE user_id = 900001 AND balance >= 15`
+          );
+        }
+        await pool.query(
+          `INSERT INTO store_user_achievements (user_id, achievement_id)
+           SELECT 900001, id FROM store_achievements WHERE slug = 'first-purchase'
+           ON CONFLICT DO NOTHING`
+        );
+      }
+
+      // 3 sample game_downloads rows
+      const { rows: allGames } = await pool.query(
+        `SELECT id FROM store_games LIMIT 3`
+      );
+      for (const g of allGames) {
+        await pool.query(
+          `INSERT INTO game_downloads (user_id, game_id, action)
+           VALUES (900001, $1, 'play') ON CONFLICT DO NOTHING`,
+          [g.id]
+        ).catch(() => {});
+      }
+    }
+
+    log.info('db', 'Staging store extension fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Staging store extension seeding failed', { message: err.message });
   }
 }
 

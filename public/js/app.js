@@ -22,6 +22,8 @@ const App = {
   // three top-level screens, and they're mutually exclusive. Flipped
   // by navigateToLeaderboard() / _exitLeaderboard() / navigateHome().
   _inLeaderboard: false,
+  // Tracks whether the Game Store screen is visible.
+  _inStore: false,
 
   // Set to true while restoreFromHash() is applying a URL (e.g. on
   // popstate/hashchange) so that the navigation helpers it calls
@@ -1637,6 +1639,7 @@ const App = {
         if (App.currentApp) App.navigateHome();
         else if (App._inLeaderboard) App.navigateHome();
         else if (App._inGame) App.navigateHome();
+        else if (App._inStore) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
           // navigateHome() — that would pushState, AppView.close(),
@@ -1654,6 +1657,10 @@ const App = {
       }
 
       const parts = hash.split('/');
+      if (parts[0] === 'store') {
+        App.navigateToStore();
+        return;
+      }
       if (parts[0] === 'leaderboard') {
         // Optional sub-view segment (#leaderboard/history etc.) — pass
         // it through so deep links land on the right tab. Bare
@@ -1674,6 +1681,7 @@ const App = {
         return;
       }
       if (parts[0] === 'app' && parts[1]) {
+        if (App._inStore) App._exitStore();
         const slug = parts[1];
         // Card-list hashes (#194 revision): app/{slug}/app,
         // app/{slug}/dev (the card list), app/{slug}/dev/chat (general
@@ -1735,6 +1743,7 @@ const App = {
       } else {
         if (App._inLeaderboard) App._exitLeaderboard();
         if (App._inGame) App._exitGame();
+        if (App._inStore) App._exitStore();
         App.setHeaderTitle('dApps');
         Home.load();
       }
@@ -1755,6 +1764,7 @@ const App = {
       document.getElementById('app-view').classList.add('hidden');
     }
     if (App._inGame) App._exitGame();
+    if (App._inStore) App._exitStore();
     document.getElementById('home-screen').classList.add('hidden');
     const screen = document.getElementById('leaderboard-screen');
     if (screen) screen.classList.remove('hidden');
@@ -1799,6 +1809,7 @@ const App = {
       document.getElementById('app-view').classList.add('hidden');
     }
     if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inStore) App._exitStore();
     document.getElementById('home-screen').classList.add('hidden');
     const screen = document.getElementById('game-screen');
     if (screen) screen.classList.remove('hidden');
@@ -1819,6 +1830,38 @@ const App = {
     const screen = document.getElementById('game-screen');
     if (screen) screen.classList.add('hidden');
     if (window.Game?.close) Game.close();
+  },
+
+  // Show the Game Store screen.
+  navigateToStore() {
+    if (App.currentApp) {
+      AppView.close();
+      App.currentApp = null;
+      document.getElementById('app-view').classList.add('hidden');
+    }
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inGame) App._exitGame();
+    document.getElementById('home-screen').classList.add('hidden');
+    const screen = document.getElementById('store-screen');
+    if (screen) screen.classList.remove('hidden');
+    document.getElementById('back-btn').classList.remove('hidden');
+    const _drg = document.getElementById('drawer-row-github');
+    const _drs = document.getElementById('drawer-row-share');
+    const _drm = document.getElementById('drawer-row-members');
+    if (_drg) _drg.classList.add('hidden');
+    if (_drs) _drs.classList.add('hidden');
+    if (_drm) _drm.classList.add('hidden');
+    App.setHeaderTitle('Game Store');
+    App._inStore = true;
+    if (!App._isRestoring) history.pushState(null, '', '#store');
+    if (window.Store?.open) Store.open();
+  },
+
+  _exitStore() {
+    App._inStore = false;
+    const screen = document.getElementById('store-screen');
+    if (screen) screen.classList.add('hidden');
+    if (window.Store?.close) Store.close();
   },
 
   // Push a new history entry on real screen transitions (entering an
@@ -2174,6 +2217,7 @@ const App = {
     document.getElementById('app-view').classList.add('hidden');
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inGame) App._exitGame();
+    if (App._inStore) App._exitStore();
     document.getElementById('home-screen').classList.remove('hidden');
     document.getElementById('back-btn').classList.add('hidden');
     const _drgH = document.getElementById('drawer-row-github');

@@ -104,6 +104,10 @@
     <!-- Kudos leaderboard entry point. Mirrors the bell/settings icons
          visually; links straight to the #leaderboard hash route which
          public/js/leaderboard.js handles. -->
+    <!-- Game Store entry point. -->
+    <a id="store-btn" href="#store" class="text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Game Store" title="Game Store">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+    </a>
     <a id="leaderboard-btn" href="#leaderboard" class="text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Kudos leaderboard" title="Kudos leaderboard">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 11V3H8v8M5 7H3v4a2 2 0 002 2h3M19 7h2v4a2 2 0 01-2 2h-3M8 15a4 4 0 008 0h-8z M12 15v3m-3 3h6"/></svg>
     </a>
@@ -260,6 +264,13 @@
         Create your first app
       </button>
     </div>
+  </main>
+
+  <!-- Game Store screen (hidden by default). Populated by public/js/store.js.
+       The Steam-themed UI is rendered into #store-root; all theming is
+       scoped via an injected <style> tag so it can't bleed into other screens. -->
+  <main id="store-screen" class="hidden flex-1 overflow-hidden" style="position:relative">
+    <div id="store-root" class="h-full overflow-y-auto"></div>
   </main>
 
   <!-- Kudos leaderboard screen (hidden by default). Populated by
@@ -886,6 +897,9 @@
         <div id="ai-progress-estimate-status" class="text-xs mt-2 hidden"></div>
       </div>
 
+      <!-- Edit Profile section — injected by Settings._renderProfileSection() -->
+      <div id="settings-profile-section" class="hidden"></div>
+
       <div class="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
         <button id="settings-logout"
           class="w-full rounded-lg border border-red-400 dark:border-red-700 px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors">
@@ -946,6 +960,7 @@
        Loaded BEFORE app-view.js so the panel renderer can use
        Kudos.renderButton directly. -->
   <script src="/js/kudos.js"></script>
+  <script src="/js/store.js"></script>
   <script src="/js/leaderboard.js"></script>
   <script src="/js/game.js"></script>
   <script src="/js/proposal-discuss.js"></script>

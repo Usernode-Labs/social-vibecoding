@@ -147,6 +147,99 @@
       </div>
       <div id="user-list" class="divide-y divide-zinc-200 dark:divide-zinc-800"></div>
     </div>
+
+    <!-- Game Store -->
+    <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800">
+      <div class="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-zinc-200 dark:border-zinc-800">
+        <h2 class="text-lg font-semibold">Game Store</h2>
+        <button id="store-refresh-btn" class="rounded-lg bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-300 dark:hover:bg-zinc-600 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-200 transition-colors">Refresh</button>
+      </div>
+
+      <!-- Stats row -->
+      <div id="store-stats-row" class="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 border-b border-zinc-200 dark:border-zinc-800">
+        <div class="rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 p-3 text-center">
+          <div id="store-stat-games" class="text-2xl font-bold text-zinc-900 dark:text-zinc-100">—</div>
+          <div class="text-xs text-zinc-500 mt-0.5">Games</div>
+        </div>
+        <div class="rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 p-3 text-center">
+          <div id="store-stat-purchases" class="text-2xl font-bold text-zinc-900 dark:text-zinc-100">—</div>
+          <div class="text-xs text-zinc-500 mt-0.5">Purchases</div>
+        </div>
+        <div class="rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 p-3 text-center">
+          <div id="store-stat-unt" class="text-2xl font-bold text-zinc-900 dark:text-zinc-100">—</div>
+          <div class="text-xs text-zinc-500 mt-0.5">UNT Held</div>
+        </div>
+        <div class="rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 p-3 text-center">
+          <div id="store-stat-promos" class="text-2xl font-bold text-zinc-900 dark:text-zinc-100">—</div>
+          <div class="text-xs text-zinc-500 mt-0.5">Active Promos</div>
+        </div>
+      </div>
+
+      <!-- Games table -->
+      <div class="p-4 border-b border-zinc-200 dark:border-zinc-800">
+        <h3 class="text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-2">Games catalog</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-xs text-zinc-500 border-b border-zinc-200 dark:border-zinc-800">
+                <th class="text-left pb-1 pr-3">Name</th>
+                <th class="text-left pb-1 pr-3">Genre</th>
+                <th class="text-right pb-1 pr-3">Price (UNT)</th>
+                <th class="text-right pb-1 pr-3">Purchases</th>
+                <th class="text-center pb-1">Active</th>
+              </tr>
+            </thead>
+            <tbody id="store-games-tbody" class="divide-y divide-zinc-100 dark:divide-zinc-800"></tbody>
+          </table>
+        </div>
+        <p id="store-games-empty" class="hidden text-xs text-zinc-500 mt-2">No games yet.</p>
+        <!-- Add game form -->
+        <details id="store-add-game-details" class="mt-3">
+          <summary class="text-xs font-medium text-violet-600 dark:text-violet-400 cursor-pointer hover:underline">+ Add game</summary>
+          <form id="store-add-game-form" class="mt-2 grid grid-cols-2 gap-2 max-w-lg">
+            <input name="name" required placeholder="Name" class="col-span-2 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs">
+            <input name="slug" required placeholder="slug-kebab" class="rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs">
+            <input name="genre" placeholder="Genre" class="rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs">
+            <input name="price_unt" type="number" min="0" required placeholder="Price (UNT)" class="rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs">
+            <input name="cover_color" type="color" value="#7c3aed" title="Cover color" class="rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-1 py-1 h-7 w-full text-xs">
+            <textarea name="description" placeholder="Description (optional)" rows="2" class="col-span-2 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs resize-none"></textarea>
+            <button type="submit" class="col-span-2 rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-xs font-medium text-white transition-colors">Create game</button>
+          </form>
+        </details>
+      </div>
+
+      <!-- Promo codes table -->
+      <div class="p-4">
+        <h3 class="text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-2">Promo codes</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-xs text-zinc-500 border-b border-zinc-200 dark:border-zinc-800">
+                <th class="text-left pb-1 pr-3">Code</th>
+                <th class="text-right pb-1 pr-3">Discount</th>
+                <th class="text-right pb-1 pr-3">Uses / Max</th>
+                <th class="text-left pb-1 pr-3">Expires</th>
+                <th class="text-center pb-1">Active</th>
+              </tr>
+            </thead>
+            <tbody id="store-promos-tbody" class="divide-y divide-zinc-100 dark:divide-zinc-800"></tbody>
+          </table>
+        </div>
+        <p id="store-promos-empty" class="hidden text-xs text-zinc-500 mt-2">No promo codes yet.</p>
+        <!-- Add promo form -->
+        <details id="store-add-promo-details" class="mt-3">
+          <summary class="text-xs font-medium text-violet-600 dark:text-violet-400 cursor-pointer hover:underline">+ Add promo code</summary>
+          <form id="store-add-promo-form" class="mt-2 grid grid-cols-2 gap-2 max-w-lg">
+            <input name="code" required placeholder="CODE" class="rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono uppercase" style="text-transform:uppercase">
+            <input name="discount_pct" type="number" min="1" max="100" required placeholder="Discount %" class="rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs">
+            <input name="max_uses" type="number" min="1" placeholder="Max uses (blank = unlimited)" class="rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs">
+            <input name="expires_at" type="date" placeholder="Expires (optional)" class="rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs">
+            <button type="submit" class="col-span-2 rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-xs font-medium text-white transition-colors">Create promo code</button>
+          </form>
+        </details>
+      </div>
+    </div>
+
   </div>
 
   <!-- Temporary password modal (issue #282). Shown ONCE after an admin
@@ -768,6 +861,142 @@
       loadUsers();
       loadOverview();
       loadLimits();
+      loadStoreStats();
+      loadStoreGames();
+      loadStorePromos();
+    }
+
+    // ── Game Store admin ─────────────────────────────────────────────────────
+    async function loadStoreStats() {
+      try {
+        const res = await fetch('/api/admin/store/stats');
+        if (!res.ok) return;
+        const d = await res.json();
+        document.getElementById('store-stat-games').textContent = d.game_count ?? '—';
+        document.getElementById('store-stat-purchases').textContent = d.purchase_count ?? '—';
+        document.getElementById('store-stat-unt').textContent = d.total_unt_held ?? '—';
+        document.getElementById('store-stat-promos').textContent = d.active_promo_count ?? '—';
+      } catch {}
+    }
+
+    async function loadStoreGames() {
+      try {
+        const res = await fetch('/api/admin/store/games');
+        if (!res.ok) return;
+        const games = await res.json();
+        const tbody = document.getElementById('store-games-tbody');
+        const empty = document.getElementById('store-games-empty');
+        if (!games.length) { empty.classList.remove('hidden'); tbody.innerHTML = ''; return; }
+        empty.classList.add('hidden');
+        tbody.innerHTML = games.map((g) => `
+          <tr class="text-xs">
+            <td class="py-1.5 pr-3 font-medium text-zinc-800 dark:text-zinc-200">${escH(g.name)}</td>
+            <td class="py-1.5 pr-3 text-zinc-500">${escH(g.genre || '—')}</td>
+            <td class="py-1.5 pr-3 text-right font-mono">${g.price_unt}</td>
+            <td class="py-1.5 pr-3 text-right text-zinc-500">${g.purchase_count ?? 0}</td>
+            <td class="py-1.5 text-center">
+              <button data-store-game-id="${g.id}" data-store-game-active="${g.active}"
+                class="px-2 py-0.5 rounded text-[10px] font-semibold ${g.active ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800'}">
+                ${g.active ? 'active' : 'inactive'}
+              </button>
+            </td>
+          </tr>`).join('');
+        tbody.querySelectorAll('[data-store-game-id]').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            if (!CAN_WRITE) return;
+            const id = btn.dataset.storeGameId;
+            const active = btn.dataset.storeGameActive === 'true';
+            await fetch(`/api/admin/store/games/${id}`, {
+              method: 'PUT', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ active: !active }),
+            });
+            loadStoreGames();
+            loadStoreStats();
+          });
+        });
+      } catch {}
+    }
+
+    async function loadStorePromos() {
+      try {
+        const res = await fetch('/api/admin/store/promo-codes');
+        if (!res.ok) return;
+        const promos = await res.json();
+        const tbody = document.getElementById('store-promos-tbody');
+        const empty = document.getElementById('store-promos-empty');
+        if (!promos.length) { empty.classList.remove('hidden'); tbody.innerHTML = ''; return; }
+        empty.classList.add('hidden');
+        tbody.innerHTML = promos.map((p) => `
+          <tr class="text-xs">
+            <td class="py-1.5 pr-3 font-mono font-semibold text-zinc-800 dark:text-zinc-200">${escH(p.code)}</td>
+            <td class="py-1.5 pr-3 text-right">${p.discount_pct}%</td>
+            <td class="py-1.5 pr-3 text-right font-mono">${p.used_count} / ${p.max_uses ?? '∞'}</td>
+            <td class="py-1.5 pr-3 text-zinc-500">${p.expires_at ? new Date(p.expires_at).toLocaleDateString() : '—'}</td>
+            <td class="py-1.5 text-center">
+              <button data-store-promo-id="${p.id}" data-store-promo-active="${p.active}"
+                class="px-2 py-0.5 rounded text-[10px] font-semibold ${p.active ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800'}">
+                ${p.active ? 'active' : 'inactive'}
+              </button>
+            </td>
+          </tr>`).join('');
+        tbody.querySelectorAll('[data-store-promo-id]').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            if (!CAN_WRITE) return;
+            const id = btn.dataset.storePromoId;
+            const active = btn.dataset.storePromoActive === 'true';
+            await fetch(`/api/admin/store/promo-codes/${id}`, {
+              method: 'PUT', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ active: !active }),
+            });
+            loadStorePromos();
+            loadStoreStats();
+          });
+        });
+      } catch {}
+    }
+
+    document.getElementById('store-refresh-btn')?.addEventListener('click', () => {
+      loadStoreStats(); loadStoreGames(); loadStorePromos();
+    });
+
+    document.getElementById('store-add-game-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!CAN_WRITE) return;
+      const fd = new FormData(e.target);
+      const body = Object.fromEntries(fd);
+      body.price_unt = parseInt(body.price_unt, 10);
+      const res = await fetch('/api/admin/store/games', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        e.target.reset();
+        document.getElementById('store-add-game-details').removeAttribute('open');
+        loadStoreGames(); loadStoreStats();
+      }
+    });
+
+    document.getElementById('store-add-promo-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!CAN_WRITE) return;
+      const fd = new FormData(e.target);
+      const body = Object.fromEntries(fd);
+      body.discount_pct = parseInt(body.discount_pct, 10);
+      if (body.max_uses) body.max_uses = parseInt(body.max_uses, 10); else delete body.max_uses;
+      if (!body.expires_at) delete body.expires_at;
+      const res = await fetch('/api/admin/store/promo-codes', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        e.target.reset();
+        document.getElementById('store-add-promo-details').removeAttribute('open');
+        loadStorePromos(); loadStoreStats();
+      }
+    });
+
+    function escH(s) {
+      return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
     initAdminPanel();

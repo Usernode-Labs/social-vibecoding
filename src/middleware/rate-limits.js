@@ -111,4 +111,25 @@ const attributeVoteLimiter = makeLimiter({
   message: 'Too many updates — slow down for a minute.',
 });
 
-module.exports = { authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, chatLimiter, proposalDiscussLimiter, attributeVoteLimiter };
+// Store purchases: 10 / 10 min / user. Guards the purchase endpoint
+// against rapid-fire retry loops that could drain a balance or exhaust
+// promo codes. Per-user keyed for shared-NAT fairness.
+const storePurchaseLimiter = makeLimiter({
+  windowMs: 10 * 60 * 1000,
+  max: 10,
+  name: 'store-purchase',
+  keyByUser: true,
+  message: 'Too many purchase attempts — please slow down.',
+});
+
+// Promo-code validation: 30 / min / user. Prevents brute-force guessing
+// of promo code strings while allowing fast UI feedback on valid codes.
+const storePromoValidateLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 30,
+  name: 'store-promo-validate',
+  keyByUser: true,
+  message: 'Too many promo code checks — slow down for a minute.',
+});
+
+module.exports = { authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, chatLimiter, proposalDiscussLimiter, attributeVoteLimiter, storePurchaseLimiter, storePromoValidateLimiter };

@@ -202,6 +202,7 @@
       this._renderDevConsoleSection();
       this._renderExperimentalSection();
       this._renderAdminSection();
+      this._renderProfileSection();
       this._clearStatus();
       // Reveal via the shared gesture-safe path (see AppView.revealModal) so
       // the opening tap from the drawer row can't ghost-click the backdrop
@@ -891,6 +892,97 @@
       const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
       el.classList.add(cls);
       if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
+    },
+
+    // ── Edit Profile section ──────────────────────────────────────────────
+    async _renderProfileSection() {
+      const container = document.getElementById('settings-profile-section');
+      if (!container) return;
+      try {
+        const res = await fetch('/api/me/profile');
+        if (!res.ok) { container.classList.add('hidden'); return; }
+        const { profile } = await res.json();
+        container.classList.remove('hidden');
+        container.innerHTML = `
+          <div class="border-t border-zinc-700 pt-4 mt-4">
+            <div class="text-sm font-semibold text-zinc-300 mb-3">Edit Profile</div>
+            <div class="space-y-3">
+              <div>
+                <label class="block text-xs text-zinc-400 mb-1">Display name</label>
+                <input id="prof-display-name" type="text" maxlength="100"
+                       class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-zinc-200 outline-none focus:border-violet-500"
+                       value="${this._esc(profile.display_name || '')}" placeholder="Your display name">
+              </div>
+              <div>
+                <label class="block text-xs text-zinc-400 mb-1">Bio <span class="text-zinc-500">(max 160 chars)</span></label>
+                <textarea id="prof-bio" maxlength="160" rows="2"
+                          class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-zinc-200 outline-none focus:border-violet-500 resize-none"
+                          placeholder="A short bio…">${this._esc(profile.bio || '')}</textarea>
+              </div>
+              <div class="flex items-center gap-3">
+                <div>
+                  <label class="block text-xs text-zinc-400 mb-1">Avatar color</label>
+                  <input id="prof-avatar-color" type="color" value="${this._esc(profile.avatar_color || '#7c3aed')}"
+                         class="w-10 h-10 rounded cursor-pointer border border-zinc-700">
+                </div>
+                <div class="flex-1">
+                  <label class="block text-xs text-zinc-400 mb-1">Library privacy</label>
+                  <label class="flex items-center gap-2 cursor-pointer">
+                    <input id="prof-library-public" type="checkbox" ${profile.library_public ? 'checked' : ''}
+                           class="accent-violet-500">
+                    <span class="text-sm text-zinc-300">Public library</span>
+                  </label>
+                </div>
+              </div>
+              <div class="flex items-center gap-3">
+                <button id="prof-save-btn"
+                        class="px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white text-sm rounded font-medium">
+                  Save profile
+                </button>
+                <span id="prof-status" class="text-xs hidden"></span>
+              </div>
+            </div>
+          </div>`;
+
+        document.getElementById('prof-save-btn')?.addEventListener('click', () => this._saveProfile());
+      } catch {
+        container.classList.add('hidden');
+      }
+    },
+
+    _esc(s) {
+      return String(s || '').replace(/[&<>"']/g, (c) => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+      ));
+    },
+
+    async _saveProfile() {
+      const btn = document.getElementById('prof-save-btn');
+      const status = document.getElementById('prof-status');
+      const dn = document.getElementById('prof-display-name')?.value?.trim();
+      const bio = document.getElementById('prof-bio')?.value?.trim();
+      const color = document.getElementById('prof-avatar-color')?.value;
+      const libPub = document.getElementById('prof-library-public')?.checked;
+
+      if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+      try {
+        const res = await fetch('/api/me/profile', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ display_name: dn, bio, avatar_color: color, library_public: libPub }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          if (status) { status.textContent = 'Saved!'; status.className = 'text-xs text-emerald-400'; status.classList.remove('hidden'); }
+          setTimeout(() => status?.classList.add('hidden'), 2000);
+        } else {
+          if (status) { status.textContent = data.error || 'Failed'; status.className = 'text-xs text-red-400'; status.classList.remove('hidden'); }
+        }
+      } catch {
+        if (status) { status.textContent = 'Network error'; status.className = 'text-xs text-red-400'; status.classList.remove('hidden'); }
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Save profile'; }
+      }
     },
   };
 
