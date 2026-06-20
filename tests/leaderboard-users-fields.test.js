@@ -56,7 +56,7 @@ function withMockPool(mockPool, fn) {
   }
 }
 
-// The ten keys every unshaped row carries (matches the SELECT aliases).
+// The keys every unshaped row carries (matches the SELECT aliases).
 const ALL_KEYS = [
   'user_id',
   'username',
@@ -68,6 +68,7 @@ const ALL_KEYS = [
   'last_kudos_at',
   'kudos_given',
   'issues_created',
+  'address',
 ];
 
 // ─── In-memory mock pool ─────────────────────────────────────────
@@ -76,9 +77,10 @@ const ALL_KEYS = [
 // canned two-row result for the leaderboard/users query. Rows mirror the
 // real column shape:
 //   - alice: a rich row — every field non-zero, a present timestamp, a
-//     non-empty kudos_given map.
+//     non-empty kudos_given map, a linked `address`.
 //   - bob:   a sparse row — issues_created = 0, last_kudos_at = null,
-//     kudos_given = {} (empty map). Exercises the zero/null drop rules.
+//     kudos_given = {} (empty map), address = null (unlinked wallet).
+//     Exercises the zero/null drop rules.
 // They tie on the ranking keys → username ASC keeps order [alice, bob]; the
 // handler does no re-sorting, but we keep the order so the envelope/order
 // assertions match the sibling test's expectations.
@@ -96,6 +98,7 @@ function makeMockPool() {
       last_kudos_at: '2026-06-15T12:00:00.000Z',
       kudos_given: { '2026-06-15': 3 },
       issues_created: 5,
+      address: 'ut1aliceaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     },
     {
       user_id: 2,
@@ -108,6 +111,7 @@ function makeMockPool() {
       last_kudos_at: null,
       kudos_given: {},
       issues_created: 0,
+      address: null,
     },
   ];
 
@@ -159,6 +163,27 @@ test('no fields → items carry the full key set (unchanged)', async () => {
     for (const item of body.items) {
       assert.deepEqual(Object.keys(item).sort(), [...ALL_KEYS].sort());
     }
+  } finally { await srv.close(); }
+});
+
+test('no fields → each item carries its wallet address (null when unlinked)', async () => {
+  const srv = await startTestServer(makeMockPool());
+  try {
+    const { body } = await get(srv.baseUrl, '');
+    const alice = body.items.find((i) => i.username === 'alice');
+    const bob = body.items.find((i) => i.username === 'bob');
+    assert.equal(alice.address, 'ut1aliceaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+    assert.equal(bob.address, null);
+  } finally { await srv.close(); }
+});
+
+test('fields=address → exactly username + address', async () => {
+  const srv = await startTestServer(makeMockPool());
+  try {
+    const { body } = await get(srv.baseUrl, '?fields=address');
+    const alice = body.items.find((i) => i.username === 'alice');
+    assert.deepEqual(Object.keys(alice).sort(), ['address', 'username']);
+    assert.equal(alice.address, 'ut1aliceaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
   } finally { await srv.close(); }
 });
 
