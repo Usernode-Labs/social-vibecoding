@@ -32,6 +32,10 @@ const LEADERBOARD_USER_FIELDS = new Set([
   'last_kudos_at',
   'kudos_given',
   'issues_created',
+  // The user's linked Usernode wallet address (the `ut1...` value stored in
+  // users.usernode_pubkey), or null when no wallet is linked. Aliased to
+  // `address` in the SELECT below.
+  'address',
 ]);
 
 // Shape a single leaderboard/users row per the optional `fields` /
@@ -820,7 +824,8 @@ function kudosRoutes(config) {
                 COUNT(DISTINCT cs.id) FILTER (WHERE cs.status = 'merged')::int AS prs_merged,
                 GREATEST(MAX(pk.created_at), ab.last_at) AS last_kudos_at,
                 kg.kudos_given,
-                COALESCE(ic.cnt, 0)::int AS issues_created
+                COALESCE(ic.cnt, 0)::int AS issues_created,
+                u.usernode_pubkey AS address
            FROM users u
            LEFT JOIN chat_sessions cs ON cs.user_id = u.id
              AND EXISTS (SELECT 1 FROM apps ap
@@ -853,7 +858,7 @@ function kudosRoutes(config) {
                 AND EXISTS (SELECT 1 FROM apps ap
                             WHERE ap.id = i.app_id AND ap.view_visibility = 'public')
            ) ic ON true
-           GROUP BY u.id, u.username, kg.kudos_given, ab.received, ab.last_at, ic.cnt
+           GROUP BY u.id, u.username, u.usernode_pubkey, kg.kudos_given, ab.received, ab.last_at, ic.cnt
            ORDER BY kudos_received_prs_merged DESC,
                     prs_merged DESC,
                     kudos_received DESC,
