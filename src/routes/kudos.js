@@ -15,6 +15,45 @@ const WEEKLY_KUDOS_LIMIT = 5;
 // signal, not encouragement on private work.
 const ELIGIBLE_STATES = ['promoted', 'merging', 'merged'];
 
+// Canonical set of per-user fields the GET /api/leaderboard/users handler
+// returns, kept in sync with the SELECT aliases in that query. Used to
+// validate the optional `fields` allowlist query param: unknown names are
+// silently ignored (never reach SQL), so this Set is the single source of
+// truth for what a caller may ask for. `username` is always present
+// regardless of `fields` — it's listed here too so `?fields=username` works.
+const LEADERBOARD_USER_FIELDS = new Set([
+  'user_id',
+  'username',
+  'kudos_received',
+  'prs_kudosed',
+  'kudos_received_prs_merged',
+  'kudos_received_prs_unmerged',
+  'prs_merged',
+  'last_kudos_at',
+  'kudos_given',
+  'issues_created',
+]);
+
+// Shape a single leaderboard/users row per the optional `fields` /
+// `include_0_values` query params. `selectedKeys` is null (return all keys)
+// or a Set of allowlisted field names to project down to. `dropEmpty` drops
+// any field whose value is literally 0 or null (strict equality — an empty
+// {} kudos_given map or a present timestamp is KEPT). `username` is ALWAYS
+// present, no matter the params. Projection happens first, then zero/null
+// filtering, then the username invariant is re-asserted.
+function shapeLeaderboardRow(row, selectedKeys, dropEmpty) {
+  // Start from username so it can never be projected or filtered away.
+  const out = { username: row.username };
+  for (const key of LEADERBOARD_USER_FIELDS) {
+    if (key === 'username') continue;
+    if (selectedKeys && !selectedKeys.has(key)) continue;
+    const value = row[key];
+    if (dropEmpty && (value === 0 || value === null)) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
 // Compute the Monday-00:00-UTC date that contains the given Date.
 // Mirror of Postgres's `date_trunc('week', t AT TIME ZONE 'UTC')::DATE`
 // for that same instant. JS getUTCDay() returns 0..6 with Sunday=0; we
@@ -703,6 +742,28 @@ function kudosRoutes(config) {
     const windowArg = req.query.window === 'week' ? 'week' : 'all';
     // `limit` is optional now: absent/blank => return all users.
     const hasLimit = req.query.limit !== undefined && req.query.limit !== '';
+    // Optional `fields` allowlist: comma-separated field names to project
+    // each item down to. Unset/blank => return all keys. Unknown names are
+    // silently ignored (intersect with LEADERBOARD_USER_FIELDS); `username`
+    // is always kept regardless. The intersection means user input never
+    // reaches SQL, so there's no injection surface.
+    const fieldsRaw = typeof req.query.fields === 'string' ? req.query.fields : '';
+    let selectedKeys = null;
+    if (fieldsRaw.trim() !== '') {
+      selectedKeys = new Set(
+        fieldsRaw
+          .split(',')
+          .map((s) => s.trim())
+          .filter((s) => s !== '' && LEADERBOARD_USER_FIELDS.has(s))
+      );
+      // `username` is always present; force it in so the projection never
+      // strips it (and so `?fields=username` is a valid no-op selection).
+      selectedKeys.add('username');
+    }
+    // Optional `include_0_values`: only the exact string '0' enables dropping
+    // fields whose value is literally 0 or null. Unset / '1' / anything else
+    // keeps them (default 1).
+    const dropEmpty = req.query.include_0_values === '0';
     try {
       const weekStart = weekStartUtc();
       const params = [];
@@ -801,10 +862,18 @@ function kudosRoutes(config) {
            ${limitClause}`,
         params
       );
+      // Shape each item per the optional `fields` / `include_0_values`
+      // params (projection then zero/null filtering, username always kept).
+      // When neither is set this is a no-op and rows pass through unchanged.
+      // The envelope (window/weekStart) is untouched.
+      const items =
+        selectedKeys || dropEmpty
+          ? rows.map((r) => shapeLeaderboardRow(r, selectedKeys, dropEmpty))
+          : rows;
       res.json({
         window: windowArg,
         weekStart: windowArg === 'week' ? weekStart : null,
-        items: rows,
+        items,
       });
     } catch (err) {
       log.error('kudos', 'leaderboard/users failed', { err: err.message });
