@@ -380,11 +380,27 @@
               placeholder="default" ${CAN_WRITE ? '' : 'disabled'}>
           </div>`;
 
+        // Per-user linked Usernode wallet (issue #422). Inline text editor
+        // with the same save-on-blur/Enter, revert-on-failure behaviour as
+        // the Cap $ / App quota fields. Empty = no wallet linked (clears it).
+        const walletAddr = user.usernode_pubkey == null ? '' : user.usernode_pubkey;
+        const walletHtml = `
+          <div class="flex items-center gap-1" title="Linked Usernode wallet (ut1…). Blank = no wallet linked.">
+            <span class="text-xs text-zinc-400">Wallet</span>
+            <input type="text" autocomplete="off" spellcheck="false"
+              class="wallet-input w-44 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono disabled:opacity-60"
+              data-user-id="${user.id}"
+              data-original="${escapeHtml(walletAddr)}"
+              value="${escapeHtml(walletAddr)}"
+              placeholder="none" ${CAN_WRITE ? '' : 'disabled'}>
+          </div>`;
+
         el.innerHTML = `
           <div class="flex-1">
             <div class="font-medium">${escapeHtml(user.username)}</div>
             <div class="text-sm text-zinc-500">$${costToday} spent today ${codeInfo}</div>
           </div>
+          ${walletHtml}
           ${limitHtml}
           ${roleControlHtml}
           ${quotaHtml}
@@ -432,6 +448,69 @@
               const v = data.daily_limit_cents == null ? '' : centsToDollars(data.daily_limit_cents);
               inp.value = v;
               inp.dataset.original = v;
+            }
+          } catch (err) {
+            alert(`Save failed: ${err.message}`);
+            inp.value = orig;
+          } finally {
+            inp.disabled = false;
+          }
+        };
+        inp.addEventListener('blur', commit);
+        inp.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
+        });
+      });
+
+      list.querySelectorAll('.wallet-input').forEach((inp) => {
+        // Save on blur or Enter, mirroring the Cap $ / App quota fields.
+        // Empty = clear the wallet. On a 409 the target address already
+        // belongs to another user; offer to reassign (move) it, which the
+        // backend does atomically.
+        const commit = async () => {
+          const next = inp.value.trim();
+          const orig = inp.dataset.original || '';
+          if (next === orig) return;
+          const userId = inp.dataset.userId;
+          // Client-side shape pre-check (empty allowed = clear).
+          if (next !== '' && !/^ut1\S{5,252}$/.test(next)) {
+            alert('Wallet address must start with "ut1" and contain no spaces.');
+            inp.value = orig;
+            return;
+          }
+          inp.disabled = true;
+          const send = async (reassign) => {
+            const body = { pubkey: next === '' ? null : next };
+            if (reassign) body.reassign = true;
+            return fetch(`/api/admin/users/${userId}/wallet`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+          };
+          try {
+            let res = await send(false);
+            if (res.status === 409) {
+              const data = await res.json().catch(() => ({}));
+              const other = data.conflictUser?.username || 'another user';
+              if (confirm(`${next} is currently linked to "${other}". Move it to this user? This clears it from "${other}".`)) {
+                res = await send(true);
+              } else {
+                inp.value = orig;
+                return;
+              }
+            }
+            if (!res.ok) {
+              const data = await res.json().catch(() => ({}));
+              alert(data.error || `Save failed (HTTP ${res.status})`);
+              inp.value = orig;
+            } else {
+              const data = await res.json();
+              const v = data.usernode_pubkey == null ? '' : data.usernode_pubkey;
+              // A reassign empties the previous holder's row too; reload so
+              // both affected rows reflect the new state.
+              await loadUsers();
+              return;
             }
           } catch (err) {
             alert(`Save failed: ${err.message}`);
