@@ -76,6 +76,11 @@
       "name": "Leaderboard Top-users tab renders",
       "path": "/leaderboard",
       "expectText": "Top users"
+    },
+    {
+      "name": "Admin Users list renders",
+      "path": "/admin",
+      "expectText": "Users"
     }
   ]
 }

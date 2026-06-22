@@ -39,6 +39,7 @@ async function migrate(config) {
   await seedStagingMembersPanel(pool);
   await seedStagingAppQuotaUsers(pool);
   await seedStagingViewOnlyAdmin(pool);
+  await seedStagingWalletUsers(pool);
   await seedStagingVisuals(pool);
   await seedStagingLeaderboardProfile(pool);
   await seedStagingQaSession(pool, config);
@@ -1813,6 +1814,42 @@ async function seedStagingViewOnlyAdmin(pool) {
     log.info('db', 'Staging view-only admin fixture seeded');
   } catch (err) {
     log.warn('db', 'Staging view-only admin fixture seeding failed', { message: err.message });
+  }
+}
+
+// Linked-wallet fixtures (issue #422). The admin Users list now shows each
+// user's linked Usernode wallet and lets a full admin edit it inline. The
+// wallet column (users.usernode_pubkey) is NOT staging-scrubbed, so cloned
+// prod rows keep their addresses — but to demonstrate every path
+// deterministically (display, the "none" placeholder, and the
+// already-linked 409 + reassign flow) we seed an obviously-fake pair: one
+// account WITH a wallet and one WITHOUT. A reviewer can then type the
+// linked account's address into the unlinked one to trigger the reassign
+// confirmation. Sentinel passwords mean neither can log in interactively.
+// Idempotent via fixed ids + ON CONFLICT and pinned UPDATEs on reboot;
+// strict no-op outside staging.
+async function seedStagingWalletUsers(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password, usernode_pubkey)
+       VALUES
+         (900022, 'staging-demo-wallet-linked', '!staging-fixture-no-login!', 'ut1stagingdemowalletlinked000000000000001'),
+         (900023, 'staging-demo-wallet-none',   '!staging-fixture-no-login!', NULL)
+       ON CONFLICT (id) DO NOTHING`
+    );
+    // Pin the wallet states explicitly so a reboot (or a tester editing
+    // them) restores the intended linked / unlinked pair.
+    await pool.query(
+      `UPDATE users SET usernode_pubkey = 'ut1stagingdemowalletlinked000000000000001'
+       WHERE id = 900022`
+    );
+    await pool.query('UPDATE users SET usernode_pubkey = NULL WHERE id = 900023');
+
+    log.info('db', 'Staging wallet fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Staging wallet fixtures seeding failed', { message: err.message });
   }
 }
 
