@@ -168,11 +168,35 @@
   </div>
 
   <script>
+    // Safe fetch+parse for the admin read endpoints. Returns
+    // { status, ok, data } and NEVER throws: a non-OK response, a
+    // non-JSON content-type, or a body that fails to parse all yield
+    // data === null instead of an uncaught promise rejection. This
+    // matters on a fresh/unauthenticated load where an /api/* route can
+    // fall through to the SPA shell and return 200 + HTML ("<!DOCTYPE …")
+    // — calling res.json() on that throws "Unexpected token '<'".
+    async function fetchAdminJson(url) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) return { status: res.status, ok: false, data: null };
+        const ct = res.headers.get('content-type') || '';
+        if (!ct.includes('application/json')) {
+          return { status: res.status, ok: true, data: null };
+        }
+        try {
+          return { status: res.status, ok: true, data: await res.json() };
+        } catch {
+          return { status: res.status, ok: true, data: null };
+        }
+      } catch {
+        return { status: 0, ok: false, data: null };
+      }
+    }
+
     async function loadCodes() {
-      const res = await fetch('/api/admin/codes');
-      if (!res.ok) return;
-      const codes = await res.json();
-      renderCodes(codes);
+      const { data } = await fetchAdminJson('/api/admin/codes');
+      if (!Array.isArray(data)) return;
+      renderCodes(data);
     }
 
     function renderCodes(codes) {
@@ -279,14 +303,13 @@
     });
 
     async function loadUsers() {
-      const res = await fetch('/api/admin/users');
-      if (res.status === 403) {
+      const { status, data } = await fetchAdminJson('/api/admin/users');
+      if (status === 403) {
         document.body.innerHTML = '<div class="flex items-center justify-center h-screen text-zinc-500">Admin access required</div>';
         return;
       }
-      if (!res.ok) return;
-      const users = await res.json();
-      renderUsers(users);
+      if (!Array.isArray(data)) return;
+      renderUsers(data);
     }
 
     function renderUsers(users) {
@@ -669,9 +692,8 @@
     }
 
     async function loadOverview() {
-      const res = await fetch('/api/admin/overview');
-      if (!res.ok) return;
-      const data = await res.json();
+      const { data } = await fetchAdminJson('/api/admin/overview');
+      if (!data || typeof data !== 'object') return;
       renderOverview(data);
     }
 
@@ -759,9 +781,8 @@
     }
 
     async function loadLimits() {
-      const res = await fetch('/api/admin/limits');
-      if (!res.ok) return;
-      const data = await res.json();
+      const { data } = await fetchAdminJson('/api/admin/limits');
+      if (!data || typeof data !== 'object') return;
       document.getElementById('limit-user').value = centsToDollars(data.user_daily_limit_cents);
       document.getElementById('limit-global').value = centsToDollars(data.global_daily_limit_cents);
       document.getElementById('limit-system').value = centsToDollars(data.system_tokens_daily_limit_cents);
@@ -822,17 +843,14 @@
     let CAN_WRITE = false;
 
     async function initAdminPanel() {
-      try {
-        const res = await fetch('/api/auth/me');
-        if (res.ok) {
-          const data = await res.json();
-          CAN_WRITE = !!data.user?.canAdminWrite;
-          // Show the read-only banner for a view-only admin.
-          if (data.user?.isAdmin && !CAN_WRITE) {
-            document.getElementById('view-only-banner')?.classList.remove('hidden');
-          }
+      const { data } = await fetchAdminJson('/api/auth/me');
+      if (data && typeof data === 'object') {
+        CAN_WRITE = !!data.user?.canAdminWrite;
+        // Show the read-only banner for a view-only admin.
+        if (data.user?.isAdmin && !CAN_WRITE) {
+          document.getElementById('view-only-banner')?.classList.remove('hidden');
         }
-      } catch {}
+      }
 
       // Hide the panel-level mutating controls for view-only admins. The
       // values they act on (codes, limits, quotas) still render read-only.
@@ -845,13 +863,17 @@
         document.getElementById('limit-global')?.setAttribute('disabled', 'true');
       }
 
-      loadCodes();
-      loadUsers();
-      loadOverview();
-      loadLimits();
+      // Fire-and-forget reads — each loader already swallows non-OK /
+      // non-JSON responses via fetchAdminJson; the extra .catch() is a
+      // belt-and-suspenders guard so an unexpected throw in a renderer
+      // can never surface as an uncaught promise rejection on load.
+      loadCodes().catch(() => {});
+      loadUsers().catch(() => {});
+      loadOverview().catch(() => {});
+      loadLimits().catch(() => {});
     }
 
-    initAdminPanel();
+    initAdminPanel().catch(() => {});
   </script>
 </body>
 </html>
