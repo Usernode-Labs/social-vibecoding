@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Usernode Social Vibecoding — Admin</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>tailwind.config = {
@@ -38,7 +38,7 @@
   </style>
 </head>
 <body class="bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 min-h-screen p-6">
-  <div class="max-w-2xl mx-auto">
+  <div class="max-w-4xl mx-auto">
     <div class="flex items-center justify-between mb-8">
       <h1 class="text-2xl font-bold">Admin Panel</h1>
       <div class="flex items-center gap-3">
@@ -62,7 +62,7 @@
         <h2 class="text-lg font-semibold">Operations</h2>
         <button id="refresh-overview" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
       </div>
-      <div class="grid grid-cols-3 gap-3 mb-4">
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
         <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
           <div class="text-xs uppercase tracking-wide text-zinc-500">Stuck apps</div>
           <div id="overview-stuck" class="text-2xl font-bold mt-1">—</div>
@@ -85,7 +85,7 @@
         <h2 class="text-lg font-semibold">LLM Spend Limits</h2>
         <span class="text-xs text-zinc-500">USD · resets midnight UTC</span>
       </div>
-      <div class="grid grid-cols-3 gap-3 mb-3">
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
         <label class="block">
           <span class="text-xs uppercase tracking-wide text-zinc-500">Default per-user daily cap</span>
           <div class="relative mt-1">
@@ -114,7 +114,7 @@
           </div>
         </label>
       </div>
-      <div class="flex items-center justify-between">
+      <div class="flex flex-wrap items-center justify-between gap-2">
         <p class="text-xs text-zinc-500">Per-user overrides live in the Users list below; these are the platform defaults.</p>
         <button id="save-limits-btn" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Save</button>
       </div>
@@ -188,7 +188,7 @@
 
       for (const code of codes) {
         const el = document.createElement('div');
-        el.className = 'flex items-center justify-between gap-3 p-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800';
+        el.className = 'flex flex-wrap items-center justify-between gap-3 p-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800';
 
         const used = !!code.used_by_username;
         const codeDisplay = `<code class="font-mono text-sm ${used ? 'text-zinc-400 line-through' : 'text-violet-400'}">${escapeHtml(code.code)}</code>`;
@@ -202,11 +202,11 @@
         }
 
         el.innerHTML = `
-          <div class="flex-1 flex items-center gap-3">
+          <div class="flex-1 min-w-0 flex flex-wrap items-center gap-x-3 gap-y-1">
             ${codeDisplay}
             ${statusHtml}
           </div>
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 shrink-0">
             ${!used ? `<button class="copy-btn text-xs text-zinc-400 hover:text-violet-400 transition-colors" data-code="${escapeHtml(code.code)}">Copy</button>` : ''}
             ${!used ? `<button class="share-btn text-xs text-zinc-400 hover:text-green-400 transition-colors" data-code="${escapeHtml(code.code)}">Share link</button>` : ''}
             ${!used && CAN_WRITE ? `<button class="delete-code-btn text-xs text-zinc-400 hover:text-red-400 transition-colors" data-id="${code.id}">&times;</button>` : ''}
@@ -301,7 +301,7 @@
 
       for (const user of users) {
         const el = document.createElement('div');
-        el.className = 'p-4 flex items-center gap-4';
+        el.className = 'p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4';
 
         const codeInfo = user.activation_code
           ? `<span class="text-xs text-zinc-500">code: <code class="text-zinc-400">${escapeHtml(user.activation_code)}</code></span>`
@@ -332,7 +332,7 @@
         const roleLabel = { user: 'User', view_admin: 'View-only admin', admin: 'Admin' }[role];
         const roleControlHtml = CAN_WRITE
           ? `
-          <div class="flex items-center gap-2" title="${roleTitle}">
+          <div class="flex items-center gap-2 shrink-0" title="${roleTitle}">
             <span class="text-xs text-zinc-400">Role</span>
             <select class="role-select rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs"
               data-user-id="${user.id}" data-original="${role}" ${roleSelectDisabled ? 'disabled' : ''}>
@@ -342,7 +342,7 @@
             </select>
           </div>`
           : `
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 shrink-0">
             <span class="text-xs text-zinc-400">Role</span>
             <span class="text-xs font-medium text-zinc-500 dark:text-zinc-300">${roleLabel}</span>
           </div>`;
@@ -354,7 +354,7 @@
         const appQuota = user.app_quota == null ? 0 : user.app_quota;
         const appsCreated = user.apps_created == null ? 0 : user.apps_created;
         const quotaHtml = `
-          <div class="flex items-center gap-1" title="Max apps this user may create. 0 = cannot create. Admins bypass this.">
+          <div class="flex items-center gap-1 shrink-0" title="Max apps this user may create. 0 = cannot create. Admins bypass this.">
             <span class="text-xs text-zinc-400">App quota</span>
             <input type="number" min="0" step="1" inputmode="numeric"
               class="quota-input w-16 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono disabled:opacity-60"
@@ -370,7 +370,7 @@
         const overrideCents = user.daily_limit_cents;
         const overrideDollars = overrideCents == null ? '' : centsToDollars(overrideCents);
         const limitHtml = `
-          <div class="flex items-center gap-1" title="Per-user daily cap in dollars. Blank = use platform default.">
+          <div class="flex items-center gap-1 shrink-0" title="Per-user daily cap in dollars. Blank = use platform default.">
             <span class="text-xs text-zinc-400">Cap $</span>
             <input type="number" min="0" step="0.01" inputmode="decimal"
               class="user-limit-input w-20 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono disabled:opacity-60"
@@ -385,10 +385,10 @@
         // the Cap $ / App quota fields. Empty = no wallet linked (clears it).
         const walletAddr = user.usernode_pubkey == null ? '' : user.usernode_pubkey;
         const walletHtml = `
-          <div class="flex items-center gap-1" title="Linked Usernode wallet (ut1…). Blank = no wallet linked.">
+          <div class="flex items-center gap-1 shrink-0" title="Linked Usernode wallet (ut1…). Blank = no wallet linked.">
             <span class="text-xs text-zinc-400">Wallet</span>
             <input type="text" autocomplete="off" spellcheck="false"
-              class="wallet-input w-44 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono disabled:opacity-60"
+              class="wallet-input w-44 max-w-full rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono disabled:opacity-60"
               data-user-id="${user.id}"
               data-original="${escapeHtml(walletAddr)}"
               value="${escapeHtml(walletAddr)}"
@@ -396,16 +396,18 @@
           </div>`;
 
         el.innerHTML = `
-          <div class="flex-1">
-            <div class="font-medium">${escapeHtml(user.username)}</div>
-            <div class="text-sm text-zinc-500">$${costToday} spent today ${codeInfo}</div>
+          <div class="flex-1 min-w-0">
+            <div class="font-medium truncate">${escapeHtml(user.username)}</div>
+            <div class="text-sm text-zinc-500 truncate">$${costToday} spent today ${codeInfo}</div>
           </div>
-          ${walletHtml}
-          ${limitHtml}
-          ${roleControlHtml}
-          ${quotaHtml}
-          ${CAN_WRITE ? `<button data-reset-id="${user.id}" data-username="${escapeHtml(user.username)}" class="text-violet-400 hover:text-violet-300 text-sm reset-pw-btn">Reset password</button>` : ''}
-          ${CAN_WRITE && !user.is_admin ? `<button data-delete-id="${user.id}" class="text-red-400 hover:text-red-300 text-sm delete-btn">Delete</button>` : ''}
+          <div class="flex flex-wrap items-center gap-3">
+            ${walletHtml}
+            ${limitHtml}
+            ${roleControlHtml}
+            ${quotaHtml}
+            ${CAN_WRITE ? `<button data-reset-id="${user.id}" data-username="${escapeHtml(user.username)}" class="text-violet-400 hover:text-violet-300 text-sm reset-pw-btn shrink-0">Reset password</button>` : ''}
+            ${CAN_WRITE && !user.is_admin ? `<button data-delete-id="${user.id}" class="text-red-400 hover:text-red-300 text-sm delete-btn shrink-0">Delete</button>` : ''}
+          </div>
         `;
         list.appendChild(el);
       }
