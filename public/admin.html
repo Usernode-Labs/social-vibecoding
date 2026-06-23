@@ -324,7 +324,10 @@
 
       for (const user of users) {
         const el = document.createElement('div');
-        el.className = 'p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4';
+        // Two-line row (#424 follow-up): an identity line + a controls line
+        // stacked in the left content column, with the per-row actions
+        // collapsed into a "…" kebab pinned at the row's right edge.
+        el.className = 'p-4 flex items-start gap-3';
 
         const codeInfo = user.activation_code
           ? `<span class="text-xs text-zinc-500">code: <code class="text-zinc-400">${escapeHtml(user.activation_code)}</code></span>`
@@ -418,19 +421,38 @@
               placeholder="none" ${CAN_WRITE ? '' : 'disabled'}>
           </div>`;
 
+        // Per-row actions live in a "…" overflow menu pinned to the right
+        // edge (#424 follow-up). Only full admins (CAN_WRITE) get a kebab at
+        // all — view-only admins have no actions, so no menu renders. Delete
+        // stays hidden for admin users. The menu items keep the existing
+        // .reset-pw-btn / .delete-btn classes so their click handlers below
+        // bind unchanged; only the buttons' DOM location moved.
+        const deleteItem = !user.is_admin
+          ? `<button data-delete-id="${user.id}" class="delete-btn block w-full text-left px-3 py-2 text-sm text-red-500 hover:bg-zinc-100 dark:hover:bg-zinc-700">Delete</button>`
+          : '';
+        const kebabHtml = CAN_WRITE ? `
+          <div class="relative shrink-0 user-actions">
+            <button type="button" class="kebab-btn rounded px-2 py-1 text-lg leading-none text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200" aria-label="User actions" aria-haspopup="true" aria-expanded="false">&#8943;</button>
+            <div class="kebab-menu hidden absolute right-0 mt-1 z-20 min-w-[11rem] rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 py-1 shadow-lg">
+              <button data-reset-id="${user.id}" data-username="${escapeHtml(user.username)}" class="reset-pw-btn block w-full text-left px-3 py-2 text-sm text-violet-500 hover:bg-zinc-100 dark:hover:bg-zinc-700">Reset password</button>
+              ${deleteItem}
+            </div>
+          </div>` : '';
+
         el.innerHTML = `
-          <div class="flex-1 min-w-0">
-            <div class="font-medium truncate">${escapeHtml(user.username)}</div>
-            <div class="text-sm text-zinc-500 truncate">$${costToday} spent today ${codeInfo}</div>
+          <div class="flex-1 min-w-0 flex flex-col gap-2">
+            <div>
+              <div class="font-medium break-words">${escapeHtml(user.username)}</div>
+              <div class="text-sm text-zinc-500 truncate">$${costToday} spent today ${codeInfo}</div>
+            </div>
+            <div class="flex flex-wrap items-center gap-3">
+              ${walletHtml}
+              ${limitHtml}
+              ${roleControlHtml}
+              ${quotaHtml}
+            </div>
           </div>
-          <div class="flex flex-wrap items-center gap-3">
-            ${walletHtml}
-            ${limitHtml}
-            ${roleControlHtml}
-            ${quotaHtml}
-            ${CAN_WRITE ? `<button data-reset-id="${user.id}" data-username="${escapeHtml(user.username)}" class="text-violet-400 hover:text-violet-300 text-sm reset-pw-btn shrink-0">Reset password</button>` : ''}
-            ${CAN_WRITE && !user.is_admin ? `<button data-delete-id="${user.id}" class="text-red-400 hover:text-red-300 text-sm delete-btn shrink-0">Delete</button>` : ''}
-          </div>
+          ${kebabHtml}
         `;
         list.appendChild(el);
       }
@@ -654,6 +676,42 @@
             btn.disabled = false;
           }
         });
+      });
+
+      // Kebab overflow menus. Clicking a kebab toggles its own menu and
+      // closes any other that's open; only one menu is open at a time. The
+      // document-level outside-click/Escape listener is registered once
+      // (guarded by a module flag) since renderUsers re-runs on every reload.
+      list.querySelectorAll('.kebab-btn').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const menu = btn.parentElement.querySelector('.kebab-menu');
+          const isOpen = !menu.classList.contains('hidden');
+          closeAllUserMenus();
+          if (!isOpen) {
+            menu.classList.remove('hidden');
+            btn.setAttribute('aria-expanded', 'true');
+          }
+        });
+      });
+    }
+
+    // Close every open per-row actions menu. Safe to call when none are open.
+    function closeAllUserMenus() {
+      document.querySelectorAll('.kebab-menu').forEach((m) => m.classList.add('hidden'));
+      document.querySelectorAll('.kebab-btn').forEach((b) => b.setAttribute('aria-expanded', 'false'));
+    }
+
+    // Register the global close-on-outside-click / Escape handlers exactly
+    // once — renderUsers rebuilds the rows on every reload, so binding here
+    // (not per row) avoids stacking duplicate listeners.
+    if (!window.__userMenusWired) {
+      window.__userMenusWired = true;
+      document.addEventListener('click', (e) => {
+        if (!e.target.closest('.user-actions')) closeAllUserMenus();
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeAllUserMenus();
       });
     }
 

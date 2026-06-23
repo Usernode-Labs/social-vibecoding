@@ -1763,21 +1763,26 @@ async function seedStagingAppQuotaUsers(pool) {
 
   try {
     // CAN-create and CANNOT-create fixture users. Sentinel passwords mean
-    // these accounts can never log in interactively.
+    // these accounts can never log in interactively. The third account has a
+    // deliberately long username (#424 follow-up) so the admin Users list's
+    // full-username rendering (no ellipsis, wraps cleanly) is verifiable in a
+    // staging preview — cloned prod usernames may all be short.
     await pool.query(
       `INSERT INTO users (id, username, password, app_quota)
        VALUES
          (900020, 'staging-demo-quota-ok',   '!staging-fixture-no-login!', 5),
-         (900021, 'staging-demo-quota-zero', '!staging-fixture-no-login!', 0)
+         (900021, 'staging-demo-quota-zero', '!staging-fixture-no-login!', 0),
+         (900024, 'staging-demo-very-long-username-overflow-check-0000000000', '!staging-fixture-no-login!', 3)
        ON CONFLICT (id) DO NOTHING`
     );
 
-    // Pin the three quotas explicitly so reboots keep the intended states
-    // even if a tester edited them, and so staging-demo-user lands "at
-    // limit" (quota 1, owns the 1 live demo app from seedStagingDemoAppCard).
+    // Pin the quotas explicitly so reboots keep the intended states even if a
+    // tester edited them, and so staging-demo-user lands "at limit" (quota 1,
+    // owns the 1 live demo app from seedStagingDemoAppCard).
     await pool.query('UPDATE users SET app_quota = 1 WHERE id = 900001');
     await pool.query('UPDATE users SET app_quota = 5 WHERE id = 900020');
     await pool.query('UPDATE users SET app_quota = 0 WHERE id = 900021');
+    await pool.query('UPDATE users SET app_quota = 3 WHERE id = 900024');
 
     log.info('db', 'Staging app-quota fixtures seeded');
   } catch (err) {
