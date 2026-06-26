@@ -1444,6 +1444,9 @@ const DevChat = {
       case 'staging_ready':
         DevChat._removeSpinner();
         DevChat._deactivateLastStatus();
+        // #439: a replayed staging_ready may be resolving an on-demand
+        // Preview-click rebuild — open the new URL if its loader is pending.
+        AppView.onStagingRebuildResult(sessionId, { url: data.url });
         DevChat.messages.push({ role: 'system', content: 'Staging deployed!', stagingUrl: data.url, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8) });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
@@ -1457,6 +1460,8 @@ const DevChat = {
       case 'staging_failed':
         DevChat._removeSpinner();
         DevChat._deactivateLastStatus();
+        // #439: surface a failed on-demand rebuild in the preview loader.
+        AppView.onStagingRebuildResult(sessionId, { failed: true, error: data.error });
         DevChat.messages.push({
           role: 'system',
           content: `Staging build failed: ${data.error || 'unknown error'}`,
@@ -2109,7 +2114,16 @@ const DevChat = {
     const testing = (s.testing_md || s.testing_path)
       ? { md: s.testing_md || null, path: s.testing_path || null }
       : null;
-    AppView.swapToStaging(url, testing, { jump: !!jump });
+    // #439: route through ensure-then-open so a preview torn down while the
+    // user was away (idle GC, lost container) rebuilds on click. Prefer the
+    // session's live staging_url over the (possibly stale) message URL as
+    // the fallback for the already-live case. With no session id we can't
+    // ensure — fall back to the legacy direct open.
+    if (s.id) {
+      AppView.ensureStaging(s.id, s.staging_url || url, testing, { jump: !!jump });
+    } else {
+      AppView.swapToStaging(url, testing, { jump: !!jump });
+    }
   },
 
   async promotePR() {
@@ -2326,45 +2340,41 @@ const DevChat = {
           // clicking it lands on a 502/blank page. Disable it instead, with a
           // tooltip pointing the user at the now-live app.
           const previewGone = !!session && (session.status === 'merged' || session.status === 'merging' || !!session.merged_at);
-          // A usable preview exists only when we have a URL and it hasn't been
-          // torn down by a merge. Otherwise (staging failed, or preview gone)
-          // the Preview button renders disabled.
-          const hasPreview = !!msg.stagingUrl && !previewGone;
+          // #439: the Preview button is ACTIVE whenever this card represents
+          // reviewable work that isn't merged. Clicking always routes through
+          // DevChat.previewStaging → ensure-staging, which opens a live
+          // preview as-is OR rebuilds a torn-down one on demand (idle GC /
+          // lost container) — no more dead links or "proposing will rebuild
+          // it" dead-ends. It renders disabled only once the change is merged
+          // (previewGone), when the preview is intentionally gone and the
+          // change is live in the app.
+          const canPreview = !previewGone;
+          // Best-known URL handed to the opener as a fallback. ensure-staging
+          // keys off the session id and prefers the session's live
+          // staging_url, so this is only used for the already-live fast path;
+          // prefer the session row over the (possibly stale) message URL.
+          const liveUrl = (session && session.staging_url) || msg.stagingUrl || '';
           // #127: bot-emitted testing guidance lives on the session row
           // (testing_md / testing_path). When present, offer a "Test this
           // change" button that opens the preview at the deep link with the
           // instructions panel showing. The markdown is looked up at click
           // time (DevChat.previewStaging) — never inlined in the attribute.
-          // Only meaningful when a live preview exists to open.
           const hasTesting = !!(session?.testing_md || session?.testing_path);
-          // Active Test button when a live preview exists; the existing
-          // disabled "Test this change" when the preview was torn down by a
-          // merge (previewGone); nothing when staging simply failed to build
-          // (no URL to test — the missing-preview note covers that case).
-          const testBtn = !hasTesting ? '' : (hasPreview
-            ? `<button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.previewStaging('${msg.stagingUrl}', true)">Test this change</button>`
-            : (previewGone
-              ? `<button class="dc-pr-btn dc-pr-btn-preview" disabled title="Preview removed after merge — this change is now live in the app">Test this change</button>`
-              : ''));
-          // Disabled-Preview note when no live preview. Distinguish the two
-          // causes: a merge tore it down (now live) vs. the build failed (it
-          // rebuilds on propose). For the failure case, surface the missing
-          // secret keys when describeStagingFailure flagged them.
-          const missingKeys = Array.isArray(msg.stagingMissingKeys) ? msg.stagingMissingKeys.filter(Boolean) : [];
-          const missingHint = missingKeys.length
-            ? ` Missing secret${missingKeys.length > 1 ? 's' : ''}: ${escapeHtml(missingKeys.join(', '))}.`
-            : '';
-          const previewBtnTitle = previewGone
-            ? 'Preview removed after merge — this change is now live in the app'
-            : `Preview unavailable — proposing will rebuild it.${missingHint}`;
-          const previewBtnHtml = hasPreview
-            ? `<button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.previewStaging('${msg.stagingUrl}', false)">Preview staging</button>`
+          // Active Test button whenever a preview can be opened/rebuilt; the
+          // disabled "Test this change" only once the merge tore it down.
+          const testBtn = !hasTesting ? '' : (canPreview
+            ? `<button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.previewStaging('${liveUrl}', true)">Test this change</button>`
+            : `<button class="dc-pr-btn dc-pr-btn-preview" disabled title="Preview removed after merge — this change is now live in the app">Test this change</button>`);
+          // Disabled tooltip only applies to the merged case now — a missing/
+          // failed-build preview is rebuilt on click and surfaces any reason
+          // (missing secret, etc.) in the preview loader, not here.
+          const previewBtnTitle = 'Preview removed after merge — this change is now live in the app';
+          const previewBtnHtml = canPreview
+            ? `<button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.previewStaging('${liveUrl}', false)">Preview staging</button>`
             : `<button class="dc-pr-btn dc-pr-btn-preview" disabled title="${escapeHtml(previewBtnTitle)}">Preview staging</button>`;
-          // Inline note explaining the disabled preview on a staging-failure
-          // card (not on a post-merge card — that one's self-explanatory).
-          const previewNote = (!hasPreview && !previewGone)
-            ? `<div class="dc-pr-card-note" style="font-size:11px;color:var(--text-muted);margin-top:4px">Preview unavailable — proposing will rebuild it.${missingHint}</div>`
-            : '';
+          // #439: no inline "proposing will rebuild it" note anymore — the
+          // Preview button itself rebuilds on click.
+          const previewNote = '';
           // PR link prefers the session row, falling back to the marker the
           // message carries (so a rehydrated/cloned failure card still links
           // out even before the session refetch lands).

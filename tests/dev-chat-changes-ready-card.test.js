@@ -82,7 +82,7 @@ const activeSession = (over) => ({
   id: 7, status: 'active', pr_url: null, pr_number: null, ...over,
 });
 
-test('changesReady WITHOUT stagingUrl renders the card with Propose + a disabled Preview', () => {
+test('changesReady WITHOUT stagingUrl renders the card with Propose + an ACTIVE (rebuild-on-click) Preview (#439)', () => {
   const { render } = makeDevChat();
   const html = render([
     {
@@ -95,12 +95,30 @@ test('changesReady WITHOUT stagingUrl renders the card with Propose + a disabled
 
   assert.match(html, /dc-pr-card/, 'the Changes ready card renders');
   assert.match(html, /Propose to group/, 'Propose to group button present');
-  // Preview button is present but disabled (no live URL to open).
-  assert.match(html, /disabled[^>]*>Preview staging</, 'Preview staging is disabled');
-  assert.doesNotMatch(html, /previewStaging\(/, 'no live preview click handler');
-  // Missing-secret hint surfaces in the disabled note.
-  assert.match(html, /EXAMPLE_KEY/, 'missing-secret hint surfaced');
-  assert.match(html, /proposing will rebuild it/i, 'explains proposing rebuilds the preview');
+  // #439: the Preview button is now ACTIVE — clicking it triggers an
+  // on-demand rebuild rather than being a disabled "proposing will rebuild
+  // it" dead-end. The fallback URL is empty (no live/message URL yet).
+  assert.doesNotMatch(html, /disabled[^>]*>Preview staging</, 'Preview staging is NOT disabled');
+  assert.match(html, /previewStaging\('', false\)/, 'Preview wired to rebuild-on-click');
+  // The old inline "proposing will rebuild it" note is gone — any failure
+  // reason now surfaces in the preview loader on click instead.
+  assert.doesNotMatch(html, /proposing will rebuild it/i, 'no stale disabled note');
+});
+
+test('a merged (previewGone) card keeps Preview disabled with the now-live tooltip (#439)', () => {
+  const { render } = makeDevChat();
+  const html = render([
+    {
+      role: 'system', content: 'Staging deployed!',
+      changesReady: true, stagingUrl: 'https://preview.example.org',
+      _slug: 'aaa222',
+    },
+  ], activeSession({ status: 'merged', merged_at: '2026-06-26T00:00:00Z' }));
+
+  assert.match(html, /dc-pr-card/, 'card still renders post-merge');
+  assert.match(html, /disabled[^>]*>Preview staging</, 'Preview is disabled once merged');
+  assert.match(html, /now live in the app/i, 'tooltip explains the change is now live');
+  assert.doesNotMatch(html, /previewStaging\(/, 'no rebuild handler on a merged card');
 });
 
 test('stagingUrl renders the FULL card with a live Preview + Propose', () => {
