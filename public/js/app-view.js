@@ -824,6 +824,16 @@ const AppView = {
       title="Ask AI about this proposal (private to you)"><span aria-hidden="true">✨</span> Ask AI</button>`;
   },
 
+  // #404: a card's action row. Takes a flat, already-ordered array of
+  // button-HTML strings, drops falsy entries, and wraps the rest in one
+  // consistent, evenly-gapped inline row (.gc-card-actions). Every card type
+  // uses this so the whole Dev list lines up the same way. Returns '' when
+  // there's nothing to show, so callers can drop the row entirely.
+  _cardActionsHtml(buttons) {
+    const inner = (buttons || []).filter(Boolean).join('');
+    return inner ? `<div class="gc-card-actions">${inner}</div>` : '';
+  },
+
   // Open the private read-only advisor for a card's proposal, resolving
   // the row from the in-memory promoted/merged lists (same shape the
   // topic head passes to ProposalDiscuss.open).
@@ -2150,12 +2160,12 @@ const AppView = {
       ? `<template class="usn-visuals-tpl">${visualTiles}</template><div class="usn-visuals-body">${visualsOpen ? visualTiles : ''}</div>`
       : '';
 
-    // Merged proposals (topic-view fallback) drop the live vote buttons —
-    // the vote is settled; kudos stays open.
-    const actions = (isMerged
-      ? [kudosBtn, sessionBtn, askAiBtn, visualsBtn]
-      : [AppView.voteButtonsHtml(pr), kudosBtn, sessionBtn, archiveBtn, askAiBtn, visualsBtn]
-    ).filter(Boolean).join('');
+    // #404: all actions inline on one consistent row. Merged proposals
+    // (topic-view fallback) drop the live vote buttons — the vote is settled;
+    // kudos stays open.
+    const actions = isMerged
+      ? AppView._cardActionsHtml([kudosBtn, sessionBtn, askAiBtn, visualsBtn])
+      : AppView._cardActionsHtml([AppView.voteButtonsHtml(pr), kudosBtn, sessionBtn, archiveBtn, askAiBtn, visualsBtn]);
 
     return `
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}"${visualTiles ? ' data-visuals-scope="1"' : ''}${noNav ? '' : ` data-proposal-row="${pr.id}" title="Open this proposal's discussion"`}>
@@ -2174,7 +2184,7 @@ const AppView = {
             ${AppView._attrChipsHtml('proposal', pr.id, pr, { readonly: isMerged })}
             ${AppView._devChatBadge(chatN)}
           </div>
-          ${actions ? `<div class="flex flex-wrap items-center gap-1.5 mt-1.5">${actions}</div>` : ''}
+          ${actions}
           ${visualsBlock}
         </div>
         ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
@@ -2388,12 +2398,7 @@ const AppView = {
             ${tallyPill}
             ${AppView._devChatBadge(govChatN)}
           </div>
-          <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
-            ${yesBtn}
-            ${noBtn}
-            ${adminBtn}
-            ${withdrawBtn}
-          </div>
+          ${AppView._cardActionsHtml([yesBtn, noBtn, adminBtn, withdrawBtn])}
         </div>
         ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
       </div>`;
@@ -3039,7 +3044,8 @@ const AppView = {
     // independent of the headless Generate-proposal path below — both can
     // show on the same row. The viewer's existing session is still reachable
     // from the Dev Chat tab.
-    const createBtn = issue.myPrSessionId
+    const hasMySession = !!issue.myPrSessionId;
+    const createBtn = hasMySession
       ? `<button class="gc-vote-btn" title="Start another dev chat for this issue" onclick="AppView.createPrForIssue(${n})">Create new proposal</button>`
       : `<button class="gc-vote-btn" title="Start a dev chat to solve this issue" onclick="AppView.createPrForIssue(${n})">Create proposal</button>`;
     // #155: headless auto-session button. Four states driven by the
@@ -3130,11 +3136,7 @@ const AppView = {
             ${AppView._attrChipsHtml('issue', n, issue)}
             ${AppView._devChatBadge(issue.chatCount)}
           </div>
-          <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
-            ${kudosBtn}
-            ${createBtn}
-            ${autoBtn}
-          </div>
+          ${AppView._cardActionsHtml([kudosBtn, createBtn, autoBtn])}
         </div>
         ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
       </div>`;
@@ -3310,10 +3312,7 @@ const AppView = {
       const linkHref = pr.revert_pr_url || '#';
       undoUI = `<a href="${linkHref}" target="_blank" class="text-xs text-amber-500 hover:text-amber-400 font-medium">${label}</a>`;
     } else {
-      undoUI = `
-        <button class="gc-vote-btn gc-vote-btn-undo"
-          title="Open a revert PR for this merge. It still needs a merge vote to land."
-          onclick="AppView.undoPr(${pr.id})">Undo</button>`;
+      undoUI = `<button class="gc-vote-btn gc-vote-btn-undo" title="Open a revert PR for this merge. It still needs a merge vote to land." onclick="AppView.undoPr(${pr.id})">Undo</button>`;
     }
 
     return `
@@ -3329,12 +3328,7 @@ const AppView = {
               ${AppView._attrChipsHtml('proposal', pr.id, pr, { readonly: true })}
               ${AppView._devChatBadge(parseInt(pr.chat_count) || 0)}
             </div>
-            <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
-              ${AppView.voteButtonsHtml(pr, { collapseVoted: true })}
-              ${undoUI}
-              ${kudosBtn}
-              ${askAiBtn}
-            </div>
+            ${AppView._cardActionsHtml([AppView.voteButtonsHtml(pr, { collapseVoted: true }), undoUI, kudosBtn, askAiBtn])}
           </div>
           ${AppView.DEV_CARD_CHEVRON}
         </div>`;
@@ -4082,8 +4076,7 @@ const AppView = {
     // #127: stash the PR's testing guidance in the by-session registry so
     // the Preview onclick passes it to the overlay (which renders its own
     // "Test this change" button + instructions panel) without the markdown
-    // ever transiting an HTML attribute. No new button here — the row is
-    // already dense.
+    // ever transiting an HTML attribute.
     if (pr.testing_md || pr.testing_path) {
       AppView._sessionTesting[pr.id] = { md: pr.testing_md || null, path: pr.testing_path || null };
     } else {

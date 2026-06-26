@@ -769,6 +769,20 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .gc-vote-voted-box-yes { color: #22c55e; }
 .gc-vote-voted-box-no { color: #ef4444; }
 
+/* #404: a card's action row. Every issue / proposal / governance / merged
+ * card routes its buttons through this one container so they all line up the
+ * same way — buttons stay inline at their natural width, with a single uniform
+ * gap both between buttons and between wrapped rows (so a busy card wraps onto
+ * an evenly-spaced second row instead of a scattered jumble). Pure layout; the
+ * per-button .gc-vote-btn* styles are unchanged. */
+.gc-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
 /* Inline vote buttons rendered on a "promoted / voted" group-chat
  * activity row. Sits right after the row text; wraps onto its own line
  * on narrow screens. Empty (no buttons) once the PR leaves the votable
