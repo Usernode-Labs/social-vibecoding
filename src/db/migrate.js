@@ -54,6 +54,7 @@ async function migrate(config) {
   await seedStagingGameFixtures(pool);
   await seedStagingChatEditFixtures(pool, config);
   await seedStagingLlmUsage(pool);
+  await seedStagingSpendDistribution(pool);
   await seedStagingCapReached(pool, config);
   await seedStagingAppCapApps(pool, config);
   await seedStagingSystemTokenUsage(pool);
@@ -2154,6 +2155,100 @@ async function seedStagingLlmUsage(pool) {
   }
 
   log.info('db', 'Staging llm_usage fixtures seeded', { users: users.length });
+}
+
+// Daily spend distribution fixtures (the seven-bucket stacked chart on
+// /dashboard). The chart counts users per platform-spend bucket per day,
+// with the $20+ tier split into "capped" (no usable own key) vs "kept going
+// on own key". Two staging facts force a dedicated seed:
+//   1. llm_usage is staging:private (schema-only clone → empty), so there is
+//      no per-day spend to bucket at all without seeding it here.
+//   2. users.anthropic_key_enc is a staging:private COLUMN (scrubbed to NULL
+//      on clone), so the "has own key" branch would never populate from real
+//      users — the $20+/own-key segment would always be empty.
+// We create obviously-fake users (staging-demo-spend-*) at fixed high ids,
+// give a subset a non-null anthropic_key_enc sentinel so the own-key branch
+// lights up, and write 30 days of llm_usage spanning every bucket. A couple
+// are is_admin so the "Include admin users" toggle visibly changes the bars.
+// Idempotent (fixed ids + ON CONFLICT DO NOTHING); strict no-op outside
+// staging; never references real users.
+async function seedStagingSpendDistribution(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    // 10 fake users. `tier` decides the daily platform-spend band each lands
+    // in; `key` marks who has a configured own key (drives the $20+ split);
+    // two are admins. Spend is varied by day in SQL so the stacks shift.
+    //   tier 0 → no spend (stays in the $0 bucket)
+    //   tier 1 → $0.01–$5     tier 2 → $5–$10     tier 3 → $10–$15
+    //   tier 4 → $15–$19.99
+    //   tier 5 → $20+ (capped — no own key)
+    //   tier 6 → $20+ (own key)
+    const fixtures = [
+      { id: 9300001, name: 'staging-demo-spend-zero-a',   tier: 0, key: false, admin: false },
+      { id: 9300002, name: 'staging-demo-spend-zero-b',   tier: 0, key: false, admin: false },
+      { id: 9300003, name: 'staging-demo-spend-low',      tier: 1, key: false, admin: false },
+      { id: 9300004, name: 'staging-demo-spend-mid',      tier: 2, key: false, admin: false },
+      { id: 9300005, name: 'staging-demo-spend-high',     tier: 3, key: false, admin: false },
+      { id: 9300006, name: 'staging-demo-spend-higher',   tier: 4, key: false, admin: false },
+      { id: 9300007, name: 'staging-demo-spend-capped',   tier: 5, key: false, admin: false },
+      { id: 9300008, name: 'staging-demo-spend-ownkey',   tier: 6, key: true,  admin: false },
+      { id: 9300009, name: 'staging-demo-spend-admin-cap',tier: 5, key: false, admin: true },
+      { id: 9300010, name: 'staging-demo-spend-admin-key',tier: 6, key: true,  admin: true },
+    ];
+
+    for (const f of fixtures) {
+      // Sentinel password → never an interactive login. Sentinel
+      // anthropic_key_enc (non-null) → "has own key" without a real key;
+      // the chart only tests IS NOT NULL, never decrypts it.
+      await pool.query(
+        `INSERT INTO users (id, username, password, is_admin, anthropic_key_enc, anthropic_key_last4)
+         VALUES ($1, $2, '!staging-fixture-no-login!', $3, $4, $5)
+         ON CONFLICT (id) DO NOTHING`,
+        [f.id, f.name, f.admin,
+         f.key ? 'v1:staging-demo-fake-key' : null,
+         f.key ? 'demo' : null]
+      );
+      // Pin role + key on reboot so a tester flipping them doesn't drift the
+      // intended buckets across container rebuilds.
+      await pool.query(
+        `UPDATE users SET is_admin = $2, anthropic_key_enc = $3, anthropic_key_last4 = $4 WHERE id = $1`,
+        [f.id, f.admin,
+         f.key ? 'v1:staging-demo-fake-key' : null,
+         f.key ? 'demo' : null]
+      );
+      // Backdate signup so every fixture user counts toward the $0
+      // (registered-as-of-day) baseline across the whole 30-day window.
+      await pool.query(
+        `UPDATE users SET created_at = NOW() - INTERVAL '45 days'
+          WHERE id = $1 AND created_at > NOW() - INTERVAL '45 days'`,
+        [f.id]
+      );
+
+      if (f.tier === 0) continue; // no spend rows → stays in the $0 bucket
+
+      // Cents/day for this tier, kept safely inside the bucket bounds and
+      // nudged by the day index (g) so the stacked heights vary day to day.
+      // tier 5/6 → $20+ ; only the own-key tier writes byok_cost_cents.
+      const base = { 1: 250, 2: 750, 3: 1250, 4: 1750, 5: 2200, 6: 2500 }[f.tier];
+      const byokExpr = f.tier === 6 ? '(800 + (g % 5) * 40)' : '0';
+      await pool.query(
+        `INSERT INTO llm_usage (user_id, date, total_cost_cents, byok_cost_cents)
+         SELECT $1,
+                CURRENT_DATE - g,
+                LEAST($2 + (g % 5) * 10, $3)::numeric(10,4),
+                ${byokExpr}::numeric(10,4)
+           FROM generate_series(0, 29) g
+         ON CONFLICT (user_id, date) DO NOTHING`,
+        // Cap the jitter so a tier-4 user never crosses $20 into the top tier.
+        [f.id, base, f.tier === 4 ? 1999 : base + 40]
+      );
+    }
+
+    log.info('db', 'Staging spend-distribution fixtures seeded', { users: fixtures.length });
+  } catch (err) {
+    log.warn('db', 'Staging spend-distribution seeding failed', { message: err.message });
+  }
 }
 
 // #370: make the token/spend cap reproducible in a staging preview so a

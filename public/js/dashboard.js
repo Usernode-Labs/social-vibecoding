@@ -109,6 +109,7 @@ const INFO = {
   'top-users': 'The 30 most prolific builders by lifetime dev sessions started, highest on the left. Hover a bar for the per-outcome breakdown (PRs produced, promoted, voted, merged).',
   'spend-by-builder': 'The 30 biggest LLM spenders, highest on the left. The toggle re-ranks by <b>Platform key</b> spend, <b>User key</b> (BYOK) spend, or <b>Both</b>. Hover a bar for the full breakdown.',
   kudos: 'Per ISO week, how many users gave 0–5 kudos (everyone gets a budget of 5/week). The 0 bucket is registered users who gave none that week, making this a participation view rather than a raw count.',
+  'spend-distribution': 'Per day, how many users\' platform-key AI spend (what the daily caps track) fell into each dollar bucket. The <b>$0</b> bucket is every registered user (as of that day) with no platform spend. The top tier splits <b>$20+ capped</b> (heavy spenders with no usable own key — blocked at the cap) from <b>$20+ own key</b> (heavy spenders who had a personal Anthropic key configured, or spent on it that day, so could keep going). The "has own key" signal is a current snapshot corrected by that day\'s own-key spend, so past-day attribution is approximate.',
 };
 
 // Per-card Overview definitions (#341). Keyed by a stable card id, mirroring
@@ -635,6 +636,91 @@ function renderKudos(d) {
   attachTooltip(el);
 }
 
+// ── Daily spend distribution (last 30 days) ───────────────────
+// One stacked bar per day. Segments = number of users whose platform-key
+// spend that day fell into a dollar bucket. The $0 bucket (drawn at the
+// bottom, muted) is registered users with no platform spend; the paid
+// buckets stack above in ascending spend order, and the $20+ tier splits
+// into "capped" (red, no usable own key) and "kept going on own key"
+// (violet) at the very top. Mirrors renderKudos: a full-height transparent
+// hover overlay per column makes every day hoverable.
+let lastSpendDistribution = null;
+
+function renderSpendDistribution() {
+  const d = lastSpendDistribution || {};
+  const days = d.days || [];
+  const el = document.getElementById('spend-distribution');
+  if (!el) return;
+  if (!days.length) {
+    el.innerHTML = '<p class="text-sm text-zinc-500">Not enough data yet.</p>';
+    return;
+  }
+  // b0 first (bottom, muted), paid buckets ascending, $20+ split at the top:
+  // capped (red) then kept-going-on-own-key (violet).
+  const segs = [
+    { key: 'b0', label: '$0', color: '#3f3f5a' },
+    { key: 'b1', label: '$0.01–$5', color: '#34d399' },
+    { key: 'b2', label: '$5–$10', color: '#a3e635' },
+    { key: 'b3', label: '$10–$15', color: '#fbbf24' },
+    { key: 'b4', label: '$15–$19.99', color: '#fb923c' },
+    { key: 'b5', label: '$20+ capped', color: '#ef4444' },
+    { key: 'b6', label: '$20+ own key', color: '#a855f7' },
+  ];
+  const totals = days.map((x) => segs.reduce((a, s) => a + (Number(x[s.key]) || 0), 0));
+  const max = Math.max(1, ...totals);
+  const W = 640, H = 180, topPad = 14, botPad = 18, n = days.length;
+  const plot = H - topPad - botPad;
+  const bw = W / n;
+  const grid = (() => {
+    let out = '';
+    for (let i = 0; i <= 4; i++) {
+      const y = (topPad + (i / 4) * plot).toFixed(1);
+      out += `<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="currentColor" stroke-opacity="0.12" stroke-width="0.5" />`;
+    }
+    return out;
+  })();
+  const labels = days.map((x) => weekLabel(x.day));
+  const isCurrent = (i) => i === days.length - 1;
+  const bars = days.map((x, i) => {
+    let acc = 0; // running height from baseline, in value units
+    const barX = i * bw;
+    const segRects = segs.map((s) => {
+      const v = Number(x[s.key]) || 0;
+      if (v <= 0) return '';
+      const h = (v / max) * plot;
+      const yBottom = topPad + plot - (acc / max) * plot;
+      acc += v;
+      const y = yBottom - h;
+      return `<rect x="${(barX + 1).toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(1, bw - 2).toFixed(1)}" height="${h.toFixed(1)}" fill="${s.color}"></rect>`;
+    }).join('');
+    // Per-day breakdown tooltip covering the full column height.
+    const row = (label, color, v) =>
+      `<div class="flex justify-between gap-3"><span class="text-zinc-400"><span class="inline-block w-2 h-2 rounded-sm align-middle mr-1" style="background:${color}"></span>${label}</span><span>${fmtInt(v)}</span></div>`;
+    const tipId = `spend-dist-${i}`;
+    tipStore[tipId] = `<div class="font-semibold mb-1">${esc(labels[i])}${isCurrent(i) ? ' (today)' : ''}</div>
+      <div class="mb-1">${fmtInt(totals[i])} user${totals[i] === 1 ? '' : 's'}</div>
+      <div class="text-[11px] leading-tight">
+        ${segs.slice().reverse().map((s) => row(s.label, s.color, Number(x[s.key]) || 0)).join('')}
+      </div>`;
+    const overlay = `<rect class="dc-hover" x="${barX.toFixed(1)}" y="${topPad}" width="${bw.toFixed(1)}" height="${plot}"
+      fill="#8b5cf6" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></rect>`;
+    return segRects + overlay;
+  }).join('');
+  const legend = segs.slice().reverse().map((s) =>
+    `<span class="inline-flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm" style="background:${s.color}"></span>${s.label}</span>`
+  ).join('');
+  el.innerHTML = `
+    <div class="flex flex-wrap items-center gap-3 text-xs text-zinc-400 mb-2">${legend}</div>
+    <svg viewBox="0 0 ${W} ${H}" class="w-full text-zinc-500" preserveAspectRatio="none" style="height:180px">
+      ${grid}${bars}
+    </svg>
+    <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
+      <span>${esc(labels[0] || '')}</span>
+      <span>${esc(labels[labels.length - 1] || '')} (today)</span>
+    </div>`;
+  attachTooltip(el);
+}
+
 // ── Daily spend (last 30 days) ────────────────────────────────
 // One vertical bar per calendar day. Each bar carries a full-height
 // transparent hover overlay (data-tip-id) so even $0 days are hoverable
@@ -978,7 +1064,7 @@ async function init() {
 // Fetch every analytics endpoint (with the current includeAdmins flag)
 // and (re)render. Shared by first load and the admin-checkbox toggle.
 async function loadAll() {
-  const [overview, spend, growth, retention, engagement, topUsers, kudos, spendByBuilder, limits] =
+  const [overview, spend, growth, retention, engagement, topUsers, kudos, spendByBuilder, spendDistribution, limits] =
     await Promise.all([
       getJSON(withAdmins('/api/admin/analytics/overview')),
       getJSON(withAdmins('/api/admin/analytics/spend')),
@@ -988,6 +1074,7 @@ async function loadAll() {
       getJSON(withAdmins('/api/admin/analytics/top-users')),
       getJSON(withAdmins('/api/admin/analytics/kudos')),
       getJSON(withAdmins('/api/admin/analytics/spend-by-builder')),
+      getJSON(withAdmins('/api/admin/analytics/spend-distribution')),
       // #361: system-token cap for the "today / cap" readout. Tolerate a
       // failure (non-admin-write tokens still GET it) — default stays 2500.
       getJSON('/api/admin/limits').catch(() => null),
@@ -1006,6 +1093,8 @@ async function loadAll() {
   renderKudos(kudos);
   lastSpendByBuilder = spendByBuilder;
   renderSpendByBuilder();
+  lastSpendDistribution = spendDistribution;
+  renderSpendDistribution();
   await loadFunnels();
 }
 

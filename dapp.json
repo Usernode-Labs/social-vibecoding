@@ -81,6 +81,11 @@
       "name": "Admin Users list renders",
       "path": "/admin",
       "expectText": "Users"
+    },
+    {
+      "name": "Dashboard spend distribution chart renders",
+      "path": "/dashboard",
+      "expectSelector": "#spend-distribution"
     }
   ]
 }
