@@ -13,6 +13,7 @@ const { chatRoutes } = require('./src/routes/chat');
 const { sessionRoutes } = require('./src/routes/sessions');
 const { voteRoutes } = require('./src/routes/votes');
 const { kudosRoutes } = require('./src/routes/kudos');
+const { publicApiRoutes } = require('./src/routes/public-api');
 const { issueRoutes } = require('./src/routes/issues');
 const { adminRoutes } = require('./src/routes/admin');
 const { dashboardRoutes } = require('./src/routes/dashboard');
@@ -293,6 +294,10 @@ app.use(chatRoutes(config));
 app.use(sessionRoutes(config));
 app.use(voteRoutes(config));
 app.use(kudosRoutes(config));
+// Public read-only apps + contributors API. Mounted after authMiddleware
+// like kudosRoutes; reachable anonymously via the `/api/public/` prefix in
+// PUBLIC_PATHS (src/middleware/auth.js).
+app.use(publicApiRoutes(config));
 app.use(issueRoutes(config));
 app.use(adminRoutes(config));
 app.use(dashboardRoutes(config));

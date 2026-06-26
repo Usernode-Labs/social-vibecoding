@@ -40,6 +40,7 @@ async function migrate(config) {
   await seedStagingAppQuotaUsers(pool);
   await seedStagingViewOnlyAdmin(pool);
   await seedStagingWalletUsers(pool);
+  await seedStagingPublicApiContributors(pool);
   await seedStagingVisuals(pool);
   await seedStagingLeaderboardProfile(pool);
   await seedStagingQaSession(pool, config);
@@ -1855,6 +1856,74 @@ async function seedStagingWalletUsers(pool) {
     log.info('db', 'Staging wallet fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging wallet fixtures seeding failed', { message: err.message });
+  }
+}
+
+// Fixtures for the public read-only apps + contributors API
+// (src/routes/public-api.js, GET /api/public/apps). The endpoint lists
+// view-public apps with an embedded contributor list (creator + accepted
+// members + merged-PR authors). `apps`, `users`, and `app_collaborators`
+// are NOT staging:private (they survive cloning), but `chat_sessions` IS
+// (schema-only, always empty in a clone), so the merged-PR contributor
+// branch has nothing to surface without seeding. Seed a self-contained set
+// in the 9007x id range so the route can be exercised deterministically:
+//   - 3 obviously-fake users: a creator + member with linked wallets, and a
+//     merged-PR author with NO wallet (so the null-address path shows).
+//   - 2 view-public apps, one collab-public and one collab-private, so both
+//     "build" visibility statuses appear in the list (both are listed,
+//     since only VIEW visibility gates listing).
+//   - app_collaborators member rows + a merged chat_sessions row, so the
+//     contributor union spans all three sources (and the merged author is
+//     NOT a member — proving the union goes beyond membership).
+// Idempotent via fixed ids + ON CONFLICT DO NOTHING; sentinel passwords mean
+// none can log in; strict no-op outside staging.
+async function seedStagingPublicApiContributors(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password, usernode_pubkey)
+       VALUES
+         (900070, 'staging-demo-api-creator', '!staging-fixture-no-login!', 'ut1stagingdemoapicreator0000000000000001'),
+         (900071, 'staging-demo-api-merger',  '!staging-fixture-no-login!', NULL),
+         (900072, 'staging-demo-api-member',  '!staging-fixture-no-login!', 'ut1stagingdemoapimember00000000000000001')
+       ON CONFLICT (id) DO NOTHING`
+    );
+    // Two view-public apps: one anyone can build (collab public), one
+    // invite-only to build (collab private). Both appear in the public list
+    // because only view_visibility gates listing.
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by)
+       VALUES
+         (900070, 'Staging demo public API app', 'staging-demo-public-api-app', 'running',
+          'public',  'public', 900070),
+         (900071, 'Staging demo collab-private app', 'staging-demo-public-api-collab-private', 'running',
+          'private', 'public', 900070)
+       ON CONFLICT (id) DO NOTHING`
+    );
+    // Members: creator is a member of both (the creator-always-a-member
+    // invariant); the extra member joins the collab-public app.
+    await pool.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, invited_by, accepted_at)
+       VALUES
+         (900070, 900070, 'member', 900070, NOW()),
+         (900070, 900072, 'member', 900070, NOW()),
+         (900071, 900070, 'member', 900070, NOW())
+       ON CONFLICT (app_id, user_id) DO NOTHING`
+    );
+    // A merged proposal authored by the merger, who is NOT a member — so it
+    // surfaces ONLY via the merged-PR branch of the contributor union.
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_title, status, merged_at)
+       VALUES
+         (900070, 900070, 900071, 'staging-demo/public-api-merged-pr', 900070,
+          'Staging demo merged PR — public API contributor', 'merged', NOW())
+       ON CONFLICT (id) DO NOTHING`
+    );
+    log.info('db', 'Staging public-api contributor fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Staging public-api contributor seeding failed', { message: err.message });
   }
 }
 

@@ -19,6 +19,11 @@ const PUBLIC_PATHS = [
   // board can be linked/embedded without a session; no private data is
   // exposed (usernames + public PR titles + aggregate counts only).
   '/api/leaderboard/',
+  // Read-only public apps + contributors API (src/routes/public-api.js).
+  // Public so outside integrations can list the platform's view-public
+  // apps and who built them without an account; view-private apps and the
+  // self-app are never surfaced. Same privacy tier as the leaderboard.
+  '/api/public/',
   '/health',
   '/css/',
   '/js/',
