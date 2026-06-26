@@ -47,7 +47,7 @@ function makeRows(n) {
   return out;
 }
 
-function loadVotes({ mergedRows }) {
+function loadVotes({ mergedRows, total }) {
   const routes = [];
   const ids = {
     express: 'express',
@@ -86,6 +86,11 @@ function loadVotes({ mergedRows }) {
     getPool: () => ({
       async query(sql, params) {
         captured.calls.push({ sql, params });
+        // #433: the column-total COUNT (no `cs.` alias) — answer it before
+        // the per-row merged SELECT so the two don't collide.
+        if (/COUNT\(\*\)::int AS total/.test(sql)) {
+          return { rows: [{ total: typeof total === 'number' ? total : mergedRows.length }] };
+        }
         // Only the merged SELECT returns rows; the topic-attrs query (and
         // anything else) returns empty.
         if (/cs\.status = 'merged'/.test(sql)) return { rows: mergedRows.slice() };
@@ -200,6 +205,24 @@ test('malformed cursor is ignored — newest page, no predicate', async () => {
   assert.equal(payload.merged.length, 3);
   const mergedCall = captured.calls.find((c) => /cs\.status = 'merged'/.test(c.sql));
   assert.ok(!/\(cs\.created_at, cs\.id\) </.test(mergedCall.sql), 'no cursor predicate for bad cursor');
+});
+
+test('#433: returns a numeric `total` independent of limit and cursor', async () => {
+  // 47 merged sessions exist; the first page returns 20 rows but total=47
+  // so the Kanban Done badge can show the real count, not the page size.
+  let { routes, captured } = loadVotes({ mergedRows: makeRows(21), total: 47 });
+  let { payload } = await callMerged(routes, captured, {});
+  assert.equal(payload.merged.length, 20, 'first page still trimmed to limit');
+  assert.equal(payload.total, 47, 'total reflects the whole column, not the page');
+  const countCall = captured.calls.find((c) => /COUNT\(\*\)::int AS total/.test(c.sql));
+  assert.ok(countCall, 'a COUNT query was issued for the total');
+  assert.ok(!/\(cs\.created_at, cs\.id\) </.test(countCall.sql), 'total COUNT carries no cursor predicate');
+  assert.ok(!/LEFT JOIN/.test(countCall.sql), 'total COUNT omits the revert LEFT JOIN');
+
+  // A second page (cursor set, smaller limit) reports the SAME total.
+  ({ routes, captured } = loadVotes({ mergedRows: makeRows(5), total: 47 }));
+  ({ payload } = await callMerged(routes, captured, { before: '2026-01-30T00:00:00.000Z', before_id: '900', limit: '5' }));
+  assert.equal(payload.total, 47, 'total is stable across pages');
 });
 
 test('per-row fields survive paging', async () => {
