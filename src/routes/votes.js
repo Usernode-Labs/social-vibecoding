@@ -283,6 +283,69 @@ function stagingMockMerged() {
   ));
 }
 
+// Shared SELECT column list + FROM/JOIN block for a "merged-shaped"
+// proposal row. Used by BOTH `GET /api/apps/:slug/merged` (the paginated
+// Completed list) and `GET /api/apps/:slug/proposals/:id` (single-row
+// fetch-on-demand recovery — see app-view.js _fetchProposalById). Kept as
+// ONE fragment so the two endpoints can never drift in row shape: the FE
+// card renderer (_renderMergedCard / _renderTopicHead) depends on every
+// field below being present. Placeholders: $1 = app_id, $2 = the viewer's
+// user id (for the per-viewer my_vote / my_kudos subqueries). Callers
+// append their own WHERE / ORDER / LIMIT.
+function mergedRowSelect() {
+  return `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
+           cs.revert_of_session_id,
+           -- #381: console-error check snapshot so the warning + detail
+           -- block stay visible on a merged proposal for post-hoc review.
+           cs.console_check_state, cs.console_errors, cs.console_checked_at,
+           -- #47: checks snapshot, kept visible on merged proposals for
+           -- post-hoc review (a merged proposal passed, by the gate).
+           cs.check_state, cs.test_results, cs.checks_checked_at,
+           -- #58: the vote threshold + active-user count snapshotted at merge
+           -- time. The merged-PR pill renders against votes_required (falling
+           -- back to the live majority for legacy rows where it's NULL), and a
+           -- tooltip surfaces "needed N of M active users at merge time" when
+           -- both are present.
+           cs.votes_required,
+           cs.active_users_at_merge,
+           -- Vote tally + per-viewer vote carried through so the group-chat
+           -- activity row can keep its "x / y" pill and "You voted X" box
+           -- after the PR merges (status='merged'), rather than the controls
+           -- vanishing. Mirrors the /promoted subqueries.
+           (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') as yes_count,
+           (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'no') as no_count,
+           (SELECT vote FROM pr_votes WHERE session_id = cs.id AND user_id = $2) as my_vote,
+           -- kudos_count folds in any issue bounties AWARDED to this PR on
+           -- merge (a bounty resolves into kudos credit for the closing PR's
+           -- author), so the count matches the leaderboards. my_kudos is
+           -- likewise true if the viewer either gave a PR kudos OR pledged a
+           -- bounty that was awarded to this PR. my_kudos_direct isolates
+           -- the first source — only a direct pr_kudos row is retractable
+           -- (DELETE /api/sessions/:id/kudos), so the FE needs to know
+           -- which kind of credit it's rendering.
+           ((SELECT COUNT(*)::int FROM pr_kudos WHERE session_id = cs.id)
+             + (SELECT COUNT(*)::int FROM issue_bounties WHERE awarded_session_id = cs.id AND status = 'awarded')) as kudos_count,
+           (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)
+                 OR EXISTS(SELECT 1 FROM issue_bounties WHERE awarded_session_id = cs.id AND status = 'awarded' AND giver_user_id = $2)) as my_kudos,
+           (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)) as my_kudos_direct,
+           -- #194: per-proposal human-message count so the Completed list
+           -- renders the same 💬 badge as the active proposals (and signals
+           -- which merged proposals have a discussion worth opening). Counts
+           -- msg_type='message' only — matching the /promoted subquery — so
+           -- dual-posted lifecycle/vote system rows don't inflate the badge.
+           (SELECT COUNT(*)::int FROM chat_messages cm
+             WHERE cm.app_id = cs.app_id AND cm.thread_type = 'session' AND cm.thread_ref = cs.id
+               AND cm.msg_type = 'message') as chat_count,
+           rv.id        as revert_session_id,
+           rv.pr_number as revert_pr_number,
+           rv.pr_url    as revert_pr_url,
+           rv.status    as revert_status
+         FROM chat_sessions cs
+         JOIN users u ON cs.user_id = u.id
+         LEFT JOIN chat_sessions rv ON rv.revert_of_session_id = cs.id
+           AND rv.status IN ('promoted', 'merging', 'merged')`;
+}
+
 function voteRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -992,57 +1055,7 @@ function voteRoutes(config) {
       // (Undo is now a single direct action that opens a revert PR, so
       // there are no separate undo-vote tallies to surface.)
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
-           cs.revert_of_session_id,
-           -- #381: console-error check snapshot so the warning + detail
-           -- block stay visible on a merged proposal for post-hoc review.
-           cs.console_check_state, cs.console_errors, cs.console_checked_at,
-           -- #47: checks snapshot, kept visible on merged proposals for
-           -- post-hoc review (a merged proposal passed, by the gate).
-           cs.check_state, cs.test_results, cs.checks_checked_at,
-           -- #58: the vote threshold + active-user count snapshotted at merge
-           -- time. The merged-PR pill renders against votes_required (falling
-           -- back to the live majority for legacy rows where it's NULL), and a
-           -- tooltip surfaces "needed N of M active users at merge time" when
-           -- both are present.
-           cs.votes_required,
-           cs.active_users_at_merge,
-           -- Vote tally + per-viewer vote carried through so the group-chat
-           -- activity row can keep its "x / y" pill and "You voted X" box
-           -- after the PR merges (status='merged'), rather than the controls
-           -- vanishing. Mirrors the /promoted subqueries.
-           (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') as yes_count,
-           (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'no') as no_count,
-           (SELECT vote FROM pr_votes WHERE session_id = cs.id AND user_id = $2) as my_vote,
-           -- kudos_count folds in any issue bounties AWARDED to this PR on
-           -- merge (a bounty resolves into kudos credit for the closing PR's
-           -- author), so the count matches the leaderboards. my_kudos is
-           -- likewise true if the viewer either gave a PR kudos OR pledged a
-           -- bounty that was awarded to this PR. my_kudos_direct isolates
-           -- the first source — only a direct pr_kudos row is retractable
-           -- (DELETE /api/sessions/:id/kudos), so the FE needs to know
-           -- which kind of credit it's rendering.
-           ((SELECT COUNT(*)::int FROM pr_kudos WHERE session_id = cs.id)
-             + (SELECT COUNT(*)::int FROM issue_bounties WHERE awarded_session_id = cs.id AND status = 'awarded')) as kudos_count,
-           (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)
-                 OR EXISTS(SELECT 1 FROM issue_bounties WHERE awarded_session_id = cs.id AND status = 'awarded' AND giver_user_id = $2)) as my_kudos,
-           (SELECT EXISTS(SELECT 1 FROM pr_kudos WHERE session_id = cs.id AND giver_user_id = $2)) as my_kudos_direct,
-           -- #194: per-proposal human-message count so the Completed list
-           -- renders the same 💬 badge as the active proposals (and signals
-           -- which merged proposals have a discussion worth opening). Counts
-           -- msg_type='message' only — matching the /promoted subquery — so
-           -- dual-posted lifecycle/vote system rows don't inflate the badge.
-           (SELECT COUNT(*)::int FROM chat_messages cm
-             WHERE cm.app_id = cs.app_id AND cm.thread_type = 'session' AND cm.thread_ref = cs.id
-               AND cm.msg_type = 'message') as chat_count,
-           rv.id        as revert_session_id,
-           rv.pr_number as revert_pr_number,
-           rv.pr_url    as revert_pr_url,
-           rv.status    as revert_status
-         FROM chat_sessions cs
-         JOIN users u ON cs.user_id = u.id
-         LEFT JOIN chat_sessions rv ON rv.revert_of_session_id = cs.id
-           AND rv.status IN ('promoted', 'merging', 'merged')
+        `${mergedRowSelect()}
          WHERE cs.app_id = $1 AND cs.status = 'merged'
            ${hasCursor ? 'AND (cs.created_at, cs.id) < ($3, $4)' : ''}
          ORDER BY cs.created_at DESC, cs.id DESC
@@ -1111,6 +1124,68 @@ function voteRoutes(config) {
       res.json({ merged: rows, hasMore, total });
     } catch (err) {
       log.error('votes', 'Failed to list merged', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Single-proposal-by-id fetch — the recovery path for opening a
+  // proposal whose row isn't in the client's cached lists. The Completed
+  // list is keyset-paginated (only the first page lives in client state),
+  // so clicking / deep-linking a merged proposal beyond that page would
+  // otherwise resolve to nothing and bounce back to the dev forum. The FE
+  // (_fetchProposalById) calls this when _findTopicItem() comes up empty.
+  //
+  // Collab-gated (same as /merged and /promoted) and returns the SAME
+  // merged-shaped row via the shared mergedRowSelect() fragment, so the
+  // topic header/card renders identically whether the row came from the
+  // list or from here. Accepts promoted / merging / merged so a proposal
+  // that transitioned status between list-render and click still resolves
+  // (active rows are normally fully cached, but this stays robust).
+  router.get('/api/apps/:slug/proposals/:id', async (req, res) => {
+    try {
+      const gatedApp = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS
+      );
+      if (!gatedApp) return res.status(404).json({ error: 'App not found' });
+
+      const userId = req.user?.id || null;
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(404).json({ error: 'Proposal not found' });
+
+      const { rows } = await pool.query(
+        `${mergedRowSelect()}
+         WHERE cs.app_id = $1 AND cs.id = $3
+           AND cs.status IN ('promoted', 'merging', 'merged')
+         LIMIT 1`,
+        [gatedApp.id, userId, id]
+      );
+
+      let proposal = rows[0] || null;
+      if (proposal) {
+        // Same read-only priority + assigned-person chips the list rows carry.
+        const attrs = await topicAttrs.summarizeForTargets(
+          pool, gatedApp.id, 'proposal', [proposal.id], userId
+        );
+        const s = attrs.get(proposal.id) || topicAttrs.emptySummary();
+        proposal.priority = s.priority;
+        proposal.assignee = s.assignee;
+      }
+
+      // Staging demo mode (?demo=1): the mock merged/promoted rows aren't in
+      // the DB, so resolve a mock id straight from the generators. This lets
+      // a staging tester deep-link a mock Completed proposal that never
+      // reached the first page (ids ~9100021+) and confirm it opens on
+      // demand. Strictly a no-op in production (gated on IS_STAGING).
+      if (!proposal && IS_STAGING && req.query.demo === '1') {
+        proposal = stagingMockMerged().find((m) => m.id === id)
+          || stagingMockProposals().find((m) => m.id === id)
+          || null;
+      }
+
+      if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+      res.json({ proposal });
+    } catch (err) {
+      log.error('votes', 'Failed to get proposal by id', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
