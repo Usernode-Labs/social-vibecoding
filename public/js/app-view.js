@@ -1336,7 +1336,8 @@ const AppView = {
       const ghData = ghRes.ok ? await ghRes.json() : { issues: [] };
       const issuesData = issuesRes.ok ? await issuesRes.json() : { issues: [] };
       const promotedData = promotedRes.ok ? await promotedRes.json() : { promoted: [] };
-      const merged = mergedRes.ok ? (await mergedRes.json()).merged : [];
+      const mergedData = mergedRes.ok ? await mergedRes.json() : { merged: [], hasMore: false };
+      const merged = mergedData.merged || [];
 
       AppView._ghIssues = Array.isArray(ghData.issues) ? ghData.issues : [];
       AppView._ghIssuesMeta = {
@@ -1387,6 +1388,13 @@ const AppView = {
       };
       AppView._merged = merged;
       AppView._mergedCtx = { majority, activeUsers };
+      // #429: reset the pager state on a fresh load. _mergedHasMore drives
+      // the "Load more" footer; the cursor is the (created_at, id) of the
+      // last loaded row, used by loadMoreMerged() for keyset paging.
+      AppView._mergedHasMore = !!mergedData.hasMore;
+      AppView._mergedCursor = merged.length
+        ? { created_at: merged[merged.length - 1].created_at, id: merged[merged.length - 1].id }
+        : null;
       return true;
     } catch {
       return false;
@@ -3124,14 +3132,83 @@ const AppView = {
     }
     html += '</div>';
 
-    // Show-more / show-less footer, same styling as the Open Issues pager.
-    if (merged.length > AppView._mergedShownDefault) {
-      const label = AppView._mergedExpanded
-        ? 'Show less'
-        : `Show ${merged.length - shown} more`;
-      html += `<div class="mt-1"><button class="gc-vote-btn" onclick="AppView.toggleMergedPrs()">${label}</button></div>`;
+    // Footer pager, same styling as the Open Issues pager.
+    //   • collapsed (with more loaded rows) → "Show N more" reveals the
+    //     rest of the already-fetched page (client-side, no refetch).
+    //   • expanded, server has more pages → "Load more" fetches the next
+    //     keyset page from the server and appends it (#429).
+    //   • expanded, no more pages → "Show less" collapses back to 3.
+    const btns = [];
+    if (!AppView._mergedExpanded && merged.length > AppView._mergedShownDefault) {
+      btns.push(`<button class="gc-vote-btn" onclick="AppView.toggleMergedPrs()">Show ${merged.length - shown} more</button>`);
+    }
+    if (AppView._mergedExpanded) {
+      if (AppView._mergedHasMore) {
+        const loading = AppView._mergedLoadingMore;
+        btns.push(`<button class="gc-vote-btn" ${loading ? 'disabled' : ''} onclick="AppView.loadMoreMerged()">${loading ? 'Loading…' : 'Load more'}</button>`);
+      }
+      if (merged.length > AppView._mergedShownDefault) {
+        btns.push(`<button class="gc-vote-btn" onclick="AppView.toggleMergedPrs()">Show less</button>`);
+      }
+    }
+    if (btns.length) {
+      html += `<div class="mt-1 flex gap-2">${btns.join('')}</div>`;
     }
     return html;
+  },
+
+  // #429: fetch the next keyset page of merged PRs and append it in place.
+  // Uses the (created_at, id) cursor of the last loaded row so paging is
+  // stable even as new PRs merge at the top. Re-renders #gc-merged and
+  // re-wires kudos / Ask-AI on the freshly painted cards, mirroring the
+  // mount in loadVotePanel.
+  async loadMoreMerged() {
+    if (AppView._mergedLoadingMore || !AppView._mergedHasMore) return;
+    if (!AppView.appData || !AppView._mergedCursor) return;
+    const slug = AppView.appData.slug;
+    AppView._mergedLoadingMore = true;
+    // Reflect the disabled/"Loading…" state immediately.
+    const el0 = document.getElementById('gc-merged');
+    if (el0) el0.innerHTML = AppView._renderMergedInner();
+    try {
+      const cur = AppView._mergedCursor;
+      const qs = AppView._demoQS();
+      const sep = qs ? '&' : '?';
+      const url = `/api/apps/${slug}/merged${qs}${sep}before=${encodeURIComponent(cur.created_at)}&before_id=${encodeURIComponent(cur.id)}`;
+      const res = await fetch(url);
+      const data = res.ok ? await res.json() : { merged: [], hasMore: false };
+      const more = data.merged || [];
+      // De-dup defensively in case the cursor straddled equal timestamps.
+      const have = new Set((AppView._merged || []).map((r) => r.id));
+      const fresh = more.filter((r) => !have.has(r.id));
+      AppView._merged = (AppView._merged || []).concat(fresh);
+      AppView._mergedHasMore = !!data.hasMore;
+      if (AppView._merged.length) {
+        const last = AppView._merged[AppView._merged.length - 1];
+        AppView._mergedCursor = { created_at: last.created_at, id: last.id };
+      }
+      // Keep inline vote/kudos state in sync so the newly loaded merged
+      // rows get their group-chat activity controls too.
+      if (AppView.voteState && AppView.voteState.bySession) {
+        for (const pr of fresh) {
+          AppView.voteState.bySession[String(pr.id)] = pr;
+          if (pr.pr_number != null) AppView.voteState.byPrNumber[String(pr.pr_number)] = pr;
+        }
+        if (typeof GroupChat !== 'undefined' && GroupChat.refreshVoteControls) {
+          GroupChat.refreshVoteControls();
+        }
+      }
+    } catch {
+      // Leave the existing rows in place; surface nothing destructive.
+    } finally {
+      AppView._mergedLoadingMore = false;
+      const el = document.getElementById('gc-merged');
+      if (el) {
+        el.innerHTML = AppView._renderMergedInner();
+        if (window.Kudos) Kudos.attach(el);
+        AppView._applyAskAiCardAvailability(el);
+      }
+    }
   },
 
   // One merged ("Completed") proposal card. Extracted from

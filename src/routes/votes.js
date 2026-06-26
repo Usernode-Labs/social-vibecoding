@@ -233,14 +233,46 @@ function stagingMockMerged() {
     priority: { top: 'medium', count: 2, myValue: null },
     assignee: { top: 'staging-tester', count: 2, myValue: null },
   });
-  return [
-    mk(9100001, 910101,
-      '[Mock] Completed: tighten the empty-state copy on the dev forum',
-      1, 5),
-    mk(9100002, 910102,
-      '[Mock] Completed: bump the chat composer hit area on mobile',
-      4, 0),
+  // #429: 26 mock rows (> one 20-row page) so the "Load more" pager and
+  // the hasMore flag are exercisable in a ?demo=1 staging preview. Each
+  // has a distinct created_at (1..26 days ago) so keyset paging orders
+  // them deterministically, newest first.
+  const titles = [
+    'tighten the empty-state copy on the dev forum',
+    'bump the chat composer hit area on mobile',
+    'fix the dark-mode contrast on vote pills',
+    'debounce the proposal search box',
+    'add keyboard focus rings to the kebab menu',
+    'shorten the merged-PR relative timestamps',
+    'collapse long PR summaries behind a toggle',
+    'align the kudos count with the avatar row',
+    'cache the leaderboard avatars for a session',
+    'wrap long usernames in the activity feed',
+    'add a copy-link button to merged proposals',
+    'fix the sticky header on the issues tab',
+    'lazy-load the kanban Done column images',
+    'trim trailing whitespace in PR titles',
+    'add an empty-state for the Completed list',
+    'fix the scroll jump when expanding a thread',
+    'show the merge date in the card tooltip',
+    'group governance proposals under one header',
+    'dim already-voted proposals in the list',
+    'add a subtle divider between feed sections',
+    'fix the wrap on long linked-issue chips',
+    'preload the vote roster on hover',
+    'add a “back to top” affordance on long lists',
+    'fix the badge alignment on RTL locales',
+    'shorten the undo-confirmation copy',
+    'add a hover state to the Load more button',
   ];
+  return titles.map((t, i) => mk(
+    9100001 + i,
+    910101 + i,
+    `[Mock] Completed: ${t}`,
+    i + 1,
+    // Sprinkle a few discussion counts so the 💬 badge is visible.
+    i % 3 === 0 ? 5 : 0
+  ));
 }
 
 function voteRoutes(config) {
@@ -879,6 +911,27 @@ function voteRoutes(config) {
       const appRows = [gatedApp];
 
       const userId = req.user?.id || null;
+
+      // #429: keyset pagination so the Completed list can reach every
+      // merged PR, not just the most-recent page. `limit` defaults to 20
+      // (the historical cap) and is clamped to 50. `before` + `before_id`
+      // form the cursor — the (created_at, id) of the last row the client
+      // already has — and we page strictly older than it. Keyset (not
+      // OFFSET) because new merges insert at the top and would otherwise
+      // drift the offset. created_at isn't unique, so id is the tiebreaker.
+      let limit = parseInt(req.query.limit, 10);
+      if (!Number.isFinite(limit) || limit < 1) limit = 20;
+      if (limit > 50) limit = 50;
+      const beforeRaw = req.query.before;
+      const beforeIdRaw = parseInt(req.query.before_id, 10);
+      const before = new Date(beforeRaw);
+      // A cursor only applies when BOTH parts parse cleanly; otherwise we
+      // ignore it and return the newest page (defensive against malformed
+      // query strings).
+      const hasCursor = beforeRaw != null && !Number.isNaN(before.getTime())
+        && Number.isFinite(beforeIdRaw);
+      const isFirstPage = !hasCursor;
+
       // Same kudos subqueries as /promoted so the merged card can show
       // its count + per-viewer "you gave kudos" state without a second
       // round-trip per row. cs.user_id is also surfaced so the FE
@@ -943,10 +996,21 @@ function voteRoutes(config) {
          LEFT JOIN chat_sessions rv ON rv.revert_of_session_id = cs.id
            AND rv.status IN ('promoted', 'merging', 'merged')
          WHERE cs.app_id = $1 AND cs.status = 'merged'
-         ORDER BY cs.created_at DESC
-         LIMIT 20`,
-        [appRows[0].id, userId]
+           ${hasCursor ? 'AND (cs.created_at, cs.id) < ($3, $4)' : ''}
+         ORDER BY cs.created_at DESC, cs.id DESC
+         LIMIT $${hasCursor ? 5 : 3}`,
+        // Fetch limit+1 so an extra row signals there's another page.
+        hasCursor
+          ? [appRows[0].id, userId, before.toISOString(), beforeIdRaw, limit + 1]
+          : [appRows[0].id, userId, limit + 1]
       );
+
+      // #429: trim the look-ahead row and report whether more pages exist.
+      let hasMore = false;
+      if (rows.length > limit) {
+        hasMore = true;
+        rows.length = limit;
+      }
 
       // Same priority + assigned-person summary on completed proposals, so
       // the read-only chips stay visible after a PR merges.
@@ -959,15 +1023,23 @@ function voteRoutes(config) {
         row.assignee = s.assignee;
       }
 
-      // Staging-only demo mode (?demo=1): append mock merged rows so the
-      // clickable Completed list + 💬 badge are verifiable against a
-      // prod-cloned DB. Idempotent by id. See stagingMockMerged above.
-      if (IS_STAGING && req.query.demo === '1') {
+      // Staging-only demo mode (?demo=1): prepend mock merged rows so the
+      // clickable Completed list + 💬 badge + "Load more" pager are
+      // verifiable against a prod-cloned DB. Idempotent by id. The mock
+      // rows are gated to the FIRST page only (no cursor) — there are
+      // enough of them (#429) to fill a page and force hasMore=true, so a
+      // tester can exercise "Load more" without depending on real merged
+      // history. See stagingMockMerged above.
+      if (IS_STAGING && req.query.demo === '1' && isFirstPage) {
         const have = new Set(rows.map((r) => r.id));
         rows.unshift(...stagingMockMerged().filter((m) => !have.has(m.id)));
+        if (rows.length > limit) {
+          hasMore = true;
+          rows.length = limit;
+        }
       }
 
-      res.json({ merged: rows });
+      res.json({ merged: rows, hasMore });
     } catch (err) {
       log.error('votes', 'Failed to list merged', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
