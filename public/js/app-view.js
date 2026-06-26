@@ -1697,10 +1697,22 @@ const AppView = {
     const doneTotal = (typeof AppView._mergedTotal === 'number')
       ? AppView._mergedTotal
       : buckets.done.length;
+    // When the server has more merged pages, the footer is a real "Load
+    // more" button wired to the same pager the list view uses — clicking
+    // it fetches the next keyset page and re-paints the board in place
+    // (loadMoreMerged is view-mode aware). Falls back to the static hint
+    // only in the degenerate case where the total exceeds the loaded rows
+    // yet the server reports no more pages (shouldn't normally happen,
+    // since total + hasMore derive from the same merged set).
     let doneFooter = '';
     if (doneTotal > buckets.done.length) {
       const moreCount = doneTotal - buckets.done.length;
-      doneFooter = `<span class="text-xs text-zinc-400 dark:text-zinc-500 italic">+${moreCount} more completed</span>`;
+      if (AppView._mergedHasMore) {
+        const loading = AppView._mergedLoadingMore;
+        doneFooter = `<button class="gc-vote-btn" ${loading ? 'disabled' : ''} onclick="AppView.loadMoreMerged()">${loading ? 'Loading…' : `Load more (${moreCount})`}</button>`;
+      } else {
+        doneFooter = `<span class="text-xs text-zinc-400 dark:text-zinc-500 italic">+${moreCount} more completed</span>`;
+      }
     }
 
     const cols = [
@@ -3187,9 +3199,16 @@ const AppView = {
     if (!AppView.appData || !AppView._mergedCursor) return;
     const slug = AppView.appData.slug;
     AppView._mergedLoadingMore = true;
-    // Reflect the disabled/"Loading…" state immediately.
-    const el0 = document.getElementById('gc-merged');
-    if (el0) el0.innerHTML = AppView._renderMergedInner();
+    // Reflect the disabled/"Loading…" state immediately. In kanban mode the
+    // Done-column footer lives in #dev-kanban (there is no #gc-merged), so
+    // repaint the whole board; in list mode update the Completed section in
+    // place.
+    if (AppView._getViewMode() === 'kanban') {
+      AppView._repaintDevBody();
+    } else {
+      const el0 = document.getElementById('gc-merged');
+      if (el0) el0.innerHTML = AppView._renderMergedInner();
+    }
     try {
       const cur = AppView._mergedCursor;
       const qs = AppView._demoQS();
@@ -3222,11 +3241,18 @@ const AppView = {
       // Leave the existing rows in place; surface nothing destructive.
     } finally {
       AppView._mergedLoadingMore = false;
-      const el = document.getElementById('gc-merged');
-      if (el) {
-        el.innerHTML = AppView._renderMergedInner();
-        if (window.Kudos) Kudos.attach(el);
-        AppView._applyAskAiCardAvailability(el);
+      // Paint the freshly loaded cards into whichever view is active.
+      // _repaintDevBody re-renders #dev-kanban and re-attaches Kudos /
+      // Ask-AI for the kanban Done column; list mode updates #gc-merged.
+      if (AppView._getViewMode() === 'kanban') {
+        AppView._repaintDevBody();
+      } else {
+        const el = document.getElementById('gc-merged');
+        if (el) {
+          el.innerHTML = AppView._renderMergedInner();
+          if (window.Kudos) Kudos.attach(el);
+          AppView._applyAskAiCardAvailability(el);
+        }
       }
     }
   },

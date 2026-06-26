@@ -24,7 +24,12 @@ const APP_VIEW_SRC = fs.readFileSync(
   'utf8'
 );
 
-function makeAppView() {
+// Build a vm sandbox with app-view.js loaded. `over` can supply a custom
+// `document`, `fetch`, or `localStorage` so tests that exercise the DOM-
+// touching render paths (e.g. loadMoreMerged) can capture writes / steer the
+// view mode. Returns the sandbox; AppView is at sandbox.__AppView.
+function makeCtx(over) {
+  const o = over || {};
   const sandbox = {
     console,
     relTime: () => 'just now',
@@ -32,7 +37,7 @@ function makeAppView() {
     escapeAttr: (s) => String(s == null ? '' : s),
     App: { user: { id: 1 }, currentSubTab: 'forum' },
     Kudos: { renderButton: () => '', attach: () => {} },
-    document: {
+    document: o.document || {
       getElementById: () => null,
       querySelector: () => null,
       querySelectorAll: () => ({ forEach: () => {} }),
@@ -40,17 +45,21 @@ function makeAppView() {
       createElement: () => ({ style: {}, classList: { add: () => {}, remove: () => {} } }),
       body: { appendChild: () => {} },
     },
-    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    fetch: o.fetch || (async () => ({ ok: true, json: async () => ({}) })),
     alert: () => {},
     setTimeout, clearTimeout, setInterval, clearInterval,
     addEventListener: () => {},
-    localStorage: { getItem: () => null, setItem: () => {} },
+    localStorage: o.localStorage || { getItem: () => null, setItem: () => {} },
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
-  return sandbox.__AppView;
+  return sandbox;
+}
+
+function makeAppView() {
+  return makeCtx().__AppView;
 }
 
 // Distinct, non-equal activity timestamps so recency ordering is unambiguous.
@@ -177,4 +186,121 @@ test('empty / missing inputs yield four empty columns', () => {
   assert.equal(b.inProgress.length, 0);
   assert.equal(b.inReview.length, 0);
   assert.equal(b.done.length, 0);
+});
+
+// ── Kanban "Done" column footer: expandable Load more (spec: make the Done
+// column reach its remaining completed items in place) ─────────────────────
+
+const mergedRow = (id, h) => ({
+  id, pr_number: id * 10, pr_title: `PR ${id}`, username: 'me',
+  created_at: at(h), status: 'merged',
+});
+
+// Seed the cached dev data the kanban renderer reads, with a Done column that
+// has loaded fewer rows than the server total.
+const seedDone = (AppView, { loaded, total, hasMore, loading }) => {
+  AppView._ghIssues = [];
+  AppView._proposals = [];
+  AppView._govProposals = [];
+  AppView._merged = Array.from({ length: loaded }, (_, i) => mergedRow(i + 1, (i % 23) + 1));
+  AppView._mergedCtx = { majority: 1, activeUsers: 1 };
+  AppView._mergedTotal = total;
+  AppView._mergedHasMore = hasMore;
+  AppView._mergedLoadingMore = loading;
+};
+
+test('Kanban Done footer is a clickable Load more button when more pages exist', () => {
+  const AppView = makeAppView();
+  seedDone(AppView, { loaded: 2, total: 25, hasMore: true, loading: false });
+  const html = AppView._renderKanbanInner();
+  assert.match(html, /onclick="AppView\.loadMoreMerged\(\)"/, 'wired to the pager');
+  assert.match(html, /Load more \(23\)/, 'shows remaining count');
+  assert.match(html, /class="gc-vote-btn"/, 'uses the shared button class');
+  assert.doesNotMatch(html, /more completed/, 'no dead static hint when expandable');
+});
+
+test('Kanban Done Load more button is disabled with a Loading state while fetching', () => {
+  const AppView = makeAppView();
+  seedDone(AppView, { loaded: 2, total: 25, hasMore: true, loading: true });
+  const html = AppView._renderKanbanInner();
+  assert.match(html, /onclick="AppView\.loadMoreMerged\(\)"[^>]*>Loading…|disabled[^>]*onclick="AppView\.loadMoreMerged/);
+  assert.match(html, /Loading…/);
+  assert.match(html, /disabled/);
+});
+
+test('Kanban Done footer falls back to the static hint when the server has no more pages', () => {
+  const AppView = makeAppView();
+  // total exceeds loaded but hasMore=false — degenerate; keep a hint, no dead button.
+  seedDone(AppView, { loaded: 1, total: 5, hasMore: false, loading: false });
+  const html = AppView._renderKanbanInner();
+  assert.match(html, /\+4 more completed/);
+  assert.doesNotMatch(html, /loadMoreMerged/);
+});
+
+test('Kanban Done footer is absent once every completed item is loaded', () => {
+  const AppView = makeAppView();
+  seedDone(AppView, { loaded: 3, total: 3, hasMore: false, loading: false });
+  const html = AppView._renderKanbanInner();
+  assert.doesNotMatch(html, /loadMoreMerged/);
+  assert.doesNotMatch(html, /more completed/);
+});
+
+// ── loadMoreMerged re-render is view-mode aware ────────────────────────────
+
+// A capturing #gc-merged element; records innerHTML writes and no-ops the
+// querySelector calls _applyAskAiCardAvailability makes.
+const captureEl = (sink) => ({
+  set innerHTML(v) { sink.push(v); },
+  querySelector: () => null,
+  querySelectorAll: () => ({ forEach: () => {} }),
+});
+
+const docWithGcMerged = (gcEl) => ({
+  getElementById: (id) => (id === 'gc-merged' ? gcEl : null),
+  querySelector: () => null,
+  querySelectorAll: () => ({ forEach: () => {} }),
+  addEventListener: () => {},
+  createElement: () => ({ style: {}, classList: { add() {}, remove() {} } }),
+  body: { appendChild: () => {} },
+});
+
+const primePager = (AppView) => {
+  AppView.appData = { slug: 'demo' };
+  AppView._merged = [mergedRow(1, 1)];
+  AppView._mergedCtx = { majority: 1, activeUsers: 1 };
+  AppView._mergedHasMore = true;
+  AppView._mergedLoadingMore = false;
+  AppView._mergedCursor = { created_at: at(1), id: 1 };
+};
+
+test('loadMoreMerged repaints the board (not #gc-merged) in kanban mode', async () => {
+  const writes = [];
+  const ctx = makeCtx({
+    localStorage: { getItem: () => 'kanban', setItem: () => {} },
+    document: docWithGcMerged(captureEl(writes)),
+    fetch: async () => ({ ok: true, json: async () => ({ merged: [], hasMore: false, total: 1 }) }),
+  });
+  const AppView = ctx.__AppView;
+  let repaints = 0;
+  AppView._repaintDevBody = () => { repaints += 1; };
+  primePager(AppView);
+  await AppView.loadMoreMerged();
+  assert.ok(repaints >= 1, 'kanban mode repaints the whole board');
+  assert.equal(writes.length, 0, '#gc-merged is never touched in kanban mode');
+});
+
+test('loadMoreMerged updates #gc-merged (not the board) in list mode', async () => {
+  const writes = [];
+  const ctx = makeCtx({
+    localStorage: { getItem: () => 'list', setItem: () => {} },
+    document: docWithGcMerged(captureEl(writes)),
+    fetch: async () => ({ ok: true, json: async () => ({ merged: [], hasMore: false, total: 1 }) }),
+  });
+  const AppView = ctx.__AppView;
+  let repaints = 0;
+  AppView._repaintDevBody = () => { repaints += 1; };
+  primePager(AppView);
+  await AppView.loadMoreMerged();
+  assert.equal(repaints, 0, 'list mode does not repaint the whole board');
+  assert.ok(writes.length >= 1, '#gc-merged is updated in list mode');
 });
