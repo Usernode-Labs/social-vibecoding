@@ -58,7 +58,46 @@ test('send() broadcasts on the global WS exactly when the type is not SSE-only',
   // the SSE_ONLY membership check is what gates broadcastGlobal.
   assert.match(
     SRC,
-    /if\s*\(\s*!SSE_ONLY\.has\(type\)\s*\)\s*\{\s*\n\s*broadcastGlobal\(/,
+    /if\s*\(\s*!SSE_ONLY\.has\(type\)\s*\)\s*\{\s*\n\s*[\s\S]*?broadcastGlobal\(/,
     'send() still gates broadcastGlobal on !SSE_ONLY.has(type)'
   );
+});
+
+// Extract the literal object send() hands to broadcastGlobal and evaluate it
+// against the same locals send() has in scope (`event`, `type`, `session`).
+// This is the regression guard for #437: the payload MUST end up typed
+// `session_event` (the client's `switch (data.type)` routes to
+// handleSessionEvent only on that), with the real event name in `event` and
+// `_seq` + data fields preserved. If a refactor lets `...event` clobber the
+// envelope `type` again, this fails.
+function buildBroadcastPayload(type, data, seq, sessionId) {
+  const m = SRC.match(/broadcastGlobal\(\s*(\{[\s\S]*?\})\s*\)/);
+  assert.ok(m, 'found the broadcastGlobal({ ... }) call literal');
+  const event = { type, _seq: seq, ...data }; // eslint-disable-line no-unused-vars
+  const session = { id: sessionId }; // eslint-disable-line no-unused-vars
+  // eslint-disable-next-line no-eval
+  return eval(`(${m[1]})`);
+}
+
+test('broadcastGlobal payload stays typed session_event with event + _seq + data preserved (#437)', () => {
+  const payload = buildBroadcastPayload(
+    'mayor_reasoning',
+    { text: 'wrap-up summary' },
+    'abc-7',
+    999
+  );
+  assert.equal(payload.type, 'session_event',
+    "broadcast envelope must be type 'session_event' so the client routes it to handleSessionEvent");
+  assert.equal(payload.event, 'mayor_reasoning', 'real event name carried in `event`');
+  assert.equal(payload._seq, 'abc-7', '_seq preserved for cross-channel dedup');
+  assert.equal(payload.text, 'wrap-up summary', 'data fields preserved');
+  assert.equal(payload.sessionId, 999, 'sessionId carried');
+});
+
+test('broadcastGlobal payload keeps type=session_event for status/done/spec_updated too (#437)', () => {
+  for (const t of ['status', 'done', 'spec_updated', 'cc_progress', 'phase', 'stopped']) {
+    const payload = buildBroadcastPayload(t, { text: 'x' }, `s-${t}`, 42);
+    assert.equal(payload.type, 'session_event', `${t} envelope typed session_event`);
+    assert.equal(payload.event, t, `${t} carried in event field`);
+  }
 });

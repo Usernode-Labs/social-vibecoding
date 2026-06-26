@@ -1092,6 +1092,33 @@ const App = {
           DevChat._handleSpecUpdated(data);
         }
         break;
+      // #437: these four are broadcast on the WS (not in SSE_ONLY), so once
+      // the WS path is live they MUST be handled here — handleSessionEvent
+      // records `data._seq` into _seenSeqs BEFORE this switch, so an
+      // unhandled type arriving first on the WS would mark the seq seen and
+      // then get the matching POST-SSE / resumable copy deduped-and-swallowed.
+      // Mirrors the resumable handlers in dev-chat.js (_handleResumedEvent).
+      case 'phase':
+        // Toggle the live-status UI between stop-button (interruptible) and
+        // spinner (wrap-up). Cheap + idempotent — just swaps the button glyph.
+        DevChat._setStreamingUI(true, data.phase);
+        break;
+      case 'stopped':
+        // The "Stopped by @user." status row was already persisted + emitted
+        // server-side via sendStatus, so just tear down the streaming UI.
+        DevChat._removeSpinner();
+        DevChat._deactivateLastStatus();
+        DevChat._finishStreaming();
+        break;
+      case 'cc_estimate':
+        // Experimental AI progress estimate (opt-in, server-gated).
+        DevChat._applyEstimate(data.text, data.remainingSeconds);
+        break;
+      case 'cc_log':
+        DevChat.messages.push({ role: 'system', ccLog: data.log, content: 'Claude Code log', created_at: new Date().toISOString() });
+        DevChat.renderMessages();
+        DevChat.scrollToBottom();
+        break;
     }
   },
 

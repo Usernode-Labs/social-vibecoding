@@ -1269,7 +1269,13 @@ function sessionRoutes(config) {
         const event = { type, _seq: seq, ...data };
         try { res.write(`data: ${JSON.stringify(event)}\n\n`); } catch {}
         if (!SSE_ONLY.has(type)) {
-          broadcastGlobal({ type: 'session_event', sessionId: session.id, event: type, ...event });
+          // Spread the event FIRST, then pin the envelope fields — otherwise
+          // `...event` (which carries the inner `type`, e.g. 'mayor_reasoning')
+          // clobbers `type: 'session_event'`, and the client's
+          // `switch (data.type)` never routes to handleSessionEvent. The
+          // envelope must keep `type: 'session_event'` while `event` carries
+          // the real event name and `_seq` + the data fields ride along.
+          broadcastGlobal({ ...event, sessionId: session.id, event: type, type: 'session_event' });
         }
         // Also publish to the per-session event bus so a client whose POST
         // SSE connection drops can reconnect via GET /events and replay any
@@ -2798,7 +2804,12 @@ async function runHeadlessSession({
   let eventSeq = 0;
   const send = (type, data) => {
     const event = { type, _seq: `${seqPrefix}-${++eventSeq}`, ...data };
-    broadcastGlobal({ type: 'session_event', sessionId: session.id, event: type, ...event });
+    // #437: spread the event FIRST, then pin the envelope — otherwise
+    // `...event` re-adds the inner `type` and clobbers `type: 'session_event'`,
+    // so the client's `switch (data.type)` never reaches handleSessionEvent.
+    // Headless sessions have no POST SSE (res is a write-sink), so the global
+    // WS is their ONLY live channel — the clobber is especially costly here.
+    broadcastGlobal({ ...event, sessionId: session.id, event: type, type: 'session_event' });
     sessionBus.publish(session.id, event);
   };
   const sendStatus = async (text, metadata) => {
