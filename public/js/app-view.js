@@ -1395,6 +1395,13 @@ const AppView = {
       AppView._mergedCursor = merged.length
         ? { created_at: merged[merged.length - 1].created_at, id: merged[merged.length - 1].id }
         : null;
+      // #433: the true count of merged tasks for this app, used by the
+      // Kanban "Done" column header (which renders only the first page of
+      // cards and would otherwise show the loaded count, ~20). Falls back to
+      // the loaded length on an older server that doesn't return `total`.
+      AppView._mergedTotal = (typeof mergedData.total === 'number')
+        ? mergedData.total
+        : merged.length;
       return true;
     } catch {
       return false;
@@ -1682,17 +1689,34 @@ const AppView = {
       issuesFooter = `<a href="${issuesUrl}" target="_blank" rel="noopener" class="text-xs text-violet-400 hover:underline">More open issues on GitHub &rarr;</a>`;
     }
 
+    // #433: the Done column header shows the true merged total (set in
+    // _loadDevData), not the loaded-page length. When the board has loaded
+    // fewer cards than the total, surface a static "+N more completed" hint
+    // — mirroring the Issues column's truncation footer — so the count and
+    // the visible cards stay reconciled and the page cap is never silent.
+    const doneTotal = (typeof AppView._mergedTotal === 'number')
+      ? AppView._mergedTotal
+      : buckets.done.length;
+    let doneFooter = '';
+    if (doneTotal > buckets.done.length) {
+      const moreCount = doneTotal - buckets.done.length;
+      doneFooter = `<span class="text-xs text-zinc-400 dark:text-zinc-500 italic">+${moreCount} more completed</span>`;
+    }
+
     const cols = [
       { title: 'Issues', items: buckets.issues, render: (i) => AppView._renderIssueRow(i), footer: issuesFooter },
       { title: 'In progress', items: buckets.inProgress, render: (i) => AppView._renderIssueRow(i) },
       { title: 'In review', items: buckets.inReview, render: (x) => (x.kind === 'proposal' ? AppView._renderProposalCard(x.item) : AppView._renderGovCard(x.item)) },
-      { title: 'Done', items: buckets.done, render: (m) => AppView._renderMergedCard(m) },
+      { title: 'Done', items: buckets.done, render: (m) => AppView._renderMergedCard(m), count: doneTotal, footer: doneFooter },
     ];
 
     let html = '<div id="dev-kanban" class="flex gap-3 overflow-x-auto pb-2">';
     for (const col of cols) {
-      const count = col.items.length;
-      const cards = count
+      // Cards render from the in-memory (paged) items; the header count can
+      // be overridden (Done uses the server total) and falls back to the
+      // loaded length for every other column.
+      const count = (typeof col.count === 'number') ? col.count : col.items.length;
+      const cards = col.items.length
         ? `<div class="space-y-2">${col.items.map(col.render).join('')}</div>`
         : '<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">Nothing here yet</div>';
       const footer = col.footer ? `<div class="mt-2">${col.footer}</div>` : '';

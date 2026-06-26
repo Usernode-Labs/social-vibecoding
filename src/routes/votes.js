@@ -1060,6 +1060,22 @@ function voteRoutes(config) {
         rows.length = limit;
       }
 
+      // #433: the Kanban "Done" column header counts merged tasks, but the
+      // board only loads the first page (default 20), so its count was
+      // pinned at 20 on any app with ≥20 merges. Return the true column
+      // total — a cheap COUNT over the same base set the paged query draws
+      // from (status='merged' for this app), with NO cursor predicate (the
+      // total is the whole column, not the remaining page) and WITHOUT the
+      // revert LEFT JOIN (which can multiply rows). Indexed on (app_id,
+      // status), so this is far lighter than the per-row subqueries above.
+      const { rows: totalRows } = await pool.query(
+        `SELECT COUNT(*)::int AS total
+           FROM chat_sessions
+          WHERE app_id = $1 AND status = 'merged'`,
+        [appRows[0].id]
+      );
+      let total = totalRows[0]?.total || 0;
+
       // Same priority + assigned-person summary on completed proposals, so
       // the read-only chips stay visible after a PR merges.
       const mergedAttrs = await topicAttrs.summarizeForTargets(
@@ -1080,14 +1096,19 @@ function voteRoutes(config) {
       // history. See stagingMockMerged above.
       if (IS_STAGING && req.query.demo === '1' && isFirstPage) {
         const have = new Set(rows.map((r) => r.id));
-        rows.unshift(...stagingMockMerged().filter((m) => !have.has(m.id)));
+        const injected = stagingMockMerged().filter((m) => !have.has(m.id));
+        rows.unshift(...injected);
         if (rows.length > limit) {
           hasMore = true;
           rows.length = limit;
         }
+        // The COUNT(*) above can't see the mock rows (they aren't in the
+        // DB), so bump the total by however many we injected to keep the
+        // demo badge self-consistent with the rows the board renders.
+        total += injected.length;
       }
 
-      res.json({ merged: rows, hasMore });
+      res.json({ merged: rows, hasMore, total });
     } catch (err) {
       log.error('votes', 'Failed to list merged', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
