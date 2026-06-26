@@ -4515,6 +4515,114 @@ const AppView = {
     return '/#' + path.slice(1);
   },
 
+  // #439: ensure-then-open. Every Preview click routes through here so a
+  // preview that was torn down while the user was away (idle GC, lost
+  // container) is rebuilt on demand instead of opening a dead page. We open
+  // the overlay immediately with a "spinning back up" loader, ask the
+  // server whether the preview is live, and either open it as-is (`ready`)
+  // or wait for the rebuild's `staging_ready` WS event (`rebuilding`).
+  //
+  //   sessionId  — the session whose preview we're opening (drives the
+  //                ensure-staging POST and pending-marker match).
+  //   fallbackUrl — the last-known preview URL (may be stale/dead); used
+  //                only when the server says `ready` without echoing a URL.
+  //   testing    — the session's testing guidance ({ md, path } | null).
+  //   opts.jump  — open the deep link directly (the "Test this change" btn).
+  async ensureStaging(sessionId, fallbackUrl, testing, opts) {
+    const overlay = document.getElementById('staging-overlay');
+    if (!overlay) return;
+    const jump = !!(opts && opts.jump);
+
+    // Open the overlay + "spinning back up" loader right away, and take a
+    // fresh load id so backing out (closeStagingOverlay) cancels this wait.
+    overlay.classList.remove('hidden');
+    if (window.DevConsole) DevConsole.setButtonVisible(true);
+    const loadId = ++AppView._stagingLoadId;
+    document.getElementById('staging-iframe').src = '';
+    AppView._pendingStagingPreview = null;
+    AppView._setStagingLoader(true, {
+      title: 'Spinning your preview back up…',
+      sub: 'Your preview was paused after a while of inactivity. Rebuilding it '
+        + 'from your latest changes — this usually takes 20–60 seconds.',
+    });
+    document.getElementById('staging-back').onclick = () => AppView.closeStagingOverlay();
+
+    let data;
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/ensure-staging`, { method: 'POST' });
+      data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        AppView._showStagingUnavailable(loadId, data.error || 'This preview could not be rebuilt.');
+        return;
+      }
+    } catch {
+      AppView._showStagingUnavailable(loadId, 'Network error while rebuilding the preview. Try again in a moment.');
+      return;
+    }
+    // Backed out while we waited on the POST.
+    if (loadId !== AppView._stagingLoadId) return;
+
+    if (data.status === 'ready') {
+      AppView.swapToStaging(data.url || fallbackUrl, testing, { jump });
+      return;
+    }
+    if (data.status === 'unavailable') {
+      AppView._showStagingUnavailable(
+        loadId,
+        data.reason === 'demo'
+          ? 'Live previews can’t be rebuilt in this demo environment.'
+          : 'This preview isn’t available right now.'
+      );
+      return;
+    }
+    // status === 'rebuilding' — park a marker the staging_ready /
+    // staging_failed WS handlers match against, then keep the loader up.
+    // A client-side give-up keeps the loader honest if the event never
+    // lands (the server rebuild is still allowed to finish on its own).
+    AppView._pendingStagingPreview = { sessionId, jump, testing, loadId };
+    if (AppView._stagingRebuildTimer) clearTimeout(AppView._stagingRebuildTimer);
+    AppView._stagingRebuildTimer = setTimeout(() => {
+      if (loadId !== AppView._stagingLoadId) return;
+      if (!AppView._pendingStagingPreview || AppView._pendingStagingPreview.loadId !== loadId) return;
+      AppView._setStagingLoader(true, {
+        title: 'This is taking longer than expected',
+        sub: 'The rebuild is still running on the server. Close this and click '
+          + 'Preview again in a moment.',
+      });
+    }, 180000);
+  },
+
+  // #439: terminal loader state when a rebuild can't proceed (no changes,
+  // demo env, build failure). Shows the reason in the existing loader with
+  // the back button already wired by ensureStaging.
+  _showStagingUnavailable(loadId, message) {
+    if (loadId !== AppView._stagingLoadId) return;
+    AppView._pendingStagingPreview = null;
+    AppView._setStagingLoader(true, {
+      title: 'Preview unavailable',
+      sub: message,
+    });
+  },
+
+  // #439: called by the staging_ready / staging_failed WS handlers when a
+  // pending on-demand rebuild resolves. Opens the (new) URL on success, or
+  // surfaces the failure reason in the loader.
+  onStagingRebuildResult(sessionId, { url, failed, error } = {}) {
+    const pending = AppView._pendingStagingPreview;
+    if (!pending || pending.sessionId !== sessionId) return;
+    if (pending.loadId !== AppView._stagingLoadId) { AppView._pendingStagingPreview = null; return; }
+    if (AppView._stagingRebuildTimer) { clearTimeout(AppView._stagingRebuildTimer); AppView._stagingRebuildTimer = null; }
+    AppView._pendingStagingPreview = null;
+    if (failed) {
+      AppView._setStagingLoader(true, {
+        title: 'Preview couldn’t be rebuilt',
+        sub: error || 'The staging build failed. See the dev chat for details.',
+      });
+      return;
+    }
+    if (url) AppView.swapToStaging(url, pending.testing, { jump: pending.jump });
+  },
+
   // Open staging in fullscreen overlay.
   //
   // #127: `testing` is the session's bot-generated testing guidance
@@ -4590,8 +4698,17 @@ const AppView = {
   // the testing guidance stashed by voteButtonsHtml at render time, so the
   // existing Preview button passes it through without any new UI there.
   swapToStagingForSession(sessionId, stagingUrl) {
-    AppView.swapToStaging(stagingUrl, (AppView._sessionTesting || {})[sessionId] || null);
+    // #439: route through ensure-then-open so a vote-panel preview that was
+    // torn down (idle GC, lost container) rebuilds on click instead of
+    // opening a dead page.
+    AppView.ensureStaging(sessionId, stagingUrl, (AppView._sessionTesting || {})[sessionId] || null, {});
   },
+
+  // #439: pending on-demand-rebuild marker ({ sessionId, jump, testing,
+  // loadId } | null), set by ensureStaging and consumed by the
+  // staging_ready / staging_failed WS handlers via onStagingRebuildResult.
+  _pendingStagingPreview: null,
+  _stagingRebuildTimer: null,
 
   // #127: per-render registry of { md, path } testing guidance keyed by
   // session id, populated by voteButtonsHtml. Exists so bot-authored
@@ -4730,6 +4847,10 @@ const AppView = {
     const iframe = document.getElementById('staging-iframe');
     // Invalidate any in-flight readiness poll and hide the loader.
     AppView._stagingLoadId += 1;
+    // #439: drop any pending on-demand rebuild marker + its give-up timer so
+    // a late staging_ready can't reopen the overlay after the user left.
+    AppView._pendingStagingPreview = null;
+    if (AppView._stagingRebuildTimer) { clearTimeout(AppView._stagingRebuildTimer); AppView._stagingRebuildTimer = null; }
     AppView._setStagingLoader(false);
     if (overlay) overlay.classList.add('hidden');
     if (iframe) iframe.src = '';

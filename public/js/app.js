@@ -934,6 +934,16 @@ const App = {
       }
       App.refreshHomeProposals();
     }
+    // #439: an on-demand preview rebuild (Preview-click → ensure-staging)
+    // can complete for a session that isn't the focused dev-chat one (e.g. a
+    // vote-panel preview), so drive the "spinning back up" overlay globally,
+    // before the currentSession gate below. onStagingRebuildResult is a
+    // no-op unless a matching pending marker is parked, so this is cheap.
+    if (data.event === 'staging_ready') {
+      AppView.onStagingRebuildResult(data.sessionId, { url: data.url });
+    } else if (data.event === 'staging_failed') {
+      AppView.onStagingRebuildResult(data.sessionId, { failed: true, error: data.error });
+    }
     if (!DevChat.currentSession || DevChat.currentSession.id !== data.sessionId) return;
     // Dedup by sequence number
     if (data._seq && DevChat._seenSeqs?.has(data._seq)) return;

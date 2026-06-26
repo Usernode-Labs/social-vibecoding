@@ -1,0 +1,160 @@
+'use strict';
+
+// Shared staging recovery helpers — the single source of truth for
+// "does this session's staging preview need rebuilding?" and "rebuild
+// it from the branch's latest commit". Extracted from server.js so the
+// three callers never drift apart:
+//   1. startup recovery        (server.js recoverSessions)
+//   2. periodic heal sweep     (server.js sweeper Pass 3)
+//   3. on-demand preview click (routes/sessions.js ensure-staging)
+//
+// Behaviour is identical to the former in-server implementations.
+
+const log = require('./logger');
+
+// Does a session need its staging preview (re)built?
+//
+// Two failure shapes leave a card without a working preview:
+//   1. staging_url IS NULL — GC reclaimed it (or it was GC'd before
+//      promotion). The Preview button is hidden (gated on staging_url).
+//   2. staging_url is set but the staging container is gone — the
+//      Preview button renders but the hostname has no upstream, so the
+//      iframe 502s / fails to connect. (Pre-wildcard-Caddy this also
+//      surfaced as "secure connection failed" when the per-host route
+//      was dropped; routing is now container-name based so the only
+//      remaining cause is a missing/stopped container.)
+// Both are healable by a rebuild. We deliberately do NOT rebuild on a
+// merely-unhealthy-but-running container (that's a 502, an app bug, not
+// a missing preview) to avoid churn.
+async function stagingNeedsRebuild(session) {
+  if (!session.staging_url) return true;
+  if (!session.staging_container_id) return true;
+  const docker = require('./docker');
+  const status = await docker.getContainerStatus(session.staging_container_id);
+  return status !== 'running';
+}
+
+// Rebuild the staging preview for a single session that has a branch +
+// commits ahead of main but a NULL/dead staging_url. Shared by the
+// startup recovery sweep (recoverSessions), the periodic sweeper's
+// staging-heal pass (Pass 3), and the on-demand ensure-staging route so
+// they never drift apart.
+//
+// Returns 'built' on success, 'skipped' when there's nothing to do (no
+// owner/repo, no bot token, branch not ahead of main), or throws on a
+// genuine build failure (caller logs + decides whether to retry).
+//
+// Creates a PR only when one is missing — the active-session recovery case
+// where CC finished but post-processing died before opening the PR.
+// 'promoted'/'merging' sessions always already have one, so that branch is
+// a no-op for them. On success it pings BOTH the dev-chat tail
+// (broadcastGlobal session_event) AND the group-chat vote panel
+// (pushSessionUpdate) so the Preview button reappears on the PR card
+// without anyone needing to reload.
+async function rebuildSessionStaging({ config, pool, session, reason }) {
+  const staging = require('./staging');
+  const { broadcastGlobal, pushSessionUpdate } = require('./ws');
+
+  const [, owner, repo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  if (!owner || !repo) return 'skipped';
+
+  const pat = process.env.GITHUB_BOT_TOKEN;
+  if (!pat) return 'skipped';
+
+  const { Octokit } = await import('@octokit/rest');
+  const ok = new Octokit({ auth: pat });
+
+  // Only build when the branch actually carries work — a branch level with
+  // (or behind) main has nothing to preview.
+  let compare;
+  try {
+    const { data } = await ok.rest.repos.compareCommits({
+      owner, repo, base: 'main', head: session.branch_name,
+    });
+    compare = data;
+  } catch { return 'skipped'; }
+
+  if (compare.ahead_by === 0) return 'skipped';
+
+  log.info('staging-recovery', 'Rebuilding staging preview', {
+    sessionId: session.id, status: session.status, branch: session.branch_name,
+    aheadBy: compare.ahead_by, reason,
+  });
+
+  const commitHash = compare.commits[compare.commits.length - 1]?.sha || 'latest';
+  const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
+
+  // Create PR if missing (active-session recovery only). Route through
+  // applyPrMetadata — NOT a bare createPR — so the PR gets a real
+  // generated title/body and pr_title/session_title are persisted. A
+  // bare createPR here used to mint PRs titled "Changes on <branch>"
+  // with pr_title left NULL; the promote path then trusted pr_number's
+  // presence and skipped its own metadata pass, so the throwaway title
+  // stuck (the UI then renders its own "Change by <user>" NULL-fallback).
+  if (!session.pr_number) {
+    try {
+      // username + latest user message give applyPrMetadata the same
+      // signals the live dev-turn path has; without the username the
+      // fallback title would read "undefined's changes".
+      const { rows: ctxRows } = await pool.query(
+        `SELECT u.username,
+                (SELECT content FROM chat_session_messages
+                  WHERE session_id = cs.id AND role = 'user'
+                  ORDER BY id DESC LIMIT 1) AS last_user_message
+           FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id
+          WHERE cs.id = $1`,
+        [session.id]
+      );
+      const username = ctxRows[0]?.username || session.username || 'someone';
+      const recoveredUserMessage = ctxRows[0]?.last_user_message || '';
+      const prMetadata = require('./pr-metadata');
+      await prMetadata.applyPrMetadata({
+        pool, session, repoOwner: owner, repoName: repo,
+        userMessage: recoveredUserMessage,
+        ccSummary: '',
+        username,
+        userId: session.user_id,
+        broadcast: (event, data) =>
+          broadcastGlobal({ type: 'session_event', sessionId: session.id, event, ...data }),
+      });
+    } catch (err) {
+      log.warn('staging-recovery', 'Recovery PR creation via applyPrMetadata failed', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+  }
+
+  const stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
+  await pool.query(
+    `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
+    [stagingResult.containerId, stagingResult.stagingUrl, session.id]
+  );
+
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+     VALUES ($1, 'system', $2, $3)`,
+    [
+      session.id,
+      reason === 'startup' ? 'Staging recovered after restart' : 'Staging preview rebuilt',
+      JSON.stringify({ stagingUrl: stagingResult.stagingUrl }),
+    ]
+  );
+
+  broadcastGlobal({
+    type: 'session_event', sessionId: session.id,
+    event: 'staging_ready', url: stagingResult.stagingUrl,
+    // #127: keep any open dev-chat's testing affordances in sync after a
+    // staging rebuild (the guidance itself lives on the session row).
+    testingMd: session.testing_md || null,
+    testingPath: session.testing_path || null,
+  });
+  pushSessionUpdate({ action: 'staging_ready', sessionId: session.id, appSlug: session.app_slug });
+
+  log.info('staging-recovery', 'Staging preview rebuilt', { sessionId: session.id, url: stagingResult.stagingUrl, reason });
+  return 'built';
+}
+
+module.exports = {
+  stagingNeedsRebuild,
+  rebuildSessionStaging,
+};

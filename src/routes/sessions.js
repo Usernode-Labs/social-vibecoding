@@ -16,6 +16,7 @@ const caddy = require('../services/caddy');
 const worker = require('../services/worker');
 const workerProgress = require('../services/worker-progress');
 const sessionLifecycle = require('../services/session-lifecycle');
+const stagingRecovery = require('../services/staging-recovery');
 const sessionBus = require('../services/session-bus');
 const { drainGuard } = require('../services/lifecycle');
 const { getAppConventions, getSelfHostedRefuseList } = require('../services/prompts');
@@ -49,6 +50,13 @@ const { activeWorkers, getActiveWorkerCount } = require('../services/active-work
 // Phase 'mayor2' is intentionally stop-proof — by then CC has already
 // pushed a commit + opened a PR and we just want the summary to finish.
 const stopRegistry = new Map();
+
+// Per-session in-flight guard for on-demand staging rebuilds (the
+// ensure-staging route below). Repeated Preview clicks while a rebuild is
+// already running must not kick off a second concurrent docker build +
+// pg clone for the same session. Mirrors the stagingHealAttempts map the
+// sweeper uses in server.js. Cleared when the rebuild settles.
+const ensureStagingInFlight = new Set();
 
 // getActiveWorkerCount is imported from services/active-workers and
 // re-exported at the bottom of this module (server.js imports it here).
@@ -2520,6 +2528,95 @@ function sessionRoutes(config) {
     } catch (err) {
       log.error('sessions', 'Deploy staging error', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // On-demand staging restore (#439). The Preview button calls this before
+  // opening the overlay. When the preview is already live we tell the
+  // client to open it as-is; when it was torn down (idle GC, lost
+  // container) we kick off a rebuild from the branch's latest commit and
+  // let rebuildSessionStaging's existing `staging_ready` broadcast drive
+  // the front end's "spinning back up" loader to completion.
+  //
+  // The sessionCollabGuard above already gates this to app members; the
+  // ownership check below scopes WHO may trigger a rebuild.
+  router.post('/api/sessions/:id/ensure-staging', drainGuard, async (req, res) => {
+    try {
+      const sessionId = parseInt(req.params.id, 10);
+      const { rows } = await pool.query(
+        `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
+         FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
+         WHERE cs.id = $1`,
+        [sessionId]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Session not found' });
+      const session = rows[0];
+
+      // Authorize: the session owner always; for promoted/merging sessions
+      // (whose preview backs a group vote) any app member who passed the
+      // collab guard may trigger a rebuild, matching the vote panel showing
+      // them the Preview button.
+      const isOwner = session.user_id === req.user.id;
+      const voteBacked = session.status === 'promoted' || session.status === 'merging';
+      if (!isOwner && !voteBacked) {
+        return res.status(403).json({ error: 'Not allowed' });
+      }
+
+      // Staging containers have no Docker socket (SELF-HOSTING.md Phase 2g)
+      // and cannot build nested previews. Short-circuit so a Preview click
+      // inside a staging preview of this platform shows a friendly message
+      // instead of spinning forever on a rebuild that can never run.
+      if (process.env.USERNODE_ENV === 'staging') {
+        return res.json({ status: 'unavailable', reason: 'demo' });
+      }
+
+      // Already live (container running, URL set)? Open it as-is.
+      if (!(await stagingRecovery.stagingNeedsRebuild(session))) {
+        return res.json({ status: 'ready', url: session.staging_url });
+      }
+
+      // Dedup concurrent clicks: at most one rebuild per session in flight.
+      if (ensureStagingInFlight.has(sessionId)) {
+        return res.json({ status: 'rebuilding' });
+      }
+      ensureStagingInFlight.add(sessionId);
+      res.json({ status: 'rebuilding' });
+
+      // Fire-and-forget. On success rebuildSessionStaging broadcasts
+      // `staging_ready` with the (new, commit-hash-bearing) URL, which the
+      // front end opens. On a no-op ('skipped' — branch not ahead of main)
+      // or a build failure (missing secrets, docker error) we broadcast
+      // `staging_failed` so the loader surfaces a concrete reason.
+      const { broadcastGlobal } = require('../services/ws');
+      stagingRecovery.rebuildSessionStaging({ config, pool, session, reason: 'preview-click' })
+        .then((result) => {
+          if (result === 'skipped') {
+            broadcastGlobal({
+              type: 'session_event', sessionId,
+              event: 'staging_failed',
+              error: 'This branch has no changes to preview yet.',
+              errorName: 'NothingToPreview',
+              missingKeys: [],
+            });
+          }
+        })
+        .catch((err) => {
+          const { errMsg, errName, missingKeys } = describeStagingFailure(err);
+          log.error('sessions', 'ensure-staging rebuild failed', {
+            sessionId, errName, err: errMsg, missingKeys,
+          });
+          broadcastGlobal({
+            type: 'session_event', sessionId,
+            event: 'staging_failed',
+            error: errMsg, errorName: errName, missingKeys,
+          });
+        })
+        .finally(() => {
+          ensureStagingInFlight.delete(sessionId);
+        });
+    } catch (err) {
+      log.error('sessions', 'ensure-staging error', { message: err.message });
+      if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
     }
   });
 
