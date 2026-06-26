@@ -189,6 +189,17 @@
         <div id="spend-by-builder"></div>
       </section>
 
+      <!-- Daily spend distribution (user counts per spend bucket) -->
+      <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <h2 class="text-lg font-semibold mb-1 inline-flex items-center">Daily spend distribution
+          <span class="dc-info" data-info="spend-distribution" tabindex="0" role="button" aria-label="What is this?">?</span>
+        </h2>
+        <p class="text-xs text-zinc-500 mb-4">
+          Number of users by daily AI spend bucket, last 30 days. The two $20+ bars split users who hit the daily cap from those who continued on their own API key.
+        </p>
+        <div id="spend-distribution"></div>
+      </section>
+
       <!-- Kudos giving distribution -->
       <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
         <h2 class="text-lg font-semibold mb-1 inline-flex items-center">Kudos participation

@@ -732,6 +732,83 @@ function dashboardRoutes(config) {
     }
   });
 
+  // ── Spend distribution (last 30 days, bucketed user counts) ────
+  //
+  // One stacked bar per calendar day for the last 30 days: each segment is
+  // the COUNT OF USERS whose platform-key spend (llm_usage.total_cost_cents,
+  // the metered spend the daily caps track) fell into a dollar bucket that
+  // day. Buckets in cents: $0; (0,5]; (5,10]; (10,15]; (15,20); and a $20+
+  // top tier split into "capped" vs "kept going on own key".
+  //
+  // The $20+ split answers "who hit the cap and stopped vs. who continued on
+  // their own Anthropic key". A user has a usable own key for a day when
+  // EITHER users.anthropic_key_enc IS NOT NULL (key configured — a CURRENT
+  // snapshot; there is no key-presence history table) OR that day's
+  // byok_cost_cents > 0 (own-key spend actually recorded). The two are OR'd
+  // so the snapshot captures capability and the per-day spend corrects past
+  // days for users whose key has since changed. limits.recordSpend only
+  // writes a row when cost > 0, so a literal "$0" row generally never exists:
+  // the $0 bucket is therefore DERIVED as (users registered as of that day)
+  // minus the users counted in the paid buckets — analogous to the kudos
+  // "gave 0" bucket. The registered-as-of-day count is a per-day subquery
+  // against users; trivial at current scale (30 small COUNTs).
+  //
+  // `date` is bucketed by CURRENT_DATE at write time, so the window uses
+  // CURRENT_DATE too (UTC calendar day, same as every other chart here).
+  router.get('/api/admin/analytics/spend-distribution', async (req, res) => {
+    const includeAdmins = wantsAdmins(req);
+    try {
+      // "Has a usable own key" predicate, reused for the $20+ split.
+      const byok = '(u.anthropic_key_enc IS NOT NULL OR lu.byok_cost_cents > 0)';
+      const { rows } = await pool.query(
+        `WITH spine AS (
+           SELECT generate_series(
+             CURRENT_DATE - 29,
+             CURRENT_DATE,
+             INTERVAL '1 day'
+           )::date AS day
+         ),
+         agg AS (
+           SELECT lu.date AS day,
+                  COUNT(*) FILTER (WHERE lu.total_cost_cents > 0    AND lu.total_cost_cents <= 500)  AS b1,
+                  COUNT(*) FILTER (WHERE lu.total_cost_cents > 500  AND lu.total_cost_cents <= 1000) AS b2,
+                  COUNT(*) FILTER (WHERE lu.total_cost_cents > 1000 AND lu.total_cost_cents <= 1500) AS b3,
+                  COUNT(*) FILTER (WHERE lu.total_cost_cents > 1500 AND lu.total_cost_cents <  2000) AS b4,
+                  COUNT(*) FILTER (WHERE lu.total_cost_cents >= 2000 AND NOT ${byok}) AS b5,
+                  COUNT(*) FILTER (WHERE lu.total_cost_cents >= 2000 AND ${byok})     AS b6
+             FROM llm_usage lu
+             LEFT JOIN users u ON u.id = lu.user_id
+            WHERE lu.date >= CURRENT_DATE - 29
+              ${adminFilter('lu.user_id', includeAdmins)}
+            GROUP BY lu.date
+         )
+         SELECT to_char(s.day, 'YYYY-MM-DD') AS day,
+                COALESCE(a.b1, 0)::int AS b1,
+                COALESCE(a.b2, 0)::int AS b2,
+                COALESCE(a.b3, 0)::int AS b3,
+                COALESCE(a.b4, 0)::int AS b4,
+                COALESCE(a.b5, 0)::int AS b5,
+                COALESCE(a.b6, 0)::int AS b6,
+                -- $0 bucket: everyone registered as of this day who isn't in a
+                -- paid bucket. GREATEST guards float/clock edge cases.
+                GREATEST(0,
+                  (SELECT COUNT(*) FROM users u2
+                    WHERE u2.created_at::date <= s.day
+                      ${adminFilter('u2.id', includeAdmins)})
+                  - (COALESCE(a.b1, 0) + COALESCE(a.b2, 0) + COALESCE(a.b3, 0)
+                     + COALESCE(a.b4, 0) + COALESCE(a.b5, 0) + COALESCE(a.b6, 0))
+                )::int AS b0
+           FROM spine s
+           LEFT JOIN agg a ON a.day = s.day
+          ORDER BY s.day`
+      );
+      res.json({ days: rows });
+    } catch (err) {
+      log.error('dashboard', 'spend-distribution failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   return router;
 }
 
