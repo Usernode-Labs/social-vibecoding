@@ -656,11 +656,24 @@ const AppView = {
     const ok = await AppView._loadDevData();
     // The view may have been replaced (or retargeted) while the fetch
     // was in flight.
-    const t = AppView._devTopic;
+    let t = AppView._devTopic;
     if (!document.getElementById('dev-topic-thread') || !t
         || t.kind !== ref.kind || t.id !== ref.id) return;
+    // The Completed list is keyset-paginated, so a merged proposal beyond
+    // the first page (deep link, shared URL, or one paged-in then lost when
+    // _loadDevData reset _merged) won't be in any cached list. Rather than
+    // bounce to the forum, fetch just that one proposal on demand and keep
+    // it in a dedicated cache that survives WS-driven _loadDevData resets.
+    if (ok && ref.kind === 'proposal' && !AppView._findTopicItem()) {
+      await AppView._fetchProposalById(ref.id);
+      // Re-check staleness: the user may have navigated away mid-fetch.
+      t = AppView._devTopic;
+      if (!document.getElementById('dev-topic-thread') || !t
+          || t.kind !== ref.kind || t.id !== ref.id) return;
+    }
     if (!ok || !AppView._findTopicItem()) {
-      // Missing ref (closed issue, archived session, bad link) — fall
+      // Missing ref (closed issue, archived session, bad link, or a
+      // proposal that genuinely doesn't exist / is inaccessible) — fall
       // back to the card list.
       App.switchTab('dev');
       return;
@@ -680,10 +693,57 @@ const AppView = {
     if (t.kind === 'proposal') {
       // Open proposals first; merged ones stay viewable with a still-live,
       // postable discussion thread (voting is settled, talking isn't).
+      // _topicProposal is the fetch-on-demand fallback (a proposal opened
+      // from beyond the cached Completed page) — checked last, and keyed by
+      // id so a stale one from a previous topic never resolves.
       return (AppView._proposals || []).find((p) => p.id === t.id)
-        || (AppView._merged || []).find((p) => p.id === t.id) || null;
+        || (AppView._merged || []).find((p) => p.id === t.id)
+        || (AppView._topicProposal && AppView._topicProposal.id === t.id
+            ? AppView._topicProposal : null)
+        || null;
     }
     return (AppView._govProposals || []).find((i) => i.id === t.id) || null;
+  },
+
+  // Single-item cache for a proposal opened from beyond the cached
+  // Completed page (the fetch-on-demand recovery path). Kept SEPARATE from
+  // _merged because _loadDevData() resets _merged to its first page on
+  // every call (including WS-driven refreshes while the topic is open), and
+  // an injected row would vanish on the next reset and re-trigger the
+  // forum fallback. Cleared on openTopic so it never leaks across topics.
+  _topicProposal: null,
+
+  // Fetch one proposal by id when it isn't in any cached list, caching it
+  // in _topicProposal and seeding the inline vote/kudos snapshot the same
+  // way loadMoreMerged does. Best-effort: a miss (404 / no access / network
+  // error) leaves _topicProposal untouched, so the caller falls back to the
+  // forum exactly as before.
+  async _fetchProposalById(id) {
+    if (!AppView.appData || !id) return null;
+    const slug = AppView.appData.slug;
+    try {
+      const res = await fetch(`/api/apps/${slug}/proposals/${id}${AppView._demoQS()}`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      const row = data.proposal || null;
+      if (!row) return null;
+      AppView._topicProposal = row;
+      // Keep the inline vote/kudos controls in sync so the discussion
+      // thread's activity row renders its tally + per-viewer state, just
+      // like a row loaded via the list (loadMoreMerged does the same).
+      if (AppView.voteState && AppView.voteState.bySession) {
+        AppView.voteState.bySession[String(row.id)] = row;
+        if (row.pr_number != null) {
+          AppView.voteState.byPrNumber[String(row.pr_number)] = row;
+        }
+        if (typeof GroupChat !== 'undefined' && GroupChat.refreshVoteControls) {
+          GroupChat.refreshVoteControls();
+        }
+      }
+      return row;
+    } catch {
+      return null;
+    }
   },
 
   // Paint (or live-refresh) the topic title + header card + body.
@@ -910,6 +970,9 @@ const AppView = {
   // Discussion buttons, and chat reference chips (revealInDrawer).
   openTopic(kind, id) {
     if (!kind || !id) return;
+    // Drop any on-demand proposal cached for a previous topic so its row
+    // can never be mistaken for the one being opened now.
+    AppView._topicProposal = null;
     if (typeof App !== 'undefined' && App.switchTab) {
       App.switchTab('dev', { kind, id }, 'topic');
     }
