@@ -109,7 +109,7 @@ const INFO = {
   'top-users': 'The 30 most prolific builders by lifetime dev sessions started, highest on the left. Hover a bar for the per-outcome breakdown (PRs produced, promoted, voted, merged).',
   'spend-by-builder': 'The 30 biggest LLM spenders, highest on the left. The toggle re-ranks by <b>Platform key</b> spend, <b>User key</b> (BYOK) spend, or <b>Both</b>. Hover a bar for the full breakdown.',
   kudos: 'Per ISO week, how many users gave 0–5 kudos (everyone gets a budget of 5/week). The 0 bucket is registered users who gave none that week, making this a participation view rather than a raw count.',
-  'spend-distribution': 'Per day, how many users\' platform-key AI spend (what the daily caps track) fell into each dollar bucket. The <b>$0</b> bucket is every registered user (as of that day) with no platform spend. The top tier splits <b>$20+ capped</b> (heavy spenders with no usable own key — blocked at the cap) from <b>$20+ own key</b> (heavy spenders who had a personal Anthropic key configured, or spent on it that day, so could keep going). The "has own key" signal is a current snapshot corrected by that day\'s own-key spend, so past-day attribution is approximate.',
+  'spend-distribution': 'Per day, how many users\' platform-key AI spend (what the daily caps track) fell into each dollar bucket. The <b>$0</b> bucket is every registered user (as of that day) with no platform spend — it usually dwarfs the paid buckets, so it is hidden by default; use the <b>Show $0</b> toggle to include it. The top tier splits <b>$20+ capped</b> (heavy spenders with no usable own key — blocked at the cap) from <b>$20+ own key</b> (heavy spenders who had a personal Anthropic key configured, or spent on it that day, so could keep going). The "has own key" signal is a current snapshot corrected by that day\'s own-key spend, so past-day attribution is approximate.',
 };
 
 // Per-card Overview definitions (#341). Keyed by a stable card id, mirroring
@@ -645,6 +645,12 @@ function renderKudos(d) {
 // (violet) at the very top. Mirrors renderKudos: a full-height transparent
 // hover overlay per column makes every day hoverable.
 let lastSpendDistribution = null;
+// Whether the muted $0 (no-spend) bucket is drawn. Default OFF: the $0 block
+// dwarfs the paid buckets, so hiding it makes the paid distribution readable.
+// Purely client-side — the payload always carries b0; this just decides
+// whether it's rendered. Persisted like the include-admins checkbox.
+const SPEND_DIST_ZERO_KEY = 'dashSpendDistIncludeZero';
+let spendDistIncludeZero = localStorage.getItem(SPEND_DIST_ZERO_KEY) === 'true';
 
 function renderSpendDistribution() {
   const d = lastSpendDistribution || {};
@@ -656,8 +662,11 @@ function renderSpendDistribution() {
     return;
   }
   // b0 first (bottom, muted), paid buckets ascending, $20+ split at the top:
-  // capped (red) then kept-going-on-own-key (violet).
-  const segs = [
+  // capped (red) then kept-going-on-own-key (violet). The $0 bucket is dropped
+  // when the "Hide $0" toggle is active so the paid buckets rescale to fill the
+  // chart; totals/max, bars, legend and tooltip all derive from `segs`, so they
+  // follow automatically.
+  const allSegs = [
     { key: 'b0', label: '$0', color: '#3f3f5a' },
     { key: 'b1', label: '$0.01–$5', color: '#34d399' },
     { key: 'b2', label: '$5–$10', color: '#a3e635' },
@@ -666,6 +675,7 @@ function renderSpendDistribution() {
     { key: 'b5', label: '$20+ capped', color: '#ef4444' },
     { key: 'b6', label: '$20+ own key', color: '#a855f7' },
   ];
+  const segs = spendDistIncludeZero ? allSegs : allSegs.filter((s) => s.key !== 'b0');
   const totals = days.map((x) => segs.reduce((a, s) => a + (Number(x[s.key]) || 0), 0));
   const max = Math.max(1, ...totals);
   const W = 640, H = 180, topPad = 14, botPad = 18, n = days.length;
@@ -981,6 +991,31 @@ function wireSpendToggle(attr, onChange) {
   });
 }
 
+// Wire the two-way "Hide $0 / Show $0" toggle on the spend-distribution chart.
+// Reflects the persisted state on the buttons, then on click updates styling,
+// flips + persists `spendDistIncludeZero`, and re-renders from the cached
+// payload (no refetch).
+function wireZeroToggle() {
+  const group = document.querySelector('[data-zero-toggle="spend-distribution"]');
+  if (!group) return;
+  const want = spendDistIncludeZero ? 'show' : 'hide';
+  group.querySelectorAll('.zero-btn').forEach((b) => {
+    const active = b.dataset.zero === want;
+    b.className = `zero-btn px-2 py-1 rounded ${active ? 'bg-violet-600 text-white' : 'bg-zinc-200 dark:bg-zinc-800'}`;
+  });
+  group.querySelectorAll('.zero-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      spendDistIncludeZero = btn.dataset.zero === 'show';
+      localStorage.setItem(SPEND_DIST_ZERO_KEY, String(spendDistIncludeZero));
+      group.querySelectorAll('.zero-btn').forEach((b) => {
+        const active = b === btn;
+        b.className = `zero-btn px-2 py-1 rounded ${active ? 'bg-violet-600 text-white' : 'bg-zinc-200 dark:bg-zinc-800'}`;
+      });
+      renderSpendDistribution();
+    });
+  });
+}
+
 // ── Bootstrap ─────────────────────────────────────────────────
 let currentCohort = 'all';
 // Include-admins checkbox (#1). Default OFF (exclude admins); persisted
@@ -1041,6 +1076,8 @@ async function init() {
   // Spend toggles re-render from cached payloads (no refetch).
   wireSpendToggle('spend', (mode) => { spendMode = mode; renderSpend(); });
   wireSpendToggle('spend-by-builder', (mode) => { builderMode = mode; renderSpendByBuilder(); });
+  // Hide/Show $0 toggle on the spend-distribution chart (re-render, no refetch).
+  wireZeroToggle();
 
   // Include-admins checkbox: reflect persisted state, then reload all on change.
   const adminBox = document.getElementById('include-admins');
