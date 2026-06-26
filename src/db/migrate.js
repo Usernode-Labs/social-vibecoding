@@ -52,7 +52,6 @@ async function migrate(config) {
   await seedStagingSpecUserShareFixtures(pool, config);
   await seedStagingHeadlessFixtures(pool, config);
   await seedStagingSyncActivity(pool, config);
-  await seedStagingGameFixtures(pool);
   await seedStagingChatEditFixtures(pool, config);
   await seedStagingLlmUsage(pool);
   await seedStagingSpendDistribution(pool);
@@ -4335,60 +4334,6 @@ async function migrateAppDbsToPerRole(pool, config) {
         });
       }
     }
-  }
-}
-
-// Obstacle-race staging fixtures. The lobby's "recent races" list and the
-// results panel render rows from game_results / game_room_players, but
-// those tables are created empty in a fresh staging clone (they don't
-// exist in prod yet). Seed one obviously-fake completed race so a tester
-// sees populated state immediately. Idempotent via fixed high IDs +
-// ON CONFLICT DO NOTHING, obviously "Staging demo …", and a strict no-op
-// outside staging. Reuses the shared `staging-demo-user` (id 900001)
-// seeded by seedStagingDemoAppCard plus a couple of extra fake racers.
-async function seedStagingGameFixtures(pool) {
-  if (process.env.USERNODE_ENV !== 'staging') return;
-
-  try {
-    // Fake racers (900001 already exists via seedStagingDemoAppCard).
-    await pool.query(
-      `INSERT INTO users (id, username, password) VALUES
-         (900001, 'staging-demo-user', 'staging-demo-not-a-login'),
-         (900051, 'Staging demo racer 1', 'staging-demo-not-a-login'),
-         (900052, 'Staging demo racer 2', 'staging-demo-not-a-login'),
-         (900053, 'Staging demo racer 3', 'staging-demo-not-a-login')
-       ON CONFLICT DO NOTHING`
-    );
-
-    // One finished room.
-    await pool.query(
-      `INSERT INTO game_rooms (id, code, host_user_id, status, arena_id, finished_at)
-       VALUES (900001, 'DEMO', 900051, 'finished', 'classic', NOW())
-       ON CONFLICT (id) DO NOTHING`
-    );
-
-    // Four participants with finishing placements.
-    await pool.query(
-      `INSERT INTO game_room_players
-         (id, room_id, user_id, username, color, placement, finished_at)
-       VALUES
-         (900001, 900001, 900051, 'Staging demo racer 1', '#f43f5e', 1, NOW()),
-         (900002, 900001, 900052, 'Staging demo racer 2', '#3b82f6', 2, NULL),
-         (900003, 900001, 900053, 'Staging demo racer 3', '#22c55e', 3, NULL),
-         (900004, 900001, 900001, 'staging-demo-user',    '#eab308', 4, NULL)
-       ON CONFLICT (id) DO NOTHING`
-    );
-
-    // The result row that powers the "recent races" list.
-    await pool.query(
-      `INSERT INTO game_results (id, room_id, winner_user_id, player_count, finished_at)
-       VALUES (900001, 900001, 900051, 4, NOW())
-       ON CONFLICT (id) DO NOTHING`
-    );
-
-    log.info('db', 'Staging obstacle-race fixtures seeded');
-  } catch (err) {
-    log.warn('db', 'Staging obstacle-race seeding failed', { message: err.message });
   }
 }
 

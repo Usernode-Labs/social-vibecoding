@@ -107,11 +107,6 @@
     <a id="leaderboard-btn" href="#leaderboard" class="text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Kudos leaderboard" title="Kudos leaderboard">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 11V3H8v8M5 7H3v4a2 2 0 002 2h3M19 7h2v4a2 2 0 01-2 2h-3M8 15a4 4 0 008 0h-8z M12 15v3m-3 3h6"/></svg>
     </a>
-    <!-- Obstacle-race entry point. Mirrors the leaderboard icon; links to
-         the #game hash route which public/js/game.js handles. -->
-    <a id="game-btn" href="#game" class="text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Race lobby" title="Play obstacle race">
-      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12h4m-2-2v4m6-3h.01M18 11h.01M7 18a4 4 0 01-4-4V9a4 4 0 014-4h10a4 4 0 014 4v5a4 4 0 01-4 4 3 3 0 01-2.4-1.2l-.9-1.2a2 2 0 00-1.6-.8h-1.2a2 2 0 00-1.6.8l-.9 1.2A3 3 0 017 18z"/></svg>
-    </a>
     <button id="dev-console-btn" class="hidden relative text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Open developer console">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z"/></svg>
       <span id="dev-console-badge" class="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"></span>
@@ -268,26 +263,6 @@
        the others. -->
   <main id="leaderboard-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
     <div id="leaderboard-root" class="max-w-3xl mx-auto p-4"></div>
-  </main>
-
-  <!-- Obstacle-race screen (hidden by default). Populated by
-       public/js/game.js. Sits alongside #home-screen / #leaderboard-screen
-       / #app-view so the hash-router can swap to it. The lobby + waiting
-       room render into #game-root; during a race the canvas + touch
-       joystick overlay take over (the module toggles their visibility). -->
-  <main id="game-screen" class="hidden flex-1 overflow-hidden" style="position:relative">
-    <div id="game-root" class="max-w-3xl mx-auto p-4 h-full overflow-y-auto"></div>
-    <!-- Race stage: full-bleed canvas + on-screen joystick. Hidden until a
-         race starts. -->
-    <div id="game-stage" class="hidden absolute inset-0 bg-zinc-950 flex items-center justify-center">
-      <canvas id="game-canvas" class="max-w-full max-h-full touch-none"></canvas>
-      <!-- HUD overlay (countdown, position) -->
-      <div id="game-hud" class="absolute top-0 left-0 right-0 p-3 pointer-events-none text-center"></div>
-      <!-- Touch joystick — shown on touch devices. base + thumb. -->
-      <div id="game-joystick" class="hidden absolute bottom-8 left-8 w-32 h-32 rounded-full bg-white/10 border border-white/20 touch-none select-none">
-        <div id="game-joystick-thumb" class="absolute w-14 h-14 rounded-full bg-white/40 border border-white/40" style="left:36px;top:36px;"></div>
-      </div>
-    </div>
   </main>
 
   <!-- App view (hidden by default) -->
@@ -951,7 +926,6 @@
        Kudos.renderButton directly. -->
   <script src="/js/kudos.js"></script>
   <script src="/js/leaderboard.js"></script>
-  <script src="/js/game.js"></script>
   <script src="/js/proposal-discuss.js"></script>
   <script src="/js/app-view.js"></script>
   <script src="/js/app-secrets.js"></script>
