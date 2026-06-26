@@ -797,6 +797,13 @@ const App = {
                 && !document.getElementById('home-screen').classList.contains('hidden')) {
               Home.load();
             }
+            // #405: the merge that triggered this rebuild also flips the
+            // session to 'merged' — advance the open session's header pill +
+            // change card to "✓ Merged" if it's the one being viewed.
+            if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus
+                && DevChat.currentSession && DevChat.currentSession.app_slug === data.appSlug) {
+              DevChat.refreshCurrentSessionStatus(DevChat.currentSession.id);
+            }
             break;
           case 'app_redeploy_status':
             // Per-app rebuild started/ended. Flip both the header
@@ -1212,6 +1219,12 @@ const App = {
     // this app's Dev view.
     if (App.currentApp === data.appSlug && App.currentTab === 'dev') {
       AppView.refreshDevData('vote');
+    }
+    // #405: advance the OPEN dev session's header pill + change card live
+    // (e.g. promoted → merging → merged) when this update is for the session
+    // the user is currently looking at. No-op otherwise.
+    if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus) {
+      DevChat.refreshCurrentSessionStatus(data.sessionId);
     }
     // Home screen's "Your proposals" strip tracks tallies live.
     App.refreshHomeProposals();

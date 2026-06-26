@@ -941,6 +941,10 @@
        renderStreamingHtml / clipSpecSnippet to stop the task-checkbox
        flicker while output streams. -->
   <script src="/js/streaming-markdown.js"></script>
+  <!-- #405: canonical merge-lifecycle helper (window.MergeStatus). Loaded
+       before dev-chat.js / app-view.js / home.js so all three derive and
+       label proposal merge states from one place. -->
+  <script src="/js/merge-status.js"></script>
   <script src="/js/dev-chat.js"></script>
   <!-- Kudos widget (button + budget badge) and leaderboard screen.
        Loaded BEFORE app-view.js so the panel renderer can use

@@ -23,6 +23,7 @@ const { IN_LOOP_BROWSER_GUIDANCE } = require('../services/in-loop-browser');
 const models = require('../services/models');
 const limits = require('../services/limits');
 const events = require('../services/events');
+const { getActiveUserStats } = require('../services/active-users');
 const { chatLimiter } = require('../middleware/rate-limits');
 const appAccess = require('../services/app-access');
 const notifications = require('../services/notifications');
@@ -769,13 +770,26 @@ function sessionRoutes(config) {
   router.get('/api/sessions/:id', async (req, res) => {
     try {
       const { rows } = await pool.query(
-        `SELECT cs.*, a.slug as app_slug, a.name as app_name
+        `SELECT cs.*, a.slug as app_slug, a.name as app_name,
+                (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count,
+                (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'no') AS no_count
          FROM chat_sessions cs
          JOIN apps a ON cs.app_id = a.id
          WHERE cs.id = $1 AND cs.user_id = $2`,
         [req.params.id, req.user.id]
       );
       if (!rows.length) return res.status(404).json({ error: 'Session not found' });
+
+      // #405: the session view's merge-lifecycle pill needs the vote tally to
+      // resolve the In-vote / "Passed — merging shortly" states exactly as
+      // the proposal feed card does. yes_count/no_count come from the query
+      // above; majority is the app's live active-user threshold. Best-effort
+      // — a stats hiccup just leaves the pill on the tally-free states.
+      try {
+        const stats = await getActiveUserStats(pool, rows[0].app_id);
+        rows[0].majority = stats?.majority || 1;
+        rows[0].active_users = stats?.active || 1;
+      } catch { rows[0].majority = rows[0].majority || 1; }
 
       // Viewing a session counts as activity so the auto-pause sweeper
       // doesn't pause a session the user is actively reading. Fire-and-
