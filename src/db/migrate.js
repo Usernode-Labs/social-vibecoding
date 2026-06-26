@@ -22,6 +22,7 @@ async function migrate(config) {
 
   await seedAdmin(pool, config);
   await seedCaptureUser(pool);
+  await seedCaptureAdminUser(pool);
   await seedSelfApp(pool, config);
   await seedStagingNotifications(pool, config);
   await seedStagingEnvProposal(pool, config);
@@ -536,6 +537,49 @@ async function seedCaptureUser(pool) {
     // Best-effort: a missing capture user only degrades screenshots back
     // to today's unauthenticated behaviour — never abort boot over it.
     log.warn('db', 'Capture user seed failed', { err: err.message });
+  }
+}
+
+// Dedicated identity for the proposal-checks ASSERTION suite (#47 fix).
+// services/visuals.js signs the per-test navigations as this user so the
+// admin-only check routes (/admin, /dashboard) render their gated content
+// instead of "Admin access required" — the two declared admin checks
+// failed for every proposal otherwise (they ran as the non-admin
+// usernode-capture above).
+//
+// A VIEW-ONLY admin (is_admin = TRUE, admin_readonly = TRUE): it can SEE
+// admin reads (adminMiddleware lets any admin through GETs) but is blocked
+// from every mutating route (requireAdminWrite → 403), so a leaked token
+// can never change platform state. Unlike usernode-capture this identity
+// signs NO public artifact — test frames are pass/fail + console errors,
+// never a published image — so granting it admin visibility leaks nothing.
+// can_create_apps stays FALSE; the discarded-random-bytes bcrypt password
+// blocks interactive login (visuals.js mints a JWT directly). Idempotent:
+// keyed on the unique username, DO NOTHING on conflict. Runs unconditionally
+// on boot so the platform (prod) DB has it for token minting; the staging
+// clone inherits the row from prod, same as usernode-capture.
+async function seedCaptureAdminUser(pool) {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id FROM users WHERE username = $1',
+      ['usernode-capture-admin']
+    );
+    if (rows.length) {
+      log.debug('db', 'Capture admin user already exists');
+      return;
+    }
+    const hash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12);
+    await pool.query(
+      `INSERT INTO users (username, password, is_admin, admin_readonly, can_create_apps)
+       VALUES ($1, $2, TRUE, TRUE, FALSE)
+       ON CONFLICT (username) DO NOTHING`,
+      ['usernode-capture-admin', hash]
+    );
+    log.info('db', 'Capture admin user created', { username: 'usernode-capture-admin' });
+  } catch (err) {
+    // Best-effort: a missing capture-admin user only degrades the admin
+    // check routes back to today's non-admin behaviour — never abort boot.
+    log.warn('db', 'Capture admin user seed failed', { err: err.message });
   }
 }
 

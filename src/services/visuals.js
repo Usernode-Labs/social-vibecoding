@@ -39,6 +39,11 @@ const CAPTURE_IMAGE = 'usernode-capture:latest';
 // admin-only UI. The capture run is capped at RUN_TIMEOUT_MS (240s); 15
 // minutes covers the lazy image build + retry comfortably.
 const CAPTURE_USERNAME = 'usernode-capture';
+// Separate view-only-admin identity (is_admin + admin_readonly; seeded by
+// src/db/migrate.js) used ONLY to sign the proposal-checks assertion suite,
+// so the admin-only check routes (/admin, /dashboard) render under test.
+// Never signs a public screenshot — see the testsToken block below.
+const CAPTURE_ADMIN_USERNAME = 'usernode-capture-admin';
 const CAPTURE_AUTH_TTL_MS = 15 * 60 * 1000;
 
 // ── "Is this UI-affecting?" heuristic ──────────────────────────────────
@@ -75,6 +80,39 @@ const CONTENT_TYPES = {
 // the worst-case stdout is six base64 artifacts (2 png + 2 webm + 2 gif).
 const RUN_TIMEOUT_MS = 240 * 1000;
 const RUN_MAX_BUFFER = 128 * 1024 * 1024;
+
+// Mint a 15-minute capture JWT for a seeded capture identity row, in the
+// same payload shape as /api/iframe-token (server.js) so child apps verify
+// it in prod/staging and the self-app staging clone exchanges it for a local
+// session (middleware/auth.js). Returns '' when the row is absent so callers
+// degrade to unauthenticated capture — never throws on a missing user.
+function mintCaptureToken(user, jwtSecret) {
+  if (!user) return '';
+  return jwt.sign(
+    {
+      id: user.id,
+      username: user.username,
+      usernode_pubkey: user.usernode_pubkey || null,
+    },
+    jwtSecret,
+    { expiresIn: '15m' }
+  );
+}
+
+// Route the two capture identities to their jobs (#47). Screenshots always
+// sign as the non-admin capture user (public artifacts must never show
+// admin-only UI), while the proposal-checks assertion suite prefers the
+// view-only-admin token so the admin-gated check routes (/admin, /dashboard)
+// render under test — falling back to the non-admin token when the admin
+// identity is missing (migration not yet run / lookup failed). Pure so the
+// routing + fallback is unit-testable without spinning up the pipeline.
+function selectCaptureTokens({ captureToken, adminToken }) {
+  const screenshot = captureToken || '';
+  return {
+    screenshotToken: screenshot,
+    testsToken: adminToken || screenshot,
+  };
+}
 
 // Append the capture JWT as a `token` query param. testing_path can
 // legitimately carry its own query string (e.g. `/board?demo-pr=1`, see
@@ -612,15 +650,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       );
       captureUser = rows[0] || null;
       if (captureUser) {
-        captureToken = jwt.sign(
-          {
-            id: captureUser.id,
-            username: captureUser.username,
-            usernode_pubkey: captureUser.usernode_pubkey || null,
-          },
-          config.jwtSecret,
-          { expiresIn: '15m' }
-        );
+        captureToken = mintCaptureToken(captureUser, config.jwtSecret);
       } else {
         log.warn('visuals', 'Capture user missing — capturing unauthenticated', {
           sessionId: session.id, username: CAPTURE_USERNAME,
@@ -631,6 +661,38 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         sessionId: session.id, err: err.message,
       });
     }
+
+    // #47: the proposal-checks ASSERTION suite signs its per-test
+    // navigations as a separate VIEW-ONLY admin (usernode-capture-admin,
+    // seeded in migrate.js) so the admin-only check routes (/admin,
+    // /dashboard) render their gated content instead of "Admin access
+    // required". Kept distinct from captureToken because test frames are
+    // pass/fail + console errors only — never a published image — so this
+    // admin visibility leaks nothing public, whereas the non-admin
+    // captureToken still signs every screenshot. Degrades gracefully:
+    // falls back to captureToken (then to unauthenticated when even that
+    // is absent), never throws.
+    let adminToken = '';
+    try {
+      const { rows } = await pool.query(
+        'SELECT id, username, usernode_pubkey FROM users WHERE username = $1',
+        [CAPTURE_ADMIN_USERNAME]
+      );
+      const adminUser = rows[0] || null;
+      if (adminUser) {
+        adminToken = mintCaptureToken(adminUser, config.jwtSecret);
+      } else {
+        log.warn('visuals', 'Capture admin user missing — tests run as non-admin capture user', {
+          sessionId: session.id, username: CAPTURE_ADMIN_USERNAME,
+        });
+      }
+    } catch (err) {
+      log.warn('visuals', 'Capture admin lookup failed — tests run as non-admin capture user', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+    // Screenshots keep the non-admin token; tests prefer the admin token.
+    const { screenshotToken, testsToken } = selectCaptureTokens({ captureToken, adminToken });
 
     // Targets, reached directly over the shared docker network — same
     // access model waitForHealthy uses, bypassing Caddy's forward-auth
@@ -699,7 +761,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     const targets = capturePaths.map((p, index) => {
       const visitPath = isSelfApp ? selfAppHashPath(p) : p;
       const isFragmentTarget = visitPath.startsWith('/#');
-      const afterUrl = withToken(`http://${stagingName}:3000${visitPath}`, captureToken);
+      const afterUrl = withToken(`http://${stagingName}:3000${visitPath}`, screenshotToken);
       let beforeUrl = '';
       let beforeFallbackUrl = '';
       if (media && prodRunning) {
@@ -707,8 +769,8 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           beforeUrl = `http://${prodName}:3000${visitPath}`;
           if (p !== '/' && !isFragmentTarget) beforeFallbackUrl = `http://${prodName}:3000/`;
         } else {
-          beforeUrl = withToken(`http://${prodName}:3000${visitPath}`, captureToken);
-          if (p !== '/') beforeFallbackUrl = withToken(`http://${prodName}:3000/`, captureToken);
+          beforeUrl = withToken(`http://${prodName}:3000${visitPath}`, screenshotToken);
+          if (p !== '/') beforeFallbackUrl = withToken(`http://${prodName}:3000/`, screenshotToken);
         }
       }
       return {
@@ -755,7 +817,9 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         index,
         name: t.name,
         path: t.path,
-        url: withToken(`http://${stagingName}:3000${visitPath}`, captureToken),
+        // Tests sign as the view-only-admin so admin-gated check routes
+        // render; screenshots (TARGETS) keep the non-admin captureToken.
+        url: withToken(`http://${stagingName}:3000${visitPath}`, testsToken),
         expectSelector: t.expectSelector || '',
         expectText: t.expectText || '',
         allowConsoleErrors: !!t.allowConsoleErrors,
@@ -967,6 +1031,10 @@ module.exports = {
   isUiAffecting,
   parseShots,
   withToken,
+  mintCaptureToken,
+  selectCaptureTokens,
+  CAPTURE_USERNAME,
+  CAPTURE_ADMIN_USERNAME,
   selfAppHashPath,
   beforeContainerName,
   resolveCaptureScale,
