@@ -173,3 +173,47 @@ test('html: dashboard.html mounts the #spend-distribution container', () => {
   assert.match(html, /id="spend-distribution"/, 'mount point must exist');
   assert.match(html, /data-info="spend-distribution"/, 'info icon must be wired');
 });
+
+// ── 5. "Hide $0 / Show $0" toggle ────────────────────────────────────────
+
+test('html: the chart header carries a Hide/Show $0 toggle', () => {
+  const html = read('public/dashboard.html');
+  assert.match(html, /data-zero-toggle="spend-distribution"/, 'toggle group must exist');
+  assert.match(html, /data-zero="hide"[^>]*>Hide \$0/, 'a "Hide $0" button must exist');
+  assert.match(html, /data-zero="show"[^>]*>Show \$0/, 'a "Show $0" button must exist');
+  // Hide is the default-active button (violet), Show is inactive (zinc).
+  assert.match(
+    html,
+    /data-zero="hide" class="zero-btn[^"]*bg-violet-600/,
+    'Hide $0 must be the default-active (violet) button',
+  );
+});
+
+test('client: the renderer filters the $0 bucket unless the toggle is on', () => {
+  const js = read('public/js/dashboard.js');
+  // State var + persistence key, defaulting OFF (Hide $0).
+  assert.match(js, /SPEND_DIST_ZERO_KEY\s*=\s*'dashSpendDistIncludeZero'/, 'localStorage key must be defined');
+  assert.match(
+    js,
+    /let spendDistIncludeZero\s*=\s*localStorage\.getItem\(SPEND_DIST_ZERO_KEY\)\s*===\s*'true'/,
+    'state must default to false (Hide $0) and read from localStorage',
+  );
+  // The b0 segment is dropped when the toggle is off, keeping all paid buckets.
+  assert.match(
+    js,
+    /spendDistIncludeZero\s*\?\s*allSegs\s*:\s*allSegs\.filter\(\(s\)\s*=>\s*s\.key\s*!==\s*'b0'\)/,
+    'segments must exclude b0 when Hide $0 is active',
+  );
+});
+
+test('client: the toggle persists and re-renders without refetching', () => {
+  const js = read('public/js/dashboard.js');
+  assert.match(js, /function wireZeroToggle\(\)/, 'the toggle wiring fn must exist');
+  assert.match(js, /wireZeroToggle\(\)/, 'the toggle must be wired in init()');
+  // On click it persists the choice and re-renders from the cached payload.
+  assert.match(js, /localStorage\.setItem\(SPEND_DIST_ZERO_KEY, String\(spendDistIncludeZero\)\)/, 'choice must persist');
+  // wireZeroToggle re-renders directly; it must NOT trigger a data reload.
+  const fn = js.slice(js.indexOf('function wireZeroToggle'), js.indexOf('function wireZeroToggle') + 1200);
+  assert.match(fn, /renderSpendDistribution\(\)/, 'must re-render the chart');
+  assert.ok(!/loadAll\(\)/.test(fn), 'must not refetch (no loadAll) on toggle');
+});
