@@ -1,11 +1,12 @@
 // #404: consolidated action-button layout on issue / proposal / governance /
-// merged cards (app-view.js). Actions are now grouped into primary (filled
-// accent), secondary (inline outline pills), and overflow (the long tail,
-// behind a "⋯" menu) by the shared _cardActionsHtml composer. These tests
-// pin the contract: every existing action still renders, the primary action
-// carries gc-vote-btn-primary, the ⋯ menu appears only when it consolidates
-// ≥2 actions (single-item overflow renders inline), and voteButtonsHtml's
-// group-chat collapsed-vote path is unchanged.
+// merged cards (app-view.js). This is a LAYOUT-ONLY treatment: every action
+// button stays visible and inline (no overflow "⋯" menu, no primary-violet
+// emphasis), in its current colour/handler/order — they are simply routed
+// through one shared _cardActionsHtml composer that wraps them in a single
+// consistent, evenly-gapped row (.gc-card-actions). These tests pin that
+// contract: all actions render inline, the shared container is used, and none
+// of the removed overflow/primary machinery leaks into the markup. The
+// group-chat collapseVoted path through voteButtonsHtml is unchanged.
 //
 // app-view.js is a plain browser script (`const AppView = {…}`); we load it
 // into a vm context, stub the globals it reaches, and assert on the returned
@@ -29,7 +30,7 @@ function makeAppView(userId, opts) {
     console,
     relTime: () => 'just now',
     App: { user: { id: userId, canAdminWrite: !!(opts && opts.admin) } },
-    // Distinct marker so we can assert the kudos button is present in a bucket.
+    // Distinct marker so we can assert the kudos button is present inline.
     Kudos: { renderButton: () => '<button class="gc-vote-btn">kudos</button>' },
     ConfirmModal: { show: async () => true },
     ProposalDiscuss: { open: () => {} },
@@ -61,81 +62,70 @@ function makeAppView(userId, opts) {
 
 const ME = 42;
 
-// ── _cardActionsHtml composer ────────────────────────────────────────────
+// Assert none of the removed overflow/primary machinery appears in markup.
+function assertNoOverflowMachinery(html) {
+  assert.doesNotMatch(html, /gc-overflow-btn/, 'no ⋯ overflow trigger');
+  assert.doesNotMatch(html, /gc-action-menu/, 'no overflow menu');
+  assert.doesNotMatch(html, /gc-vote-btn-primary/, 'no primary-violet emphasis');
+}
 
-test('_cardActionsHtml: ≥2 overflow items render the ⋯ menu', () => {
+// ── _cardActionsHtml composer (flat, layout-only) ─────────────────────────
+
+test('_cardActionsHtml: wraps a flat button list in one consistent row', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._cardActionsHtml({
-    primary: ['<button class="gc-vote-btn">A</button>'],
-    overflow: ['<button class="gc-vote-btn">B</button>', '<button class="gc-vote-btn">C</button>'],
-  });
-  assert.match(html, /gc-overflow-btn/, 'overflow trigger rendered');
-  assert.match(html, /gc-action-menu/, 'overflow menu container rendered');
-  assert.match(html, />B</, 'first overflow action present in menu');
-  assert.match(html, />C</, 'second overflow action present in menu');
+  const html = AppView._cardActionsHtml([
+    '<button class="gc-vote-btn">A</button>',
+    '',
+    '<button class="gc-vote-btn">B</button>',
+  ]);
+  assert.match(html, /^<div class="gc-card-actions">/, 'uses the shared container');
+  assert.match(html, />A</);
+  assert.match(html, />B</);
+  assertNoOverflowMachinery(html);
 });
 
-test('_cardActionsHtml: a single overflow item renders inline (no ⋯ menu)', () => {
+test('_cardActionsHtml: empty / all-falsy input renders nothing', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._cardActionsHtml({
-    primary: ['<button class="gc-vote-btn">A</button>'],
-    overflow: ['<button class="gc-vote-btn">Solo</button>'],
-  });
-  assert.doesNotMatch(html, /gc-overflow-btn/, 'no menu for a single overflow action');
-  assert.match(html, />Solo</, 'the solo action still renders inline');
-});
-
-test('_cardActionsHtml: empty buckets render nothing', () => {
-  const AppView = makeAppView(ME);
-  assert.equal(AppView._cardActionsHtml({}), '');
-  assert.equal(AppView._cardActionsHtml({ primary: [''], overflow: [null] }), '');
-});
-
-test('_asPrimary: splices the primary class onto a vote button', () => {
-  const AppView = makeAppView(ME);
-  const out = AppView._asPrimary('<button class="gc-vote-btn" onclick="x()">Go</button>');
-  assert.match(out, /class="gc-vote-btn gc-vote-btn-primary"/);
-  assert.match(out, /onclick="x\(\)"/, 'handler preserved');
-  assert.equal(AppView._asPrimary(''), '', 'no-op on empty');
+  assert.equal(AppView._cardActionsHtml([]), '');
+  assert.equal(AppView._cardActionsHtml(['', null, undefined]), '');
+  assert.equal(AppView._cardActionsHtml(), '');
 });
 
 // ── Issue card ───────────────────────────────────────────────────────────
 
 const baseIssue = (over) => ({ number: 5, title: 'Fix the thing', ...over });
 
-test('issue card: fresh issue makes "Create proposal" the primary action', () => {
+test('issue card: all actions inline in the shared row, no primary/overflow', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderIssueRow(baseIssue());
-  // Create proposal is the violet primary.
-  assert.match(html, /class="gc-vote-btn gc-vote-btn-primary"[^>]*createPrForIssue\(5\)[^>]*>Create proposal</);
-  // Generate proposal still offered.
-  assert.match(html, /confirmAutoSession\(5\)/);
+  assert.match(html, /gc-card-actions/, 'shared action row present');
+  assert.match(html, /giveIssueBounty\(5\)/, 'Pledge kudos present');
+  assert.match(html, /createPrForIssue\(5\)/, 'Create proposal present');
+  assert.match(html, /confirmAutoSession\(5\)/, 'Generate proposal present');
+  assert.match(html, />Create proposal</);
   assert.match(html, />Generate proposal</);
-  // Pledge kudos preserved (the lone overflow item → inline, no menu).
-  assert.match(html, /giveIssueBounty\(5\)/);
-  assert.match(html, />Pledge kudos</);
-  assert.doesNotMatch(html, /gc-overflow-btn/, 'one overflow action → no menu');
+  assertNoOverflowMachinery(html);
 });
 
-test('issue card: a ready headless run becomes the primary, Create drops to secondary', () => {
+test('issue card: a ready headless run keeps its contextual label inline (no violet)', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderIssueRow(baseIssue({
     headless: { status: 'ready', outcome: 'spec', sessionId: 90 },
   }));
-  assert.match(html, /class="gc-vote-btn gc-vote-btn-primary"[^>]*startFromAutoSession\(90\)[^>]*>Review spec/);
+  assert.match(html, /startFromAutoSession\(90\)[^>]*>Review spec/, 'contextual ready label present');
   assert.match(html, />Create proposal</, 'Create proposal still present');
   assert.match(html, /giveIssueBounty\(5\)/, 'kudos still present');
+  assertNoOverflowMachinery(html);
 });
 
-test('issue card: question-outcome rerun + kudos give a ⋯ overflow menu', () => {
+test('issue card: question-outcome rerun "Generate proposal" stays inline', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderIssueRow(baseIssue({
     headless: { status: 'ready', outcome: 'question', sessionId: 91 },
   }));
-  // Two overflow items (rerun Generate + Pledge kudos) → menu appears.
-  assert.match(html, /gc-overflow-btn/, 'menu appears with ≥2 overflow actions');
-  assert.match(html, /startFromAutoSession\(91\)/, 'primary clone action present');
+  assert.match(html, /startFromAutoSession\(91\)/, 'clone action present');
   assert.match(html, /confirmAutoSession\(5\)/, 'rerun Generate proposal present');
+  assertNoOverflowMachinery(html);
 });
 
 // ── Proposal card ──────────────────────────────────────────────────────────
@@ -146,33 +136,32 @@ const baseProposal = (over) => ({
   created_at: '2026-06-01T00:00:00Z', ...over,
 });
 
-test('proposal card: vote pair is primary and keeps its yes/no colours (not violet)', () => {
+test('proposal card: vote pair keeps its yes/no colours, all actions inline', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal());
   assert.match(html, /gc-vote-btn-yes[^>]*castVote\(7, 'yes'\)/);
   assert.match(html, /gc-vote-btn-no[^>]*castVote\(7, 'no'\)/);
-  // The vote buttons are positionally primary but must NOT get the violet
-  // primary fill — they keep their semantic green/red.
-  assert.doesNotMatch(html, /gc-vote-btn-yes gc-vote-btn-primary/);
+  assert.match(html, /gc-card-actions/, 'shared action row present');
+  assertNoOverflowMachinery(html);
 });
 
-test('proposal card (admin, not author): every action survives, power actions in ⋯ menu', () => {
+test('proposal card (admin, not author): every action renders inline, none hidden', () => {
   const AppView = makeAppView(ME, { admin: true });
   const html = AppView._renderProposalCard(baseProposal({ staging_url: 'https://stg.example' }));
-  // Preview + kudos are inline secondary; Admin merge + Ask AI hide in overflow.
   assert.match(html, /swapToStagingForSession\(7/, 'Preview present');
   assert.match(html, />kudos</, 'kudos present');
-  assert.match(html, /castAdminMerge\(7\)/, 'Admin merge preserved');
-  assert.match(html, /gc-ask-ai-btn/, 'Ask AI preserved');
-  assert.match(html, /gc-overflow-btn/, 'power actions consolidated behind ⋯');
+  assert.match(html, /castAdminMerge\(7\)/, 'Admin merge present');
+  assert.match(html, /gc-ask-ai-btn/, 'Ask AI present');
+  assertNoOverflowMachinery(html);
 });
 
-test('proposal card (author): Open session + Withdraw still render', () => {
+test('proposal card (author): Open session + Withdraw render inline', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal({ user_id: ME }));
   assert.match(html, /openProposalSession\(7\)/, 'Open session present');
   assert.match(html, /withdrawProposal\(7\)/, 'Withdraw present');
   assert.doesNotMatch(html, /gc-ask-ai-btn/, 'no Ask AI on your own proposal');
+  assertNoOverflowMachinery(html);
 });
 
 // ── Governance card ──────────────────────────────────────────────────────
@@ -182,22 +171,24 @@ const baseGov = (over) => ({
   created_by: 999, created_at: '2026-06-01T00:00:00Z', ...over,
 });
 
-test('gov card: yes/no primary, admin merge + withdraw consolidate into ⋯', () => {
+test('gov card: yes/no/admin/withdraw all inline in the shared row', () => {
   const AppView = makeAppView(ME, { admin: true });
   const html = AppView._renderGovCard(baseGov({ created_by: ME }));
   assert.match(html, /castIssueVote\(11, 'up'\)/);
   assert.match(html, /castIssueVote\(11, 'down'\)/);
-  assert.match(html, /castIssueAdminApply\(11\)/, 'Admin merge preserved');
-  assert.match(html, /withdrawGovProposal\(11\)/, 'Withdraw preserved');
-  assert.match(html, /gc-overflow-btn/, 'two overflow actions → menu');
+  assert.match(html, /castIssueAdminApply\(11\)/, 'Admin merge present');
+  assert.match(html, /withdrawGovProposal\(11\)/, 'Withdraw present');
+  assert.match(html, /gc-card-actions/);
+  assertNoOverflowMachinery(html);
 });
 
-test('gov card: non-admin non-creator has no overflow menu', () => {
+test('gov card: non-admin non-creator sees only yes/no (others gated off, as today)', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderGovCard(baseGov());
-  assert.doesNotMatch(html, /gc-overflow-btn/, 'nothing to consolidate');
+  assert.match(html, /castIssueVote\(11, 'up'\)/);
   assert.doesNotMatch(html, /castIssueAdminApply/, 'no admin merge for non-admin');
   assert.doesNotMatch(html, /withdrawGovProposal/, 'no withdraw for non-creator');
+  assertNoOverflowMachinery(html);
 });
 
 // ── Merged card ────────────────────────────────────────────────────────────
@@ -208,22 +199,24 @@ const baseMerged = (over) => ({
   created_at: '2026-06-01T00:00:00Z', ...over,
 });
 
-test('merged card: Undo + Ask AI consolidate, voted indicator moves up', () => {
+test('merged card: voted box, Undo, kudos, Ask AI all inline in the shared row', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderMergedCard(baseMerged({ my_vote: 'yes' }), 1);
-  assert.match(html, /undoPr\(8\)/, 'Undo preserved');
-  assert.match(html, /gc-ask-ai-btn/, 'Ask AI preserved');
-  assert.match(html, /gc-overflow-btn/, 'two overflow actions → menu');
-  assert.match(html, /gc-vote-voted-box-yes[^>]*>You voted Yes</, '"You voted Yes" indicator present');
+  assert.match(html, /gc-card-actions/, 'shared action row present');
+  assert.match(html, /gc-vote-voted-box-yes[^>]*>You voted Yes</, '"You voted Yes" indicator present in the action row');
+  assert.match(html, /undoPr\(8\)/, 'Undo present');
+  assert.match(html, /gc-ask-ai-btn/, 'Ask AI present');
+  assertNoOverflowMachinery(html);
 });
 
-test('merged card: revert-status link stays inline, not in the menu', () => {
+test('merged card: revert-status link renders inline instead of an Undo button', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderMergedCard(baseMerged({
     revert_session_id: 9, revert_status: 'merged', revert_pr_number: 900,
   }), 1);
   assert.match(html, /Undone by PR#900/, 'revert status link present');
   assert.doesNotMatch(html, /undoPr/, 'no Undo button once a revert exists');
+  assertNoOverflowMachinery(html);
 });
 
 // ── voteButtonsHtml: group-chat collapsed-vote path unchanged ──────────────
@@ -238,7 +231,7 @@ test('voteButtonsHtml: collapseVoted returns the read-only "You voted X" box', (
   assert.equal(none, '');
 });
 
-test('voteButtonsHtml: full set (no collapse) still concatenates Preview/Yes/No/Admin', () => {
+test('voteButtonsHtml: full set concatenates Preview/Yes/No/Admin (group-chat row)', () => {
   const AppView = makeAppView(ME, { admin: true });
   const html = AppView.voteButtonsHtml(baseProposal({ staging_url: 'https://stg' }));
   assert.match(html, /swapToStagingForSession/, 'Preview');
