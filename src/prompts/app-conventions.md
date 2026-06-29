@@ -109,21 +109,61 @@ When it merges, the branch is redeployed to the **production**
 container.
 
 Apps receive `USERNODE_ENV=staging` or `USERNODE_ENV=production`.
-Use it to branch behavior where the environments must differ —
-most commonly:
-
-- Seeding fake data for tables whose content doesn't get copied into
-  staging (see "Public vs private tables").
-- Skipping side effects: don't send real emails, charge real cards,
-  post to real webhooks, etc. while `USERNODE_ENV === 'staging'`.
-- Displaying a "staging" indicator in the UI so testers know what
-  they're looking at.
+The staging container exists so a tester approves **the exact app that
+will ship**. That only holds if staging and production run the *same
+code path* — `USERNODE_ENV` may swap the **data** behind that path and
+suppress **real-world outbound side effects**, but it must never change
+which features exist or how the core logic behaves.
 
 Canonical helper:
 
 ```js
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 ```
+
+### Gate data and side effects — never features or logic
+
+✅ **Legitimate uses of `IS_STAGING`:**
+
+- **Seed mock data** for tables that aren't copied into staging
+  (newly created tables, `staging:private` tables, hard-to-reach
+  states). See "Staging mock data" below.
+- **Suppress irreversible outbound side effects** — don't send real
+  emails, charge real cards, post to real webhooks, or broadcast real
+  on-chain transactions from staging. Point at a sandbox endpoint or
+  no-op instead, but keep the surrounding code path identical (same
+  validation, same DB writes, same response shape) so the path is
+  actually exercised by the tester.
+- **Show a "staging" indicator** in the UI so testers know what
+  they're looking at.
+
+🚫 **Never gate these on `USERNODE_ENV`:**
+
+- **Feature availability.** No feature, screen, button, or endpoint
+  may exist in one environment and be absent in the other. If a tester
+  approves it, production must have it; if production lacks it, the
+  tester must not see it.
+- **Auth / permissions.** Don't auto-grant admin, bypass login, or
+  seed yourself into a privileged table only in staging. Admin and
+  permission flows must be reachable in production the same way.
+  (If a feature needs an admin to operate, it's broken in production
+  the moment its admin only exists in staging.)
+- **The default core logic path.** A "testing mode" that swaps the
+  real implementation for a fake one (mock wallets, fake balances,
+  short-circuited game logic) is fine **as an explicit, opt-in tool
+  available in both environments** — but it must NOT be the silent
+  default a tester sees, and it must NOT be env-exclusive. If staging
+  defaults to the mock path, the tester approves the mock — not the
+  real feature — and ships a product nobody actually exercised. Keep
+  the real path as the default everywhere; let mock mode be something
+  you deliberately turn on (query param, settings flag, admin
+  toggle).
+
+Rule of thumb: if flipping `USERNODE_ENV` to `production` would make a
+feature **stop working** (rather than just operate on real data /
+real endpoints), you've gated the wrong thing. Move the difference to
+**data** (seed it) or to a **single outbound boundary** (the email /
+charge / chain call), and leave everything else identical.
 
 ## Staging mock data
 
