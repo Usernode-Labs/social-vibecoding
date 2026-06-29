@@ -495,6 +495,12 @@ async function start() {
   // immediately, like the other recovery steps below.
   recoverStuckMerges(config)
     .then(() => reconcileEligibleMerges(config))
+    // #447: after reconciling merge state, re-run any stuck/never-recorded
+    // proposal checks so PRs left permanently "still running its tests" by a
+    // restart mid-capture self-heal on boot. Off the critical path; the
+    // re-checked PRs become merge-eligible and the next vote (or the eligible-
+    // merge reconcile on a later boot) merges them.
+    .then(() => reconcileStuckChecks(config))
     .catch((err) => {
       log.warn('server', 'Stuck-merge recovery / eligible-merge reconcile failed', {
         err: err.message,
@@ -546,7 +552,7 @@ if (require.main === module) {
 // `recoverStuckMerges` rides along so the GitHub-reconciliation sweep stays
 // covered too, and `reconcileEligibleMerges` (#390) so the boot-time
 // auto-merge eligibility sweep is covered. Not used by any runtime caller.
-module.exports = { adoptOrphanWorker, finalizeRecoveredTurn, recoverStuckMerges, reconcileEligibleMerges };
+module.exports = { adoptOrphanWorker, finalizeRecoveredTurn, recoverStuckMerges, reconcileEligibleMerges, reconcileStuckChecks };
 
 // Scan existing imported apps for privacy violations. Usernode workers
 // run with zero GitHub credentials and rely on unauthenticated public
@@ -836,6 +842,78 @@ async function reconcileEligibleMerges(config) {
   }
   log.info('server', 'Eligible auto-merge reconciliation complete', {
     apps: rows.length, drained, errors,
+  });
+}
+
+// #447: how long a 'pending' check may sit before it's treated as stuck.
+// The headless capture run is capped at RUN_TIMEOUT_MS (240s in
+// services/visuals.js) plus the staging build, so 10 minutes is comfortably
+// beyond any legitimately in-flight run. Tunable via CHECKS_STALE_MS.
+const CHECKS_STALE_MS = parseInt(
+  process.env.CHECKS_STALE_MS || String(10 * 60 * 1000),
+  10
+);
+
+// #447: reconcile stuck proposal checks. check_state is only ever advanced
+// out of 'pending' by the same captureForSession invocation that set it, so
+// a process restart/crash mid-capture (or a staging rebuild that predated
+// the #447 capture wiring) can leave a promoted PR 'pending'/NULL forever —
+// past the vote threshold but permanently "still running its tests", blocked
+// from merging with no retry. This re-runs the checks for promoted sessions
+// whose verdict is NULL or has been 'pending' longer than CHECKS_STALE_MS.
+// captureForSession always resolves to a terminal state (or 'error' via its
+// catch), so this guarantees no row stays 'pending' indefinitely. Bounded
+// per run like the staging-heal sweep; runs at boot and from the session
+// sweeper (Pass 4). Safe + idempotent on every boot.
+async function reconcileStuckChecks(config) {
+  const github = require('./src/services/github');
+  // Without GitHub auth a rebuild/capture is a no-op (rebuildSessionStaging
+  // returns 'skipped' with no bot token), so skip the work entirely.
+  if (!github.isEnabled()) return;
+
+  const { getPool } = require('./src/db/pool');
+  const pool = getPool(config);
+
+  let rows;
+  try {
+    ({ rows } = await pool.query(
+      `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+         FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+        WHERE cs.status = 'promoted'
+          AND cs.branch_name IS NOT NULL
+          AND (cs.check_state IS NULL
+               OR (cs.check_state = 'pending'
+                   AND cs.checks_checked_at < NOW() - make_interval(secs => $1::double precision / 1000.0)))
+        ORDER BY cs.promoted_at ASC NULLS FIRST
+        LIMIT 50`,
+      [CHECKS_STALE_MS]
+    ));
+  } catch (err) {
+    log.warn('server', 'reconcileStuckChecks query failed', { err: err.message });
+    return;
+  }
+  if (!rows.length) return;
+
+  log.info('server', 'Reconciling stuck proposal checks on startup', { count: rows.length });
+
+  const MAX_RECHECKS = 5;
+  let rechecked = 0;
+  for (const session of rows) {
+    if (rechecked >= MAX_RECHECKS) break;
+    if (worker.isInFlight(session.id)) continue;
+    rechecked++;
+    try {
+      await stagingRecovery.recheckSessionChecks({
+        config, pool, session, reason: 'stuck-checks-boot',
+      });
+    } catch (err) {
+      log.warn('server', 'reconcileStuckChecks recheck failed', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+  }
+  log.info('server', 'Stuck-check reconciliation complete', {
+    scanned: rows.length, rechecked,
   });
 }
 
@@ -1517,6 +1595,12 @@ const STAGING_HEAL_COOLDOWN_MS = parseInt(
   10
 );
 
+// #447: per-session throttle for the sweeper's stuck-check pass (Pass 4),
+// mirroring stagingHealAttempts above. Maps sessionId -> last recheck-attempt
+// epoch ms so a check that keeps failing to record (broken build, missing
+// secret) isn't re-run on every tick. Same cooldown as the staging heal.
+const checkRecheckAttempts = new Map();
+
 function startSessionAutoPauseSweeper(config) {
   if (sessionSweeperHandle) return;
   if (!config.sessionAutopauseIdleMs || config.sessionAutopauseIdleMs <= 0) {
@@ -1629,6 +1713,51 @@ function startSessionAutoPauseSweeper(config) {
       }
     } catch (err) {
       log.warn('server', 'Staging heal sweep failed', { err: err.message });
+    }
+
+    // Pass 4: stuck-check reconcile (#447). The flip side of the merge gate
+    // — a promoted PR whose proposal checks are NULL or stuck 'pending' past
+    // CHECKS_STALE_MS is permanently blocked from merging ("still running its
+    // tests") because nothing ever advances check_state out of 'pending'
+    // after a restart mid-capture. Re-run the checks (rebuild staging if the
+    // preview is gone, else recheck the live container) so legitimately-
+    // passing PRs flip to 'passing' and become mergeable. Bounded per sweep
+    // with a per-session cooldown, exactly like the staging-heal pass above;
+    // the boot-time reconcileStuckChecks handles the restart case, this keeps
+    // them healed live without a restart.
+    try {
+      const { rows } = await pool.query(
+        `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+           FROM chat_sessions cs
+           JOIN apps a ON cs.app_id = a.id
+          WHERE cs.status = 'promoted'
+            AND cs.branch_name IS NOT NULL
+            AND (cs.check_state IS NULL
+                 OR (cs.check_state = 'pending'
+                     AND cs.checks_checked_at < NOW() - make_interval(secs => $1::double precision / 1000.0)))
+          ORDER BY cs.promoted_at ASC NULLS FIRST
+          LIMIT 50`,
+        [CHECKS_STALE_MS]
+      );
+      const MAX_RECHECKS_PER_SWEEP = 5;
+      let rechecked = 0;
+      for (const session of rows) {
+        if (rechecked >= MAX_RECHECKS_PER_SWEEP) break;
+        if (worker.isInFlight(session.id)) continue;
+        const last = checkRecheckAttempts.get(session.id) || 0;
+        if (Date.now() - last < STAGING_HEAL_COOLDOWN_MS) continue;
+        // Stamp BEFORE the (minutes-long) recheck so a later tick won't kick
+        // off a duplicate concurrent run for the same session.
+        checkRecheckAttempts.set(session.id, Date.now());
+        rechecked++;
+        try {
+          await stagingRecovery.recheckSessionChecks({ config, pool, session, reason: 'stuck-checks-sweep' });
+        } catch (err) {
+          log.warn('server', 'Stuck-check recheck failed', { sessionId: session.id, err: err.message });
+        }
+      }
+    } catch (err) {
+      log.warn('server', 'Stuck-check reconcile sweep failed', { err: err.message });
     }
   }, config.sessionSweepIntervalMs).unref();
 }

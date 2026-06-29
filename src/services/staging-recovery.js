@@ -150,11 +150,54 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   });
   pushSessionUpdate({ action: 'staging_ready', sessionId: session.id, appSlug: session.app_slug });
 
+  // #447: re-run the proposal checks ("CI for proposals") against the fresh
+  // build. Before this, rebuildSessionStaging — the shared path behind
+  // startup recovery, the heal sweep (Pass 3), and the on-demand
+  // ensure-staging preview click — rebuilt the preview but never refreshed
+  // check_state, so a proposal whose staging was GC'd and rebuilt kept a
+  // stale 'pending'/NULL verdict and stayed blocked from merging forever.
+  // Fire-and-forget with the same failure-swallowing as the dev-turn
+  // callers; captureForSession is itself _inFlight-guarded so a concurrent
+  // live capture isn't duplicated.
+  const visuals = require('./visuals');
+  visuals.captureForSession(config, session, app, commitHash, stagingResult, { send: () => {} })
+    .catch((err) => log.warn('staging-recovery', 'Post-rebuild checks capture failed (non-fatal)', {
+      sessionId: session.id, err: err.message,
+    }));
+
   log.info('staging-recovery', 'Staging preview rebuilt', { sessionId: session.id, url: stagingResult.stagingUrl, reason });
   return 'built';
+}
+
+// #447: reconcile a single session's proposal checks. Used by the manual
+// "Re-run checks" endpoint and the boot-time / periodic stale-check sweep.
+// If the staging preview is missing or dead, rebuild it (the rebuild now
+// re-runs the checks via the capture fired above). Otherwise the preview is
+// healthy, so re-run the checks directly against the live container. Both
+// paths are fire-and-forget at the capture layer and never throw for the
+// no-op cases (no repo / no bot token → rebuildSessionStaging returns
+// 'skipped'); a genuine build failure propagates to the caller.
+async function recheckSessionChecks({ config, pool, session, reason }) {
+  if (await stagingNeedsRebuild(session)) {
+    // rebuildSessionStaging owns the capture (see above) and the no-op
+    // short-circuits (missing owner/repo or bot token → 'skipped').
+    return rebuildSessionStaging({ config, pool, session, reason });
+  }
+  // Healthy preview: re-run the checks directly. captureForSession reaches
+  // the staging container by name over the docker network, so it needs only
+  // the app descriptor + a commit to stamp (best-effort: the commit the
+  // prior verdict described). _inFlight-guarded internally.
+  const visuals = require('./visuals');
+  const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
+  visuals.captureForSession(config, session, app, session.checks_commit_sha || null, null, { send: () => {} })
+    .catch((err) => log.warn('staging-recovery', 'Direct checks re-run failed (non-fatal)', {
+      sessionId: session.id, reason, err: err.message,
+    }));
+  return 'rechecked';
 }
 
 module.exports = {
   stagingNeedsRebuild,
   rebuildSessionStaging,
+  recheckSessionChecks,
 };
