@@ -277,6 +277,15 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS console_checked_at T
 -- routes/votes.js checkAndMerge blocks a non-'passing' proposal (admin
 -- force-merge still bypasses). The console_* columns are kept written in
 -- parallel for one release so a rolling deploy's old readers still work.
+-- #447: 'pending' is only ever advanced out by the same captureForSession
+-- run that set it, so a restart mid-capture (or a staging rebuild that
+-- predated the capture wiring) could leave a promoted PR 'pending'/NULL and
+-- permanently merge-blocked. A 'pending' row whose checks_checked_at is
+-- older than CHECKS_STALE_MS (default 10m) is now treated as STUCK and
+-- re-run: by server.js reconcileStuckChecks (boot + session-sweeper Pass 4),
+-- by a vote that reaches threshold (checkAndMerge stale-pending kick), by any
+-- staging rebuild (staging-recovery.rebuildSessionStaging now re-runs checks),
+-- and by the manual POST /api/sessions/:id/recheck ("Re-run checks" button).
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_state TEXT;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS test_results JSONB NOT NULL DEFAULT '[]';
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS checks_commit_sha VARCHAR(40);

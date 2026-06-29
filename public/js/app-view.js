@@ -2297,14 +2297,25 @@ const AppView = {
   _checksDetailHtml(pr) {
     if (!pr) return '';
     const state = pr.check_state;
-    if (!state) return AppView._consoleCheckDetailHtml(pr);
+    // #447: a never-recorded (legacy/clone) check still offers a manual
+    // re-run for owners/admins so it isn't stuck blocked with no way out.
+    if (!state) {
+      const fallback = AppView._consoleCheckDetailHtml(pr);
+      const rb = AppView._recheckBtnHtml(pr);
+      return rb ? `${fallback}<div class="mt-1">${rb}</div>` : fallback;
+    }
     const results = Array.isArray(pr.test_results) ? pr.test_results : [];
 
     if (state === 'pending') {
+      // #447: stuck-'pending' checks now self-heal (the platform re-runs them
+      // automatically once they've been running too long) and can be kicked
+      // manually — so this is no longer an indefinite, unexplained spinner.
       return `
         <div class="mt-2 rounded border border-zinc-300/40 dark:border-zinc-700/60 bg-zinc-500/5 px-2 py-1.5 text-zinc-600 dark:text-zinc-400">
           <div class="font-medium">Checks are still running…</div>
           <div class="mt-0.5 opacity-90">The staging build is being tested. Merge is blocked until all tests pass.</div>
+          <div class="mt-1 opacity-80">If this has been running for a while, the platform re-runs the checks automatically — or re-run them now.</div>
+          ${AppView._recheckBtnHtml(pr)}
         </div>`;
     }
     if (state === 'error') {
@@ -2313,6 +2324,7 @@ const AppView = {
           <div class="font-medium">⚠ Checks couldn't run.</div>
           <div class="mt-0.5 opacity-90">The staging build or the test run itself broke, so the platform can't confirm the app works. Merge is blocked until checks pass.</div>
           <div class="mt-1 opacity-80">Pushing a fix rebuilds the preview and re-runs the checks.</div>
+          ${AppView._recheckBtnHtml(pr)}
         </div>`;
     }
     if (!results.length) return ''; // 'passing' with no detail to show — the green badge is enough.
@@ -2354,7 +2366,50 @@ const AppView = {
         <ul class="mt-1 ml-1 space-y-0.5">${rows}</ul>
         ${checked}
         ${failing ? '<div class="mt-1 opacity-80">Pushing a fix rebuilds the preview and re-runs the checks — the block clears when they pass.</div>' : ''}
+        ${failing ? AppView._recheckBtnHtml(pr) : ''}
       </div>`;
+  },
+
+  // #447: the "Re-run checks" action. Renders for the proposal's owner or an
+  // admin when the checks are stuck running, couldn't run, were never
+  // recorded, or are failing — never for a clean 'passing' run. Hitting it
+  // rebuilds the staging preview if it's gone and re-runs the test suite; the
+  // badge updates in place off the existing checks broadcasts.
+  _recheckBtnHtml(pr) {
+    if (!pr) return '';
+    if (pr.check_state === 'passing') return '';
+    const owner = !!(App.user && pr.user_id === App.user.id);
+    // `recheckable` is a staging ?demo=1 hint (set only on mock rows) so the
+    // button is reviewable regardless of the demo viewer's owner/admin status;
+    // real proposals never carry it and stay owner/admin-only.
+    if (!owner && !App.user?.isAdmin && !pr.recheckable) return '';
+    return `<button type="button" class="gc-vote-btn mt-1" title="Rebuild the staging preview if needed and re-run the automated tests" onclick="AppView.castRecheck(${pr.id}, this)">Re-run checks</button>`;
+  },
+
+  // POST /api/sessions/:id/recheck (owner/admin). Fire-and-forget on the
+  // server; progress arrives via the checks_ready / staging_ready broadcasts
+  // that drive refreshDevData, so we just disable the button transiently.
+  _recheckInFlight: new Set(),
+  async castRecheck(sessionId, btn) {
+    if (AppView._recheckInFlight.has(sessionId)) return;
+    AppView._recheckInFlight.add(sessionId);
+    if (btn) { btn.disabled = true; btn.textContent = 'Re-running…'; }
+    try {
+      const resp = await fetch(`/api/sessions/${sessionId}/recheck`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        alert(data.error || `Re-run failed (HTTP ${resp.status}).`);
+        if (btn) { btn.disabled = false; btn.textContent = 'Re-run checks'; }
+      }
+    } catch (err) {
+      alert(`Re-run failed: ${err.message}`);
+      if (btn) { btn.disabled = false; btn.textContent = 'Re-run checks'; }
+    } finally {
+      AppView._recheckInFlight.delete(sessionId);
+    }
   },
 
   // #381: expanded console-error detail for the proposal detail screen.

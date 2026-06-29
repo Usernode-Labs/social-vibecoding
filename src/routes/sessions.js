@@ -58,6 +58,13 @@ const stopRegistry = new Map();
 // sweeper uses in server.js. Cleared when the rebuild settles.
 const ensureStagingInFlight = new Set();
 
+// #447: per-session in-flight guard for the manual "Re-run checks" route
+// below. Coalesces repeat clicks so one stuck proposal can't kick off
+// several concurrent staging rebuilds + capture runs. Cleared when the
+// recheck settles. (captureForSession is _inFlight-guarded internally too;
+// this just avoids a redundant rebuild on the rebuild path.)
+const recheckInFlight = new Set();
+
 // getActiveWorkerCount is imported from services/active-workers and
 // re-exported at the bottom of this module (server.js imports it here).
 
@@ -2622,6 +2629,63 @@ function sessionRoutes(config) {
         });
     } catch (err) {
       log.error('sessions', 'ensure-staging error', { message: err.message });
+      if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #447: manual "Re-run checks" for a proposal whose automated checks are
+  // stuck. Before this the only way out of a stuck 'pending'/NULL verdict was
+  // the owner pushing a brand-new commit — useless for an already-correct PR
+  // whose build succeeded — or an admin force-merge that skips checks
+  // entirely. This re-runs the checks: rebuild staging if the preview is
+  // gone, else re-run against the live container. Progress flows through the
+  // existing checks_ready / staging_ready broadcasts so the badge updates in
+  // place. Owner + admins only.
+  router.post('/api/sessions/:id/recheck', drainGuard, async (req, res) => {
+    try {
+      const sessionId = parseInt(req.params.id, 10);
+      const { rows } = await pool.query(
+        `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
+         FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
+         WHERE cs.id = $1`,
+        [sessionId]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Session not found' });
+      const session = rows[0];
+
+      // Owner or admin only — re-running checks costs a staging build +
+      // headless run, so it's not opened to every collaborator (deferred).
+      const isOwner = session.user_id === req.user.id;
+      if (!isOwner && !req.user?.is_admin) {
+        return res.status(403).json({ error: 'Not allowed' });
+      }
+
+      // Staging containers can't build nested previews (no Docker socket),
+      // so a recheck can never run inside a staging preview of the platform.
+      if (process.env.USERNODE_ENV === 'staging') {
+        return res.json({ status: 'unavailable', reason: 'demo' });
+      }
+
+      // Coalesce repeat clicks.
+      if (recheckInFlight.has(sessionId)) {
+        return res.json({ status: 'running' });
+      }
+      recheckInFlight.add(sessionId);
+      res.json({ status: 'running' });
+
+      // Fire-and-forget. recheckSessionChecks rebuilds staging when the
+      // preview is missing (the rebuild re-runs the checks) or re-runs the
+      // checks directly against the live container otherwise. All progress +
+      // failure surfacing rides the existing capture/broadcast paths.
+      stagingRecovery.recheckSessionChecks({ config, pool, session, reason: 'manual-recheck' })
+        .catch((err) => {
+          log.error('sessions', 'manual recheck failed', { sessionId, err: err.message });
+        })
+        .finally(() => {
+          recheckInFlight.delete(sessionId);
+        });
+    } catch (err) {
+      log.error('sessions', 'recheck error', { message: err.message });
       if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
     }
   });

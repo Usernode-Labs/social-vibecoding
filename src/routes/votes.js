@@ -144,6 +144,10 @@ function stagingMockProposals() {
       // missing-selector failure) are reviewable via ?demo=1, and the gate
       // would block this merge.
       check_state: 'failing',
+      // #447: `recheckable` makes the "Re-run checks" button render under
+      // ?demo=1 regardless of the viewer's owner/admin status (real rows
+      // never carry it). Set on every non-passing checks mock.
+      recheckable: true,
       test_results: [
         { name: 'Home loads', path: '/', status: 'pass', consoleErrors: [], failureReason: '' },
         {
@@ -168,6 +172,23 @@ function stagingMockProposals() {
         '[Mock] Checks-pending test: tests are still running on the staging build',
         5, 2, 0, 1),
       check_state: 'pending',
+      recheckable: true,
+      test_results: [],
+    },
+    // #447: a proposal STUCK in 'pending' — it crossed the vote threshold but
+    // its checks have been "running" far longer than any real run takes
+    // (checks_checked_at ~2h ago, well past CHECKS_STALE_MS). This is the
+    // exact #447 failure: permanently blocked from merging with the old
+    // "still running its tests" message. Verifies the stale-pending copy +
+    // the "Re-run checks" button (and, on a live server, the boot/sweep
+    // reconcile that would re-run it). yes_count is set above any plausible
+    // staging majority so the row reads as past-threshold.
+    {
+      ...mk(9000011, 900111,
+        '[Mock] Stuck-checks test: pending past the stale window',
+        2, 9, 0, 1),
+      check_state: 'pending',
+      recheckable: true,
       test_results: [],
     },
     // #47: a proposal whose checks could not run (staging build / capture
@@ -178,6 +199,7 @@ function stagingMockProposals() {
         '[Mock] Checks-error test: the staging build or test run itself broke',
         6, 1, 0, 0),
       check_state: 'error',
+      recheckable: true,
       test_results: [],
     },
     // #405: a proposal that PASSED the vote with green checks and is not
@@ -841,6 +863,10 @@ function voteRoutes(config) {
             behind_main: m.behind_main || 0,
             check_state: m.check_state || null,
             test_results: m.test_results || [],
+            checks_checked_at: m.checks_checked_at || null,
+            // #447: demo-only hint that renders the "Re-run checks" button
+            // for any ?demo=1 viewer (real rows gate on owner/admin instead).
+            recheckable: m.recheckable || false,
             resolving: m.resolving || false,
             app_id: 0,
             app_slug: 'staging-demo',
@@ -1472,11 +1498,34 @@ async function checkAndMerge(config, pool, session, options = {}) {
     // Re-read fresh: the in-memory `session` row can predate the latest
     // build's verdict. Admin force-merge bypasses (skipped under !force).
     const { rows: checkRows } = await pool.query(
-      `SELECT check_state, test_results FROM chat_sessions WHERE id = $1`,
+      `SELECT check_state, test_results, checks_checked_at FROM chat_sessions WHERE id = $1`,
       [session.id]
     );
     const checkState = checkRows[0]?.check_state || null;
     if (checkState !== 'passing') {
+      // #447: when a vote reaches threshold but the checks are NULL or stuck
+      // 'pending' past the stale window, kick a recheck right now rather than
+      // waiting for the periodic sweep — so a legitimately-passing PR clears
+      // its block on the next vote instead of sitting indefinitely. The
+      // recheck rebuilds staging if the preview is gone, else re-runs the
+      // tests against the live container. Fire-and-forget; the gate still
+      // blocks this attempt (the verdict isn't ready yet).
+      const CHECKS_STALE_MS = parseInt(process.env.CHECKS_STALE_MS || String(10 * 60 * 1000), 10);
+      const checkedAt = checkRows[0]?.checks_checked_at
+        ? new Date(checkRows[0].checks_checked_at).getTime()
+        : 0;
+      const stalePending = checkState === null
+        || (checkState === 'pending' && (Date.now() - checkedAt) > CHECKS_STALE_MS);
+      if (stalePending) {
+        const stagingRecovery = require('../services/staging-recovery');
+        stagingRecovery.recheckSessionChecks({
+          config, pool, session, reason: 'stale-pending-vote-kick',
+        }).catch((err) => {
+          log.warn('votes', 'Stale-pending recheck kick failed', {
+            sessionId: session.id, err: err.message,
+          });
+        });
+      }
       const failingCount = Array.isArray(checkRows[0]?.test_results)
         ? checkRows[0].test_results.filter((r) => r && r.status !== 'pass').length
         : 0;
