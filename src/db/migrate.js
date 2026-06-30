@@ -1459,12 +1459,12 @@ async function seedStagingCcProgressRun(pool, config) {
   // ascending timestamps.
   const messages = [
     { role: 'user', content: '[staging fixture] Please add a progress indicator for Claude Code runs.', metadata: {}, minutesAgo: 39 },
-    { role: 'system', content: 'Spinning up coding agent (Claude Sonnet 4.6)...', metadata: {}, minutesAgo: 38 },
+    { role: 'system', content: 'Spinning up coding agent (Claude Sonnet 5)...', metadata: {}, minutesAgo: 38 },
     { role: 'system', content: 'Claude Code is running...', metadata: {}, minutesAgo: 38 },
     { role: 'system', content: 'Claude Code progress', metadata: { progressLog }, minutesAgo: 38 },
     { role: 'system', content: 'Claude Code finished', metadata: { ccOutput, ccOutcome: 'success', durationMs: 252000 }, minutesAgo: 34 },
     { role: 'user', content: '[staging fixture] Make sure the elapsed timer never disappears.', metadata: {}, minutesAgo: 33 },
-    { role: 'system', content: 'Spinning up coding agent (Claude Sonnet 4.6)...', metadata: {}, minutesAgo: 32 },
+    { role: 'system', content: 'Spinning up coding agent (Claude Sonnet 5)...', metadata: {}, minutesAgo: 32 },
     { role: 'system', content: 'Claude Code is running...', metadata: {}, minutesAgo: 32 },
     { role: 'system', content: 'Claude Code made no changes', metadata: { ccOutput: ccNoOpOutput, ccOutcome: 'no_changes', durationMs: 41000 }, minutesAgo: 31 },
   ];
@@ -1564,7 +1564,7 @@ async function seedStagingCcEstimateRun(pool, config) {
   // `_active` and whose `_estimate` the summary reads.
   const messages = [
     { role: 'user', content: '[staging fixture] Please add the new route handler.', metadata: {}, minutesAgo: 3 },
-    { role: 'system', content: 'Spinning up coding agent (Claude Sonnet 4.6)...', metadata: {}, minutesAgo: 2 },
+    { role: 'system', content: 'Spinning up coding agent (Claude Sonnet 5)...', metadata: {}, minutesAgo: 2 },
     {
       role: 'system',
       content: 'Claude Code is running...',
@@ -3984,7 +3984,7 @@ async function seedStagingProposalDiscussion(pool, config) {
       `INSERT INTO proposal_ai_messages (id, app_id, proposal_kind, proposal_ref, user_id, role, content, model)
        VALUES ($1, $2, 'pr', $3, $4, $5, $6, $7)
        ON CONFLICT (id) DO NOTHING`,
-      [id, appId, proposalRef, userId, role, content, role === 'assistant' ? 'claude-sonnet-4-6' : null]
+      [id, appId, proposalRef, userId, role, content, role === 'assistant' ? 'claude-sonnet-5' : null]
     );
   }
 
@@ -4200,7 +4200,7 @@ async function seedStagingOtherUserProposal(pool, config) {
       `INSERT INTO proposal_ai_messages (id, app_id, proposal_kind, proposal_ref, user_id, role, content, model)
        VALUES ($1, $2, 'pr', $3, $4, $5, $6, $7)
        ON CONFLICT (id) DO NOTHING`,
-      [id, appId, sessionId, tester.id, role, content, role === 'assistant' ? 'claude-sonnet-4-6' : null]
+      [id, appId, sessionId, tester.id, role, content, role === 'assistant' ? 'claude-sonnet-5' : null]
     );
   }
 
