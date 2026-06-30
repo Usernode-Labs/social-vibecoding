@@ -69,6 +69,7 @@ const ALL_KEYS = [
   'kudos_given',
   'issues_created',
   'address',
+  'active_apps',
 ];
 
 // ─── In-memory mock pool ─────────────────────────────────────────
@@ -99,6 +100,12 @@ function makeMockPool() {
       kudos_given: { '2026-06-15': 3 },
       issues_created: 5,
       address: 'ut1aliceaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      // Active on two apps — a populated array that must survive projection
+      // and the zero/null drop (an array is neither 0 nor null).
+      active_apps: [
+        { slug: 'demo-app', name: 'Demo App' },
+        { slug: 'second-app', name: 'Second App' },
+      ],
     },
     {
       user_id: 2,
@@ -112,6 +119,9 @@ function makeMockPool() {
       kudos_given: {},
       issues_created: 0,
       address: null,
+      // Active on nothing — empty array. Must be KEPT under include_0_values=0
+      // (it's neither 0 nor null), mirroring the empty {} kudos_given map.
+      active_apps: [],
     },
   ];
 
@@ -343,5 +353,75 @@ test('envelope and order unaffected by fields/include_0_values', async () => {
     assert.equal(body.window, 'week');
     assert.ok('weekStart' in body);
     assert.deepEqual(body.items.map((i) => i.username), ['alice', 'bob']);
+  } finally { await srv.close(); }
+});
+
+// ─── active_apps ─────────────────────────────────────────────────
+
+test('no fields → each item carries active_apps as an array of {slug, name}', async () => {
+  const srv = await startTestServer(makeMockPool());
+  try {
+    const { body } = await get(srv.baseUrl, '');
+    const alice = body.items.find((i) => i.username === 'alice');
+    const bob = body.items.find((i) => i.username === 'bob');
+    assert.ok(Array.isArray(alice.active_apps));
+    assert.deepEqual(alice.active_apps, [
+      { slug: 'demo-app', name: 'Demo App' },
+      { slug: 'second-app', name: 'Second App' },
+    ]);
+    assert.deepEqual(bob.active_apps, []);
+  } finally { await srv.close(); }
+});
+
+test('fields=active_apps → exactly username + active_apps', async () => {
+  const srv = await startTestServer(makeMockPool());
+  try {
+    const { body } = await get(srv.baseUrl, '?fields=username,active_apps');
+    const alice = body.items.find((i) => i.username === 'alice');
+    assert.deepEqual(Object.keys(alice).sort(), ['active_apps', 'username']);
+    assert.equal(alice.active_apps.length, 2);
+  } finally { await srv.close(); }
+});
+
+test('fields without active_apps → active_apps omitted', async () => {
+  const srv = await startTestServer(makeMockPool());
+  try {
+    const { body } = await get(srv.baseUrl, '?fields=username');
+    for (const item of body.items) {
+      assert.ok(!('active_apps' in item));
+    }
+  } finally { await srv.close(); }
+});
+
+test('include_0_values=0 → empty active_apps [] is KEPT (array is not 0/null)', async () => {
+  const srv = await startTestServer(makeMockPool());
+  try {
+    const { body } = await get(srv.baseUrl, '?include_0_values=0');
+    const alice = body.items.find((i) => i.username === 'alice');
+    const bob = body.items.find((i) => i.username === 'bob');
+    // Populated array survives, and the empty [] survives too.
+    assert.equal(alice.active_apps.length, 2);
+    assert.ok('active_apps' in bob, 'empty [] must survive (not 0/null)');
+    assert.deepEqual(bob.active_apps, []);
+  } finally { await srv.close(); }
+});
+
+test('fields=active_apps + include_0_values=0 → populated array survives unchanged', async () => {
+  const srv = await startTestServer(makeMockPool());
+  try {
+    const { body } = await get(
+      srv.baseUrl,
+      '?fields=username,active_apps&include_0_values=0'
+    );
+    const alice = body.items.find((i) => i.username === 'alice');
+    const bob = body.items.find((i) => i.username === 'bob');
+    assert.deepEqual(Object.keys(alice).sort(), ['active_apps', 'username']);
+    assert.deepEqual(alice.active_apps, [
+      { slug: 'demo-app', name: 'Demo App' },
+      { slug: 'second-app', name: 'Second App' },
+    ]);
+    // bob's empty array is kept under the projection too.
+    assert.deepEqual(Object.keys(bob).sort(), ['active_apps', 'username']);
+    assert.deepEqual(bob.active_apps, []);
   } finally { await srv.close(); }
 });

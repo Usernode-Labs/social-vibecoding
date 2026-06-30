@@ -2155,7 +2155,44 @@ async function seedStagingLeaderboardProfile(pool) {
     );
   }
 
-  log.info('db', 'Staging leaderboard-profile fixtures seeded', { appId });
+  // app_activity so the Top-users "active on N apps" chip / the API's
+  // active_apps field is non-empty and DIFFERS between the two fixture users.
+  // "Active on an app" = ever >=60s in a day on it AND a visit within the last
+  // 10 days (the active-users.js definition). We pick the first two public,
+  // non-self-hosted apps:
+  //   - author: qualifying (120s) + recent on BOTH apps → active_apps has 2.
+  //   - giver:  qualifying + recent on the FIRST app, plus a recent-but-never-
+  //             >=60s (30s) row on the second → that second app is correctly
+  //             EXCLUDED, exercising the "ever-qualified" gate, not just presence.
+  const { rows: activeAppRows } = await pool.query(
+    `SELECT id FROM apps
+       WHERE view_visibility = 'public' AND self_hosted = FALSE
+       ORDER BY id LIMIT 2`
+  );
+  const appA = activeAppRows[0]?.id;
+  const appB = activeAppRows[1]?.id;
+  // Each (app_id, user_id, date) pair is unique; spread rows across distinct
+  // recent dates so a same-day UNIQUE collision can't drop a qualifying row.
+  const activityRows = [];
+  if (appA) {
+    activityRows.push({ appId: appA, userId: AUTHOR_ID, secs: 120, daysAgo: 1 });
+    activityRows.push({ appId: appA, userId: GIVER_ID, secs: 120, daysAgo: 2 });
+  }
+  if (appB) {
+    activityRows.push({ appId: appB, userId: AUTHOR_ID, secs: 120, daysAgo: 1 });
+    // Recent but never >=60s → giver is NOT active on appB.
+    activityRows.push({ appId: appB, userId: GIVER_ID, secs: 30, daysAgo: 2 });
+  }
+  for (const a of activityRows) {
+    await pool.query(
+      `INSERT INTO app_activity (app_id, user_id, seconds_spent, date)
+       VALUES ($1, $2, $3, CURRENT_DATE - ($4::int))
+       ON CONFLICT (app_id, user_id, date) DO NOTHING`,
+      [a.appId, a.userId, a.secs, a.daysAgo]
+    );
+  }
+
+  log.info('db', 'Staging leaderboard-profile fixtures seeded', { appId, appA, appB });
 }
 
 // LLM-spend fixtures for the admin dashboard's Daily-spend and
