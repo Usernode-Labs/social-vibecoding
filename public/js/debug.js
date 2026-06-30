@@ -207,16 +207,20 @@ function setLive(on) {
 }
 
 async function init() {
-  let me;
+  // Admin check up front. The /api/debug/* endpoints are independently
+  // enforced server-side; this is only for a clean in-page message. We do
+  // NOT navigate away on failure — the "Merge debug" heading and page shell
+  // stay rendered (a transient 401 shouldn't bounce an admin to /login, and
+  // it keeps the page coherent under headless checks).
+  let me = null;
   try {
     me = await getJSON('/api/auth/me');
-  } catch {
-    window.location.href = '/login.html';
+  } catch (_) {
+    showGate('Sign in as an admin to view merge logs.');
     return;
   }
   if (!me.user?.isAdmin) {
-    showGate('Admins only — redirecting…');
-    setTimeout(() => { window.location.href = '/'; }, 1200);
+    showGate('Admins only — this page shows merge & conflict-resolution logs.');
     return;
   }
   document.getElementById('content').classList.remove('hidden');
