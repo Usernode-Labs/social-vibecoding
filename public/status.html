@@ -29,6 +29,14 @@
     .pill-missing .dot { background:#ef4444; }
     .pill-creating { background:rgba(167,139,250,0.1); color:#a78bfa; }
     .pill-creating .dot { background:#8b5cf6; }
+    /* Light-mode pill overrides: the 10%-opacity tint over white is too pale
+       for the bright dark-mode fill colors, so darken the text and slightly
+       strengthen the tint. The page toggles `.dark` on <html>, so target the
+       light state via html:not(.dark). Dots stay (solid, saturated). */
+    html:not(.dark) .pill-running { background:rgba(34,197,94,0.15); color:#15803d; }
+    html:not(.dark) .pill-stopped { background:rgba(202,138,4,0.15); color:#a16207; }
+    html:not(.dark) .pill-missing { background:rgba(239,68,68,0.15); color:#b91c1c; }
+    html:not(.dark) .pill-creating { background:rgba(139,92,246,0.15); color:#6d28d9; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
     body:not(.is-admin) .admin-only { display: none !important; }
   </style>
@@ -41,30 +49,30 @@
     <div class="flex items-center gap-3">
       <h1 class="text-xl font-bold">Usernode Status</h1>
       <span id="version" class="text-xs mono text-zinc-500"></span>
-      <span id="admin-badge" class="admin-only text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-700/30 text-violet-300">admin view</span>
+      <span id="admin-badge" class="admin-only text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-700/30 text-violet-700 dark:text-violet-300">admin view</span>
     </div>
     <div class="flex items-center gap-4 text-xs text-zinc-500">
       <label class="flex items-center gap-2">
         <input id="autorefresh" type="checkbox" checked class="accent-violet-500">
         auto-refresh <span id="refresh-countdown" class="mono"></span>
       </label>
-      <button id="refresh-now" class="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200">refresh</button>
-      <a href="/" class="text-violet-400 hover:text-violet-300">&larr; home</a>
+      <button id="refresh-now" class="px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200">refresh</button>
+      <a href="/" class="text-violet-600 dark:text-violet-400 hover:text-violet-700 dark:hover:text-violet-300">&larr; home</a>
     </div>
   </header>
 
   <!-- Deploy-in-progress banner. Hidden by default; renderDeploy() toggles. -->
-  <div id="deploy-banner" class="hidden mb-4 rounded-lg border border-violet-700/50 bg-violet-900/20 px-4 py-3">
+  <div id="deploy-banner" class="hidden mb-4 rounded-lg border border-violet-300 dark:border-violet-700/50 bg-violet-50 dark:bg-violet-900/20 px-4 py-3">
     <div class="flex items-center gap-3">
       <span class="relative flex h-2.5 w-2.5">
         <span class="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75 animate-ping"></span>
         <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-violet-500"></span>
       </span>
       <div class="text-sm">
-        <span class="font-semibold text-violet-200">Deploy in progress</span>
-        <span class="text-violet-300/80"> — your changes may take a minute to go live.</span>
+        <span class="font-semibold text-violet-800 dark:text-violet-200">Deploy in progress</span>
+        <span class="text-violet-700 dark:text-violet-300/80"> — your changes may take a minute to go live.</span>
       </div>
-      <span id="deploy-meta" class="ml-auto text-xs mono text-violet-400"></span>
+      <span id="deploy-meta" class="ml-auto text-xs mono text-violet-600 dark:text-violet-400"></span>
     </div>
   </div>
 
@@ -78,50 +86,50 @@
        /node-status viewer (modeled on dapp-server.js's /status page). -->
   <section class="mb-6">
     <div class="flex items-baseline justify-between mb-2">
-      <h2 class="text-sm font-semibold text-zinc-400 uppercase tracking-wide">Usernode node</h2>
-      <a href="/node-status" target="_blank" rel="noopener" class="text-xs text-violet-400 hover:text-violet-300">
+      <h2 class="text-sm font-semibold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide">Usernode node</h2>
+      <a href="/node-status" target="_blank" rel="noopener" class="text-xs text-violet-600 dark:text-violet-400 hover:text-violet-700 dark:hover:text-violet-300">
         → full status
       </a>
     </div>
-    <div id="node" class="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 text-sm"></div>
+    <div id="node" class="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 p-4 text-sm"></div>
   </section>
 
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
     <!-- Left: Apps tree -->
     <div class="lg:col-span-2 space-y-3">
-      <h2 class="text-sm font-semibold text-zinc-400 uppercase tracking-wide">Apps</h2>
+      <h2 class="text-sm font-semibold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide">Apps</h2>
       <div id="apps" class="space-y-3"></div>
     </div>
 
     <!-- Right: System lanes -->
     <div class="space-y-6">
       <section class="admin-only">
-        <h2 class="text-sm font-semibold text-zinc-400 uppercase tracking-wide mb-2">Capacity &amp; host</h2>
-        <div id="capacity" class="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 text-sm"></div>
+        <h2 class="text-sm font-semibold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide mb-2">Capacity &amp; host</h2>
+        <div id="capacity" class="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 p-4 text-sm"></div>
       </section>
 
       <section>
-        <h2 class="text-sm font-semibold text-zinc-400 uppercase tracking-wide mb-2">Workers</h2>
+        <h2 class="text-sm font-semibold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide mb-2">Workers</h2>
         <div id="workers" class="space-y-2 text-sm"></div>
       </section>
 
       <section>
-        <h2 class="text-sm font-semibold text-zinc-400 uppercase tracking-wide mb-2">Stuck sessions</h2>
+        <h2 class="text-sm font-semibold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide mb-2">Stuck sessions</h2>
         <div id="stuck" class="space-y-2 text-sm"></div>
       </section>
 
       <section class="admin-only">
-        <h2 class="text-sm font-semibold text-zinc-400 uppercase tracking-wide mb-2">LLM today</h2>
+        <h2 class="text-sm font-semibold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide mb-2">LLM today</h2>
         <div id="llm" class="space-y-1 text-sm"></div>
       </section>
 
       <section>
-        <h2 class="text-sm font-semibold text-zinc-400 uppercase tracking-wide mb-2">Drift</h2>
+        <h2 class="text-sm font-semibold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide mb-2">Drift</h2>
         <div id="drift" class="space-y-2 text-sm"></div>
       </section>
 
       <section class="admin-only">
-        <h2 class="text-sm font-semibold text-zinc-400 uppercase tracking-wide mb-2">Recent events</h2>
+        <h2 class="text-sm font-semibold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide mb-2">Recent events</h2>
         <div id="events" class="space-y-0.5 text-xs mono max-h-80 overflow-y-auto"></div>
       </section>
     </div>
@@ -164,10 +172,10 @@ function meterRow(label, valueText, pct, tone = 'zinc') {
   return `
     <div class="mb-2">
       <div class="flex justify-between text-xs mb-1">
-        <span class="text-zinc-400">${h(label)}</span>
-        <span class="mono text-zinc-300">${valueText}</span>
+        <span class="text-zinc-600 dark:text-zinc-400">${h(label)}</span>
+        <span class="mono text-zinc-700 dark:text-zinc-300">${valueText}</span>
       </div>
-      <div class="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+      <div class="h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
         <div class="h-full ${barTone}" style="width:${w}%"></div>
       </div>
     </div>`;
@@ -187,9 +195,9 @@ function renderCapacity(data) {
   const sessTone = sessPct >= 90 ? 'red' : sessPct >= 70 ? 'yellow' : 'green';
   let out = meterRow('Sessions (active + promoted)', `${c.globalUsed} / ${c.globalCap}`, sessPct, sessTone);
 
-  out += `<div class="flex justify-between text-xs mb-3 text-zinc-400">
-    <span>Active turns <span class="mono text-zinc-200">${c.activeTurns}</span> · warm idle <span class="mono text-zinc-200">${c.warmIdleWorkers}</span></span>
-    <span>per-user cap <span class="mono text-zinc-200">${c.userCap}</span></span>
+  out += `<div class="flex justify-between text-xs mb-3 text-zinc-600 dark:text-zinc-400">
+    <span>Active turns <span class="mono text-zinc-800 dark:text-zinc-200">${c.activeTurns}</span> · warm idle <span class="mono text-zinc-800 dark:text-zinc-200">${c.warmIdleWorkers}</span></span>
+    <span>per-user cap <span class="mono text-zinc-800 dark:text-zinc-200">${c.userCap}</span></span>
   </div>`;
 
   if (host) {
@@ -208,12 +216,12 @@ function renderCapacity(data) {
   }
 
   const bs = c.byStatus || {};
-  out += `<div class="mt-3 pt-3 border-t border-zinc-800 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+  out += `<div class="mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-800 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
     <div class="flex justify-between"><span class="text-zinc-500">active</span><span class="mono">${bs.active ?? 0}</span></div>
     <div class="flex justify-between"><span class="text-zinc-500">promoted</span><span class="mono">${bs.promoted ?? 0}</span></div>
     <div class="flex justify-between"><span class="text-zinc-500">paused</span><span class="mono">${bs.paused ?? 0}</span></div>
     <div class="flex justify-between"><span class="text-zinc-500">archived</span><span class="mono">${bs.archived ?? 0}</span></div>
-    <div class="flex justify-between"><span class="text-zinc-500">stale → archive</span><span class="mono ${c.staleNotified > 0 ? 'text-yellow-400' : ''}">${c.staleNotified}</span></div>
+    <div class="flex justify-between"><span class="text-zinc-500">stale → archive</span><span class="mono ${c.staleNotified > 0 ? 'text-yellow-600 dark:text-yellow-400' : ''}">${c.staleNotified}</span></div>
     <div class="flex justify-between"><span class="text-zinc-500">resumable</span><span class="mono">${c.archivedResumable}</span></div>
   </div>`;
 
@@ -236,13 +244,13 @@ function statePill(state, label) {
 
 function summaryCard(label, value, tone = 'zinc') {
   const toneCls = {
-    zinc: 'border-zinc-800',
-    green: 'border-green-700/40',
-    yellow: 'border-yellow-700/40',
-    red: 'border-red-700/40',
+    zinc: 'border-zinc-200 dark:border-zinc-800',
+    green: 'border-green-300 dark:border-green-700/40',
+    yellow: 'border-yellow-300 dark:border-yellow-700/40',
+    red: 'border-red-300 dark:border-red-700/40',
   }[tone];
   return `
-    <div class="rounded-lg border ${toneCls} bg-zinc-900/60 p-3">
+    <div class="rounded-lg border ${toneCls} bg-zinc-50 dark:bg-zinc-900/60 p-3">
       <div class="text-xs text-zinc-500 uppercase tracking-wide">${h(label)}</div>
       <div class="text-xl font-semibold mt-0.5">${value}</div>
     </div>`;
@@ -267,7 +275,7 @@ function renderSummary(s, node) {
   const warmIdle = s.workersWarmIdle ?? 0;
   const workerExtras = [];
   if (warmIdle > 0) workerExtras.push(`<span class="text-zinc-500 text-xs">+${warmIdle} warm</span>`);
-  if (s.workersOrphaned > 0) workerExtras.push(`<span class="text-red-400 text-xs">+${s.workersOrphaned} orphan</span>`);
+  if (s.workersOrphaned > 0) workerExtras.push(`<span class="text-red-600 dark:text-red-400 text-xs">+${s.workersOrphaned} orphan</span>`);
   const workerValue = `${inFlight}${workerExtras.length ? ' ' + workerExtras.join(' ') : ''}`;
 
   const cards = [
@@ -360,19 +368,19 @@ function renderNode(node) {
   // stream to silently drop tx from non-tracked senders. Operators should
   // restart the sidecar with a fresh archive snapshot.
   const partialLedgerWarning = node.hasFullUtxoDb === false ? `
-    <div class="mt-3 rounded border border-red-700/40 bg-red-900/20 p-2 text-xs">
-      <span class="font-semibold text-red-300">Partial ledger mode</span>
-      <span class="text-red-300/80">— sidecar booted without HAS_FULL_UTXO_DB. Incoming tx from non-tracked senders may be silently dropped. Restart with a fresh archive snapshot.</span>
+    <div class="mt-3 rounded border border-red-300 dark:border-red-700/40 bg-red-50 dark:bg-red-900/20 p-2 text-xs">
+      <span class="font-semibold text-red-700 dark:text-red-300">Partial ledger mode</span>
+      <span class="text-red-700 dark:text-red-300/80">— sidecar booted without HAS_FULL_UTXO_DB. Incoming tx from non-tracked senders may be silently dropped. Restart with a fresh archive snapshot.</span>
     </div>` : '';
 
   const errorLine = node.error ? `
-    <div class="mt-2 text-xs text-red-400 mono break-all">${h(node.error)}</div>` : '';
+    <div class="mt-2 text-xs text-red-600 dark:text-red-400 mono break-all">${h(node.error)}</div>` : '';
 
   const tipLine = (ourTip != null || peerTip != null) ? `
     <div class="text-xs text-zinc-500 mt-1">
-      tip <span class="mono text-zinc-300">${ourTip != null ? ourTip.toLocaleString() : '—'}</span>
-      ${peerTip != null ? `/ <span class="mono text-zinc-400">${peerTip.toLocaleString()}</span> on network` : ''}
-      ${behind != null && behind > 0 ? `<span class="text-yellow-400 ml-1">(${behind.toLocaleString()} blocks behind)</span>` : ''}
+      tip <span class="mono text-zinc-700 dark:text-zinc-300">${ourTip != null ? ourTip.toLocaleString() : '—'}</span>
+      ${peerTip != null ? `/ <span class="mono text-zinc-600 dark:text-zinc-400">${peerTip.toLocaleString()}</span> on network` : ''}
+      ${behind != null && behind > 0 ? `<span class="text-yellow-600 dark:text-yellow-400 ml-1">(${behind.toLocaleString()} blocks behind)</span>` : ''}
     </div>` : '';
 
   const ageSeconds = node.at ? Math.max(0, Math.floor((Date.now() - new Date(node.at).getTime()) / 1000)) : null;
@@ -380,7 +388,7 @@ function renderNode(node) {
 
   const bar = showBar ? `
     <div class="mt-2">
-      <div class="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+      <div class="h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
         <div class="h-full ${barColor} transition-all duration-300" style="width:${pct.toFixed(1)}%"></div>
       </div>
     </div>` : '';
@@ -388,7 +396,7 @@ function renderNode(node) {
   return `
     <div class="flex items-center gap-3 flex-wrap">
       <span class="pill ${meta.pill}"><span class="dot"></span>${h(meta.label)}</span>
-      <span class="text-zinc-300">${node.peers} peer${node.peers === 1 ? '' : 's'}</span>
+      <span class="text-zinc-700 dark:text-zinc-300">${node.peers} peer${node.peers === 1 ? '' : 's'}</span>
       ${node.hasFullUtxoDb === true ? '<span class="pill pill-running"><span class="dot"></span>full UTXO DB</span>' : ''}
       ${lastUpdated}
     </div>
@@ -410,31 +418,31 @@ function renderApps(apps) {
       const stagingState = s.staging?.state || (s.stagingDriftWarning ? 'missing' : 'creating');
       const stagingLabel = s.staging?.state || (s.stagingDriftWarning ? 'drift' : 'pending');
       const stagingStats = s.staging?.stats ? `<span class="mono text-zinc-500 ml-2">${h(s.staging.stats.mem)} · ${h(s.staging.stats.cpu)}</span>` : '';
-      const prLink = s.prUrl ? `<a href="${h(s.prUrl)}" target="_blank" class="text-violet-400 hover:underline">PR #${s.prNumber}</a>` : '<span class="text-zinc-500">no PR</span>';
-      const prTitle = s.prTitle ? `<span class="text-zinc-300 ml-2 truncate">${h(s.prTitle)}</span>` : '';
+      const prLink = s.prUrl ? `<a href="${h(s.prUrl)}" target="_blank" class="text-violet-600 dark:text-violet-400 hover:underline">PR #${s.prNumber}</a>` : '<span class="text-zinc-500">no PR</span>';
+      const prTitle = s.prTitle ? `<span class="text-zinc-700 dark:text-zinc-300 ml-2 truncate">${h(s.prTitle)}</span>` : '';
       const stagingResolved = s.stagingUrl ? resolveDevHost(s.stagingUrl) : '';
-      const stagingLink = s.stagingUrl ? `<a href="${h(stagingResolved)}" target="_blank" class="text-violet-400 hover:underline mono text-xs break-all">${h(stagingResolved)}</a>` : '';
+      const stagingLink = s.stagingUrl ? `<a href="${h(stagingResolved)}" target="_blank" class="text-violet-600 dark:text-violet-400 hover:underline mono text-xs break-all">${h(stagingResolved)}</a>` : '';
 
       let workerLine = '';
       if (s.worker) {
-        const orphanTag = s.worker.orphan ? '<span class="text-red-400 ml-1">(orphan)</span>' : '';
+        const orphanTag = s.worker.orphan ? '<span class="text-red-600 dark:text-red-400 ml-1">(orphan)</span>' : '';
         workerLine = `
-          <div class="mt-1.5 pl-3 border-l-2 border-violet-800 text-xs">
+          <div class="mt-1.5 pl-3 border-l-2 border-violet-300 dark:border-violet-800 text-xs">
             <div class="flex items-center gap-2">
               <span class="pill pill-running"><span class="dot"></span>worker</span>
-              <span class="text-zinc-400">${fmtDuration(s.worker.uptimeSeconds)}${orphanTag}</span>
+              <span class="text-zinc-600 dark:text-zinc-400">${fmtDuration(s.worker.uptimeSeconds)}${orphanTag}</span>
               ${s.worker.model ? `<span class="mono text-zinc-500">${h(s.worker.model)}</span>` : ''}
             </div>
-            ${s.worker.lastProgress ? `<div class="text-zinc-400 mt-0.5 mono truncate">▸ ${h(s.worker.lastProgress)}</div>` : ''}
+            ${s.worker.lastProgress ? `<div class="text-zinc-600 dark:text-zinc-400 mt-0.5 mono truncate">▸ ${h(s.worker.lastProgress)}</div>` : ''}
           </div>`;
       }
 
       return `
-        <div class="pl-3 border-l-2 border-zinc-800 py-2">
+        <div class="pl-3 border-l-2 border-zinc-200 dark:border-zinc-800 py-2">
           <div class="flex items-center gap-2 flex-wrap">
             ${statePill(stagingState, `staging: ${stagingLabel}`)}
-            <span class="text-zinc-400 text-xs">#${s.id}</span>
-            <span class="text-zinc-300 text-xs">@${h(s.username)}</span>
+            <span class="text-zinc-600 dark:text-zinc-400 text-xs">#${s.id}</span>
+            <span class="text-zinc-700 dark:text-zinc-300 text-xs">@${h(s.username)}</span>
             <span class="mono text-zinc-500 text-xs">${h(s.branchName || '—')}</span>
             <span class="text-xs">${prLink}</span>
             ${prTitle}
@@ -451,7 +459,7 @@ function renderApps(apps) {
     const repoHost = a.repoUrl ? new URL(a.repoUrl).pathname.replace(/^\//, '') : '';
 
     return `
-      <div class="rounded-lg border border-zinc-800 bg-zinc-900/40">
+      <div class="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40">
         <div class="p-3 flex items-start justify-between gap-3 flex-wrap">
           <div class="min-w-0">
             <div class="flex items-center gap-2 flex-wrap">
@@ -460,7 +468,7 @@ function renderApps(apps) {
               ${statePill(prodState, `prod: ${prodLabel}`)}
             </div>
             <div class="text-xs text-zinc-500 mt-1 flex items-center gap-3 flex-wrap">
-              ${a.repoUrl ? `<a href="${h(a.repoUrl)}" target="_blank" class="hover:text-violet-400 mono">${h(repoHost)}</a>` : ''}
+              ${a.repoUrl ? `<a href="${h(a.repoUrl)}" target="_blank" class="hover:text-violet-600 dark:hover:text-violet-400 mono">${h(repoHost)}</a>` : ''}
               <span>by @${h(a.createdBy || 'unknown')}</span>
               <span>${a.openSessions} session${a.openSessions === 1 ? '' : 's'}</span>
               <span>${a.openIssues} issue${a.openIssues === 1 ? '' : 's'}</span>
@@ -469,7 +477,7 @@ function renderApps(apps) {
             </div>
           </div>
         </div>
-        ${a.sessions.length ? `<div class="border-t border-zinc-800 px-3 pb-2">${sessions}</div>` : ''}
+        ${a.sessions.length ? `<div class="border-t border-zinc-200 dark:border-zinc-800 px-3 pb-2">${sessions}</div>` : ''}
       </div>`;
   }).join('');
 }
@@ -494,22 +502,22 @@ function workerModePill(mode) {
 function renderWorkers(workers) {
   if (!workers.length) return '<div class="text-zinc-500">No workers running.</div>';
   return workers.map((w) => {
-    const orphan = w.orphan ? '<span class="text-red-400 ml-1">orphan</span>' : '';
+    const orphan = w.orphan ? '<span class="text-red-600 dark:text-red-400 ml-1">orphan</span>' : '';
     const idleLabel = w.workerMode === 'warm-idle' && w.idleMs != null
       ? `idle ${fmtDuration(Math.floor(w.idleMs / 1000))}`
       : '';
     return `
-      <div class="rounded border ${w.orphan ? 'border-red-700/40' : 'border-zinc-800'} bg-zinc-900/40 p-2">
+      <div class="rounded border ${w.orphan ? 'border-red-300 dark:border-red-700/40' : 'border-zinc-200 dark:border-zinc-800'} bg-zinc-50 dark:bg-zinc-900/40 p-2">
         <div class="flex items-center gap-2 flex-wrap">
           ${statePill(w.state, w.state)}
           ${workerModePill(w.workerMode)}
-          <span class="text-xs text-zinc-400">session #${w.sessionId}</span>
+          <span class="text-xs text-zinc-600 dark:text-zinc-400">session #${w.sessionId}</span>
           ${w.appSlug ? `<span class="mono text-xs text-zinc-500">${h(w.appSlug)}</span>` : ''}
           ${w.username ? `<span class="text-xs">@${h(w.username)}</span>` : ''}
           ${idleLabel ? `<span class="text-xs text-zinc-500">${idleLabel}</span>` : ''}
           <span class="text-xs text-zinc-500 ml-auto">${fmtDuration(w.uptimeSeconds)}${orphan}</span>
         </div>
-        ${w.lastProgress ? `<div class="mt-1 mono text-xs text-zinc-400 truncate">▸ ${h(w.lastProgress)}</div>` : ''}
+        ${w.lastProgress ? `<div class="mt-1 mono text-xs text-zinc-600 dark:text-zinc-400 truncate">▸ ${h(w.lastProgress)}</div>` : ''}
       </div>`;
   }).join('');
 }
@@ -517,10 +525,10 @@ function renderWorkers(workers) {
 function renderStuck(stuck) {
   if (!stuck.length) return '<div class="text-zinc-500">None.</div>';
   return stuck.map((s) => `
-    <div class="rounded border border-yellow-700/40 bg-zinc-900/40 p-2">
+    <div class="rounded border border-yellow-300 dark:border-yellow-700/40 bg-zinc-50 dark:bg-zinc-900/40 p-2">
       <div class="flex items-center gap-2 flex-wrap">
         <span class="pill pill-stopped"><span class="dot"></span>stuck</span>
-        <span class="text-xs text-zinc-400">session #${s.id}</span>
+        <span class="text-xs text-zinc-600 dark:text-zinc-400">session #${s.id}</span>
         <span class="mono text-xs text-zinc-500">${h(s.appSlug)}</span>
         <span class="text-xs">@${h(s.username || 'unknown')}</span>
         <span class="text-xs text-zinc-500 ml-auto">${fmtDuration(s.ageSeconds)}</span>
@@ -535,10 +543,10 @@ function renderLlm(data) {
   const bar = `
     <div class="mb-2">
       <div class="flex justify-between text-xs mb-1">
-        <span class="text-zinc-400">global</span>
+        <span class="text-zinc-600 dark:text-zinc-400">global</span>
         <span class="mono">${fmtDollars(summary.globalSpendCents)} / ${fmtDollars(summary.globalSpendCap)} (${pct}%)</span>
       </div>
-      <div class="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+      <div class="h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
         <div class="h-full bg-violet-500" style="width:${pct}%"></div>
       </div>
     </div>`;
@@ -551,9 +559,9 @@ function renderLlm(data) {
       <div class="flex items-center justify-between text-xs py-0.5">
         <div class="flex items-center gap-2 min-w-0">
           <span class="truncate">@${h(u.username)}</span>
-          ${stagingCt >= limits.stagingPerUser ? `<span class="text-red-400 text-[10px]">${stagingCt}/${limits.stagingPerUser} staging</span>` : stagingCt > 0 ? `<span class="text-zinc-500 text-[10px]">${stagingCt} staging</span>` : ''}
+          ${stagingCt >= limits.stagingPerUser ? `<span class="text-red-600 dark:text-red-400 text-[10px]">${stagingCt}/${limits.stagingPerUser} staging</span>` : stagingCt > 0 ? `<span class="text-zinc-500 text-[10px]">${stagingCt} staging</span>` : ''}
         </div>
-        <span class="mono ${atCap ? 'text-red-400' : 'text-zinc-400'}">${fmtDollars(u.costCents)} (${userPct}%)</span>
+        <span class="mono ${atCap ? 'text-red-600 dark:text-red-400' : 'text-zinc-600 dark:text-zinc-400'}">${fmtDollars(u.costCents)} (${userPct}%)</span>
       </div>`;
   }).join('') : '<div class="text-zinc-500 text-xs">no activity</div>';
 
@@ -563,10 +571,10 @@ function renderLlm(data) {
 function renderDrift(drift) {
   if (!drift.length) return '<div class="text-zinc-500">No drift detected.</div>';
   return drift.map((d) => `
-    <div class="rounded border border-red-700/40 bg-zinc-900/40 p-2 text-xs">
+    <div class="rounded border border-red-300 dark:border-red-700/40 bg-zinc-50 dark:bg-zinc-900/40 p-2 text-xs">
       <div class="flex items-center gap-2">
         <span class="pill pill-missing"><span class="dot"></span>${h(d.kind)} missing</span>
-        <span class="mono text-zinc-400">${h(d.expected)}</span>
+        <span class="mono text-zinc-600 dark:text-zinc-400">${h(d.expected)}</span>
       </div>
     </div>`).join('');
 }
@@ -589,7 +597,7 @@ function renderDeployBanner(deploy) {
 function renderEvents(events) {
   if (!events.length) return '<div class="text-zinc-500 text-xs">no events yet</div>';
   return events.map((e) => {
-    const lvl = { ERROR: 'text-red-400', WARN: 'text-yellow-400', INFO: 'text-zinc-400', DEBUG: 'text-zinc-600' }[e.level] || 'text-zinc-400';
+    const lvl = { ERROR: 'text-red-600 dark:text-red-400', WARN: 'text-yellow-600 dark:text-yellow-400', INFO: 'text-zinc-600 dark:text-zinc-400', DEBUG: 'text-zinc-600' }[e.level] || 'text-zinc-600 dark:text-zinc-400';
     const time = new Date(e.ts).toLocaleTimeString();
     const data = e.data ? ' ' + (typeof e.data === 'string' ? e.data : JSON.stringify(e.data)) : '';
     return `<div class="truncate"><span class="text-zinc-600">${h(time)}</span> <span class="${lvl}">${h(e.level)}</span> <span class="text-zinc-500">[${h(e.category)}]</span> ${h(e.message)}<span class="text-zinc-600">${h(data.substring(0, 200))}</span></div>`;
@@ -600,7 +608,7 @@ async function refresh() {
   try {
     const res = await fetch('/api/status', { credentials: 'include' });
     if (res.status === 401 || res.status === 403) {
-      document.body.innerHTML = '<div class="flex items-center justify-center min-h-screen text-zinc-500">Admin access required. <a href="/" class="text-violet-400 ml-2">home</a></div>';
+      document.body.innerHTML = '<div class="flex items-center justify-center min-h-screen text-zinc-500">Admin access required. <a href="/" class="text-violet-600 dark:text-violet-400 ml-2">home</a></div>';
       return;
     }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
