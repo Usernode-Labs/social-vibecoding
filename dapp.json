@@ -86,6 +86,11 @@
       "name": "Dashboard spend distribution chart renders",
       "path": "/dashboard",
       "expectSelector": "#spend-distribution"
+    },
+    {
+      "name": "Merge debug view renders",
+      "path": "/debug?demo=1",
+      "expectText": "Merge debug"
     }
   ]
 }
