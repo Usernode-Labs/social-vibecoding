@@ -1056,16 +1056,19 @@ function showGate(msg) {
 async function init() {
   // Admin check up front. The data endpoints are independently enforced
   // server-side; this is just for a clean redirect / message.
-  let me;
+  // We do NOT navigate away on an auth failure: a transient 401 shouldn't
+  // bounce an admin to /login, and keeping the page shell rendered (the data
+  // endpoints stay admin-enforced server-side) makes the page coherent under
+  // headless checks. Show an inline notice instead.
+  let me = null;
   try {
     me = await getJSON('/api/auth/me');
   } catch (_) {
-    window.location.href = '/login.html';
+    showGate('Sign in as an admin to view the dashboard.');
     return;
   }
   if (!me.user?.isAdmin) {
     showGate('Admin access required.');
-    setTimeout(() => { window.location.href = '/'; }, 1200);
     return;
   }
 

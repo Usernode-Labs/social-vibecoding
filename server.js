@@ -28,6 +28,7 @@ const appLlmProxyRoutes = require('./src/routes/app-llm-proxy');
 const { llmGrantsRoutes } = require('./src/routes/llm-grants');
 const { proposalDiscussRoutes } = require('./src/routes/proposal-discuss');
 const { topicAttributeRoutes } = require('./src/routes/topic-attributes');
+const { debugRoutes } = require('./src/routes/debug');
 const github = require('./src/services/github');
 const llm = require('./src/services/llm');
 const worker = require('./src/services/worker');
@@ -307,6 +308,7 @@ app.use(collaboratorRoutes(config));
 app.use(llmGrantsRoutes(config));
 app.use(proposalDiscussRoutes(config));
 app.use(topicAttributeRoutes(config));
+app.use(debugRoutes(config));
 
 app.get('/api/iframe-token', async (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
@@ -362,6 +364,14 @@ app.get('/admin', (req, res) => {
 // are independently enforced by adminMiddleware.
 app.get('/dashboard', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+});
+
+// Admin merge-debug view. Like /admin and /dashboard the static shell is
+// served to anyone; debug.js checks /api/auth/me and redirects non-admins,
+// while the /api/debug/* endpoints it calls are enforced by adminMiddleware.
+// Must be registered before the app.get('*') SPA fallback below.
+app.get('/debug', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'debug.html'));
 });
 
 app.get('*', (req, res) => {
@@ -526,6 +536,30 @@ async function start() {
   recoverSessions(config).catch((err) => {
     log.warn('server', 'Session recovery failed', { err: err.message });
   });
+
+  // Merge-debug retention: prune /debug runs (and their cascaded steps)
+  // older than the window once at boot and then on a slow timer, so the
+  // staging:private merge_debug_* tables can't grow without bound. Off the
+  // critical path; swallows its own errors.
+  const mergeDebug = require('./src/services/merge-debug');
+  const MERGE_DEBUG_RETENTION_DAYS = parseInt(process.env.MERGE_DEBUG_RETENTION_DAYS || '30', 10);
+  mergeDebug.pruneOldRuns(getPool(config), MERGE_DEBUG_RETENTION_DAYS).catch(() => {});
+  setInterval(() => {
+    mergeDebug.pruneOldRuns(getPool(config), MERGE_DEBUG_RETENTION_DAYS).catch(() => {});
+  }, 6 * 60 * 60 * 1000).unref();
+
+  // #451: periodic auto-merge safety net. The boot sequence above runs
+  // reconcileEligibleMerges / reconcileStuckChecks exactly once; the live
+  // triggers (a vote landing, a checks verdict turning green — see
+  // services/visuals.js, services/conflict-resolver.js, routes/votes.js)
+  // cover the common case, but a lost broadcast or a crash between the
+  // checks-store and its drain trigger could still leave a PR that has both
+  // a winning vote AND passing checks sitting in review until the next
+  // restart. Re-run the same idempotent, bounded reconcilers on a slow
+  // interval so a genuinely-ready proposal can never stall indefinitely.
+  // Off the critical path, single-flight per app inside the drain, and a
+  // no-op when GitHub isn't wired up. Tunable via ELIGIBLE_MERGE_SWEEP_MS.
+  startEligibleMergeSweeper(config);
 
   return server;
 }
@@ -933,6 +967,41 @@ async function reconcileStuckChecks(config) {
   log.info('server', 'Stuck-check reconciliation complete', {
     scanned: rows.length, rechecked,
   });
+}
+
+// #451: how often the auto-merge safety-net sweep runs. A few minutes is
+// well below the cost of letting a ready proposal linger but far above the
+// per-pass work (one indexed query per app with an open proposal, then the
+// single-flight drain). Tunable via ELIGIBLE_MERGE_SWEEP_MS; floored so a
+// mis-set tiny value can't busy-loop the drain.
+const ELIGIBLE_MERGE_SWEEP_MS = Math.max(
+  parseInt(process.env.ELIGIBLE_MERGE_SWEEP_MS || String(4 * 60 * 1000), 10) || (4 * 60 * 1000),
+  30 * 1000
+);
+
+// #451: periodic re-drive of the boot-time auto-merge reconcilers. Both
+// reconcileEligibleMerges (merge any promoted PR that now has votes + passing
+// checks) and reconcileStuckChecks (re-run checks left 'pending'/NULL by a
+// mid-capture restart, so they reach a terminal verdict the eligible-merge
+// pass can then act on) are idempotent and bounded, so re-running them on a
+// timer is safe. Guards: skip when GitHub isn't enabled (both are no-ops
+// then), never overlap a still-running sweep, and swallow all errors so the
+// timer can't crash the process. Not awaited — fire-and-forget per tick.
+function startEligibleMergeSweeper(config) {
+  const github = require('./src/services/github');
+  let running = false;
+  setInterval(() => {
+    if (running) return;
+    if (!github.isEnabled()) return;
+    running = true;
+    Promise.resolve()
+      .then(() => reconcileStuckChecks(config))
+      .then(() => reconcileEligibleMerges(config))
+      .catch((err) => {
+        log.warn('server', 'Eligible-merge sweep tick failed', { err: err.message });
+      })
+      .finally(() => { running = false; });
+  }, ELIGIBLE_MERGE_SWEEP_MS).unref?.();
 }
 
 // Resume post-merge issue-close watches for sessions merged shortly

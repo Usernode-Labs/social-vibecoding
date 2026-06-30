@@ -144,7 +144,12 @@ async function runSyncMain(config, pool, sessionId, opts = {}) {
   return entry.promise;
 }
 
-async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger } = {}, entry) {
+async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, debugRunId } = {}, entry) {
+  // Admin /debug: when the conflict-resolver passes its run id, narrate each
+  // worker sync phase + the outcome into that run. Fire-and-forget; a null
+  // runId (manual sync / resume auto-sync) makes every call a no-op.
+  const md = require('./merge-debug');
+  const dstep = (o) => md.step(pool, debugRunId, o);
   let session = sessionRow;
   if (!session) {
     const { rows } = await pool.query(
@@ -247,7 +252,10 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger }
     const pm = line.match(/^\[(sync_[a-z_]+)\]$/);
     if (!pm) return;
     const label = SYNC_PROGRESS_LABELS[pm[1]];
-    if (label) appendProgress(label);
+    if (label) {
+      appendProgress(label);
+      dstep({ phase: `sync:${pm[1]}`, message: `Worker sync: ${label}` });
+    }
     const phase = SYNC_PHASE_MAP[pm[1]];
     if (!phase || entry.phase === phase) return;
     entry.phase = phase;
@@ -332,8 +340,10 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger }
     // branch now merges → 'clean' with an empty file list.
     if (syncResult === 'conflict') {
       await persistConflictState(pool, session, { state: 'failed', files: result.conflictFiles || [] });
+      dstep({ phase: 'sync_result', level: 'error', message: 'Worker sync: Claude could not resolve the conflicts.', detail: { syncResult, conflictFiles: result.conflictFiles || [], costUsd: result.costUsd || 0 } });
     } else {
       await persistConflictState(pool, session, { state: 'clean', files: [] });
+      dstep({ phase: 'sync_result', message: `Worker sync ${syncResult}${result.sha ? ` — pushed ${String(result.sha).slice(0, 9)}` : ''}.`, detail: { syncResult, sha: result.sha || null, behind: result.behind || 0, conflictFiles: result.conflictFiles || [], costUsd: result.costUsd || 0 } });
     }
 
     // Close the activity with a terminal status. Routing through
@@ -384,6 +394,7 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger }
       behind: result.behind || 0,
       sha: result.sha || null,
       pushOk: !!result.pushOk,
+      conflictFiles: result.conflictFiles || [],
       message,
     };
   } catch (err) {

@@ -659,6 +659,38 @@ function resolveCaptureScale(row) {
   return row && row.screenshot_device_scale === 1 ? 1 : 2;
 }
 
+// #451: re-drive the app-level auto-merge drain after a proposal's checks
+// reach a terminal verdict, so a PR that already had a winning vote merges
+// the moment its checks turn green (the "checks were the last thing to pass"
+// ordering the vote-triggered path never covered). A no-op unless the verdict
+// is 'passing', GitHub is wired up (staging / standalone runs have nothing to
+// merge), and the session is STILL 'promoted' — the capture can take minutes,
+// so we re-read the row rather than trust the in-memory snapshot (it may have
+// been voted, force-merged, or archived meanwhile). The drain owns all the
+// real gating (majority, locked-app admin-yes, behind-main, check_state, the
+// atomic promoted→merging claim); this is purely an extra trigger, never a
+// second merge path. Fire-and-forget and best-effort: any failure is logged,
+// never thrown, so the capture pipeline's contract is unchanged.
+function maybeAutoMergeAfterChecks(config, pool, session, state) {
+  if (state !== 'passing' || !github.isEnabled()) return;
+  pool.query(
+    `SELECT status, app_id FROM chat_sessions WHERE id = $1`,
+    [session.id]
+  ).then(({ rows }) => {
+    const fresh = rows[0];
+    if (!fresh || fresh.status !== 'promoted' || fresh.app_id == null) return undefined;
+    // Lazy require: conflict-resolver lazy-requires routes/votes, which
+    // requires this module — a top-level import would close the cycle. By
+    // call time the module graph is fully settled.
+    const { checkAndResolveConflicts } = require('./conflict-resolver');
+    return checkAndResolveConflicts(config, { app_id: fresh.app_id });
+  }).catch((err) => {
+    log.warn('visuals', 'Post-checks auto-merge drain failed (non-fatal)', {
+      sessionId: session.id, err: err.message,
+    });
+  });
+}
+
 async function captureForSession(config, session, app, commitHash, stagingResult, { send } = {}) {
   if (_inFlight.has(session.id)) {
     log.info('visuals', 'Capture already in flight — skipping', { sessionId: session.id });
@@ -975,6 +1007,16 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       });
     }
 
+    // #451: a passing verdict is the *other* half of the merge gate (the
+    // first being a winning vote). The vote path already re-drives a merge
+    // when a vote lands, but nothing re-drove it when the checks were the
+    // last thing to turn green — so a PR that crossed the vote threshold
+    // before its checks finished sat in review forever. Re-drive the
+    // app-level merge drain so "checks finished after the votes were in"
+    // auto-merges just like "votes landed after checks were green".
+    // Fire-and-forget; never blocks or fails the capture pipeline.
+    maybeAutoMergeAfterChecks(config, pool, session, checksResult.state);
+
     const stored = await storeArtifacts(pool, session.id, commitHash, targets, shots);
     if (!stored) {
       if (media) log.warn('visuals', 'No usable "after" artifact — nothing stored', { sessionId: session.id });
@@ -1098,6 +1140,7 @@ module.exports = {
   storeChecks,
   setChecksPending,
   summarizeBootFailure,
+  maybeAutoMergeAfterChecks,
   consoleSnapshotFromTests,
   resolveDeclaredTests,
   isFrontendFile,
