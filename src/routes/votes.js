@@ -295,14 +295,27 @@ function stagingMockMerged() {
     'shorten the undo-confirmation copy',
     'add a hover state to the Load more button',
   ];
-  return titles.map((t, i) => mk(
+  // #451: the merged-list counterpart to the #405 "Ready-to-merge" promoted
+  // mock — the same shape of proposal (votes passed, checks green) AFTER it
+  // auto-merged on its own. Lets a ?demo=1 preview show the before/after of
+  // the In-review → Completed transition the auto-merge trigger produces,
+  // without staging ever performing a real GitHub merge. Newest row (0 days)
+  // so it sorts to the top of the Completed list next to the live demo.
+  const autoMerged = mk(
+    9100000,
+    910100,
+    '[Mock] Auto-merged: votes passed and checks turned green — merged automatically (#451)',
+    0,
+    3
+  );
+  return [autoMerged].concat(titles.map((t, i) => mk(
     9100001 + i,
     910101 + i,
     `[Mock] Completed: ${t}`,
     i + 1,
     // Sprinkle a few discussion counts so the 💬 badge is visible.
     i % 3 === 0 ? 5 : 0
-  ));
+  )));
 }
 
 // Shared SELECT column list + FROM/JOIN block for a "merged-shaped"
