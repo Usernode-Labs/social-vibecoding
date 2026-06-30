@@ -388,10 +388,44 @@ function classifyTests(frames, expectedCount) {
 // signal for the merge gate). The console_* columns are kept written in
 // parallel (deriving an advisory clean/errors/unknown from the same run)
 // for one release so a rolling deploy's old readers don't break.
-async function storeChecks(pool, sessionId, commitSha, result) {
+async function storeChecks(pool, sessionId, commitSha, result, errorDetail = null) {
+  if (result && result.state === 'error') {
+    // A build/boot/capture failure — record a TERMINAL 'error' verdict plus
+    // the failure-streak bookkeeping that powers the sweeper's backoff and
+    // the owner escalation. Backoff on check_next_retry_at grows
+    // 2m → 4m → 8m → 16m → … capped at 30m; it uses the PRE-increment
+    // failure count (so the first failure waits ~2m). `errorDetail` is the
+    // concise reason (see summarizeBootFailure) — kept across retries via
+    // COALESCE so a later retry that fails to collect logs doesn't blank it.
+    await pool.query(
+      `UPDATE chat_sessions
+          SET check_state = 'error',
+              test_results = $2,
+              checks_commit_sha = $3,
+              checks_checked_at = NOW(),
+              check_error_detail = COALESCE($5, check_error_detail),
+              consecutive_check_failures = consecutive_check_failures + 1,
+              first_check_failure_at = COALESCE(first_check_failure_at, NOW()),
+              last_check_failure_at = NOW(),
+              check_next_retry_at = NOW() + make_interval(
+                secs => LEAST(120 * power(2, consecutive_check_failures), 1800)::double precision)
+        WHERE id = $4`,
+      [result.state, JSON.stringify(result.results || []), commitSha || null, sessionId, errorDetail]
+    );
+    return;
+  }
+  // A real verdict ('passing' / 'failing'): clear the failure streak so a
+  // later transient error starts its backoff fresh, and drop the now-stale
+  // error detail / retry schedule / notify stamp.
   await pool.query(
     `UPDATE chat_sessions
-       SET check_state = $1, test_results = $2, checks_commit_sha = $3, checks_checked_at = NOW()
+       SET check_state = $1, test_results = $2, checks_commit_sha = $3, checks_checked_at = NOW(),
+           check_error_detail = NULL,
+           consecutive_check_failures = 0,
+           first_check_failure_at = NULL,
+           last_check_failure_at = NULL,
+           check_next_retry_at = NULL,
+           check_error_notified_at = NULL
      WHERE id = $4`,
     [result.state, JSON.stringify(result.results || []), commitSha || null, sessionId]
   );
@@ -399,13 +433,51 @@ async function storeChecks(pool, sessionId, commitSha, result) {
 
 // Set 'pending' the instant a (re)check starts so a stale 'passing' can't
 // slip through the merge gate while the fresh build is being tested.
+//
+// Reset the failure streak ONLY when a genuinely new commit is being checked.
+// A backoff RETRY of the same failing commit also flows through here (every
+// captureForSession calls setChecksPending), and zeroing the counter on those
+// would defeat the escalation + crash-loop short-circuit — so the streak is
+// preserved when checks_commit_sha is unchanged.
 async function setChecksPending(pool, sessionId, commitSha) {
   await pool.query(
     `UPDATE chat_sessions
-       SET check_state = 'pending', checks_commit_sha = $2, checks_checked_at = NOW()
+       SET check_state = 'pending', checks_commit_sha = $2, checks_checked_at = NOW(),
+           check_next_retry_at = NULL,
+           consecutive_check_failures = CASE WHEN checks_commit_sha IS DISTINCT FROM $2
+                                             THEN 0 ELSE consecutive_check_failures END,
+           first_check_failure_at  = CASE WHEN checks_commit_sha IS DISTINCT FROM $2
+                                          THEN NULL ELSE first_check_failure_at END,
+           check_error_detail      = CASE WHEN checks_commit_sha IS DISTINCT FROM $2
+                                          THEN NULL ELSE check_error_detail END,
+           check_error_notified_at = CASE WHEN checks_commit_sha IS DISTINCT FROM $2
+                                          THEN NULL ELSE check_error_notified_at END
      WHERE id = $1`,
     [sessionId, commitSha || null]
   );
+}
+
+// Extract a concise, human-readable reason from a staging build/boot failure
+// (docker.waitForHealthy attaches containerLogs/containerStatus to the thrown
+// error) for storage in check_error_detail + display in the merge gate, the
+// proposal thread, and the checks badge tooltip. Prefers the most specific
+// error line in the container's boot logs — the app's own crash message, e.g.
+// a Postgres "no unique or exclusion constraint matching the ON CONFLICT
+// specification" — and falls back to the container status / raw error
+// message. Length-bounded so it fits a chat line and a tooltip.
+function summarizeBootFailure(err) {
+  const MAX = 280;
+  const logs = (err && err.containerLogs) ? String(err.containerLogs) : '';
+  const lines = logs.split('\n').map((l) => l.trim()).filter(Boolean);
+  const errRe = /(^error\b|Error:|errno|ECONNREFUSED|EADDRINUSE|panic|Unhandled|SQLSTATE|syntax error|does not exist|no unique or exclusion constraint|relation .* does not exist|cannot |failed)/i;
+  let reason = '';
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (errRe.test(lines[i])) { reason = lines[i]; break; }
+  }
+  if (!reason && lines.length) reason = lines[lines.length - 1];
+  if (!reason) reason = (err && err.message) ? String(err.message) : 'staging preview failed to start';
+  if (err && err.containerStatus) reason = `[${err.containerStatus}] ${reason}`;
+  return reason.length > MAX ? `${reason.slice(0, MAX - 1)}…` : reason;
 }
 
 // Map the structured test result onto the legacy advisory console snapshot
@@ -1025,6 +1097,7 @@ module.exports = {
   classifyTests,
   storeChecks,
   setChecksPending,
+  summarizeBootFailure,
   consoleSnapshotFromTests,
   resolveDeclaredTests,
   isFrontendFile,

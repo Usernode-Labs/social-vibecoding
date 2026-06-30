@@ -854,6 +854,20 @@ const CHECKS_STALE_MS = parseInt(
   10
 );
 
+// #237: crash-loop short-circuit. A staging build that crashes deterministically
+// (e.g. an app whose staging-only seed hits a missing constraint) used to be
+// retried by the sweeper every sweep forever — a silent, churning deadlock.
+// Build/boot failures now land a terminal 'error' verdict (services/visuals
+// storeChecks) with an exponential backoff retry schedule (check_next_retry_at:
+// 2m → 4m → … → 30m). The sweeper only re-picks an errored row once its backoff
+// has elapsed AND it's still under this cap; past the cap we stop auto-retrying
+// and leave it 'error' (the owner is already notified, and a NEW commit resets
+// the streak via setChecksPending so a fix re-enables checks). Tunable.
+const CHECK_MAX_AUTO_RETRIES = parseInt(
+  process.env.CHECK_MAX_AUTO_RETRIES || '6',
+  10
+);
+
 // #447: reconcile stuck proposal checks. check_state is only ever advanced
 // out of 'pending' by the same captureForSession invocation that set it, so
 // a process restart/crash mid-capture (or a staging rebuild that predated
@@ -883,10 +897,14 @@ async function reconcileStuckChecks(config) {
           AND cs.branch_name IS NOT NULL
           AND (cs.check_state IS NULL
                OR (cs.check_state = 'pending'
-                   AND cs.checks_checked_at < NOW() - make_interval(secs => $1::double precision / 1000.0)))
+                   AND cs.checks_checked_at < NOW() - make_interval(secs => $1::double precision / 1000.0))
+               OR (cs.check_state = 'error'
+                   AND cs.consecutive_check_failures < $2
+                   AND cs.check_next_retry_at IS NOT NULL
+                   AND cs.check_next_retry_at < NOW()))
         ORDER BY cs.promoted_at ASC NULLS FIRST
         LIMIT 50`,
-      [CHECKS_STALE_MS]
+      [CHECKS_STALE_MS, CHECK_MAX_AUTO_RETRIES]
     ));
   } catch (err) {
     log.warn('server', 'reconcileStuckChecks query failed', { err: err.message });
@@ -1734,10 +1752,14 @@ function startSessionAutoPauseSweeper(config) {
             AND cs.branch_name IS NOT NULL
             AND (cs.check_state IS NULL
                  OR (cs.check_state = 'pending'
-                     AND cs.checks_checked_at < NOW() - make_interval(secs => $1::double precision / 1000.0)))
+                     AND cs.checks_checked_at < NOW() - make_interval(secs => $1::double precision / 1000.0))
+                 OR (cs.check_state = 'error'
+                     AND cs.consecutive_check_failures < $2
+                     AND cs.check_next_retry_at IS NOT NULL
+                     AND cs.check_next_retry_at < NOW()))
           ORDER BY cs.promoted_at ASC NULLS FIRST
           LIMIT 50`,
-        [CHECKS_STALE_MS]
+        [CHECKS_STALE_MS, CHECK_MAX_AUTO_RETRIES]
       );
       const MAX_RECHECKS_PER_SWEEP = 5;
       let rechecked = 0;

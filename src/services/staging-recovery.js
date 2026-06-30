@@ -124,7 +124,23 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
     }
   }
 
-  const stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
+  let stagingResult;
+  try {
+    stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
+  } catch (err) {
+    // The staging preview failed to build or boot. Before #237's fix this
+    // threw straight past the checks capture below, leaving check_state NULL
+    // — the merge gate fail-closes on NULL with no signal and the sweeper
+    // retried the identical failing build forever (silent deadlock). Record
+    // a TERMINAL 'error' verdict carrying a concise reason + nudge the owner
+    // once per streak, then re-throw so callers keep their existing WARN
+    // logging + retry-cooldown bookkeeping.
+    await recordStagingBootFailure({ config, pool, session, commitHash, err }).catch((e) =>
+      log.warn('staging-recovery', 'recordStagingBootFailure failed (non-fatal)', {
+        sessionId: session.id, err: e.message,
+      }));
+    throw err;
+  }
   await pool.query(
     `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
     [stagingResult.containerId, stagingResult.stagingUrl, session.id]
@@ -167,6 +183,78 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
 
   log.info('staging-recovery', 'Staging preview rebuilt', { sessionId: session.id, url: stagingResult.stagingUrl, reason });
   return 'built';
+}
+
+// #237: record a staging build/boot failure as a terminal proposal-checks
+// 'error' verdict (with a concise reason) and nudge the proposal owner — once
+// per failure streak — so an app that crashes only in staging no longer
+// dead-ends as a silent, unexplained "votes passed but nothing merges".
+// Idempotent across retries: storeChecks bumps consecutive_check_failures +
+// schedules the next backoff retry; the owner notification + thread post fire
+// only on the first failure of a streak (check_error_notified_at gate), which
+// setChecksPending clears when a new commit is pushed.
+async function recordStagingBootFailure({ config, pool, session, commitHash, err }) {
+  const visuals = require('./visuals');
+  const detail = visuals.summarizeBootFailure(err);
+
+  await visuals.storeChecks(pool, session.id, commitHash, { state: 'error', results: [] }, detail);
+
+  // Read back the streak bookkeeping to decide whether this is the first
+  // failure of the streak (→ notify + post) or a quiet backoff retry.
+  let row = null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT user_id, app_id, pr_number, consecutive_check_failures, check_error_notified_at
+         FROM chat_sessions WHERE id = $1`,
+      [session.id]
+    );
+    row = rows[0] || null;
+  } catch (e) {
+    log.warn('staging-recovery', 'boot-failure readback failed', { sessionId: session.id, err: e.message });
+  }
+
+  log.warn('staging-recovery', 'Staging preview failed to boot — recorded checks error', {
+    sessionId: session.id,
+    failures: row ? row.consecutive_check_failures : null,
+    detail,
+  });
+
+  const alreadyNotified = row && row.check_error_notified_at;
+  if (!row || alreadyNotified) return;
+
+  // First failure of this streak: stamp so we don't re-nudge on every retry.
+  await pool.query(
+    `UPDATE chat_sessions SET check_error_notified_at = NOW() WHERE id = $1`,
+    [session.id]
+  ).catch(() => {});
+
+  // Visible-in-thread record of why the preview won't come up.
+  try {
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+       VALUES ($1, 'system', $2, $3)`,
+      [
+        session.id,
+        `⚠️ Staging preview failed to start, so automated checks can't run and this proposal can't merge yet. Reason: ${detail}`,
+        JSON.stringify({ checkError: true, detail }),
+      ]
+    );
+  } catch (e) {
+    log.warn('staging-recovery', 'boot-failure thread post failed', { sessionId: session.id, err: e.message });
+  }
+
+  // Notify the owner + refresh any open card's checks badge.
+  try {
+    const notifications = require('./notifications');
+    const created = await notifications.createCheckFailedNotification(pool, {
+      userId: row.user_id, appId: row.app_id, sessionId: session.id,
+    });
+    if (created.length) await notifications.hydrateAndPush(pool, created[0]);
+    const { broadcastGlobal } = require('./ws');
+    broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'checks_ready', state: 'error' });
+  } catch (e) {
+    log.warn('staging-recovery', 'boot-failure notify failed', { sessionId: session.id, err: e.message });
+  }
 }
 
 // #447: reconcile a single session's proposal checks. Used by the manual

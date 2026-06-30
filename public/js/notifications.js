@@ -412,7 +412,7 @@ const Notifications = {
           return;
         }
       }
-      const voteKinds = new Set(['pr_proposed', 'stale_pr', 'kudos']);
+      const voteKinds = new Set(['pr_proposed', 'stale_pr', 'kudos', 'check_failed']);
       const toProposals = voteKinds.has(item.kind);
       if (typeof App !== 'undefined' && App.openAppTab) {
         App.openAppTab(item.appSlug, 'dev', toProposals
@@ -865,6 +865,7 @@ function previewText(n) {
     case 'kudos':       return `\u{1F44F} ${who} gave kudos to your PR`;
     case 'reaction':    return `${n.detail || '❤️'} ${who} reacted to your message`;
     case 'stale_pr':    return `⏳ Your PR is going stale`;
+    case 'check_failed': return `⚠️ Your proposal's preview won't boot`;
     case 'pr_proposed': return `\u{1F5F3}️ ${who} proposed a PR to vote on`;
     case 'reply':       return `${who} replied to you`;
     case 'mention':     return `${who} mentioned you`;
@@ -945,6 +946,27 @@ function renderRow(n) {
         <span>Your PR in</span>
         <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
         <span>is going stale — it'll auto-archive soon without votes</span>
+        <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
+      </div>
+      <div class="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2 font-medium">${prLabel}</div>
+    </button>`;
+  }
+
+  // Check-failed rows are system warnings (no source user): the owner's
+  // promoted proposal can't merge because its staging preview failed to
+  // boot, so automated checks never ran. Lead with ⚠️ and show the PR
+  // title; clicking lands on the proposal so they can push a fix.
+  if (n.kind === 'check_failed') {
+    const prLabel = n.prTitle
+      ? escapeHtml(n.prTitle)
+      : (n.prNumber ? `PR #${n.prNumber}` : 'your proposal');
+    return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
+      <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1">
+        ${dot}
+        <span aria-hidden="true">⚠️</span>
+        <span>Your proposal in</span>
+        <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
+        <span>can't merge — its preview won't boot, so checks can't run</span>
         <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
       </div>
       <div class="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2 font-medium">${prLabel}</div>

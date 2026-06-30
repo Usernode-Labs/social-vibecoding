@@ -108,7 +108,7 @@ const session = {
 function poolWith(checkState, testResults) {
   return makeRecordingPool([
     [/SELECT COUNT\(\*\) as cnt FROM pr_votes/, [{ cnt: '1' }]],
-    [/SELECT check_state, test_results FROM chat_sessions/, [{ check_state: checkState, test_results: testResults || [] }]],
+    [/SELECT check_state, test_results[\s\S]*FROM chat_sessions/, [{ check_state: checkState, test_results: testResults || [], check_error_detail: null }]],
     [/SET status = 'merging'/, [{ id: 7 }]],
     [/SELECT \* FROM apps WHERE id/, [{ id: 5, slug: 'whiteboard', self_hosted: false }]],
     [/SET\s+status = 'merged'/, { rows: [], rowCount: 1 }],
@@ -176,8 +176,33 @@ test('admin force-merge bypasses the checks gate', async () => {
   try {
     const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session }, { force: true });
     assert.equal(r.merged, true);
-    assert.ok(!p.queries.some((q) => /SELECT check_state, test_results FROM chat_sessions/.test(q.sql)),
+    assert.ok(!p.queries.some((q) => /SELECT check_state, test_results[\s\S]*FROM chat_sessions/.test(q.sql)),
       'gate query skipped under force');
+  } finally {
+    restore();
+  }
+});
+
+// #237: an 'error' verdict (staging preview crashed on boot) blocks the merge
+// AND surfaces the captured crash reason in the block message, so the proposal
+// owner can act instead of facing an unexplained "couldn't run" dead-end.
+test('an errored proposal surfaces its captured boot-failure reason in the block message', async () => {
+  const { subject, systemMessages, restore } = loadVotes();
+  const detail = '[exited (exit=1)] error: no unique or exclusion constraint matching the ON CONFLICT specification';
+  const p = makeRecordingPool([
+    [/SELECT COUNT\(\*\) as cnt FROM pr_votes/, [{ cnt: '1' }]],
+    [/SELECT check_state, test_results[\s\S]*FROM chat_sessions/,
+      [{ check_state: 'error', test_results: [], checks_checked_at: new Date().toISOString(), check_error_detail: detail }]],
+    [/SET status = 'merging'/, [{ id: 7 }]],
+  ]);
+  try {
+    const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
+    assert.equal(r.merged, false);
+    assert.equal(r.checksBlocked, true);
+    assert.equal(r.checkState, 'error');
+    assert.ok(!p.queries.some((q) => /SET status = 'merging'/.test(q.sql)), 'never claimed the merge');
+    assert.ok(systemMessages.some((m) => /preview failed to start/i.test(m) && m.includes('ON CONFLICT')),
+      'block message includes the captured boot-failure reason');
   } finally {
     restore();
   }

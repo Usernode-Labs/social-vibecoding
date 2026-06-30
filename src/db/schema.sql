@@ -290,6 +290,40 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_state TEXT;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS test_results JSONB NOT NULL DEFAULT '[]';
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS checks_commit_sha VARCHAR(40);
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS checks_checked_at TIMESTAMPTZ;
+-- Deadlock-diagnosis columns. Before these, a staging build that crashed on
+-- boot threw before any verdict was written, leaving check_state NULL — the
+-- merge gate fail-closes on NULL with no signal, and the stuck-checks sweeper
+-- retried the identical failing build every ~2 min forever (an "unclear
+-- deadlock": votes pass, nothing merges, nobody is told why). Now a build/boot
+-- failure is recorded as a terminal 'error' verdict carrying:
+--   check_error_detail       : a concise, human-readable reason for the LAST
+--                              failure (e.g. the Postgres error / crash line
+--                              pulled from the container's boot logs). Surfaced
+--                              in the merge-gate message, the proposal thread,
+--                              and the proposal's checks badge tooltip.
+--   consecutive_check_failures : count of back-to-back failed check runs for
+--                              the current commit. Reset to 0 on any passing/
+--                              failing verdict and when a NEW commit starts a
+--                              check run (see visuals.setChecksPending). Drives
+--                              the sweeper's exponential backoff + the
+--                              crash-loop short-circuit (stop auto-retrying a
+--                              deterministically-failing build after N tries).
+--   first_check_failure_at / last_check_failure_at : streak bounds, for "stuck
+--                              for X hours" escalation + diagnostics.
+--   check_next_retry_at      : earliest time the sweeper may re-attempt this
+--                              errored check. Set to NOW()+backoff on each
+--                              failure; the sweeper only re-picks an 'error'
+--                              row once this has elapsed, replacing the old
+--                              fixed ~2 min retry with 2m → 4m → 8m → … → 30m.
+--   check_error_notified_at  : stamped when the proposal owner is notified of
+--                              the failure, so they're nudged once per streak
+--                              (cleared when a new commit resets the streak).
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_error_detail TEXT;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS consecutive_check_failures INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS first_check_failure_at TIMESTAMPTZ;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS last_check_failure_at TIMESTAMPTZ;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_next_retry_at TIMESTAMPTZ;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_error_notified_at TIMESTAMPTZ;
 -- #11: vote-to-undo a merged PR. When the undo majority is reached we
 -- open a `git revert <merge_commit_sha>` PR and insert a new
 -- chat_sessions row pointing back here via revert_of_session_id.

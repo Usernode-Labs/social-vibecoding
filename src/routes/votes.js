@@ -323,6 +323,9 @@ function mergedRowSelect() {
            -- #47: checks snapshot, kept visible on merged proposals for
            -- post-hoc review (a merged proposal passed, by the gate).
            cs.check_state, cs.test_results, cs.checks_checked_at,
+           -- #237: when checks are in 'error' (staging preview wouldn't boot),
+           -- the captured reason powers the "Preview won't boot" badge tooltip.
+           cs.check_error_detail,
            -- #58: the vote threshold + active-user count snapshotted at merge
            -- time. The merged-PR pill renders against votes_required (falling
            -- back to the live majority for legacy rows where it's NULL), and a
@@ -800,7 +803,7 @@ function voteRoutes(config) {
         `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status,
                 cs.created_at, cs.promoted_at,
                 cs.merge_conflict_state, cs.behind_main,
-                cs.check_state,
+                cs.check_state, cs.check_error_detail,
                 a.id AS app_id, a.slug AS app_slug, a.name AS app_name,
                 (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count,
                 (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'no') AS no_count
@@ -920,6 +923,9 @@ function voteRoutes(config) {
            -- per-test detail block. Unlike the console snapshot this GATES
            -- merge (checkAndMerge blocks a non-'passing' proposal).
            cs.check_state, cs.test_results, cs.checks_checked_at,
+           -- #237: captured reason when checks are 'error' (staging preview
+           -- failed to boot) — drives the "Preview won't boot" badge tooltip.
+           cs.check_error_detail,
            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') as yes_count,
            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'no') as no_count,
            (SELECT vote FROM pr_votes WHERE session_id = cs.id AND user_id = $2) as my_vote,
@@ -1498,7 +1504,8 @@ async function checkAndMerge(config, pool, session, options = {}) {
     // Re-read fresh: the in-memory `session` row can predate the latest
     // build's verdict. Admin force-merge bypasses (skipped under !force).
     const { rows: checkRows } = await pool.query(
-      `SELECT check_state, test_results, checks_checked_at FROM chat_sessions WHERE id = $1`,
+      `SELECT check_state, test_results, checks_checked_at, check_error_detail
+         FROM chat_sessions WHERE id = $1`,
       [session.id]
     );
     const checkState = checkRows[0]?.check_state || null;
@@ -1532,10 +1539,16 @@ async function checkAndMerge(config, pool, session, options = {}) {
       const label = session.pr_title
         ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
+      // #237: for the 'error' state, surface the captured reason (usually a
+      // staging preview that crashed on boot, e.g. a bad migration/seed) so
+      // the block isn't an unexplained dead-end — the owner can act on it.
+      const errorDetail = checkState === 'error' ? (checkRows[0]?.check_error_detail || null) : null;
       const reason = checkState === 'failing'
         ? `has ${failingCount || 'failing'} test${failingCount === 1 ? '' : 's'} failing`
         : checkState === 'error'
-          ? "couldn't run its tests"
+          ? (errorDetail
+            ? `couldn't run its tests — its staging preview failed to start (${errorDetail})`
+            : "couldn't run its tests")
           : 'is still running its tests';
       const blockMsg = `${label} reached the vote threshold but ${reason} — merge is blocked until checks pass. The proposal's tests re-run automatically when its owner pushes a fix.`;
       await sendSystemMessage(pool, session.app_id, blockMsg, 'system').catch(() => {});

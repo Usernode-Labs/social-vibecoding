@@ -94,12 +94,24 @@
         title: 'The last automatic conflict resolution failed — the owner needs to resolve manually.',
       });
     }
-    // 5 — checks blocked the merge (a test broke, or the run itself errored).
-    if (check === 'failing' || check === 'error') {
+    // 5a — the staging preview itself couldn't boot, so checks never ran
+    // (#237). Distinct from a test failure: nothing was even exercised. Red,
+    // with the captured crash reason in the tooltip so the owner knows what
+    // to fix rather than facing an unexplained "couldn't run".
+    if (check === 'error') {
+      return descriptor('preview_failed', "Preview won't boot", 'red', false, {
+        glyph: '⚠', votes: votes,
+        title: p.check_error_detail
+          ? ('The staging preview failed to start, so automated checks can\u2019t run — merge is blocked. Reason: ' + p.check_error_detail)
+          : 'The staging preview failed to start, so automated checks couldn\u2019t run — merge is blocked until it boots cleanly.',
+      });
+    }
+    // 5b — checks blocked the merge (a test broke).
+    if (check === 'failing') {
       var n = Array.isArray(p.test_results)
         ? p.test_results.filter(function (r) { return r && r.status !== 'pass'; }).length
         : 0;
-      var label = (check === 'failing' && n) ? 'Checks failing · ' + n : 'Checks failing';
+      var label = n ? 'Checks failing · ' + n : 'Checks failing';
       return descriptor('checks_failing', label, 'amber', false, {
         glyph: '⚠', votes: votes,
         title: 'Automated tests are not passing on the staging build — merge is blocked until they pass.',

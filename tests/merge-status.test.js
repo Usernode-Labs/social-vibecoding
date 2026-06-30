@@ -54,7 +54,7 @@ test('state 4 — conflict_failed beats checks pending (precedence)', () => {
   assert.equal(life.tone, 'red');
 });
 
-test('state 5 — checks failing/error (amber), with failing-test count in the label', () => {
+test('state 5b — checks failing is amber, with failing-test count in the label', () => {
   const failing = MergeStatus.lifecycle({
     status: 'promoted', check_state: 'failing',
     test_results: [
@@ -64,10 +64,26 @@ test('state 5 — checks failing/error (amber), with failing-test count in the l
   assert.equal(failing.key, 'checks_failing');
   assert.equal(failing.label, 'Checks failing · 2');
   assert.equal(failing.tone, 'amber');
+});
 
-  const errored = MergeStatus.lifecycle({ status: 'promoted', check_state: 'error' });
-  assert.equal(errored.key, 'checks_failing');
-  assert.equal(errored.label, 'Checks failing');
+// #237: an 'error' check_state means the staging preview itself never booted,
+// so no test ran — distinct from a test failure. It gets its own red
+// "Preview won't boot" badge, and the captured reason rides in the tooltip.
+test("state 5a — checks error renders a distinct red \"Preview won't boot\" badge", () => {
+  const errored = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'error',
+    check_error_detail: '[exited (exit=1)] error: no unique or exclusion constraint matching the ON CONFLICT specification',
+  });
+  assert.equal(errored.key, 'preview_failed');
+  assert.equal(errored.label, "Preview won't boot");
+  assert.equal(errored.tone, 'red');
+  assert.match(errored.title, /ON CONFLICT/);
+
+  // Without a captured reason it still resolves to the same badge, with a
+  // generic tooltip.
+  const bare = MergeStatus.lifecycle({ status: 'promoted', check_state: 'error' });
+  assert.equal(bare.key, 'preview_failed');
+  assert.equal(bare.tone, 'red');
 });
 
 test('state 6 — checks pending is neutral + spinner (not amber)', () => {
