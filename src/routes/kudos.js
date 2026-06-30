@@ -36,6 +36,13 @@ const LEADERBOARD_USER_FIELDS = new Set([
   // users.usernode_pubkey), or null when no wallet is linked. Aliased to
   // `address` in the SELECT below.
   'address',
+  // The apps this user is CURRENTLY active on — a JSON array of {slug, name}
+  // objects, built by the `active_apps` LATERAL below (mirrors the active-user
+  // rules in src/services/active-users.js). Empty array when active on nothing.
+  // Always reflects the rolling 10-day window; the `window` param does NOT
+  // scope it (same as prs_merged). Under include_0_values=0 an empty [] is
+  // KEPT (it's neither 0 nor null), consistent with the empty {} kudos_given map.
+  'active_apps',
 ]);
 
 // Shape a single leaderboard/users row per the optional `fields` /
@@ -739,6 +746,15 @@ function kudosRoutes(config) {
   //   issues_created              — count of issues the user filed (issues.created_by)
   //                                 on public apps, window-filtered by created_at.
   //                                 Display-only detail; NOT a sort key.
+  //   active_apps                 — JSON array of {slug, name} for the apps the
+  //                                 user is CURRENTLY active on, per the active-
+  //                                 user rules in src/services/active-users.js
+  //                                 (ever >=60s in a day on the app, AND visited
+  //                                 within the last 10 days; collab-private apps
+  //                                 only count members; self-hosted + non-public-
+  //                                 view apps excluded). ALWAYS reflects the
+  //                                 rolling 10-day window — NOT scoped by the
+  //                                 `window` param (like prs_merged). Display-only.
   // --------------------------------------------------------------
   router.get('/api/leaderboard/users', async (req, res) => {
     // Public endpoint (see PUBLIC_PATHS in middleware/auth.js) — no
@@ -825,7 +841,8 @@ function kudosRoutes(config) {
                 GREATEST(MAX(pk.created_at), ab.last_at) AS last_kudos_at,
                 kg.kudos_given,
                 COALESCE(ic.cnt, 0)::int AS issues_created,
-                u.usernode_pubkey AS address
+                u.usernode_pubkey AS address,
+                aa.active_apps
            FROM users u
            LEFT JOIN chat_sessions cs ON cs.user_id = u.id
              AND EXISTS (SELECT 1 FROM apps ap
@@ -858,7 +875,43 @@ function kudosRoutes(config) {
                 AND EXISTS (SELECT 1 FROM apps ap
                             WHERE ap.id = i.app_id AND ap.view_visibility = 'public')
            ) ic ON true
-           GROUP BY u.id, u.username, u.usernode_pubkey, kg.kudos_given, ab.received, ab.last_at, ic.cnt
+           -- The apps the user is CURRENTLY active on. Mirrors the active-user
+           -- definition in src/services/active-users.js EXACTLY (source of truth
+           -- there; keep both in sync if the 60s bar / 10-day window ever moves):
+           --   * public-view, non-self-hosted apps only (this is a public route,
+           --     and the self-app never accrues its own app_activity rows);
+           --   * EVER qualified: some app_activity row with seconds_spent >= 60;
+           --   * visited recently: an app_activity row within the last 10 days;
+           --   * collab-private apps only count status='member' collaborators.
+           -- Intrinsically 10-day-windowed, so it is NOT scoped by the window arg.
+           -- COALESCE to an empty array so "active on nothing" is [] not null.
+           LEFT JOIN LATERAL (
+             SELECT COALESCE(
+                      jsonb_agg(
+                        jsonb_build_object('slug', ap.slug, 'name', ap.name)
+                        ORDER BY ap.name, ap.slug
+                      ),
+                      '[]'::jsonb
+                    ) AS active_apps
+               FROM apps ap
+              WHERE ap.view_visibility = 'public'
+                AND ap.self_hosted = FALSE
+                AND EXISTS (
+                  SELECT 1 FROM app_activity r
+                   WHERE r.app_id = ap.id AND r.user_id = u.id
+                     AND r.date >= CURRENT_DATE - 10
+                )
+                AND EXISTS (
+                  SELECT 1 FROM app_activity q
+                   WHERE q.app_id = ap.id AND q.user_id = u.id
+                     AND q.seconds_spent >= 60
+                )
+                AND (ap.collab_visibility <> 'private' OR EXISTS (
+                  SELECT 1 FROM app_collaborators c
+                   WHERE c.app_id = ap.id AND c.user_id = u.id AND c.status = 'member'
+                ))
+           ) aa ON true
+           GROUP BY u.id, u.username, u.usernode_pubkey, kg.kudos_given, ab.received, ab.last_at, ic.cnt, aa.active_apps
            ORDER BY kudos_received_prs_merged DESC,
                     prs_merged DESC,
                     kudos_received DESC,

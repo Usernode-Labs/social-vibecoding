@@ -665,6 +665,21 @@ const Leaderboard = {
       const issuesMeta = issuesCreated > 0
         ? `<span class="text-zinc-400">·</span><span>${issuesCreated} issue${issuesCreated === 1 ? '' : 's'}</span>`
         : '';
+      // Apps this user is currently active on (active_apps: [{slug, name}]).
+      // Show a count chip with the app names on hover; hidden at 0 to match
+      // the other optional detail chips. This is the same 10-day "active"
+      // window used for voting and the group-chat active-users tile.
+      const activeApps = Array.isArray(row.active_apps) ? row.active_apps : [];
+      const activeAppsCount = activeApps.length;
+      const activeAppsTitle = activeAppsCount > 0
+        ? 'Active on: ' + activeApps
+            .map((a) => (a && a.name) ? a.name : (a && a.slug) || '')
+            .filter(Boolean)
+            .join(', ')
+        : '';
+      const activeAppsMeta = activeAppsCount > 0
+        ? `<span class="text-zinc-400">·</span><span title="${escapeAttr(activeAppsTitle)}">active on ${activeAppsCount} app${activeAppsCount === 1 ? '' : 's'}</span>`
+        : '';
       // Footnote on the kudos badge: how many additional kudos sit on
       // PRs that haven't landed yet (and so don't count toward the
       // ranking score). Only meaningful when > 0.
@@ -682,6 +697,7 @@ const Leaderboard = {
               <span>${row.prs_kudosed} PR${row.prs_kudosed === 1 ? '' : 's'} kudosed</span>
               ${mergedMeta}
               ${issuesMeta}
+              ${activeAppsMeta}
             </div>
           </div>
           ${unmergedKudosNote}
