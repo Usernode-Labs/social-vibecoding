@@ -399,7 +399,7 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
     // COALESCE so a later retry that fails to collect logs doesn't blank it.
     await pool.query(
       `UPDATE chat_sessions
-          SET check_state = 'error',
+          SET check_state = $1,
               test_results = $2,
               checks_commit_sha = $3,
               checks_checked_at = NOW(),
