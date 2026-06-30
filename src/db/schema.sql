@@ -1220,3 +1220,49 @@ CREATE TABLE IF NOT EXISTS proposal_ai_messages (
 CREATE INDEX IF NOT EXISTS idx_proposal_ai_messages_convo
   ON proposal_ai_messages (app_id, proposal_kind, proposal_ref, user_id, id);
 COMMENT ON TABLE proposal_ai_messages IS 'staging:private';
+
+-- Admin /debug merge & conflict-resolution logs. Each merge attempt (or
+-- automatic conflict-resolution attempt) is a "run"; every step inside it
+-- (gate check, GitHub merge call, worker sync phase, outcome) is a child
+-- row ordered by `seq`. Written fire-and-forget by services/merge-debug.js
+-- and read only by the admin-gated /api/debug/* endpoints.
+CREATE TABLE IF NOT EXISTS merge_debug_runs (
+  id          BIGSERIAL PRIMARY KEY,
+  app_id      INTEGER REFERENCES apps(id) ON DELETE SET NULL,
+  session_id  INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL,
+  pr_number   INTEGER,
+  -- 'merge' | 'conflict_resolution'
+  kind        VARCHAR(32) NOT NULL DEFAULT 'merge',
+  -- 'vote' | 'force' | 'post_merge_sweep' | 'drift' | 'behind_main' | 'merge_conflict'
+  trigger     VARCHAR(48),
+  -- running | merged | blocked | conflict_resolving | conflict_failed
+  --   | awaiting_github | noop | error
+  status      VARCHAR(32) NOT NULL DEFAULT 'running',
+  summary     TEXT,
+  started_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ended_at    TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_merge_debug_runs_app     ON merge_debug_runs (app_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_merge_debug_runs_session ON merge_debug_runs (session_id);
+CREATE INDEX IF NOT EXISTS idx_merge_debug_runs_started ON merge_debug_runs (started_at DESC);
+
+CREATE TABLE IF NOT EXISTS merge_debug_steps (
+  id         BIGSERIAL PRIMARY KEY,
+  run_id     BIGINT NOT NULL REFERENCES merge_debug_runs(id) ON DELETE CASCADE,
+  seq        INTEGER NOT NULL,
+  phase      VARCHAR(48),
+  -- info | warn | error
+  level      VARCHAR(8) NOT NULL DEFAULT 'info',
+  message    TEXT,
+  detail     JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_merge_debug_steps_run ON merge_debug_steps (run_id, seq);
+
+-- staging:private — these rows carry internal session ids, conflict file
+-- paths, error text and resolution details that mirror private build
+-- history; they're TRUNCATEd in staging clones rather than leaking into
+-- previews (same policy as the events / proposal_ai_messages tables). The
+-- /debug view seeds its own mock runs under IS_STAGING + ?demo=1.
+COMMENT ON TABLE merge_debug_runs  IS 'staging:private';
+COMMENT ON TABLE merge_debug_steps IS 'staging:private';

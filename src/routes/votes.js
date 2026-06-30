@@ -1439,10 +1439,37 @@ async function checkAndMerge(config, pool, session, options = {}) {
   );
   const yesCount = parseInt(yesRows[0].cnt);
 
+  // Admin /debug capture. We deliberately do NOT open a run for the
+  // common "not enough votes yet" early-return below — that fires on every
+  // sub-threshold vote and would bury the interesting attempts. A run opens
+  // only once a merge actually has a shot (majority reached, or a
+  // force-merge), so the /debug list reads as real merge attempts — the
+  // ones that either merge or get blocked. When the conflict-resolver
+  // re-enters us (autoResolve:false) it passes its own run id so the retry
+  // merge nests under the resolution run instead of spawning a duplicate.
+  const md = require('../services/merge-debug');
+  let debugRunId = options.debugRunId || null;
+  const ownDebugRun = !debugRunId;
+  const startDebugIfNeeded = async () => {
+    if (ownDebugRun && debugRunId == null) {
+      debugRunId = await md.startRun(pool, {
+        appId: session.app_id, sessionId: session.id, prNumber: session.pr_number || null,
+        kind: 'merge', trigger: force ? 'force' : 'vote',
+      });
+    }
+  };
+  const dstep = (o) => md.step(pool, debugRunId, o);
+  // Only the run's owner stamps its terminal status; a passed-in run id
+  // belongs to the resolver, which ends it itself.
+  const dend = (status, summary) => { if (ownDebugRun) md.endRun(pool, debugRunId, { status, summary }); };
+
   if (!force) {
     if (yesCount < majority) {
       return { merged: false, yesCount, needed: majority };
     }
+
+    await startDebugIfNeeded();
+    dstep({ phase: 'gate:majority', message: `Majority reached: ${yesCount} of ${majority} active users voted yes.`, detail: { yesCount, majority, activeCount } });
 
     // Locked apps additionally require at least one admin yes vote (see
     // services/admin-approval.js + the apps.locked column). The active-user
@@ -1455,8 +1482,13 @@ async function checkAndMerge(config, pool, session, options = {}) {
         log.info('votes', 'Majority reached but app is locked; awaiting admin yes', {
           sessionId: session.id, yesCount, majority,
         });
+        dstep({ phase: 'gate:lock', level: 'warn', message: 'App is locked and has no admin yes vote yet — merge blocked.', detail: { locked: true, adminYes: false } });
+        dend('blocked', 'Blocked — locked app awaiting an admin yes vote.');
         return { merged: false, yesCount, needed: majority, awaitingAdmin: true };
       }
+      dstep({ phase: 'gate:lock', message: 'App is locked — admin yes vote present.', detail: { locked: true, adminYes: true } });
+    } else {
+      dstep({ phase: 'gate:lock', message: 'App is not locked — no admin-yes requirement.' });
     }
 
     // #8: refuse the merge if the branch is behind origin/main. We don't
@@ -1482,6 +1514,8 @@ async function checkAndMerge(config, pool, session, options = {}) {
       log.info('votes', 'Merge blocked: branch behind main', {
         sessionId: session.id, behind: session.behind_main,
       });
+      dstep({ phase: 'gate:behind_main', level: 'warn', message: `Branch is ${session.behind_main} commit(s) behind main — auto-sync queued, merge deferred.`, detail: { behind: session.behind_main } });
+      dend('conflict_resolving', 'Behind main — auto-sync queued; see the conflict-resolution run.');
       // Auto-heal: sync the branch with main (worker git-merge +
       // Claude-on-markers) and retry the merge. The PR keeps its votes
       // because the sync push doesn't go through the vote-resetting
@@ -1557,11 +1591,14 @@ async function checkAndMerge(config, pool, session, options = {}) {
       log.info('votes', 'Merge blocked: checks not passing', {
         sessionId: session.id, checkState, failingCount,
       });
+      dstep({ phase: 'gate:checks', level: 'warn', message: `Merge blocked: checks not passing (state = ${checkState || 'pending'}${failingCount ? `, ${failingCount} failing` : ''}).`, detail: { checkState: checkState || 'pending', failingCount } });
+      dend('blocked', 'Blocked — votes reached but checks must pass first.');
       return {
         merged: false, yesCount, needed: majority,
         checksBlocked: true, checkState: checkState || 'pending', failingCount,
       };
     }
+    dstep({ phase: 'gate:checks', message: 'Checks gate: state = passing.', detail: { checkState: 'passing' } });
   }
   // For admin force-merge we deliberately skip the behind_main pre-check
   // — GitHub will still reject the merge if there's a real conflict,
@@ -1575,6 +1612,12 @@ async function checkAndMerge(config, pool, session, options = {}) {
   // previous bug where hammering "Yes" fired N parallel merge+rebuild
   // pipelines that stomped on each other (GitHub lock, /tmp/usernode-
   // rebuild-* git clone races, duplicate `docker run --name ...`, etc).
+  // Force-merge skips the gate block above, so its run opens here.
+  await startDebugIfNeeded();
+  if (force) {
+    dstep({ phase: 'gate:majority', message: `Force-merge by ${forceBy?.username || 'an admin'} — bypassing the vote/checks gates.`, detail: { yesCount, majority, forced: true } });
+  }
+
   const { rows: claim } = await pool.query(
     `UPDATE chat_sessions SET status = 'merging'
      WHERE id = $1 AND status = 'promoted'
@@ -1585,8 +1628,11 @@ async function checkAndMerge(config, pool, session, options = {}) {
     log.info('votes', 'Merge already claimed by another request, skipping', {
       sessionId: session.id,
     });
+    dstep({ phase: 'claim', message: 'Merge already claimed by another request — skipping.' });
+    dend('noop', 'Another request is already merging this proposal.');
     return { merged: false, inProgress: true };
   }
+  dstep({ phase: 'claim', message: 'Claimed merge (promoted → merging).' });
 
   // Broadcast the 'merging' transition so every client refreshes its
   // vote panel and re-renders the PR as "Merging…" — rather than having
@@ -1634,13 +1680,17 @@ async function checkAndMerge(config, pool, session, options = {}) {
     if (github.isEnabled() && session.repo_url && session.pr_number) {
       const [, owner, repo] = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
       if (owner && repo) {
+        dstep({ phase: 'github_merge', message: `Calling GitHub merge for PR #${session.pr_number}…`, detail: { owner, repo } });
         const mergeData = await github.mergePR(owner, repo, session.pr_number);
         // #11: capture the squash-merge commit SHA so future vote-to-undo
         // can `git revert <sha>` against main. The Octokit `pulls.merge`
         // response shape is { sha, merged: true, message }.
         mergeCommitSha = mergeData?.sha || null;
         githubMerged = true;
+        dstep({ phase: 'github_merge', message: `GitHub merged PR #${session.pr_number}${mergeCommitSha ? ` as commit ${String(mergeCommitSha).slice(0, 9)}` : ''}.`, detail: { sha: mergeCommitSha } });
       }
+    } else {
+      dstep({ phase: 'github_merge', message: 'GitHub not enabled or PR-less — skipping the GitHub merge call.' });
     }
 
     // Rebuild production
@@ -1657,8 +1707,10 @@ async function checkAndMerge(config, pool, session, options = {}) {
       // hook. main_sha is refreshed by seedSelfApp() on the next boot,
       // which clients pick up via /api/version.
       if (!app.self_hosted) {
+        dstep({ phase: 'prod_rebuild', message: 'Production rebuild started.' });
         const result = await staging.rebuildProduction(config, app);
         sha = result.sha;
+        dstep({ phase: 'prod_rebuild', message: `Production rebuild finished${sha ? ` (deployed ${String(sha).slice(0, 9)})` : ''}.`, detail: { sha: sha || null } });
         // Also record the SHA + originating PR so the main app view can
         // show "live on <sha> · PR #<n>" (#21). pr_number comes from the
         // session we just merged; sha is what `rebuildProduction` cloned.
@@ -1692,6 +1744,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
 
     // Teardown staging
     await staging.teardownStaging(session, app);
+    dstep({ phase: 'staging_teardown', message: 'Staging container torn down.' });
 
     // #58: snapshot the vote threshold + active-user count in effect at
     // this merge, so the merged-PR pill shows the historical "yes / N"
@@ -1877,9 +1930,12 @@ async function checkAndMerge(config, pool, session, options = {}) {
       log.error('votes', 'Conflict resolution check failed', { err: err.message });
     });
 
+    dstep({ phase: 'merged', message: `Marked session merged${mergeCommitSha ? ` (commit ${String(mergeCommitSha).slice(0, 9)})` : ''}.`, detail: { sha: mergeCommitSha, yesCount, majority } });
+    dend('merged', `Merged${force ? ` (force by ${forceBy?.username || 'admin'})` : ''}.`);
     return { merged: true };
   } catch (err) {
     log.error('votes', 'Merge failed', { sessionId: session.id, err: err.message, githubMerged });
+    dstep({ phase: 'merge_error', level: 'error', message: `Merge step threw: ${err.message}`, detail: { githubMerged, status: err.status || null } });
 
     // The GitHub merge is irreversible. If it already succeeded and a
     // LATER step threw (most commonly `staging.rebuildProduction` — e.g. a
@@ -1930,6 +1986,8 @@ async function checkAndMerge(config, pool, session, options = {}) {
         });
       } catch (_) { /* ws failures non-fatal */ }
 
+      dstep({ phase: 'merged', level: 'warn', message: `PR merged on GitHub but the production deploy failed: ${err.message}`, detail: { deployFailed: true } });
+      dend('merged', 'Merged on GitHub; production deploy failed (operator retry needed).');
       return { merged: true, deployFailed: true, error: err.message };
     }
 
@@ -2049,6 +2107,12 @@ async function checkAndMerge(config, pool, session, options = {}) {
         `Failed to merge PR #${session.pr_number || session.id}: ${err.message}`,
         'system'
       );
+    }
+    if (isConflict) {
+      dstep({ phase: 'conflict_detected', level: 'warn', message: 'GitHub rejected the merge as a conflict — auto-resolver ' + (autoResolve ? 'queued.' : 'not run (resolver re-entry).'), detail: { autoResolve } });
+      dend(autoResolve ? 'conflict_resolving' : 'conflict_failed', 'Merge conflict at GitHub.');
+    } else {
+      dend('error', `Merge failed: ${err.message}`);
     }
     return { merged: false, error: err.message, conflict: isConflict };
   }

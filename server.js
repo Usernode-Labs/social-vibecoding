@@ -28,6 +28,7 @@ const appLlmProxyRoutes = require('./src/routes/app-llm-proxy');
 const { llmGrantsRoutes } = require('./src/routes/llm-grants');
 const { proposalDiscussRoutes } = require('./src/routes/proposal-discuss');
 const { topicAttributeRoutes } = require('./src/routes/topic-attributes');
+const { debugRoutes } = require('./src/routes/debug');
 const github = require('./src/services/github');
 const llm = require('./src/services/llm');
 const worker = require('./src/services/worker');
@@ -307,6 +308,7 @@ app.use(collaboratorRoutes(config));
 app.use(llmGrantsRoutes(config));
 app.use(proposalDiscussRoutes(config));
 app.use(topicAttributeRoutes(config));
+app.use(debugRoutes(config));
 
 app.get('/api/iframe-token', async (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
@@ -362,6 +364,14 @@ app.get('/admin', (req, res) => {
 // are independently enforced by adminMiddleware.
 app.get('/dashboard', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+});
+
+// Admin merge-debug view. Like /admin and /dashboard the static shell is
+// served to anyone; debug.js checks /api/auth/me and redirects non-admins,
+// while the /api/debug/* endpoints it calls are enforced by adminMiddleware.
+// Must be registered before the app.get('*') SPA fallback below.
+app.get('/debug', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'debug.html'));
 });
 
 app.get('*', (req, res) => {
@@ -526,6 +536,17 @@ async function start() {
   recoverSessions(config).catch((err) => {
     log.warn('server', 'Session recovery failed', { err: err.message });
   });
+
+  // Merge-debug retention: prune /debug runs (and their cascaded steps)
+  // older than the window once at boot and then on a slow timer, so the
+  // staging:private merge_debug_* tables can't grow without bound. Off the
+  // critical path; swallows its own errors.
+  const mergeDebug = require('./src/services/merge-debug');
+  const MERGE_DEBUG_RETENTION_DAYS = parseInt(process.env.MERGE_DEBUG_RETENTION_DAYS || '30', 10);
+  mergeDebug.pruneOldRuns(getPool(config), MERGE_DEBUG_RETENTION_DAYS).catch(() => {});
+  setInterval(() => {
+    mergeDebug.pruneOldRuns(getPool(config), MERGE_DEBUG_RETENTION_DAYS).catch(() => {});
+  }, 6 * 60 * 60 * 1000).unref();
 
   // #451: periodic auto-merge safety net. The boot sequence above runs
   // reconcileEligibleMerges / reconcileStuckChecks exactly once; the live

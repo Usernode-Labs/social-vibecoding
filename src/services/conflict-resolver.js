@@ -358,7 +358,46 @@ async function resolveAndMaybeRetryInner(config, target, options = {}) {
   };
 }
 
+// Map the inner resolve's exit `reason` onto a terminal /debug run status.
+function resolutionRunStatus(reason) {
+  if (reason === 'synced_and_merged' || reason === 'merged') return 'merged';
+  if (reason === 'unresolved_conflict' || reason === 'still_conflicting') return 'conflict_failed';
+  if (reason === 'mergeable_recompute_pending') return 'awaiting_github';
+  if (reason === 'synced_awaiting_votes' || reason === 'awaiting_votes') return 'blocked';
+  if (reason === 'over_budget' || reason === 'sync_threw' || reason === 'retry_threw') return 'error';
+  return 'noop';
+}
+
+// Admin /debug wrapper. Lazily opens a 'conflict_resolution' run on the
+// first step (so the no-op deferral / no_conflict early returns never spawn
+// an empty run), threads its id into the worker sync + retry merge, and
+// stamps a terminal status from the inner reason. The capture is
+// fire-and-forget — a failure here never affects the resolve.
 async function resolveWithSession(config, pool, session, options = {}) {
+  const md = require('./merge-debug');
+  const ctx = { runId: null, started: false };
+  ctx.ensure = async () => {
+    if (!ctx.started) {
+      ctx.started = true;
+      ctx.runId = await md.startRun(pool, {
+        appId: session.app_id, sessionId: session.id, prNumber: session.pr_number,
+        kind: 'conflict_resolution', trigger: options.trigger || 'conflict_resolver',
+      });
+    }
+    return ctx.runId;
+  };
+  ctx.step = async (o) => { await ctx.ensure(); md.step(pool, ctx.runId, o); };
+  const result = await resolveWithSessionInner(config, pool, session, options, ctx);
+  if (ctx.started) {
+    md.endRun(pool, ctx.runId, {
+      status: resolutionRunStatus(result && result.reason),
+      summary: result && result.reason ? `reason: ${result.reason}` : null,
+    });
+  }
+  return result;
+}
+
+async function resolveWithSessionInner(config, pool, session, options = {}, ctx = { step: async () => {} }) {
   // #391: `mergeOnly` (Phase 1 of the drain) merges a PR only if it's
   // directly mergeable; one that needs a worker sync is deferred (no sync
   // run, no state change) so it can't block clean siblings. Phase 2 re-runs
@@ -421,6 +460,8 @@ async function resolveWithSession(config, pool, session, options = {}) {
     log.info('conflict', 'Conflict/drift detected, syncing PR with main', {
       sessionId: session.id, pr: session.pr_number, behind, mergeable0,
     });
+    await ctx.step({ phase: 'pollMergeable', message: `GitHub mergeability settled: mergeable = ${mergeable0}.`, detail: { mergeable: mergeable0, behind } });
+    await ctx.step({ phase: 'needs_sync', message: `Branch needs a worker sync with main (behind ${behind}${mergeable0 === false ? ', conflicting' : ''}).`, detail: { behind, mergeable: mergeable0 } });
 
     // #361: the worker sync draws from the dedicated "system tokens"
     // budget (platform housekeeping, not the owner's spend). Skip — and
@@ -435,6 +476,7 @@ async function resolveWithSession(config, pool, session, options = {}) {
       await postGroupMessage(pool, session,
         `Auto-conflict-resolution skipped on PR #${session.pr_number}: the system token budget is exhausted — resolve manually via "Sync with main" or wait for the midnight-UTC reset.`
       );
+      await ctx.step({ phase: 'budget', level: 'error', message: 'Skipped — system token budget exhausted.', detail: { reason: sysBudget.error } });
       return { ok: false, reason: 'over_budget' };
     }
 
@@ -447,6 +489,7 @@ async function resolveWithSession(config, pool, session, options = {}) {
     // #361: snapshot the in-flight state so a reload (or a card rendered
     // mid-resolve) shows the animated "Resolving conflicts…" badge.
     await persistConflictState(pool, session, { state: 'resolving', files: session.conflict_files || [] });
+    await ctx.step({ phase: 'persist:resolving', message: 'Snapshot → resolving. Dispatching the worker sync with main.' });
     try {
       const { pushVoteUpdate } = require('./ws');
       pushVoteUpdate({
@@ -460,12 +503,13 @@ async function resolveWithSession(config, pool, session, options = {}) {
 
     let sync;
     try {
-      sync = await runSyncMain(config, pool, session.id, { sessionRow: session, trigger: 'conflict_resolver' });
+      sync = await runSyncMain(config, pool, session.id, { sessionRow: session, trigger: 'conflict_resolver', debugRunId: ctx.runId });
     } catch (err) {
       log.error('conflict', 'runSyncMain threw', { sessionId: session.id, err: err.message });
       await postGroupMessage(pool, session,
         `Couldn't auto-resolve conflicts on PR #${session.pr_number} (sync failed: ${err.message}). Try "Sync with main" from the session's dev-chat.`
       );
+      await ctx.step({ phase: 'sync_result', level: 'error', message: `Worker sync threw: ${err.message}` });
       return { ok: false, reason: 'sync_threw' };
     }
     didSync = true;
@@ -476,8 +520,11 @@ async function resolveWithSession(config, pool, session, options = {}) {
       await postGroupMessage(pool, session,
         `PR #${session.pr_number} couldn't be auto-merged with main — Claude couldn't resolve the conflicts. ${owner}: open the session's dev-chat to resolve it.`
       );
+      await ctx.step({ phase: 'sync_result', level: 'error', message: 'Claude could not resolve the conflicts; branch left unchanged.', detail: { syncResult: 'conflict', conflictFiles: sync.conflictFiles || sync.conflict_files || [] } });
+      await ctx.step({ phase: 'group_chat', message: "Posted to group chat: couldn't auto-merge — owner must resolve in dev-chat.", detail: { reason: 'unresolved_conflict' } });
       return { ok: false, reason: 'unresolved_conflict' };
     }
+    await ctx.step({ phase: 'sync_result', message: `Worker sync ${sync.syncResult}${sync.sha ? ` — pushed ${String(sync.sha).slice(0, 9)}` : ''}.`, detail: { syncResult: sync.syncResult, sha: sync.sha || null, behind: sync.behind } });
   } else if (mergeable0 !== true) {
     // No recorded drift and GitHub never settled to a definite state
     // (null). Nothing actionable — don't risk a 405 on an unknown state.
@@ -494,6 +541,10 @@ async function resolveWithSession(config, pool, session, options = {}) {
   } catch (err) {
     log.warn('conflict', 'waitForMergeableTrue failed', { sessionId: session.id, err: err.message });
     mergeableNow = null;
+  }
+
+  if (didSync || mergeable0 === true) {
+    await ctx.step({ phase: 'waitForMergeableTrue', message: `Waiting for GitHub to confirm mergeability… mergeable = ${mergeableNow}.`, detail: { mergeable: mergeableNow, afterPush: didSync } });
   }
 
   if (mergeableNow === false) {
@@ -529,13 +580,17 @@ async function resolveWithSession(config, pool, session, options = {}) {
   let mergeResult;
   try {
     const { checkAndMerge } = require('../routes/votes');
-    mergeResult = await checkAndMerge(config, pool, fresh, { autoResolve: false });
+    // Pass our run id so the retry merge's gate/merge steps nest under this
+    // conflict-resolution run instead of opening a second run.
+    mergeResult = await checkAndMerge(config, pool, fresh, { autoResolve: false, debugRunId: ctx.runId });
   } catch (err) {
     log.error('conflict', 'retry checkAndMerge threw', { sessionId: session.id, err: err.message });
+    await ctx.step({ phase: 'retry_merge', level: 'error', message: `Retry merge threw: ${err.message}` });
     return { ok: true, reason: 'retry_threw', syncResult };
   }
 
   if (mergeResult?.merged) {
+    await ctx.step({ phase: 'retry_merge', message: 'Re-attempted merge after sync — merged.', detail: { syncResult } });
     try {
       const { pushVoteUpdate } = require('./ws');
       pushVoteUpdate({ sessionId: fresh.id, appSlug: fresh.app_slug, merged: true });
