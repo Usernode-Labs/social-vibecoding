@@ -20,7 +20,7 @@
 #   PROMPT, BRANCH, WORKER_JWT, SESSION_ID, PLATFORM_URL
 # Optional env:
 #   MODE                       build (default) | scout | sync
-#   MODEL                      default: claude-sonnet-4-6
+#   MODEL                      default: claude-sonnet-5
 #   COMMIT_MSG                 default: "Changes via Usernode"
 #   CLAUDE_RESUME_SESSION_ID   if set, passes `--resume <id>` to claude
 #   PAT                        legacy back-compat — not set by the
@@ -57,7 +57,7 @@ die() {
 : "${SESSION_ID:?SESSION_ID required}"
 : "${PLATFORM_URL:?PLATFORM_URL required}"
 : "${MODE:=build}"
-: "${MODEL:=claude-sonnet-4-6}"
+: "${MODEL:=claude-sonnet-5}"
 : "${COMMIT_MSG:=Changes via Usernode}"
 : "${PAT:=}"
 : "${CLAUDE_RESUME_SESSION_ID:=}"

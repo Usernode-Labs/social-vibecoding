@@ -292,7 +292,7 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
         prompt: '(sync turn — see MODE=sync block in run-cc.sh)',
         // Use a small fast model — the prompt is short and the task is
         // mechanical. The route's caller doesn't get to pick.
-        model: 'claude-sonnet-4-6',
+        model: 'claude-sonnet-5',
         commitMsg: '',
         // Don't pass cc_session_id — we don't want sync turns polluting
         // the session's main CC conversation thread.

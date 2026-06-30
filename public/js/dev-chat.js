@@ -19,7 +19,7 @@ const DevChat = {
   currentSession: null,
   messages: [],
   isStreaming: false,
-  selectedModel: loadStoredModel() || 'claude-sonnet-4-6',
+  selectedModel: loadStoredModel() || 'claude-sonnet-5',
   _staleTimer: null,
   _abortController: null,
   // Most recent event _seq we've processed across any channel (POST SSE,
@@ -95,14 +95,14 @@ const DevChat = {
   // surface cost; loadModels() refreshes this from the server.
   MODELS: {
     'claude-haiku-4-5': { label: 'Haiku 4.5', outputCostPerMTok: 5 },
-    'claude-sonnet-4-6': { label: 'Sonnet 4.6', outputCostPerMTok: 15 },
+    'claude-sonnet-5': { label: 'Sonnet 5', outputCostPerMTok: 15 },
     'claude-opus-4-8': { label: 'Opus 4.8', outputCostPerMTok: 25 },
   },
 
   // Default model id used when sanitization rejects a stale storage
   // value. Overwritten by GET /api/models with the server's authoritative
   // default so the two stay aligned.
-  _defaultModel: 'claude-sonnet-4-6',
+  _defaultModel: 'claude-sonnet-5',
 
   // Fetch the authoritative model allowlist from the server. Replaces
   // the inline MODELS map so adding/removing a model on the server

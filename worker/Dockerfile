@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # CLAUDE_CODE_CACHE_BUST, so the layer is reused within a calendar day and
 # re-pulls `latest` on the first build of each new day. Stale CLIs are the
 # cause of "thinking.type.enabled is not supported for this model" 400s on
-# newer models (Sonnet 4.6 / Opus 4.8), which require thinking.type.adaptive.
+# newer models (Sonnet 5 / Opus 4.8), which require thinking.type.adaptive.
 ARG CLAUDE_CODE_CACHE_BUST=unset
 RUN echo "claude-code cache bust: ${CLAUDE_CODE_CACHE_BUST}" \
   && npm install -g @anthropic-ai/claude-code

@@ -14,10 +14,10 @@ test('Fable 5 is no longer an allowed model', () => {
 });
 
 test('a stored Fable 5 selection resolves to the default model', () => {
-  assert.equal(models.resolve('claude-fable-5'), 'claude-sonnet-4-6');
+  assert.equal(models.resolve('claude-fable-5'), 'claude-sonnet-5');
 });
 
 test('list() exposes exactly the three remaining model ids', () => {
   const ids = models.list().map((m) => m.id).sort();
-  assert.deepEqual(ids, ['claude-haiku-4-5', 'claude-opus-4-8', 'claude-sonnet-4-6']);
+  assert.deepEqual(ids, ['claude-haiku-4-5', 'claude-opus-4-8', 'claude-sonnet-5']);
 });
