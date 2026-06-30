@@ -59,6 +59,7 @@ async function migrate(config) {
   await seedStagingAppCapApps(pool, config);
   await seedStagingSystemTokenUsage(pool);
   await seedStagingDashboardAdminSplit(pool);
+  await seedStagingAnalyticsCharts(pool);
   await seedStagingTopicAttributes(pool, config);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
@@ -2600,6 +2601,103 @@ async function seedStagingDashboardAdminSplit(pool) {
     log.info('db', 'Staging dashboard admin-split fixtures seeded', { appId });
   } catch (err) {
     log.warn('db', 'Staging dashboard admin-split seeding failed', { message: err.message });
+  }
+}
+
+// Fixtures for the dashboard's General-users and Power-users sections.
+// Both read empty on a fresh/cloned staging DB (the General-users daily
+// charts need spread-out activity; the Power-users charts read the events
+// log, and chat_sessions/events fixtures don't survive into staging), so
+// seed:
+//   - Six fixture users whose created_at spans several signup weeks → a
+//     non-trivial retention triangle (both alignment views).
+//   - app_activity across many days per user, distinct strides, so the
+//     General-users DAU line varies day-to-day and the 7/30-day rolling
+//     WAU/MAU windows are fully backed.
+//   - Power-user events (dapp_active_day >=3/week + one developer action —
+//     kudos/vote/proposal — per qualifying week) across the trailing four
+//     weeks, with each user qualifying in a different number of weeks so the
+//     L4 stacked bar shows distinct 1/4…4/4 buckets and the rolling
+//     power-user WAU is non-zero.
+// High synthetic ids + ON CONFLICT DO NOTHING keep it idempotent across the
+// every-boot re-run; a strict no-op outside staging.
+async function seedStagingAnalyticsCharts(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    const { rows: appRows } = await pool.query(
+      `SELECT id FROM apps
+         WHERE COALESCE(self_hosted, FALSE) = FALSE AND status <> 'deleted'
+         ORDER BY id LIMIT 1`
+    );
+    const appId = appRows[0]?.id;
+    if (!appId) {
+      log.warn('db', 'Staging analytics-charts skipped: no public app');
+      return;
+    }
+
+    // Fixture users across several signup weeks. Sentinel password → no login.
+    const users = [
+      { id: 900060, createdDaysAgo: 38, stride: 2 },
+      { id: 900061, createdDaysAgo: 31, stride: 3 },
+      { id: 900062, createdDaysAgo: 24, stride: 2 },
+      { id: 900063, createdDaysAgo: 17, stride: 3 },
+      { id: 900064, createdDaysAgo: 10, stride: 2 },
+      { id: 900065, createdDaysAgo: 4,  stride: 1 },
+    ];
+    for (const u of users) {
+      await pool.query(
+        `INSERT INTO users (id, username, password, created_at)
+         VALUES ($1, $2, '!staging-fixture-no-login!', NOW() - ($3::int * INTERVAL '1 day'))
+         ON CONFLICT (id) DO NOTHING`,
+        [u.id, `staging-demo-analytics-${u.id}`, u.createdDaysAgo]
+      );
+      // app_activity on every `stride`-th day from signup to now → the
+      // activityDaysSql surface the General-users + retention queries read.
+      await pool.query(
+        `INSERT INTO app_activity (app_id, user_id, seconds_spent, date)
+         SELECT $1, $2, 120, CURRENT_DATE - g
+           FROM generate_series(1, $3, $4) g
+         ON CONFLICT (app_id, user_id, date) DO NOTHING`,
+        [appId, u.id, u.createdDaysAgo, u.stride]
+      );
+    }
+
+    // Power-user events. Per qualifying week: 3 dapp_active_day events (>=3
+    // "uses") + one developer action. Week w (days ago) spans [7w+1, 7w+7].
+    const weekDappDays = [[1, 2, 3], [8, 9, 10], [15, 16, 17], [22, 23, 24]];
+    const weekDevDay = [2, 9, 16, 23];
+    const devTypes = ['kudos_given', 'pr_vote_cast', 'pr_promoted', 'kudos_given'];
+    // Trailing weeks each user qualifies in (1..4) → distinct L4 buckets.
+    const qualWeeks = [
+      { id: 900060, weeks: 4 },
+      { id: 900061, weeks: 3 },
+      { id: 900062, weeks: 2 },
+      { id: 900063, weeks: 1 },
+    ];
+    let evId = 90006000;
+    for (const q of qualWeeks) {
+      for (let w = 0; w < q.weeks; w++) {
+        for (const d of weekDappDays[w]) {
+          await pool.query(
+            `INSERT INTO events (id, user_id, app_id, event_type, created_at)
+             VALUES ($1, $2, $3, 'dapp_active_day', NOW() - ($4::int * INTERVAL '1 day'))
+             ON CONFLICT (id) DO NOTHING`,
+            [evId++, q.id, appId, d]
+          );
+        }
+        await pool.query(
+          `INSERT INTO events (id, user_id, app_id, event_type, created_at)
+           VALUES ($1, $2, $3, $4, NOW() - ($5::int * INTERVAL '1 day'))
+           ON CONFLICT (id) DO NOTHING`,
+          [evId++, q.id, appId, devTypes[w], weekDevDay[w]]
+        );
+      }
+    }
+
+    log.info('db', 'Staging analytics-charts fixtures seeded', { appId });
+  } catch (err) {
+    log.warn('db', 'Staging analytics-charts seeding failed', { message: err.message });
   }
 }
 

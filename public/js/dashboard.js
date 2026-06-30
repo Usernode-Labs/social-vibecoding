@@ -1,7 +1,7 @@
 // Admin analytics dashboard client. Fetches the /api/admin/analytics/*
 // endpoints and renders counters, the two funnels, growth time series,
-// and the retention cohort heatmap + WAU/MAU stickiness. Vanilla JS +
-// hand-rolled SVG so there's no chart-lib dependency to ship.
+// the retention cohort heatmap, and the General-users / Power-users daily
+// charts. Vanilla JS + hand-rolled SVG so there's no chart-lib dependency.
 
 const fmtInt = (n) => (n == null ? '—' : Number(n).toLocaleString());
 const pct = (num, den) => (den > 0 ? Math.round((num / den) * 100) : 0);
@@ -104,8 +104,9 @@ const INFO = {
   spend: 'LLM spend per day for the last 30 days. <b>Platform key</b> is spend billed to the platform key (this is what the daily caps track); <b>User key</b> is spend billed to users\' own Anthropic keys (display only); <b>Both</b> stacks them.',
   funnels: 'Each stage shows the count reaching that milestone and the step-over-step conversion. "Promoted" = a session opened for group vote; "Merged" = landed in production. Use the cohort buttons to scope to recent signups.',
   growth: 'New signups, apps, and promoted/merged PRs bucketed per ISO week. Hover any bar for that week\'s exact count.',
-  retention: 'Each row is a signup-week cohort; each cell is the share of that cohort active (any tracked action) N weeks later. Hover a cell for the exact counts. Below, WAU/MAU stickiness charts weekly active vs trailing-28-day active.',
-  engagement: 'Operator-defined engagement tiers (not the classic active-user counts above), charted weekly. Hover a bar for the exact value.',
+  'general-users': 'A general user is anyone active during the period (any tracked action — used a dapp, sent a chat message, or sent a dev-session message). <b>DAU</b> is distinct users active that day; <b>WAU</b> is a 7-day rolling window (distinct users in the trailing 7 days, recomputed every day); <b>MAU</b> is a 30-day rolling window. Daily points over the last 90 days. Hover for the exact date and count.',
+  retention: 'Each row is a signup-week cohort; each cell is the share of that cohort active (any tracked action) in a given week. Hover a cell for the exact counts. Use the <b>Align</b> toggle to line cohorts up on real calendar weeks (default) or by cohort age (Week 0, Week 1, …).',
+  'power-users': 'A power user, evaluated over a 7-day window, both used dapps &ge; 3 times that week (counting each use of any dapp) AND did &ge; 1 visible developer action (gave kudos, cast a vote, or made a proposal). <b>Power-user WAU</b> is a 7-day rolling count; <b>Consistency (L4)</b> stacks, per day, how many of the trailing 4 weeks each user was a power user (1/4…4/4). Hover for exact counts.',
   'top-users': 'The 30 most prolific builders by lifetime dev sessions started, highest on the left. Hover a bar for the per-outcome breakdown (PRs produced, promoted, voted, merged).',
   'spend-by-builder': 'The 30 biggest LLM spenders, highest on the left. The toggle re-ranks by <b>Platform key</b> spend, <b>User key</b> (BYOK) spend, or <b>Both</b>. Hover a bar for the full breakdown.',
   kudos: 'Per ISO week, how many users gave 0–5 kudos (everyone gets a budget of 5/week). The 0 bucket is registered users who gave none that week, making this a participation view rather than a raw count.',
@@ -119,7 +120,7 @@ const CARD_INFO = {
   'total-users': 'Count of all registered accounts (admins excluded unless the box above is ticked).',
   'new-7d': 'Accounts that signed up in the last 7 days.',
   'new-30d': 'Accounts that signed up in the last 30 days.',
-  'wau-mau': 'Two independent counts, not a ratio. <b>WAU</b> = distinct users who took any tracked action (used a dapp, sent a chat message, or sent a dev-session message) in the last 7 days. <b>MAU</b> = the same, over the last 30 days. Different from the Engagement-tiers DAU/WAU bars lower down, which use custom operator definitions.',
+  'wau-mau': 'Two independent counts, not a ratio. <b>WAU</b> = distinct users who took any tracked action (used a dapp, sent a chat message, or sent a dev-session message) in the last 7 days. <b>MAU</b> = the same, over the last 30 days. The General-users section below charts these same definitions as daily rolling windows.',
   'apps': 'Published apps that aren\'t self-hosted and aren\'t deleted.',
   'promoted-open': 'Live count of dev sessions sitting in the "promoted" or "merging" state right now (not a lifetime total).',
   'promoted-all': 'Every dev session that was ever opened for a group vote.',
@@ -160,6 +161,12 @@ function weekLabel(d) {
   const dt = /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(s + 'T00:00:00Z') : new Date(s);
   if (isNaN(dt.getTime())) return '';
   return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
+// Short "Mar 3" style label for a single calendar day. Same formatting as
+// weekLabel — kept as its own name so day-resolution call sites read clearly.
+function dayLabel(d) {
+  return weekLabel(d);
 }
 
 async function getJSON(url) {
@@ -369,124 +376,242 @@ function renderGrowth(g) {
 }
 
 // ── Retention cohort heatmap ──────────────────────────────────
-function renderRetention(r) {
-  const cohorts = (r.cohorts || []).slice().sort((a, b) =>
-    a.cohortWeek < b.cohortWeek ? 1 : -1); // newest first
-  let maxOffset = 0;
-  for (const c of cohorts) {
-    for (const k of Object.keys(c.offsets)) maxOffset = Math.max(maxOffset, Number(k));
-  }
-  maxOffset = Math.min(maxOffset, 11); // keep the triangle readable
+// Empty-state markup shared by the daily charts.
+const EMPTY_MSG = '<p class="text-sm text-zinc-500">Not enough data yet.</p>';
+
+// ── Daily line chart ──────────────────────────────────────────
+// A polyline over ~90 daily points (too dense for per-day bars). Each
+// point gets a tiny dot plus a full-height transparent hit-band so the
+// whole column is hoverable. opts.grid / opts.tipPrefix + opts.tip(i)
+// mirror barChart; the caller must attachTooltip() afterwards.
+function lineChart(values, labels, color, opts = {}) {
+  const n = values.length;
+  const W = 320, H = 90, pad = 14;
+  const vals = values.map((v) => Number(v) || 0);
+  const max = Math.max(1, ...vals);
+  const grid = opts.grid ? gridLines(W, H, 4, pad) : '';
+  const step = n > 1 ? W / (n - 1) : W;
+  const x = (i) => i * step;
+  const y = (v) => H - (v / max) * (H - pad);
+  const pts = vals.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const rich = opts.tipPrefix && typeof opts.tip === 'function';
+  const overlay = vals.map((v, i) => {
+    let attrs = '';
+    if (rich) { const tipId = `${opts.tipPrefix}-${i}`; tipStore[tipId] = opts.tip(i); attrs = ` data-tip-id="${tipId}"`; }
+    const band = `<rect class="dc-hover" x="${(x(i) - step / 2).toFixed(1)}" y="0" width="${Math.max(1, step).toFixed(1)}" height="${H}" fill="${color}" fill-opacity="0" pointer-events="all"${attrs}></rect>`;
+    const dot = `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="1.5" fill="${color}"></circle>`;
+    return band + dot;
+  }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" class="w-full text-zinc-500" style="height:90px">${grid}` +
+    `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" />${overlay}</svg>`;
+}
+
+// ── Stacked bar chart ─────────────────────────────────────────
+// `stacks` is an array (one per column) of segment arrays, bottom-to-top.
+// `colors[si]` paints segment si. A full-height transparent hover rect per
+// column drives the rich tooltip. Used by the power-user L4 chart.
+function stackedBarChart(stacks, labels, colors, opts = {}) {
+  const n = stacks.length;
+  const W = 320, H = 90, pad = 14;
+  const totals = stacks.map((s) => s.reduce((a, b) => a + (Number(b) || 0), 0));
+  const max = Math.max(1, ...totals);
+  const grid = opts.grid ? gridLines(W, H, 4, pad) : '';
+  const bw = n > 0 ? (W / n) : W;
+  const rich = opts.tipPrefix && typeof opts.tip === 'function';
+  const bars = stacks.map((segs, i) => {
+    const x = i * bw;
+    const x0 = (x + 0.4).toFixed(1);
+    const w = Math.max(0.6, bw - 0.8).toFixed(1);
+    let cursor = H;
+    let rects = '';
+    segs.forEach((seg, si) => {
+      const val = Number(seg) || 0;
+      if (val <= 0) return;
+      const h = (val / max) * (H - pad);
+      cursor -= h;
+      rects += `<rect x="${x0}" y="${cursor.toFixed(1)}" width="${w}" height="${h.toFixed(1)}" fill="${colors[si]}"></rect>`;
+    });
+    let hover = '';
+    if (rich) {
+      const tipId = `${opts.tipPrefix}-${i}`;
+      tipStore[tipId] = opts.tip(i);
+      hover = `<rect class="dc-hover" x="${x.toFixed(1)}" y="0" width="${bw.toFixed(1)}" height="${H}" fill="${colors[colors.length - 1]}" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></rect>`;
+    }
+    return rects + hover;
+  }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" class="w-full text-zinc-500" preserveAspectRatio="none" style="height:90px">${grid}${bars}</svg>`;
+}
+
+// ── Retention cohort grid ─────────────────────────────────────
+// `mode` selects the alignment:
+//   'calendar' (default) — columns are absolute calendar weeks, so every
+//      cohort's cells line up on the same dates (overlapping weeks share a
+//      column). The calendar week for offset k is cohortWeek + k*7 days.
+//   'cohort' — columns are W0, W1, … measured from each cohort's own signup
+//      week (the original triangle). Re-pivots the same payload; no refetch.
+function addWeeksISO(dateStr, k) {
+  const dt = new Date(String(dateStr) + 'T00:00:00Z');
+  dt.setUTCDate(dt.getUTCDate() + k * 7);
+  return dt.toISOString().slice(0, 10);
+}
+
+function renderRetention(r, mode) {
+  const m = mode || retAlign || 'calendar';
+  const cohorts = ((r && r.cohorts) || []).slice().sort((a, b) =>
+    (a.cohortWeek < b.cohortWeek ? 1 : -1)); // newest first
+  const el = document.getElementById('retention-cohorts');
+  if (!el) return;
+  if (!cohorts.length) { el.innerHTML = EMPTY_MSG; return; }
+
+  // One coloured cell. `key` makes the tooltip id unique within the row.
+  const cell = (v, size, headLabel, ci, key) => {
+    if (v == null) return '<td class="px-2 py-1 text-center text-zinc-700">·</td>';
+    const p = pct(v, size);
+    const alpha = Math.max(0.06, Math.min(1, p / 100));
+    const tipId = `ret-${ci}-${key}`;
+    tipStore[tipId] = `<div class="font-semibold">${esc(headLabel)}</div>
+      <div class="text-zinc-300">${fmtInt(v)} of ${fmtInt(size)} active</div>
+      <div class="text-zinc-300">${p}% retained</div>`;
+    return `<td class="px-2 py-1 text-center" data-tip-id="${tipId}" style="background:rgba(139,92,246,${alpha});cursor:pointer">
+      <span class="text-[11px] ${p >= 45 ? 'text-white' : 'text-zinc-300'}">${p}%</span></td>`;
+  };
 
   const head = ['<th class="text-left px-2 py-1 font-medium text-zinc-400">Cohort</th>',
     '<th class="px-2 py-1 font-medium text-zinc-400">Users</th>'];
-  for (let k = 0; k <= maxOffset; k++) head.push(`<th class="px-2 py-1 font-medium text-zinc-400">W${k}</th>`);
+  let rows;
 
-  const rows = cohorts.map((c, ci) => {
-    const cells = [];
-    for (let k = 0; k <= maxOffset; k++) {
-      const v = c.offsets[k];
-      if (v == null) { cells.push('<td class="px-2 py-1 text-center text-zinc-700">·</td>'); continue; }
-      const p = pct(v, c.cohortSize);
-      const alpha = Math.max(0.06, Math.min(1, p / 100));
-      const tipId = `ret-${ci}-${k}`;
-      tipStore[tipId] = `<div class="font-semibold">${esc(weekLabel(c.cohortWeek))} cohort · Week ${k}</div>
-        <div class="text-zinc-300">${fmtInt(v)} of ${fmtInt(c.cohortSize)} active</div>
-        <div class="text-zinc-300">${p}% retained</div>`;
-      cells.push(`<td class="px-2 py-1 text-center" data-tip-id="${tipId}" style="background:rgba(139,92,246,${alpha});cursor:pointer">
-        <span class="text-[11px] ${p >= 45 ? 'text-white' : 'text-zinc-300'}">${p}%</span></td>`);
-    }
-    return `<tr>
-      <td class="px-2 py-1 whitespace-nowrap text-zinc-300">${esc(weekLabel(c.cohortWeek))}</td>
-      <td class="px-2 py-1 text-center text-zinc-400">${fmtInt(c.cohortSize)}</td>
-      ${cells.join('')}
-    </tr>`;
-  }).join('');
+  if (m === 'cohort') {
+    let maxOffset = 0;
+    for (const c of cohorts) for (const k of Object.keys(c.offsets)) maxOffset = Math.max(maxOffset, Number(k));
+    maxOffset = Math.min(maxOffset, 11); // keep the triangle readable
+    for (let k = 0; k <= maxOffset; k++) head.push(`<th class="px-2 py-1 font-medium text-zinc-400">W${k}</th>`);
+    rows = cohorts.map((c, ci) => {
+      const cells = [];
+      for (let k = 0; k <= maxOffset; k++) {
+        cells.push(cell(c.offsets[k], c.cohortSize, `${weekLabel(c.cohortWeek)} cohort · Week ${k}`, ci, `w${k}`));
+      }
+      return `<tr>
+        <td class="px-2 py-1 whitespace-nowrap text-zinc-300">${esc(weekLabel(c.cohortWeek))}</td>
+        <td class="px-2 py-1 text-center text-zinc-400">${fmtInt(c.cohortSize)}</td>
+        ${cells.join('')}
+      </tr>`;
+    }).join('');
+  } else {
+    // Calendar aligned — shared, sorted set of absolute week columns.
+    const weekSet = new Set();
+    const cal = cohorts.map((c) => {
+      const map = {};
+      for (const k of Object.keys(c.offsets)) {
+        const wk = addWeeksISO(c.cohortWeek, Number(k));
+        map[wk] = c.offsets[k];
+        weekSet.add(wk);
+      }
+      return map;
+    });
+    const allCols = Array.from(weekSet).sort(); // ascending YYYY-MM-DD
+    const cols = allCols.slice(Math.max(0, allCols.length - 12)); // keep readable
+    for (const wk of cols) head.push(`<th class="px-2 py-1 font-medium text-zinc-400 whitespace-nowrap">${esc(weekLabel(wk))}</th>`);
+    rows = cohorts.map((c, ci) => {
+      const map = cal[ci];
+      const cells = cols.map((wk) =>
+        cell(map[wk], c.cohortSize, `${weekLabel(c.cohortWeek)} cohort · week of ${weekLabel(wk)}`, ci, wk)).join('');
+      return `<tr>
+        <td class="px-2 py-1 whitespace-nowrap text-zinc-300">${esc(weekLabel(c.cohortWeek))}</td>
+        <td class="px-2 py-1 text-center text-zinc-400">${fmtInt(c.cohortSize)}</td>
+        ${cells}
+      </tr>`;
+    }).join('');
+  }
 
-  const el = document.getElementById('retention-cohorts');
-  el.innerHTML = cohorts.length
-    ? `<table class="text-xs border-collapse"><thead><tr>${head.join('')}</tr></thead><tbody>${rows}</tbody></table>`
-    : '<p class="text-sm text-zinc-500">Not enough data yet.</p>';
+  el.innerHTML = `<table class="text-xs border-collapse"><thead><tr>${head.join('')}</tr></thead><tbody>${rows}</tbody></table>`;
   attachTooltip(el);
 }
 
-function renderStickiness(rows) {
-  if (!rows || !rows.length) {
-    document.getElementById('stickiness').innerHTML = '<p class="text-sm text-zinc-500">Not enough data yet.</p>';
-    return;
-  }
-  const labels = rows.map((r) => weekLabel(r.wk));
-  const wau = rows.map((r) => Number(r.wau) || 0);
-  const mau = rows.map((r) => Number(r.mau) || 0);
-  const max = Math.max(1, ...mau, ...wau);
-  const W = 640, H = 120, n = rows.length;
-  const grid = gridLines(W, H, 4, 16);
-  const step = n > 1 ? W / (n - 1) : W;
-  const line = (vals, color) => {
-    const pts = vals.map((v, i) => `${(i * step).toFixed(1)},${(H - (v / max) * (H - 16)).toFixed(1)}`).join(' ');
-    return `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" />`;
-  };
-  const dots = rows.map((r, i) => {
-    const ratio = r.mau > 0 ? Math.round((r.wau / r.mau) * 100) : 0;
-    const x = (i * step).toFixed(1);
-    const y = (H - (wau[i] / max) * (H - 16)).toFixed(1);
-    const tipId = `stick-${i}`;
-    tipStore[tipId] = `<div class="font-semibold">Week of ${esc(labels[i])}</div>
-      <div class="text-zinc-300">WAU ${fmtInt(wau[i])} · MAU ${fmtInt(mau[i])}</div>
-      <div class="text-zinc-300">Stickiness ${ratio}%</div>`;
-    // A wide transparent hit-circle so the small dot is easy to hover.
-    return `<circle cx="${x}" cy="${y}" r="2.5" fill="#8b5cf6"></circle>` +
-      `<circle class="dc-hover" cx="${x}" cy="${y}" r="9" fill="#8b5cf6" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></circle>`;
-  }).join('');
-  const stickEl = document.getElementById('stickiness');
-  stickEl.innerHTML = `
-    <div class="flex items-center gap-4 text-xs text-zinc-400 mb-2">
-      <span><span class="inline-block w-3 h-0.5 align-middle" style="background:#8b5cf6"></span> WAU</span>
-      <span><span class="inline-block w-3 h-0.5 align-middle" style="background:#60a5fa"></span> MAU (28d)</span>
-    </div>
-    <svg viewBox="0 0 ${W} ${H}" class="w-full text-zinc-500" style="height:120px">
-      ${grid}${line(mau, '#60a5fa')}${line(wau, '#8b5cf6')}${dots}
-    </svg>
-    <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
-      <span>${esc(labels[0] || '')}</span>
-      <span>${esc(labels[labels.length - 1] || '')}</span>
-    </div>`;
-  attachTooltip(stickEl);
-}
-
-// ── Engagement tiers (custom DAU / WAU) ───────────────────────
-function renderEngagement(e) {
-  const weeks = e.weeks || [];
-  const labels = weeks.map((w) => weekLabel(w.wk));
-  const dau = weeks.map((w) => Number(w.dau) || 0);
-  const wau = weeks.map((w) => Number(w.wau) || 0);
-  const dauAdmin = weeks.map((w) => Number(w.dau_admin) || 0);
-  const wauAdmin = weeks.map((w) => Number(w.wau_admin) || 0);
-
-  const block = (containerId, latestId, vals, adminVals, color, prefix, def) => {
-    const tip = (i) => `<div class="font-semibold">${esc(prefix.toUpperCase())}</div>
-      <div class="text-zinc-300">Week of ${esc(labels[i] || '')}</div>
-      <div class="text-zinc-300">${fmtInt(vals[i] + adminVals[i])} users${includeAdmins && adminVals[i] > 0 ? ` · ${fmtInt(adminVals[i])} admin` : ''}</div>
-      <div class="text-zinc-500 mt-1 text-[11px]">${def}</div>`;
+// ── General users (DAU / WAU / MAU daily rolling windows) ──────
+function renderGeneralUsers(g) {
+  const daily = (g && g.daily) || [];
+  const labels = daily.map((r) => dayLabel(r.day));
+  const block = (containerId, latestId, key, color, def) => {
     const el = document.getElementById(containerId);
-    el.innerHTML = `
-      ${adminLegend(color)}
-      ${barChart(vals, labels, color, { grid: true, tipPrefix: `eng-${prefix}`, tip, adminValues: adminVals })}
+    if (!el) return;
+    const latestEl = document.getElementById(latestId);
+    if (!daily.length) { el.innerHTML = EMPTY_MSG; if (latestEl) latestEl.textContent = ''; return; }
+    const vals = daily.map((r) => Number(r[key]) || 0);
+    const tip = (i) => `<div class="font-semibold">${esc(labels[i] || '')}</div>
+      <div class="text-zinc-300">${fmtInt(vals[i])} users</div>
+      <div class="text-zinc-500 mt-1 text-[11px]">${def}</div>`;
+    el.innerHTML = `${lineChart(vals, labels, color, { grid: true, tipPrefix: `gu-${key}`, tip })}
       <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
         <span>${esc(labels[0] || '')}</span>
         <span>${esc(labels[labels.length - 1] || '')}</span>
       </div>`;
     attachTooltip(el);
-    const latest = vals[vals.length - 1];
-    const latestAdmin = adminVals[adminVals.length - 1] || 0;
-    document.getElementById(latestId).textContent =
-      latest == null ? '' : `${fmtInt(latest + latestAdmin)} this week`;
+    if (latestEl) latestEl.textContent = `${fmtInt(vals[vals.length - 1])} latest`;
   };
+  block('gu-dau', 'gu-dau-latest', 'dau', '#8b5cf6', 'Distinct users active that day.');
+  block('gu-wau', 'gu-wau-latest', 'wau', '#60a5fa', 'Distinct users active in the trailing 7 days.');
+  block('gu-mau', 'gu-mau-latest', 'mau', '#34d399', 'Distinct users active in the trailing 30 days.');
+}
 
-  block('eng-dau', 'eng-dau-latest', dau, dauAdmin, '#8b5cf6', 'dau',
-    'Used a dapp ≥ 4× OR promoted ≥ 1 session that week.');
-  block('eng-wau', 'eng-wau-latest', wau, wauAdmin, '#34d399', 'wau',
-    'Used a dapp ≥ 2× in the trailing 2 weeks.');
+// ── Power users (rolling WAU + L4 consistency) ────────────────
+// Four violet shades for the L4 buckets: light (1/4) → dark (4/4).
+const L4_COLORS = ['#ddd6fe', '#a78bfa', '#7c3aed', '#5b21b6'];
+
+function l4Legend() {
+  const items = [['1/4', L4_COLORS[0]], ['2/4', L4_COLORS[1]], ['3/4', L4_COLORS[2]], ['4/4', L4_COLORS[3]]];
+  return `<div class="flex items-center gap-3 text-[10px] text-zinc-400 mb-2">` +
+    items.map(([lab, c]) => `<span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${c}"></span> ${lab}</span>`).join('') +
+    `</div>`;
+}
+
+function renderPowerUsers(p) {
+  // Rolling power-user WAU (daily line).
+  const wau = (p && p.wau) || [];
+  const wEl = document.getElementById('pu-wau');
+  const wLatest = document.getElementById('pu-wau-latest');
+  if (wEl) {
+    if (!wau.length) { wEl.innerHTML = EMPTY_MSG; if (wLatest) wLatest.textContent = ''; }
+    else {
+      const labels = wau.map((r) => dayLabel(r.day));
+      const vals = wau.map((r) => Number(r.count) || 0);
+      const tip = (i) => `<div class="font-semibold">${esc(labels[i] || '')}</div>
+        <div class="text-zinc-300">${fmtInt(vals[i])} power users</div>
+        <div class="text-zinc-500 mt-1 text-[11px]">Trailing 7-day window.</div>`;
+      wEl.innerHTML = `${lineChart(vals, labels, '#8b5cf6', { grid: true, tipPrefix: 'pu-wau', tip })}
+        <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
+          <span>${esc(labels[0] || '')}</span>
+          <span>${esc(labels[labels.length - 1] || '')}</span>
+        </div>`;
+      attachTooltip(wEl);
+      if (wLatest) wLatest.textContent = `${fmtInt(vals[vals.length - 1])} latest`;
+    }
+  }
+
+  // L4 consistency (daily stacked bars: 1/4…4/4 of trailing four weeks).
+  const l4 = (p && p.l4) || [];
+  const lEl = document.getElementById('pu-l4');
+  const lLatest = document.getElementById('pu-l4-latest');
+  if (lEl) {
+    if (!l4.length) { lEl.innerHTML = EMPTY_MSG; if (lLatest) lLatest.textContent = ''; return; }
+    const labels = l4.map((r) => dayLabel(r.day));
+    const stacks = l4.map((r) => [Number(r.b1) || 0, Number(r.b2) || 0, Number(r.b3) || 0, Number(r.b4) || 0]);
+    const tip = (i) => {
+      const s = stacks[i];
+      const total = s.reduce((a, b) => a + b, 0);
+      return `<div class="font-semibold">${esc(labels[i] || '')}</div>
+        <div class="text-zinc-300">${fmtInt(total)} power users (trailing 4 wks)</div>
+        <div class="text-zinc-400 mt-1 text-[11px]">4/4 ${fmtInt(s[3])} · 3/4 ${fmtInt(s[2])} · 2/4 ${fmtInt(s[1])} · 1/4 ${fmtInt(s[0])}</div>`;
+    };
+    lEl.innerHTML = `${l4Legend()}
+      ${stackedBarChart(stacks, labels, L4_COLORS, { grid: true, tipPrefix: 'pu-l4', tip })}
+      <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
+        <span>${esc(labels[0] || '')}</span>
+        <span>${esc(labels[labels.length - 1] || '')}</span>
+      </div>`;
+    attachTooltip(lEl);
+    const last = stacks[stacks.length - 1] || [0, 0, 0, 0];
+    if (lLatest) lLatest.textContent = `${fmtInt(last.reduce((a, b) => a + b, 0))} latest`;
+  }
 }
 
 // ── Top users by dev sessions started ─────────────────────────
@@ -1018,6 +1143,11 @@ function wireZeroToggle() {
 
 // ── Bootstrap ─────────────────────────────────────────────────
 let currentCohort = 'all';
+// Retention alignment toggle. 'calendar' (default) lines cohorts up on real
+// calendar weeks; 'cohort' shows W0/W1/… by cohort age. The last retention
+// payload is cached so the toggle re-pivots client-side with no refetch.
+let retAlign = 'calendar';
+let lastRetention = null;
 // Include-admins checkbox (#1). Default OFF (exclude admins); persisted
 // so an operator's preference survives reloads.
 const ADMIN_KEY = 'dashIncludeAdmins';
@@ -1042,6 +1172,20 @@ function wireCohortButtons() {
         b.className = `cohort-btn px-2 py-1 rounded ${active ? 'bg-violet-600 text-white' : 'bg-zinc-200 dark:bg-zinc-800'}`;
       });
       try { await loadFunnels(); } catch (_) {}
+    });
+  });
+}
+
+// Retention alignment buttons re-pivot the cached payload — no refetch.
+function wireRetAlign() {
+  document.querySelectorAll('.retalign-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      retAlign = btn.dataset.retalign;
+      document.querySelectorAll('.retalign-btn').forEach((b) => {
+        const active = b.dataset.retalign === retAlign;
+        b.className = `retalign-btn px-2 py-1 rounded ${active ? 'bg-violet-600 text-white' : 'bg-zinc-200 dark:bg-zinc-800'}`;
+      });
+      if (lastRetention) renderRetention(lastRetention, retAlign);
     });
   });
 }
@@ -1074,6 +1218,7 @@ async function init() {
 
   document.getElementById('content').classList.remove('hidden');
   wireCohortButtons();
+  wireRetAlign();
   wireInfoIcons();
 
   // Spend toggles re-render from cached payloads (no refetch).
@@ -1104,13 +1249,14 @@ async function init() {
 // Fetch every analytics endpoint (with the current includeAdmins flag)
 // and (re)render. Shared by first load and the admin-checkbox toggle.
 async function loadAll() {
-  const [overview, spend, growth, retention, engagement, topUsers, kudos, spendByBuilder, spendDistribution, limits] =
+  const [overview, spend, growth, retention, generalUsers, powerUsers, topUsers, kudos, spendByBuilder, spendDistribution, limits] =
     await Promise.all([
       getJSON(withAdmins('/api/admin/analytics/overview')),
       getJSON(withAdmins('/api/admin/analytics/spend')),
       getJSON(withAdmins('/api/admin/analytics/growth')),
       getJSON(withAdmins('/api/admin/analytics/retention')),
-      getJSON(withAdmins('/api/admin/analytics/engagement')),
+      getJSON(withAdmins('/api/admin/analytics/general-users')),
+      getJSON(withAdmins('/api/admin/analytics/power-users')),
       getJSON(withAdmins('/api/admin/analytics/top-users')),
       getJSON(withAdmins('/api/admin/analytics/kudos')),
       getJSON(withAdmins('/api/admin/analytics/spend-by-builder')),
@@ -1126,9 +1272,10 @@ async function loadAll() {
   lastSpend = spend;
   renderSpend();
   renderGrowth(growth);
-  renderRetention(retention);
-  renderStickiness(retention.stickiness);
-  renderEngagement(engagement);
+  lastRetention = retention;
+  renderRetention(retention, retAlign);
+  renderGeneralUsers(generalUsers);
+  renderPowerUsers(powerUsers);
   renderTopUsers(topUsers);
   renderKudos(kudos);
   lastSpendByBuilder = spendByBuilder;
