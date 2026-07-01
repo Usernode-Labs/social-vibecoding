@@ -14,9 +14,10 @@ const MODELS = {
   'claude-haiku-4-5':    { label: 'Haiku 4.5', tier: 'haiku', outputCostPerMTok: 5 },
   'claude-sonnet-5':    { label: 'Sonnet 5', tier: 'sonnet', outputCostPerMTok: 15 },
   'claude-opus-4-8':    { label: 'Opus 4.8', tier: 'opus', outputCostPerMTok: 25 },
+  'claude-fable-5':    { label: 'Fable 5', tier: 'fable', outputCostPerMTok: 50 },
 };
 
-const DEFAULT_MODEL = 'claude-sonnet-5';
+const DEFAULT_MODEL = 'claude-opus-4-8';
 
 function isAllowed(m) {
   return typeof m === 'string' && Object.prototype.hasOwnProperty.call(MODELS, m);
