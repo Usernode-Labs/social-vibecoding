@@ -751,10 +751,12 @@ function kudosRoutes(config) {
   //                                 user rules in src/services/active-users.js
   //                                 (ever >=60s in a day on the app, AND visited
   //                                 within the last 10 days; collab-private apps
-  //                                 only count members; self-hosted + non-public-
-  //                                 view apps excluded). ALWAYS reflects the
-  //                                 rolling 10-day window — NOT scoped by the
-  //                                 `window` param (like prs_merged). Display-only.
+  //                                 only count members; self-hosted apps excluded).
+  //                                 Private-VIEW apps ARE included — this reflects
+  //                                 every app the user actually uses, not just
+  //                                 public-view ones. ALWAYS reflects the rolling
+  //                                 10-day window — NOT scoped by the `window`
+  //                                 param (like prs_merged). Display-only.
   // --------------------------------------------------------------
   router.get('/api/leaderboard/users', async (req, res) => {
     // Public endpoint (see PUBLIC_PATHS in middleware/auth.js) — no
@@ -876,10 +878,13 @@ function kudosRoutes(config) {
                             WHERE ap.id = i.app_id AND ap.view_visibility = 'public')
            ) ic ON true
            -- The apps the user is CURRENTLY active on. Mirrors the active-user
-           -- definition in src/services/active-users.js EXACTLY (source of truth
-           -- there; keep both in sync if the 60s bar / 10-day window ever moves):
-           --   * public-view, non-self-hosted apps only (this is a public route,
-           --     and the self-app never accrues its own app_activity rows);
+           -- definition in src/services/active-users.js (source of truth there;
+           -- keep the 60s bar / 10-day window / collab-private rules in sync):
+           --   * non-self-hosted apps only (the self-app never accrues its own
+           --     app_activity rows). Private-VIEW apps ARE included here — a
+           --     user's own activity on a private-view app is not private data
+           --     about anyone else, and the leaderboard should reflect all the
+           --     apps they use, not just the public-view ones.
            --   * EVER qualified: some app_activity row with seconds_spent >= 60;
            --   * visited recently: an app_activity row within the last 10 days;
            --   * collab-private apps only count status='member' collaborators.
@@ -894,8 +899,7 @@ function kudosRoutes(config) {
                       '[]'::jsonb
                     ) AS active_apps
                FROM apps ap
-              WHERE ap.view_visibility = 'public'
-                AND ap.self_hosted = FALSE
+              WHERE ap.self_hosted = FALSE
                 AND EXISTS (
                   SELECT 1 FROM app_activity r
                    WHERE r.app_id = ap.id AND r.user_id = u.id
