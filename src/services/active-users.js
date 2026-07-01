@@ -2,27 +2,43 @@
 // machinery (PR + issue thresholds) and the group-chat dashboard tile,
 // so the number that gates voting matches the number users see.
 //
-// Active-user definition (current — see SPEC.md):
+// TWO SEPARATE CONCEPTS (deliberately decoupled — see below):
 //
-//   - **Qualifying event** (sticky): the user has accumulated >= 60
-//     seconds on a single calendar day on this app at some point in
-//     their history with it (`app_activity.seconds_spent >= 60`).
-//     Once they've ever crossed this bar, they're a qualified user
-//     for the rest of their relationship with the app.
+//   1. ACTIVITY ("active user" / "has tested the app") — a pure
+//      engagement signal, `hasQualifyingActivity()`:
 //
-//   - **Retention**: a qualified user is currently counted as active
-//     if they have at least one row in `app_activity` for this app
-//     dated within the last 10 calendar days. Any visit counts —
-//     opening the App tab is enough; you don't need another 60s
-//     session each time. If 10 calendar days pass with no visits the
-//     user falls out of the active count and would have to come back
-//     to be re-counted.
+//        - **Qualifying event** (sticky): the user has accumulated >= 60
+//          seconds on a single calendar day on this app at some point in
+//          their history with it (`app_activity.seconds_spent >= 60`).
+//          Once they've ever crossed this bar, they're a qualified user
+//          for the rest of their relationship with the app.
 //
-//   - **Collab-private scoping**: for apps with
-//     collab_visibility='private', only collaborators (status='member'
-//     in app_collaborators) count. Without this, viewers of a
-//     view-public/collab-private app would inflate the vote-majority
-//     denominator while being unable to vote.
+//        - **Retention**: a qualified user is currently counted as active
+//          if they have at least one row in `app_activity` for this app
+//          dated within the last 10 calendar days. Any visit counts —
+//          opening the App tab is enough; you don't need another 60s
+//          session each time. If 10 calendar days pass with no visits the
+//          user falls out of the active count and would have to come back
+//          to be re-counted.
+//
+//      This concept carries NO collaborator gate: someone who spent
+//      >=60s/day on a view-public app has "tested" it whether or not
+//      they're a member. It's the right signal for "apps the user is
+//      active on" surfaces (leaderboard `active_apps`) and for a
+//      test-before-you-vote gate.
+//
+//   2. COLLAB-ELIGIBILITY — a governance gate, `isCollabEligible()`:
+//      for apps with collab_visibility='private' (non-self-hosted),
+//      only collaborators (status='member' in app_collaborators) count.
+//      Enforced independently at the vote WRITE layer via
+//      appAccess.getAppForUser(..., 'collab', ...).
+//
+// The vote-facing helpers (`getActiveUserStats`, `listActiveUserIds`,
+// `isUserActive`) return the INTERSECTION (activity ∩ eligibility): the
+// majority denominator must only count users who can actually vote, or a
+// view-public/collab-private app's threshold becomes unreachable
+// (non-voting viewers inflating floor(active/2)+1). Display/"tested"
+// surfaces use concept #1 alone.
 //
 // Pragmatic-vs-strict note: a fully strict "lifecycle" reading of the
 // rule would say a 10-day absence un-qualifies the user, requiring
@@ -95,22 +111,16 @@ async function getActiveUserStats(pool, appId) {
   return { active, majority };
 }
 
-// Whether a specific user is currently counted in the active set,
-// using the same definition as getActiveUserStats. Used by the
-// dashboard's "are you counted as a user?" indicator and any callers
-// that need a per-viewer answer rather than a count. Returns false
-// for unauthenticated callers.
-async function isUserActive(pool, appId, userId) {
+// Concept #1 — pure ACTIVITY: has this user "tested"/is currently active on
+// this app, ignoring collab-eligibility? True iff they EVER logged >=60s on a
+// single day AND have visited within the last 10 days. self_hosted apps fan
+// out across every app's activity (the self-app has no App tab of its own —
+// see header). Returns false for unauthenticated callers. This is the right
+// predicate for "apps the user is active on" surfaces and a test-before-vote
+// gate; it is NOT collab-gated.
+async function hasQualifyingActivity(pool, appId, userId) {
   if (!userId) return false;
-  const { selfHosted, collabPrivate } = await getAppMeta(pool, appId);
-
-  if (!selfHosted && collabPrivate) {
-    const { rows: memberRows } = await pool.query(
-      `SELECT 1 FROM app_collaborators WHERE app_id = $1 AND user_id = $2 AND status = 'member'`,
-      [appId, userId]
-    );
-    if (!memberRows.length) return false;
-  }
+  const { selfHosted } = await getAppMeta(pool, appId);
 
   const { rows } = selfHosted
     ? await pool.query(
@@ -139,6 +149,33 @@ async function isUserActive(pool, appId, userId) {
       );
   const r = rows[0] || {};
   return !!(r.visited_recently && r.ever_qualified);
+}
+
+// Concept #2 — COLLAB-ELIGIBILITY gate: everyone is eligible except on
+// non-self-hosted collab_visibility='private' apps, where only status='member'
+// collaborators are. Independent of activity. Returns false for
+// unauthenticated callers.
+async function isCollabEligible(pool, appId, userId) {
+  if (!userId) return false;
+  const { selfHosted, collabPrivate } = await getAppMeta(pool, appId);
+  if (selfHosted || !collabPrivate) return true;
+  const { rows } = await pool.query(
+    `SELECT 1 FROM app_collaborators WHERE app_id = $1 AND user_id = $2 AND status = 'member'`,
+    [appId, userId]
+  );
+  return rows.length > 0;
+}
+
+// Whether a specific user is currently counted in the active (voter) set:
+// activity ∩ collab-eligibility, matching getActiveUserStats. Used by the
+// dashboard's "are you counted as a user?" indicator and any callers that need
+// a per-viewer answer rather than a count. Eligibility is checked first so a
+// non-member on a collab-private app short-circuits before the heavier
+// activity lookup. Returns false for unauthenticated callers.
+async function isUserActive(pool, appId, userId) {
+  if (!userId) return false;
+  if (!(await isCollabEligible(pool, appId, userId))) return false;
+  return hasQualifyingActivity(pool, appId, userId);
 }
 
 // The full set of user ids currently counted as active for an app,
@@ -180,4 +217,10 @@ async function listActiveUserIds(pool, appId) {
   return rows.map((r) => r.id);
 }
 
-module.exports = { getActiveUserStats, isUserActive, listActiveUserIds };
+module.exports = {
+  getActiveUserStats,
+  isUserActive,
+  listActiveUserIds,
+  hasQualifyingActivity,
+  isCollabEligible,
+};

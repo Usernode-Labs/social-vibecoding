@@ -464,7 +464,7 @@ test('active_apps LATERAL does NOT filter on view_visibility (private-view apps 
   } finally { await srv.close(); }
 });
 
-test('active_apps LATERAL keeps self_hosted, 10-day, ≥60s and collab-private guards', async () => {
+test('active_apps LATERAL keeps the activity guards (self_hosted, 10-day, ≥60s)', async () => {
   const pool = makeMockPool();
   const srv = await startTestServer(pool);
   try {
@@ -477,8 +477,33 @@ test('active_apps LATERAL keeps self_hosted, 10-day, ≥60s and collab-private g
     assert.match(lateral, /r\.date >= CURRENT_DATE - 10/);
     // Sticky qualification: ever spent >= 60s in a day.
     assert.match(lateral, /q\.seconds_spent >= 60/);
-    // Collab-private apps still only count status='member' collaborators.
-    assert.match(lateral, /ap\.collab_visibility <> 'private'/);
-    assert.match(lateral, /c\.status = 'member'/);
+  } finally { await srv.close(); }
+});
+
+// active_apps is a PURE ACTIVITY signal ("apps the user has tested"),
+// deliberately decoupled from collab-eligibility (see the LATERAL comment in
+// src/routes/kudos.js and the two-concept split in
+// src/services/active-users.js). A user who spent >=60s/day on an app has
+// tested it whether or not they're a member collaborator, so the LATERAL must
+// NOT re-apply the collab-private membership gate — doing so hid collab-private
+// apps (e.g. goalio) from their own testers. Eligibility stays a separate
+// concern (vote-write layer + getActiveUserStats' vote-majority denominator).
+test('active_apps LATERAL does NOT apply the collab-private membership gate', async () => {
+  const pool = makeMockPool();
+  const srv = await startTestServer(pool);
+  try {
+    await fetch(`${srv.baseUrl}/api/leaderboard/users`);
+    const sql = pool.calls.find((c) => /AS active_apps/.test(c.sql)).sql;
+    const lateral = activeAppsLateral(sql);
+    assert.doesNotMatch(
+      lateral,
+      /collab_visibility/,
+      'active_apps LATERAL must not gate on collab_visibility'
+    );
+    assert.doesNotMatch(
+      lateral,
+      /app_collaborators/,
+      'active_apps LATERAL must not join app_collaborators'
+    );
   } finally { await srv.close(); }
 });

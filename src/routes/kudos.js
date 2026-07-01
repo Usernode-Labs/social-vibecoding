@@ -877,43 +877,47 @@ function kudosRoutes(config) {
                 AND EXISTS (SELECT 1 FROM apps ap
                             WHERE ap.id = i.app_id AND ap.view_visibility = 'public')
            ) ic ON true
-           -- The apps the user is CURRENTLY active on. Mirrors the active-user
-           -- definition in src/services/active-users.js (source of truth there;
-           -- keep the 60s bar / 10-day window / collab-private rules in sync):
-           --   * non-self-hosted apps only (the self-app never accrues its own
-           --     app_activity rows). Private-VIEW apps ARE included here — a
-           --     user's own activity on a private-view app is not private data
-           --     about anyone else, and the leaderboard should reflect all the
-           --     apps they use, not just the public-view ones.
-           --   * EVER qualified: some app_activity row with seconds_spent >= 60;
-           --   * visited recently: an app_activity row within the last 10 days;
-           --   * collab-private apps only count status='member' collaborators.
-           -- Intrinsically 10-day-windowed, so it is NOT scoped by the window arg.
-           -- COALESCE to an empty array so "active on nothing" is [] not null.
-           LEFT JOIN LATERAL (
-             SELECT COALESCE(
-                      jsonb_agg(
-                        jsonb_build_object('slug', ap.slug, 'name', ap.name)
-                        ORDER BY ap.name, ap.slug
-                      ),
-                      '[]'::jsonb
-                    ) AS active_apps
-               FROM apps ap
-              WHERE ap.self_hosted = FALSE
-                AND EXISTS (
-                  SELECT 1 FROM app_activity r
-                   WHERE r.app_id = ap.id AND r.user_id = u.id
-                     AND r.date >= CURRENT_DATE - 10
-                )
-                AND EXISTS (
-                  SELECT 1 FROM app_activity q
-                   WHERE q.app_id = ap.id AND q.user_id = u.id
-                     AND q.seconds_spent >= 60
-                )
-                AND (ap.collab_visibility <> 'private' OR EXISTS (
-                  SELECT 1 FROM app_collaborators c
-                   WHERE c.app_id = ap.id AND c.user_id = u.id AND c.status = 'member'
-                ))
+          -- The apps the user is CURRENTLY active on — a pure ACTIVITY signal
+          -- (the "active user"/"tested" definition), deliberately decoupled
+          -- from collab-eligibility. Uses the activity half of
+          -- src/services/active-users.js (hasQualifyingActivity); keep the
+          -- 60s bar / 10-day window in sync if either moves:
+          --   * non-self-hosted apps only (the self-app never accrues its own
+          --     app_activity rows). Private-VIEW apps ARE included — a user's
+          --     own activity on a private-view app is not private data about
+          --     anyone else, and the leaderboard should reflect all the apps
+          --     they use, not just the public-view ones.
+          --   * EVER qualified: some app_activity row with seconds_spent >= 60;
+          --   * visited recently: an app_activity row within the last 10 days.
+          -- NO collab-membership gate: a user who spent >=60s/day on an app has
+          -- "tested" it whether or not they're a member collaborator. Collab-
+          -- eligibility is a SEPARATE concern, enforced at the vote layer
+          -- (appAccess 'collab') and folded into the vote-majority denominator
+          -- (active-users.js getActiveUserStats = activity ∩ eligibility) — not
+          -- here, where it would hide collab-private apps (e.g. goalio) from
+          -- their own testers.
+          -- Intrinsically 10-day-windowed, so it is NOT scoped by the window arg.
+          -- COALESCE to an empty array so "active on nothing" is [] not null.
+          LEFT JOIN LATERAL (
+            SELECT COALESCE(
+                     jsonb_agg(
+                       jsonb_build_object('slug', ap.slug, 'name', ap.name)
+                       ORDER BY ap.name, ap.slug
+                     ),
+                     '[]'::jsonb
+                   ) AS active_apps
+              FROM apps ap
+             WHERE ap.self_hosted = FALSE
+               AND EXISTS (
+                 SELECT 1 FROM app_activity r
+                  WHERE r.app_id = ap.id AND r.user_id = u.id
+                    AND r.date >= CURRENT_DATE - 10
+               )
+               AND EXISTS (
+                 SELECT 1 FROM app_activity q
+                  WHERE q.app_id = ap.id AND q.user_id = u.id
+                    AND q.seconds_spent >= 60
+               )
            ) aa ON true
            GROUP BY u.id, u.username, u.usernode_pubkey, kg.kudos_given, ab.received, ab.last_at, ic.cnt, aa.active_apps
            ORDER BY kudos_received_prs_merged DESC,
