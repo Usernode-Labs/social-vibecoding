@@ -4,10 +4,10 @@
 // Three layers:
 //   1. Behavioural — mount the analytics router with a mocked pool and
 //      assert each modified endpoint returns the `_admin` companion fields /
-//      `is_admin` row flag, that the engagement merge threads the admin
-//      series through, and that includeAdmins is wired into the SQL gate
-//      (the NOT-IN admin-exclusion fragment appears when the box is off and
-//      is dropped when it is on).
+//      `is_admin` row flag, that the reworked general-users endpoint (#456)
+//      returns its daily DAU/WAU/MAU series, and that includeAdmins is wired
+//      into the SQL gate (the NOT-IN admin-exclusion fragment appears when
+//      the box is off and is dropped when it is on).
 //   2. Source guards — pin the SQL companions on src/routes/dashboard.js and
 //      the staging seed contract on src/db/migrate.js (string-assertion
 //      style, matching tests/ai-progress-estimate.test.js).
@@ -68,12 +68,11 @@ function handler(sql) {
       merged_prs: 2, merged_prs_admin: 1,
     }] };
   }
-  // Engagement — two queries.
-  if (/AS dau_admin/.test(sql)) {
-    return { rows: [{ wk: '2026-06-08', dau: 12, dau_admin: 3 }] };
-  }
-  if (/AS wau_admin/.test(sql)) {
-    return { rows: [{ wk: '2026-06-08', wau: 18, wau_admin: 4 }] };
+  // General users (#456 rework) — a single query returns the daily
+  // DAU/WAU/MAU series. The pre-#456 weekly engagement admin split was
+  // removed when the chart became a plain daily line chart.
+  if (/COUNT\(DISTINCT a\.user_id\)/.test(sql)) {
+    return { rows: [{ day: '2026-06-08', dau: 12, wau: 18, mau: 30 }] };
   }
   // Top users.
   if (/COUNT\(cs\.id\)::int AS sessions/.test(sql)) {
@@ -145,13 +144,17 @@ test('growth: each weekly row carries the four _admin companions', async () => {
   assert.equal(w.new_users_admin, 2);
 });
 
-test('engagement: the merged weekly series threads dau_admin and wau_admin', async () => {
-  const e = await get('/api/admin/analytics/engagement?includeAdmins=true');
-  const w = e.weeks[0];
-  assert.equal(w.dau, 12);
-  assert.equal(w.dau_admin, 3);
-  assert.equal(w.wau, 18);
-  assert.equal(w.wau_admin, 4);
+// #456 reworked the old weekly "engagement" split into a daily General
+// users endpoint (DAU / 7-day rolling WAU / 30-day rolling MAU), rendered as
+// plain line charts. The amber admin split only ever applied to bar charts,
+// so it was intentionally dropped here — these two cases now pin the
+// reworked contract instead of the removed admin companions.
+test('general-users: the daily series carries dau, wau and mau (#456 rework)', async () => {
+  const e = await get('/api/admin/analytics/general-users?includeAdmins=true');
+  const d = e.daily[0];
+  assert.equal(d.dau, 12);
+  assert.equal(d.wau, 18);
+  assert.equal(d.mau, 30);
 });
 
 test('top-users: rows carry the is_admin flag', async () => {
@@ -219,11 +222,14 @@ test('route: overview is unchanged (no admin companions — cards aren\'t bars)'
   assert.doesNotMatch(overview, /_admin/, 'overview must not gain admin-split columns');
 });
 
-test('route: engagement splits both dau and wau by admin', () => {
+test('route: general-users returns the daily DAU/WAU/MAU series (#456 rework)', () => {
   const src = read('src/routes/dashboard.js');
-  assert.match(src, /AS dau_admin/);
-  assert.match(src, /AS wau_admin/);
-  assert.match(src, /bool_or\(d\.is_admin\)/, 'wau qualifying must carry the admin flag');
+  const start = src.indexOf("analytics/general-users'");
+  assert.ok(start !== -1, 'general-users endpoint must exist');
+  const body = src.slice(start, src.indexOf('router.get', start + 1));
+  assert.match(body, /AS +dau\b/, 'general-users must return a dau column');
+  assert.match(body, /AS +wau\b/, 'general-users must return a wau column');
+  assert.match(body, /AS +mau\b/, 'general-users must return a mau column');
 });
 
 test('route: per-user endpoints select the is_admin row flag', () => {
