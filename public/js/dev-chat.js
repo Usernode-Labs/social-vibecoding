@@ -1261,6 +1261,28 @@ const DevChat = {
     // (backgrounded), even when the user is watching this same dev chat.
   },
 
+  // Self-healing sync for degraded turns (#446): called from the WS and
+  // resumable 'done' handlers — the two paths that only run when the
+  // primary POST SSE did NOT finish the turn (a healthy primary stream
+  // delivers its own 'done' first and seq-dedup swallows the copies).
+  // Anything that rode only the dead stream (suggestion chips, quick-reply
+  // pills, a late mayor_reasoning) is persisted but missing from the
+  // in-memory timeline, so reload the session — the automated equivalent
+  // of the manual refresh users do today. Mirrors what the /status poll
+  // fallback already does when it sees busy=false.
+  async _reconcileAfterFallbackDone(sessionId) {
+    const sid = sessionId != null ? sessionId : DevChat.currentSession?.id;
+    if (sid == null) return;
+    if (Number(sid) !== Number(DevChat.currentSession?.id)) return;
+    // A newer turn already started — its own stream owns the timeline now.
+    if (DevChat.isStreaming) return;
+    try {
+      await DevChat.openSession(sid);
+      DevChat.renderMessages();
+      DevChat.scrollToBottom();
+    } catch { /* the next poll or manual refresh still recovers */ }
+  },
+
   // Open (or reopen) the resumable GET /events SSE for the active session.
   // EventSource handles reconnect automatically and sends Last-Event-Id on
   // each retry, which the server uses to replay missed events from its
@@ -1399,9 +1421,28 @@ const DevChat = {
         }
         break;
       }
+      case 'quick_replies': {
+        // Quick-reply pills (#285), replayed right after the wrap-up
+        // mayor_reasoning. This case was missing, so a "Build it" pill
+        // delivered over the resumable channel was silently dropped until
+        // refresh. Mirrors the primary POST-SSE handler: attach to the
+        // latest assistant bubble; the pill bar reads from it (hidden
+        // while streaming, surfaces when _finishStreaming re-renders).
+        if (!Array.isArray(data.replies) || !data.replies.length) break;
+        const am = lastAssistantMsg();
+        if (am) {
+          am.quickReplies = data.replies;
+          DevChat._renderQuickReplies();
+        }
+        break;
+      }
       case 'done':
         DevChat._deactivateLastStatus();
         DevChat._finishStreaming();
+        // A 'done' on the resumable channel means the primary POST SSE never
+        // finished this turn — reconcile from the DB so anything that rode
+        // only the dead stream shows without a manual refresh (#446).
+        DevChat._reconcileAfterFallbackDone(sessionId);
         break;
       case 'phase':
         // Server announces which phase of the turn we're in so the UI

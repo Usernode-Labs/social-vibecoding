@@ -1264,8 +1264,6 @@ function sessionRoutes(config) {
       // 'token' stays SSE-only: it is high-frequency streaming and is fully
       // recovered by the single full-text 'mayor_reasoning' event, so
       // broadcasting every token on the WS buys nothing.
-      // 'suggestions'/'quick_replies' stay SSE-only too: a refresh restores
-      // them from the assistant row's metadata, so the WS adds only dedup risk.
       //
       // 'mayor_reasoning' is NO LONGER SSE-only (#394). It is the authoritative
       // full-text wrap-up the Mayor posts after a scout/spec or build turn, and
@@ -1278,7 +1276,15 @@ function sessionRoutes(config) {
       // 'mayor_reasoning' case (no "swallowed then deduped" problem) and (b) it
       // carries the COMPLETE text and is applied idempotently / last-write-wins,
       // so overlap with the SSE/bus copy reconciles to the same result.
-      const SSE_ONLY = new Set(['token', 'usage', 'error', 'suggestions', 'quick_replies']);
+      //
+      // 'suggestions'/'quick_replies' are NO LONGER SSE-only either: they ride
+      // right behind mayor_reasoning (the phase-2 quick_replies carry the
+      // "Build it" pill) and were hit by the exact same dropped-POST-SSE race —
+      // persisted in the assistant row's metadata but only visible after a
+      // refresh. Same safety argument as mayor_reasoning: App.handleSessionEvent
+      // has dedicated cases for both, and each event carries the COMPLETE
+      // chip/pill list, applied last-write-wins.
+      const SSE_ONLY = new Set(['token', 'usage', 'error']);
       const send = (type, data) => {
         const seq = `${seqPrefix}-${++eventSeq}`;
         const event = { type, _seq: seq, ...data };
