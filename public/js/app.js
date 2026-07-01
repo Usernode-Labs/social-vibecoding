@@ -950,7 +950,13 @@ const App = {
     if (data._seq) {
       if (!DevChat._seenSeqs) DevChat._seenSeqs = new Set();
       DevChat._seenSeqs.add(data._seq);
-      DevChat._lastSeenSeq = data._seq;
+      // Deliberately do NOT advance DevChat._lastSeenSeq here. That cursor
+      // seeds the resumable GET /events `?since=` replay, and WS + SSE-only
+      // events interleave in ONE monotonic seq stream — advancing it from a
+      // WS delivery would make the replay skip SSE-only events (suggestions,
+      // quick_replies, tokens) that were never actually delivered. Replay
+      // overlap is harmless (_seenSeqs dedups it); cursor over-advancement
+      // loses events until refresh. Only the SSE channels move the cursor.
     }
 
     switch (data.event) {
@@ -1077,6 +1083,42 @@ const App = {
         DevChat.scrollToBottom();
         break;
       }
+      case 'suggestions': {
+        // Q/A suggested-answer chips, no longer SSE-only: they must survive a
+        // dropped POST SSE just like mayor_reasoning (#394). Attach to the
+        // live assistant bubble — the emit order guarantees mayor_reasoning
+        // (WS-handled above) pushed it first. A sealed bubble means a
+        // dispatch turn, where suggestions were already dropped server-side —
+        // skip rather than mis-attach (same guard as the resumable handler).
+        if (!Array.isArray(data.suggestions) || !data.suggestions.length) break;
+        let am = null;
+        for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+          if (DevChat.messages[i].role === 'assistant') { am = DevChat.messages[i]; break; }
+        }
+        if (am && !am._finalized) {
+          am.suggestions = data.suggestions;
+          DevChat.renderMessages();
+          DevChat.scrollToBottom();
+        }
+        break;
+      }
+      case 'quick_replies': {
+        // Quick-reply pills ("Build it", …), no longer SSE-only: the phase-2
+        // emit rides right behind the wrap-up mayor_reasoning, which a long
+        // scout/build turn frequently delivers only via this WS after the
+        // POST SSE died. Attach to the latest assistant bubble; the pill bar
+        // reads from it, so _renderQuickReplies redraws (hidden while
+        // streaming, surfaces when _finishStreaming re-renders).
+        if (!Array.isArray(data.replies) || !data.replies.length) break;
+        for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+          if (DevChat.messages[i].role === 'assistant') {
+            DevChat.messages[i].quickReplies = data.replies;
+            DevChat._renderQuickReplies();
+            break;
+          }
+        }
+        break;
+      }
       case 'assistant_message_end': {
         // #394: seal the current assistant bubble so a subsequent
         // 'mayor_reasoning' / token starts a fresh one. Already broadcast on
@@ -1092,6 +1134,12 @@ const App = {
         DevChat._deactivateLastStatus();
         DevChat._finishStreaming();
         DevChat.renderMessages();
+        // A 'done' arriving on the WS means the primary POST SSE never
+        // finished this turn (its own 'done' would have been seq-deduped
+        // first) — reconcile the timeline from the DB so anything that rode
+        // only the dead stream (chips, pills, a late wrap-up) shows without
+        // a manual refresh. See issue #446.
+        DevChat._reconcileAfterFallbackDone(data.sessionId);
         break;
       case 'spec_updated':
         // Mayor's dispatch_scout updated the live draft.

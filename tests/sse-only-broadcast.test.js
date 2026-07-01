@@ -8,6 +8,14 @@
 // ahead and tears down streaming before the resumable stream can replay it,
 // and the summary only shows after a refresh).
 //
+// The suggestion chips ('suggestions') and quick-reply pills ('quick_replies',
+// the "Build it" button) were later hit by the exact same race — persisted in
+// the assistant row's metadata but invisible until refresh — so they are now
+// broadcast on the WS too, with dedicated App.handleSessionEvent cases (the
+// #437 rule: every broadcast type must have a WS handler, or the seq-dedup
+// swallows the SSE copy). See tests/quick-replies-delivery.test.js for the
+// client-side halves of that invariant.
+//
 // SSE_ONLY and send() are closures inside the route handler, so rather than
 // spin up the whole streaming route we evaluate the EXACT SSE_ONLY literal out
 // of the source and assert the broadcast guard is still wired the way this
@@ -46,9 +54,17 @@ test('high-frequency token streaming stays SSE-only', () => {
     'token stays SSE-only — it is recovered by the full-text mayor_reasoning event');
 });
 
-test('suggestions / quick_replies / usage / error remain SSE-only', () => {
+test('suggestions / quick_replies are NOT SSE-only, so chips and pills survive a dropped POST SSE', () => {
   const sseOnly = extractSseOnly();
-  for (const t of ['suggestions', 'quick_replies', 'usage', 'error']) {
+  for (const t of ['suggestions', 'quick_replies']) {
+    assert.equal(sseOnly.has(t), false,
+      `${t} must be broadcast on the global WS — otherwise it only rides the POST SSE and shows up after a refresh`);
+  }
+});
+
+test('usage / error remain SSE-only', () => {
+  const sseOnly = extractSseOnly();
+  for (const t of ['usage', 'error']) {
     assert.equal(sseOnly.has(t), true, `${t} stays SSE-only`);
   }
 });
