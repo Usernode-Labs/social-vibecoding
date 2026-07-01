@@ -57,6 +57,35 @@ const { execFile } = require('child_process');
 // DEVICE_SCALE_FACTOR. Only 1 and 2 are accepted; anything else (unset,
 // garbage, out of range) falls back to 2 — so even an old orchestrator
 // that doesn't set the var still gets 2× from a freshly-built image.
+// Chromium launch flags for the headless capture browser.
+//
+// Software WebGL: apps that use WebGL / Three.js / a <canvas> 3D context
+// must be able to create a context here, or they crash on load with
+// "Could not create a WebGL context" — a console error that fails their
+// proposal checks (see runTest) and leaves the before/after screenshots
+// blank. The distro Chromium has no GPU in the container, so the fix is
+// SwiftShader, Chromium's bundled CPU rasterizer, routed through ANGLE:
+//   --use-gl=angle --use-angle=swiftshader
+// On modern Chromium (bookworm ships a recent stable) unaccelerated
+// SwiftShader for WebGL is gated behind an explicit opt-in, without which
+// getContext() still returns null and logs a deprecation error:
+//   --enable-unsafe-swiftshader
+// This REPLACES the old --disable-gpu flag, which turned the GPU stack off
+// entirely and made any WebGL context (hardware or software) impossible.
+// Rendering is CPU-bound and deterministic across runs; non-WebGL pages
+// are unaffected.
+const CHROMIUM_LAUNCH_ARGS = [
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-dev-shm-usage',
+  '--use-gl=angle',
+  '--use-angle=swiftshader',
+  '--enable-unsafe-swiftshader',
+  '--hide-scrollbars',
+  '--mute-audio',
+  '--force-color-profile=srgb',
+];
+
 function resolveDeviceScaleFactor(raw) {
   return parseInt(raw, 10) === 1 ? 1 : 2;
 }
@@ -546,15 +575,7 @@ async function main() {
   const browser = await puppeteer.launch({
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
     headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--hide-scrollbars',
-      '--mute-audio',
-      '--force-color-profile=srgb',
-    ],
+    args: CHROMIUM_LAUNCH_ARGS,
   });
 
   const media = mediaEnabled(process.env);
@@ -600,4 +621,4 @@ if (require.main === module) {
     .then(() => process.exit(0));
 }
 
-module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, mediaEnabled, resolveTests };
+module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, mediaEnabled, resolveTests, CHROMIUM_LAUNCH_ARGS };
