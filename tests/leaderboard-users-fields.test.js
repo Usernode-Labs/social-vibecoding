@@ -425,3 +425,60 @@ test('fields=active_apps + include_0_values=0 → populated array survives uncha
     assert.deepEqual(bob.active_apps, []);
   } finally { await srv.close(); }
 });
+
+// ─── active_apps: private-view apps are included (SQL-level) ─────────
+//
+// The active_apps LATERAL runs entirely in SQL, so — like the sibling
+// issues.test.js — we assert against the query string the handler emits
+// (the mock records every call in `pool.calls`). A user's own activity
+// on a private-VIEW app is not private data about anyone else, so the
+// LATERAL must NOT restrict on ap.view_visibility: a private-view app the
+// user is active on should surface alongside public-view ones.
+
+// Isolate the active_apps LATERAL from the SQL so per-branch assertions
+// don't accidentally match the view_visibility='public' filters that
+// legitimately live on the OTHER LATERALs (bounties / issues-created).
+function activeAppsLateral(sql) {
+  const m = /\)\s+AS active_apps\b/.exec(sql);
+  assert.ok(m, 'active_apps LATERAL not found in SQL');
+  // The LATERAL body runs from `FROM apps ap` up to its closing `) aa ON true`.
+  const from = sql.indexOf('FROM apps ap', m.index);
+  const end = sql.indexOf(') aa ON true', from);
+  assert.ok(from !== -1 && end !== -1, 'active_apps LATERAL bounds not found');
+  return sql.slice(from, end);
+}
+
+test('active_apps LATERAL does NOT filter on view_visibility (private-view apps included)', async () => {
+  const pool = makeMockPool();
+  const srv = await startTestServer(pool);
+  try {
+    await fetch(`${srv.baseUrl}/api/leaderboard/users`);
+    const sql = pool.calls.find((c) => /AS active_apps/.test(c.sql)).sql;
+    const lateral = activeAppsLateral(sql);
+    // The public-view restriction must be gone from this LATERAL.
+    assert.doesNotMatch(
+      lateral,
+      /view_visibility/,
+      'active_apps LATERAL must not restrict on view_visibility'
+    );
+  } finally { await srv.close(); }
+});
+
+test('active_apps LATERAL keeps self_hosted, 10-day, ≥60s and collab-private guards', async () => {
+  const pool = makeMockPool();
+  const srv = await startTestServer(pool);
+  try {
+    await fetch(`${srv.baseUrl}/api/leaderboard/users`);
+    const sql = pool.calls.find((c) => /AS active_apps/.test(c.sql)).sql;
+    const lateral = activeAppsLateral(sql);
+    // Self-hosted apps stay excluded.
+    assert.match(lateral, /ap\.self_hosted = FALSE/);
+    // Recency: visited within the last 10 days.
+    assert.match(lateral, /r\.date >= CURRENT_DATE - 10/);
+    // Sticky qualification: ever spent >= 60s in a day.
+    assert.match(lateral, /q\.seconds_spent >= 60/);
+    // Collab-private apps still only count status='member' collaborators.
+    assert.match(lateral, /ap\.collab_visibility <> 'private'/);
+    assert.match(lateral, /c\.status = 'member'/);
+  } finally { await srv.close(); }
+});
