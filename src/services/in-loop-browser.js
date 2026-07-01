@@ -19,6 +19,11 @@
 // never routed through ANTHROPIC_BASE_URL (which only retargets the
 // Anthropic SDK). Chromium launches lazily — only when the agent actually
 // calls a browser tool — so turns that never reach for it pay no cost.
+//
+// WebGL: the MCP server is seeded (worker/worker-run.sh) with a Playwright
+// config that enables software WebGL via SwiftShader, so Three.js /
+// <canvas> WebGL apps render (CPU-rendered) instead of failing to create a
+// context — matching the capture image's launch flags.
 
 // Suggested loopback port for the in-loop app launch. Deliberately NOT 3000
 // (the platform-convention app port) so a stray prod-style process can't
