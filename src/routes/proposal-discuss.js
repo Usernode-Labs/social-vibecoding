@@ -22,6 +22,8 @@ const llm = require('../services/llm');
 const github = require('../services/github');
 const limits = require('../services/limits');
 const models = require('../services/models');
+const events = require('../services/events');
+const modelFallback = require('../services/model-fallback');
 const prompts = require('../services/prompts');
 const appAccess = require('../services/app-access');
 const { proposalDiscussLimiter } = require('../middleware/rate-limits');
@@ -263,20 +265,50 @@ function proposalDiscussRoutes(config) {
         return res.end();
       }
 
-      const reply = (result.text || '').trim();
+      // Fable 5 classifier fallback: attribute the reply to the model
+      // that actually served it (persisted model column + usage event +
+      // pricing), and keep a durable admin record. This surface has no
+      // system-status rows, so the model column is the in-UI signal.
+      const servedModel = result.servedModel || selectedModel;
+      if (result.fallbackServed) {
+        await modelFallback.record(pool, {
+          kind: events.EVENT_TYPES.MODEL_FALLBACK,
+          userId: req.user.id, appId: app.id, sessionId: null,
+          requested: selectedModel, served: servedModel,
+          category: (result.stopDetails && result.stopDetails.category) || null,
+          source: 'proposal-discuss',
+        });
+      }
+
+      let reply = (result.text || '').trim();
+      if (result.stopReason === 'refusal') {
+        // Whole-chain refusal — record it and substitute an honest line
+        // instead of persisting nothing (the old silent-empty behaviour).
+        const category = (result.stopDetails && result.stopDetails.category) || null;
+        await modelFallback.record(pool, {
+          kind: events.EVENT_TYPES.MODEL_REFUSAL,
+          userId: req.user.id, appId: app.id, sessionId: null,
+          requested: selectedModel, served: servedModel,
+          category, source: 'proposal-discuss',
+        });
+        if (!reply) {
+          reply = modelFallback.refusalText(selectedModel, category);
+          send('token', { text: reply });
+        }
+      }
       if (reply) {
         await pool.query(
           `INSERT INTO proposal_ai_messages (app_id, proposal_kind, proposal_ref, user_id, role, content, model)
            VALUES ($1, $2, $3, $4, 'assistant', $5, $6)`,
-          [app.id, proposal.kind, proposal.ref, req.user.id, reply, selectedModel]
+          [app.id, proposal.kind, proposal.ref, req.user.id, reply, servedModel]
         );
       }
 
       // Settle cost into the same llm_usage ledger /api/budget reads.
       if (result.usage) {
-        const costCents = llm.estimateCostCents(result.usage, selectedModel);
+        const costCents = llm.estimateCostCents(result.usage, servedModel);
         await limits.recordSpend(pool, req.user.id, costCents, { byok: !!userApiKey });
-        send('usage', { costCents, model: selectedModel, byok: !!userApiKey });
+        send('usage', { costCents, model: servedModel, byok: !!userApiKey });
       }
 
       send('done', {});

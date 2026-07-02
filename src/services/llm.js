@@ -4,8 +4,72 @@ const log = require('./logger');
 // pass an explicit `model` fall back to this, so bumping the platform's
 // default model is a one-line change here rather than a grep-and-replace
 // across hardcoded slugs (which is how the conflict-resolver previously
-// pinned a stale model).
-const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
+// pinned a stale model). Kept aligned with services/models.js
+// DEFAULT_MODEL (the user-facing allowlist default).
+const DEFAULT_MODEL = 'claude-opus-4-8';
+
+// ── Fable 5 classifier fallback ─────────────────────────────────────
+// claude-fable-5 requests run through Anthropic's safety classifiers,
+// which can decline a request (HTTP 200 + stop_reason 'refusal' +
+// stop_details.category). Recovery is opt-in and PER REQUEST: the
+// server-side fallback beta re-serves a declined request on the fallback
+// model inside the same call, with cache-read repricing applied
+// automatically. streamChat below is the single funnel for every
+// platform-authored Messages call that can run a user-selected model —
+// all Mayor phases, the headless runner, and proposal-discuss — so
+// opting in here covers every retry/regeneration/continuation path.
+// NOTE: any future direct SDK use outside this module bypasses the
+// fallback config, the detection, and the billing attribution — route
+// new Messages calls through streamChat.
+const FABLE_MODEL = 'claude-fable-5';
+const FALLBACK_TARGET_MODEL = 'claude-opus-4-8';
+const FALLBACK_BETA = 'server-side-fallback-2026-06-01';
+
+// A fallback-served response is detected reliably ONLY via
+// usage.iterations carrying a 'fallback_message' entry. A sticky-served
+// turn (conversation already pinned to the fallback model) carries NO
+// {type:'fallback'} content block, so the block alone under-detects.
+function detectFallback(finalMessage) {
+  const iterations = finalMessage && finalMessage.usage && finalMessage.usage.iterations;
+  if (!Array.isArray(iterations)) return false;
+  return iterations.some((entry) => entry && entry.type === 'fallback_message');
+}
+
+// The {from, to} of the LAST fallback content block, when present —
+// attribution only (absent on sticky-served turns; see detectFallback).
+function fallbackBoundary(content) {
+  if (!Array.isArray(content)) return null;
+  for (let i = content.length - 1; i >= 0; i--) {
+    const block = content[i];
+    if (block && block.type === 'fallback') {
+      return {
+        from: (block.from && block.from.model) || null,
+        to: (block.to && block.to.model) || null,
+      };
+    }
+  }
+  return null;
+}
+
+// Streaming echo rule for a mid-output fallback: the declined model's
+// truncated tool_use / thinking blocks BEFORE the switch boundary are
+// invalid in subsequent calls and must be omitted; text blocks and
+// everything after the boundary echo normally. The fallback block itself
+// is an ignorable audit marker (kept). Content with no fallback block
+// passes through untouched.
+function sanitizeFallbackContent(content) {
+  if (!Array.isArray(content)) return content || [];
+  let boundaryIdx = -1;
+  for (let i = content.length - 1; i >= 0; i--) {
+    if (content[i] && content[i].type === 'fallback') { boundaryIdx = i; break; }
+  }
+  if (boundaryIdx === -1) return content;
+  return content.filter((block, i) => {
+    if (i >= boundaryIdx) return true;
+    const type = block && block.type;
+    return type !== 'tool_use' && type !== 'thinking' && type !== 'redacted_thinking';
+  });
+}
 
 let Anthropic;
 let client;
@@ -64,45 +128,87 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
   const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
   if (!activeClient) throw new Error('LLM not initialized');
 
-  const params = {
-    model: model || DEFAULT_MODEL,
-    max_tokens: 8192,
-    system: systemPrompt,
-    messages,
-    stream: true,
-  };
-  if (Array.isArray(tools) && tools.length) params.tools = tools;
-  // toolChoice lets callers force 'none' on wrap-up turns to prevent the
-  // model from calling tools again after a tool_result round-trip.
-  if (toolChoice) params.tool_choice = toolChoice;
+  const requestedModel = model || DEFAULT_MODEL;
+
+  // Pass the abort signal via request options so /api/sessions/:id/stop
+  // can cancel an in-flight Mayor call cleanly (instead of us just
+  // swallowing tokens locally while the API keeps billing).
+  const requestOptions = signal ? { signal } : undefined;
 
   try {
     let fullText = '';
 
-    // Pass the abort signal via request options so /api/sessions/:id/stop
-    // can cancel an in-flight Mayor call cleanly (instead of us just
-    // swallowing tokens locally while the API keeps billing).
-    const requestOptions = signal ? { signal } : undefined;
-    const stream = activeClient.messages.stream(params, requestOptions);
+    // One attempt against `runModel`. Fable 5 requests go through the
+    // beta surface with the server-side fallback opt-in (see the module
+    // header) so a classifier decline is re-served by Opus 4.8 inside
+    // the same call; every other model keeps the plain path byte-for-byte.
+    const runStream = async (runModel, { withFallbacks }) => {
+      const params = {
+        model: runModel,
+        max_tokens: 8192,
+        system: systemPrompt,
+        messages,
+        stream: true,
+      };
+      if (Array.isArray(tools) && tools.length) params.tools = tools;
+      // toolChoice lets callers force 'none' on wrap-up turns to prevent
+      // the model from calling tools again after a tool_result round-trip.
+      if (toolChoice) params.tool_choice = toolChoice;
 
-    stream.on('text', (text) => {
-      fullText += text;
-      if (onToken) onToken(text);
+      const stream = withFallbacks
+        ? activeClient.beta.messages.stream({
+          ...params,
+          betas: [FALLBACK_BETA],
+          fallbacks: [{ model: FALLBACK_TARGET_MODEL }],
+        }, requestOptions)
+        : activeClient.messages.stream(params, requestOptions);
+
+      stream.on('text', (text) => {
+        fullText += text;
+        if (onToken) onToken(text);
+      });
+
+      return stream.finalMessage();
+    };
+
+    let finalMessage = await runStream(requestedModel, {
+      withFallbacks: requestedModel === FABLE_MODEL,
     });
 
-    const finalMessage = await stream.finalMessage();
+    // Fallback couldn't run (e.g. Opus rate-limited at that instant):
+    // the refusal names a model to retry directly. ONE retry, plain
+    // path (no fallbacks param needed); a second refusal is final.
+    // Fable's thinking blocks in the replayed history are dropped
+    // server-side (unbilled) by the other model — no stripping needed.
+    let retriedOnRecommended = false;
+    const recommendedModel = finalMessage.stop_reason === 'refusal'
+      && finalMessage.stop_details
+      && typeof finalMessage.stop_details.recommended_model === 'string'
+      && finalMessage.stop_details.recommended_model.trim();
+    if (recommendedModel) {
+      log.warn('llm', 'Refusal with recommended_model — retrying once directly', {
+        requested: requestedModel, retryModel: recommendedModel,
+      });
+      finalMessage = await runStream(recommendedModel, { withFallbacks: false });
+      retriedOnRecommended = true;
+    }
+
     const inputTokens = finalMessage.usage?.input_tokens || 0;
     const outputTokens = finalMessage.usage?.output_tokens || 0;
 
     // Walk the assembled content blocks so callers can orchestrate a
     // tool-use loop without having to re-derive text vs. tool_use from
-    // the raw SDK event shapes. `rawContent` is returned verbatim so the
-    // caller can echo it back into the next turn's assistant message —
+    // the raw SDK event shapes. `rawContent` is returned so the caller
+    // can echo it back into the next turn's assistant message —
     // Anthropic requires the exact block sequence to round-trip a
-    // tool_use → tool_result handoff.
+    // tool_use → tool_result handoff. It is sanitized per the fallback
+    // echo rule first (a no-op when no fallback block is present), and
+    // `toolUses` derives from the SANITIZED content so a truncated
+    // pre-boundary tool_use can never be dispatched or answered.
+    const rawContent = sanitizeFallbackContent(finalMessage.content || []);
     const toolUses = [];
     let assembledText = '';
-    for (const block of finalMessage.content || []) {
+    for (const block of rawContent) {
       if (block.type === 'text') assembledText += block.text;
       else if (block.type === 'tool_use') {
         toolUses.push({ id: block.id, name: block.name, input: block.input });
@@ -111,12 +217,23 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
 
     if (onDone) onDone();
 
+    const stopReason = finalMessage.stop_reason;
     return {
       text: assembledText || fullText,
       toolUses,
-      stopReason: finalMessage.stop_reason,
-      rawContent: finalMessage.content || [],
+      stopReason,
+      rawContent,
       usage: { input_tokens: inputTokens, output_tokens: outputTokens },
+      // Fable 5 fallback surface (see module header). servedModel names
+      // the model that actually produced the message; fallbackServed is
+      // the usage.iterations detection (plus the recommended_model retry
+      // path, where the serving model is by definition not the requested
+      // one); stopDetails is populated only on refusals.
+      requestedModel,
+      servedModel: finalMessage.model || requestedModel,
+      fallbackServed: retriedOnRecommended || detectFallback(finalMessage),
+      fallbackBoundary: fallbackBoundary(finalMessage.content || []),
+      stopDetails: stopReason === 'refusal' ? (finalMessage.stop_details || null) : null,
     };
   } catch (err) {
     if (onError) onError(err);
@@ -124,15 +241,23 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
   }
 }
 
+// Dollars per 1k tokens, aligned with services/models.js (the allowlist's
+// $/MTok figures: haiku 1/5, sonnet 3/15, opus 5/25, fable 10/50).
+// Fable previously matched no branch and silently fell through to sonnet
+// pricing — a ~3x underestimate that let fable turns slip past the daily
+// budget enforcement. Callers should pass the SERVED model (streamChat's
+// `servedModel`) so a fallback-served turn bills at the fallback's rates.
 function estimateCostCents(usage, model) {
-  const inputPer1k = model?.includes('opus') ? 0.015
-    : model?.includes('sonnet') ? 0.003
-    : model?.includes('haiku') ? 0.00025
-    : 0.003;
-  const outputPer1k = model?.includes('opus') ? 0.075
-    : model?.includes('sonnet') ? 0.015
-    : model?.includes('haiku') ? 0.00125
-    : 0.015;
+  const inputPer1k = model?.includes('fable') ? 0.010
+    : model?.includes('opus') ? 0.005
+      : model?.includes('sonnet') ? 0.003
+        : model?.includes('haiku') ? 0.001
+          : 0.003;
+  const outputPer1k = model?.includes('fable') ? 0.050
+    : model?.includes('opus') ? 0.025
+      : model?.includes('sonnet') ? 0.015
+        : model?.includes('haiku') ? 0.005
+          : 0.015;
 
   return (
     (usage.input_tokens / 1000) * inputPer1k * 100 +
@@ -447,4 +572,22 @@ Respond with ONLY a JSON object: {“title”: “...”}. No prose before or af
   return { title, usage: resp.usage, model };
 }
 
-module.exports = { init, isEnabled, getSystemPrompt, streamChat, estimateCostCents, generatePrMetadata, parsePrMetadataText, generateSessionTitle, parseSessionTitleText, estimateRunProgress, sanitizeEstimate, sanitizeRemainingSeconds, DEFAULT_MODEL };
+// Test hook: swap the shared client for a stub so streamChat's fallback
+// plumbing is unit-testable without the SDK or network. Returns the
+// previous client so tests can restore it.
+function _setClientForTests(fakeClient) {
+  const prev = client;
+  client = fakeClient;
+  return prev;
+}
+
+module.exports = {
+  init, isEnabled, getSystemPrompt, streamChat, estimateCostCents,
+  generatePrMetadata, parsePrMetadataText, generateSessionTitle,
+  parseSessionTitleText, estimateRunProgress, sanitizeEstimate,
+  sanitizeRemainingSeconds, DEFAULT_MODEL,
+  // Fable 5 classifier-fallback surface (+ tests)
+  detectFallback, sanitizeFallbackContent, fallbackBoundary,
+  FABLE_MODEL, FALLBACK_TARGET_MODEL, FALLBACK_BETA,
+  _setClientForTests,
+};
