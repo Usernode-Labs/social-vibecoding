@@ -1181,6 +1181,49 @@ async function stopTurn(sessionId) {
   log.info('worker', 'Stop signal sent (in-container turn-process kill)', { containerName, sessionId });
 }
 
+// #460: materialize the dispatching user's personal agent files into the
+// warm worker's CC volume before a build/scout turn. Wipe-and-rewrite of
+// two managed paths — ~/.claude/CLAUDE.md (user-level memory Claude Code
+// loads natively) and ~/.claude/skills/ (personal skills) — so deletions
+// in Settings take effect on the next dispatch. Both live OUTSIDE the
+// repo checkout, so run-cc.sh's `git add -A` can never commit them.
+//
+// The script travels on the exec child's STDIN (contents base64-inlined
+// within it), never as a CLI arg, so user file contents don't show up in
+// `ps` or `docker inspect`. Callers treat failures as non-fatal: the
+// dispatch proceeds without personal files rather than failing the turn.
+async function syncUserAgentFiles(sessionId, files) {
+  const meta = _registryGet(sessionId);
+  if (!meta) {
+    throw new Error(`syncUserAgentFiles: no warm worker registered for session ${sessionId}`);
+  }
+  const { buildSyncShellScript } = require('./user-agent-files');
+  const script = buildSyncShellScript(files || []);
+  await new Promise((resolve, reject) => {
+    const proc = spawn('docker', ['exec', '-i', meta.containerName, 'sh'], {
+      stdio: ['pipe', 'ignore', 'pipe'],
+    });
+    const timer = setTimeout(() => {
+      try { proc.kill('SIGKILL'); } catch {}
+      reject(new Error('syncUserAgentFiles: timed out'));
+    }, 20000);
+    let stderr = '';
+    proc.stderr.on('data', (d) => { stderr += String(d); });
+    proc.on('error', (err) => { clearTimeout(timer); reject(err); });
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) return resolve();
+      reject(new Error(`syncUserAgentFiles: docker exec exited ${code}: ${stderr.slice(0, 300)}`));
+    });
+    proc.stdin.on('error', () => {});
+    proc.stdin.write(script);
+    proc.stdin.end();
+  });
+  log.info('worker', 'Personal agent files synced', {
+    sessionId, count: (files || []).length,
+  });
+}
+
 // Boot-time resume: pick an in-flight (or finished-while-we-were-down)
 // turn back up from its journal. The caller (server.js adoption) owns
 // post-turn processing and clearing chat_sessions.active_turn; this
@@ -1508,6 +1551,7 @@ module.exports = {
   ensureWorker,
   execInWorker,
   stopTurn,
+  syncUserAgentFiles,
   resumeTurnFromJournal,
   clearActiveTurn,
   evictWorker,
