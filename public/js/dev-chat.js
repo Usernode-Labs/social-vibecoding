@@ -236,15 +236,15 @@ const DevChat = {
       return;
     }
     if (!DevChat.budget) return;
-    // #463: explicit exhausted state — no key saved and the free
-    // allowance (or the platform's shared budget) is fully spent. An
-    // unmistakable label beats a red $25.00/$25.00 pair.
-    if (DevChat._creditsExhausted()) {
-      el.innerHTML = `<span class="text-red-500 font-semibold" title="Your free daily AI credits are used up. Resets at midnight UTC — or add your own Anthropic API key in Settings to keep working.">free credits used up</span>`;
-      return;
-    }
     const spent = (DevChat.budget.spentCents / 100).toFixed(2);
     const limit = (DevChat.budget.limitCents / 100).toFixed(2);
+    // #463: exhausted (no key saved) keeps the familiar $spent/$limit
+    // pair — just unmistakably red, with the tooltip pointing at the
+    // BYOK escape hatch. The banner carries the wordy explanation.
+    if (DevChat._creditsExhausted()) {
+      el.innerHTML = `<span title="Your free daily AI credits are used up. Resets at midnight UTC — or add your own Anthropic API key in Settings to keep working."><span class="text-red-500 font-semibold">$${spent}</span><span class="text-red-400">/$${limit}</span></span>`;
+      return;
+    }
     const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
     const color = pct > 80 ? 'text-red-400' : pct > 50 ? 'text-yellow-400' : 'text-emerald-400';
     el.innerHTML = `<span class="${color}">$${spent}</span><span class="text-zinc-600">/$${limit}</span>`;

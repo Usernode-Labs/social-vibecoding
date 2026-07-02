@@ -1,7 +1,7 @@
-// #463: the credits-exhausted banner + the meter's explicit exhausted
-// state. Guards the show-condition contract:
-//   - free allowance spent AND no BYOK key → banner + "free credits used
-//     up" meter label
+// #463: the credits-exhausted banner + the meter's exhausted styling.
+// Guards the show-condition contract:
+//   - free allowance spent AND no BYOK key → banner + the $spent/$limit
+//     pair styled red (the numbers stay; no replacement label)
 //   - key saved → neither (spillover billing continues silently)
 //   - headroom left → neither
 //   - global cap spent (user under) → banner with the shared-budget copy
@@ -85,12 +85,15 @@ test('allowance spent + no key → banner renders with the Add API key CTA', () 
   assert.match(html, /Add API key/, 'CTA label present');
 });
 
-test('meter shows the explicit exhausted label instead of $spent/$limit', () => {
+test('exhausted meter keeps the $spent/$limit pair, styled red', () => {
   const { DevChat, meterHtml } = makeDevChat();
   DevChat.budget = budget({ spentCents: 2500 });
   DevChat.renderBudget();
-  assert.match(meterHtml(), /free credits used up/, 'unmistakable exhausted label');
-  assert.doesNotMatch(meterHtml(), /\$25\.00\/\$25\.00/, 'no ambiguous number pair');
+  assert.match(meterHtml(), /\$25\.00/, 'the spent figure stays visible');
+  assert.match(meterHtml(), /\/\$25\.00/, 'the limit figure stays visible');
+  assert.match(meterHtml(), /text-red-500/, 'exhausted pair is unmistakably red');
+  assert.match(meterHtml(), /free daily AI credits are used up/, 'tooltip still explains the state');
+  assert.doesNotMatch(meterHtml(), /free credits used up</, 'no replacement label — the numbers remain');
 });
 
 test('key saved → no banner, meter keeps the BYOK rendering', () => {
