@@ -101,6 +101,11 @@
       "name": "Merge debug view renders",
       "path": "/debug?demo=1",
       "expectText": "Merge debug"
+    },
+    {
+      "name": "Dev tab defaults to kanban board on wide screens",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban"
     }
   ]
 }

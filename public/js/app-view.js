@@ -119,15 +119,31 @@ const AppView = {
   // ── Dev view mode (list ↔ kanban) ─────────────────────────────────
   // A personal display preference, persisted to localStorage and shared
   // across every app's Dev view (same pattern as DevConsole's MODE_KEY
-  // and the "view as non-admin" toggle). 'list' is the default and the
-  // historical behaviour; 'kanban' lays the same cached topics out in
-  // four lifecycle columns. Read/written only through the two helpers
-  // below so the localStorage access stays guarded in one place.
+  // and the "view as non-admin" toggle). An explicitly saved choice
+  // always wins; with nothing saved the default is width-based (#462):
+  // 'kanban' on viewports ≥1024px — Tailwind's lg breakpoint, and the
+  // width at which the board's four min-w-[16rem] columns first fit
+  // without horizontal scrolling — and 'list' (the historical default)
+  // below it. Read/written only through the two helpers below so the
+  // localStorage access stays guarded in one place.
   VIEW_MODE_KEY: 'devViewMode',
+  // Width-based default, resolved lazily ONCE per page load and never
+  // written to localStorage — so an undecided user keeps getting the
+  // responsive default on future visits, and the mode can't flip
+  // mid-flight between the paired _getViewMode() reads inside async
+  // flows like loadMoreMerged if the window is resized across 1024px.
+  _viewModeAutoDefault: null,
   _getViewMode() {
     try {
-      return window.localStorage.getItem(AppView.VIEW_MODE_KEY) === 'kanban'
-        ? 'kanban' : 'list';
+      const stored = window.localStorage.getItem(AppView.VIEW_MODE_KEY);
+      if (stored === 'kanban' || stored === 'list') return stored;
+      if (AppView._viewModeAutoDefault === null) {
+        AppView._viewModeAutoDefault =
+          (typeof window.matchMedia === 'function'
+            && window.matchMedia('(min-width: 1024px)').matches)
+            ? 'kanban' : 'list';
+      }
+      return AppView._viewModeAutoDefault;
     } catch { return 'list'; }
   },
   _setViewMode(mode) {
