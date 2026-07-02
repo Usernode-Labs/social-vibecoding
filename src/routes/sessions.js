@@ -31,6 +31,7 @@ const { getActiveUserStats } = require('../services/active-users');
 const { chatLimiter, attachmentUploadLimiter } = require('../middleware/rate-limits');
 const attachmentsSvc = require('../services/attachments');
 const appAccess = require('../services/app-access');
+const userAgentFiles = require('../services/user-agent-files');
 const notifications = require('../services/notifications');
 // runSyncMain + persistBehindMain now live in services/sync-main.js so
 // the conflict-resolver can drive a sync turn without a route-requires-
@@ -1631,7 +1632,21 @@ function sessionRoutes(config) {
             log.warn('sessions', 'Open-proposals lookup failed (continuing without block)', { sessionId: session.id, err: err.message });
           }
         }
-        let mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext, openProposalsBlock);
+        // #460: compact metadata block listing the session owner's
+        // personal agent files (names + descriptions only — contents go
+        // to Claude Code via the CC-volume sync, never to the Mayor) so
+        // the Mayor can answer "what instructions are you using?".
+        // Advisory: any failure just drops the block.
+        let agentFilesBlock = '';
+        try {
+          if (session.user_id) {
+            const afMeta = await userAgentFiles.listForUser(pool, session.user_id);
+            agentFilesBlock = userAgentFiles.buildMayorAgentFilesBlock(afMeta);
+          }
+        } catch (err) {
+          log.warn('sessions', 'Agent-files metadata load failed (continuing without block)', { sessionId: session.id, err: err.message });
+        }
+        let mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext, openProposalsBlock, agentFilesBlock);
         const messages = buildMayorMessages(history, historyAttachments);
 
         if (!llm.isEnabled()) {
@@ -2099,7 +2114,7 @@ function sessionRoutes(config) {
         // Same open-proposals block as phase-1 so the wrap-up turn sees a
         // consistent prompt (the instruction is scoped to "before
         // dispatching", so it's inert after a tool has already run).
-        mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext2, openProposalsBlock);
+        mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext2, openProposalsBlock, agentFilesBlock);
         const mayor2 = await llm.streamChat({
           messages: followUpMessages,
           systemPrompt: mayorPrompt,
@@ -4673,6 +4688,24 @@ ${existingSpec}
 ==== END CURRENT SPEC DOC ====`
     : '';
 
+  // #460: the dispatching user's personal agent files — same load as the
+  // build path (see runClaudeCodeTool). Synced into the CC volume after
+  // ensureWorker below; the one-line prompt pointer only appears when
+  // files exist. Non-fatal on any failure.
+  let personalFiles = [];
+  try {
+    if (session.user_id) {
+      personalFiles = await userAgentFiles.loadAllForUser(pool, session.user_id);
+    }
+  } catch (err) {
+    log.warn('sessions', 'Personal agent files load failed (continuing without)', { sessionId: session.id, err: err.message });
+  }
+  const personalFilesNote = personalFiles.length
+    ? `
+
+PERSONAL AGENT FILES: the user who dispatched this run has personal instruction files (already loaded for you at \`~/.claude/CLAUDE.md\`) and/or personal skills (under \`~/.claude/skills/\`). Honor them as the dispatching user's personal preferences when writing this spec, wherever they don't conflict with platform rules or the repo's own \`CLAUDE.md\` on app-specific matters.`
+    : '';
+
   // Scout-specific prompt. Deliberately omits the platform-conventions
   // block and commit/push instructions used in the build prompt — scout
   // never edits anything. The "final message is the spec" contract is
@@ -4683,7 +4716,7 @@ ${toolPromptArg}
 
 USER REQUEST: "${userMessage}"${attachmentsBlock}
 
-You are running in PLAN MODE: you can read files (Read, Glob, Grep) but you cannot edit, commit, or push anything. Do not attempt to.${revisionBlock}
+You are running in PLAN MODE: you can read files (Read, Glob, Grep) but you cannot edit, commit, or push anything. Do not attempt to.${personalFilesNote}${revisionBlock}
 
 A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`); long bodies are clipped with a "[truncated …]" marker, and \`usernode-issues <number>\` fetches that one issue with its FULL body (\`{ issue, note? }\`). Use it if the open issues are relevant context for this spec; do not try to reach GitHub any other way.
 
@@ -4724,6 +4757,15 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
   // signal travels through worker.stopTurn (in-container pkill) so the
   // warm container survives stop and the next dispatch is fast.
   if (stopHandle) stopHandle.workerName = containerName;
+
+  // #460: wipe-and-rewrite the personal agent files in the CC volume —
+  // runs even with an empty list so Settings deletions take effect on
+  // the next dispatch. Never fails the scout turn.
+  try {
+    await worker.syncUserAgentFiles(session.id, personalFiles);
+  } catch (err) {
+    log.warn('sessions', 'Personal agent files sync failed (continuing without)', { sessionId: session.id, err: err.message });
+  }
 
   let isError = false;
   const summaryParts = [];
@@ -5053,6 +5095,31 @@ not re-derive intent from it when the spec covers the same ground.
 Platform conventions still override the spec on any platform-wide
 rule (auth, public/private tables, etc.).`
     : '';
+
+  // #460: the dispatching user's personal agent files. Loaded here (by
+  // session OWNER — headless sessions with no resolvable owner simply
+  // get none) and materialized into the warm worker's CC volume right
+  // after ensureWorker below. The prompt note is only added when files
+  // exist so everyone else's prompt stays byte-identical. Failures are
+  // non-fatal: the build proceeds without personal files.
+  let personalFiles = [];
+  try {
+    if (session.user_id) {
+      personalFiles = await userAgentFiles.loadAllForUser(pool, session.user_id);
+    }
+  } catch (err) {
+    log.warn('sessions', 'Personal agent files load failed (continuing without)', { sessionId: session.id, err: err.message });
+  }
+  const personalFilesNote = personalFiles.length
+    ? `
+
+PERSONAL AGENT FILES: the user who dispatched this run has personal
+instruction files (already loaded for you at \`~/.claude/CLAUDE.md\`)
+and/or personal skills (under \`~/.claude/skills/\`). Treat them as the
+dispatching user's personal preferences: follow them wherever they don't
+conflict with the PLATFORM CONVENTIONS block above (which always wins)
+or the repo's own \`CLAUDE.md\` on app-specific matters.`
+    : '';
   const claudePrompt = `USER REQUEST: "${userMessage}"
 
 CODING TASK (from the Mayor):
@@ -5075,7 +5142,7 @@ The repo's \`CLAUDE.md\` may reference a hosted copy of the platform
 conventions at \`https://${process.env.USERNODE_DOMAIN || 'social-vibecoding.usernodelabs.org'}/claude.md\` —
 in dev-chat you already have those rules injected above, so ignore
 that instruction here. It's for humans or Claude Code invocations
-that run against this repo outside the harness.
+that run against this repo outside the harness.${personalFilesNote}
 
 A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`); long bodies are clipped with a "[truncated …]" marker, and \`usernode-issues <number>\` fetches that one issue with its FULL body (\`{ issue, note? }\`). Consult it if an open issue is relevant to what you're building; do not try to reach GitHub any other way.
 
@@ -5168,6 +5235,15 @@ path: /another/changed/view
   // pkill) so the warm container is preserved across stop — eviction is
   // the only path that destroys it.
   if (stopHandle) stopHandle.workerName = containerName;
+
+  // #460: wipe-and-rewrite the personal agent files in the CC volume
+  // every dispatch — runs even when the list is empty so a deletion in
+  // Settings takes effect on the very next turn. Never fails the build.
+  try {
+    await worker.syncUserAgentFiles(session.id, personalFiles);
+  } catch (err) {
+    log.warn('sessions', 'Personal agent files sync failed (continuing without)', { sessionId: session.id, err: err.message });
+  }
 
   let ccLog = null;
   let stagingUrl = null;
@@ -5866,7 +5942,7 @@ path: /another/changed/view
   return { toolResultText, ccLog, stagingUrl, isError, commitSha: commitHash || null };
 }
 
-function getMayorSystemPrompt(appName, isWorkerBusy, currentSpec, selfHosted, prContext, openProposalsBlock = '') {
+function getMayorSystemPrompt(appName, isWorkerBusy, currentSpec, selfHosted, prContext, openProposalsBlock = '', agentFilesBlock = '') {
   const specIsEmpty = !((currentSpec || '').trim());
 
   const toolNote = isWorkerBusy
@@ -5998,7 +6074,7 @@ Some assistant turns in this conversation contain "${CODING_AGENT_COMPLETED_MARK
 
 You MUST NOT, under any circumstances:
 - Write the literal string "${CODING_AGENT_COMPLETED_MARKER}" in your reply. That marker is reserved for the harness; emitting it yourself fakes a coding-agent run that never happened.
-- Paraphrase a past summary as a substitute for dispatching a new run. If the user reports a bug, regression, or "still not quite right" — even if a previous run targeted the same area — that is a NEW change request and you MUST call dispatch_claude_code (assuming the tool is available per STATUS). Past summaries are read-only history; they cannot fix new bugs.${toolNote}${conventionsBlock}${selfHosted ? getSelfHostedRefuseList() : ''}${prBlock}${openProposalsBlock || ''}${specBlock}`;
+- Paraphrase a past summary as a substitute for dispatching a new run. If the user reports a bug, regression, or "still not quite right" — even if a previous run targeted the same area — that is a NEW change request and you MUST call dispatch_claude_code (assuming the tool is available per STATUS). Past summaries are read-only history; they cannot fix new bugs.${toolNote}${conventionsBlock}${selfHosted ? getSelfHostedRefuseList() : ''}${prBlock}${openProposalsBlock || ''}${agentFilesBlock || ''}${specBlock}`;
 }
 
 async function getFilesFromContainer(appSlug) {

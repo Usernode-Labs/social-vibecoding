@@ -1312,6 +1312,32 @@ CREATE INDEX IF NOT EXISTS idx_merge_debug_steps_run ON merge_debug_steps (run_i
 COMMENT ON TABLE merge_debug_runs  IS 'staging:private';
 COMMENT ON TABLE merge_debug_steps IS 'staging:private';
 
+-- #460: per-user global agent instruction & skill files. Uploaded in the
+-- account Settings modal ("Agent instructions & skills") and materialized
+-- into the per-session CC volume (~/.claude/CLAUDE.md + ~/.claude/skills/)
+-- at every build/scout dispatch the user owns — see
+-- services/user-agent-files.js + worker.syncUserAgentFiles. Contents are
+-- plain user-authored text (NOT secrets — no encryption), but they are
+-- personal scratch config with no value in a staging clone, so the table
+-- ships schema-only + empty there (staging:private); the Settings section
+-- uses ?demo=1 fabricated rows for staging previews instead.
+CREATE TABLE IF NOT EXISTS user_agent_files (
+  id          SERIAL PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- 'instruction' | 'skill'
+  kind        VARCHAR(16) NOT NULL CHECK (kind IN ('instruction', 'skill')),
+  -- normalized slug: ^[a-z0-9][a-z0-9-]{0,63}$
+  name        VARCHAR(64) NOT NULL,
+  description VARCHAR(200) NOT NULL DEFAULT '',
+  content     TEXT NOT NULL,
+  size_bytes  INTEGER NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id, kind, name)
+);
+CREATE INDEX IF NOT EXISTS idx_user_agent_files_user ON user_agent_files (user_id, kind, name);
+COMMENT ON TABLE user_agent_files IS 'staging:private';
+
 -- Dev-chat file attachments (#450). Users attach images / text files to
 -- dev-chat messages as extra context for the Mayor, scout, and coding
 -- agent. Bytea-in-Postgres like session_visuals (the platform container

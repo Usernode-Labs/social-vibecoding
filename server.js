@@ -26,6 +26,7 @@ const { visualsRoutes } = require('./src/routes/visuals');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
 const appLlmProxyRoutes = require('./src/routes/app-llm-proxy');
 const { llmGrantsRoutes } = require('./src/routes/llm-grants');
+const { userAgentFilesRoutes } = require('./src/routes/user-agent-files');
 const { proposalDiscussRoutes } = require('./src/routes/proposal-discuss');
 const { topicAttributeRoutes } = require('./src/routes/topic-attributes');
 const { debugRoutes } = require('./src/routes/debug');
@@ -132,6 +133,10 @@ app.use('/explorer-api', (req, res) => {
 app.use((req, res, next) => {
   if (req.path.startsWith('/api/internal/anthropic/')) return next();
   if (req.path.startsWith('/api/app-llm/')) return next();
+  // Agent-file uploads (#460) carry up to 48 KB of file content, which
+  // can exceed the 100kb default once JSON-escaped — the route mounts
+  // its own 256kb parser (see routes/user-agent-files.js).
+  if (req.path === '/api/me/agent-files' && req.method === 'POST') return next();
   express.json()(req, res, next);
 });
 app.use(cookieParser());
@@ -306,6 +311,7 @@ app.use(feedbackRoutes(config));
 app.use(notificationsRoutes(config));
 app.use(collaboratorRoutes(config));
 app.use(llmGrantsRoutes(config));
+app.use(userAgentFilesRoutes(config));
 app.use(proposalDiscussRoutes(config));
 app.use(topicAttributeRoutes(config));
 app.use(debugRoutes(config));

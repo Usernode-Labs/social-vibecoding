@@ -197,6 +197,7 @@
       this._renderBody();
       this._refreshSpend();
       this._renderLlmGrants();
+      this._renderAgentFilesSection();
       this._renderWalletSection();
       this._renderChangePasswordSection();
       this._renderDevConsoleSection();
@@ -751,6 +752,258 @@
     _setLlmGrantsStatus(text, kind) {
       const el = document.getElementById('llm-grants-status');
       if (!el) return;
+      el.textContent = text;
+      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
+      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
+      el.classList.add(cls);
+      if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
+    },
+
+    // ── Agent instructions & skills (#460) ───────────────────────
+    // Per-user global files the coding agent loads on every build/scout
+    // run this user dispatches. List/upload/delete against
+    // /api/me/agent-files; in staging the (staging:private, always empty)
+    // table is stood in for by ?demo=1 fabricated rows, passed through
+    // from the page URL exactly like the AI-permissions section above.
+
+    _renderAgentFilesSection() {
+      this._wireAgentFiles();
+      this._hideAgentFilesForm();
+      this._loadAgentFiles();
+    },
+
+    _agentFilesDemo() {
+      return new URLSearchParams(window.location.search).get('demo') === '1';
+    },
+
+    // One-time event wiring (the section markup is static in index.html;
+    // open() re-runs this, so guard against double-binding).
+    _wireAgentFiles() {
+      if (this._agentFilesWired) return;
+      this._agentFilesWired = true;
+
+      const input = document.getElementById('agent-files-input');
+      document.querySelectorAll('[data-agent-files-upload]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          this._pendingAgentKind = btn.dataset.agentFilesUpload;
+          input.value = '';
+          input.click();
+        });
+      });
+
+      input.addEventListener('change', () => {
+        const file = input.files && input.files[0];
+        if (!file) return;
+        if (file.size > 48 * 1024) {
+          this._setAgentFilesStatus(`"${file.name}" is too large — the limit is 48 KB per file.`, 'error');
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+          this._pendingAgentFile = {
+            kind: this._pendingAgentKind,
+            content: String(reader.result || ''),
+          };
+          this._showAgentFilesForm(file.name);
+        };
+        reader.onerror = () => this._setAgentFilesStatus('Could not read that file.', 'error');
+        reader.readAsText(file);
+      });
+
+      document.getElementById('agent-files-cancel').addEventListener('click', () => {
+        this._hideAgentFilesForm();
+      });
+      document.getElementById('agent-files-save').addEventListener('click', () => {
+        this._saveAgentFile();
+      });
+    },
+
+    // Client-side twin of the server's normalizeName — purely a
+    // convenience prefill; the server re-normalizes and is authoritative.
+    _slugifyAgentFileName(raw) {
+      return String(raw || '')
+        .trim()
+        .replace(/\.(md|txt)$/i, '')
+        .toLowerCase()
+        .replace(/[\s_.]+/g, '-')
+        .replace(/[^a-z0-9-]/g, '')
+        .replace(/-+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 64);
+    },
+
+    _showAgentFilesForm(filename) {
+      const form = document.getElementById('agent-files-form');
+      const title = document.getElementById('agent-files-form-title');
+      const nameInput = document.getElementById('agent-files-name');
+      const descWrap = document.getElementById('agent-files-desc-wrap');
+      const descInput = document.getElementById('agent-files-desc');
+      const kind = this._pendingAgentFile?.kind || 'instruction';
+      title.textContent = kind === 'skill'
+        ? `New skill from "${filename}"`
+        : `New instruction file from "${filename}"`;
+      nameInput.value = this._slugifyAgentFileName(filename);
+      descWrap.classList.toggle('hidden', kind !== 'skill');
+      descInput.value = '';
+      form.classList.remove('hidden');
+      this._setAgentFilesStatus('', 'clear');
+    },
+
+    _hideAgentFilesForm() {
+      this._pendingAgentFile = null;
+      const form = document.getElementById('agent-files-form');
+      if (form) form.classList.add('hidden');
+    },
+
+    async _saveAgentFile() {
+      const pending = this._pendingAgentFile;
+      if (!pending) return;
+      if (this._agentFilesDemo()) {
+        this._setAgentFilesStatus('Demo data — changes are not saved.', 'info');
+        this._hideAgentFilesForm();
+        return;
+      }
+      const name = document.getElementById('agent-files-name').value.trim();
+      if (!name) {
+        this._setAgentFilesStatus('Give the file a name.', 'error');
+        return;
+      }
+      const description = document.getElementById('agent-files-desc').value.trim();
+      try {
+        const r = await fetch('/api/me/agent-files', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ kind: pending.kind, name, description, content: pending.content }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          this._setAgentFilesStatus(j.error || 'Failed to save the file.', 'error');
+          return;
+        }
+        this._hideAgentFilesForm();
+        this._setAgentFilesStatus(`Saved "${j.file?.name || name}" — it applies from your next run.`, 'ok');
+        this._loadAgentFiles();
+      } catch (err) {
+        this._setAgentFilesStatus('Network error: ' + err.message, 'error');
+      }
+    },
+
+    async _loadAgentFiles() {
+      const instrList = document.getElementById('agent-files-instructions-list');
+      const skillList = document.getElementById('agent-files-skills-list');
+      if (!instrList || !skillList) return;
+      instrList.innerHTML = '<p class="text-xs text-zinc-500">Loading…</p>';
+      skillList.innerHTML = '';
+      const demo = this._agentFilesDemo();
+      let files = [];
+      try {
+        const r = await fetch('/api/me/agent-files' + (demo ? '?demo=1' : ''), { credentials: 'same-origin' });
+        if (!r.ok) throw new Error('fetch failed');
+        const j = await r.json();
+        files = j.files || [];
+      } catch {
+        instrList.innerHTML = '<p class="text-xs text-red-500">Failed to load your agent files.</p>';
+        return;
+      }
+      const byKind = (kind) => files.filter((f) => f.kind === kind);
+      const renderList = (el, list, emptyText) => {
+        el.innerHTML = '';
+        if (!list.length) {
+          el.innerHTML = `<p class="text-xs text-zinc-500 dark:text-zinc-500">${emptyText}</p>`;
+          return;
+        }
+        for (const f of list) el.appendChild(this._agentFileRow(f, demo));
+      };
+      renderList(instrList, byKind('instruction'),
+        'No instruction files yet — upload a markdown file to guide the coding agent on every build you start.');
+      renderList(skillList, byKind('skill'),
+        'No skills yet — upload a skill file the agent can use while building for you.');
+    },
+
+    _agentFileRow(f, demo) {
+      const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+      }[c]));
+      const row = document.createElement('div');
+      row.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs';
+      const kb = Math.max(1, Math.round((f.size_bytes || 0) / 1024));
+      row.innerHTML = `
+        <div class="flex items-center justify-between gap-2">
+          <span class="font-mono font-medium text-zinc-700 dark:text-zinc-300 truncate">${esc(f.name)}</span>
+          <span class="shrink-0 flex items-center gap-2">
+            <span class="text-zinc-500 dark:text-zinc-500">${kb} KB</span>
+            <button data-role="view" class="text-violet-500 hover:text-violet-400 font-medium">View</button>
+            <button data-role="delete" class="text-red-600 dark:text-red-400 hover:text-red-500 font-medium">Delete</button>
+          </span>
+        </div>
+        ${f.description ? `<div class="text-zinc-500 dark:text-zinc-500 mt-1 truncate">${esc(f.description)}</div>` : ''}
+        <pre data-role="content" class="hidden mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1.5 font-mono text-[11px] text-zinc-700 dark:text-zinc-300"></pre>`;
+
+      const viewBtn = row.querySelector('[data-role="view"]');
+      const pre = row.querySelector('[data-role="content"]');
+      viewBtn.addEventListener('click', async () => {
+        if (!pre.classList.contains('hidden')) {
+          pre.classList.add('hidden');
+          viewBtn.textContent = 'View';
+          return;
+        }
+        if (!pre.textContent) {
+          pre.textContent = 'Loading…';
+          pre.classList.remove('hidden');
+          try {
+            const qs = `kind=${encodeURIComponent(f.kind)}&name=${encodeURIComponent(f.name)}` + (demo ? '&demo=1' : '');
+            const r = await fetch(`/api/me/agent-files/content?${qs}`, { credentials: 'same-origin' });
+            const j = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(j.error || 'fetch failed');
+            pre.textContent = j.file?.content || '(empty)';
+          } catch (err) {
+            pre.textContent = 'Failed to load: ' + err.message;
+          }
+        } else {
+          pre.classList.remove('hidden');
+        }
+        viewBtn.textContent = 'Hide';
+      });
+
+      row.querySelector('[data-role="delete"]').addEventListener('click', async () => {
+        const ok = window.ConfirmModal
+          ? await ConfirmModal.show({
+              title: `Delete "${f.name}"?`,
+              message: 'The coding agent stops using it from your next run. This cannot be undone.',
+              confirmLabel: 'Delete',
+              danger: true,
+            })
+          : confirm(`Delete "${f.name}"?`);
+        if (!ok) return;
+        if (demo) { this._setAgentFilesStatus('Demo data — changes are not saved.', 'info'); return; }
+        try {
+          const r = await fetch('/api/me/agent-files', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ kind: f.kind, name: f.name }),
+          });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) { this._setAgentFilesStatus(j.error || 'Failed to delete.', 'error'); return; }
+          this._setAgentFilesStatus(`Deleted "${f.name}".`, 'ok');
+          this._loadAgentFiles();
+        } catch (err) {
+          this._setAgentFilesStatus('Network error: ' + err.message, 'error');
+        }
+      });
+
+      return row;
+    },
+
+    _setAgentFilesStatus(text, kind) {
+      const el = document.getElementById('agent-files-status');
+      if (!el) return;
+      if (kind === 'clear' || !text) {
+        el.classList.add('hidden');
+        el.textContent = '';
+        return;
+      }
       el.textContent = text;
       el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
       const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
