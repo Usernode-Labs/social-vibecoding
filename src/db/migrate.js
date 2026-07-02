@@ -1686,6 +1686,33 @@ async function seedStagingSyncActivity(pool, config) {
       );
     }
 
+    // Fable 5 fallback-notice fixture: one persisted system row (the
+    // in-chat notice the fallback detection emits) plus its matching
+    // analytics event, so the notice rendering is reviewable in staging —
+    // a real classifier fallback can't be triggered on demand. Keyed off
+    // its own metadata marker so it seeds exactly once, independent of
+    // the sync rows above.
+    const { rows: fallbackRows } = await pool.query(
+      `SELECT 1 FROM chat_session_messages
+        WHERE session_id = $1 AND metadata->'modelFallback' IS NOT NULL LIMIT 1`,
+      [SESSION_ID]
+    );
+    if (!fallbackRows.length) {
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'system', $2, $3)`,
+        [SESSION_ID,
+         'Fable 5 declined part of this request (safety classifier: cyber) — it was completed by Opus 4.8.',
+         JSON.stringify({ modelFallback: { requested: 'claude-fable-5', served: 'claude-opus-4-8', category: 'cyber' } })]
+      );
+      await pool.query(
+        `INSERT INTO events (user_id, app_id, session_id, event_type, metadata)
+         VALUES ($1, $2, $3, 'model_fallback', $4::jsonb)`,
+        [owner.id, appId, SESSION_ID,
+         JSON.stringify({ requested: 'claude-fable-5', served: 'claude-opus-4-8', category: 'cyber', source: 'staging-seed' })]
+      );
+    }
+
     log.info('db', 'Staging sync-activity fixture seeded', {
       appId, owner: owner.username, sessionId: SESSION_ID,
     });

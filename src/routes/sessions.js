@@ -24,6 +24,7 @@ const { IN_LOOP_BROWSER_GUIDANCE } = require('../services/in-loop-browser');
 const models = require('../services/models');
 const limits = require('../services/limits');
 const events = require('../services/events');
+const modelFallback = require('../services/model-fallback');
 const { getActiveUserStats } = require('../services/active-users');
 const { chatLimiter } = require('../middleware/rate-limits');
 const appAccess = require('../services/app-access');
@@ -1392,6 +1393,29 @@ function sessionRoutes(config) {
           ).catch(() => {});
         };
 
+        // Fable 5 classifier fallback: every fallback-served Mayor call
+        // gets an admin record (log.warn + events row), but the in-chat
+        // notice fires ONCE per turn — a multi-phase turn where both the
+        // plan and the wrap-up fell back shouldn't nag twice.
+        let fallbackNoticed = false;
+        const noteModelFallback = async (result) => {
+          if (!result || !result.fallbackServed) return;
+          const requested = selectedModel;
+          const served = result.servedModel || llm.FALLBACK_TARGET_MODEL;
+          const category = (result.stopDetails && result.stopDetails.category) || null;
+          await modelFallback.record(pool, {
+            kind: events.EVENT_TYPES.MODEL_FALLBACK,
+            userId: req.user.id, appId: session.app_id, sessionId: session.id,
+            requested, served, category, source: 'mayor',
+          });
+          if (!fallbackNoticed) {
+            fallbackNoticed = true;
+            await sendStatus(modelFallback.noticeText(requested, served, category), {
+              modelFallback: { requested, served, category },
+            });
+          }
+        };
+
         await sendStatus('Thinking about your request...');
 
         // Pull user+mayor turns AND the coding-agent's final summaries
@@ -1513,6 +1537,7 @@ function sessionRoutes(config) {
               onToken: (text) => send('token', { text }),
               apiKey: userApiKey,
             });
+            await noteModelFallback(mayor1);
 
             const dataCalls = mayor1.toolUses.filter((t) => DATA_TOOL_NAMES.has(t.name));
             // Parallel tool use is enabled, so the Mayor may emit
@@ -1538,11 +1563,14 @@ function sessionRoutes(config) {
             // happened and is invoiced whether or not it produced text.
             // (The final iteration's spend is billed by the existing
             // phase-1 accounting just below the loop.)
+            // Price + attribute with the SERVED model — a fallback-served
+            // call bills at (and displays) the fallback model's identity.
+            const servedModelIter = mayor1.servedModel || selectedModel;
             let dataCost = 0;
             if (mayor1.usage) {
-              dataCost = llm.estimateCostCents(mayor1.usage, selectedModel);
+              dataCost = llm.estimateCostCents(mayor1.usage, servedModelIter);
               await limits.recordSpend(pool, req.user.id, dataCost, { byok: !!userApiKey });
-              send('usage', { costCents: dataCost, model: selectedModel, byok: !!userApiKey });
+              send('usage', { costCents: dataCost, model: servedModelIter, byok: !!userApiKey });
             }
 
             // Persist any preamble text this iteration produced ("Let me
@@ -1556,7 +1584,7 @@ function sessionRoutes(config) {
               await pool.query(
                 `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
                  VALUES ($1, 'assistant', $2, $3, $4, $5)`,
-                [session.id, mayor1.text, selectedModel,
+                [session.id, mayor1.text, servedModelIter,
                   mayor1.usage ? mayor1.usage.input_tokens + mayor1.usage.output_tokens : null,
                   dataCost]
               );
@@ -1614,10 +1642,27 @@ function sessionRoutes(config) {
           preview: mayorText1.substring(0, 200),
         });
 
-        // Fallback text when the model jumps straight to a tool_use
-        // with no preamble — the user otherwise stares at a silent
-        // "Thinking…" until CC spins up, which looks broken.
-        if (!mayorText1.trim() && mayor1.toolUses.length === 0) {
+        // Whole-chain refusal: Fable 5's classifiers declined AND the
+        // fallback couldn't complete it (or declined too). Replace the
+        // old silent empty reply with an explicit persisted status, and
+        // end the turn cleanly — a refused turn must never dispatch
+        // (any tool_use blocks are the declined model's).
+        if (mayor1.stopReason === 'refusal') {
+          const refusalCategory = (mayor1.stopDetails && mayor1.stopDetails.category) || null;
+          await modelFallback.record(pool, {
+            kind: events.EVENT_TYPES.MODEL_REFUSAL,
+            userId: req.user.id, appId: session.app_id, sessionId: session.id,
+            requested: selectedModel, served: mayor1.servedModel || selectedModel,
+            category: refusalCategory, source: 'mayor',
+          });
+          await sendStatus(modelFallback.refusalText(selectedModel, refusalCategory), {
+            modelRefusal: { requested: selectedModel, category: refusalCategory },
+          });
+          mayor1.toolUses = [];
+        } else if (!mayorText1.trim() && mayor1.toolUses.length === 0) {
+          // Fallback text when the model jumps straight to a tool_use
+          // with no preamble — the user otherwise stares at a silent
+          // "Thinking…" until CC spins up, which looks broken.
           mayorText1 = '_(Mayor returned no response — try sending again.)_';
           send('token', { text: mayorText1 });
         }
@@ -1660,13 +1705,16 @@ function sessionRoutes(config) {
         // happened and was billed). chat_session_messages still gets
         // an assistant row only when there's actual reasoning text;
         // an empty assistant message would clutter the chat history.
-        const costCents1 = mayor1.usage ? llm.estimateCostCents(mayor1.usage, selectedModel) : 0;
+        // Served-model attribution: a fallback-served turn is priced,
+        // persisted, and displayed as the model that actually answered.
+        const servedModel1 = mayor1.servedModel || selectedModel;
+        const costCents1 = mayor1.usage ? llm.estimateCostCents(mayor1.usage, servedModel1) : 0;
         if (mayorText1.trim()) {
           send('mayor_reasoning', { text: mayorText1 });
           await pool.query(
             `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
              VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
-            [session.id, mayorText1, selectedModel, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1,
+            [session.id, mayorText1, servedModel1, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1,
              JSON.stringify({ ...(suggestions ? { suggestions } : {}), ...(quickReplies ? { quickReplies } : {}) })]
           );
           if (suggestions) send('suggestions', { suggestions });
@@ -1677,7 +1725,7 @@ function sessionRoutes(config) {
         // platform-key spend counts against the daily caps.
         if (mayor1.usage) {
           await limits.recordSpend(pool, req.user.id, costCents1, { byok: !!userApiKey });
-          send('usage', { costCents: costCents1, model: selectedModel, byok: !!userApiKey });
+          send('usage', { costCents: costCents1, model: servedModel1, byok: !!userApiKey });
         }
 
         // Pick which tool the Mayor invoked, with server-side priority
@@ -1893,6 +1941,7 @@ function sessionRoutes(config) {
           onToken: (text) => send('token', { text }),
           apiKey: userApiKey,
         });
+        await noteModelFallback(mayor2);
 
         // Quick-reply pills (#285): the wrap-up reflects the final post-build
         // state, so this is where dispatch turns get their pills. The
@@ -1906,7 +1955,22 @@ function sessionRoutes(config) {
           stopReason: mayor2.stopReason,
           preview: mayorText2.substring(0, 200),
         });
-        if (!mayorText2.trim()) {
+        if (mayor2.stopReason === 'refusal') {
+          // The wrap-up itself was refused end-to-end. The dispatched
+          // work already happened — record it and substitute an honest
+          // line rather than leaving the build unexplained.
+          const refusalCategory2 = (mayor2.stopDetails && mayor2.stopDetails.category) || null;
+          await modelFallback.record(pool, {
+            kind: events.EVENT_TYPES.MODEL_REFUSAL,
+            userId: req.user.id, appId: session.app_id, sessionId: session.id,
+            requested: selectedModel, served: mayor2.servedModel || selectedModel,
+            category: refusalCategory2, source: 'mayor',
+          });
+          if (!mayorText2.trim()) {
+            mayorText2 = '_The wrap-up was declined by the model\'s safety classifiers — the dispatched work above still completed; see the status messages for the outcome._';
+            send('token', { text: mayorText2 });
+          }
+        } else if (!mayorText2.trim()) {
           // Cheap guard: we still want to show *something* after the
           // tool runs, even if the Mayor produces no wrap-up text.
           if (toolResult.isError) {
@@ -1924,16 +1988,17 @@ function sessionRoutes(config) {
         }
         send('mayor_reasoning', { text: mayorText2 });
 
-        const costCents2 = llm.estimateCostCents(mayor2.usage, selectedModel);
+        const servedModel2 = mayor2.servedModel || selectedModel;
+        const costCents2 = llm.estimateCostCents(mayor2.usage, servedModel2);
         await pool.query(
           `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
            VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
-          [session.id, mayorText2, selectedModel, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2,
+          [session.id, mayorText2, servedModel2, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2,
            JSON.stringify(quickReplies2 ? { quickReplies: quickReplies2 } : {})]
         );
         if (quickReplies2) send('quick_replies', { replies: quickReplies2 });
         await limits.recordSpend(pool, req.user.id, costCents2, { byok: !!userApiKey });
-        send('usage', { costCents: costCents2, model: selectedModel, byok: !!userApiKey });
+        send('usage', { costCents: costCents2, model: servedModel2, byok: !!userApiKey });
       } catch (err) {
         activeWorkers.delete(session.id);
         workerProgress.clear(session.id);
@@ -2993,12 +3058,34 @@ async function runHeadlessSession({
   const fakeReq = { user: { id: user.id, username: user.username } };
   const fakeRes = { write() {} };
 
-  const debitMayorUsage = async (usage) => {
+  const debitMayorUsage = async (usage, servedModel) => {
     if (!usage) return;
-    const cost = llm.estimateCostCents(usage, selectedModel);
+    const billModel = servedModel || selectedModel;
+    const cost = llm.estimateCostCents(usage, billModel);
     await limits.recordSpend(pool, user.id, cost, { byok: !!userApiKey });
-    send('usage', { costCents: cost, model: selectedModel, byok: !!userApiKey });
+    send('usage', { costCents: cost, model: billModel, byok: !!userApiKey });
     return cost;
+  };
+
+  // Fable 5 classifier fallback: same once-per-run notice + per-call
+  // admin record as the interactive chat handler.
+  let fallbackNoticed = false;
+  const noteModelFallback = async (result) => {
+    if (!result || !result.fallbackServed) return;
+    const requested = selectedModel;
+    const served = result.servedModel || llm.FALLBACK_TARGET_MODEL;
+    const category = (result.stopDetails && result.stopDetails.category) || null;
+    await modelFallback.record(pool, {
+      kind: events.EVENT_TYPES.MODEL_FALLBACK,
+      userId: user.id, appId: session.app_id, sessionId: session.id,
+      requested, served, category, source: 'headless',
+    });
+    if (!fallbackNoticed) {
+      fallbackNoticed = true;
+      await sendStatus(modelFallback.noticeText(requested, served, category), {
+        modelFallback: { requested, served, category },
+      });
+    }
   };
 
   let outcome = 'question';
@@ -3042,6 +3129,7 @@ async function runHeadlessSession({
         tools,
         apiKey: userApiKey,
       });
+      await noteModelFallback(mayor1);
 
       const dataCalls = mayor1.toolUses.filter((t) => DATA_TOOL_NAMES.has(t.name));
       // suggest_answers (#32) is terminal here too — same dangling-
@@ -3052,7 +3140,7 @@ async function runHeadlessSession({
       if (!dataCalls.length || hasTerminalTool || dataIters >= MAYOR_DATA_TOOLS_MAX_ITERS) break;
       dataIters += 1;
 
-      await debitMayorUsage(mayor1.usage);
+      await debitMayorUsage(mayor1.usage, mayor1.servedModel);
       const dataResults = await Promise.all(
         dataCalls.map((tc) => resolveDataToolResult(tc, repoOwner, repoName))
       );
@@ -3070,22 +3158,41 @@ async function runHeadlessSession({
       ];
     }
 
+    // Whole-chain refusal (mirrors the interactive handler): record it,
+    // persist an explicit status, and clear the tool calls so the run
+    // finalizes on the no-dispatch path instead of acting on the
+    // declined model's truncated tool_use blocks.
+    if (mayor1.stopReason === 'refusal') {
+      const refusalCategory = (mayor1.stopDetails && mayor1.stopDetails.category) || null;
+      await modelFallback.record(pool, {
+        kind: events.EVENT_TYPES.MODEL_REFUSAL,
+        userId: user.id, appId: session.app_id, sessionId: session.id,
+        requested: selectedModel, served: mayor1.servedModel || selectedModel,
+        category: refusalCategory, source: 'headless',
+      });
+      await sendStatus(modelFallback.refusalText(selectedModel, refusalCategory), {
+        modelRefusal: { requested: selectedModel, category: refusalCategory },
+      });
+      mayor1.toolUses = [];
+    }
+
     const mayorText1 = stripFakeCompletionMarker(mayor1.text, { sessionId: session.id });
     // Q/A mode (#32): same suggestion handling as the interactive route —
     // persisted on the assistant row so the cloned session a human picks
     // up renders the answer chips. Dropped if a dispatch co-occurred.
     const { suggestions: headlessSuggestions } = resolveSuggestedAnswers(mayor1.toolUses);
-    const costCents1 = mayor1.usage ? llm.estimateCostCents(mayor1.usage, selectedModel) : 0;
+    const servedModel1 = mayor1.servedModel || selectedModel;
+    const costCents1 = mayor1.usage ? llm.estimateCostCents(mayor1.usage, servedModel1) : 0;
     if (mayorText1.trim()) {
       send('mayor_reasoning', { text: mayorText1 });
       await pool.query(
         `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
          VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
-        [session.id, mayorText1, selectedModel, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1,
+        [session.id, mayorText1, servedModel1, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1,
          JSON.stringify(headlessSuggestions ? { suggestions: headlessSuggestions } : {})]
       );
     }
-    await debitMayorUsage(mayor1.usage);
+    await debitMayorUsage(mayor1.usage, mayor1.servedModel);
 
     const scoutCall = mayor1.toolUses.find((t) => t.name === 'dispatch_scout');
     const dispatchCall = mayor1.toolUses.find((t) => t.name === 'dispatch_claude_code');
@@ -3189,10 +3296,12 @@ async function runHeadlessSession({
           tools: [DISPATCH_TOOL],
           apiKey: userApiKey,
         });
+        await noteModelFallback(mayor2);
+        const servedModel2 = mayor2.servedModel || selectedModel;
         const buildCall = mayor2.toolUses.find((t) => t.name === 'dispatch_claude_code');
         const strayCalls = mayor2.toolUses.filter((t) => t.name !== 'dispatch_claude_code');
         const mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
-        const costCents2 = llm.estimateCostCents(mayor2.usage, selectedModel);
+        const costCents2 = llm.estimateCostCents(mayor2.usage, servedModel2);
 
         if (!mayor2.toolUses.length) {
           // Text only. Without open Questions the decision text IS the
@@ -3214,9 +3323,9 @@ async function runHeadlessSession({
           await pool.query(
             `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
              VALUES ($1, 'assistant', $2, $3, $4, $5)`,
-            [session.id, finalText, selectedModel, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2]
+            [session.id, finalText, servedModel2, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2]
           );
-          await debitMayorUsage(mayor2.usage);
+          await debitMayorUsage(mayor2.usage, mayor2.servedModel);
         } else {
           // The Mayor called a tool — persist its stated rationale first
           // (same text-plus-dispatch pattern phase-1 uses).
@@ -3225,10 +3334,10 @@ async function runHeadlessSession({
             await pool.query(
               `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
                VALUES ($1, 'assistant', $2, $3, $4, $5)`,
-              [session.id, mayorText2, selectedModel, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2]
+              [session.id, mayorText2, servedModel2, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2]
             );
           }
-          await debitMayorUsage(mayor2.usage);
+          await debitMayorUsage(mayor2.usage, mayor2.servedModel);
 
           const decisionToolResults = [];
           if (buildCall && specHasQuestions) {
@@ -3315,6 +3424,7 @@ async function runHeadlessSession({
             tools: [SUGGEST_ANSWERS_TOOL],
             apiKey: userApiKey,
           });
+          await noteModelFallback(mayor3);
           let mayorText3 = stripFakeCompletionMarker(mayor3.text, { sessionId: session.id });
           // #32: persist suggestions only on the question outcome — that's
           // the row a cloned session forwards onto its follow-up to render
@@ -3334,14 +3444,15 @@ async function runHeadlessSession({
                 : '_Spec drafted — the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
           }
           send('mayor_reasoning', { text: mayorText3 });
-          const costCents3 = llm.estimateCostCents(mayor3.usage, selectedModel);
+          const servedModel3 = mayor3.servedModel || selectedModel;
+          const costCents3 = llm.estimateCostCents(mayor3.usage, servedModel3);
           await pool.query(
             `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
              VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
-            [session.id, mayorText3, selectedModel, mayor3.usage.input_tokens + mayor3.usage.output_tokens, costCents3,
+            [session.id, mayorText3, servedModel3, mayor3.usage.input_tokens + mayor3.usage.output_tokens, costCents3,
              JSON.stringify(decisionSuggestions ? { suggestions: decisionSuggestions } : {})]
           );
-          await debitMayorUsage(mayor3.usage);
+          await debitMayorUsage(mayor3.usage, mayor3.servedModel);
         }
       } else {
         // --- Phase 2: Mayor wrap-up (mirrors the chat handler) — scout
@@ -3354,6 +3465,7 @@ async function runHeadlessSession({
           toolChoice: { type: 'none' },
           apiKey: userApiKey,
         });
+        await noteModelFallback(mayor2);
 
         let mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
         if (!mayorText2.trim()) {
@@ -3362,13 +3474,14 @@ async function runHeadlessSession({
             : '_Change committed and pushed — start a session from this auto session to review it and propose it to the group._';
         }
         send('mayor_reasoning', { text: mayorText2 });
-        const costCents2 = llm.estimateCostCents(mayor2.usage, selectedModel);
+        const servedModelW = mayor2.servedModel || selectedModel;
+        const costCents2 = llm.estimateCostCents(mayor2.usage, servedModelW);
         await pool.query(
           `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
            VALUES ($1, 'assistant', $2, $3, $4, $5)`,
-          [session.id, mayorText2, selectedModel, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2]
+          [session.id, mayorText2, servedModelW, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2]
         );
-        await debitMayorUsage(mayor2.usage);
+        await debitMayorUsage(mayor2.usage, mayor2.servedModel);
       }
     }
 
@@ -3755,6 +3868,17 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
     model: selectedModel,
     apiKey: userApiKey,
   });
+  // Fable 5 fallback: admin record only on this rare resume path (there's
+  // no sendStatus plumbing here); attribution below uses the served model.
+  if (mayor2.fallbackServed) {
+    await modelFallback.record(pool, {
+      kind: events.EVENT_TYPES.MODEL_FALLBACK,
+      userId: user.id, appId: session.app_id, sessionId: session.id,
+      requested: selectedModel, served: mayor2.servedModel || llm.FALLBACK_TARGET_MODEL,
+      category: (mayor2.stopDetails && mayor2.stopDetails.category) || null,
+      source: 'headless-resume',
+    });
+  }
 
   let mayorText2 = (mayor2.text || '').trim();
   if (!mayorText2) {
@@ -3766,11 +3890,12 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
           ? '_Change committed and pushed — start a session from this auto session to open the PR._'
           : "_The auto session's dispatch didn't finish successfully — see the status above._";
   }
-  const costCents2 = mayor2.usage ? llm.estimateCostCents(mayor2.usage, selectedModel) : 0;
+  const servedModelR = mayor2.servedModel || selectedModel;
+  const costCents2 = mayor2.usage ? llm.estimateCostCents(mayor2.usage, servedModelR) : 0;
   await pool.query(
     `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
      VALUES ($1, 'assistant', $2, $3, $4, $5)`,
-    [session.id, mayorText2, selectedModel,
+    [session.id, mayorText2, servedModelR,
       mayor2.usage ? mayor2.usage.input_tokens + mayor2.usage.output_tokens : 0, costCents2]
   );
   await limits.recordSpend(pool, user.id, costCents2, { byok: !!userApiKey });
