@@ -3817,6 +3817,12 @@ const DevChat = {
               <select id="dc-model-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">
                 ${modelOptions}
               </select>
+              <input type="file" id="dc-file-input" class="hidden" multiple
+                accept=".png,.jpg,.jpeg,.gif,.webp,.txt,.md,.markdown,.csv,.tsv,.json,.log,.yaml,.yml,.xml,.html,.css,.js,.jsx,.ts,.tsx,.py,.rb,.go,.rs,.java,.sql,.sh,image/png,image/jpeg,image/gif,image/webp">
+              <button type="button" id="dc-attach-btn" title="Attach files — images (PNG/JPEG/GIF/WebP, ≤4 MB) or text files (≤200 KB), up to 4 per message" aria-label="Attach files"
+                class="dc-attach-btn rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-900 text-zinc-500 hover:text-violet-400 hover:border-violet-500 px-1.5 py-1 shrink-0 transition-colors">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+              </button>
               <span class="flex-1"></span>
               <span id="dc-budget" class="text-xs font-mono"></span>
             </div>
@@ -3824,12 +3830,6 @@ const DevChat = {
             <div id="dc-attachments" class="dc-attach-strip"></div>
             <div id="dc-attach-error" class="dc-attach-error hidden"></div>
             <form id="dc-form" class="flex gap-2 items-end">
-              <input type="file" id="dc-file-input" class="hidden" multiple
-                accept=".png,.jpg,.jpeg,.gif,.webp,.txt,.md,.markdown,.csv,.tsv,.json,.log,.yaml,.yml,.xml,.html,.css,.js,.jsx,.ts,.tsx,.py,.rb,.go,.rs,.java,.sql,.sh,image/png,image/jpeg,image/gif,image/webp">
-              <button type="button" id="dc-attach-btn" title="Attach files — images (PNG/JPEG/GIF/WebP, ≤4 MB) or text files (≤200 KB), up to 4 per message" aria-label="Attach files"
-                class="dc-attach-btn rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-900 text-zinc-500 hover:text-violet-400 hover:border-violet-500 px-2 py-2 shrink-0 transition-colors">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-              </button>
               <textarea
                 id="dc-input"
                 rows="1"
