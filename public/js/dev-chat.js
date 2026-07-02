@@ -199,6 +199,11 @@ const DevChat = {
   },
 
   renderBudget() {
+    // #463: budget data just changed (usage event, chat open, key
+    // save/remove) — sync the credits-exhausted banner alongside the
+    // meter. Runs before the meter's own element guard so the banner
+    // clears/appears even when the meter isn't mounted.
+    DevChat._applyCreditsBanner();
     const el = document.getElementById('dc-budget');
     if (!el) return;
     // BYOK (#30/#119/#212): billing is limit-first — the daily platform
@@ -233,9 +238,81 @@ const DevChat = {
     if (!DevChat.budget) return;
     const spent = (DevChat.budget.spentCents / 100).toFixed(2);
     const limit = (DevChat.budget.limitCents / 100).toFixed(2);
+    // #463: exhausted (no key saved) keeps the familiar $spent/$limit
+    // pair — just unmistakably red, with the tooltip pointing at the
+    // BYOK escape hatch. The banner carries the wordy explanation.
+    if (DevChat._creditsExhausted()) {
+      el.innerHTML = `<span title="Your free daily AI credits are used up. Resets at midnight UTC — or add your own Anthropic API key in Settings to keep working."><span class="text-red-500 font-semibold">$${spent}</span><span class="text-red-400">/$${limit}</span></span>`;
+      return;
+    }
     const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
     const color = pct > 80 ? 'text-red-400' : pct > 50 ? 'text-yellow-400' : 'text-emerald-400';
     el.innerHTML = `<span class="${color}">$${spent}</span><span class="text-zinc-600">/$${limit}</span>`;
+  },
+
+  // #463: true when the signed-in user is out of free credits AND has no
+  // BYOK key to spill over to — the only state where AI work is actually
+  // blocked. Key-holders never match (billing continues on their key),
+  // and a missing budget fetch stays quiet rather than guessing.
+  _creditsExhausted() {
+    const b = DevChat.budget;
+    if (!b) return false;
+    if (window.Settings?.state?.hasApiKey) return false;
+    const userOut = typeof b.spentCents === 'number' && typeof b.limitCents === 'number'
+      && b.spentCents >= b.limitCents;
+    const globalOut = typeof b.globalSpentCents === 'number' && typeof b.globalLimitCents === 'number'
+      && b.globalSpentCents >= b.globalLimitCents;
+    return userOut || globalOut;
+  },
+
+  // #463: the credits-exhausted banner (sibling of the sync banner,
+  // #dc-sync-banner). Empty string when the show-condition doesn't hold.
+  _renderCreditsBannerHtml() {
+    if (!DevChat._creditsExhausted()) return '';
+    const b = DevChat.budget;
+    const userOut = b.spentCents >= b.limitCents;
+    const lead = userOut
+      ? 'You&rsquo;ve used up today&rsquo;s free AI credits.'
+      : 'The platform&rsquo;s shared daily AI budget is used up.';
+    return `
+      <div id="dc-credits-banner" class="flex items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-950/30 border-b border-red-200 dark:border-red-900/50 text-xs">
+        <svg class="w-4 h-4 text-red-500 dark:text-red-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
+        </svg>
+        <span class="text-red-800 dark:text-red-200 flex-1"><span class="font-semibold">${lead}</span> Resets at midnight UTC &mdash; or add your own Anthropic API key to keep working right now, billed to your own Anthropic account.</span>
+        <button id="dc-credits-add-key" type="button" class="rounded bg-red-600 hover:bg-red-500 text-white px-2 py-1 text-xs font-medium shrink-0">Add API key</button>
+      </div>`;
+  },
+
+  // Swap/insert/remove the banner in place (mirror of _applySyncBanner,
+  // minus the full re-render fallback: the banner slot sits directly
+  // above .dc-session-body, so we can insert without re-rendering and
+  // avoid disturbing an in-flight stream).
+  _applyCreditsBanner() {
+    const existing = document.getElementById('dc-credits-banner');
+    const html = DevChat.currentSession ? DevChat._renderCreditsBannerHtml() : '';
+    if (existing) {
+      if (html) {
+        existing.outerHTML = html;
+        DevChat._wireCreditsBanner();
+      } else {
+        existing.remove();
+      }
+    } else if (html) {
+      const body = document.querySelector('.dc-session-body');
+      if (body) {
+        body.insertAdjacentHTML('beforebegin', html);
+        DevChat._wireCreditsBanner();
+      }
+    }
+  },
+
+  _wireCreditsBanner() {
+    const btn = document.getElementById('dc-credits-add-key');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      if (window.Settings) Settings.open({ focusApiKey: true });
+    });
   },
 
   async loadSessions(appSlug) {
@@ -905,7 +982,22 @@ const DevChat = {
       if (res.status === 429) {
         const data = await res.json();
         DevChat._removeSpinner();
-        DevChat.messages.push({ role: 'assistant', content: `**Rate limit reached.** ${data.error || 'Try again later.'}`, created_at: new Date().toISOString() });
+        // #463: budget exhaustion is not rate limiting — tell the user
+        // what actually happened and point at the BYOK escape hatch.
+        // Only the server's billing path sets code: 'budget_exceeded';
+        // chatLimiter throttles keep the old wording.
+        if (data.code === 'budget_exceeded') {
+          DevChat.messages.push({
+            role: 'assistant',
+            content: `**You've used up today's free AI credits.** ${data.error || 'They reset at midnight UTC.'}\n\nOpen Settings from the menu (or use the banner above) to add your key — your work then bills to your own Anthropic account.`,
+            created_at: new Date().toISOString(),
+          });
+          // Refresh the meter + banner right away so the "out of
+          // credits" state is visible without waiting for a usage event.
+          DevChat.refreshBudget();
+        } else {
+          DevChat.messages.push({ role: 'assistant', content: `**Rate limit reached.** ${data.error || 'Try again later.'}`, created_at: new Date().toISOString() });
+        }
         DevChat._finishStreaming();
         // #370: the cap rejected the send before any turn ran. Put the
         // text back in the composer (editable, draft re-saved) and drop
@@ -3774,6 +3866,7 @@ const DevChat = {
       </div>
       ${DevChat._renderSyncBannerHtml(DevChat.currentSession)}
       ${DevChat._renderNewChangeBannerHtml(DevChat.currentSession)}
+      ${DevChat._renderCreditsBannerHtml()}
       <div class="dc-session-body flex-1 flex min-h-0">
         <div id="dc-tab-chat" class="dc-chat-pane flex-1 flex flex-col min-h-0">
           <div id="dc-messages" class="dc-messages-container flex-1 overflow-y-auto py-2"></div>
@@ -3811,6 +3904,10 @@ const DevChat = {
     DevChat.renderMessages();
     DevChat._renderQuickReplies();
     DevChat._wireQuickReplies();
+    // #463: the template above may have rendered the credits banner from
+    // the cached budget — wire its button now; refreshBudget() re-syncs
+    // banner + meter once fresh figures land.
+    DevChat._wireCreditsBanner();
     DevChat.refreshBudget();
     // Attach tracker first so the scroll set below is observed, then
     // restore the session's last known position (or fall through to

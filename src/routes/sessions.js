@@ -507,8 +507,10 @@ function sessionRoutes(config) {
       // Billed to the clicking user, limit-first (#212): their shared
       // daily allowance while it has headroom, their BYOK key once it's
       // exhausted — exactly like a chat turn. No headroom + no key → 429.
+      // The code lets the client tell budget exhaustion apart from a
+      // rate-limit 429 (#463).
       const billing = await limits.resolveBillingPath(pool, config.jwtSecret, req.user.id);
-      if (billing.error) return res.status(429).json({ error: billing.error });
+      if (billing.error) return res.status(429).json({ error: billing.error, code: 'budget_exceeded' });
       const userApiKey = billing.apiKey;
 
       // Headless sessions don't count against the clicking user's session
@@ -1216,9 +1218,10 @@ function sessionRoutes(config) {
       // the whole turn — null = platform-billed, non-null = the user's
       // own key — so every recordSpend(..., { byok: !!userApiKey })
       // below routes the cost to the right bucket. Allowance gone and
-      // no key on file → the same 429 as always.
+      // no key on file → the same 429 as always, tagged with a code so
+      // the client can tell it apart from a chatLimiter throttle (#463).
       const billing = await limits.resolveBillingPath(pool, config.jwtSecret, req.user.id);
-      if (billing.error) return res.status(429).json({ error: billing.error });
+      if (billing.error) return res.status(429).json({ error: billing.error, code: 'budget_exceeded' });
       const userApiKey = billing.apiKey;
 
       await pool.query(
