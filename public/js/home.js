@@ -820,6 +820,17 @@ const Home = {
     let grabY = 0;
     let ghostLeft = 0;
     let ghostTop = 0;
+    // Latest pointer position, kept fresh on every move so the
+    // edge auto-scroll loop can re-run the hit-test while the finger
+    // holds still against the edge and the content scrolls underneath.
+    let lastClientX = 0;
+    let lastClientY = 0;
+    // rAF handle for the edge auto-scroll loop (null when not scrolling).
+    let autoScrollRAF = null;
+    // The scrollable viewport the favorites live in (#home-screen has
+    // overflow-y-auto). Falling back to the document scroller keeps the
+    // feature working if the markup ever changes.
+    const scrollEl = listEl.closest('.overflow-y-auto') || document.scrollingElement;
 
     const starredCards = () =>
       [...listEl.querySelectorAll('.app-card[data-starred="true"]')];
@@ -952,8 +963,97 @@ const Home = {
       });
     };
 
+    // Move the drop slot to wherever (x, y) points. Hit-tests against
+    // the other starred cards (the ghost is pointer-events: none, so it
+    // never occludes this). Hits on "All Apps" cards, the create tile,
+    // or section headers fall through (no [data-starred] ancestor) and
+    // the slot stays put — drops are constrained to the Starred section
+    // by construction. Shared by pointer moves and the auto-scroll loop.
+    const updateSlot = (x, y) => {
+      const over = document.elementFromPoint(x, y)
+        ?.closest('.app-card[data-starred="true"]');
+      if (!over || over === card || !listEl.contains(over)) return;
+      // Insert before when the pointer is in the leading half of the
+      // hovered card, after otherwise. "Leading" follows reading order:
+      // the left half at 2-3 grid columns, the top half when the grid is
+      // single-column (card spans the full row).
+      const rect = over.getBoundingClientRect();
+      const multiCol = rect.width < listEl.getBoundingClientRect().width * 0.9;
+      const before = multiCol
+        ? x < rect.left + rect.width / 2
+        : y < rect.top + rect.height / 2;
+      // Skip no-op reinserts: before()/after() always remove + re-add the
+      // node even when it already sits in the target slot, which would
+      // churn layout and re-fire FLIP for nothing.
+      if (before) {
+        if (card.nextElementSibling !== over) flipReorder(() => over.before(card));
+      } else {
+        if (over.nextElementSibling !== card) flipReorder(() => over.after(card));
+      }
+    };
+
+    // ===== Edge auto-scroll (touch) =====
+    // When the finger nears the top/bottom of the scroll viewport, pan
+    // the page so favorites below/above the fold can be reordered past
+    // the visible area. The distance the finger sits INTO the edge zone
+    // sets the speed (closer to the edge = faster), so a gentle hover
+    // creeps and pressing right up to the edge races.
+    const EDGE_ZONE = 72;      // px from an edge where auto-scroll kicks in
+    const MAX_SCROLL_STEP = 18; // px/frame at the very edge
+
+    // Signed px/frame to scroll for a finger at viewport-y `y`
+    // (negative = up), 0 when outside both edge zones.
+    const edgeScrollStep = (y) => {
+      const rect = scrollEl === document.scrollingElement
+        ? { top: 0, bottom: window.innerHeight }
+        : scrollEl.getBoundingClientRect();
+      if (y < rect.top + EDGE_ZONE) {
+        const t = Math.min(1, (rect.top + EDGE_ZONE - y) / EDGE_ZONE);
+        return -Math.ceil(t * MAX_SCROLL_STEP);
+      }
+      if (y > rect.bottom - EDGE_ZONE) {
+        const t = Math.min(1, (y - (rect.bottom - EDGE_ZONE)) / EDGE_ZONE);
+        return Math.ceil(t * MAX_SCROLL_STEP);
+      }
+      return 0;
+    };
+
+    const autoScrollTick = () => {
+      if (!dragging) { autoScrollRAF = null; return; }
+      const step = edgeScrollStep(lastClientY);
+      if (step === 0) { autoScrollRAF = null; return; }
+      const before = scrollEl.scrollTop;
+      scrollEl.scrollTop += step;
+      // Only if the container actually moved (not already pinned at
+      // top/bottom) does the card under the stationary finger change —
+      // re-run the hit-test so the slot follows the scrolling content.
+      // The ghost is fixed-position and pinned to the finger, so it
+      // needs no update while the finger holds still.
+      if (scrollEl.scrollTop !== before) updateSlot(lastClientX, lastClientY);
+      autoScrollRAF = requestAnimationFrame(autoScrollTick);
+    };
+
+    // Start the loop if the finger is in an edge zone, stop it otherwise.
+    // Touch-only: desktop mouse drag is intentionally left unchanged.
+    const syncAutoScroll = () => {
+      if (isTouch && edgeScrollStep(lastClientY) !== 0) {
+        if (autoScrollRAF == null) autoScrollRAF = requestAnimationFrame(autoScrollTick);
+      } else if (autoScrollRAF != null) {
+        cancelAnimationFrame(autoScrollRAF);
+        autoScrollRAF = null;
+      }
+    };
+
+    const stopAutoScroll = () => {
+      if (autoScrollRAF != null) {
+        cancelAnimationFrame(autoScrollRAF);
+        autoScrollRAF = null;
+      }
+    };
+
     const detach = () => {
       clearTimeout(longPressTimer);
+      stopAutoScroll();
       listEl.removeEventListener('pointermove', onMove);
       listEl.removeEventListener('pointerup', onUp);
       listEl.removeEventListener('pointercancel', onCancel);
@@ -1007,33 +1107,12 @@ const Home = {
         if (!dragging) return;
       }
       ev.preventDefault();
+      lastClientX = ev.clientX;
+      lastClientY = ev.clientY;
       moveGhost(ev.clientX, ev.clientY);
-      // Hit-test against the other starred cards (the ghost is
-      // pointer-events: none, so it never occludes this). Hits on
-      // "All Apps" cards, the create tile, or section headers fall
-      // through (no [data-starred] ancestor) and the slot stays where
-      // it is — drops are constrained to the Starred section by
-      // construction.
-      const over = document.elementFromPoint(ev.clientX, ev.clientY)
-        ?.closest('.app-card[data-starred="true"]');
-      if (!over || over === card || !listEl.contains(over)) return;
-      // Insert before when the pointer is in the leading half of the
-      // hovered card, after otherwise. "Leading" follows reading
-      // order: the left half at 2-3 grid columns, the top half when
-      // the grid is single-column (card spans the full row).
-      const rect = over.getBoundingClientRect();
-      const multiCol = rect.width < listEl.getBoundingClientRect().width * 0.9;
-      const before = multiCol
-        ? ev.clientX < rect.left + rect.width / 2
-        : ev.clientY < rect.top + rect.height / 2;
-      // Skip no-op reinserts: before()/after() always remove + re-add
-      // the node even when it already sits in the target slot, which
-      // would churn layout and re-fire FLIP for nothing.
-      if (before) {
-        if (card.nextElementSibling !== over) flipReorder(() => over.before(card));
-      } else {
-        if (over.nextElementSibling !== card) flipReorder(() => over.after(card));
-      }
+      updateSlot(ev.clientX, ev.clientY);
+      // Start/stop edge auto-scroll based on where the finger now sits.
+      syncAutoScroll();
     };
 
     const onUp = (ev) => {
