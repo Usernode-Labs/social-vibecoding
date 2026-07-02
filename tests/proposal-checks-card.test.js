@@ -127,13 +127,42 @@ test('passing with no result detail renders nothing (the green badge is enough)'
   assert.equal(AppView._checksDetailHtml(baseProposal({ check_state: 'passing', test_results: [] })), '');
 });
 
+// #461: an explicit terminal 'skipped' verdict renders a grey, non-blocking
+// badge + detail carrying the recorded reason, with the manual re-run still
+// offered so an owner/admin can force a real run.
+test('check_state="skipped" renders a grey non-blocking badge with the reason', () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._renderProposalCard(baseProposal({
+    check_state: 'skipped', test_results: [],
+    check_error_detail: 'branch has no commits beyond main — nothing to test',
+  }));
+  assert.match(html, /Checks skipped/);
+  assert.match(html, /gc-checks-running-badge/);
+  assert.match(html, /does not block the merge/);
+  assert.doesNotMatch(html, /dc-status-spinner-arc.*Checks skipped/);
+});
+
+test('the checks detail shows a skipped block with the reason and the re-run button for the owner', () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._checksDetailHtml(baseProposal({
+    check_state: 'skipped', test_results: [], user_id: ME,
+    check_error_detail: 'branch has no commits beyond main — nothing to test',
+  }));
+  assert.match(html, /Checks skipped/);
+  assert.match(html, /nothing to test/);
+  assert.match(html, /does not block the merge/);
+  assert.match(html, /Re-run checks/);
+});
+
 test('_proposalPinRank pins failing/error proposals above ordinary ones', () => {
   const AppView = makeAppView(ME);
   assert.equal(AppView._proposalPinRank(baseProposal({ status: 'merging' })), 0);
   assert.equal(AppView._proposalPinRank(baseProposal({ merge_conflict_state: 'failed' })), 2);
   assert.equal(AppView._proposalPinRank(baseProposal({ check_state: 'failing' })), 3);
   assert.equal(AppView._proposalPinRank(baseProposal({ check_state: 'error' })), 3);
-  // A passing / pending proposal is not pinned by checks.
+  // A passing / pending / skipped proposal is not pinned by checks —
+  // 'skipped' (#461) is not a problem state.
   assert.equal(AppView._proposalPinRank(baseProposal({ check_state: 'passing' })), 4);
   assert.equal(AppView._proposalPinRank(baseProposal({ check_state: 'pending' })), 4);
+  assert.equal(AppView._proposalPinRank(baseProposal({ check_state: 'skipped' })), 4);
 });

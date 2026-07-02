@@ -56,10 +56,28 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   const { broadcastGlobal, pushSessionUpdate } = require('./ws');
 
   const [, owner, repo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-  if (!owner || !repo) return 'skipped';
+  if (!owner || !repo) {
+    // #461: every no-op below used to return silently, leaving check_state
+    // NULL — the merge gate blocks NULL as "still running its tests" and the
+    // stuck-checks sweeper re-picked the row every pass, re-skipped, forever.
+    // Record an explicit terminal verdict instead: 'skipped' (gate-passing)
+    // when checks genuinely cannot/need not run, 'error' (retryable with
+    // backoff) when the cause is transient.
+    await recordChecksSkipped({
+      config, pool, session, commitSha: session.checks_commit_sha || null,
+      reason: 'checks unavailable — GitHub is not configured',
+    });
+    return 'skipped';
+  }
 
   const pat = process.env.GITHUB_BOT_TOKEN;
-  if (!pat) return 'skipped';
+  if (!pat) {
+    await recordChecksSkipped({
+      config, pool, session, commitSha: session.checks_commit_sha || null,
+      reason: 'checks unavailable — GitHub is not configured',
+    });
+    return 'skipped';
+  }
 
   const { Octokit } = await import('@octokit/rest');
   const ok = new Octokit({ auth: pat });
@@ -72,9 +90,30 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
       owner, repo, base: 'main', head: session.branch_name,
     });
     compare = data;
-  } catch { return 'skipped'; }
+  } catch (err) {
+    // Transient (API hiccup) or a deleted branch — record a retryable
+    // 'error' verdict so the existing exponential backoff +
+    // CHECK_MAX_AUTO_RETRIES bound the retries instead of the old silent
+    // infinite skip loop (#461).
+    const visuals = require('./visuals');
+    await visuals.storeChecks(
+      pool, session.id, session.checks_commit_sha || null,
+      { state: 'error', results: [] },
+      `could not compare ${session.branch_name} with main: ${err.message}`.slice(0, 280)
+    ).catch((e) => log.warn('staging-recovery', 'compare-failure verdict write failed', {
+      sessionId: session.id, err: e.message,
+    }));
+    return 'skipped';
+  }
 
-  if (compare.ahead_by === 0) return 'skipped';
+  if (compare.ahead_by === 0) {
+    await recordChecksSkipped({
+      config, pool, session,
+      commitSha: compare.base_commit?.sha || session.checks_commit_sha || null,
+      reason: 'branch has no commits beyond main — nothing to test',
+    });
+    return 'skipped';
+  }
 
   log.info('staging-recovery', 'Rebuilding staging preview', {
     sessionId: session.id, status: session.status, branch: session.branch_name,
@@ -185,6 +224,31 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   return 'built';
 }
 
+// #461: record a terminal, gate-passing 'skipped' checks verdict (with its
+// reason) for a session whose checks genuinely cannot / need not run, then
+// tell open clients and re-drive the auto-merge drain — a proposal whose vote
+// already passed should merge the moment its checks resolve to 'skipped',
+// exactly as it would on 'passing'. Best-effort: never throws.
+async function recordChecksSkipped({ config, pool, session, commitSha, reason }) {
+  const visuals = require('./visuals');
+  try {
+    await visuals.storeChecksSkipped(pool, session.id, commitSha, reason);
+  } catch (err) {
+    log.warn('staging-recovery', 'skipped-verdict write failed', {
+      sessionId: session.id, err: err.message,
+    });
+    return;
+  }
+  log.info('staging-recovery', 'Checks marked skipped', { sessionId: session.id, reason });
+  try {
+    const { broadcastGlobal } = require('./ws');
+    broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'checks_ready', state: 'skipped' });
+  } catch (err) {
+    log.warn('staging-recovery', 'skipped-verdict notify failed', { sessionId: session.id, err: err.message });
+  }
+  visuals.maybeAutoMergeAfterChecks(config, pool, session, 'skipped');
+}
+
 // #237: record a staging build/boot failure as a terminal proposal-checks
 // 'error' verdict (with a concise reason) and nudge the proposal owner — once
 // per failure streak — so an app that crashes only in staging no longer
@@ -288,4 +352,10 @@ module.exports = {
   stagingNeedsRebuild,
   rebuildSessionStaging,
   recheckSessionChecks,
+  // #461: exported so the dev-turn tails (routes/sessions.js) and the
+  // post-promote build catch (routes/votes.js) can record an 'error'
+  // verdict when their staging build fails, instead of leaving the
+  // previous commit's check_state in place.
+  recordStagingBootFailure,
+  recordChecksSkipped,
 };

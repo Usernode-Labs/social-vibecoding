@@ -431,6 +431,30 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
   );
 }
 
+// #461: record an explicit terminal 'skipped' verdict for a proposal whose
+// checks genuinely cannot / need not run (branch has no commits beyond main,
+// GitHub not configured). The merge gate treats 'skipped' like 'passing', so
+// this is the "either run, or skipped from running" half of #461 — before it,
+// these paths left check_state NULL and the proposal blocked on "still
+// running its tests" forever. `reason` lands in check_error_detail (the same
+// column the badge tooltip / gate message already surface). Clears the
+// failure-streak bookkeeping exactly like a real passing/failing verdict.
+async function storeChecksSkipped(pool, sessionId, commitSha, reason) {
+  await pool.query(
+    `UPDATE chat_sessions
+       SET check_state = 'skipped', test_results = '[]', checks_commit_sha = $1,
+           checks_checked_at = NOW(),
+           check_error_detail = $2,
+           consecutive_check_failures = 0,
+           first_check_failure_at = NULL,
+           last_check_failure_at = NULL,
+           check_next_retry_at = NULL,
+           check_error_notified_at = NULL
+     WHERE id = $3`,
+    [commitSha || null, reason || null, sessionId]
+  );
+}
+
 // Set 'pending' the instant a (re)check starts so a stale 'passing' can't
 // slip through the merge gate while the fresh build is being tested.
 //
@@ -663,16 +687,18 @@ function resolveCaptureScale(row) {
 // reach a terminal verdict, so a PR that already had a winning vote merges
 // the moment its checks turn green (the "checks were the last thing to pass"
 // ordering the vote-triggered path never covered). A no-op unless the verdict
-// is 'passing', GitHub is wired up (staging / standalone runs have nothing to
-// merge), and the session is STILL 'promoted' — the capture can take minutes,
-// so we re-read the row rather than trust the in-memory snapshot (it may have
-// been voted, force-merged, or archived meanwhile). The drain owns all the
-// real gating (majority, locked-app admin-yes, behind-main, check_state, the
-// atomic promoted→merging claim); this is purely an extra trigger, never a
-// second merge path. Fire-and-forget and best-effort: any failure is logged,
-// never thrown, so the capture pipeline's contract is unchanged.
+// is 'passing' (or, since #461, 'skipped' — the gate treats both as
+// non-blocking), GitHub is wired up (staging / standalone runs have nothing
+// to merge), and the session is STILL 'promoted' — the capture can take
+// minutes, so we re-read the row rather than trust the in-memory snapshot
+// (it may have been voted, force-merged, or archived meanwhile). The drain
+// owns all the real gating (majority, locked-app admin-yes, behind-main,
+// check_state, the atomic promoted→merging claim); this is purely an extra
+// trigger, never a second merge path. Fire-and-forget and best-effort: any
+// failure is logged, never thrown, so the capture pipeline's contract is
+// unchanged.
 function maybeAutoMergeAfterChecks(config, pool, session, state) {
-  if (state !== 'passing' || !github.isEnabled()) return;
+  if ((state !== 'passing' && state !== 'skipped') || !github.isEnabled()) return;
   pool.query(
     `SELECT status, app_id FROM chat_sessions WHERE id = $1`,
     [session.id]
@@ -1138,6 +1164,7 @@ module.exports = {
   parseTests,
   classifyTests,
   storeChecks,
+  storeChecksSkipped,
   setChecksPending,
   summarizeBootFailure,
   maybeAutoMergeAfterChecks,

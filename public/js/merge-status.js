@@ -125,6 +125,18 @@
         title: 'Automated tests are still running on the staging build — merge is blocked until they pass.',
       });
     }
+    // 6b — checks explicitly skipped (#461): there was genuinely nothing to
+    // test (branch level with main, or no GitHub wired up). Terminal and
+    // NON-blocking — the gate treats it like 'passing' — so grey, no
+    // spinner, with the recorded reason in the tooltip.
+    if (check === 'skipped') {
+      return descriptor('checks_skipped', 'Checks skipped', 'neutral', false, {
+        votes: votes,
+        title: p.check_error_detail
+          ? ('Automated checks were skipped — ' + p.check_error_detail + '. This does not block the merge.')
+          : 'Automated checks were skipped — there was nothing to test. This does not block the merge.',
+      });
+    }
     // 7 — behind main (or a fresh conflict snapshot, which always carries
     // behind_main ≥ 1 while the auto-resolver runs).
     if (behind > 0 || mcs === 'behind' || mcs === 'conflict') {
