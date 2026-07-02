@@ -2605,6 +2605,17 @@ function sessionRoutes(config) {
           // gate keys off it); otherwise the warm is refused and the first
           // click hits a cold hostname.
           await staging.warmStagingCert(session, result.hostname, result.stagingUrl);
+          // #461: run the proposal checks against the fresh build, matching
+          // every other staging-deploy path. Before this, a preview built
+          // via this button left check_state NULL — the promote path then
+          // skipped its own build+capture (staging_url already set) and the
+          // proposal sat merge-blocked on "still running its tests" until a
+          // sweep happened to heal it. Fire-and-forget; captureForSession
+          // owns all failure handling and is _inFlight-guarded.
+          visuals.captureForSession(config, session, app, commitHash === 'latest' ? null : commitHash, result, { send: () => {} })
+            .catch((err) => log.warn('visuals', 'Deploy-staging capture failed (non-fatal)', {
+              sessionId: session.id, err: err.message,
+            }));
         })
         .catch((err) => {
           log.error('sessions', 'Staging deploy failed', { sessionId: session.id, err: err.message });
@@ -3778,6 +3789,11 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
         const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
         let stagingResult = null;
         let stagingErr = null;
+        // #461: pend the checks for the NEW commit before the build, so the
+        // previous commit's verdict (e.g. a stale 'passing') can't satisfy
+        // the merge gate while this build runs — or after it fails.
+        await visuals.setChecksPending(pool, session.id, result.sha)
+          .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
         try {
           stagingResult = await staging.buildAndDeployStaging(config, session, app, result.sha);
         } catch (e) {
@@ -3811,6 +3827,11 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
             [session.id, 'Staging build failed',
               JSON.stringify({ error: errMsg, changesReady: true, stagingFailed: true, stagingErrorName: errName, stagingMissingKeys: missingKeys, prNumber: null })]
           ).catch(() => {});
+          // #461: record the failure as a terminal 'error' checks verdict
+          // (with reason + once-per-streak owner nudge) instead of leaving
+          // the pending state to look "still running" forever.
+          await stagingRecovery.recordStagingBootFailure({ config, pool, session, commitHash: result.sha, err: stagingErr })
+            .catch((e) => log.warn('staging', 'recordStagingBootFailure failed (non-fatal)', { sessionId: session.id, err: e.message }));
           log.warn('staging', 'Resumed headless staging build failed (non-fatal — commit pushed)', {
             sessionId: session.id, errName, err: errMsg, missingKeys,
           });
@@ -5282,6 +5303,11 @@ path: /another/changed/view
       const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
       let stagingResult = null;
       let stagingErr = null;
+      // #461: pend the checks for the NEW commit before the build starts, so
+      // the previous commit's verdict (e.g. a stale 'passing') can't satisfy
+      // the merge gate while this build runs — or after it fails.
+      await visuals.setChecksPending(pool, session.id, commitHash)
+        .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
       try {
         stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
       } catch (e) {
@@ -5353,6 +5379,11 @@ path: /another/changed/view
           `Staging preview failed to build (non-fatal — commit ${commitHash.substring(0, 8)} is pushed; `
           + `a preview can be built from a cloned session).\n\n${fix}`
         );
+        // #461: record the failure as a terminal 'error' checks verdict
+        // (with reason + once-per-streak owner nudge) instead of leaving
+        // the pending state to look "still running" forever.
+        await stagingRecovery.recordStagingBootFailure({ config, pool, session, commitHash, err: stagingErr })
+          .catch((e) => log.warn('staging', 'recordStagingBootFailure failed (non-fatal)', { sessionId: session.id, err: e.message }));
         log.error('staging', 'Headless staging build failed (non-fatal)', {
           sessionId: session.id, slug: app.slug, errName, err: errMsg, missingKeys,
         });
@@ -5429,6 +5460,11 @@ path: /another/changed/view
       // "Chat error" toast and has no breadcrumb to follow.
       let stagingResult = null;
       let stagingErr = null;
+      // #461: pend the checks for the NEW commit before the build starts, so
+      // the previous commit's verdict (e.g. a stale 'passing') can't satisfy
+      // the merge gate while this build runs — or after it fails.
+      await visuals.setChecksPending(pool, session.id, commitHash)
+        .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
       try {
         stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
       } catch (e) {
@@ -5560,6 +5596,12 @@ path: /another/changed/view
           prUrl: session.pr_url || null,
         });
         summaryParts.push(message);
+
+        // #461: record the failure as a terminal 'error' checks verdict
+        // (with reason + once-per-streak owner nudge) instead of leaving
+        // the pending state to look "still running" forever.
+        await stagingRecovery.recordStagingBootFailure({ config, pool, session, commitHash, err: stagingErr })
+          .catch((e) => log.warn('staging', 'recordStagingBootFailure failed (non-fatal)', { sessionId: session.id, err: e.message }));
 
         log.error('staging', 'Staging build failed (surfaced to Mayor)', {
           sessionId: session.id,

@@ -50,12 +50,14 @@ function loadVotes() {
     adminApproval: require.resolve('../src/services/admin-approval'),
     events: require.resolve('../src/services/events'),
     appAccess: require.resolve('../src/services/app-access'),
+    stagingRecovery: require.resolve('../src/services/staging-recovery'),
     subject: require.resolve('../src/routes/votes'),
   };
   const orig = {};
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
 
   const systemMessages = [];
+  const recheckCalls = [];
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.pool, { getPool: () => makeRecordingPool([]) });
@@ -87,6 +89,13 @@ function loadVotes() {
   stub(ids.adminApproval, { isAppLocked: async () => false, hasAdminYesVote: async () => true });
   stub(ids.events, { record: () => {}, EVENT_TYPES: { PR_MERGED: 'pr_merged' } });
   stub(ids.appAccess, { sessionCollabGuard: () => (_req, _res, next) => next() });
+  stub(ids.stagingRecovery, {
+    recheckSessionChecks: async (args) => { recheckCalls.push(args); return 'rechecked'; },
+    rebuildSessionStaging: async () => 'skipped',
+    stagingNeedsRebuild: async () => false,
+    recordStagingBootFailure: async () => {},
+    recordChecksSkipped: async () => {},
+  });
 
   delete require.cache[ids.subject];
   const subject = require(ids.subject);
@@ -95,7 +104,7 @@ function loadVotes() {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { subject, systemMessages, restore };
+  return { subject, systemMessages, recheckCalls, restore };
 }
 
 const session = {
@@ -151,6 +160,38 @@ test('a NULL check_state (never checked) is blocked', async () => {
     const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
     assert.equal(r.checksBlocked, true);
     assert.equal(r.checkState, 'pending');
+  } finally {
+    restore();
+  }
+});
+
+// #447/#461: the NULL block must also KICK a recheck right away (rather
+// than waiting for the periodic sweep), so a never-checked proposal that
+// crosses the vote threshold heals itself on the next vote.
+test('a NULL check_state fires the stale-pending recheck kick', async () => {
+  const { subject, recheckCalls, restore } = loadVotes();
+  const p = poolWith(null, []);
+  try {
+    await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
+    assert.equal(recheckCalls.length, 1, 'recheckSessionChecks invoked once');
+    assert.equal(recheckCalls[0].reason, 'stale-pending-vote-kick');
+    assert.equal(recheckCalls[0].session.id, session.id);
+  } finally {
+    restore();
+  }
+});
+
+// #461: an explicit 'skipped' verdict (nothing to test) counts like
+// 'passing' — the gate lets the merge proceed instead of blocking on a
+// checks state that can never advance.
+test("a 'skipped' proposal clears the gate and proceeds to claim the merge", async () => {
+  const { subject, recheckCalls, restore } = loadVotes();
+  const p = poolWith('skipped', []);
+  try {
+    const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
+    assert.equal(r.merged, true, 'skipped proposal merges');
+    assert.ok(p.queries.some((q) => /SET status = 'merging'/.test(q.sql)), 'claimed the merge');
+    assert.equal(recheckCalls.length, 0, 'no recheck kick for a terminal skipped verdict');
   } finally {
     restore();
   }

@@ -94,6 +94,32 @@ test('state 6 — checks pending is neutral + spinner (not amber)', () => {
   assert.equal(life.spinner, true);
 });
 
+test('state 6b — checks skipped (#461) is neutral, terminal (no spinner) and carries the reason', () => {
+  const life = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'skipped',
+    check_error_detail: 'branch has no commits beyond main — nothing to test',
+  });
+  assert.equal(life.key, 'checks_skipped');
+  assert.equal(life.label, 'Checks skipped');
+  assert.equal(life.tone, 'neutral');
+  assert.equal(life.spinner, false);
+  assert.ok(/nothing to test/.test(life.title), 'tooltip carries the recorded reason');
+  assert.ok(/does not block/.test(life.title), 'tooltip says the merge is not blocked');
+  // No recorded reason → generic non-blocking tooltip, never "undefined".
+  const bare = MergeStatus.lifecycle({ status: 'promoted', check_state: 'skipped' });
+  assert.equal(bare.key, 'checks_skipped');
+  assert.ok(!/undefined/.test(bare.title));
+});
+
+test('state 6b — checks skipped outranks behind_main (precedence)', () => {
+  // Per the #461 precedence, the explicit skipped verdict sits between the
+  // pending rung and the behind-main rung.
+  const life = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'skipped', behind_main: 2,
+  });
+  assert.equal(life.key, 'checks_skipped');
+});
+
 test('state 7 — behind main, with the commit count in the label', () => {
   const life = MergeStatus.lifecycle({ status: 'promoted', behind_main: 4, check_state: 'passing' });
   assert.equal(life.key, 'behind');

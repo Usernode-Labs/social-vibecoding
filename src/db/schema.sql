@@ -265,10 +265,10 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS console_checked_at T
 -- (captureForSession → storeChecks) and records the outcome here, latest
 -- run only.
 --   check_state       : 'passing' | 'failing' | 'pending' | 'error' |
---                       'unknown' (NULL until the first run). 'pending' is
---                       set the moment a (re)build starts so a stale pass
---                       can't slip through; 'error'/'unknown' mean the
---                       staging build or capture run itself broke.
+--                       'skipped' | 'unknown' (NULL until the first run).
+--                       'pending' is set the moment a (re)build starts so a
+--                       stale pass can't slip through; 'error'/'unknown' mean
+--                       the staging build or capture run itself broke.
 --   test_results      : array of { name, path, status:'pass'|'fail',
 --                       consoleErrors:[{kind,message,source}], failureReason }
 --   checks_commit_sha : the commit the results describe (staleness signal).
@@ -286,6 +286,17 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS console_checked_at T
 -- by a vote that reaches threshold (checkAndMerge stale-pending kick), by any
 -- staging rebuild (staging-recovery.rebuildSessionStaging now re-runs checks),
 -- and by the manual POST /api/sessions/:id/recheck ("Re-run checks" button).
+-- #461: 'skipped' is a TERMINAL, GATE-PASSING verdict recorded when the
+-- checks genuinely cannot / need not run — the branch carries no commits
+-- beyond main, or GitHub isn't configured so no checks infrastructure
+-- exists. Written by visuals.storeChecksSkipped (via
+-- staging-recovery.recordChecksSkipped) with the human-readable reason in
+-- check_error_detail (same column the badge tooltip already surfaces); the
+-- merge gate treats it exactly like 'passing', and the next pushed commit
+-- returns the row to 'pending' via setChecksPending as usual. Before #461
+-- these paths returned silently, leaving check_state NULL — merge-blocked
+-- as "still running its tests" forever while the stuck-checks sweeper
+-- re-skipped the same row every pass.
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_state TEXT;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS test_results JSONB NOT NULL DEFAULT '[]';
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS checks_commit_sha VARCHAR(40);
