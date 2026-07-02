@@ -193,9 +193,10 @@ function proposalDiscussRoutes(config) {
       if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
 
       // Who pays for this turn (limit-first, BYOK spillover) — same path
-      // the Mayor turn uses. A bare 429 when budget is gone and no key.
+      // the Mayor turn uses. Budget gone and no key → 429 tagged with a
+      // code so clients can distinguish it from rate limiting (#463).
       const billing = await limits.resolveBillingPath(pool, config.jwtSecret, req.user.id);
-      if (billing.error) return res.status(429).json({ error: billing.error });
+      if (billing.error) return res.status(429).json({ error: billing.error, code: 'budget_exceeded' });
       const userApiKey = billing.apiKey;
 
       // Feature gate: no platform key AND no usable user key → disabled,

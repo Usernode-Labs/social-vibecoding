@@ -79,11 +79,13 @@ test('user cap hit + key on file → BYOK path with the decrypted key', async ()
   assert.deepEqual(r, { apiKey: USER_KEY, byok: true });
 });
 
-test('user cap hit + no key → the daily-limit error message', async () => {
+test('user cap hit + no key → the daily-limit error message with the BYOK hint (#463)', async () => {
   const pool = makePool({ userSpent: 2500 });
   const r = await limits.resolveBillingPath(pool, JWT_SECRET, 7);
   assert.equal(r.apiKey, undefined);
   assert.match(r.error, /Daily limit reached/);
+  assert.match(r.error, /Add your own Anthropic API key in Settings to keep going\.$/,
+    'the no-key error carries the Settings hint');
 });
 
 test('global cap hit + key on file → BYOK path', async () => {
@@ -92,10 +94,12 @@ test('global cap hit + key on file → BYOK path', async () => {
   assert.deepEqual(r, { apiKey: USER_KEY, byok: true });
 });
 
-test('global cap hit + no key → the global-limit error message', async () => {
+test('global cap hit + no key → the global-limit error message with the BYOK hint (#463)', async () => {
   const pool = makePool({ userSpent: 0, globalSpent: 20000 });
   const r = await limits.resolveBillingPath(pool, JWT_SECRET, 7);
   assert.match(r.error, /Global daily limit reached/);
+  assert.match(r.error, /Add your own Anthropic API key in Settings to keep going\.$/,
+    'the global-cap error carries the same hint — BYOK bypasses the global cap too');
 });
 
 test('key-decrypt failure is treated as no key → error at the cap', async () => {
