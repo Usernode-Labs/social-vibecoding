@@ -193,7 +193,7 @@
       }
     },
 
-    open() {
+    open(opts = {}) {
       this._renderBody();
       this._refreshSpend();
       this._renderLlmGrants();
@@ -213,6 +213,14 @@
       // focusing an input on open immediately pops the on-screen keyboard,
       // which is jarring when the user just wanted to view settings. Let the
       // keyboard appear only when the user taps a field that needs it.
+      // #463: the credits-exhausted banner deep-links here — scroll the
+      // API-key section into view (still no focus, per the above).
+      if (opts.focusApiKey) {
+        const keyInput = document.getElementById('settings-api-key');
+        if (keyInput && typeof keyInput.scrollIntoView === 'function') {
+          keyInput.scrollIntoView({ block: 'center' });
+        }
+      }
     },
 
     _renderDevConsoleSection() {

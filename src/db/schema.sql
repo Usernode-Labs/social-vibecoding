@@ -265,10 +265,10 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS console_checked_at T
 -- (captureForSession → storeChecks) and records the outcome here, latest
 -- run only.
 --   check_state       : 'passing' | 'failing' | 'pending' | 'error' |
---                       'unknown' (NULL until the first run). 'pending' is
---                       set the moment a (re)build starts so a stale pass
---                       can't slip through; 'error'/'unknown' mean the
---                       staging build or capture run itself broke.
+--                       'skipped' | 'unknown' (NULL until the first run).
+--                       'pending' is set the moment a (re)build starts so a
+--                       stale pass can't slip through; 'error'/'unknown' mean
+--                       the staging build or capture run itself broke.
 --   test_results      : array of { name, path, status:'pass'|'fail',
 --                       consoleErrors:[{kind,message,source}], failureReason }
 --   checks_commit_sha : the commit the results describe (staleness signal).
@@ -286,6 +286,17 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS console_checked_at T
 -- by a vote that reaches threshold (checkAndMerge stale-pending kick), by any
 -- staging rebuild (staging-recovery.rebuildSessionStaging now re-runs checks),
 -- and by the manual POST /api/sessions/:id/recheck ("Re-run checks" button).
+-- #461: 'skipped' is a TERMINAL, GATE-PASSING verdict recorded when the
+-- checks genuinely cannot / need not run — the branch carries no commits
+-- beyond main, or GitHub isn't configured so no checks infrastructure
+-- exists. Written by visuals.storeChecksSkipped (via
+-- staging-recovery.recordChecksSkipped) with the human-readable reason in
+-- check_error_detail (same column the badge tooltip already surfaces); the
+-- merge gate treats it exactly like 'passing', and the next pushed commit
+-- returns the row to 'pending' via setChecksPending as usual. Before #461
+-- these paths returned silently, leaving check_state NULL — merge-blocked
+-- as "still running its tests" forever while the stuck-checks sweeper
+-- re-skipped the same row every pass.
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_state TEXT;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS test_results JSONB NOT NULL DEFAULT '[]';
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS checks_commit_sha VARCHAR(40);
@@ -1326,3 +1337,36 @@ CREATE TABLE IF NOT EXISTS user_agent_files (
 );
 CREATE INDEX IF NOT EXISTS idx_user_agent_files_user ON user_agent_files (user_id, kind, name);
 COMMENT ON TABLE user_agent_files IS 'staging:private';
+
+-- Dev-chat file attachments (#450). Users attach images / text files to
+-- dev-chat messages as extra context for the Mayor, scout, and coding
+-- agent. Bytea-in-Postgres like session_visuals (the platform container
+-- has no persistent file volume); ids are random 32-hex tokens generated
+-- in Node. message_id is NULL between upload and send — the chat handler
+-- links it when the message posts, and server.js's session sweeper GCs
+-- orphans older than 24h. Retention otherwise follows the parent session
+-- (ON DELETE CASCADE), bounded by a 25 MB per-session cap at upload time.
+CREATE TABLE IF NOT EXISTS chat_session_attachments (
+  id           VARCHAR(32) PRIMARY KEY,
+  session_id   INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  message_id   INTEGER REFERENCES chat_session_messages(id) ON DELETE CASCADE,
+  user_id      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  -- 'image' (png/jpeg/gif/webp, magic-byte verified) | 'text' (UTF-8)
+  kind         VARCHAR(8)   NOT NULL,
+  filename     VARCHAR(256) NOT NULL,
+  content_type VARCHAR(64)  NOT NULL,
+  size_bytes   INTEGER      NOT NULL,
+  data         BYTEA        NOT NULL,
+  created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_chat_session_attachments_session ON chat_session_attachments(session_id);
+CREATE INDEX IF NOT EXISTS idx_chat_session_attachments_message ON chat_session_attachments(message_id);
+CREATE INDEX IF NOT EXISTS idx_chat_session_attachments_orphan
+  ON chat_session_attachments(created_at) WHERE message_id IS NULL;
+
+-- Private like its parent chat_sessions (public-FK-to-private is the
+-- combination the migration linter forbids), and the bytes are private
+-- chat content in their own right — screenshots and files a user shared
+-- with their own dev session only. Schema-only in staging clones;
+-- migrate.js seeds a demo fixture so the UI is exercisable there.
+COMMENT ON TABLE chat_session_attachments IS 'staging:private';

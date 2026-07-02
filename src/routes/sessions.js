@@ -1,5 +1,7 @@
 'use strict';
 
+const express = require('express');
+const crypto = require('crypto');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
@@ -26,7 +28,8 @@ const limits = require('../services/limits');
 const events = require('../services/events');
 const modelFallback = require('../services/model-fallback');
 const { getActiveUserStats } = require('../services/active-users');
-const { chatLimiter } = require('../middleware/rate-limits');
+const { chatLimiter, attachmentUploadLimiter } = require('../middleware/rate-limits');
+const attachmentsSvc = require('../services/attachments');
 const appAccess = require('../services/app-access');
 const userAgentFiles = require('../services/user-agent-files');
 const notifications = require('../services/notifications');
@@ -508,8 +511,10 @@ function sessionRoutes(config) {
       // Billed to the clicking user, limit-first (#212): their shared
       // daily allowance while it has headroom, their BYOK key once it's
       // exhausted — exactly like a chat turn. No headroom + no key → 429.
+      // The code lets the client tell budget exhaustion apart from a
+      // rate-limit 429 (#463).
       const billing = await limits.resolveBillingPath(pool, config.jwtSecret, req.user.id);
-      if (billing.error) return res.status(429).json({ error: billing.error });
+      if (billing.error) return res.status(429).json({ error: billing.error, code: 'budget_exceeded' });
       const userApiKey = billing.apiKey;
 
       // Headless sessions don't count against the clicking user's session
@@ -1185,16 +1190,120 @@ function sessionRoutes(config) {
     }
   });
 
+  // ── Dev-chat file attachments (#450) ─────────────────────────────
+  //
+  // Upload happens BEFORE send: the client POSTs raw bytes here per
+  // file, gets back an attachment id, and passes the ids to /chat which
+  // links them to the user message row. The body is always
+  // application/octet-stream (real type is derived server-side from the
+  // filename extension + magic-byte sniff) — this deliberately sidesteps
+  // the global express.json() parser, which only consumes JSON bodies,
+  // so no server.js parser change is needed and a .json text file can
+  // never be swallowed as a JSON request body.
+  router.post(
+    '/api/sessions/:id/attachments',
+    attachmentUploadLimiter,
+    express.raw({ type: 'application/octet-stream', limit: '5mb' }),
+    async (req, res) => {
+      try {
+        const { rows: sessionRows } = await pool.query(
+          `SELECT cs.id FROM chat_sessions cs
+           WHERE cs.id = $1 AND cs.user_id = $2
+             AND cs.status IN ('active', 'promoted')
+             AND cs.is_headless = FALSE`,
+          [req.params.id, req.user.id]
+        );
+        if (!sessionRows.length) return res.status(404).json({ error: 'Active session not found' });
+        const sessionId = sessionRows[0].id;
+
+        const filename = String(req.query.filename || '').trim();
+        const data = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+        const verdict = attachmentsSvc.validateUpload({ filename, data });
+        if (!verdict.ok) return res.status(400).json({ error: verdict.error });
+
+        // Per-session storage cap — the retention bound for linked rows
+        // (orphans are GC'd by the server.js sweeper after 24h).
+        const { rows: sumRows } = await pool.query(
+          `SELECT COALESCE(SUM(size_bytes), 0)::bigint AS total
+             FROM chat_session_attachments WHERE session_id = $1`,
+          [sessionId]
+        );
+        if (Number(sumRows[0].total) + data.length > attachmentsSvc.MAX_SESSION_BYTES) {
+          return res.status(400).json({
+            error: `This session's attachment storage is full (${Math.round(attachmentsSvc.MAX_SESSION_BYTES / 1024 / 1024)} MB max)`,
+          });
+        }
+
+        const id = crypto.randomBytes(16).toString('hex');
+        await pool.query(
+          `INSERT INTO chat_session_attachments
+             (id, session_id, user_id, kind, filename, content_type, size_bytes, data)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [id, sessionId, req.user.id, verdict.kind, filename, verdict.contentType, data.length, data]
+        );
+        return res.json({
+          id, kind: verdict.kind, filename,
+          contentType: verdict.contentType, sizeBytes: data.length,
+        });
+      } catch (err) {
+        // express.raw over-limit bodies raise PayloadTooLargeError before
+        // the handler runs; anything landing here is a genuine failure.
+        log.error('sessions', 'Attachment upload failed', { sessionId: req.params.id, err: err.message });
+        return res.status(500).json({ error: 'Upload failed' });
+      }
+    }
+  );
+
+  // Serve attachment bytes. Authed + owner-gated (deliberately NOT the
+  // pre-auth /visuals/:id pattern — attachments are private chat content
+  // with no GitHub-camo requirement). Rows are immutable and ids are
+  // unguessable, so a long private immutable cache is safe.
+  router.get('/api/sessions/:id/attachments/:attId', async (req, res) => {
+    const attId = String(req.params.attId || '');
+    if (!/^[a-f0-9]{32}$/.test(attId)) return res.status(404).end();
+    try {
+      const { rows } = await pool.query(
+        `SELECT att.kind, att.filename, att.content_type, att.data
+           FROM chat_session_attachments att
+           JOIN chat_sessions cs ON cs.id = att.session_id
+          WHERE att.id = $1 AND att.session_id = $2 AND cs.user_id = $3`,
+        [attId, req.params.id, req.user.id]
+      );
+      if (!rows.length) return res.status(404).end();
+      const att = rows[0];
+      // Text always serves as text/plain (set at upload) and downloads as
+      // an attachment; images render inline. nosniff so a browser can
+      // never promote either into something executable.
+      const safeName = String(att.filename || 'file').replace(/["\\\r\n]/g, '_');
+      res.set('Content-Type', att.content_type || 'application/octet-stream');
+      res.set('X-Content-Type-Options', 'nosniff');
+      res.set('Content-Disposition', `${att.kind === 'image' ? 'inline' : 'attachment'}; filename="${safeName}"`);
+      res.set('Cache-Control', 'private, max-age=31536000, immutable');
+      return res.send(att.data);
+    } catch (err) {
+      log.error('sessions', 'Attachment serve failed', { attId, err: err.message });
+      return res.status(500).end();
+    }
+  });
+
   // Send a message in a dev chat session — Mayor + Claude Code pattern.
   // chatLimiter caps a single user at 30 chat turns/min so a runaway
   // script can't drain their daily LLM cap before checkBudget() can
   // even respond. See src/middleware/rate-limits.js.
   router.post('/api/sessions/:id/chat', chatLimiter, drainGuard, async (req, res) => {
-    const { message, model } = req.body;
+    const { message, model, attachmentIds } = req.body;
 
-    if (!message?.trim()) {
+    // #450: attachments may accompany (or replace) the typed message.
+    const attIds = attachmentsSvc.sanitizeAttachmentIds(attachmentIds);
+    if (attIds === null) {
+      return res.status(400).json({ error: `Bad attachments (max ${attachmentsSvc.MAX_PER_MESSAGE} per message)` });
+    }
+    if (!message?.trim() && !attIds.length) {
       return res.status(400).json({ error: 'Message required' });
     }
+    // Downstream code (prompt assembly, titling, dispatch args) never
+    // sees empty content — an attachments-only send gets a stub caption.
+    const messageText = message?.trim() || attachmentsSvc.ATTACHMENTS_ONLY_TEXT;
 
     try {
       const { rows: sessionRows } = await pool.query(
@@ -1217,15 +1326,51 @@ function sessionRoutes(config) {
       // the whole turn — null = platform-billed, non-null = the user's
       // own key — so every recordSpend(..., { byok: !!userApiKey })
       // below routes the cost to the right bucket. Allowance gone and
-      // no key on file → the same 429 as always.
+      // no key on file → the same 429 as always, tagged with a code so
+      // the client can tell it apart from a chatLimiter throttle (#463).
       const billing = await limits.resolveBillingPath(pool, config.jwtSecret, req.user.id);
-      if (billing.error) return res.status(429).json({ error: billing.error });
+      if (billing.error) return res.status(429).json({ error: billing.error, code: 'budget_exceeded' });
       const userApiKey = billing.apiKey;
 
-      await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content) VALUES ($1, 'user', $2)`,
-        [session.id, message.trim()]
+      // #450: verify every attachment id is this user's, this session's,
+      // and unlinked BEFORE inserting the message row (we're still in
+      // plain-JSON response land here — after the SSE writeHead below,
+      // 4xx replies are no longer possible).
+      let turnAttachments = [];
+      if (attIds.length) {
+        const { rows: attRows } = await pool.query(
+          `SELECT id, kind, filename, content_type, size_bytes
+             FROM chat_session_attachments
+            WHERE id = ANY($1) AND session_id = $2 AND user_id = $3
+              AND message_id IS NULL
+            ORDER BY created_at ASC, id ASC`,
+          [attIds, session.id, req.user.id]
+        );
+        if (attRows.length !== attIds.length) {
+          return res.status(400).json({ error: 'Unknown or already-sent attachment' });
+        }
+        turnAttachments = attRows;
+      }
+      const userMeta = turnAttachments.length
+        ? {
+            attachments: turnAttachments.map((a) => ({
+              id: a.id, kind: a.kind, filename: a.filename,
+              contentType: a.content_type, sizeBytes: a.size_bytes,
+            })),
+          }
+        : {};
+
+      const { rows: userMsgRows } = await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'user', $2, $3) RETURNING id`,
+        [session.id, messageText, JSON.stringify(userMeta)]
       );
+      if (turnAttachments.length) {
+        await pool.query(
+          `UPDATE chat_session_attachments SET message_id = $1 WHERE id = ANY($2)`,
+          [userMsgRows[0].id, attIds]
+        );
+      }
 
       // Mark the session as freshly active so the auto-pause sweeper
       // leaves it alone (see server.js session sweeper + schema
@@ -1357,7 +1502,7 @@ function sessionRoutes(config) {
       const titledThisTurn = !session.session_title && !session.pr_number;
       if (titledThisTurn) {
         sessionTitles.maybeTitleFirstMessage({
-          pool, session, message: message.trim(),
+          pool, session, message: messageText,
           userId: req.user.id, apiKey: userApiKey, send,
         });
       }
@@ -1425,13 +1570,24 @@ function sessionRoutes(config) {
         // earlier turns, so questions like "what was the fix?" would
         // dispatch CC unnecessarily just to re-discover the answer.
         const { rows: history } = await pool.query(
-          `SELECT role, content, metadata FROM chat_session_messages
+          `SELECT id, role, content, metadata FROM chat_session_messages
            WHERE session_id = $1
              AND (role IN ('user', 'assistant')
                   OR (role = 'system' AND metadata->>'ccOutput' IS NOT NULL))
            ORDER BY id ASC`,
           [session.id]
         );
+
+        // #450: bulk-load attachment bytes for user rows that carry
+        // metadata.attachments so buildMayorMessages can emit vision
+        // blocks + inlined text files. Best-effort — on failure the
+        // Mayor just sees the plain text history.
+        let historyAttachments = new Map();
+        try {
+          historyAttachments = await attachmentsSvc.loadForHistory(pool, history);
+        } catch (err) {
+          log.warn('sessions', 'Failed to load history attachments', { sessionId: session.id, err: err.message });
+        }
 
         // Same "in-flight only — warm-idle ≠ busy" rationale as the
         // /status endpoint above. Pre-warm-CC, "container running"
@@ -1491,7 +1647,7 @@ function sessionRoutes(config) {
           log.warn('sessions', 'Agent-files metadata load failed (continuing without block)', { sessionId: session.id, err: err.message });
         }
         let mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext, openProposalsBlock, agentFilesBlock);
-        const messages = buildMayorMessages(history);
+        const messages = buildMayorMessages(history, historyAttachments);
 
         if (!llm.isEnabled()) {
           send('error', { error: 'LLM not configured' });
@@ -1814,17 +1970,32 @@ function sessionRoutes(config) {
         }
 
         // --- Run the chosen tool ---
+        // #450: forward this turn's attachments to the dispatched agent —
+        // text files inlined verbatim, images referenced by id with
+        // usernode-attachments download instructions. Best-effort: a load
+        // failure must not block the dispatch.
+        let attachmentsBlock = '';
+        if (turnAttachments.length) {
+          try {
+            attachmentsBlock = attachmentsSvc.buildDispatchBlock(
+              await attachmentsSvc.loadByIds(pool, turnAttachments.map((a) => a.id))
+            );
+          } catch (err) {
+            log.warn('sessions', 'Failed to build dispatch attachments block', { sessionId: session.id, err: err.message });
+          }
+        }
         let toolResult;
         if (toolKind === 'scout') {
           const toolPromptArg = typeof activeToolCall.input?.prompt === 'string' && activeToolCall.input.prompt.trim()
             ? activeToolCall.input.prompt.trim()
-            : message.trim();
+            : messageText;
 
           setPhase('cc');
           toolResult = await runScoutTool({
             pool, config, req, res, session, selectedModel,
-            userMessage: message.trim(),
+            userMessage: messageText,
             toolPromptArg,
+            attachmentsBlock,
             repoOwner, repoName,
             send, sendStatus,
             stopHandle,
@@ -1844,13 +2015,14 @@ function sessionRoutes(config) {
         } else {
           const toolPromptArg = typeof activeToolCall.input?.prompt === 'string' && activeToolCall.input.prompt.trim()
             ? activeToolCall.input.prompt.trim()
-            : message.trim();
+            : messageText;
 
           setPhase('cc');
           toolResult = await runClaudeCodeTool({
             pool, config, req, res, session, selectedModel,
-            userMessage: message.trim(),
+            userMessage: messageText,
             toolPromptArg,
+            attachmentsBlock,
             repoOwner, repoName,
             send, sendStatus,
             stopHandle,
@@ -2620,6 +2792,17 @@ function sessionRoutes(config) {
           // gate keys off it); otherwise the warm is refused and the first
           // click hits a cold hostname.
           await staging.warmStagingCert(session, result.hostname, result.stagingUrl);
+          // #461: run the proposal checks against the fresh build, matching
+          // every other staging-deploy path. Before this, a preview built
+          // via this button left check_state NULL — the promote path then
+          // skipped its own build+capture (staging_url already set) and the
+          // proposal sat merge-blocked on "still running its tests" until a
+          // sweep happened to heal it. Fire-and-forget; captureForSession
+          // owns all failure handling and is _inFlight-guarded.
+          visuals.captureForSession(config, session, app, commitHash === 'latest' ? null : commitHash, result, { send: () => {} })
+            .catch((err) => log.warn('visuals', 'Deploy-staging capture failed (non-fatal)', {
+              sessionId: session.id, err: err.message,
+            }));
         })
         .catch((err) => {
           log.error('sessions', 'Staging deploy failed', { sessionId: session.id, err: err.message });
@@ -3793,6 +3976,11 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
         const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
         let stagingResult = null;
         let stagingErr = null;
+        // #461: pend the checks for the NEW commit before the build, so the
+        // previous commit's verdict (e.g. a stale 'passing') can't satisfy
+        // the merge gate while this build runs — or after it fails.
+        await visuals.setChecksPending(pool, session.id, result.sha)
+          .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
         try {
           stagingResult = await staging.buildAndDeployStaging(config, session, app, result.sha);
         } catch (e) {
@@ -3826,6 +4014,11 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
             [session.id, 'Staging build failed',
               JSON.stringify({ error: errMsg, changesReady: true, stagingFailed: true, stagingErrorName: errName, stagingMissingKeys: missingKeys, prNumber: null })]
           ).catch(() => {});
+          // #461: record the failure as a terminal 'error' checks verdict
+          // (with reason + once-per-streak owner nudge) instead of leaving
+          // the pending state to look "still running" forever.
+          await stagingRecovery.recordStagingBootFailure({ config, pool, session, commitHash: result.sha, err: stagingErr })
+            .catch((e) => log.warn('staging', 'recordStagingBootFailure failed (non-fatal)', { sessionId: session.id, err: e.message }));
           log.warn('staging', 'Resumed headless staging build failed (non-fatal — commit pushed)', {
             sessionId: session.id, errName, err: errMsg, missingKeys,
           });
@@ -4390,7 +4583,7 @@ function stripFakeCompletionMarker(text, { sessionId } = {}) {
   return text.replace(COMPLETION_MARKER_RE, '').trim();
 }
 
-function buildMayorMessages(history) {
+function buildMayorMessages(history, attachmentsByMessageId = new Map()) {
   const CC_SUMMARY_MAX = 2000;
   const messages = [];
   const pushAssistant = (text) => {
@@ -4400,6 +4593,19 @@ function buildMayorMessages(history) {
       messages.push({ role: 'assistant', content: text });
     }
   };
+
+  // #450: image replay plan. Only user turns within the replay window
+  // re-send their images as vision blocks (all-or-nothing per turn, max
+  // total per request); older turns degrade to a textual placeholder.
+  // Text-file attachments are inlined for ALL turns, consistent with the
+  // uncapped text history replay.
+  const userRows = history.filter((r) => r.role === 'user');
+  const imageCounts = userRows.map((r) => (
+    (attachmentsByMessageId.get(r.id) || []).filter((a) => a.kind === 'image').length
+  ));
+  const includeImagesPlan = attachmentsSvc.planImageInclusion(imageCounts);
+  const includeByRowId = new Map(userRows.map((r, i) => [r.id, includeImagesPlan[i]]));
+
   for (const row of history) {
     if (row.role === 'system' && row.metadata?.ccOutput) {
       const summary = String(row.metadata.ccOutput).slice(0, CC_SUMMARY_MAX);
@@ -4418,7 +4624,18 @@ function buildMayorMessages(history) {
     } else if (row.role === 'assistant') {
       pushAssistant(row.content);
     } else if (row.role === 'user') {
-      messages.push({ role: 'user', content: row.content });
+      // #450: rows with attachments become content-block arrays (image
+      // blocks + one text block); plain rows stay strings. Assistant-row
+      // merging above only ever touches strings, so this is safe.
+      const atts = attachmentsByMessageId.get(row.id) || [];
+      messages.push({
+        role: 'user',
+        content: attachmentsSvc.buildUserMessageContent({
+          text: row.content,
+          attachments: atts,
+          includeImages: includeByRowId.get(row.id) === true,
+        }),
+      });
     }
   }
   return messages;
@@ -4434,6 +4651,10 @@ function buildMayorMessages(history) {
 async function runScoutTool({
   pool, config, req, res, session, selectedModel,
   userMessage, toolPromptArg,
+  // #450: pre-rendered "==== USER-ATTACHED FILES ====" block for the
+  // current turn (text files inlined, images via usernode-attachments).
+  // '' when the turn carried no attachments (incl. every headless path).
+  attachmentsBlock = '',
   repoOwner, repoName,
   send, sendStatus,
   stopHandle,
@@ -4493,7 +4714,7 @@ PERSONAL AGENT FILES: the user who dispatched this run has personal instruction 
   const scoutPrompt = `SCOUT TASK (from the Mayor):
 ${toolPromptArg}
 
-USER REQUEST: "${userMessage}"
+USER REQUEST: "${userMessage}"${attachmentsBlock}
 
 You are running in PLAN MODE: you can read files (Read, Glob, Grep) but you cannot edit, commit, or push anything. Do not attempt to.${personalFilesNote}${revisionBlock}
 
@@ -4815,6 +5036,8 @@ function describeStagingFailure(stagingErr) {
 async function runClaudeCodeTool({
   pool, config, req, res, session, selectedModel,
   userMessage, toolPromptArg,
+  // #450: current-turn user attachments block — see runScoutTool.
+  attachmentsBlock = '',
   repoOwner, repoName,
   send, sendStatus,
   stopHandle,
@@ -4900,7 +5123,7 @@ or the repo's own \`CLAUDE.md\` on app-specific matters.`
   const claudePrompt = `USER REQUEST: "${userMessage}"
 
 CODING TASK (from the Mayor):
-${toolPromptArg}
+${toolPromptArg}${attachmentsBlock}
 
 ==== PLATFORM CONVENTIONS (authoritative) ====
 
@@ -5358,6 +5581,11 @@ path: /another/changed/view
       const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
       let stagingResult = null;
       let stagingErr = null;
+      // #461: pend the checks for the NEW commit before the build starts, so
+      // the previous commit's verdict (e.g. a stale 'passing') can't satisfy
+      // the merge gate while this build runs — or after it fails.
+      await visuals.setChecksPending(pool, session.id, commitHash)
+        .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
       try {
         stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
       } catch (e) {
@@ -5429,6 +5657,11 @@ path: /another/changed/view
           `Staging preview failed to build (non-fatal — commit ${commitHash.substring(0, 8)} is pushed; `
           + `a preview can be built from a cloned session).\n\n${fix}`
         );
+        // #461: record the failure as a terminal 'error' checks verdict
+        // (with reason + once-per-streak owner nudge) instead of leaving
+        // the pending state to look "still running" forever.
+        await stagingRecovery.recordStagingBootFailure({ config, pool, session, commitHash, err: stagingErr })
+          .catch((e) => log.warn('staging', 'recordStagingBootFailure failed (non-fatal)', { sessionId: session.id, err: e.message }));
         log.error('staging', 'Headless staging build failed (non-fatal)', {
           sessionId: session.id, slug: app.slug, errName, err: errMsg, missingKeys,
         });
@@ -5505,6 +5738,11 @@ path: /another/changed/view
       // "Chat error" toast and has no breadcrumb to follow.
       let stagingResult = null;
       let stagingErr = null;
+      // #461: pend the checks for the NEW commit before the build starts, so
+      // the previous commit's verdict (e.g. a stale 'passing') can't satisfy
+      // the merge gate while this build runs — or after it fails.
+      await visuals.setChecksPending(pool, session.id, commitHash)
+        .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
       try {
         stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
       } catch (e) {
@@ -5636,6 +5874,12 @@ path: /another/changed/view
           prUrl: session.pr_url || null,
         });
         summaryParts.push(message);
+
+        // #461: record the failure as a terminal 'error' checks verdict
+        // (with reason + once-per-streak owner nudge) instead of leaving
+        // the pending state to look "still running" forever.
+        await stagingRecovery.recordStagingBootFailure({ config, pool, session, commitHash, err: stagingErr })
+          .catch((e) => log.warn('staging', 'recordStagingBootFailure failed (non-fatal)', { sessionId: session.id, err: e.message }));
 
         log.error('staging', 'Staging build failed (surfaced to Mayor)', {
           sessionId: session.id,
@@ -5821,6 +6065,9 @@ A dispatch_claude_code tool_result may report that the commit/push/PR succeeded 
   * Missing \`staging_default\` for a private secret in dapp.json — the agent CAN fix this directly. Acknowledge the issue to the user, propose the concrete fix in one sentence (e.g. "I'll add \`staging_default: \"\"\` to SENDER_APP_SECRET_KEY since the app degrades gracefully without it"), and on the user's next confirmation call dispatch_claude_code with a prompt naming the keys and the value to use.
   * Missing required secret in the platform secret store — the agent CANNOT fix this; the user (or admin) needs to set the value in Settings → Secrets. Tell them which key, point them at the Settings UI, and offer to retry once it's set.
 For other staging failures (Docker build, network, image cache), explain briefly and offer to retry. Do NOT pretend a failed staging build succeeded — the user can see the build status in the chat.
+
+USER FILE ATTACHMENTS:
+The user can attach images and text files to their messages. Images appear to you directly as vision input on recent turns (older ones are replaced by an "[image attachment: …]" placeholder to keep costs bounded); text files are inlined in the message inside "==== ATTACHED FILE: <name> ====" blocks (long files truncated with a marker). When you dispatch the scout or the coding agent, the CURRENT turn's attachments are forwarded to it automatically — reference the relevant filenames in your dispatch prompt (e.g. "match the attached mockup dashboard.png") so the agent knows to consult them.
 
 HISTORY CONTEXT:
 Some assistant turns in this conversation contain "${CODING_AGENT_COMPLETED_MARKER}:" — that is a summary from a PAST coding-agent run, written by the system, not by you. You may reference it when the user asks an INFORMATIONAL question about a past turn (e.g. "what did you do?", "why did you change X?", "what files were touched?") — quote or paraphrase to answer.

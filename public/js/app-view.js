@@ -119,15 +119,31 @@ const AppView = {
   // ── Dev view mode (list ↔ kanban) ─────────────────────────────────
   // A personal display preference, persisted to localStorage and shared
   // across every app's Dev view (same pattern as DevConsole's MODE_KEY
-  // and the "view as non-admin" toggle). 'list' is the default and the
-  // historical behaviour; 'kanban' lays the same cached topics out in
-  // four lifecycle columns. Read/written only through the two helpers
-  // below so the localStorage access stays guarded in one place.
+  // and the "view as non-admin" toggle). An explicitly saved choice
+  // always wins; with nothing saved the default is width-based (#462):
+  // 'kanban' on viewports ≥1024px — Tailwind's lg breakpoint, and the
+  // width at which the board's four min-w-[16rem] columns first fit
+  // without horizontal scrolling — and 'list' (the historical default)
+  // below it. Read/written only through the two helpers below so the
+  // localStorage access stays guarded in one place.
   VIEW_MODE_KEY: 'devViewMode',
+  // Width-based default, resolved lazily ONCE per page load and never
+  // written to localStorage — so an undecided user keeps getting the
+  // responsive default on future visits, and the mode can't flip
+  // mid-flight between the paired _getViewMode() reads inside async
+  // flows like loadMoreMerged if the window is resized across 1024px.
+  _viewModeAutoDefault: null,
   _getViewMode() {
     try {
-      return window.localStorage.getItem(AppView.VIEW_MODE_KEY) === 'kanban'
-        ? 'kanban' : 'list';
+      const stored = window.localStorage.getItem(AppView.VIEW_MODE_KEY);
+      if (stored === 'kanban' || stored === 'list') return stored;
+      if (AppView._viewModeAutoDefault === null) {
+        AppView._viewModeAutoDefault =
+          (typeof window.matchMedia === 'function'
+            && window.matchMedia('(min-width: 1024px)').matches)
+            ? 'kanban' : 'list';
+      }
+      return AppView._viewModeAutoDefault;
     } catch { return 'list'; }
   },
   _setViewMode(mode) {
@@ -2327,6 +2343,21 @@ const AppView = {
           ${AppView._recheckBtnHtml(pr)}
         </div>`;
     }
+    if (state === 'skipped') {
+      // #461: an explicit terminal "nothing to test" verdict — grey and
+      // NON-blocking (the merge gate treats it like passing). The recorded
+      // reason rides in check_error_detail; owners/admins can still force a
+      // real run via the re-run button.
+      const reason = pr.check_error_detail
+        ? escapeHtml(String(pr.check_error_detail).slice(0, 280))
+        : 'there was nothing to test';
+      return `
+        <div class="mt-2 rounded border border-zinc-300/40 dark:border-zinc-700/60 bg-zinc-500/5 px-2 py-1.5 text-zinc-600 dark:text-zinc-400">
+          <div class="font-medium">Checks skipped.</div>
+          <div class="mt-0.5 opacity-90">Automated checks were skipped — ${reason}. This does not block the merge.</div>
+          ${AppView._recheckBtnHtml(pr)}
+        </div>`;
+    }
     if (!results.length) return ''; // 'passing' with no detail to show — the green badge is enough.
 
     const rows = results.map((r) => {
@@ -3894,6 +3925,14 @@ const AppView = {
     }
     if (state === 'error') {
       return `<span class="gc-conflict-badge" title="The staging build or the test run itself broke, so the platform can't confirm the app works — merge is blocked until checks pass.">⚠ Checks couldn't run</span>`;
+    }
+    if (state === 'skipped') {
+      // #461: explicit terminal "nothing to test" verdict — grey, no
+      // spinner, and NON-blocking (the merge gate treats it like passing).
+      const why = pr.check_error_detail
+        ? `Automated checks were skipped — ${String(pr.check_error_detail).slice(0, 280)}. This does not block the merge.`
+        : 'Automated checks were skipped — there was nothing to test. This does not block the merge.';
+      return `<span class="gc-checks-running-badge" title="${escapeHtml(why)}">Checks skipped</span>`;
     }
     // 'pending' (or anything else): tests are still running. #405: grey
     // (gc-checks-running-badge), not amber, so a not-yet-started check is

@@ -202,6 +202,21 @@ function stagingMockProposals() {
       recheckable: true,
       test_results: [],
     },
+    // #461: a proposal whose checks were explicitly SKIPPED (nothing to
+    // test — e.g. the branch carries no commits beyond main). The grey
+    // non-blocking "Checks skipped" badge + its reason tooltip are
+    // reviewable via ?demo=1; the gate treats 'skipped' like 'passing', so
+    // with yes_count past any plausible staging majority this row reads as
+    // vote-complete and NOT checks-blocked.
+    {
+      ...mk(9000012, 900112,
+        '[Mock] Checks-skipped test: nothing to test for this proposal',
+        3, 9, 0, 1),
+      check_state: 'skipped',
+      check_error_detail: 'branch has no commits beyond main — nothing to test',
+      recheckable: true,
+      test_results: [],
+    },
     // #405: a proposal that PASSED the vote with green checks and is not
     // behind — eligible and queued to merge. Verifies the new green
     // "Passed — merging shortly" badge on the feed card + home strip via
@@ -577,7 +592,24 @@ function voteRoutes(config) {
             } catch {}
           }
           const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
-          const result = await staging.buildAndDeployStaging(config, session, app, commitHash);
+          let result;
+          try {
+            result = await staging.buildAndDeployStaging(config, session, app, commitHash);
+          } catch (err) {
+            // #461: the proposal is already promoted, so a swallowed build
+            // failure would leave check_state NULL — merge-blocked as
+            // "still running its tests" with no signal. Record a terminal
+            // 'error' verdict (with reason + once-per-streak owner nudge)
+            // before surfacing the failure to the outer catch's WARN log.
+            const stagingRecovery = require('../services/staging-recovery');
+            await stagingRecovery.recordStagingBootFailure({
+              config, pool, session,
+              commitHash: commitHash === 'latest' ? null : commitHash, err,
+            }).catch((e) => log.warn('votes', 'recordStagingBootFailure failed (non-fatal)', {
+              sessionId: session.id, err: e.message,
+            }));
+            throw err;
+          }
           await pool.query(
             `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
             [result.containerId, result.stagingUrl, session.id]
@@ -596,6 +628,36 @@ function voteRoutes(config) {
           });
         })().catch((err) => {
           log.warn('votes', 'Post-promote staging build failed', { sessionId: session.id, err: err.message });
+        });
+      } else {
+        // #461: the preview already exists (e.g. built via the manual
+        // deploy-staging button, which historically never ran checks, or
+        // inherited from an earlier turn whose capture described an older
+        // commit). Kick a recheck NOW when the verdict is missing or
+        // describes a different commit than the branch head, instead of
+        // leaving the freshly-promoted proposal merge-blocked until a
+        // background sweep notices. Fire-and-forget; recheckSessionChecks
+        // re-runs against the live container (or rebuilds a dead one) and
+        // captureForSession is _inFlight-guarded.
+        (async () => {
+          let needsKick = !session.check_state;
+          if (!needsKick && github.isEnabled() && repoOwner && repoName) {
+            try {
+              const octokit = await github.getInstallationOctokit(repoOwner);
+              const { data: ref } = await octokit.request(
+                'GET /repos/{owner}/{repo}/git/ref/{+ref}',
+                { owner: repoOwner, repo: repoName, ref: `heads/${session.branch_name}` }
+              );
+              needsKick = !!ref.object.sha && ref.object.sha !== session.checks_commit_sha;
+            } catch {}
+          }
+          if (!needsKick) return;
+          const stagingRecovery = require('../services/staging-recovery');
+          await stagingRecovery.recheckSessionChecks({
+            config, pool, session, reason: 'promote-kick',
+          });
+        })().catch((err) => {
+          log.warn('votes', 'Promote-time checks kick failed', { sessionId: session.id, err: err.message });
         });
       }
 
@@ -1543,11 +1605,13 @@ async function checkAndMerge(config, pool, session, options = {}) {
 
     // #47: "CI for proposals" gate. A proposal merges only when its
     // automated tests (the dapp.json `tests` suite, run against the staging
-    // build by services/visuals.js — see check_state) are PASSING. Anything
-    // else blocks fail-closed: 'failing' (a test broke), 'pending' (the
-    // check is still running, or a fresh commit reset it and the rebuild
-    // hasn't reported yet), 'error' ("couldn't run"), or NULL (never
-    // checked). This is the answer to "everything got super broken" (#47).
+    // build by services/visuals.js — see check_state) are PASSING — or,
+    // since #461, explicitly SKIPPED (there was genuinely nothing to test:
+    // branch level with main, or no GitHub wired up). Anything else blocks
+    // fail-closed: 'failing' (a test broke), 'pending' (the check is still
+    // running, or a fresh commit reset it and the rebuild hasn't reported
+    // yet), 'error' ("couldn't run"), or NULL (never checked). This is the
+    // answer to "everything got super broken" (#47).
     // Re-read fresh: the in-memory `session` row can predate the latest
     // build's verdict. Admin force-merge bypasses (skipped under !force).
     const { rows: checkRows } = await pool.query(
@@ -1556,7 +1620,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
       [session.id]
     );
     const checkState = checkRows[0]?.check_state || null;
-    if (checkState !== 'passing') {
+    if (checkState !== 'passing' && checkState !== 'skipped') {
       // #447: when a vote reaches threshold but the checks are NULL or stuck
       // 'pending' past the stale window, kick a recheck right now rather than
       // waiting for the periodic sweep — so a legitimately-passing PR clears
@@ -1611,7 +1675,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
         checksBlocked: true, checkState: checkState || 'pending', failingCount,
       };
     }
-    dstep({ phase: 'gate:checks', message: 'Checks gate: state = passing.', detail: { checkState: 'passing' } });
+    dstep({ phase: 'gate:checks', message: `Checks gate: state = ${checkState}.`, detail: { checkState } });
   }
   // For admin force-merge we deliberately skip the behind_main pre-check
   // — GitHub will still reject the merge if there's a real conflict,

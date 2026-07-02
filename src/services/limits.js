@@ -179,7 +179,10 @@ async function resolveBillingPath(pool, jwtSecret, userId) {
   if (!budget.error) return { apiKey: null, byok: false };
   const apiKey = await loadUserApiKey(pool, userId, jwtSecret);
   if (apiKey) return { apiKey, byok: true };
-  return { error: budget.error };
+  // #463: this branch is only reachable with NO usable key on file, so
+  // the BYOK hint is always accurate here. checkBudget itself stays
+  // hint-free — it also runs on paths where the caller has a key.
+  return { error: `${budget.error} Add your own Anthropic API key in Settings to keep going.` };
 }
 
 // Daily-ledger upsert shared by every spend site (Mayor turns, Claude

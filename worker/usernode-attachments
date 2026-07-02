@@ -1,0 +1,92 @@
+#!/bin/sh
+# Read-only: list this session's dev-chat file attachments, or download
+# ONE attachment's bytes to a local file (#450).
+#
+# Users can attach images / text files to their dev-chat messages. Text
+# files are inlined into the dispatch prompt directly; images can't ride
+# an env var, so this CLI fetches them from the platform's internal
+# attachments endpoint into the worker container, where Claude Code's
+# Read tool can view them natively.
+#
+# Like usernode-issues, this is allowed in BOTH build and scout modes:
+# it authenticates with ISSUES_JWT (session-scoped, read-only) —
+# deliberately NOT WORKER_JWT, so scout still has no way to push. An
+# attachment id from another session 404s platform-side.
+#
+# Usage:
+#   usernode-attachments                 list attachments as JSON
+#                                        ({ ok, attachments: [{ id, kind,
+#                                        filename, contentType, sizeBytes }] })
+#   usernode-attachments <id> <outpath>  download that attachment's bytes
+#                                        to <outpath>
+#
+# Endpoints: GET /api/internal/sessions/$SESSION_ID/attachments
+#            GET /api/internal/sessions/$SESSION_ID/attachments/<id>
+#   Authorization: Bearer $ISSUES_JWT
+# List form prints the JSON body to stdout; download form prints a tiny
+# status JSON. Exit 0 on success, non-zero otherwise — always parseable.
+
+set -u
+
+: "${ISSUES_JWT:?ISSUES_JWT required}"
+: "${SESSION_ID:?SESSION_ID required}"
+: "${PLATFORM_URL:=http://usernode:3000}"
+
+ATT_ID="${1:-}"
+OUT_PATH="${2:-}"
+
+if [ -z "$ATT_ID" ]; then
+  URL="${PLATFORM_URL%/}/api/internal/sessions/${SESSION_ID}/attachments"
+  RESP=$(curl -sS -X GET \
+    -H "Authorization: Bearer $ISSUES_JWT" \
+    -H "Accept: application/json" \
+    -w "\n%{http_code}" \
+    --max-time 30 \
+    "$URL" 2>&1) || {
+    echo '{"ok":false,"attachments":[],"note":"fetch failed"}'
+    exit 1
+  }
+  CODE=$(printf '%s' "$RESP" | tail -n1)
+  BODY=$(printf '%s' "$RESP" | sed '$d')
+  if [ "$CODE" = "200" ]; then
+    printf '%s\n' "$BODY"
+    exit 0
+  fi
+  echo '{"ok":false,"attachments":[],"note":"unavailable"}'
+  exit 1
+fi
+
+# Download form: id must be 32 lowercase hex chars; outpath required.
+case "$ATT_ID" in
+  *[!0-9a-f]*)
+    echo '{"ok":false,"note":"bad attachment id"}'
+    exit 1
+    ;;
+esac
+if [ "${#ATT_ID}" -ne 32 ] || [ -z "$OUT_PATH" ]; then
+  echo '{"ok":false,"note":"usage: usernode-attachments <id> <outpath>"}'
+  exit 1
+fi
+
+URL="${PLATFORM_URL%/}/api/internal/sessions/${SESSION_ID}/attachments/${ATT_ID}"
+CODE=$(curl -sS -X GET \
+  -H "Authorization: Bearer $ISSUES_JWT" \
+  -o "$OUT_PATH" \
+  -w "%{http_code}" \
+  --max-time 60 \
+  "$URL" 2>/dev/null) || {
+  rm -f "$OUT_PATH"
+  echo '{"ok":false,"note":"fetch failed"}'
+  exit 1
+}
+
+if [ "$CODE" = "200" ]; then
+  printf '{"ok":true,"path":"%s"}\n' "$OUT_PATH"
+  exit 0
+fi
+
+# Non-200 wrote an error body into OUT_PATH — don't leave it behind
+# masquerading as the attachment.
+rm -f "$OUT_PATH"
+echo '{"ok":false,"note":"unavailable"}'
+exit 1

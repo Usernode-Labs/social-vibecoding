@@ -199,6 +199,11 @@ const DevChat = {
   },
 
   renderBudget() {
+    // #463: budget data just changed (usage event, chat open, key
+    // save/remove) — sync the credits-exhausted banner alongside the
+    // meter. Runs before the meter's own element guard so the banner
+    // clears/appears even when the meter isn't mounted.
+    DevChat._applyCreditsBanner();
     const el = document.getElementById('dc-budget');
     if (!el) return;
     // BYOK (#30/#119/#212): billing is limit-first — the daily platform
@@ -233,9 +238,81 @@ const DevChat = {
     if (!DevChat.budget) return;
     const spent = (DevChat.budget.spentCents / 100).toFixed(2);
     const limit = (DevChat.budget.limitCents / 100).toFixed(2);
+    // #463: exhausted (no key saved) keeps the familiar $spent/$limit
+    // pair — just unmistakably red, with the tooltip pointing at the
+    // BYOK escape hatch. The banner carries the wordy explanation.
+    if (DevChat._creditsExhausted()) {
+      el.innerHTML = `<span title="Your free daily AI credits are used up. Resets at midnight UTC — or add your own Anthropic API key in Settings to keep working."><span class="text-red-500 font-semibold">$${spent}</span><span class="text-red-400">/$${limit}</span></span>`;
+      return;
+    }
     const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
     const color = pct > 80 ? 'text-red-400' : pct > 50 ? 'text-yellow-400' : 'text-emerald-400';
     el.innerHTML = `<span class="${color}">$${spent}</span><span class="text-zinc-600">/$${limit}</span>`;
+  },
+
+  // #463: true when the signed-in user is out of free credits AND has no
+  // BYOK key to spill over to — the only state where AI work is actually
+  // blocked. Key-holders never match (billing continues on their key),
+  // and a missing budget fetch stays quiet rather than guessing.
+  _creditsExhausted() {
+    const b = DevChat.budget;
+    if (!b) return false;
+    if (window.Settings?.state?.hasApiKey) return false;
+    const userOut = typeof b.spentCents === 'number' && typeof b.limitCents === 'number'
+      && b.spentCents >= b.limitCents;
+    const globalOut = typeof b.globalSpentCents === 'number' && typeof b.globalLimitCents === 'number'
+      && b.globalSpentCents >= b.globalLimitCents;
+    return userOut || globalOut;
+  },
+
+  // #463: the credits-exhausted banner (sibling of the sync banner,
+  // #dc-sync-banner). Empty string when the show-condition doesn't hold.
+  _renderCreditsBannerHtml() {
+    if (!DevChat._creditsExhausted()) return '';
+    const b = DevChat.budget;
+    const userOut = b.spentCents >= b.limitCents;
+    const lead = userOut
+      ? 'You&rsquo;ve used up today&rsquo;s free AI credits.'
+      : 'The platform&rsquo;s shared daily AI budget is used up.';
+    return `
+      <div id="dc-credits-banner" class="flex items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-950/30 border-b border-red-200 dark:border-red-900/50 text-xs">
+        <svg class="w-4 h-4 text-red-500 dark:text-red-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
+        </svg>
+        <span class="text-red-800 dark:text-red-200 flex-1"><span class="font-semibold">${lead}</span> Resets at midnight UTC &mdash; or add your own Anthropic API key to keep working right now, billed to your own Anthropic account.</span>
+        <button id="dc-credits-add-key" type="button" class="rounded bg-red-600 hover:bg-red-500 text-white px-2 py-1 text-xs font-medium shrink-0">Add API key</button>
+      </div>`;
+  },
+
+  // Swap/insert/remove the banner in place (mirror of _applySyncBanner,
+  // minus the full re-render fallback: the banner slot sits directly
+  // above .dc-session-body, so we can insert without re-rendering and
+  // avoid disturbing an in-flight stream).
+  _applyCreditsBanner() {
+    const existing = document.getElementById('dc-credits-banner');
+    const html = DevChat.currentSession ? DevChat._renderCreditsBannerHtml() : '';
+    if (existing) {
+      if (html) {
+        existing.outerHTML = html;
+        DevChat._wireCreditsBanner();
+      } else {
+        existing.remove();
+      }
+    } else if (html) {
+      const body = document.querySelector('.dc-session-body');
+      if (body) {
+        body.insertAdjacentHTML('beforebegin', html);
+        DevChat._wireCreditsBanner();
+      }
+    }
+  },
+
+  _wireCreditsBanner() {
+    const btn = document.getElementById('dc-credits-add-key');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      if (window.Settings) Settings.open({ focusApiKey: true });
+    });
   },
 
   async loadSessions(appSlug) {
@@ -758,6 +835,12 @@ const DevChat = {
           // Quick-reply pills (#285): next-step suggestions survive refresh
           // via metadata.quickReplies on the assistant row.
           if (m.metadata.quickReplies) m.quickReplies = m.metadata.quickReplies;
+          // File attachments (#450): user rows carry a metadata summary
+          // [{ id, kind, filename, contentType, sizeBytes }]; bytes are
+          // served by GET /api/sessions/:id/attachments/:attId.
+          if (Array.isArray(m.metadata.attachments) && m.metadata.attachments.length) {
+            m.attachments = m.metadata.attachments;
+          }
         }
         return m;
       });
@@ -836,8 +919,14 @@ const DevChat = {
 
   // ── Streaming + send ─────────────────────────────────────
 
-  async sendMessage(message) {
+  async sendMessage(message, attachments = []) {
     if (!DevChat.currentSession || DevChat.isStreaming) return;
+    // #450: attachments-only sends are allowed; the server stores a
+    // "(attached files)" stub caption, mirrored here for the optimistic
+    // bubble. `attachments` entries come from pendingAttachments (already
+    // uploaded — each carries a server id + objectUrl for image thumbs).
+    const sentAttachments = (attachments || []).filter((a) => a && a.id);
+    if (!message && !sentAttachments.length) return;
     // #138: a send is a user gesture — unlock the AudioContext and lazily
     // request OS-notification permission now, so the completion chime /
     // notification can fire when this turn finishes (browsers only allow
@@ -862,7 +951,17 @@ const DevChat = {
       if (m._progress) m._progress = false;
     }
 
-    DevChat.messages.push({ role: 'user', content: message, created_at: new Date().toISOString() });
+    DevChat.messages.push({
+      role: 'user',
+      content: message || '(attached files)',
+      created_at: new Date().toISOString(),
+      ...(sentAttachments.length ? { attachments: sentAttachments } : {}),
+    });
+    // Clear the composer strip — restored on the failure paths below.
+    if (sentAttachments.length) {
+      DevChat.pendingAttachments = [];
+      DevChat._renderAttachStrip();
+    }
     // `let`, not `const`: the `assistant_message_end` handler reassigns this
     // to a fresh object when the Mayor seals phase-1 so the phase-2 wrap-up
     // lands in its own bubble. A `const` here used to throw silently inside
@@ -881,7 +980,10 @@ const DevChat = {
       const postChat = () => fetch(`/api/sessions/${sessionId}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, model }),
+        body: JSON.stringify({
+          message, model,
+          ...(sentAttachments.length ? { attachmentIds: sentAttachments.map((a) => a.id) } : {}),
+        }),
         signal: DevChat._abortController.signal,
       });
 
@@ -905,7 +1007,22 @@ const DevChat = {
       if (res.status === 429) {
         const data = await res.json();
         DevChat._removeSpinner();
-        DevChat.messages.push({ role: 'assistant', content: `**Rate limit reached.** ${data.error || 'Try again later.'}`, created_at: new Date().toISOString() });
+        // #463: budget exhaustion is not rate limiting — tell the user
+        // what actually happened and point at the BYOK escape hatch.
+        // Only the server's billing path sets code: 'budget_exceeded';
+        // chatLimiter throttles keep the old wording.
+        if (data.code === 'budget_exceeded') {
+          DevChat.messages.push({
+            role: 'assistant',
+            content: `**You've used up today's free AI credits.** ${data.error || 'They reset at midnight UTC.'}\n\nOpen Settings from the menu (or use the banner above) to add your key — your work then bills to your own Anthropic account.`,
+            created_at: new Date().toISOString(),
+          });
+          // Refresh the meter + banner right away so the "out of
+          // credits" state is visible without waiting for a usage event.
+          DevChat.refreshBudget();
+        } else {
+          DevChat.messages.push({ role: 'assistant', content: `**Rate limit reached.** ${data.error || 'Try again later.'}`, created_at: new Date().toISOString() });
+        }
         DevChat._finishStreaming();
         // #370: the cap rejected the send before any turn ran. Put the
         // text back in the composer (editable, draft re-saved) and drop
@@ -913,6 +1030,10 @@ const DevChat = {
         // editor — the user never has to retype it. Restore AFTER
         // _finishStreaming so the input is re-enabled before we focus it.
         DevChat._restoreComposer(message, { dropOptimisticUser: true });
+        if (sentAttachments.length) {
+          DevChat.pendingAttachments = sentAttachments;
+          DevChat._renderAttachStrip();
+        }
         DevChat.renderMessages();
         return;
       }
@@ -941,6 +1062,10 @@ const DevChat = {
         // bubble in the list while the spinner disappears is what the
         // user perceived as "my message disappears".
         DevChat._restoreComposer(message, { dropOptimisticUser: true });
+        if (sentAttachments.length) {
+          DevChat.pendingAttachments = sentAttachments;
+          DevChat._renderAttachStrip();
+        }
         DevChat.renderMessages();
         return;
       }
@@ -2593,6 +2718,7 @@ const DevChat = {
             <span style="color:var(--text-muted);font-size:9px;opacity:0.5">${idLabel} ${ts}</span>
           </div>
           <div class="dc-msg-content">${isUser ? DevChat.renderMarkdown(content) : displayContent}</div>
+          ${isUser ? DevChat._attachmentsRowHtml(msg) : ''}
           ${isUser ? '' : reasoningDetail}
           ${qaChips}
         </div>`;
@@ -3774,6 +3900,7 @@ const DevChat = {
       </div>
       ${DevChat._renderSyncBannerHtml(DevChat.currentSession)}
       ${DevChat._renderNewChangeBannerHtml(DevChat.currentSession)}
+      ${DevChat._renderCreditsBannerHtml()}
       <div class="dc-session-body flex-1 flex min-h-0">
         <div id="dc-tab-chat" class="dc-chat-pane flex-1 flex flex-col min-h-0">
           <div id="dc-messages" class="dc-messages-container flex-1 overflow-y-auto py-2"></div>
@@ -3783,10 +3910,18 @@ const DevChat = {
               <select id="dc-model-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">
                 ${modelOptions}
               </select>
+              <input type="file" id="dc-file-input" class="hidden" multiple
+                accept=".png,.jpg,.jpeg,.gif,.webp,.txt,.md,.markdown,.csv,.tsv,.json,.log,.yaml,.yml,.xml,.html,.css,.js,.jsx,.ts,.tsx,.py,.rb,.go,.rs,.java,.sql,.sh,image/png,image/jpeg,image/gif,image/webp">
+              <button type="button" id="dc-attach-btn" title="Attach files — images (PNG/JPEG/GIF/WebP, ≤4 MB) or text files (≤200 KB), up to 4 per message" aria-label="Attach files"
+                class="dc-attach-btn rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-900 text-zinc-500 hover:text-violet-400 hover:border-violet-500 px-1.5 py-1 shrink-0 transition-colors">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+              </button>
               <span class="flex-1"></span>
               <span id="dc-budget" class="text-xs font-mono"></span>
             </div>
             <div id="dc-quick-replies" class="dc-quick-replies"></div>
+            <div id="dc-attachments" class="dc-attach-strip"></div>
+            <div id="dc-attach-error" class="dc-attach-error hidden"></div>
             <form id="dc-form" class="flex gap-2 items-end">
               <textarea
                 id="dc-input"
@@ -3811,6 +3946,10 @@ const DevChat = {
     DevChat.renderMessages();
     DevChat._renderQuickReplies();
     DevChat._wireQuickReplies();
+    // #463: the template above may have rendered the credits banner from
+    // the cached budget — wire its button now; refreshBudget() re-syncs
+    // banner + meter once fresh figures land.
+    DevChat._wireCreditsBanner();
     DevChat.refreshBudget();
     // Attach tracker first so the scroll set below is observed, then
     // restore the session's last known position (or fall through to
@@ -3819,6 +3958,7 @@ const DevChat = {
     DevChat.restoreSessionScroll();
     DevChat._setupTextareaResize();
     DevChat._setupKeyboardShortcuts();
+    DevChat._setupAttachments();
     DevChat._restoreDraft();
     if (DevChat.isStreaming) DevChat._setStreamingUI(true);
 
@@ -3892,11 +4032,225 @@ const DevChat = {
   _submitFromInput() {
     const input = document.getElementById('dc-input');
     const msg = input.value.trim();
-    if (!msg || DevChat.isStreaming) return;
+    const atts = DevChat.pendingAttachments.filter((a) => !a.uploading);
+    // Attachments alone are a valid send (#450) — the server stores a
+    // "(attached files)" stub caption.
+    if ((!msg && !atts.length) || DevChat.isStreaming) return;
+    if (DevChat.pendingAttachments.some((a) => a.uploading)) {
+      DevChat._setAttachError('Still uploading — one moment…');
+      return;
+    }
     input.value = '';
     input.style.height = 'auto';
     if (DevChat.currentSession) DevChat._setDraft(DevChat.currentSession.id, '');
-    DevChat.sendMessage(msg);
+    DevChat.sendMessage(msg, atts);
+  },
+
+  // ── File attachments (#450) ─────────────────────────────────
+  //
+  // Upload-before-send: each picked/pasted/dropped file is validated
+  // client-side (mirroring src/services/attachments.js), POSTed as raw
+  // octet-stream to /api/sessions/:id/attachments, and parked in
+  // `pendingAttachments` (rendered as a strip above the composer) until
+  // the message sends with the attachment ids. Orphans left by removed
+  // or abandoned uploads are GC'd server-side after 24h.
+  pendingAttachments: [],
+
+  ATTACH_LIMITS: {
+    maxPerMessage: 4,
+    maxImageBytes: 4 * 1024 * 1024,
+    maxTextBytes: 200 * 1024,
+    imageExts: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
+    textExts: ['txt', 'md', 'markdown', 'csv', 'tsv', 'json', 'log', 'yaml', 'yml', 'xml', 'html', 'css', 'js', 'jsx', 'ts', 'tsx', 'py', 'rb', 'go', 'rs', 'java', 'sql', 'sh'],
+  },
+
+  _setupAttachments() {
+    const btn = document.getElementById('dc-attach-btn');
+    const fileInput = document.getElementById('dc-file-input');
+    const textarea = document.getElementById('dc-input');
+    const messagesEl = document.getElementById('dc-messages');
+    if (!btn || !fileInput) return;
+
+    // Pending uploads belong to the session they were uploaded to.
+    const sid = DevChat.currentSession?.id;
+    DevChat.pendingAttachments = DevChat.pendingAttachments.filter((a) => a.sessionId === sid);
+    DevChat._renderAttachStrip();
+
+    btn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files?.length) DevChat._addFiles(fileInput.files);
+      fileInput.value = '';
+    });
+
+    // Paste an image straight from the clipboard (screenshots).
+    if (textarea) {
+      textarea.addEventListener('paste', (e) => {
+        const items = e.clipboardData?.items || [];
+        const files = [];
+        for (const item of items) {
+          if (item.kind === 'file') {
+            const f = item.getAsFile();
+            if (f) {
+              // Clipboard images often arrive nameless — synthesize one.
+              if (!f.name || f.name === 'image.png' || !/\./.test(f.name)) {
+                const ext = (f.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+                const named = new File([f], `pasted-image-${Date.now() % 100000}.${ext}`, { type: f.type });
+                files.push(named);
+              } else {
+                files.push(f);
+              }
+            }
+          }
+        }
+        if (files.length) {
+          e.preventDefault();
+          DevChat._addFiles(files);
+        }
+      });
+    }
+
+    // Drag-and-drop onto the message area or the composer.
+    for (const el of [messagesEl, document.getElementById('dc-form')]) {
+      if (!el) continue;
+      el.addEventListener('dragover', (e) => { e.preventDefault(); });
+      el.addEventListener('drop', (e) => {
+        if (e.dataTransfer?.files?.length) {
+          e.preventDefault();
+          DevChat._addFiles(e.dataTransfer.files);
+        }
+      });
+    }
+  },
+
+  async _addFiles(fileList) {
+    if (!DevChat.currentSession || DevChat.isStreaming) return;
+    DevChat._setAttachError(null);
+    const sid = DevChat.currentSession.id;
+    const L = DevChat.ATTACH_LIMITS;
+    for (const file of Array.from(fileList)) {
+      if (DevChat.pendingAttachments.length >= L.maxPerMessage) {
+        DevChat._setAttachError(`Up to ${L.maxPerMessage} files per message.`);
+        break;
+      }
+      const ext = (file.name.toLowerCase().match(/\.([a-z0-9]+)$/) || [])[1] || '';
+      const isImage = L.imageExts.includes(ext);
+      const isText = L.textExts.includes(ext);
+      if (!isImage && !isText) {
+        DevChat._setAttachError(`"${file.name}" isn't supported — attach an image (PNG/JPEG/GIF/WebP) or a text file.`);
+        continue;
+      }
+      if (isImage && file.size > L.maxImageBytes) {
+        DevChat._setAttachError(`"${file.name}" is too big — images max ${Math.round(L.maxImageBytes / 1024 / 1024)} MB.`);
+        continue;
+      }
+      if (isText && file.size > L.maxTextBytes) {
+        DevChat._setAttachError(`"${file.name}" is too big — text files max ${Math.round(L.maxTextBytes / 1024)} KB.`);
+        continue;
+      }
+      const entry = {
+        sessionId: sid,
+        uploading: true,
+        id: null,
+        kind: isImage ? 'image' : 'text',
+        filename: file.name,
+        sizeBytes: file.size,
+        objectUrl: isImage ? URL.createObjectURL(file) : null,
+      };
+      DevChat.pendingAttachments.push(entry);
+      DevChat._renderAttachStrip();
+      try {
+        const res = await fetch(`/api/sessions/${sid}/attachments?filename=${encodeURIComponent(file.name)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: file,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data?.error || `Upload failed (HTTP ${res.status})`);
+        entry.id = data.id;
+        entry.kind = data.kind;
+        entry.uploading = false;
+      } catch (err) {
+        DevChat.pendingAttachments = DevChat.pendingAttachments.filter((a) => a !== entry);
+        if (entry.objectUrl) { try { URL.revokeObjectURL(entry.objectUrl); } catch {} }
+        DevChat._setAttachError(err.message || 'Upload failed');
+      }
+      DevChat._renderAttachStrip();
+    }
+  },
+
+  _removeAttachment(idx) {
+    const entry = DevChat.pendingAttachments[idx];
+    if (!entry || entry.uploading) return;
+    DevChat.pendingAttachments.splice(idx, 1);
+    if (entry.objectUrl) { try { URL.revokeObjectURL(entry.objectUrl); } catch {} }
+    // Server row stays until the 24h orphan sweep — harmless.
+    DevChat._setAttachError(null);
+    DevChat._renderAttachStrip();
+  },
+
+  _setAttachError(msg) {
+    const el = document.getElementById('dc-attach-error');
+    if (!el) return;
+    if (msg) {
+      el.textContent = msg;
+      el.classList.remove('hidden');
+    } else {
+      el.textContent = '';
+      el.classList.add('hidden');
+    }
+  },
+
+  _humanSize(bytes) {
+    const n = Number(bytes) || 0;
+    if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+    if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+    return `${n} B`;
+  },
+
+  _renderAttachStrip() {
+    const strip = document.getElementById('dc-attachments');
+    if (!strip) return;
+    const items = DevChat.pendingAttachments;
+    if (!items.length) {
+      strip.innerHTML = '';
+      strip.classList.remove('dc-attach-strip-active');
+      return;
+    }
+    strip.classList.add('dc-attach-strip-active');
+    strip.innerHTML = items.map((a, i) => {
+      const name = escapeHtml(a.filename);
+      const removeBtn = a.uploading
+        ? '<span class="dc-attach-uploading">…</span>'
+        : `<button type="button" class="dc-attach-remove" data-attach-idx="${i}" title="Remove" aria-label="Remove ${name}">&times;</button>`;
+      if (a.kind === 'image' && a.objectUrl) {
+        return `<div class="dc-attach-item"><img class="dc-attach-thumb" src="${a.objectUrl}" alt="${name}" title="${name}">${removeBtn}</div>`;
+      }
+      return `<div class="dc-attach-item dc-attach-chip" title="${name}"><span class="dc-attach-name">${name}</span><span class="dc-attach-size">${DevChat._humanSize(a.sizeBytes)}</span>${removeBtn}</div>`;
+    }).join('');
+    strip.querySelectorAll('.dc-attach-remove').forEach((btn) => {
+      btn.addEventListener('click', () => DevChat._removeAttachment(Number(btn.dataset.attachIdx)));
+    });
+  },
+
+  // Attachment row inside a user bubble. Rendered OUTSIDE renderMarkdown
+  // (the DOMPurify allowlist strips <img>, and must keep doing so for
+  // untrusted markdown). Optimistic sends carry objectUrl until the
+  // reload swaps in the server URL.
+  _attachmentsRowHtml(msg) {
+    const atts = msg.attachments;
+    if (!Array.isArray(atts) || !atts.length) return '';
+    const sid = DevChat.currentSession?.id;
+    const items = atts.map((a) => {
+      const name = escapeHtml(String(a.filename || 'file'));
+      const idOk = typeof a.id === 'string' && /^[a-f0-9]{32}$/.test(a.id);
+      const url = a.objectUrl || (idOk && sid ? `/api/sessions/${sid}/attachments/${a.id}` : null);
+      if (!url) return '';
+      if (a.kind === 'image') {
+        return `<a href="${url}" target="_blank" rel="noopener" title="${name} — open full size"><img class="dc-msg-att-img" src="${url}" alt="${name}" loading="lazy"></a>`;
+      }
+      return `<a class="dc-msg-att-chip" href="${url}" download="${name}" title="Download ${name}"><span class="dc-attach-name">${name}</span><span class="dc-attach-size">${DevChat._humanSize(a.sizeBytes)}</span></a>`;
+    }).filter(Boolean).join('');
+    return items ? `<div class="dc-msg-attachments">${items}</div>` : '';
   },
 
   _setupTextareaResize() {

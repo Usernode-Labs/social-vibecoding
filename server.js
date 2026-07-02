@@ -1856,6 +1856,21 @@ function startSessionAutoPauseSweeper(config) {
     } catch (err) {
       log.warn('server', 'Stuck-check reconcile sweep failed', { err: err.message });
     }
+
+    // Pass 5: orphaned dev-chat attachments GC (#450). An upload that was
+    // never sent (message_id still NULL — the user removed it from the
+    // composer, or navigated away) has no owner message to cascade from,
+    // so reclaim its bytea after 24h. Linked rows live with their session.
+    try {
+      const { rowCount } = await pool.query(
+        `DELETE FROM chat_session_attachments
+          WHERE message_id IS NULL
+            AND created_at < NOW() - INTERVAL '24 hours'`
+      );
+      if (rowCount) log.info('server', 'GC\'d orphaned chat attachments', { count: rowCount });
+    } catch (err) {
+      log.warn('server', 'Orphaned-attachment sweep failed', { err: err.message });
+    }
   }, config.sessionSweepIntervalMs).unref();
 }
 
