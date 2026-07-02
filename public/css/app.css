@@ -482,6 +482,105 @@ html, body {
 }
 .dc-quick-pill:hover { background: var(--bg-tertiary); border-color: var(--accent); }
 
+/* ── File attachments (#450) ───────────────────────────── */
+
+/* Pending strip above the composer. Hidden when empty. */
+.dc-attach-strip { display: none; }
+.dc-attach-strip.dc-attach-strip-active {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.dc-attach-item {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  max-width: 100%;
+}
+
+.dc-attach-thumb {
+  display: block;
+  height: 48px;
+  max-width: 96px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.dc-attach-chip { padding: 4px 8px; font-size: 12px; }
+
+.dc-attach-name {
+  color: var(--text-secondary);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dc-attach-size { color: var(--text-muted); font-size: 11px; }
+
+.dc-attach-remove {
+  border: none;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  border-radius: 999px;
+  width: 18px;
+  height: 18px;
+  line-height: 16px;
+  font-size: 13px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.dc-attach-remove:hover { color: #ef4444; }
+
+.dc-attach-uploading { color: var(--text-muted); font-size: 12px; padding: 0 4px; }
+
+.dc-attach-error {
+  color: #ef4444;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+/* Attachments inside a sent user bubble — rendered OUTSIDE the
+   markdown pipeline (DOMPurify strips <img> from chat markdown by
+   design; these come from the trusted attachments route only). */
+.dc-msg-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.dc-msg-att-img {
+  display: block;
+  max-height: 120px;
+  max-width: 220px;
+  object-fit: contain;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.dc-msg-att-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-card-alt);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+  text-decoration: none;
+}
+.dc-msg-att-chip:hover { border-color: var(--accent); }
+
 /* ── Claude Code log (collapsible) ─────────────────────── */
 
 .dc-cc-log {

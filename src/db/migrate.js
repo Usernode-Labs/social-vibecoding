@@ -47,6 +47,7 @@ async function migrate(config) {
   await seedStagingQaSession(pool, config);
   await seedStagingCloneQuestionSuggestions(pool, config);
   await seedStagingCloneSpecPills(pool, config);
+  await seedStagingChatAttachments(pool, config);
   await seedStagingSpecViewerSessions(pool, config);
   await seedStagingDemoProposal(pool, config);
   await seedStagingSpecUserShareFixtures(pool, config);
@@ -3004,6 +3005,114 @@ async function seedStagingCloneSpecPills(pool, config) {
     appId,
     owner: owner.username,
     sessionId,
+  });
+}
+
+
+// Dev-chat attachment fixture (#450). chat_sessions /
+// chat_session_messages / chat_session_attachments are all
+// staging:private (schema-only in staging), so without this seed the
+// attachment UI — the thumbnail + file chip inside a sent user bubble,
+// the full-size image open, and the text-file download — would be
+// invisible on a staging preview. One fixture session owned by the
+// first admin (the user the tester logs in as) carrying a user message
+// with one tiny PNG and one small text file, plus an assistant reply so
+// the conversation reads naturally. Idempotent via the branch-name
+// existence check; attachment ids are fixed 32-hex constants with
+// ON CONFLICT DO NOTHING.
+async function seedStagingChatAttachments(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging chat-attachments fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging chat-attachments fixture skipped: no users');
+    return;
+  }
+  const owner = userRows[0];
+
+  const branch = 'staging-fixture/chat-attachments';
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, branch]
+  );
+  if (existing.length) return;
+
+  const { rows: sessionRows } = await pool.query(
+    `INSERT INTO chat_sessions
+       (app_id, user_id, branch_name, session_title, status, created_at)
+     VALUES ($1, $2, $3, $4, 'active', NOW() - INTERVAL '10 minutes')
+     RETURNING id`,
+    [appId, owner.id, branch, '[staging fixture] Staging demo: message with attachments']
+  );
+  const sessionId = sessionRows[0].id;
+
+  // Fixed ids (32-hex) so re-seeding after a partial run stays clean.
+  const pngId = 'a11ac4e5fabc4450a11ac4e5fabc4450';
+  const txtId = 'b22bd5f60bcd5450b22bd5f60bcd5450';
+
+  // 1×1 red PNG — a real, valid image so the thumbnail and the
+  // full-size open both work against the serving route.
+  const pngData = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64'
+  );
+  const txtData = Buffer.from(
+    'Staging demo notes\n\nThis text file was attached to a dev-chat message so the\nattachment chip and its download can be tested in staging.\n',
+    'utf8'
+  );
+
+  const { rows: msgRows } = await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+     VALUES ($1, 'user', $2, $3, NOW() - INTERVAL '9 minutes')
+     RETURNING id`,
+    [
+      sessionId,
+      'Here\'s a mockup screenshot and my notes — can you match the header color to the mockup?',
+      JSON.stringify({
+        attachments: [
+          { id: pngId, kind: 'image', filename: 'staging-demo-mockup.png', contentType: 'image/png', sizeBytes: pngData.length },
+          { id: txtId, kind: 'text', filename: 'staging-demo-notes.txt', contentType: 'text/plain', sizeBytes: txtData.length },
+        ],
+      }),
+    ]
+  );
+  const messageId = msgRows[0].id;
+
+  await pool.query(
+    `INSERT INTO chat_session_attachments
+       (id, session_id, message_id, user_id, kind, filename, content_type, size_bytes, data, created_at)
+     VALUES
+       ($1, $2, $3, $4, 'image', 'staging-demo-mockup.png', 'image/png', $5, $6, NOW() - INTERVAL '9 minutes'),
+       ($7, $2, $3, $4, 'text', 'staging-demo-notes.txt', 'text/plain', $8, $9, NOW() - INTERVAL '9 minutes')
+     ON CONFLICT (id) DO NOTHING`,
+    [pngId, sessionId, messageId, owner.id, pngData.length, pngData, txtId, txtData.length, txtData]
+  );
+
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, created_at)
+     VALUES ($1, 'assistant', $2, NOW() - INTERVAL '8 minutes')`,
+    [sessionId, 'Got it — I can see the mockup and your notes. Tell me when you want me to build the header change.']
+  );
+
+  log.info('db', 'Staging chat-attachments fixture seeded', {
+    appId, owner: owner.username, sessionId,
   });
 }
 
