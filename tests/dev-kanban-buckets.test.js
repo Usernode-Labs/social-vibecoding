@@ -25,12 +25,15 @@ const APP_VIEW_SRC = fs.readFileSync(
 );
 
 // Build a vm sandbox with app-view.js loaded. `over` can supply a custom
-// `document`, `fetch`, or `localStorage` so tests that exercise the DOM-
-// touching render paths (e.g. loadMoreMerged) can capture writes / steer the
-// view mode. Returns the sandbox; AppView is at sandbox.__AppView.
+// `document`, `fetch`, `localStorage`, or `matchMedia` so tests that exercise
+// the DOM-touching render paths (e.g. loadMoreMerged) can capture writes /
+// steer the view mode / fake the viewport width. matchMedia is absent unless
+// supplied — mirroring old browsers, and pinning the _getViewMode guard.
+// Returns the sandbox; AppView is at sandbox.__AppView.
 function makeCtx(over) {
   const o = over || {};
   const sandbox = {
+    matchMedia: o.matchMedia,
     console,
     relTime: () => 'just now',
     escapeHtml: (s) => String(s == null ? '' : s),
@@ -303,4 +306,83 @@ test('loadMoreMerged updates #gc-merged (not the board) in list mode', async () 
   await AppView.loadMoreMerged();
   assert.equal(repaints, 0, 'list mode does not repaint the whole board');
   assert.ok(writes.length >= 1, '#gc-merged is updated in list mode');
+});
+
+// ── _getViewMode default: explicit preference, else width-based (#462) ─────
+
+// A matchMedia stub that answers `wide` for the 1024px query and counts how
+// many times it is evaluated (for the once-per-page-load memoization test).
+const mediaStub = (wide, counter) => (query) => {
+  if (counter) counter.n += 1;
+  return { media: query, matches: wide };
+};
+
+test('no stored value + wide viewport → kanban by default', () => {
+  const ctx = makeCtx({
+    localStorage: { getItem: () => null, setItem: () => {} },
+    matchMedia: mediaStub(true),
+  });
+  assert.equal(ctx.__AppView._getViewMode(), 'kanban');
+});
+
+test('no stored value + narrow viewport → list by default', () => {
+  const ctx = makeCtx({
+    localStorage: { getItem: () => null, setItem: () => {} },
+    matchMedia: mediaStub(false),
+  });
+  assert.equal(ctx.__AppView._getViewMode(), 'list');
+});
+
+test('stored list beats the wide-viewport kanban default', () => {
+  const ctx = makeCtx({
+    localStorage: { getItem: () => 'list', setItem: () => {} },
+    matchMedia: mediaStub(true),
+  });
+  assert.equal(ctx.__AppView._getViewMode(), 'list');
+});
+
+test('stored kanban beats the narrow-viewport list default', () => {
+  const ctx = makeCtx({
+    localStorage: { getItem: () => 'kanban', setItem: () => {} },
+    matchMedia: mediaStub(false),
+  });
+  assert.equal(ctx.__AppView._getViewMode(), 'kanban');
+});
+
+test('no matchMedia in the environment → list (guarded fallback)', () => {
+  const ctx = makeCtx({
+    localStorage: { getItem: () => null, setItem: () => {} },
+  });
+  assert.equal(ctx.__AppView._getViewMode(), 'list');
+});
+
+test('unrecognized stored garbage falls through to the width-based default', () => {
+  const ctx = makeCtx({
+    localStorage: { getItem: () => 'banana', setItem: () => {} },
+    matchMedia: mediaStub(true),
+  });
+  assert.equal(ctx.__AppView._getViewMode(), 'kanban');
+});
+
+test('width-based default is memoized: media query evaluated once per context', () => {
+  const counter = { n: 0 };
+  const ctx = makeCtx({
+    localStorage: { getItem: () => null, setItem: () => {} },
+    matchMedia: mediaStub(true, counter),
+  });
+  const AppView = ctx.__AppView;
+  assert.equal(AppView._getViewMode(), 'kanban');
+  assert.equal(AppView._getViewMode(), 'kanban');
+  assert.equal(AppView._getViewMode(), 'kanban');
+  assert.equal(counter.n, 1, 'matchMedia consulted exactly once');
+});
+
+test('auto-default is never written back to localStorage', () => {
+  const writes = [];
+  const ctx = makeCtx({
+    localStorage: { getItem: () => null, setItem: (k, v) => writes.push([k, v]) },
+    matchMedia: mediaStub(true),
+  });
+  assert.equal(ctx.__AppView._getViewMode(), 'kanban');
+  assert.equal(writes.length, 0, 'reading the mode must not persist the default');
 });
