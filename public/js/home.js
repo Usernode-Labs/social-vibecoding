@@ -871,9 +871,11 @@ const Home = {
         borderStyle: 'dashed',
         borderColor: 'rgba(139, 92, 246, 0.55)',
         backgroundColor: 'rgba(139, 92, 246, 0.07)',
-        // touch-pan-y let the page scroll while the gesture was still
-        // ambiguous; now that it's a drag, claim the pointer entirely
-        // so the browser doesn't take over mid-drag with a pan.
+        // touch-action is evaluated at touchstart and immutable for
+        // the gesture, so this only shields NEW touches that land
+        // mid-drag/settle — the in-flight gesture is claimed by
+        // onTouchMove's preventDefault below, the one veto browsers
+        // still honor after the gesture has started.
         touchAction: 'none',
       });
       // The cards themselves are already select-none via
@@ -891,6 +893,26 @@ const Home = {
     // means the user is scrolling — bail and let the browser pan
     // (touch-pan-y on the card keeps that path native).
     if (isTouch) longPressTimer = setTimeout(() => beginDrag(startX, startY), 350);
+
+    // Pointer Events alone can't hold off the browser's pan once the
+    // long-press promotes to a drag: the card's touch-action (pan-y)
+    // was locked in at touchstart, and preventDefault() on pointermove
+    // has no effect on scrolling — so the first finger movement would
+    // start a page scroll and pointercancel the drag. The one veto
+    // browsers still honor is preventDefault() on the raw touchmove,
+    // which works here because the finger held still through the
+    // long-press, so no scroll has been committed yet. Must be
+    // registered non-passive (document-level touchmove defaults to
+    // passive). While the gesture is still ambiguous (!dragging) it
+    // does nothing and scrolling stays native.
+    const onTouchMove = (ev) => { if (dragging) ev.preventDefault(); };
+    // Android fires contextmenu at ~500ms of long-press — after our
+    // 350ms pickup — which would pop a menu mid-drag; eat it.
+    const onContextMenu = (ev) => { if (dragging) ev.preventDefault(); };
+    if (isTouch) {
+      document.addEventListener('touchmove', onTouchMove, { passive: false });
+      document.addEventListener('contextmenu', onContextMenu);
+    }
 
     const moveGhost = (x, y) => {
       ghost.style.transform =
@@ -935,6 +957,8 @@ const Home = {
       listEl.removeEventListener('pointermove', onMove);
       listEl.removeEventListener('pointerup', onUp);
       listEl.removeEventListener('pointercancel', onCancel);
+      document.removeEventListener('touchmove', onTouchMove);
+      document.removeEventListener('contextmenu', onContextMenu);
       try { listEl.releasePointerCapture(pointerId); } catch {}
     };
 
