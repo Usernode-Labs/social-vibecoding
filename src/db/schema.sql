@@ -1300,3 +1300,36 @@ CREATE INDEX IF NOT EXISTS idx_merge_debug_steps_run ON merge_debug_steps (run_i
 -- /debug view seeds its own mock runs under IS_STAGING + ?demo=1.
 COMMENT ON TABLE merge_debug_runs  IS 'staging:private';
 COMMENT ON TABLE merge_debug_steps IS 'staging:private';
+
+-- Dev-chat file attachments (#450). Users attach images / text files to
+-- dev-chat messages as extra context for the Mayor, scout, and coding
+-- agent. Bytea-in-Postgres like session_visuals (the platform container
+-- has no persistent file volume); ids are random 32-hex tokens generated
+-- in Node. message_id is NULL between upload and send — the chat handler
+-- links it when the message posts, and server.js's session sweeper GCs
+-- orphans older than 24h. Retention otherwise follows the parent session
+-- (ON DELETE CASCADE), bounded by a 25 MB per-session cap at upload time.
+CREATE TABLE IF NOT EXISTS chat_session_attachments (
+  id           VARCHAR(32) PRIMARY KEY,
+  session_id   INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  message_id   INTEGER REFERENCES chat_session_messages(id) ON DELETE CASCADE,
+  user_id      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  -- 'image' (png/jpeg/gif/webp, magic-byte verified) | 'text' (UTF-8)
+  kind         VARCHAR(8)   NOT NULL,
+  filename     VARCHAR(256) NOT NULL,
+  content_type VARCHAR(64)  NOT NULL,
+  size_bytes   INTEGER      NOT NULL,
+  data         BYTEA        NOT NULL,
+  created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_chat_session_attachments_session ON chat_session_attachments(session_id);
+CREATE INDEX IF NOT EXISTS idx_chat_session_attachments_message ON chat_session_attachments(message_id);
+CREATE INDEX IF NOT EXISTS idx_chat_session_attachments_orphan
+  ON chat_session_attachments(created_at) WHERE message_id IS NULL;
+
+-- Private like its parent chat_sessions (public-FK-to-private is the
+-- combination the migration linter forbids), and the bytes are private
+-- chat content in their own right — screenshots and files a user shared
+-- with their own dev session only. Schema-only in staging clones;
+-- migrate.js seeds a demo fixture so the UI is exercisable there.
+COMMENT ON TABLE chat_session_attachments IS 'staging:private';

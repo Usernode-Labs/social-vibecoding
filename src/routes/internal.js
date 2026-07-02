@@ -475,6 +475,92 @@ function internalRoutes(_config) {
     }
   );
 
+  // Read-only: list this session's dev-chat file attachments (#450).
+  // Backs the worker's usernode-attachments CLI (scout + build) so
+  // Claude Code can discover user-attached files. Same auth posture as
+  // the issues routes: session-scoped ISSUES_JWT via internalAuth, so
+  // scout (which never gets WORKER_JWT) can still read. Metadata only —
+  // bytes come from the sibling route below. Only linked (sent)
+  // attachments are listed; pending uploads aren't context yet.
+  router.get(
+    '/api/internal/sessions/:sessionId/attachments',
+    internalAuth,
+    pushLimiter,
+    async (req, res) => {
+      const sessionId = parseInt(req.params.sessionId, 10);
+      if (!Number.isFinite(sessionId)) {
+        return res.status(400).json({ ok: false, code: 'bad_session_id' });
+      }
+      if (req.workerSession.sessionId !== sessionId) {
+        log.warn('internal-api', 'Session mismatch between JWT and route (attachments)', {
+          jwt: req.workerSession.sessionId, route: sessionId,
+        });
+        return res.status(403).json({ ok: false, code: 'session_mismatch' });
+      }
+      try {
+        const { rows } = await pool.query(
+          `SELECT id, kind, filename, content_type, size_bytes, created_at
+             FROM chat_session_attachments
+            WHERE session_id = $1 AND message_id IS NOT NULL
+            ORDER BY created_at ASC, id ASC`,
+          [sessionId]
+        );
+        return res.json({
+          ok: true,
+          attachments: rows.map((r) => ({
+            id: r.id, kind: r.kind, filename: r.filename,
+            contentType: r.content_type, sizeBytes: r.size_bytes,
+            createdAt: r.created_at,
+          })),
+        });
+      } catch (err) {
+        log.error('internal-api', 'Attachment list failed', { sessionId, err: err.message });
+        return res.status(500).json({ ok: false, code: 'db_error' });
+      }
+    }
+  );
+
+  // Read-only: fetch ONE attachment's raw bytes (#450). Backs
+  // `usernode-attachments <id> <outpath>` — the worker downloads an
+  // image into its container and Reads it (Claude Code's Read tool
+  // handles image files natively). Session-scoped like everything else
+  // here: an id from another session 404s.
+  router.get(
+    '/api/internal/sessions/:sessionId/attachments/:attId',
+    internalAuth,
+    pushLimiter,
+    async (req, res) => {
+      const sessionId = parseInt(req.params.sessionId, 10);
+      if (!Number.isFinite(sessionId)) {
+        return res.status(400).json({ ok: false, code: 'bad_session_id' });
+      }
+      if (req.workerSession.sessionId !== sessionId) {
+        log.warn('internal-api', 'Session mismatch between JWT and route (attachment)', {
+          jwt: req.workerSession.sessionId, route: sessionId,
+        });
+        return res.status(403).json({ ok: false, code: 'session_mismatch' });
+      }
+      const attId = String(req.params.attId || '');
+      if (!/^[a-f0-9]{32}$/.test(attId)) {
+        return res.status(404).json({ ok: false, code: 'not_found' });
+      }
+      try {
+        const { rows } = await pool.query(
+          `SELECT content_type, data FROM chat_session_attachments
+            WHERE id = $1 AND session_id = $2`,
+          [attId, sessionId]
+        );
+        if (!rows.length) return res.status(404).json({ ok: false, code: 'not_found' });
+        res.set('Content-Type', rows[0].content_type || 'application/octet-stream');
+        res.set('X-Content-Type-Options', 'nosniff');
+        return res.send(rows[0].data);
+      } catch (err) {
+        log.error('internal-api', 'Attachment fetch failed', { sessionId, attId, err: err.message });
+        return res.status(500).json({ ok: false, code: 'db_error' });
+      }
+    }
+  );
+
   // PR creation endpoint. Today's `git push` path doesn't strictly
   // need a worker-callable PR endpoint (the platform's sessions route
   // creates PRs as part of the per-turn finalization flow), but

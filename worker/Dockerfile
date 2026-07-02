@@ -50,6 +50,12 @@ COPY usernode-push   /usr/local/bin/usernode-push
 # untruncated body via `usernode-issues <number>` — in both build and
 # scout modes. Authenticates with the read-only ISSUES_JWT, never WORKER_JWT.
 COPY usernode-issues /usr/local/bin/usernode-issues
+# usernode-attachments is read-only like usernode-issues (same ISSUES_JWT
+# auth, works in scout + build): it lists the session's user-attached
+# dev-chat files, or downloads one into the container so Claude Code can
+# Read it (images especially — text files are already inlined in the
+# prompt). See src/routes/internal.js attachments routes (#450).
+COPY usernode-attachments /usr/local/bin/usernode-attachments
 # `.claude` must exist (owned by node) in the image so that when we mount a
 # named volume at that path for persistent CC sessions, Docker initialises the
 # volume with node ownership instead of defaulting to root.
@@ -57,6 +63,7 @@ RUN chmod +x /usr/local/bin/worker-run.sh \
               /usr/local/bin/run-cc.sh \
               /usr/local/bin/usernode-push \
               /usr/local/bin/usernode-issues \
+              /usr/local/bin/usernode-attachments \
   && mkdir -p /home/node/workspace /home/node/.claude \
   && chown -R node:node /home/node
 
