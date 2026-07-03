@@ -2642,7 +2642,7 @@ async function seedStagingDashboardAdminSplit(pool) {
 //   - app_activity across many days per user, distinct strides, so the
 //     General-users DAU line varies day-to-day and the 7/30-day rolling
 //     WAU/MAU windows are fully backed.
-//   - Power-user events (dapp_active_day >=3/week + one developer action —
+//   - Power-user events (dapp_active_day >=3/week + three developer actions —
 //     kudos/vote/proposal — per qualifying week) across the trailing four
 //     weeks, with each user qualifying in a different number of weeks so the
 //     L4 stacked bar shows distinct 1/4…4/4 buckets and the rolling
@@ -2692,10 +2692,11 @@ async function seedStagingAnalyticsCharts(pool) {
     }
 
     // Power-user events. Per qualifying week: 3 dapp_active_day events (>=3
-    // "uses") + one developer action. Week w (days ago) spans [7w+1, 7w+7].
+    // "uses") + 3 developer actions (>=3). Week w (days ago) spans
+    // [7w+1, 7w+7].
     const weekDappDays = [[1, 2, 3], [8, 9, 10], [15, 16, 17], [22, 23, 24]];
-    const weekDevDay = [2, 9, 16, 23];
-    const devTypes = ['kudos_given', 'pr_vote_cast', 'pr_promoted', 'kudos_given'];
+    const weekDevDays = [[2, 3, 4], [9, 10, 11], [16, 17, 18], [23, 24, 25]];
+    const devTypes = ['kudos_given', 'pr_vote_cast', 'pr_promoted'];
     // Trailing weeks each user qualifies in (1..4) → distinct L4 buckets.
     const qualWeeks = [
       { id: 900060, weeks: 4 },
@@ -2714,12 +2715,14 @@ async function seedStagingAnalyticsCharts(pool) {
             [evId++, q.id, appId, d]
           );
         }
-        await pool.query(
-          `INSERT INTO events (id, user_id, app_id, event_type, created_at)
-           VALUES ($1, $2, $3, $4, NOW() - ($5::int * INTERVAL '1 day'))
-           ON CONFLICT (id) DO NOTHING`,
-          [evId++, q.id, appId, devTypes[w], weekDevDay[w]]
-        );
+        for (let i = 0; i < weekDevDays[w].length; i++) {
+          await pool.query(
+            `INSERT INTO events (id, user_id, app_id, event_type, created_at)
+             VALUES ($1, $2, $3, $4, NOW() - ($5::int * INTERVAL '1 day'))
+             ON CONFLICT (id) DO NOTHING`,
+            [evId++, q.id, appId, devTypes[i % devTypes.length], weekDevDays[w][i]]
+          );
+        }
       }
     }
 
