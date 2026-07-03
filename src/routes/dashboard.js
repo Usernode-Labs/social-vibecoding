@@ -462,9 +462,9 @@ function dashboardRoutes(config) {
   //       events in the window (each (app, day) row is one "use"; counting
   //       rows, not distinct days/apps, is what "same or different dapps"
   //       means), AND
-  //   (b) did >= 1 visible developer action that week — at least one event
-  //       in {kudos_given, pr_vote_cast, pr_promoted} (kudos, voting, and
-  //       making a proposal respectively; "making a proposal" maps to
+  //   (b) did >= 3 visible developer actions that week — at least three
+  //       events in {kudos_given, pr_vote_cast, pr_promoted} (kudos, voting,
+  //       and making a proposal respectively; "making a proposal" maps to
   //       pr_promoted = a PR opened for group voting, the tracked action
   //       that lives in the events log alongside the other two).
   //
@@ -501,7 +501,7 @@ function dashboardRoutes(config) {
            FROM days d
            JOIN rollup r ON r.day BETWEEN d.d - 6 AND d.d
            GROUP BY d.d, r.user_id
-           HAVING SUM(r.dapp_ct) >= 3 AND SUM(r.dev_ct) >= 1
+           HAVING SUM(r.dapp_ct) >= 3 AND SUM(r.dev_ct) >= 3
          )
          SELECT to_char(d.d, 'YYYY-MM-DD') AS day,
                 COUNT(q.user_id)::int AS count
@@ -527,7 +527,7 @@ function dashboardRoutes(config) {
            CROSS JOIN weeks gw
            JOIN rollup r ON r.day BETWEEN d.d - 7 * gw.w - 6 AND d.d - 7 * gw.w
            GROUP BY d.d, gw.w, r.user_id
-           HAVING SUM(r.dapp_ct) >= 3 AND SUM(r.dev_ct) >= 1
+           HAVING SUM(r.dapp_ct) >= 3 AND SUM(r.dev_ct) >= 3
          ),
          counts AS (
            SELECT d, user_id, COUNT(DISTINCT w) AS q
