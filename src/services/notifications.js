@@ -145,6 +145,29 @@ async function createStalePrNotification(pool, { userId, appId, sessionId }) {
   return rows;
 }
 
+// #237: staging preview failed to boot, so proposal checks can't run and the
+// PR is merge-blocked. Addressed to the proposal owner (system-generated, so
+// source_user_id is NULL). Same unread-dedup as session_done — at most one
+// unread 'check_failed' per (user, session) — so the per-streak nudge can't
+// pile up if the owner hasn't looked yet. The streak gate in
+// staging-recovery.recordStagingBootFailure already limits this to once per
+// failure streak; the dedup is belt-and-suspenders against re-fires.
+async function createCheckFailedNotification(pool, { userId, appId, sessionId }) {
+  if (!userId || !sessionId) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
+     SELECT $1, $2, $3, NULL, 'check_failed'
+      WHERE NOT EXISTS (
+        SELECT 1 FROM notifications n
+        WHERE n.user_id = $1 AND n.session_id = $3
+          AND n.kind = 'check_failed' AND n.read_at IS NULL
+      )
+     RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
+    [userId, appId, sessionId]
+  );
+  return rows;
+}
+
 // #161: dev-session completion notification (kind='session_done').
 // Fired by the chat handler's done hook when the session owner armed
 // notify_on_done (they left mid-turn), and unconditionally by
@@ -625,6 +648,7 @@ module.exports = {
   createReplyNotification,
   createReactionNotification,
   createStalePrNotification,
+  createCheckFailedNotification,
   createSessionDoneNotification,
   createAutoSolveDoneNotification,
   createSpecSharedNotification,

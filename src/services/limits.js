@@ -15,6 +15,10 @@ const log = require('./logger');
 
 const KEY_USER  = 'user_daily_limit_cents';
 const KEY_GLOBAL = 'global_daily_limit_cents';
+// #361: dedicated daily cap for platform-driven merge-conflict / sync
+// resolution turns. Lives in platform_settings like the other two and
+// is admin-tunable from /admin. Defaults to $25/day (2500 cents).
+const KEY_SYSTEM = 'system_tokens_daily_limit_cents';
 
 const CACHE_TTL_MS = 10_000;
 const cache = new Map();
@@ -68,6 +72,12 @@ async function getGlobalLimitCents(pool) {
 
 async function getDefaultUserLimitCents(pool) {
   return readSettingCents(pool, KEY_USER, 2500);
+}
+
+// #361: the system-tokens daily cap (cents). Same 10s-cached read as the
+// other two caps; admin writes call invalidate(KEY_SYSTEM).
+async function getSystemTokensLimitCents(pool) {
+  return readSettingCents(pool, KEY_SYSTEM, 2500);
 }
 
 async function getEffectiveUserLimitCents(pool, userId) {
@@ -169,7 +179,10 @@ async function resolveBillingPath(pool, jwtSecret, userId) {
   if (!budget.error) return { apiKey: null, byok: false };
   const apiKey = await loadUserApiKey(pool, userId, jwtSecret);
   if (apiKey) return { apiKey, byok: true };
-  return { error: budget.error };
+  // #463: this branch is only reachable with NO usable key on file, so
+  // the BYOK hint is always accurate here. checkBudget itself stays
+  // hint-free — it also runs on paths where the caller has a key.
+  return { error: `${budget.error} Add your own Anthropic API key in Settings to keep going.` };
 }
 
 // Daily-ledger upsert shared by every spend site (Mayor turns, Claude
@@ -196,9 +209,57 @@ async function recordSpend(pool, userId, costCents, { byok = false } = {}) {
   }
 }
 
+// #361: gate for "may the platform incur another merge-conflict /
+// sync-resolution turn right now?". Reads today's accumulated
+// system-token spend and compares to the system cap. Returns
+// `{ ok: true, remaining }` or `{ error: '...user-facing message...' }`
+// mirroring checkBudget's shape so call sites can branch the same way.
+async function checkSystemBudget(pool) {
+  const limit = await getSystemTokensLimitCents(pool);
+  let spent = 0;
+  try {
+    const { rows } = await pool.query(
+      'SELECT cost_cents FROM system_token_usage WHERE date = CURRENT_DATE'
+    );
+    spent = parseFloat(rows[0]?.cost_cents || 0);
+  } catch (err) {
+    // Table may not exist yet on first boot before migrate() runs, or a
+    // transient DB hiccup — fail open (treat as headroom) so housekeeping
+    // isn't blocked by bookkeeping. The mid-stream proxy gate still caps
+    // runaway spend.
+    log.warn('limits', 'system_token_usage read failed; allowing turn', { err: err.message });
+    return { ok: true, remaining: limit };
+  }
+  if (spent >= limit) {
+    return { error: `System token budget reached ($${(limit / 100).toFixed(2)}). Resets at midnight UTC.` };
+  }
+  return { ok: true, remaining: limit - spent };
+}
+
+// #361: daily-ledger upsert for system-token spend. One row per day,
+// keyed on date (no user). Same swallow-and-log tolerance as recordSpend
+// — billing bookkeeping must never fail the turn that incurred it.
+async function recordSystemSpend(pool, costCents) {
+  if (!(costCents > 0)) return;
+  try {
+    await pool.query(
+      `INSERT INTO system_token_usage (date, cost_cents) VALUES (CURRENT_DATE, $1)
+       ON CONFLICT (date) DO UPDATE
+         SET cost_cents = system_token_usage.cost_cents + EXCLUDED.cost_cents,
+             updated_at = NOW()`,
+      [costCents]
+    );
+  } catch (err) {
+    log.warn('limits', 'Failed to record system_token_usage spend', { costCents, err: err.message });
+  }
+}
+
 module.exports = {
   getGlobalLimitCents,
   getDefaultUserLimitCents,
+  getSystemTokensLimitCents,
+  checkSystemBudget,
+  recordSystemSpend,
   getEffectiveUserLimitCents,
   checkBudget,
   loadUserApiKey,
@@ -207,4 +268,5 @@ module.exports = {
   invalidate,
   KEY_USER,
   KEY_GLOBAL,
+  KEY_SYSTEM,
 };

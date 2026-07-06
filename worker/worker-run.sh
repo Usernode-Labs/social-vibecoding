@@ -70,6 +70,58 @@ if [ ! -f /home/node/.claude.json ]; then
   fi
 fi
 
+# Seed the Playwright browser config for the in-loop browser. The MCP
+# server has no CLI flag for raw Chromium args, but `--config <file>`
+# accepts a JSON whose browser.launchOptions.args are forwarded to
+# Chromium (see @playwright/mcp config.d.ts: launchOptions is a Playwright
+# LaunchOptions, which includes `args`). We use it to enable software
+# WebGL via SwiftShader so Three.js / <canvas> WebGL apps can create a
+# context while the agent visually checks them — the same flag set the
+# capture image uses (see capture/capture.js CHROMIUM_LAUNCH_ARGS).
+# --use-gl=angle --use-angle=swiftshader route WebGL to the CPU
+# rasterizer; --enable-unsafe-swiftshader opts modern Chromium into
+# unaccelerated SwiftShader (else getContext() returns null on the
+# worker's GPU-less Chromium).
+BROWSER_PW_CONFIG=/home/node/.usernode-playwright.json
+cat > "$BROWSER_PW_CONFIG" <<'JSON'
+{
+  "browser": {
+    "launchOptions": {
+      "args": [
+        "--use-gl=angle",
+        "--use-angle=swiftshader",
+        "--enable-unsafe-swiftshader"
+      ]
+    }
+  }
+}
+JSON
+
+# Seed the Playwright MCP config used by the OPTIONAL in-loop browser
+# (build-mode turns only — see run-cc.sh). Written on every bootstrap so a
+# warm container always has a config matching the image's pinned MCP
+# server. It lives on the container filesystem (re-created each bootstrap),
+# NOT the ~/.claude volume, so it can't go stale against an image rebuild.
+# Harmless for warm/scout/sync, which never reference it.
+#   --headless : no display in the worker; Chromium runs headless.
+#   --isolated : ephemeral profile per session, no on-disk profile state.
+#   --config   : the software-WebGL launch args seeded just above.
+# `npx @playwright/mcp` resolves the globally-installed pinned package, so
+# there's no network fetch at launch, and Chromium itself launches lazily
+# on the first browser tool call.
+BROWSER_MCP_CONFIG=/home/node/.usernode-mcp.json
+cat > "$BROWSER_MCP_CONFIG" <<JSON
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["--yes", "@playwright/mcp", "--headless", "--isolated", "--config", "$BROWSER_PW_CONFIG"]
+    }
+  }
+}
+JSON
+echo "__USERNODE_PHASE__ seeded playwright mcp config"
+
 # Bootstrap: clone the repo if the workspace is empty. Re-warming
 # (after eviction) skips this because the volume isn't reused for the
 # workspace — the workspace lives on container fs, so a destroyed

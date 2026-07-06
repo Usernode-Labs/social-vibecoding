@@ -100,4 +100,28 @@ const proposalDiscussLimiter = makeLimiter({
   message: 'Too many messages — slow down for a minute.',
 });
 
-module.exports = { authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, chatLimiter, proposalDiscussLimiter };
+// Dev-chat attachment uploads (#450): 30 / minute / user. Each upload is
+// a ≤4 MB bytea INSERT; honest use is a handful per message, so 30/min
+// never bites, while a scripted loop trying to balloon the DB bounces
+// off quickly (per-session totals are additionally capped at 25 MB in
+// the route itself). Per-user keyed for shared-NAT fairness.
+const attachmentUploadLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 30,
+  name: 'attachment-upload',
+  keyByUser: true,
+  message: 'Too many file uploads — slow down for a minute.',
+});
+
+// Priority / assignee attribute votes: 60 / minute / user. Loose enough
+// that switching your pick a few times never bumps it, tight enough to
+// stop a scripted vote-spam loop. Per-user keyed for shared-NAT fairness.
+const attributeVoteLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 60,
+  name: 'attribute-vote',
+  keyByUser: true,
+  message: 'Too many updates — slow down for a minute.',
+});
+
+module.exports = { authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, chatLimiter, proposalDiscussLimiter, attributeVoteLimiter, attachmentUploadLimiter };

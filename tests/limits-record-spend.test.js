@@ -81,3 +81,83 @@ test('swallows DB errors instead of throwing', async () => {
   await assert.doesNotReject(() => limits.recordSpend(pool, 7, 5, { byok: true }));
   assert.equal(pool.calls.length, 1);
 });
+
+// ── #361: system-token budget helpers ──────────────────────────────────
+
+// A pool whose query routes by SQL so the cap read (platform_settings)
+// and the spend read (system_token_usage) can return distinct values.
+function makeRoutingPool({ settingValue, sysSpent } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (/platform_settings/.test(sql)) {
+        return { rows: settingValue == null ? [] : [{ value: String(settingValue) }] };
+      }
+      if (/system_token_usage/.test(sql)) {
+        // SELECT path returns the day's spend; INSERT path returns nothing.
+        if (/^\s*SELECT/i.test(sql)) {
+          return { rows: sysSpent == null ? [] : [{ cost_cents: sysSpent }] };
+        }
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+  };
+}
+
+test('getSystemTokensLimitCents defaults to 2500 when unset', async () => {
+  limits.invalidate(limits.KEY_SYSTEM);
+  const pool = makeRoutingPool({ settingValue: null });
+  assert.equal(await limits.getSystemTokensLimitCents(pool), 2500);
+  limits.invalidate(limits.KEY_SYSTEM);
+});
+
+test('getSystemTokensLimitCents honors a stored override', async () => {
+  limits.invalidate(limits.KEY_SYSTEM);
+  const pool = makeRoutingPool({ settingValue: 5000 });
+  assert.equal(await limits.getSystemTokensLimitCents(pool), 5000);
+  limits.invalidate(limits.KEY_SYSTEM);
+});
+
+test('checkSystemBudget ok under cap with remaining', async () => {
+  limits.invalidate(limits.KEY_SYSTEM);
+  const pool = makeRoutingPool({ settingValue: 2500, sysSpent: 1000 });
+  const r = await limits.checkSystemBudget(pool);
+  assert.equal(r.error, undefined);
+  assert.equal(r.ok, true);
+  assert.equal(r.remaining, 1500);
+  limits.invalidate(limits.KEY_SYSTEM);
+});
+
+test('checkSystemBudget errors when at/over cap', async () => {
+  limits.invalidate(limits.KEY_SYSTEM);
+  const pool = makeRoutingPool({ settingValue: 2500, sysSpent: 2500 });
+  const r = await limits.checkSystemBudget(pool);
+  assert.match(r.error, /System token budget reached \(\$25\.00\)/);
+  limits.invalidate(limits.KEY_SYSTEM);
+});
+
+test('recordSystemSpend upserts accumulating cost on the date key', async () => {
+  const pool = makePool();
+  await limits.recordSystemSpend(pool, 42);
+  assert.equal(pool.calls.length, 1);
+  const { sql, params } = pool.calls[0];
+  assert.match(sql, /INSERT INTO system_token_usage/);
+  assert.match(sql, /ON CONFLICT \(date\)/);
+  assert.match(sql, /system_token_usage\.cost_cents \+ EXCLUDED\.cost_cents/);
+  assert.deepEqual(params, [42]);
+});
+
+test('recordSystemSpend no-ops on non-positive cost', async () => {
+  const pool = makePool();
+  await limits.recordSystemSpend(pool, 0);
+  await limits.recordSystemSpend(pool, -5);
+  assert.equal(pool.calls.length, 0);
+});
+
+test('recordSystemSpend swallows DB errors', async () => {
+  const pool = makePool({ fail: true });
+  await assert.doesNotReject(() => limits.recordSystemSpend(pool, 10));
+});

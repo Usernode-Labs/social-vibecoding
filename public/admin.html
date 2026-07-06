@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Usernode Social Vibecoding — Admin</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>tailwind.config = {
@@ -38,10 +38,11 @@
   </style>
 </head>
 <body class="bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 min-h-screen p-6">
-  <div class="max-w-2xl mx-auto">
+  <div class="max-w-4xl mx-auto">
     <div class="flex items-center justify-between mb-8">
       <h1 class="text-2xl font-bold">Admin Panel</h1>
       <div class="flex items-center gap-3">
+        <a href="/debug" class="text-sm text-violet-400 hover:text-violet-300">Merge debug &rarr;</a>
         <a href="/status" class="text-sm text-violet-400 hover:text-violet-300">Full status &rarr;</a>
         <a href="/" class="text-sm text-violet-400 hover:text-violet-300">&larr; Back to app</a>
       </div>
@@ -62,7 +63,7 @@
         <h2 class="text-lg font-semibold">Operations</h2>
         <button id="refresh-overview" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
       </div>
-      <div class="grid grid-cols-3 gap-3 mb-4">
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
         <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
           <div class="text-xs uppercase tracking-wide text-zinc-500">Stuck apps</div>
           <div id="overview-stuck" class="text-2xl font-bold mt-1">—</div>
@@ -85,7 +86,7 @@
         <h2 class="text-lg font-semibold">LLM Spend Limits</h2>
         <span class="text-xs text-zinc-500">USD · resets midnight UTC</span>
       </div>
-      <div class="grid grid-cols-2 gap-3 mb-3">
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
         <label class="block">
           <span class="text-xs uppercase tracking-wide text-zinc-500">Default per-user daily cap</span>
           <div class="relative mt-1">
@@ -104,8 +105,17 @@
               placeholder="200.00">
           </div>
         </label>
+        <label class="block">
+          <span class="text-xs uppercase tracking-wide text-zinc-500" title="Funds platform-driven merge-conflict / sync-with-main resolution turns">System tokens daily cap</span>
+          <div class="relative mt-1">
+            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500 pointer-events-none">$</span>
+            <input id="limit-system" type="number" min="0" step="0.01" inputmode="decimal"
+              class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 pl-6 pr-3 py-2 text-sm font-mono"
+              placeholder="25.00">
+          </div>
+        </label>
       </div>
-      <div class="flex items-center justify-between">
+      <div class="flex flex-wrap items-center justify-between gap-2">
         <p class="text-xs text-zinc-500">Per-user overrides live in the Users list below; these are the platform defaults.</p>
         <button id="save-limits-btn" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Save</button>
       </div>
@@ -159,11 +169,35 @@
   </div>
 
   <script>
+    // Safe fetch+parse for the admin read endpoints. Returns
+    // { status, ok, data } and NEVER throws: a non-OK response, a
+    // non-JSON content-type, or a body that fails to parse all yield
+    // data === null instead of an uncaught promise rejection. This
+    // matters on a fresh/unauthenticated load where an /api/* route can
+    // fall through to the SPA shell and return 200 + HTML ("<!DOCTYPE …")
+    // — calling res.json() on that throws "Unexpected token '<'".
+    async function fetchAdminJson(url) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) return { status: res.status, ok: false, data: null };
+        const ct = res.headers.get('content-type') || '';
+        if (!ct.includes('application/json')) {
+          return { status: res.status, ok: true, data: null };
+        }
+        try {
+          return { status: res.status, ok: true, data: await res.json() };
+        } catch {
+          return { status: res.status, ok: true, data: null };
+        }
+      } catch {
+        return { status: 0, ok: false, data: null };
+      }
+    }
+
     async function loadCodes() {
-      const res = await fetch('/api/admin/codes');
-      if (!res.ok) return;
-      const codes = await res.json();
-      renderCodes(codes);
+      const { data } = await fetchAdminJson('/api/admin/codes');
+      if (!Array.isArray(data)) return;
+      renderCodes(data);
     }
 
     function renderCodes(codes) {
@@ -179,7 +213,7 @@
 
       for (const code of codes) {
         const el = document.createElement('div');
-        el.className = 'flex items-center justify-between gap-3 p-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800';
+        el.className = 'flex flex-wrap items-center justify-between gap-3 p-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800';
 
         const used = !!code.used_by_username;
         const codeDisplay = `<code class="font-mono text-sm ${used ? 'text-zinc-400 line-through' : 'text-violet-400'}">${escapeHtml(code.code)}</code>`;
@@ -193,11 +227,11 @@
         }
 
         el.innerHTML = `
-          <div class="flex-1 flex items-center gap-3">
+          <div class="flex-1 min-w-0 flex flex-wrap items-center gap-x-3 gap-y-1">
             ${codeDisplay}
             ${statusHtml}
           </div>
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 shrink-0">
             ${!used ? `<button class="copy-btn text-xs text-zinc-400 hover:text-violet-400 transition-colors" data-code="${escapeHtml(code.code)}">Copy</button>` : ''}
             ${!used ? `<button class="share-btn text-xs text-zinc-400 hover:text-green-400 transition-colors" data-code="${escapeHtml(code.code)}">Share link</button>` : ''}
             ${!used && CAN_WRITE ? `<button class="delete-code-btn text-xs text-zinc-400 hover:text-red-400 transition-colors" data-id="${code.id}">&times;</button>` : ''}
@@ -270,14 +304,13 @@
     });
 
     async function loadUsers() {
-      const res = await fetch('/api/admin/users');
-      if (res.status === 403) {
+      const { status, data } = await fetchAdminJson('/api/admin/users');
+      if (status === 403) {
         document.body.innerHTML = '<div class="flex items-center justify-center h-screen text-zinc-500">Admin access required</div>';
         return;
       }
-      if (!res.ok) return;
-      const users = await res.json();
-      renderUsers(users);
+      if (!Array.isArray(data)) return;
+      renderUsers(data);
     }
 
     function renderUsers(users) {
@@ -292,7 +325,10 @@
 
       for (const user of users) {
         const el = document.createElement('div');
-        el.className = 'p-4 flex items-center gap-4';
+        // Two-line row (#424 follow-up): an identity line + a controls line
+        // stacked in the left content column, with the per-row actions
+        // collapsed into a "…" kebab pinned at the row's right edge.
+        el.className = 'p-4 flex items-start gap-3';
 
         const codeInfo = user.activation_code
           ? `<span class="text-xs text-zinc-500">code: <code class="text-zinc-400">${escapeHtml(user.activation_code)}</code></span>`
@@ -323,7 +359,7 @@
         const roleLabel = { user: 'User', view_admin: 'View-only admin', admin: 'Admin' }[role];
         const roleControlHtml = CAN_WRITE
           ? `
-          <div class="flex items-center gap-2" title="${roleTitle}">
+          <div class="flex items-center gap-2 shrink-0" title="${roleTitle}">
             <span class="text-xs text-zinc-400">Role</span>
             <select class="role-select rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs"
               data-user-id="${user.id}" data-original="${role}" ${roleSelectDisabled ? 'disabled' : ''}>
@@ -333,7 +369,7 @@
             </select>
           </div>`
           : `
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 shrink-0">
             <span class="text-xs text-zinc-400">Role</span>
             <span class="text-xs font-medium text-zinc-500 dark:text-zinc-300">${roleLabel}</span>
           </div>`;
@@ -345,7 +381,7 @@
         const appQuota = user.app_quota == null ? 0 : user.app_quota;
         const appsCreated = user.apps_created == null ? 0 : user.apps_created;
         const quotaHtml = `
-          <div class="flex items-center gap-1" title="Max apps this user may create. 0 = cannot create. Admins bypass this.">
+          <div class="flex items-center gap-1 shrink-0" title="Max apps this user may create. 0 = cannot create. Admins bypass this.">
             <span class="text-xs text-zinc-400">App quota</span>
             <input type="number" min="0" step="1" inputmode="numeric"
               class="quota-input w-16 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono disabled:opacity-60"
@@ -361,7 +397,7 @@
         const overrideCents = user.daily_limit_cents;
         const overrideDollars = overrideCents == null ? '' : centsToDollars(overrideCents);
         const limitHtml = `
-          <div class="flex items-center gap-1" title="Per-user daily cap in dollars. Blank = use platform default.">
+          <div class="flex items-center gap-1 shrink-0" title="Per-user daily cap in dollars. Blank = use platform default.">
             <span class="text-xs text-zinc-400">Cap $</span>
             <input type="number" min="0" step="0.01" inputmode="decimal"
               class="user-limit-input w-20 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono disabled:opacity-60"
@@ -371,16 +407,53 @@
               placeholder="default" ${CAN_WRITE ? '' : 'disabled'}>
           </div>`;
 
+        // Per-user linked Usernode wallet (issue #422). Inline text editor
+        // with the same save-on-blur/Enter, revert-on-failure behaviour as
+        // the Cap $ / App quota fields. Empty = no wallet linked (clears it).
+        const walletAddr = user.usernode_pubkey == null ? '' : user.usernode_pubkey;
+        const walletHtml = `
+          <div class="flex items-center gap-1 shrink-0" title="Linked Usernode wallet (ut1…). Blank = no wallet linked.">
+            <span class="text-xs text-zinc-400">Wallet</span>
+            <input type="text" autocomplete="off" spellcheck="false"
+              class="wallet-input w-44 max-w-full rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono disabled:opacity-60"
+              data-user-id="${user.id}"
+              data-original="${escapeHtml(walletAddr)}"
+              value="${escapeHtml(walletAddr)}"
+              placeholder="none" ${CAN_WRITE ? '' : 'disabled'}>
+          </div>`;
+
+        // Per-row actions live in a "…" overflow menu pinned to the right
+        // edge (#424 follow-up). Only full admins (CAN_WRITE) get a kebab at
+        // all — view-only admins have no actions, so no menu renders. Delete
+        // stays hidden for admin users. The menu items keep the existing
+        // .reset-pw-btn / .delete-btn classes so their click handlers below
+        // bind unchanged; only the buttons' DOM location moved.
+        const deleteItem = !user.is_admin
+          ? `<button data-delete-id="${user.id}" class="delete-btn block w-full text-left px-3 py-2 text-sm text-red-500 hover:bg-zinc-100 dark:hover:bg-zinc-700">Delete</button>`
+          : '';
+        const kebabHtml = CAN_WRITE ? `
+          <div class="relative shrink-0 user-actions">
+            <button type="button" class="kebab-btn rounded px-2 py-1 text-lg leading-none text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200" aria-label="User actions" aria-haspopup="true" aria-expanded="false">&#8943;</button>
+            <div class="kebab-menu hidden absolute right-0 mt-1 z-20 min-w-[11rem] rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 py-1 shadow-lg">
+              <button data-reset-id="${user.id}" data-username="${escapeHtml(user.username)}" class="reset-pw-btn block w-full text-left px-3 py-2 text-sm text-violet-500 hover:bg-zinc-100 dark:hover:bg-zinc-700">Reset password</button>
+              ${deleteItem}
+            </div>
+          </div>` : '';
+
         el.innerHTML = `
-          <div class="flex-1">
-            <div class="font-medium">${escapeHtml(user.username)}</div>
-            <div class="text-sm text-zinc-500">$${costToday} spent today ${codeInfo}</div>
+          <div class="flex-1 min-w-0 flex flex-col gap-2">
+            <div>
+              <div class="font-medium break-words">${escapeHtml(user.username)}</div>
+              <div class="text-sm text-zinc-500 truncate">$${costToday} spent today ${codeInfo}</div>
+            </div>
+            <div class="flex flex-wrap items-center gap-3">
+              ${walletHtml}
+              ${limitHtml}
+              ${roleControlHtml}
+              ${quotaHtml}
+            </div>
           </div>
-          ${limitHtml}
-          ${roleControlHtml}
-          ${quotaHtml}
-          ${CAN_WRITE ? `<button data-reset-id="${user.id}" data-username="${escapeHtml(user.username)}" class="text-violet-400 hover:text-violet-300 text-sm reset-pw-btn">Reset password</button>` : ''}
-          ${CAN_WRITE && !user.is_admin ? `<button data-delete-id="${user.id}" class="text-red-400 hover:text-red-300 text-sm delete-btn">Delete</button>` : ''}
+          ${kebabHtml}
         `;
         list.appendChild(el);
       }
@@ -423,6 +496,69 @@
               const v = data.daily_limit_cents == null ? '' : centsToDollars(data.daily_limit_cents);
               inp.value = v;
               inp.dataset.original = v;
+            }
+          } catch (err) {
+            alert(`Save failed: ${err.message}`);
+            inp.value = orig;
+          } finally {
+            inp.disabled = false;
+          }
+        };
+        inp.addEventListener('blur', commit);
+        inp.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
+        });
+      });
+
+      list.querySelectorAll('.wallet-input').forEach((inp) => {
+        // Save on blur or Enter, mirroring the Cap $ / App quota fields.
+        // Empty = clear the wallet. On a 409 the target address already
+        // belongs to another user; offer to reassign (move) it, which the
+        // backend does atomically.
+        const commit = async () => {
+          const next = inp.value.trim();
+          const orig = inp.dataset.original || '';
+          if (next === orig) return;
+          const userId = inp.dataset.userId;
+          // Client-side shape pre-check (empty allowed = clear).
+          if (next !== '' && !/^ut1\S{5,252}$/.test(next)) {
+            alert('Wallet address must start with "ut1" and contain no spaces.');
+            inp.value = orig;
+            return;
+          }
+          inp.disabled = true;
+          const send = async (reassign) => {
+            const body = { pubkey: next === '' ? null : next };
+            if (reassign) body.reassign = true;
+            return fetch(`/api/admin/users/${userId}/wallet`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+          };
+          try {
+            let res = await send(false);
+            if (res.status === 409) {
+              const data = await res.json().catch(() => ({}));
+              const other = data.conflictUser?.username || 'another user';
+              if (confirm(`${next} is currently linked to "${other}". Move it to this user? This clears it from "${other}".`)) {
+                res = await send(true);
+              } else {
+                inp.value = orig;
+                return;
+              }
+            }
+            if (!res.ok) {
+              const data = await res.json().catch(() => ({}));
+              alert(data.error || `Save failed (HTTP ${res.status})`);
+              inp.value = orig;
+            } else {
+              const data = await res.json();
+              const v = data.usernode_pubkey == null ? '' : data.usernode_pubkey;
+              // A reassign empties the previous holder's row too; reload so
+              // both affected rows reflect the new state.
+              await loadUsers();
+              return;
             }
           } catch (err) {
             alert(`Save failed: ${err.message}`);
@@ -542,6 +678,42 @@
           }
         });
       });
+
+      // Kebab overflow menus. Clicking a kebab toggles its own menu and
+      // closes any other that's open; only one menu is open at a time. The
+      // document-level outside-click/Escape listener is registered once
+      // (guarded by a module flag) since renderUsers re-runs on every reload.
+      list.querySelectorAll('.kebab-btn').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const menu = btn.parentElement.querySelector('.kebab-menu');
+          const isOpen = !menu.classList.contains('hidden');
+          closeAllUserMenus();
+          if (!isOpen) {
+            menu.classList.remove('hidden');
+            btn.setAttribute('aria-expanded', 'true');
+          }
+        });
+      });
+    }
+
+    // Close every open per-row actions menu. Safe to call when none are open.
+    function closeAllUserMenus() {
+      document.querySelectorAll('.kebab-menu').forEach((m) => m.classList.add('hidden'));
+      document.querySelectorAll('.kebab-btn').forEach((b) => b.setAttribute('aria-expanded', 'false'));
+    }
+
+    // Register the global close-on-outside-click / Escape handlers exactly
+    // once — renderUsers rebuilds the rows on every reload, so binding here
+    // (not per row) avoids stacking duplicate listeners.
+    if (!window.__userMenusWired) {
+      window.__userMenusWired = true;
+      document.addEventListener('click', (e) => {
+        if (!e.target.closest('.user-actions')) closeAllUserMenus();
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeAllUserMenus();
+      });
     }
 
     // Temporary-password modal — shows the one-time plaintext exactly once.
@@ -579,9 +751,8 @@
     }
 
     async function loadOverview() {
-      const res = await fetch('/api/admin/overview');
-      if (!res.ok) return;
-      const data = await res.json();
+      const { data } = await fetchAdminJson('/api/admin/overview');
+      if (!data || typeof data !== 'object') return;
       renderOverview(data);
     }
 
@@ -669,11 +840,11 @@
     }
 
     async function loadLimits() {
-      const res = await fetch('/api/admin/limits');
-      if (!res.ok) return;
-      const data = await res.json();
+      const { data } = await fetchAdminJson('/api/admin/limits');
+      if (!data || typeof data !== 'object') return;
       document.getElementById('limit-user').value = centsToDollars(data.user_daily_limit_cents);
       document.getElementById('limit-global').value = centsToDollars(data.global_daily_limit_cents);
+      document.getElementById('limit-system').value = centsToDollars(data.system_tokens_daily_limit_cents);
     }
 
     document.getElementById('save-limits-btn').addEventListener('click', async () => {
@@ -681,12 +852,15 @@
       status.classList.add('hidden');
       const userInput = document.getElementById('limit-user').value.trim();
       const globalInput = document.getElementById('limit-global').value.trim();
+      const systemInput = document.getElementById('limit-system').value.trim();
       const body = {};
       try {
         const u = parseDollarsToCents('Default per-user', userInput);
         const g = parseDollarsToCents('Global', globalInput);
+        const s = parseDollarsToCents('System tokens', systemInput);
         if (u !== null) body.user = u;
         if (g !== null) body.global = g;
+        if (s !== null) body.system = s;
         if (!Object.keys(body).length) {
           throw new Error('Provide at least one value.');
         }
@@ -709,6 +883,7 @@
         const data = await res.json();
         document.getElementById('limit-user').value = centsToDollars(data.user_daily_limit_cents);
         document.getElementById('limit-global').value = centsToDollars(data.global_daily_limit_cents);
+        document.getElementById('limit-system').value = centsToDollars(data.system_tokens_daily_limit_cents);
         status.textContent = 'Saved.';
         status.className = 'text-xs mt-2 text-green-500';
         status.classList.remove('hidden');
@@ -727,17 +902,14 @@
     let CAN_WRITE = false;
 
     async function initAdminPanel() {
-      try {
-        const res = await fetch('/api/auth/me');
-        if (res.ok) {
-          const data = await res.json();
-          CAN_WRITE = !!data.user?.canAdminWrite;
-          // Show the read-only banner for a view-only admin.
-          if (data.user?.isAdmin && !CAN_WRITE) {
-            document.getElementById('view-only-banner')?.classList.remove('hidden');
-          }
+      const { data } = await fetchAdminJson('/api/auth/me');
+      if (data && typeof data === 'object') {
+        CAN_WRITE = !!data.user?.canAdminWrite;
+        // Show the read-only banner for a view-only admin.
+        if (data.user?.isAdmin && !CAN_WRITE) {
+          document.getElementById('view-only-banner')?.classList.remove('hidden');
         }
-      } catch {}
+      }
 
       // Hide the panel-level mutating controls for view-only admins. The
       // values they act on (codes, limits, quotas) still render read-only.
@@ -750,13 +922,17 @@
         document.getElementById('limit-global')?.setAttribute('disabled', 'true');
       }
 
-      loadCodes();
-      loadUsers();
-      loadOverview();
-      loadLimits();
+      // Fire-and-forget reads — each loader already swallows non-OK /
+      // non-JSON responses via fetchAdminJson; the extra .catch() is a
+      // belt-and-suspenders guard so an unexpected throw in a renderer
+      // can never surface as an uncaught promise rejection on load.
+      loadCodes().catch(() => {});
+      loadUsers().catch(() => {});
+      loadOverview().catch(() => {});
+      loadLimits().catch(() => {});
     }
 
-    initAdminPanel();
+    initAdminPanel().catch(() => {});
   </script>
 </body>
 </html>

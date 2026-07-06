@@ -13,6 +13,7 @@ const { chatRoutes } = require('./src/routes/chat');
 const { sessionRoutes } = require('./src/routes/sessions');
 const { voteRoutes } = require('./src/routes/votes');
 const { kudosRoutes } = require('./src/routes/kudos');
+const { publicApiRoutes } = require('./src/routes/public-api');
 const { issueRoutes } = require('./src/routes/issues');
 const { adminRoutes } = require('./src/routes/admin');
 const { dashboardRoutes } = require('./src/routes/dashboard');
@@ -25,11 +26,15 @@ const { visualsRoutes } = require('./src/routes/visuals');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
 const appLlmProxyRoutes = require('./src/routes/app-llm-proxy');
 const { llmGrantsRoutes } = require('./src/routes/llm-grants');
+const { userAgentFilesRoutes } = require('./src/routes/user-agent-files');
 const { proposalDiscussRoutes } = require('./src/routes/proposal-discuss');
+const { topicAttributeRoutes } = require('./src/routes/topic-attributes');
+const { debugRoutes } = require('./src/routes/debug');
 const github = require('./src/services/github');
 const llm = require('./src/services/llm');
 const worker = require('./src/services/worker');
 const sessionLifecycle = require('./src/services/session-lifecycle');
+const stagingRecovery = require('./src/services/staging-recovery');
 const limits = require('./src/services/limits');
 const ws = require('./src/services/ws');
 const log = require('./src/services/logger');
@@ -128,6 +133,10 @@ app.use('/explorer-api', (req, res) => {
 app.use((req, res, next) => {
   if (req.path.startsWith('/api/internal/anthropic/')) return next();
   if (req.path.startsWith('/api/app-llm/')) return next();
+  // Agent-file uploads (#460) carry up to 48 KB of file content, which
+  // can exceed the 100kb default once JSON-escaped — the route mounts
+  // its own 256kb parser (see routes/user-agent-files.js).
+  if (req.path === '/api/me/agent-files' && req.method === 'POST') return next();
   express.json()(req, res, next);
 });
 app.use(cookieParser());
@@ -291,6 +300,10 @@ app.use(chatRoutes(config));
 app.use(sessionRoutes(config));
 app.use(voteRoutes(config));
 app.use(kudosRoutes(config));
+// Public read-only apps + contributors API. Mounted after authMiddleware
+// like kudosRoutes; reachable anonymously via the `/api/public/` prefix in
+// PUBLIC_PATHS (src/middleware/auth.js).
+app.use(publicApiRoutes(config));
 app.use(issueRoutes(config));
 app.use(adminRoutes(config));
 app.use(dashboardRoutes(config));
@@ -298,7 +311,10 @@ app.use(feedbackRoutes(config));
 app.use(notificationsRoutes(config));
 app.use(collaboratorRoutes(config));
 app.use(llmGrantsRoutes(config));
+app.use(userAgentFilesRoutes(config));
 app.use(proposalDiscussRoutes(config));
+app.use(topicAttributeRoutes(config));
+app.use(debugRoutes(config));
 
 app.get('/api/iframe-token', async (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
@@ -354,6 +370,14 @@ app.get('/admin', (req, res) => {
 // are independently enforced by adminMiddleware.
 app.get('/dashboard', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+});
+
+// Admin merge-debug view. Like /admin and /dashboard the static shell is
+// served to anyone; debug.js checks /api/auth/me and redirects non-admins,
+// while the /api/debug/* endpoints it calls are enforced by adminMiddleware.
+// Must be registered before the app.get('*') SPA fallback below.
+app.get('/debug', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'debug.html'));
 });
 
 app.get('*', (req, res) => {
@@ -477,9 +501,27 @@ async function start() {
   // stay 'promoted' and keep showing as "up for voting" forever — and
   // demotes 'merging' rows GitHub never merged (crash mid-merge) back to
   // 'promoted' so the next vote/retry can redrive. See the function body.
-  recoverStuckMerges(config).catch((err) => {
-    log.warn('server', 'Stuck-merge recovery failed', { err: err.message });
-  });
+  // #390: after the GitHub-state reconcile completes (which demotes
+  // crash-stuck 'merging' rows back to 'promoted' so they're eligible
+  // again this same boot), re-drive the per-app drain for every app with
+  // open proposals so any PR that crossed the vote-majority threshold
+  // while the process was down — or whose background merge was lost to the
+  // restart — actually merges now instead of waiting for a fresh vote.
+  // Both stay off the critical path so the server still comes up
+  // immediately, like the other recovery steps below.
+  recoverStuckMerges(config)
+    .then(() => reconcileEligibleMerges(config))
+    // #447: after reconciling merge state, re-run any stuck/never-recorded
+    // proposal checks so PRs left permanently "still running its tests" by a
+    // restart mid-capture self-heal on boot. Off the critical path; the
+    // re-checked PRs become merge-eligible and the next vote (or the eligible-
+    // merge reconcile on a later boot) merges them.
+    .then(() => reconcileStuckChecks(config))
+    .catch((err) => {
+      log.warn('server', 'Stuck-merge recovery / eligible-merge reconcile failed', {
+        err: err.message,
+      });
+    });
 
   // #144: re-arm post-merge issue-close watches a restart killed. The
   // watcher (services/issue-close-watcher.js) is fired-and-forgotten
@@ -500,6 +542,30 @@ async function start() {
   recoverSessions(config).catch((err) => {
     log.warn('server', 'Session recovery failed', { err: err.message });
   });
+
+  // Merge-debug retention: prune /debug runs (and their cascaded steps)
+  // older than the window once at boot and then on a slow timer, so the
+  // staging:private merge_debug_* tables can't grow without bound. Off the
+  // critical path; swallows its own errors.
+  const mergeDebug = require('./src/services/merge-debug');
+  const MERGE_DEBUG_RETENTION_DAYS = parseInt(process.env.MERGE_DEBUG_RETENTION_DAYS || '30', 10);
+  mergeDebug.pruneOldRuns(getPool(config), MERGE_DEBUG_RETENTION_DAYS).catch(() => {});
+  setInterval(() => {
+    mergeDebug.pruneOldRuns(getPool(config), MERGE_DEBUG_RETENTION_DAYS).catch(() => {});
+  }, 6 * 60 * 60 * 1000).unref();
+
+  // #451: periodic auto-merge safety net. The boot sequence above runs
+  // reconcileEligibleMerges / reconcileStuckChecks exactly once; the live
+  // triggers (a vote landing, a checks verdict turning green — see
+  // services/visuals.js, services/conflict-resolver.js, routes/votes.js)
+  // cover the common case, but a lost broadcast or a crash between the
+  // checks-store and its drain trigger could still leave a PR that has both
+  // a winning vote AND passing checks sitting in review until the next
+  // restart. Re-run the same idempotent, bounded reconcilers on a slow
+  // interval so a genuinely-ready proposal can never stall indefinitely.
+  // Off the critical path, single-flight per app inside the drain, and a
+  // no-op when GitHub isn't wired up. Tunable via ELIGIBLE_MERGE_SWEEP_MS.
+  startEligibleMergeSweeper(config);
 
   return server;
 }
@@ -524,8 +590,9 @@ if (require.main === module) {
 // Test-only surface (#183): the orphan-adoption + recovered-turn finalize
 // internals, so the headless-recovery guards stay covered by node --test.
 // `recoverStuckMerges` rides along so the GitHub-reconciliation sweep stays
-// covered too. Not used by any runtime caller.
-module.exports = { adoptOrphanWorker, finalizeRecoveredTurn, recoverStuckMerges };
+// covered too, and `reconcileEligibleMerges` (#390) so the boot-time
+// auto-merge eligibility sweep is covered. Not used by any runtime caller.
+module.exports = { adoptOrphanWorker, finalizeRecoveredTurn, recoverStuckMerges, reconcileEligibleMerges, reconcileStuckChecks };
 
 // Scan existing imported apps for privacy violations. Usernode workers
 // run with zero GitHub credentials and rely on unauthenticated public
@@ -736,6 +803,213 @@ async function recoverStuckMerges(config) {
   });
 }
 
+// Boot-time auto-merge reconcile sweep (#390). recoverStuckMerges above
+// reconciles each open session's status against GitHub's actual merge
+// state, but it deliberately leaves genuinely-open 'promoted' rows alone
+// (see its body: "Not merged + 'promoted' == genuinely open proposal:
+// leave alone"). It never re-checks whether a proposal has crossed the
+// vote-majority threshold.
+//
+// Auto-merge is otherwise PURELY event-driven: a merge is only attempted
+// in the background of a live vote (routes/votes.js fires checkAndMerge
+// fire-and-forget). So a proposal that crossed threshold while the process
+// was down — or whose background merge was lost to a restart mid-flight,
+// or that became eligible because the active-user count (and thus the
+// majority) dropped — sits in the Dev vote panel forever until someone
+// happens to cast a fresh vote. That is the "auto-merge stops after
+// restart/update" bug.
+//
+// The fix re-drives the existing per-app drain (checkAndResolveConflicts →
+// drainApp) once at boot for every app that has any open proposal. The
+// drain re-reads everything from Postgres, only ever touches PRs already
+// at/above the active-user majority (the same bar checkAndMerge gates on,
+// so nothing below threshold is resolved pre-emptively — #380), merges
+// them in the normal priority order, and inherits the normal single-flight
+// + Phase 1/Phase 2 conflict handling. It is idempotent and safe to run on
+// every boot. Bounded cross-app concurrency keeps a many-app fleet from
+// fanning out unbounded GitHub calls; per-app work is already serialized
+// by the drain's own single-flight.
+async function reconcileEligibleMerges(config) {
+  const github = require('./src/services/github');
+  // Without GitHub auth the drain's per-session resolve is a no-op
+  // (github_disabled_or_no_pr merges nothing), so skip the work entirely —
+  // matches the no-auth short-circuit in recoverStuckMerges above.
+  if (!github.isEnabled()) return;
+
+  const { getPool } = require('./src/db/pool');
+  const { checkAndResolveConflicts } = require('./src/services/conflict-resolver');
+  const pool = getPool(config);
+
+  let rows;
+  try {
+    ({ rows } = await pool.query(
+      `SELECT DISTINCT app_id FROM chat_sessions WHERE status = 'promoted'`
+    ));
+  } catch (err) {
+    log.warn('server', 'reconcileEligibleMerges query failed', { err: err.message });
+    return;
+  }
+  if (!rows.length) return;
+
+  log.info('server', 'Reconciling eligible auto-merges on startup', { apps: rows.length });
+
+  const CONCURRENCY = 4;
+  const queue = rows.slice();
+  let drained = 0;
+  let errors = 0;
+
+  async function worker() {
+    while (queue.length) {
+      const { app_id: appId } = queue.shift();
+      try {
+        await checkAndResolveConflicts(config, { app_id: appId });
+        drained++;
+      } catch (err) {
+        // checkAndResolveConflicts swallows drainApp errors internally, so
+        // this is belt-and-braces; never let one app's failure abort the rest.
+        errors++;
+        log.warn('server', 'reconcileEligibleMerges: drain failed', {
+          appId, err: err.message,
+        });
+      }
+    }
+  }
+
+  try {
+    await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+  } catch (err) {
+    log.warn('server', 'reconcileEligibleMerges sweep failed', { err: err.message });
+  }
+  log.info('server', 'Eligible auto-merge reconciliation complete', {
+    apps: rows.length, drained, errors,
+  });
+}
+
+// #447: how long a 'pending' check may sit before it's treated as stuck.
+// The headless capture run is capped at RUN_TIMEOUT_MS (240s in
+// services/visuals.js) plus the staging build, so 10 minutes is comfortably
+// beyond any legitimately in-flight run. Tunable via CHECKS_STALE_MS.
+const CHECKS_STALE_MS = parseInt(
+  process.env.CHECKS_STALE_MS || String(10 * 60 * 1000),
+  10
+);
+
+// #237: crash-loop short-circuit. A staging build that crashes deterministically
+// (e.g. an app whose staging-only seed hits a missing constraint) used to be
+// retried by the sweeper every sweep forever — a silent, churning deadlock.
+// Build/boot failures now land a terminal 'error' verdict (services/visuals
+// storeChecks) with an exponential backoff retry schedule (check_next_retry_at:
+// 2m → 4m → … → 30m). The sweeper only re-picks an errored row once its backoff
+// has elapsed AND it's still under this cap; past the cap we stop auto-retrying
+// and leave it 'error' (the owner is already notified, and a NEW commit resets
+// the streak via setChecksPending so a fix re-enables checks). Tunable.
+const CHECK_MAX_AUTO_RETRIES = parseInt(
+  process.env.CHECK_MAX_AUTO_RETRIES || '6',
+  10
+);
+
+// #447: reconcile stuck proposal checks. check_state is only ever advanced
+// out of 'pending' by the same captureForSession invocation that set it, so
+// a process restart/crash mid-capture (or a staging rebuild that predated
+// the #447 capture wiring) can leave a promoted PR 'pending'/NULL forever —
+// past the vote threshold but permanently "still running its tests", blocked
+// from merging with no retry. This re-runs the checks for promoted sessions
+// whose verdict is NULL or has been 'pending' longer than CHECKS_STALE_MS.
+// captureForSession always resolves to a terminal state (or 'error' via its
+// catch), so this guarantees no row stays 'pending' indefinitely. Bounded
+// per run like the staging-heal sweep; runs at boot and from the session
+// sweeper (Pass 4). Safe + idempotent on every boot.
+async function reconcileStuckChecks(config) {
+  const github = require('./src/services/github');
+  // Without GitHub auth a rebuild/capture is a no-op (rebuildSessionStaging
+  // returns 'skipped' with no bot token), so skip the work entirely.
+  if (!github.isEnabled()) return;
+
+  const { getPool } = require('./src/db/pool');
+  const pool = getPool(config);
+
+  let rows;
+  try {
+    ({ rows } = await pool.query(
+      `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+         FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+        WHERE cs.status = 'promoted'
+          AND cs.branch_name IS NOT NULL
+          AND (cs.check_state IS NULL
+               OR (cs.check_state = 'pending'
+                   AND cs.checks_checked_at < NOW() - make_interval(secs => $1::double precision / 1000.0))
+               OR (cs.check_state = 'error'
+                   AND cs.consecutive_check_failures < $2
+                   AND cs.check_next_retry_at IS NOT NULL
+                   AND cs.check_next_retry_at < NOW()))
+        ORDER BY cs.promoted_at ASC NULLS FIRST
+        LIMIT 50`,
+      [CHECKS_STALE_MS, CHECK_MAX_AUTO_RETRIES]
+    ));
+  } catch (err) {
+    log.warn('server', 'reconcileStuckChecks query failed', { err: err.message });
+    return;
+  }
+  if (!rows.length) return;
+
+  log.info('server', 'Reconciling stuck proposal checks on startup', { count: rows.length });
+
+  const MAX_RECHECKS = 5;
+  let rechecked = 0;
+  for (const session of rows) {
+    if (rechecked >= MAX_RECHECKS) break;
+    if (worker.isInFlight(session.id)) continue;
+    rechecked++;
+    try {
+      await stagingRecovery.recheckSessionChecks({
+        config, pool, session, reason: 'stuck-checks-boot',
+      });
+    } catch (err) {
+      log.warn('server', 'reconcileStuckChecks recheck failed', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+  }
+  log.info('server', 'Stuck-check reconciliation complete', {
+    scanned: rows.length, rechecked,
+  });
+}
+
+// #451: how often the auto-merge safety-net sweep runs. A few minutes is
+// well below the cost of letting a ready proposal linger but far above the
+// per-pass work (one indexed query per app with an open proposal, then the
+// single-flight drain). Tunable via ELIGIBLE_MERGE_SWEEP_MS; floored so a
+// mis-set tiny value can't busy-loop the drain.
+const ELIGIBLE_MERGE_SWEEP_MS = Math.max(
+  parseInt(process.env.ELIGIBLE_MERGE_SWEEP_MS || String(4 * 60 * 1000), 10) || (4 * 60 * 1000),
+  30 * 1000
+);
+
+// #451: periodic re-drive of the boot-time auto-merge reconcilers. Both
+// reconcileEligibleMerges (merge any promoted PR that now has votes + passing
+// checks) and reconcileStuckChecks (re-run checks left 'pending'/NULL by a
+// mid-capture restart, so they reach a terminal verdict the eligible-merge
+// pass can then act on) are idempotent and bounded, so re-running them on a
+// timer is safe. Guards: skip when GitHub isn't enabled (both are no-ops
+// then), never overlap a still-running sweep, and swallow all errors so the
+// timer can't crash the process. Not awaited — fire-and-forget per tick.
+function startEligibleMergeSweeper(config) {
+  const github = require('./src/services/github');
+  let running = false;
+  setInterval(() => {
+    if (running) return;
+    if (!github.isEnabled()) return;
+    running = true;
+    Promise.resolve()
+      .then(() => reconcileStuckChecks(config))
+      .then(() => reconcileEligibleMerges(config))
+      .catch((err) => {
+        log.warn('server', 'Eligible-merge sweep tick failed', { err: err.message });
+      })
+      .finally(() => { running = false; });
+  }, ELIGIBLE_MERGE_SWEEP_MS).unref?.();
+}
+
 // Resume post-merge issue-close watches for sessions merged shortly
 // before this process started. See the call site for rationale. The
 // 15-minute window comfortably covers the merge → GHA build → rolling
@@ -777,147 +1051,10 @@ async function resumeIssueCloseWatches(config) {
   }
 }
 
-// Rebuild the staging preview for a single session that has a branch +
-// commits ahead of main but a NULL staging_url. Shared by the startup
-// recovery sweep (recoverSessions) and the periodic sweeper's staging-heal
-// pass (Pass 3) so the two never drift apart.
-//
-// Returns 'built' on success, 'skipped' when there's nothing to do (no
-// owner/repo, no bot token, branch not ahead of main), or throws on a
-// genuine build failure (caller logs + decides whether to retry).
-//
-// Creates a PR only when one is missing — the active-session recovery case
-// where CC finished but post-processing died before opening the PR.
-// 'promoted'/'merging' sessions always already have one, so that branch is
-// a no-op for them. On success it pings BOTH the dev-chat tail
-// (broadcastGlobal session_event) AND the group-chat vote panel
-// (pushSessionUpdate) so the Preview button reappears on the PR card
-// without anyone needing to reload.
-async function rebuildSessionStaging({ config, pool, session, reason }) {
-  const staging = require('./src/services/staging');
-  const ghub = require('./src/services/github');
-  const { broadcastGlobal, pushSessionUpdate } = require('./src/services/ws');
-
-  const [, owner, repo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-  if (!owner || !repo) return 'skipped';
-
-  const pat = process.env.GITHUB_BOT_TOKEN;
-  if (!pat) return 'skipped';
-
-  const { Octokit } = await import('@octokit/rest');
-  const ok = new Octokit({ auth: pat });
-
-  // Only build when the branch actually carries work — a branch level with
-  // (or behind) main has nothing to preview.
-  let compare;
-  try {
-    const { data } = await ok.rest.repos.compareCommits({
-      owner, repo, base: 'main', head: session.branch_name,
-    });
-    compare = data;
-  } catch { return 'skipped'; }
-
-  if (compare.ahead_by === 0) return 'skipped';
-
-  log.info('server', 'Rebuilding staging preview', {
-    sessionId: session.id, status: session.status, branch: session.branch_name,
-    aheadBy: compare.ahead_by, reason,
-  });
-
-  const commitHash = compare.commits[compare.commits.length - 1]?.sha || 'latest';
-  const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
-
-  // Create PR if missing (active-session recovery only). Route through
-  // applyPrMetadata — NOT a bare createPR — so the PR gets a real
-  // generated title/body and pr_title/session_title are persisted. A
-  // bare createPR here used to mint PRs titled "Changes on <branch>"
-  // with pr_title left NULL; the promote path then trusted pr_number's
-  // presence and skipped its own metadata pass, so the throwaway title
-  // stuck (the UI then renders its own "Change by <user>" NULL-fallback).
-  if (!session.pr_number) {
-    try {
-      // username + latest user message give applyPrMetadata the same
-      // signals the live dev-turn path has; without the username the
-      // fallback title would read "undefined's changes".
-      const { rows: ctxRows } = await pool.query(
-        `SELECT u.username,
-                (SELECT content FROM chat_session_messages
-                  WHERE session_id = cs.id AND role = 'user'
-                  ORDER BY id DESC LIMIT 1) AS last_user_message
-           FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id
-          WHERE cs.id = $1`,
-        [session.id]
-      );
-      const username = ctxRows[0]?.username || session.username || 'someone';
-      const recoveredUserMessage = ctxRows[0]?.last_user_message || '';
-      const prMetadata = require('./src/services/pr-metadata');
-      await prMetadata.applyPrMetadata({
-        pool, session, repoOwner: owner, repoName: repo,
-        userMessage: recoveredUserMessage,
-        ccSummary: '',
-        username,
-        userId: session.user_id,
-        broadcast: (event, data) =>
-          broadcastGlobal({ type: 'session_event', sessionId: session.id, event, ...data }),
-      });
-    } catch (err) {
-      log.warn('server', 'Recovery PR creation via applyPrMetadata failed', {
-        sessionId: session.id, err: err.message,
-      });
-    }
-  }
-
-  const stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
-  await pool.query(
-    `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
-    [stagingResult.containerId, stagingResult.stagingUrl, session.id]
-  );
-
-  await pool.query(
-    `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-     VALUES ($1, 'system', $2, $3)`,
-    [
-      session.id,
-      reason === 'startup' ? 'Staging recovered after restart' : 'Staging preview rebuilt',
-      JSON.stringify({ stagingUrl: stagingResult.stagingUrl }),
-    ]
-  );
-
-  broadcastGlobal({
-    type: 'session_event', sessionId: session.id,
-    event: 'staging_ready', url: stagingResult.stagingUrl,
-    // #127: keep any open dev-chat's testing affordances in sync after a
-    // staging rebuild (the guidance itself lives on the session row).
-    testingMd: session.testing_md || null,
-    testingPath: session.testing_path || null,
-  });
-  pushSessionUpdate({ action: 'staging_ready', sessionId: session.id, appSlug: session.app_slug });
-
-  log.info('server', 'Staging preview rebuilt', { sessionId: session.id, url: stagingResult.stagingUrl, reason });
-  return 'built';
-}
-
-// Does a promoted/merging session need its staging preview (re)built?
-//
-// Two failure shapes leave a vote card without a working preview:
-//   1. staging_url IS NULL — GC reclaimed it (or it was GC'd before
-//      promotion). The Preview button is hidden (gated on staging_url).
-//   2. staging_url is set but the staging container is gone — the
-//      Preview button renders but the hostname has no upstream, so the
-//      iframe 502s / fails to connect. (Pre-wildcard-Caddy this also
-//      surfaced as "secure connection failed" when the per-host route
-//      was dropped; routing is now container-name based so the only
-//      remaining cause is a missing/stopped container.)
-// Both are healable by a rebuild. We deliberately do NOT rebuild on a
-// merely-unhealthy-but-running container (that's a 502, an app bug, not
-// a missing preview) to avoid churn.
-async function stagingNeedsRebuild(session) {
-  if (!session.staging_url) return true;
-  if (!session.staging_container_id) return true;
-  const docker = require('./src/services/docker');
-  const status = await docker.getContainerStatus(session.staging_container_id);
-  return status !== 'running';
-}
+// stagingNeedsRebuild + rebuildSessionStaging moved to
+// src/services/staging-recovery.js so the startup recovery, the heal
+// sweep (Pass 3), and the on-demand ensure-staging route share one
+// implementation. Imported as stagingRecovery at the top of this file.
 
 // Recover sessions where CC finished but post-processing didn't complete,
 // AND promoted/merging PRs whose staging preview is missing or dead.
@@ -944,8 +1081,8 @@ async function recoverSessions(config) {
 
   for (const session of rows) {
     try {
-      if (!(await stagingNeedsRebuild(session))) continue;
-      await rebuildSessionStaging({ config, pool, session, reason: 'startup' });
+      if (!(await stagingRecovery.stagingNeedsRebuild(session))) continue;
+      await stagingRecovery.rebuildSessionStaging({ config, pool, session, reason: 'startup' });
     } catch (err) {
       log.warn('server', 'Failed to recover session', { sessionId: session.id, err: err.message });
     }
@@ -1551,6 +1688,12 @@ const STAGING_HEAL_COOLDOWN_MS = parseInt(
   10
 );
 
+// #447: per-session throttle for the sweeper's stuck-check pass (Pass 4),
+// mirroring stagingHealAttempts above. Maps sessionId -> last recheck-attempt
+// epoch ms so a check that keeps failing to record (broken build, missing
+// secret) isn't re-run on every tick. Same cooldown as the staging heal.
+const checkRecheckAttempts = new Map();
+
 function startSessionAutoPauseSweeper(config) {
   if (sessionSweeperHandle) return;
   if (!config.sessionAutopauseIdleMs || config.sessionAutopauseIdleMs <= 0) {
@@ -1646,7 +1789,7 @@ function startSessionAutoPauseSweeper(config) {
       for (const session of rows) {
         if (healed >= MAX_HEALS_PER_SWEEP) break;
         if (worker.isInFlight(session.id)) continue;
-        if (!(await stagingNeedsRebuild(session))) continue;
+        if (!(await stagingRecovery.stagingNeedsRebuild(session))) continue;
         const last = stagingHealAttempts.get(session.id) || 0;
         if (Date.now() - last < STAGING_HEAL_COOLDOWN_MS) continue;
         // Stamp the attempt BEFORE the (minutes-long) build so a later
@@ -1655,7 +1798,7 @@ function startSessionAutoPauseSweeper(config) {
         stagingHealAttempts.set(session.id, Date.now());
         healed++;
         try {
-          const result = await rebuildSessionStaging({ config, pool, session, reason: 'heal' });
+          const result = await stagingRecovery.rebuildSessionStaging({ config, pool, session, reason: 'heal' });
           if (result === 'built') stagingHealAttempts.delete(session.id);
         } catch (err) {
           log.warn('server', 'Staging heal failed', { sessionId: session.id, err: err.message });
@@ -1663,6 +1806,70 @@ function startSessionAutoPauseSweeper(config) {
       }
     } catch (err) {
       log.warn('server', 'Staging heal sweep failed', { err: err.message });
+    }
+
+    // Pass 4: stuck-check reconcile (#447). The flip side of the merge gate
+    // — a promoted PR whose proposal checks are NULL or stuck 'pending' past
+    // CHECKS_STALE_MS is permanently blocked from merging ("still running its
+    // tests") because nothing ever advances check_state out of 'pending'
+    // after a restart mid-capture. Re-run the checks (rebuild staging if the
+    // preview is gone, else recheck the live container) so legitimately-
+    // passing PRs flip to 'passing' and become mergeable. Bounded per sweep
+    // with a per-session cooldown, exactly like the staging-heal pass above;
+    // the boot-time reconcileStuckChecks handles the restart case, this keeps
+    // them healed live without a restart.
+    try {
+      const { rows } = await pool.query(
+        `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+           FROM chat_sessions cs
+           JOIN apps a ON cs.app_id = a.id
+          WHERE cs.status = 'promoted'
+            AND cs.branch_name IS NOT NULL
+            AND (cs.check_state IS NULL
+                 OR (cs.check_state = 'pending'
+                     AND cs.checks_checked_at < NOW() - make_interval(secs => $1::double precision / 1000.0))
+                 OR (cs.check_state = 'error'
+                     AND cs.consecutive_check_failures < $2
+                     AND cs.check_next_retry_at IS NOT NULL
+                     AND cs.check_next_retry_at < NOW()))
+          ORDER BY cs.promoted_at ASC NULLS FIRST
+          LIMIT 50`,
+        [CHECKS_STALE_MS, CHECK_MAX_AUTO_RETRIES]
+      );
+      const MAX_RECHECKS_PER_SWEEP = 5;
+      let rechecked = 0;
+      for (const session of rows) {
+        if (rechecked >= MAX_RECHECKS_PER_SWEEP) break;
+        if (worker.isInFlight(session.id)) continue;
+        const last = checkRecheckAttempts.get(session.id) || 0;
+        if (Date.now() - last < STAGING_HEAL_COOLDOWN_MS) continue;
+        // Stamp BEFORE the (minutes-long) recheck so a later tick won't kick
+        // off a duplicate concurrent run for the same session.
+        checkRecheckAttempts.set(session.id, Date.now());
+        rechecked++;
+        try {
+          await stagingRecovery.recheckSessionChecks({ config, pool, session, reason: 'stuck-checks-sweep' });
+        } catch (err) {
+          log.warn('server', 'Stuck-check recheck failed', { sessionId: session.id, err: err.message });
+        }
+      }
+    } catch (err) {
+      log.warn('server', 'Stuck-check reconcile sweep failed', { err: err.message });
+    }
+
+    // Pass 5: orphaned dev-chat attachments GC (#450). An upload that was
+    // never sent (message_id still NULL — the user removed it from the
+    // composer, or navigated away) has no owner message to cascade from,
+    // so reclaim its bytea after 24h. Linked rows live with their session.
+    try {
+      const { rowCount } = await pool.query(
+        `DELETE FROM chat_session_attachments
+          WHERE message_id IS NULL
+            AND created_at < NOW() - INTERVAL '24 hours'`
+      );
+      if (rowCount) log.info('server', 'GC\'d orphaned chat attachments', { count: rowCount });
+    } catch (err) {
+      log.warn('server', 'Orphaned-attachment sweep failed', { err: err.message });
     }
   }, config.sessionSweepIntervalMs).unref();
 }

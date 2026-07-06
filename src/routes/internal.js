@@ -406,14 +406,15 @@ function internalRoutes(_config) {
     }
   );
 
-  // Read-only: fetch ONE GitHub issue with its FULL (untruncated) body.
-  // Backs the worker's `usernode-issues <number>` CLI form — the escape
-  // hatch for bodies the list route clips (#158). Same auth posture as
+  // Read-only: fetch ONE GitHub issue with its FULL (untruncated) body and
+  // its comment thread (#396). Backs the worker's `usernode-issues <number>`
+  // CLI form — the escape hatch for bodies the list route clips (#158) and
+  // the discussion the original post doesn't carry. Same auth posture as
   // the list route (session-scoped ISSUES_JWT, both scout and build).
-  // Always 200 with `{ ok: true, issue, note? }` once the session checks
-  // pass — github.fetchPublicIssue never throws and resolves every
-  // failure to `{ issue: null, note }`, so the CLI always prints
-  // parseable JSON.
+  // Always 200 with `{ ok: true, issue, comments, commentsTruncated, note?,
+  // commentsNote? }` once the session checks pass — both fetchers never
+  // throw and resolve every failure to a well-formed shape, so the CLI
+  // always prints parseable JSON.
   router.get(
     '/api/internal/sessions/:sessionId/issues/:number',
     internalAuth,
@@ -454,8 +455,109 @@ function internalRoutes(_config) {
       }
       const [, owner, repo] = parsed;
       // fetchPublicIssue validates the number itself ('bad issue number').
-      const result = await github.fetchPublicIssue(owner, repo, req.params.number);
-      return res.json({ ok: true, ...result });
+      // #396: merge the issue's comment thread (clipped) so the worker CLI
+      // surfaces the discussion, not just the body. Both fetchers never
+      // throw; `comments` is always an array and `commentsNote` carries a
+      // comment-fetch failure independently of the issue's own `note`.
+      const { issue, note } = await github.fetchPublicIssue(owner, repo, req.params.number);
+      const rawComments = await github.fetchIssueComments(owner, repo, req.params.number);
+      const { comments, truncated } = github.clipIssueComments(
+        rawComments.comments, { wasTruncated: rawComments.truncated }
+      );
+      return res.json({
+        ok: true,
+        issue,
+        comments,
+        commentsTruncated: truncated,
+        ...(note ? { note } : {}),
+        ...(rawComments.note ? { commentsNote: rawComments.note } : {}),
+      });
+    }
+  );
+
+  // Read-only: list this session's dev-chat file attachments (#450).
+  // Backs the worker's usernode-attachments CLI (scout + build) so
+  // Claude Code can discover user-attached files. Same auth posture as
+  // the issues routes: session-scoped ISSUES_JWT via internalAuth, so
+  // scout (which never gets WORKER_JWT) can still read. Metadata only —
+  // bytes come from the sibling route below. Only linked (sent)
+  // attachments are listed; pending uploads aren't context yet.
+  router.get(
+    '/api/internal/sessions/:sessionId/attachments',
+    internalAuth,
+    pushLimiter,
+    async (req, res) => {
+      const sessionId = parseInt(req.params.sessionId, 10);
+      if (!Number.isFinite(sessionId)) {
+        return res.status(400).json({ ok: false, code: 'bad_session_id' });
+      }
+      if (req.workerSession.sessionId !== sessionId) {
+        log.warn('internal-api', 'Session mismatch between JWT and route (attachments)', {
+          jwt: req.workerSession.sessionId, route: sessionId,
+        });
+        return res.status(403).json({ ok: false, code: 'session_mismatch' });
+      }
+      try {
+        const { rows } = await pool.query(
+          `SELECT id, kind, filename, content_type, size_bytes, created_at
+             FROM chat_session_attachments
+            WHERE session_id = $1 AND message_id IS NOT NULL
+            ORDER BY created_at ASC, id ASC`,
+          [sessionId]
+        );
+        return res.json({
+          ok: true,
+          attachments: rows.map((r) => ({
+            id: r.id, kind: r.kind, filename: r.filename,
+            contentType: r.content_type, sizeBytes: r.size_bytes,
+            createdAt: r.created_at,
+          })),
+        });
+      } catch (err) {
+        log.error('internal-api', 'Attachment list failed', { sessionId, err: err.message });
+        return res.status(500).json({ ok: false, code: 'db_error' });
+      }
+    }
+  );
+
+  // Read-only: fetch ONE attachment's raw bytes (#450). Backs
+  // `usernode-attachments <id> <outpath>` — the worker downloads an
+  // image into its container and Reads it (Claude Code's Read tool
+  // handles image files natively). Session-scoped like everything else
+  // here: an id from another session 404s.
+  router.get(
+    '/api/internal/sessions/:sessionId/attachments/:attId',
+    internalAuth,
+    pushLimiter,
+    async (req, res) => {
+      const sessionId = parseInt(req.params.sessionId, 10);
+      if (!Number.isFinite(sessionId)) {
+        return res.status(400).json({ ok: false, code: 'bad_session_id' });
+      }
+      if (req.workerSession.sessionId !== sessionId) {
+        log.warn('internal-api', 'Session mismatch between JWT and route (attachment)', {
+          jwt: req.workerSession.sessionId, route: sessionId,
+        });
+        return res.status(403).json({ ok: false, code: 'session_mismatch' });
+      }
+      const attId = String(req.params.attId || '');
+      if (!/^[a-f0-9]{32}$/.test(attId)) {
+        return res.status(404).json({ ok: false, code: 'not_found' });
+      }
+      try {
+        const { rows } = await pool.query(
+          `SELECT content_type, data FROM chat_session_attachments
+            WHERE id = $1 AND session_id = $2`,
+          [attId, sessionId]
+        );
+        if (!rows.length) return res.status(404).json({ ok: false, code: 'not_found' });
+        res.set('Content-Type', rows[0].content_type || 'application/octet-stream');
+        res.set('X-Content-Type-Options', 'nosniff');
+        return res.send(rows[0].data);
+      } catch (err) {
+        log.error('internal-api', 'Attachment fetch failed', { sessionId, attId, err: err.message });
+        return res.status(500).json({ ok: false, code: 'db_error' });
+      }
     }
   );
 

@@ -1,3 +1,4 @@
+// Build trigger: no-op change to force a fresh staging build (2026-06-16).
 // localStorage key for the user's last-chosen model. Single global
 // key (not per-app/per-session) so the preference is sticky wherever
 // the user goes — nobody wants "I set Opus here, but the next app
@@ -18,7 +19,7 @@ const DevChat = {
   currentSession: null,
   messages: [],
   isStreaming: false,
-  selectedModel: loadStoredModel() || 'claude-sonnet-4-6',
+  selectedModel: loadStoredModel() || 'claude-opus-4-8',
   _staleTimer: null,
   _abortController: null,
   // Most recent event _seq we've processed across any channel (POST SSE,
@@ -94,14 +95,15 @@ const DevChat = {
   // surface cost; loadModels() refreshes this from the server.
   MODELS: {
     'claude-haiku-4-5': { label: 'Haiku 4.5', outputCostPerMTok: 5 },
-    'claude-sonnet-4-6': { label: 'Sonnet 4.6', outputCostPerMTok: 15 },
+    'claude-sonnet-5': { label: 'Sonnet 5', outputCostPerMTok: 15 },
     'claude-opus-4-8': { label: 'Opus 4.8', outputCostPerMTok: 25 },
+    'claude-fable-5': { label: 'Fable 5', outputCostPerMTok: 50 },
   },
 
   // Default model id used when sanitization rejects a stale storage
   // value. Overwritten by GET /api/models with the server's authoritative
   // default so the two stay aligned.
-  _defaultModel: 'claude-sonnet-4-6',
+  _defaultModel: 'claude-opus-4-8',
 
   // Fetch the authoritative model allowlist from the server. Replaces
   // the inline MODELS map so adding/removing a model on the server
@@ -197,6 +199,11 @@ const DevChat = {
   },
 
   renderBudget() {
+    // #463: budget data just changed (usage event, chat open, key
+    // save/remove) — sync the credits-exhausted banner alongside the
+    // meter. Runs before the meter's own element guard so the banner
+    // clears/appears even when the meter isn't mounted.
+    DevChat._applyCreditsBanner();
     const el = document.getElementById('dc-budget');
     if (!el) return;
     // BYOK (#30/#119/#212): billing is limit-first — the daily platform
@@ -231,9 +238,81 @@ const DevChat = {
     if (!DevChat.budget) return;
     const spent = (DevChat.budget.spentCents / 100).toFixed(2);
     const limit = (DevChat.budget.limitCents / 100).toFixed(2);
+    // #463: exhausted (no key saved) keeps the familiar $spent/$limit
+    // pair — just unmistakably red, with the tooltip pointing at the
+    // BYOK escape hatch. The banner carries the wordy explanation.
+    if (DevChat._creditsExhausted()) {
+      el.innerHTML = `<span title="Your free daily AI credits are used up. Resets at midnight UTC — or add your own Anthropic API key in Settings to keep working."><span class="text-red-500 font-semibold">$${spent}</span><span class="text-red-400">/$${limit}</span></span>`;
+      return;
+    }
     const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
     const color = pct > 80 ? 'text-red-400' : pct > 50 ? 'text-yellow-400' : 'text-emerald-400';
     el.innerHTML = `<span class="${color}">$${spent}</span><span class="text-zinc-600">/$${limit}</span>`;
+  },
+
+  // #463: true when the signed-in user is out of free credits AND has no
+  // BYOK key to spill over to — the only state where AI work is actually
+  // blocked. Key-holders never match (billing continues on their key),
+  // and a missing budget fetch stays quiet rather than guessing.
+  _creditsExhausted() {
+    const b = DevChat.budget;
+    if (!b) return false;
+    if (window.Settings?.state?.hasApiKey) return false;
+    const userOut = typeof b.spentCents === 'number' && typeof b.limitCents === 'number'
+      && b.spentCents >= b.limitCents;
+    const globalOut = typeof b.globalSpentCents === 'number' && typeof b.globalLimitCents === 'number'
+      && b.globalSpentCents >= b.globalLimitCents;
+    return userOut || globalOut;
+  },
+
+  // #463: the credits-exhausted banner (sibling of the sync banner,
+  // #dc-sync-banner). Empty string when the show-condition doesn't hold.
+  _renderCreditsBannerHtml() {
+    if (!DevChat._creditsExhausted()) return '';
+    const b = DevChat.budget;
+    const userOut = b.spentCents >= b.limitCents;
+    const lead = userOut
+      ? 'You&rsquo;ve used up today&rsquo;s free AI credits.'
+      : 'The platform&rsquo;s shared daily AI budget is used up.';
+    return `
+      <div id="dc-credits-banner" class="flex items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-950/30 border-b border-red-200 dark:border-red-900/50 text-xs">
+        <svg class="w-4 h-4 text-red-500 dark:text-red-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
+        </svg>
+        <span class="text-red-800 dark:text-red-200 flex-1"><span class="font-semibold">${lead}</span> Resets at midnight UTC &mdash; or add your own Anthropic API key to keep working right now, billed to your own Anthropic account.</span>
+        <button id="dc-credits-add-key" type="button" class="rounded bg-red-600 hover:bg-red-500 text-white px-2 py-1 text-xs font-medium shrink-0">Add API key</button>
+      </div>`;
+  },
+
+  // Swap/insert/remove the banner in place (mirror of _applySyncBanner,
+  // minus the full re-render fallback: the banner slot sits directly
+  // above .dc-session-body, so we can insert without re-rendering and
+  // avoid disturbing an in-flight stream).
+  _applyCreditsBanner() {
+    const existing = document.getElementById('dc-credits-banner');
+    const html = DevChat.currentSession ? DevChat._renderCreditsBannerHtml() : '';
+    if (existing) {
+      if (html) {
+        existing.outerHTML = html;
+        DevChat._wireCreditsBanner();
+      } else {
+        existing.remove();
+      }
+    } else if (html) {
+      const body = document.querySelector('.dc-session-body');
+      if (body) {
+        body.insertAdjacentHTML('beforebegin', html);
+        DevChat._wireCreditsBanner();
+      }
+    }
+  },
+
+  _wireCreditsBanner() {
+    const btn = document.getElementById('dc-credits-add-key');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      if (window.Settings) Settings.open({ focusApiKey: true });
+    });
   },
 
   async loadSessions(appSlug) {
@@ -340,7 +419,14 @@ const DevChat = {
       let statusClass;
       let dotTitle;
       if (s.status === 'paused') { statusClass = 'dc-active-dot-paused'; dotTitle = 'Paused'; }
-      else if (s.status === 'promoted') { statusClass = 'dc-active-dot-promoted'; dotTitle = s.busy ? 'Claude is running (promoted)' : 'Promoted (merged)'; }
+      else if (s.status === 'promoted') {
+        statusClass = 'dc-active-dot-promoted';
+        // #405: "Promoted (merged)" was ambiguous (a promoted PR is in a
+        // vote, NOT merged). Use the canonical lifecycle label instead.
+        const pLife = (window.MergeStatus && MergeStatus.lifecycle) ? MergeStatus.lifecycle(s) : null;
+        const pLabel = (pLife && pLife.label) || 'Proposed';
+        dotTitle = s.busy ? `Claude is running · ${pLabel}` : pLabel;
+      }
       else { statusClass = 'dc-active-dot-active'; dotTitle = s.busy ? 'Claude is running' : 'Active'; }
       const busyClass = s.busy ? ' dc-active-dot-busy' : '';
       const isPaused = s.status === 'paused';
@@ -697,6 +783,18 @@ const DevChat = {
       DevChat.messages = messages.map((m) => {
         if (m.metadata) {
           if (m.metadata.stagingUrl) m.stagingUrl = m.metadata.stagingUrl;
+          // #361: the "Changes ready" card is driven by an explicit marker
+          // (set on both the staging-success and staging-failed branches of
+          // runClaudeCodeTool) rather than incidentally by stagingUrl, so it
+          // rehydrates the same whether or not a preview built. When staging
+          // failed the disabled-Preview note reads stagingErrorName /
+          // stagingMissingKeys; prNumber/prUrl back the header + GitHub link.
+          if (m.metadata.changesReady) m.changesReady = true;
+          if (m.metadata.stagingFailed) m.stagingFailed = true;
+          if (m.metadata.stagingErrorName) m.stagingErrorName = m.metadata.stagingErrorName;
+          if (m.metadata.stagingMissingKeys) m.stagingMissingKeys = m.metadata.stagingMissingKeys;
+          if (m.metadata.prNumber != null) m.prNumber = m.metadata.prNumber;
+          if (m.metadata.prUrl) m.prUrl = m.metadata.prUrl;
           if (m.metadata.ccLog) m.ccLog = m.metadata.ccLog;
           if (m.metadata.ccOutput) m.ccOutput = m.metadata.ccOutput;
           if (m.metadata.ccSummary) m.ccSummary = m.metadata.ccSummary;
@@ -714,6 +812,10 @@ const DevChat = {
             m._estimateRemaining = m.metadata.estimate.remainingSeconds == null
               ? null
               : m.metadata.estimate.remainingSeconds;
+            // #359: re-anchor the count-down from load time. metadata.estimate
+            // carries no "estimated-at" stamp, so this reads slightly high; the
+            // next live cc_estimate corrects it within ~a minute.
+            m._countdownTo = DevChat._countdownTarget(m._estimateRemaining);
           }
           // Spec preview cards: scout dispatches persist these on the
           // status row so a refresh re-renders the same inline card the
@@ -733,6 +835,12 @@ const DevChat = {
           // Quick-reply pills (#285): next-step suggestions survive refresh
           // via metadata.quickReplies on the assistant row.
           if (m.metadata.quickReplies) m.quickReplies = m.metadata.quickReplies;
+          // File attachments (#450): user rows carry a metadata summary
+          // [{ id, kind, filename, contentType, sizeBytes }]; bytes are
+          // served by GET /api/sessions/:id/attachments/:attId.
+          if (Array.isArray(m.metadata.attachments) && m.metadata.attachments.length) {
+            m.attachments = m.metadata.attachments;
+          }
         }
         return m;
       });
@@ -811,8 +919,14 @@ const DevChat = {
 
   // ── Streaming + send ─────────────────────────────────────
 
-  async sendMessage(message) {
+  async sendMessage(message, attachments = []) {
     if (!DevChat.currentSession || DevChat.isStreaming) return;
+    // #450: attachments-only sends are allowed; the server stores a
+    // "(attached files)" stub caption, mirrored here for the optimistic
+    // bubble. `attachments` entries come from pendingAttachments (already
+    // uploaded — each carries a server id + objectUrl for image thumbs).
+    const sentAttachments = (attachments || []).filter((a) => a && a.id);
+    if (!message && !sentAttachments.length) return;
     // #138: a send is a user gesture — unlock the AudioContext and lazily
     // request OS-notification permission now, so the completion chime /
     // notification can fire when this turn finishes (browsers only allow
@@ -837,7 +951,17 @@ const DevChat = {
       if (m._progress) m._progress = false;
     }
 
-    DevChat.messages.push({ role: 'user', content: message, created_at: new Date().toISOString() });
+    DevChat.messages.push({
+      role: 'user',
+      content: message || '(attached files)',
+      created_at: new Date().toISOString(),
+      ...(sentAttachments.length ? { attachments: sentAttachments } : {}),
+    });
+    // Clear the composer strip — restored on the failure paths below.
+    if (sentAttachments.length) {
+      DevChat.pendingAttachments = [];
+      DevChat._renderAttachStrip();
+    }
     // `let`, not `const`: the `assistant_message_end` handler reassigns this
     // to a fresh object when the Mayor seals phase-1 so the phase-2 wrap-up
     // lands in its own bubble. A `const` here used to throw silently inside
@@ -856,7 +980,10 @@ const DevChat = {
       const postChat = () => fetch(`/api/sessions/${sessionId}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, model }),
+        body: JSON.stringify({
+          message, model,
+          ...(sentAttachments.length ? { attachmentIds: sentAttachments.map((a) => a.id) } : {}),
+        }),
         signal: DevChat._abortController.signal,
       });
 
@@ -880,9 +1007,34 @@ const DevChat = {
       if (res.status === 429) {
         const data = await res.json();
         DevChat._removeSpinner();
-        DevChat.messages.push({ role: 'assistant', content: `**Rate limit reached.** ${data.error || 'Try again later.'}`, created_at: new Date().toISOString() });
-        DevChat.renderMessages();
+        // #463: budget exhaustion is not rate limiting — tell the user
+        // what actually happened and point at the BYOK escape hatch.
+        // Only the server's billing path sets code: 'budget_exceeded';
+        // chatLimiter throttles keep the old wording.
+        if (data.code === 'budget_exceeded') {
+          DevChat.messages.push({
+            role: 'assistant',
+            content: `**You've used up today's free AI credits.** ${data.error || 'They reset at midnight UTC.'}\n\nOpen Settings from the menu (or use the banner above) to add your key — your work then bills to your own Anthropic account.`,
+            created_at: new Date().toISOString(),
+          });
+          // Refresh the meter + banner right away so the "out of
+          // credits" state is visible without waiting for a usage event.
+          DevChat.refreshBudget();
+        } else {
+          DevChat.messages.push({ role: 'assistant', content: `**Rate limit reached.** ${data.error || 'Try again later.'}`, created_at: new Date().toISOString() });
+        }
         DevChat._finishStreaming();
+        // #370: the cap rejected the send before any turn ran. Put the
+        // text back in the composer (editable, draft re-saved) and drop
+        // the optimistic user bubble so the message lives only in the
+        // editor — the user never has to retype it. Restore AFTER
+        // _finishStreaming so the input is re-enabled before we focus it.
+        DevChat._restoreComposer(message, { dropOptimisticUser: true });
+        if (sentAttachments.length) {
+          DevChat.pendingAttachments = sentAttachments;
+          DevChat._renderAttachStrip();
+        }
+        DevChat.renderMessages();
         return;
       }
 
@@ -898,20 +1050,23 @@ const DevChat = {
           if (data?.error) errText = data.error;
         } catch {}
         DevChat._removeSpinner();
-        // Drop the optimistic user message — it was never persisted, and
-        // leaving it in the list while the spinner disappears is what the
-        // user perceived as "my message disappears".
-        const lastIdx = DevChat.messages.length - 1;
-        if (lastIdx >= 0 && DevChat.messages[lastIdx].role === 'user' && !DevChat.messages[lastIdx].id) {
-          DevChat.messages.splice(lastIdx, 1);
-        }
         DevChat.messages.push({
           role: 'assistant',
           content: `**Couldn't send message:** ${errText}`,
           created_at: new Date().toISOString(),
         });
-        DevChat.renderMessages();
         DevChat._finishStreaming();
+        // #370: restore the typed text into the composer and drop the
+        // optimistic (never-persisted) user bubble so the message isn't
+        // lost — same recovery as the 429 cap path above. Leaving the
+        // bubble in the list while the spinner disappears is what the
+        // user perceived as "my message disappears".
+        DevChat._restoreComposer(message, { dropOptimisticUser: true });
+        if (sentAttachments.length) {
+          DevChat.pendingAttachments = sentAttachments;
+          DevChat._renderAttachStrip();
+        }
+        DevChat.renderMessages();
         return;
       }
 
@@ -1032,9 +1187,15 @@ const DevChat = {
                 DevChat.messages.push({
                   role: 'system',
                   content: `Staging build failed: ${data.error || 'unknown error'}`,
+                  // #361: a staging_failed event always implies a pushed,
+                  // proposable commit, so render the "Changes ready" card
+                  // (disabled Preview + working Propose) — not a card-less line.
+                  changesReady: true,
                   stagingFailed: true,
                   stagingErrorName: data.errorName || 'Error',
                   stagingMissingKeys: data.missingKeys || [],
+                  prNumber: data.prNumber != null ? data.prNumber : (DevChat.currentSession?.pr_number ?? null),
+                  prUrl: data.prUrl || DevChat.currentSession?.pr_url || null,
                   created_at: new Date().toISOString(),
                   _slug: Math.random().toString(36).slice(2, 8),
                 });
@@ -1225,6 +1386,28 @@ const DevChat = {
     // (backgrounded), even when the user is watching this same dev chat.
   },
 
+  // Self-healing sync for degraded turns (#446): called from the WS and
+  // resumable 'done' handlers — the two paths that only run when the
+  // primary POST SSE did NOT finish the turn (a healthy primary stream
+  // delivers its own 'done' first and seq-dedup swallows the copies).
+  // Anything that rode only the dead stream (suggestion chips, quick-reply
+  // pills, a late mayor_reasoning) is persisted but missing from the
+  // in-memory timeline, so reload the session — the automated equivalent
+  // of the manual refresh users do today. Mirrors what the /status poll
+  // fallback already does when it sees busy=false.
+  async _reconcileAfterFallbackDone(sessionId) {
+    const sid = sessionId != null ? sessionId : DevChat.currentSession?.id;
+    if (sid == null) return;
+    if (Number(sid) !== Number(DevChat.currentSession?.id)) return;
+    // A newer turn already started — its own stream owns the timeline now.
+    if (DevChat.isStreaming) return;
+    try {
+      await DevChat.openSession(sid);
+      DevChat.renderMessages();
+      DevChat.scrollToBottom();
+    } catch { /* the next poll or manual refresh still recovers */ }
+  },
+
   // Open (or reopen) the resumable GET /events SSE for the active session.
   // EventSource handles reconnect automatically and sends Last-Event-Id on
   // each retry, which the server uses to replay missed events from its
@@ -1328,12 +1511,17 @@ const DevChat = {
         if (!am || am._finalized) {
           DevChat.messages.push({ role: 'assistant', content: data.text, created_at: new Date().toISOString() });
           DevChat.renderMessages();
-        } else if (am.content.length < data.text.length) {
-          // Growing an EXISTING live bubble: patch its content node in
-          // place via the stabilized streaming updater rather than tearing
-          // down and rebuilding the whole list (which would re-parse and
-          // re-mount every checkbox-bearing message mid-stream). The full
-          // renderMessages() still runs when a new bubble is pushed above.
+        } else if (am.content !== data.text) {
+          // Reconcile an EXISTING live bubble to the server's authoritative
+          // text whenever it DIFFERS — not only when it's longer (#358). The
+          // server may have SHORTENED the text by scrubbing a hallucinated
+          // "[CODING AGENT COMPLETED]" marker the user already saw stream in;
+          // a grow-only patch would leave that fake marker on screen until
+          // reload. Patch the content node in place via the stabilized
+          // streaming updater rather than tearing down and rebuilding the
+          // whole list (which would re-parse and re-mount every
+          // checkbox-bearing message mid-stream). The full renderMessages()
+          // still runs when a new bubble is pushed above.
           am.content = data.text;
           const displayContent = am.content.replace(/^\[CHAT_ONLY\]\s*/i, '');
           const els = document.querySelectorAll('#dc-messages .dc-msg-assistant .dc-msg-content');
@@ -1358,9 +1546,28 @@ const DevChat = {
         }
         break;
       }
+      case 'quick_replies': {
+        // Quick-reply pills (#285), replayed right after the wrap-up
+        // mayor_reasoning. This case was missing, so a "Build it" pill
+        // delivered over the resumable channel was silently dropped until
+        // refresh. Mirrors the primary POST-SSE handler: attach to the
+        // latest assistant bubble; the pill bar reads from it (hidden
+        // while streaming, surfaces when _finishStreaming re-renders).
+        if (!Array.isArray(data.replies) || !data.replies.length) break;
+        const am = lastAssistantMsg();
+        if (am) {
+          am.quickReplies = data.replies;
+          DevChat._renderQuickReplies();
+        }
+        break;
+      }
       case 'done':
         DevChat._deactivateLastStatus();
         DevChat._finishStreaming();
+        // A 'done' on the resumable channel means the primary POST SSE never
+        // finished this turn — reconcile from the DB so anything that rode
+        // only the dead stream shows without a manual refresh (#446).
+        DevChat._reconcileAfterFallbackDone(sessionId);
         break;
       case 'phase':
         // Server announces which phase of the turn we're in so the UI
@@ -1404,6 +1611,9 @@ const DevChat = {
       case 'staging_ready':
         DevChat._removeSpinner();
         DevChat._deactivateLastStatus();
+        // #439: a replayed staging_ready may be resolving an on-demand
+        // Preview-click rebuild — open the new URL if its loader is pending.
+        AppView.onStagingRebuildResult(sessionId, { url: data.url });
         DevChat.messages.push({ role: 'system', content: 'Staging deployed!', stagingUrl: data.url, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8) });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
@@ -1417,12 +1627,19 @@ const DevChat = {
       case 'staging_failed':
         DevChat._removeSpinner();
         DevChat._deactivateLastStatus();
+        // #439: surface a failed on-demand rebuild in the preview loader.
+        AppView.onStagingRebuildResult(sessionId, { failed: true, error: data.error });
         DevChat.messages.push({
           role: 'system',
           content: `Staging build failed: ${data.error || 'unknown error'}`,
+          // #361: same as the primary SSE path — a failed staging build still
+          // means there's a reviewable commit, so render the card.
+          changesReady: true,
           stagingFailed: true,
           stagingErrorName: data.errorName || 'Error',
           stagingMissingKeys: data.missingKeys || [],
+          prNumber: data.prNumber != null ? data.prNumber : (DevChat.currentSession?.pr_number ?? null),
+          prUrl: data.prUrl || DevChat.currentSession?.pr_url || null,
           created_at: new Date().toISOString(),
           _slug: Math.random().toString(36).slice(2, 8),
         });
@@ -1679,19 +1896,15 @@ const DevChat = {
     // can edit + resend without retyping. We pull from the in-memory
     // messages array (most recent user row is the one they just sent)
     // rather than plumbing it through from sendMessage so this also
-    // works when stop is pressed after a cross-tab reconnect.
+    // works when stop is pressed after a cross-tab reconnect. onlyIfEmpty
+    // keeps a half-typed follow-up from being clobbered; the sent bubble
+    // stays in the timeline (the turn really ran), so no splice here.
     try {
-      const input = document.getElementById('dc-input');
-      if (input && !input.value.trim()) {
-        for (let i = DevChat.messages.length - 1; i >= 0; i--) {
-          const m = DevChat.messages[i];
-          if (m.role === 'user' && typeof m.content === 'string' && m.content.trim()) {
-            input.value = m.content;
-            input.style.height = 'auto';
-            input.style.height = Math.min(input.scrollHeight, 120) + 'px';
-            DevChat._setDraft(sessionId, m.content);
-            break;
-          }
+      for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+        const m = DevChat.messages[i];
+        if (m.role === 'user' && typeof m.content === 'string' && m.content.trim()) {
+          DevChat._restoreComposer(m.content, { onlyIfEmpty: true });
+          break;
         }
       }
     } catch {}
@@ -1893,14 +2106,27 @@ const DevChat = {
   // The server only emits cc_estimate when the user's toggle is ON, so
   // with the toggle off this never runs and the line is pixel-identical
   // to before.
-  // The trailing "· ~X left" numeric suffix (#50 follow-up). remainingSeconds
-  // is the model's seconds-remaining guess, or null/absent when it declined
-  // a number — in which case the phrase renders alone, exactly as before.
-  _estimateSuffix(remainingSeconds) {
-    if (remainingSeconds == null || typeof formatElapsed !== 'function') return '';
+  // #359: turn the latest remaining-seconds guess into an absolute target
+  // end-timestamp the shared 1s ticker can count down from. Returns null
+  // when the model declined a number (remainingSeconds == null/invalid) so
+  // the phrase renders alone, exactly as before #50's "phrase only" path.
+  _countdownTarget(remainingSeconds) {
+    if (remainingSeconds == null) return null;
     const n = Number(remainingSeconds);
-    if (!Number.isFinite(n) || n < 0) return '';
-    return ` · ~${formatElapsed(n * 1000)} left`;
+    if (!Number.isFinite(n) || n < 0) return null;
+    return Date.now() + n * 1000;
+  },
+
+  // The trailing live count-down span (#359, replacing the static "· ~X
+  // left" suffix from #50). Carries an absolute `data-countdown-to`
+  // end-timestamp that _tickElapsed recomputes each second; empty (no span)
+  // when there's no numeric guess to count down from. The initial
+  // textContent is filled here so the span isn't blank for the up-to-1s
+  // before the first tick.
+  _countdownSpanHtml(countdownTo) {
+    if (countdownTo == null || typeof formatCountdown !== 'function') return '';
+    const initial = formatCountdown(countdownTo, Date.now());
+    return `<span class="dc-cc-countdown" data-countdown-to="${countdownTo}">${initial}</span>`;
   },
 
   _applyEstimate(text, remainingSeconds) {
@@ -1922,6 +2148,9 @@ const DevChat = {
     DevChat._pendingEstimate = null;
     target._estimate = clean;
     target._estimateRemaining = remaining;
+    // #359: re-anchor the count-down to this fresh guess (or clear it when
+    // the model declined a number) so the next tick counts from here.
+    target._countdownTo = DevChat._countdownTarget(remaining);
     // Patch in place within THIS run's own DOM node (keyed by persist-id)
     // rather than the last estimate span on the page, so a prior collapsed
     // run's span can't be mis-targeted (#323).
@@ -1933,7 +2162,9 @@ const DevChat = {
       const spans = document.querySelectorAll('#dc-messages .dc-cc-estimate');
       span = spans.length ? spans[spans.length - 1] : null;
     }
-    if (span) span.textContent = `· ✦ AI guess: ${clean}${DevChat._estimateSuffix(remaining)}`;
+    // innerHTML (not textContent): the count-down lives in a child span the
+    // ticker patches in place. The phrase is escaped because it's model output.
+    if (span) span.innerHTML = `· ✦ AI guess: ${escapeHtml(clean)}${DevChat._countdownSpanHtml(target._countdownTo)}`;
   },
 
   // ── #50: elapsed-time ticker ────────────────────────────────
@@ -1946,32 +2177,47 @@ const DevChat = {
   _elapsedTimer: null,
 
   _syncElapsedTicker() {
-    const any = document.querySelector('#dc-messages [data-elapsed-since]');
+    // #359: the same 1s heartbeat now also drives the AI-estimate
+    // count-down span, so the predicate matches either kind of ticking span.
+    const any = document.querySelector('#dc-messages [data-elapsed-since], #dc-messages [data-countdown-to]');
     if (any && !DevChat._elapsedTimer) {
       DevChat._elapsedTimer = setInterval(() => DevChat._tickElapsed(), 1000);
     } else if (!any && DevChat._elapsedTimer) {
       clearInterval(DevChat._elapsedTimer);
       DevChat._elapsedTimer = null;
     }
-    // Fill immediately so the span isn't blank until the first tick.
+    // Fill immediately so the spans aren't blank until the first tick.
     if (any) DevChat._tickElapsed();
   },
 
   _tickElapsed() {
     const els = document.querySelectorAll('#dc-messages [data-elapsed-since]');
-    if (!els.length) {
+    // #359: count-down spans share this loop — anchored to an absolute
+    // target end-timestamp and clamped at "due now" (formatCountdown), so a
+    // late-firing tick under tab throttling still shows the right value.
+    const downs = document.querySelectorAll('#dc-messages [data-countdown-to]');
+    if (!els.length && !downs.length) {
       if (DevChat._elapsedTimer) {
         clearInterval(DevChat._elapsedTimer);
         DevChat._elapsedTimer = null;
       }
       return;
     }
-    if (typeof formatElapsed !== 'function') return;
-    els.forEach((el) => {
-      const since = parseInt(el.dataset.elapsedSince, 10);
-      if (!Number.isFinite(since)) return;
-      el.textContent = formatElapsed(Math.max(0, Date.now() - since));
-    });
+    const now = Date.now();
+    if (typeof formatElapsed === 'function') {
+      els.forEach((el) => {
+        const since = parseInt(el.dataset.elapsedSince, 10);
+        if (!Number.isFinite(since)) return;
+        el.textContent = formatElapsed(Math.max(0, now - since));
+      });
+    }
+    if (typeof formatCountdown === 'function') {
+      downs.forEach((el) => {
+        const to = parseInt(el.dataset.countdownTo, 10);
+        if (!Number.isFinite(to)) return;
+        el.textContent = formatCountdown(to, now);
+      });
+    }
   },
 
   // The elapsed/duration suffix for a system status row:
@@ -2013,8 +2259,10 @@ const DevChat = {
           }
         }
         // Experimental AI estimate: a finished/stopped step never shows a
-        // guess — the real duration replaces it.
+        // guess — the real duration replaces it. Clear the count-down anchor
+        // too (#359) so a stale target can't be re-rendered.
         delete m._estimate;
+        delete m._countdownTo;
         break;
       }
     }
@@ -2033,7 +2281,16 @@ const DevChat = {
     const testing = (s.testing_md || s.testing_path)
       ? { md: s.testing_md || null, path: s.testing_path || null }
       : null;
-    AppView.swapToStaging(url, testing, { jump: !!jump });
+    // #439: route through ensure-then-open so a preview torn down while the
+    // user was away (idle GC, lost container) rebuilds on click. Prefer the
+    // session's live staging_url over the (possibly stale) message URL as
+    // the fallback for the already-live case. With no session id we can't
+    // ensure — fall back to the legacy direct open.
+    if (s.id) {
+      AppView.ensureStaging(s.id, s.staging_url || url, testing, { jump: !!jump });
+    } else {
+      AppView.swapToStaging(url, testing, { jump: !!jump });
+    }
   },
 
   async promotePR() {
@@ -2085,6 +2342,8 @@ const DevChat = {
         if (m.role === 'system' && m._active) {
           m._estimate = DevChat._pendingEstimate.text;
           m._estimateRemaining = DevChat._pendingEstimate.remainingSeconds;
+          // #359: anchor the count-down for the drained pending estimate too.
+          m._countdownTo = DevChat._countdownTarget(m._estimateRemaining);
           DevChat._pendingEstimate = null;
           break;
         }
@@ -2231,7 +2490,16 @@ const DevChat = {
           const icon = '<span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span>';
           return `<details class="dc-cc-attached" data-persist-id="${outerPid}" data-default-open="1" open><summary class="dc-status-line dc-cc-attached-summary">${icon} Claude Code output<span class="dc-cc-attached-chevron" aria-hidden="true"></span><span style="font-size:9px;opacity:0.4;margin-left:auto">${id} ${ts}</span></summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
         }
-        if (msg.stagingUrl) {
+        // #361: the "Changes ready" card renders whenever the turn produced
+        // a reviewable commit — i.e. either a preview built (msg.stagingUrl)
+        // OR the staging-independent marker (msg.changesReady) is set on the
+        // message (staging-failed turns, rehydrated metadata, cloned rows).
+        // Staging is an ENRICHMENT of the card, not its on/off switch: when
+        // the preview is absent, the Preview button is shown disabled with a
+        // short "rebuild on propose" note (surfacing the missing-secret hint
+        // when that was the cause), while Propose still works — promote
+        // lazily creates the PR and rebuilds staging itself (routes/votes.js).
+        if (msg.stagingUrl || msg.changesReady) {
           const stgTs = msg.created_at ? new Date(msg.created_at).getTime() : '';
           const stgId = msg.id || msg._slug || '';
           // Once the PR merges (or is mid-merge), the merge path tears down
@@ -2239,47 +2507,91 @@ const DevChat = {
           // clicking it lands on a 502/blank page. Disable it instead, with a
           // tooltip pointing the user at the now-live app.
           const previewGone = !!session && (session.status === 'merged' || session.status === 'merging' || !!session.merged_at);
+          // #439: the Preview button is ACTIVE whenever this card represents
+          // reviewable work that isn't merged. Clicking always routes through
+          // DevChat.previewStaging → ensure-staging, which opens a live
+          // preview as-is OR rebuilds a torn-down one on demand (idle GC /
+          // lost container) — no more dead links or "proposing will rebuild
+          // it" dead-ends. It renders disabled only once the change is merged
+          // (previewGone), when the preview is intentionally gone and the
+          // change is live in the app.
+          const canPreview = !previewGone;
+          // Best-known URL handed to the opener as a fallback. ensure-staging
+          // keys off the session id and prefers the session's live
+          // staging_url, so this is only used for the already-live fast path;
+          // prefer the session row over the (possibly stale) message URL.
+          const liveUrl = (session && session.staging_url) || msg.stagingUrl || '';
           // #127: bot-emitted testing guidance lives on the session row
           // (testing_md / testing_path). When present, offer a "Test this
           // change" button that opens the preview at the deep link with the
           // instructions panel showing. The markdown is looked up at click
           // time (DevChat.previewStaging) — never inlined in the attribute.
           const hasTesting = !!(session?.testing_md || session?.testing_path);
-          const testBtn = !hasTesting ? '' : (previewGone
-            ? `<button class="dc-pr-btn dc-pr-btn-preview" disabled title="Preview removed after merge — this change is now live in the app">Test this change</button>`
-            : `<button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.previewStaging('${msg.stagingUrl}', true)">Test this change</button>`);
+          // Active Test button whenever a preview can be opened/rebuilt; the
+          // disabled "Test this change" only once the merge tore it down.
+          const testBtn = !hasTesting ? '' : (canPreview
+            ? `<button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.previewStaging('${liveUrl}', true)">Test this change</button>`
+            : `<button class="dc-pr-btn dc-pr-btn-preview" disabled title="Preview removed after merge — this change is now live in the app">Test this change</button>`);
+          // Disabled tooltip only applies to the merged case now — a missing/
+          // failed-build preview is rebuilt on click and surfaces any reason
+          // (missing secret, etc.) in the preview loader, not here.
+          const previewBtnTitle = 'Preview removed after merge — this change is now live in the app';
+          const previewBtnHtml = canPreview
+            ? `<button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.previewStaging('${liveUrl}', false)">Preview staging</button>`
+            : `<button class="dc-pr-btn dc-pr-btn-preview" disabled title="${escapeHtml(previewBtnTitle)}">Preview staging</button>`;
+          // #439: no inline "proposing will rebuild it" note anymore — the
+          // Preview button itself rebuilds on click.
+          const previewNote = '';
+          // PR link prefers the session row, falling back to the marker the
+          // message carries (so a rehydrated/cloned failure card still links
+          // out even before the session refetch lands).
+          const prUrl = session?.pr_url || msg.prUrl || null;
+          const prNumber = session?.pr_number || msg.prNumber || null;
           // #195: before/after capture tiles. Visuals are latest-set-per-
           // session, so only the NEWEST staging card carries them — older
-          // cards from earlier turns would just repeat the same media.
-          // Arrives via session.visuals (history reload) or the
-          // visuals_ready event (live upgrade-in-place after capture).
+          // cards from earlier turns would just repeat the same media. The
+          // scan recognizes changesReady cards too so a later success card
+          // still wins; visuals only attach to a card that has a live URL.
           let visualsHtml = '';
           if (window.AppView && session?.visuals) {
             let latestStagingMsg = null;
             for (let vi = DevChat.messages.length - 1; vi >= 0; vi--) {
-              if (DevChat.messages[vi].stagingUrl) { latestStagingMsg = DevChat.messages[vi]; break; }
+              if (DevChat.messages[vi].stagingUrl || DevChat.messages[vi].changesReady) { latestStagingMsg = DevChat.messages[vi]; break; }
             }
-            if (latestStagingMsg === msg) visualsHtml = AppView.visualsTilesHtml(session.visuals);
+            if (latestStagingMsg === msg && msg.stagingUrl) visualsHtml = AppView.visualsTilesHtml(session.visuals);
+          }
+          // #405: the change card's status used to freeze on "Proposed!"
+          // and never reflect the later merge stages. Drive it from the
+          // shared lifecycle helper so it tracks In vote → Passed → Merging…
+          // → ✓ Merged; the merged case gets a friendlier, self-explanatory
+          // label that doubles as the reason the preview link is gone.
+          let cardStatusHtml = '';
+          if (session && session.status !== 'active' && window.MergeStatus && MergeStatus.lifecycle) {
+            const cardLife = MergeStatus.lifecycle(session);
+            if (cardLife && cardLife.key === 'merged') {
+              cardStatusHtml = '<span class="ms-badge ms-badge-violet" title="This change is merged and now live in the app.">✓ Merged — now live in the app</span>';
+            } else if (cardLife && cardLife.label) {
+              cardStatusHtml = MergeStatus.badgeHtml(cardLife);
+            }
           }
           return `
             <div class="dc-status-line"><span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span> ${msg.content} <span style="font-size:9px;opacity:0.4;margin-left:auto">${stgId} ${stgTs}</span></div>
             <div class="dc-pr-card" id="dc-pr-card">
               <div class="dc-pr-card-header">
-                ${session?.pr_url ? `<a href="${session.pr_url}" target="_blank" class="dc-pr-link">PR #${session.pr_number}</a>` : '<span style="color:var(--text-muted)">Changes ready</span>'}
+                ${prUrl ? `<a href="${prUrl}" target="_blank" class="dc-pr-link">PR #${prNumber}</a>` : '<span style="color:var(--text-muted)">Changes ready</span>'}
                 ${(session?.session_title || session?.pr_title) ? `<span class="dc-pr-title">${escapeHtml(session.session_title || session.pr_title)}</span>` : ''}
                 ${window.AppView ? AppView.closesPillHtml(session) : ''}
                 <span style="font-size:9px;opacity:0.4;margin-left:8px">${stgId} ${stgTs}</span>
               </div>
               ${visualsHtml ? `<div class="dc-pr-card-visuals" style="margin:6px 0 2px">${visualsHtml}</div>` : ''}
               <div class="dc-pr-card-actions">
-                ${previewGone
-                  ? `<button class="dc-pr-btn dc-pr-btn-preview" disabled title="Preview removed after merge — this change is now live in the app">Preview staging</button>`
-                  : `<button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.previewStaging('${msg.stagingUrl}', false)">Preview staging</button>`}
+                ${previewBtnHtml}
                 ${testBtn}
-                ${session?.pr_url ? `<a href="${session.pr_url}" target="_blank" class="dc-pr-btn dc-pr-btn-preview" style="text-decoration:none">View on GitHub</a>` : ''}
+                ${prUrl ? `<a href="${prUrl}" target="_blank" class="dc-pr-btn dc-pr-btn-preview" style="text-decoration:none">View on GitHub</a>` : ''}
                 ${session?.status === 'active' ? `<button class="dc-pr-btn dc-pr-btn-promote" onclick="DevChat.promotePR()">Propose to group</button>` : ''}
-                ${session?.status === 'promoted' ? '<span class="text-xs" style="color:var(--accent)">Proposed!</span>' : ''}
+                ${cardStatusHtml}
               </div>
+              ${previewNote}
             </div>`;
         }
         const sTs = msg.created_at ? new Date(msg.created_at).getTime() : '';
@@ -2324,7 +2636,10 @@ const DevChat = {
           // Experimental AI progress estimate: rendered unconditionally
           // (even empty) so _applyEstimate can patch it in place; only
           // populated while the server emits cc_estimate for this run.
-          const estimateSpan = `<span class="dc-cc-estimate" title="Experimental: a small AI model's rough guess from the progress log. May be wrong.">${msg._estimate ? `· ✦ AI guess: ${escapeHtml(msg._estimate)}${escapeHtml(DevChat._estimateSuffix(msg._estimateRemaining))}` : ''}</span>`;
+          // #359: the remaining-time portion is a live count-down child span
+          // (data-countdown-to) the shared ticker decrements; the phrase stays
+          // plain escaped text. Empty when there's no numeric guess.
+          const estimateSpan = `<span class="dc-cc-estimate" title="Experimental: a small AI model's rough guess from the progress log. May be wrong.">${msg._estimate ? `· ✦ AI guess: ${escapeHtml(msg._estimate)}${DevChat._countdownSpanHtml(msg._countdownTo)}` : ''}</span>`;
           return `<details class="dc-cc-attached" data-persist-id="${outerPid}" data-default-open="1" open><summary class="${sumClass}">${iconHtml} ${msg.content}${currentSpan}${stepsSpan}${estimateSpan}${elapsedHtml}${chevron}${tsSpan}</summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
         }
 
@@ -2403,6 +2718,7 @@ const DevChat = {
             <span style="color:var(--text-muted);font-size:9px;opacity:0.5">${idLabel} ${ts}</span>
           </div>
           <div class="dc-msg-content">${isUser ? DevChat.renderMarkdown(content) : displayContent}</div>
+          ${isUser ? DevChat._attachmentsRowHtml(msg) : ''}
           ${isUser ? '' : reasoningDetail}
           ${qaChips}
         </div>`;
@@ -3178,6 +3494,68 @@ const DevChat = {
     return Number(st.sessionId) === Number(session.id) ? st : null;
   },
 
+  // #405: the session header's merge-lifecycle pill. Mirrors the canonical
+  // state shown on the proposal feed card / home strip so the user no longer
+  // has to leave the session to learn where it is — Draft → In vote →
+  // Checks running → Behind → Resolving → Passed → Merging… → ✓ Merged. The
+  // session payload (GET /api/sessions/:id) carries status / check_state /
+  // merge_conflict_state / behind_main, plus yes_count + majority (added for
+  // this feature) so the in-vote tally and the "Passed — merging shortly"
+  // state resolve exactly as on the feed.
+  _renderHeaderStatusPill(session) {
+    return `<span id="dc-status-pill">${DevChat._statusPillInnerHtml(session)}</span>`;
+  },
+
+  _statusPillInnerHtml(session) {
+    if (!session || !(window.MergeStatus && MergeStatus.lifecycle)) return '';
+    const life = MergeStatus.lifecycle(session);
+    if (!life || !life.label) return '';
+    return MergeStatus.pillHtml(life);
+  },
+
+  // #405: patch the header pill in place (used while a turn is streaming, so
+  // we don't re-render the whole view and disrupt the live message stream).
+  _patchHeaderStatusPill() {
+    const el = document.getElementById('dc-status-pill');
+    if (!el) return;
+    el.innerHTML = DevChat._statusPillInnerHtml(DevChat.currentSession);
+  },
+
+  // #405: re-read the open session's lifecycle fields after a vote_update /
+  // app_version_changed WS event so the header pill + change card advance
+  // live (In vote → Passed → Merging… → ✓ Merged) without a manual reload.
+  // No-op unless the event pertains to the session currently open. A full
+  // re-render repaints the change card too; while a chat turn is streaming
+  // we only patch the header pill to avoid disturbing the live stream.
+  async refreshCurrentSessionStatus(sessionId) {
+    const cur = DevChat.currentSession;
+    if (!cur) return;
+    if (sessionId != null && Number(sessionId) !== Number(cur.id)) return;
+    if (!document.getElementById('dc-view')) return;
+    try {
+      const res = await fetch(`/api/sessions/${cur.id}`);
+      if (!res.ok) return;
+      const { session } = await res.json();
+      if (!session || !DevChat.currentSession
+          || Number(DevChat.currentSession.id) !== Number(session.id)) return;
+      // Lifecycle-relevant scalars decide whether anything visible changed;
+      // copy them onto the live row either way.
+      const watch = ['status', 'check_state', 'merge_conflict_state', 'behind_main',
+                     'yes_count', 'no_count', 'majority', 'merged_at'];
+      let changed = false;
+      for (const k of watch) {
+        if (session[k] !== undefined && DevChat.currentSession[k] !== session[k]) changed = true;
+        if (session[k] !== undefined) DevChat.currentSession[k] = session[k];
+      }
+      // Arrays/objects the card reads are refreshed unconditionally.
+      if (session.test_results !== undefined) DevChat.currentSession.test_results = session.test_results;
+      if (session.conflict_files !== undefined) DevChat.currentSession.conflict_files = session.conflict_files;
+      if (!changed) return;
+      if (DevChat.isStreaming) DevChat._patchHeaderStatusPill();
+      else DevChat.renderChatView();
+    } catch { /* network blip — ignore, next event/reload reconciles */ }
+  },
+
   _renderSyncBannerHtml(session) {
     const behind = session && Number(session.behind_main) || 0;
     const sync = DevChat._syncStateFor(session);
@@ -3518,9 +3896,11 @@ const DevChat = {
         ${DevChat.currentSession.pr_number
           ? `<button id="dc-pr-header-link" class="text-xs text-violet-400 hover:text-violet-300" title="This session's pull request — every change in this chat goes to PR #${DevChat.currentSession.pr_number}. Use “Start a new change” for separate work.">PR #${DevChat.currentSession.pr_number}</button>`
           : '<span class="text-xs text-zinc-500" title="This chat is one change → one pull request. A PR opens after the first build.">New change</span>'}
+        ${DevChat._renderHeaderStatusPill(DevChat.currentSession)}
       </div>
       ${DevChat._renderSyncBannerHtml(DevChat.currentSession)}
       ${DevChat._renderNewChangeBannerHtml(DevChat.currentSession)}
+      ${DevChat._renderCreditsBannerHtml()}
       <div class="dc-session-body flex-1 flex min-h-0">
         <div id="dc-tab-chat" class="dc-chat-pane flex-1 flex flex-col min-h-0">
           <div id="dc-messages" class="dc-messages-container flex-1 overflow-y-auto py-2"></div>
@@ -3530,10 +3910,18 @@ const DevChat = {
               <select id="dc-model-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">
                 ${modelOptions}
               </select>
+              <input type="file" id="dc-file-input" class="hidden" multiple
+                accept=".png,.jpg,.jpeg,.gif,.webp,.txt,.md,.markdown,.csv,.tsv,.json,.log,.yaml,.yml,.xml,.html,.css,.js,.jsx,.ts,.tsx,.py,.rb,.go,.rs,.java,.sql,.sh,image/png,image/jpeg,image/gif,image/webp">
+              <button type="button" id="dc-attach-btn" title="Attach files — images (PNG/JPEG/GIF/WebP, ≤4 MB) or text files (≤200 KB), up to 4 per message" aria-label="Attach files"
+                class="dc-attach-btn rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-900 text-zinc-500 hover:text-violet-400 hover:border-violet-500 px-1.5 py-1 shrink-0 transition-colors">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+              </button>
               <span class="flex-1"></span>
               <span id="dc-budget" class="text-xs font-mono"></span>
             </div>
             <div id="dc-quick-replies" class="dc-quick-replies"></div>
+            <div id="dc-attachments" class="dc-attach-strip"></div>
+            <div id="dc-attach-error" class="dc-attach-error hidden"></div>
             <form id="dc-form" class="flex gap-2 items-end">
               <textarea
                 id="dc-input"
@@ -3558,6 +3946,10 @@ const DevChat = {
     DevChat.renderMessages();
     DevChat._renderQuickReplies();
     DevChat._wireQuickReplies();
+    // #463: the template above may have rendered the credits banner from
+    // the cached budget — wire its button now; refreshBudget() re-syncs
+    // banner + meter once fresh figures land.
+    DevChat._wireCreditsBanner();
     DevChat.refreshBudget();
     // Attach tracker first so the scroll set below is observed, then
     // restore the session's last known position (or fall through to
@@ -3566,6 +3958,7 @@ const DevChat = {
     DevChat.restoreSessionScroll();
     DevChat._setupTextareaResize();
     DevChat._setupKeyboardShortcuts();
+    DevChat._setupAttachments();
     DevChat._restoreDraft();
     if (DevChat.isStreaming) DevChat._setStreamingUI(true);
 
@@ -3639,11 +4032,225 @@ const DevChat = {
   _submitFromInput() {
     const input = document.getElementById('dc-input');
     const msg = input.value.trim();
-    if (!msg || DevChat.isStreaming) return;
+    const atts = DevChat.pendingAttachments.filter((a) => !a.uploading);
+    // Attachments alone are a valid send (#450) — the server stores a
+    // "(attached files)" stub caption.
+    if ((!msg && !atts.length) || DevChat.isStreaming) return;
+    if (DevChat.pendingAttachments.some((a) => a.uploading)) {
+      DevChat._setAttachError('Still uploading — one moment…');
+      return;
+    }
     input.value = '';
     input.style.height = 'auto';
     if (DevChat.currentSession) DevChat._setDraft(DevChat.currentSession.id, '');
-    DevChat.sendMessage(msg);
+    DevChat.sendMessage(msg, atts);
+  },
+
+  // ── File attachments (#450) ─────────────────────────────────
+  //
+  // Upload-before-send: each picked/pasted/dropped file is validated
+  // client-side (mirroring src/services/attachments.js), POSTed as raw
+  // octet-stream to /api/sessions/:id/attachments, and parked in
+  // `pendingAttachments` (rendered as a strip above the composer) until
+  // the message sends with the attachment ids. Orphans left by removed
+  // or abandoned uploads are GC'd server-side after 24h.
+  pendingAttachments: [],
+
+  ATTACH_LIMITS: {
+    maxPerMessage: 4,
+    maxImageBytes: 4 * 1024 * 1024,
+    maxTextBytes: 200 * 1024,
+    imageExts: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
+    textExts: ['txt', 'md', 'markdown', 'csv', 'tsv', 'json', 'log', 'yaml', 'yml', 'xml', 'html', 'css', 'js', 'jsx', 'ts', 'tsx', 'py', 'rb', 'go', 'rs', 'java', 'sql', 'sh'],
+  },
+
+  _setupAttachments() {
+    const btn = document.getElementById('dc-attach-btn');
+    const fileInput = document.getElementById('dc-file-input');
+    const textarea = document.getElementById('dc-input');
+    const messagesEl = document.getElementById('dc-messages');
+    if (!btn || !fileInput) return;
+
+    // Pending uploads belong to the session they were uploaded to.
+    const sid = DevChat.currentSession?.id;
+    DevChat.pendingAttachments = DevChat.pendingAttachments.filter((a) => a.sessionId === sid);
+    DevChat._renderAttachStrip();
+
+    btn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files?.length) DevChat._addFiles(fileInput.files);
+      fileInput.value = '';
+    });
+
+    // Paste an image straight from the clipboard (screenshots).
+    if (textarea) {
+      textarea.addEventListener('paste', (e) => {
+        const items = e.clipboardData?.items || [];
+        const files = [];
+        for (const item of items) {
+          if (item.kind === 'file') {
+            const f = item.getAsFile();
+            if (f) {
+              // Clipboard images often arrive nameless — synthesize one.
+              if (!f.name || f.name === 'image.png' || !/\./.test(f.name)) {
+                const ext = (f.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+                const named = new File([f], `pasted-image-${Date.now() % 100000}.${ext}`, { type: f.type });
+                files.push(named);
+              } else {
+                files.push(f);
+              }
+            }
+          }
+        }
+        if (files.length) {
+          e.preventDefault();
+          DevChat._addFiles(files);
+        }
+      });
+    }
+
+    // Drag-and-drop onto the message area or the composer.
+    for (const el of [messagesEl, document.getElementById('dc-form')]) {
+      if (!el) continue;
+      el.addEventListener('dragover', (e) => { e.preventDefault(); });
+      el.addEventListener('drop', (e) => {
+        if (e.dataTransfer?.files?.length) {
+          e.preventDefault();
+          DevChat._addFiles(e.dataTransfer.files);
+        }
+      });
+    }
+  },
+
+  async _addFiles(fileList) {
+    if (!DevChat.currentSession || DevChat.isStreaming) return;
+    DevChat._setAttachError(null);
+    const sid = DevChat.currentSession.id;
+    const L = DevChat.ATTACH_LIMITS;
+    for (const file of Array.from(fileList)) {
+      if (DevChat.pendingAttachments.length >= L.maxPerMessage) {
+        DevChat._setAttachError(`Up to ${L.maxPerMessage} files per message.`);
+        break;
+      }
+      const ext = (file.name.toLowerCase().match(/\.([a-z0-9]+)$/) || [])[1] || '';
+      const isImage = L.imageExts.includes(ext);
+      const isText = L.textExts.includes(ext);
+      if (!isImage && !isText) {
+        DevChat._setAttachError(`"${file.name}" isn't supported — attach an image (PNG/JPEG/GIF/WebP) or a text file.`);
+        continue;
+      }
+      if (isImage && file.size > L.maxImageBytes) {
+        DevChat._setAttachError(`"${file.name}" is too big — images max ${Math.round(L.maxImageBytes / 1024 / 1024)} MB.`);
+        continue;
+      }
+      if (isText && file.size > L.maxTextBytes) {
+        DevChat._setAttachError(`"${file.name}" is too big — text files max ${Math.round(L.maxTextBytes / 1024)} KB.`);
+        continue;
+      }
+      const entry = {
+        sessionId: sid,
+        uploading: true,
+        id: null,
+        kind: isImage ? 'image' : 'text',
+        filename: file.name,
+        sizeBytes: file.size,
+        objectUrl: isImage ? URL.createObjectURL(file) : null,
+      };
+      DevChat.pendingAttachments.push(entry);
+      DevChat._renderAttachStrip();
+      try {
+        const res = await fetch(`/api/sessions/${sid}/attachments?filename=${encodeURIComponent(file.name)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: file,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data?.error || `Upload failed (HTTP ${res.status})`);
+        entry.id = data.id;
+        entry.kind = data.kind;
+        entry.uploading = false;
+      } catch (err) {
+        DevChat.pendingAttachments = DevChat.pendingAttachments.filter((a) => a !== entry);
+        if (entry.objectUrl) { try { URL.revokeObjectURL(entry.objectUrl); } catch {} }
+        DevChat._setAttachError(err.message || 'Upload failed');
+      }
+      DevChat._renderAttachStrip();
+    }
+  },
+
+  _removeAttachment(idx) {
+    const entry = DevChat.pendingAttachments[idx];
+    if (!entry || entry.uploading) return;
+    DevChat.pendingAttachments.splice(idx, 1);
+    if (entry.objectUrl) { try { URL.revokeObjectURL(entry.objectUrl); } catch {} }
+    // Server row stays until the 24h orphan sweep — harmless.
+    DevChat._setAttachError(null);
+    DevChat._renderAttachStrip();
+  },
+
+  _setAttachError(msg) {
+    const el = document.getElementById('dc-attach-error');
+    if (!el) return;
+    if (msg) {
+      el.textContent = msg;
+      el.classList.remove('hidden');
+    } else {
+      el.textContent = '';
+      el.classList.add('hidden');
+    }
+  },
+
+  _humanSize(bytes) {
+    const n = Number(bytes) || 0;
+    if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+    if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+    return `${n} B`;
+  },
+
+  _renderAttachStrip() {
+    const strip = document.getElementById('dc-attachments');
+    if (!strip) return;
+    const items = DevChat.pendingAttachments;
+    if (!items.length) {
+      strip.innerHTML = '';
+      strip.classList.remove('dc-attach-strip-active');
+      return;
+    }
+    strip.classList.add('dc-attach-strip-active');
+    strip.innerHTML = items.map((a, i) => {
+      const name = escapeHtml(a.filename);
+      const removeBtn = a.uploading
+        ? '<span class="dc-attach-uploading">…</span>'
+        : `<button type="button" class="dc-attach-remove" data-attach-idx="${i}" title="Remove" aria-label="Remove ${name}">&times;</button>`;
+      if (a.kind === 'image' && a.objectUrl) {
+        return `<div class="dc-attach-item"><img class="dc-attach-thumb" src="${a.objectUrl}" alt="${name}" title="${name}">${removeBtn}</div>`;
+      }
+      return `<div class="dc-attach-item dc-attach-chip" title="${name}"><span class="dc-attach-name">${name}</span><span class="dc-attach-size">${DevChat._humanSize(a.sizeBytes)}</span>${removeBtn}</div>`;
+    }).join('');
+    strip.querySelectorAll('.dc-attach-remove').forEach((btn) => {
+      btn.addEventListener('click', () => DevChat._removeAttachment(Number(btn.dataset.attachIdx)));
+    });
+  },
+
+  // Attachment row inside a user bubble. Rendered OUTSIDE renderMarkdown
+  // (the DOMPurify allowlist strips <img>, and must keep doing so for
+  // untrusted markdown). Optimistic sends carry objectUrl until the
+  // reload swaps in the server URL.
+  _attachmentsRowHtml(msg) {
+    const atts = msg.attachments;
+    if (!Array.isArray(atts) || !atts.length) return '';
+    const sid = DevChat.currentSession?.id;
+    const items = atts.map((a) => {
+      const name = escapeHtml(String(a.filename || 'file'));
+      const idOk = typeof a.id === 'string' && /^[a-f0-9]{32}$/.test(a.id);
+      const url = a.objectUrl || (idOk && sid ? `/api/sessions/${sid}/attachments/${a.id}` : null);
+      if (!url) return '';
+      if (a.kind === 'image') {
+        return `<a href="${url}" target="_blank" rel="noopener" title="${name} — open full size"><img class="dc-msg-att-img" src="${url}" alt="${name}" loading="lazy"></a>`;
+      }
+      return `<a class="dc-msg-att-chip" href="${url}" download="${name}" title="Download ${name}"><span class="dc-attach-name">${name}</span><span class="dc-attach-size">${DevChat._humanSize(a.sizeBytes)}</span></a>`;
+    }).filter(Boolean).join('');
+    return items ? `<div class="dc-msg-attachments">${items}</div>` : '';
   },
 
   _setupTextareaResize() {
@@ -3673,6 +4280,42 @@ const DevChat = {
       if (value) localStorage.setItem(DevChat._draftKey(sessionId), value);
       else localStorage.removeItem(DevChat._draftKey(sessionId));
     } catch {}
+  },
+
+  // #370: put a message the user was about to send (or just sent, on a
+  // turn that bounced) back into the composer so they never have to
+  // retype it. Shared by _stopCurrentTurn and sendMessage's failure
+  // paths (429 token/spend cap, generic non-ok response).
+  //
+  // - `dropOptimisticUser` (cap/error paths): the optimistic user row
+  //   pushed in sendMessage was never persisted (no id) and the turn
+  //   never ran — splice it so the text lives only in the editor, not
+  //   as a duplicate sent-looking bubble. Scans backwards for the most
+  //   recent un-persisted user row so it still finds it even after an
+  //   assistant error message has been pushed on top.
+  // - `onlyIfEmpty` (Stop path): never clobber a half-typed follow-up,
+  //   and — matching the original inline behaviour — do nothing at all
+  //   when the textarea isn't mounted.
+  //
+  // Every DOM / storage touch is guarded (the textarea may be gone if
+  // the user navigated away) and an empty message is a no-op.
+  _restoreComposer(message, { dropOptimisticUser = false, onlyIfEmpty = false } = {}) {
+    if (!message || typeof message !== 'string') return;
+    const input = document.getElementById('dc-input');
+    if (onlyIfEmpty && (!input || input.value.trim())) return;
+    if (dropOptimisticUser) {
+      for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+        const m = DevChat.messages[i];
+        if (m.role === 'user' && !m.id) { DevChat.messages.splice(i, 1); break; }
+      }
+    }
+    if (input) {
+      input.value = message;
+      input.style.height = 'auto';
+      input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+      if (dropOptimisticUser) { try { input.focus(); } catch {} }
+    }
+    if (DevChat.currentSession) DevChat._setDraft(DevChat.currentSession.id, message);
   },
 
   _restoreDraft() {

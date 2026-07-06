@@ -19,8 +19,10 @@
 #   usernode-issues            list open issues (long bodies clipped with a
 #                              "[truncated — use usernode-issues N for full
 #                              text]" marker)
-#   usernode-issues <number>   that one issue, FULL body (#158); also
-#                              resolves recently-closed issues
+#   usernode-issues <number>   that one issue, FULL body (#158) AND its
+#                              comment thread (#396: { issue, comments:
+#                              [{ author, body, createdAt }], commentsTruncated });
+#                              also resolves recently-closed issues
 #
 # Endpoints: GET /api/internal/sessions/$SESSION_ID/issues
 #            GET /api/internal/sessions/$SESSION_ID/issues/<number>

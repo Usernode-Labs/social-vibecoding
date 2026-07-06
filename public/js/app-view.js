@@ -13,6 +13,12 @@ const AppView = {
   _ghIssuesMeta: { truncatedList: false, note: null, repoUrl: null, myRemaining: null },
   _bountyInFlight: new Set(),
 
+  // #396: per-issue-number cache of the GitHub comment thread fetched
+  // lazily when an issue topic opens, so _renderTopicHead's live-refreshes
+  // (WS-driven) reuse it instead of refetching. Each entry is
+  // `{ comments, truncated }`; absent means "not loaded yet".
+  _ghComments: {},
+
   // Scroll-position memory for the Dev card list, keyed by app slug
   // (`App.currentApp`). In-memory only — reset on a full page reload by
   // design, so a hard refresh starts at the top. Mirrors the
@@ -109,6 +115,41 @@ const AppView = {
   // topic sub-view below) tracks the open topic for hash deep links.
   // How many feed items are visible (the rest sit behind "Show more").
   _feedShown: 20,
+
+  // ── Dev view mode (list ↔ kanban) ─────────────────────────────────
+  // A personal display preference, persisted to localStorage and shared
+  // across every app's Dev view (same pattern as DevConsole's MODE_KEY
+  // and the "view as non-admin" toggle). An explicitly saved choice
+  // always wins; with nothing saved the default is width-based (#462):
+  // 'kanban' on viewports ≥1024px — Tailwind's lg breakpoint, and the
+  // width at which the board's four min-w-[16rem] columns first fit
+  // without horizontal scrolling — and 'list' (the historical default)
+  // below it. Read/written only through the two helpers below so the
+  // localStorage access stays guarded in one place.
+  VIEW_MODE_KEY: 'devViewMode',
+  // Width-based default, resolved lazily ONCE per page load and never
+  // written to localStorage — so an undecided user keeps getting the
+  // responsive default on future visits, and the mode can't flip
+  // mid-flight between the paired _getViewMode() reads inside async
+  // flows like loadMoreMerged if the window is resized across 1024px.
+  _viewModeAutoDefault: null,
+  _getViewMode() {
+    try {
+      const stored = window.localStorage.getItem(AppView.VIEW_MODE_KEY);
+      if (stored === 'kanban' || stored === 'list') return stored;
+      if (AppView._viewModeAutoDefault === null) {
+        AppView._viewModeAutoDefault =
+          (typeof window.matchMedia === 'function'
+            && window.matchMedia('(min-width: 1024px)').matches)
+            ? 'kanban' : 'list';
+      }
+      return AppView._viewModeAutoDefault;
+    } catch { return 'list'; }
+  },
+  _setViewMode(mode) {
+    const next = mode === 'kanban' ? 'kanban' : 'list';
+    try { window.localStorage.setItem(AppView.VIEW_MODE_KEY, next); } catch {}
+  },
   // Refresh timer for the Your-sessions strip's busy indicators;
   // self-clears when the strip leaves the DOM.
   _stripTimer: null,
@@ -271,8 +312,8 @@ const AppView = {
         id="app-iframe"
         src="${iframeSrc}"
         class="w-full h-full border-0"
-        sandbox="allow-scripts allow-forms allow-same-origin allow-popups"
-        allow="clipboard-write"
+        sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock"
+        allow="clipboard-write; pointer-lock"
       ></iframe>`;
 
     const iframe = document.getElementById('app-iframe');
@@ -488,9 +529,10 @@ const AppView = {
 
     content.innerHTML = `
       <div class="flex flex-col h-full min-h-0">
-        <!-- Header bar: title + the "+" menu (top right). -->
+        <!-- Header bar: title + view-mode toggle + the "+" menu (top right). -->
         <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
           <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider flex-1">Dev</span>
+          ${AppView._renderViewToggle()}
           <div class="relative">
             <button id="dev-plus-btn" aria-haspopup="true" aria-expanded="false"
               class="rounded-lg bg-violet-600 hover:bg-violet-500 w-7 h-7 flex items-center justify-center text-base font-bold leading-none text-white transition-colors"
@@ -528,7 +570,11 @@ const AppView = {
             </button>
           </div>
           <div id="dev-sessions-strip" class="px-3 pt-2"></div>
-          <div class="px-3 py-2">
+          <!-- Body region: list mode mounts #dev-feed + #gc-merged here;
+               kanban mode mounts #dev-kanban. _repaintDevBody() owns the
+               swap. The wrapper node is stable across mode switches so the
+               delegated card-open handler (bound below) survives both. -->
+          <div id="dev-body" class="px-3 py-2">
             <div id="dev-feed"><div class="text-xs text-zinc-500 dark:text-zinc-400">Loading…</div></div>
             <div id="gc-merged" class="mt-4"></div>
           </div>
@@ -536,6 +582,8 @@ const AppView = {
       </div>`;
 
     AppView._wirePlusMenu(content);
+    AppView._wireViewToggle(content);
+    AppView._attrInit();
     document.getElementById('dev-chat-card').addEventListener('click', () => {
       App.switchTab('dev', null, 'chat');
     });
@@ -543,10 +591,14 @@ const AppView = {
 
     // Delegated card-open handler: tapping a topic card anywhere except
     // its links/pills opens that topic full-screen. Bound on the stable
-    // #dev-feed container (its innerHTML re-renders, the node itself
-    // survives until the next renderDevView).
-    const feedEl = document.getElementById('dev-feed');
-    feedEl.addEventListener('click', (e) => {
+    // #dev-body wrapper (its innerHTML re-renders on every repaint and
+    // mode switch, but the node itself survives until the next
+    // renderDevView). One handler covers issue / proposal / gov rows in
+    // the list feed, merged rows in the Completed block, and every card
+    // in the kanban columns — they all carry the same
+    // data-issue-row / data-proposal-row / data-gov-row hooks.
+    const bodyEl = document.getElementById('dev-body');
+    bodyEl.addEventListener('click', (e) => {
       // #313: the card-level "Ask AI" button is a <button>, so the guard
       // below would swallow it — handle it first, then bail.
       const askBtn = e.target.closest('.gc-ask-ai-btn');
@@ -565,21 +617,6 @@ const AppView = {
       const govRow = e.target.closest('[data-gov-row]');
       if (govRow) AppView.openTopic('gov', parseInt(govRow.dataset.govRow, 10));
     });
-
-    // Completed (merged) proposals live in a sibling container with its own
-    // bespoke layout; bind the same tap-to-open behaviour here so merged
-    // rows open their (still-live) discussion thread full-screen. The node
-    // is stable across toggleMergedPrs()/_loadDevFeed() innerHTML rewrites.
-    const mergedEl = document.getElementById('gc-merged');
-    if (mergedEl) {
-      mergedEl.addEventListener('click', (e) => {
-        const askBtn = e.target.closest('.gc-ask-ai-btn');
-        if (askBtn) { AppView._openAskAiFromCard(askBtn.dataset.proposalId); return; }
-        if (e.target.closest('a, button, input, form')) return;
-        const prRow = e.target.closest('[data-proposal-row]');
-        if (prRow) AppView.openTopic('proposal', parseInt(prRow.dataset.proposalRow, 10));
-      });
-    }
 
     AppView._renderSessionsStrip();
     AppView._syncStripPolling();
@@ -614,18 +651,18 @@ const AppView = {
 
   async _renderTopicSubView(content, ref) {
     AppView._devTopic = { kind: ref.kind, id: ref.id };
-    // The header row is just the back control — the topic's icon, title and
-    // number already live on the header card painted into #dev-topic-head,
-    // so repeating them up here was pure duplication.
+    // #363: only the back bar is pinned here. The topic card/body no longer
+    // sits in its own capped, separately scrolling box — it's painted into the
+    // mounted thread's in-scroll header slot (#gc-thread-head) so the header
+    // and the discussion scroll as ONE area (matching the general chat, where
+    // only the composer is pinned). The topic's icon, title and number live on
+    // that header card, so repeating them up here would be pure duplication.
     content.innerHTML = `
       <div class="flex flex-col h-full min-h-0">
         <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
           <button id="dev-topic-back" class="inline-flex items-center gap-1 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm shrink-0" title="Back to the dev page">&larr; Back</button>
         </div>
-        <div class="flex-1 min-h-0 flex flex-col px-3 py-2">
-          <div id="dev-topic-head" class="shrink-0 overflow-y-auto overscroll-contain" style="max-height:45%"><span class="text-xs text-zinc-500 dark:text-zinc-400">Loading…</span></div>
-          <div id="dev-topic-thread" class="flex-1 min-h-0 mt-2"></div>
-        </div>
+        <div id="dev-topic-thread" class="flex-1 min-h-0"></div>
       </div>`;
 
     document.getElementById('dev-topic-back').addEventListener('click', () => {
@@ -635,17 +672,32 @@ const AppView = {
     const ok = await AppView._loadDevData();
     // The view may have been replaced (or retargeted) while the fetch
     // was in flight.
-    const t = AppView._devTopic;
-    if (!document.getElementById('dev-topic-head') || !t
+    let t = AppView._devTopic;
+    if (!document.getElementById('dev-topic-thread') || !t
         || t.kind !== ref.kind || t.id !== ref.id) return;
+    // The Completed list is keyset-paginated, so a merged proposal beyond
+    // the first page (deep link, shared URL, or one paged-in then lost when
+    // _loadDevData reset _merged) won't be in any cached list. Rather than
+    // bounce to the forum, fetch just that one proposal on demand and keep
+    // it in a dedicated cache that survives WS-driven _loadDevData resets.
+    if (ok && ref.kind === 'proposal' && !AppView._findTopicItem()) {
+      await AppView._fetchProposalById(ref.id);
+      // Re-check staleness: the user may have navigated away mid-fetch.
+      t = AppView._devTopic;
+      if (!document.getElementById('dev-topic-thread') || !t
+          || t.kind !== ref.kind || t.id !== ref.id) return;
+    }
     if (!ok || !AppView._findTopicItem()) {
-      // Missing ref (closed issue, archived session, bad link) — fall
+      // Missing ref (closed issue, archived session, bad link, or a
+      // proposal that genuinely doesn't exist / is inaccessible) — fall
       // back to the card list.
       App.switchTab('dev');
       return;
     }
-    AppView._renderTopicHead();
+    // #363: mount the thread FIRST so its header slot (#gc-thread-head) exists,
+    // then paint the topic card/body into it.
     AppView._mountTopicThread();
+    AppView._renderTopicHead();
   },
 
   _findTopicItem() {
@@ -657,10 +709,57 @@ const AppView = {
     if (t.kind === 'proposal') {
       // Open proposals first; merged ones stay viewable with a still-live,
       // postable discussion thread (voting is settled, talking isn't).
+      // _topicProposal is the fetch-on-demand fallback (a proposal opened
+      // from beyond the cached Completed page) — checked last, and keyed by
+      // id so a stale one from a previous topic never resolves.
       return (AppView._proposals || []).find((p) => p.id === t.id)
-        || (AppView._merged || []).find((p) => p.id === t.id) || null;
+        || (AppView._merged || []).find((p) => p.id === t.id)
+        || (AppView._topicProposal && AppView._topicProposal.id === t.id
+            ? AppView._topicProposal : null)
+        || null;
     }
     return (AppView._govProposals || []).find((i) => i.id === t.id) || null;
+  },
+
+  // Single-item cache for a proposal opened from beyond the cached
+  // Completed page (the fetch-on-demand recovery path). Kept SEPARATE from
+  // _merged because _loadDevData() resets _merged to its first page on
+  // every call (including WS-driven refreshes while the topic is open), and
+  // an injected row would vanish on the next reset and re-trigger the
+  // forum fallback. Cleared on openTopic so it never leaks across topics.
+  _topicProposal: null,
+
+  // Fetch one proposal by id when it isn't in any cached list, caching it
+  // in _topicProposal and seeding the inline vote/kudos snapshot the same
+  // way loadMoreMerged does. Best-effort: a miss (404 / no access / network
+  // error) leaves _topicProposal untouched, so the caller falls back to the
+  // forum exactly as before.
+  async _fetchProposalById(id) {
+    if (!AppView.appData || !id) return null;
+    const slug = AppView.appData.slug;
+    try {
+      const res = await fetch(`/api/apps/${slug}/proposals/${id}${AppView._demoQS()}`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      const row = data.proposal || null;
+      if (!row) return null;
+      AppView._topicProposal = row;
+      // Keep the inline vote/kudos controls in sync so the discussion
+      // thread's activity row renders its tally + per-viewer state, just
+      // like a row loaded via the list (loadMoreMerged does the same).
+      if (AppView.voteState && AppView.voteState.bySession) {
+        AppView.voteState.bySession[String(row.id)] = row;
+        if (row.pr_number != null) {
+          AppView.voteState.byPrNumber[String(row.pr_number)] = row;
+        }
+        if (typeof GroupChat !== 'undefined' && GroupChat.refreshVoteControls) {
+          GroupChat.refreshVoteControls();
+        }
+      }
+      return row;
+    } catch {
+      return null;
+    }
   },
 
   // Paint (or live-refresh) the topic title + header card + body.
@@ -668,7 +767,10 @@ const AppView = {
   // WS-driven refreshes.
   _renderTopicHead() {
     const t = AppView._devTopic;
-    const head = document.getElementById('dev-topic-head');
+    // #363: the topic card/body lives inside the thread's unified scroll
+    // region (#gc-thread-head), a sibling of #gc-thread-messages, so it
+    // survives renderThread()'s message-list rewrites and WS-driven refreshes.
+    const head = document.getElementById('gc-thread-head');
     if (!t || !head) return;
     const item = AppView._findTopicItem();
     // Closed / merged away mid-view: keep the last render readable.
@@ -678,7 +780,12 @@ const AppView = {
     let bodyHtml;
     if (t.kind === 'issue') {
       cardHtml = AppView._renderIssueRow(item, { noNav: true });
-      bodyHtml = AppView._issueBodyHtml(item);
+      // #396: the issue body, then a placeholder for the GitHub comment
+      // thread. The thread is fetched lazily (after paint) and rendered
+      // into the placeholder, so a cached (or empty) result reuses what's
+      // already there across WS-driven _renderTopicHead refreshes.
+      bodyHtml = AppView._issueBodyHtml(item)
+        + '<div id="dev-issue-comments" class="mt-2"></div>';
     } else if (t.kind === 'proposal') {
       cardHtml = AppView._renderProposalCard(item, { noNav: true });
       // Plain-language summary (when one was generated) sits at the very top
@@ -713,10 +820,11 @@ const AppView = {
 
     head.innerHTML = cardHtml + bodyHtml + askAiHtml;
     if (window.Kudos) Kudos.attach(head);
+    if (t.kind === 'issue') AppView._loadIssueComments(item);
     if (t.kind === 'proposal' && item.status !== 'merged') AppView._loadVoteRoster(item.id);
 
     // #321: wire the kept card pill in the topic head. Unlike the feed and
-    // Completed list, #dev-topic-head has no delegated .gc-ask-ai-btn handler,
+    // Completed list, #gc-thread-head has no delegated .gc-ask-ai-btn handler,
     // so without this the pill would be inert (no click, no availability
     // dimming). Bind the click to the same advisor opener the standalone used
     // and run the shared availability pass over this container.
@@ -758,6 +866,12 @@ const AppView = {
         }
       });
     }
+
+    // Keep the generating-state poller in sync with what we just painted, the
+    // same way _renderFeedInner does for the feed. An issue opened while its
+    // headless run is 'generating' begins polling so the card advances to its
+    // outcome label without a manual refresh.
+    AppView._syncHeadlessPolling();
   },
 
   _askAiButtonHtml() {
@@ -784,6 +898,16 @@ const AppView = {
   _askAiCardBtnHtml(pr) {
     return `<button type="button" class="gc-vote-btn gc-ask-ai-btn" data-proposal-id="${pr.id}"
       title="Ask AI about this proposal (private to you)"><span aria-hidden="true">✨</span> Ask AI</button>`;
+  },
+
+  // #404: a card's action row. Takes a flat, already-ordered array of
+  // button-HTML strings, drops falsy entries, and wraps the rest in one
+  // consistent, evenly-gapped inline row (.gc-card-actions). Every card type
+  // uses this so the whole Dev list lines up the same way. Returns '' when
+  // there's nothing to show, so callers can drop the row entirely.
+  _cardActionsHtml(buttons) {
+    const inner = (buttons || []).filter(Boolean).join('');
+    return inner ? `<div class="gc-card-actions">${inner}</div>` : '';
   },
 
   // Open the private read-only advisor for a card's proposal, resolving
@@ -852,6 +976,9 @@ const AppView = {
       ref: t.id,
       container: slot,
       fullHeight: true,
+      // #363: request the in-scroll header slot so _renderTopicHead can paint
+      // the topic card/body above the messages in the same scroll region.
+      withHeader: true,
     });
   },
 
@@ -859,6 +986,9 @@ const AppView = {
   // Discussion buttons, and chat reference chips (revealInDrawer).
   openTopic(kind, id) {
     if (!kind || !id) return;
+    // Drop any on-demand proposal cached for a previous topic so its row
+    // can never be mistaken for the one being opened now.
+    AppView._topicProposal = null;
     if (typeof App !== 'undefined' && App.switchTab) {
       App.switchTab('dev', { kind, id }, 'topic');
     }
@@ -939,6 +1069,51 @@ const AppView = {
       AppView.promptRename();
     });
     AppView.refreshDevChatSecretsState();
+  },
+
+  // ── View-mode toggle (list ↔ kanban) ─────────────────────────────────
+  // A two-button segmented control sitting to the LEFT of the "+" button.
+  // Mirrors the existing inline-SVG icon convention used throughout this
+  // file. The active button is tinted violet; both reflect their state
+  // via aria-pressed for assistive tech.
+  _viewToggleBtnCls(active) {
+    return 'dev-view-btn w-7 h-7 flex items-center justify-center transition-colors '
+      + (active
+        ? 'bg-violet-600 text-white'
+        : 'text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800');
+  },
+  _renderViewToggle() {
+    const mode = AppView._getViewMode();
+    // List-lines icon (three rows) and a board/columns icon.
+    const listSvg = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>';
+    const boardSvg = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z"/></svg>';
+    return `
+      <div class="inline-flex items-center rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden mr-1" role="group" aria-label="Dev view mode">
+        <button id="dev-view-list" data-view="list" class="${AppView._viewToggleBtnCls(mode === 'list')}" aria-pressed="${mode === 'list'}" title="List view" aria-label="List view">${listSvg}</button>
+        <button id="dev-view-kanban" data-view="kanban" class="${AppView._viewToggleBtnCls(mode === 'kanban')}" aria-pressed="${mode === 'kanban'}" title="Kanban view" aria-label="Kanban view">${boardSvg}</button>
+      </div>`;
+  },
+  _wireViewToggle(content) {
+    content.querySelectorAll('.dev-view-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const mode = btn.dataset.view === 'kanban' ? 'kanban' : 'list';
+        if (mode === AppView._getViewMode()) return;
+        AppView._setViewMode(mode);
+        AppView._updateViewToggleUI();
+        // Re-flow the already-cached data into the new layout. No refetch.
+        AppView._repaintDevBody();
+      });
+    });
+  },
+  // Swap the active/inactive styling + aria-pressed on the two toggle
+  // buttons in place, so switching modes doesn't re-render the header bar.
+  _updateViewToggleUI() {
+    const mode = AppView._getViewMode();
+    document.querySelectorAll('.dev-view-btn').forEach((btn) => {
+      const active = btn.dataset.view === mode;
+      btn.className = AppView._viewToggleBtnCls(active);
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
   },
 
   // ── "+" menu ────────────────────────────────────────────────────────
@@ -1241,12 +1416,17 @@ const AppView = {
         fetch(`/api/apps/${slug}/github-issues${AppView._demoQS()}`),
         fetch(`/api/apps/${slug}/issues`),
         fetch(`/api/apps/${slug}/promoted${AppView._demoQS()}`),
-        fetch(`/api/apps/${slug}/merged`),
+        // Forward ?demo=1 to /merged too so the kanban "Done" column (and
+        // the list's Completed block) populate in a staging ?demo=1 preview.
+        // Server-side the demo append is gated on IS_STAGING, so this is a
+        // no-op in production. votes.js stagingMockMerged() supplies the rows.
+        fetch(`/api/apps/${slug}/merged${AppView._demoQS()}`),
       ]);
       const ghData = ghRes.ok ? await ghRes.json() : { issues: [] };
       const issuesData = issuesRes.ok ? await issuesRes.json() : { issues: [] };
       const promotedData = promotedRes.ok ? await promotedRes.json() : { promoted: [] };
-      const merged = mergedRes.ok ? (await mergedRes.json()).merged : [];
+      const mergedData = mergedRes.ok ? await mergedRes.json() : { merged: [], hasMore: false };
+      const merged = mergedData.merged || [];
 
       AppView._ghIssues = Array.isArray(ghData.issues) ? ghData.issues : [];
       AppView._ghIssuesMeta = {
@@ -1297,6 +1477,20 @@ const AppView = {
       };
       AppView._merged = merged;
       AppView._mergedCtx = { majority, activeUsers };
+      // #429: reset the pager state on a fresh load. _mergedHasMore drives
+      // the "Load more" footer; the cursor is the (created_at, id) of the
+      // last loaded row, used by loadMoreMerged() for keyset paging.
+      AppView._mergedHasMore = !!mergedData.hasMore;
+      AppView._mergedCursor = merged.length
+        ? { created_at: merged[merged.length - 1].created_at, id: merged[merged.length - 1].id }
+        : null;
+      // #433: the true count of merged tasks for this app, used by the
+      // Kanban "Done" column header (which renders only the first page of
+      // cards and would otherwise show the loaded count, ~20). Falls back to
+      // the loaded length on an older server that doesn't return `total`.
+      AppView._mergedTotal = (typeof mergedData.total === 'number')
+        ? mergedData.total
+        : merged.length;
       return true;
     } catch {
       return false;
@@ -1305,13 +1499,37 @@ const AppView = {
 
   async _loadDevFeed() {
     const ok = await AppView._loadDevData();
-    const feedEl = document.getElementById('dev-feed');
-    if (!feedEl) return;
+    const body = document.getElementById('dev-body');
+    if (!body) return;
     if (!ok) {
-      feedEl.innerHTML = '<div class="text-xs text-zinc-500 dark:text-zinc-400">Couldn&#39;t load the feed right now.</div>';
+      body.innerHTML = '<div class="text-xs text-zinc-500 dark:text-zinc-400">Couldn&#39;t load the feed right now.</div>';
       return;
     }
     AppView._renderLockedNotice();
+    AppView._repaintDevBody();
+  },
+
+  // Paint #dev-body for the current view mode from cached data only (no
+  // refetch). Mode-aware so every caller — the initial load, WS-driven
+  // refreshes, the toggle, and optimistic card-action repaints — routes
+  // through one place. No-ops when #dev-body isn't mounted (topic / chat
+  // / settings sub-views), matching the old _rerenderFeed guard.
+  _repaintDevBody() {
+    const body = document.getElementById('dev-body');
+    if (!body) return;
+    if (AppView._getViewMode() === 'kanban') {
+      body.innerHTML = AppView._renderKanbanInner();
+      // The headless-state poller is keyed off whatever issue rows are on
+      // screen (generating spinners), same as the list feed.
+      AppView._syncHeadlessPolling();
+      if (window.Kudos) Kudos.attach(body);
+      AppView._applyAskAiCardAvailability(body);
+      return;
+    }
+    // List mode: rebuild the two-container shell, then fill it exactly as
+    // before. _rerenderFeed targets #dev-feed and re-attaches kudos/ask-AI
+    // there; the Completed block is filled + wired here.
+    body.innerHTML = '<div id="dev-feed"></div><div id="gc-merged" class="mt-4"></div>';
     AppView._rerenderFeed();
     const mergedEl = document.getElementById('gc-merged');
     if (mergedEl) {
@@ -1361,19 +1579,26 @@ const AppView = {
     }
     for (const pr of AppView._proposals || []) {
       items.push({
-        kind: 'proposal', id: pr.id, item: pr, r: 0,
+        // #388: pin PRs in the merge pipeline to the top of the proposal
+        // group — _proposalPinRank mirrors the badge precedence (merging >
+        // resolving > conflict-failed > normal), reusing the per-group `r`
+        // slot just like _headlessRank does for issues.
+        kind: 'proposal', id: pr.id, item: pr, r: AppView._proposalPinRank(pr),
         t: Math.max(ts(pr.promoted_at || pr.created_at), ts(pr.last_message_at)),
       });
     }
     for (const g of AppView._govProposals || []) {
       items.push({
-        kind: 'gov', id: g.id, item: g, r: 0,
+        // Governance proposals have no merge/conflict state, so they sort
+        // in the normal (unpinned) tier alongside non-pipeline PRs (#388).
+        kind: 'gov', id: g.id, item: g, r: 3,
         t: Math.max(ts(g.created_at), ts(g.last_message_at)),
       });
     }
     // Array.prototype.sort is stable, so equal keys keep source order.
-    // Rank only competes within the issues group — proposals/gov all
-    // carry r: 0 and never share a group with issues.
+    // Rank competes only within a group: the headless rank (0-2) inside
+    // the issues group, the merge-pipeline pin rank (0-3) inside the
+    // proposal group — the two never interleave because GROUP dominates.
     return items.sort((a, b) =>
       (GROUP[a.kind] - GROUP[b.kind]) || (a.r - b.r) || (b.t - a.t));
   },
@@ -1483,9 +1708,185 @@ const AppView = {
     }, 30000);
   },
 
+  // Sub-tab-aware repaint for card-action handlers that perform an optimistic
+  // local mutation. The Dev area paints cards on two surfaces from the same
+  // cached data: the feed list (#dev-feed) and the opened-topic full-screen
+  // card (#gc-thread-head). _rerenderFeed alone no-ops in the topic view, so
+  // an in-card action looked dead there (#368-class bug). This repaints
+  // whichever surface is mounted, purely from cache — no _loadDevData — so the
+  // just-set optimistic state isn't clobbered by a slower/racing refetch.
+  _repaintCards() {
+    // Repaint whichever Dev body is mounted (list feed or kanban board) —
+    // _repaintDevBody no-ops when #dev-body is absent (topic view).
+    AppView._repaintDevBody();
+    if (typeof App !== 'undefined' && App.currentSubTab === 'topic'
+        && document.getElementById('gc-thread-head')) {
+      AppView._renderTopicHead();
+    }
+  },
+
   showMoreFeed() {
     AppView._feedShown = (AppView._feedShown || 20) + 10;
     AppView._rerenderFeed();
+  },
+
+  // ── Kanban view ──────────────────────────────────────────────────────
+  //
+  // Pure bucketing of the cached dev data into the four lifecycle columns.
+  // No DOM, no AppView state reads — everything comes in via `data` — so it
+  // is unit-testable in isolation (see tests/dev-kanban-buckets.test.js).
+  //
+  //   data = { issues, proposals, gov, merged }
+  //     issues    — visible GitHub issues (already env-twin-filtered)
+  //     proposals — promoted/merging PR sessions (carry linked_issues[])
+  //     gov       — governance proposals (secret_change / rename)
+  //     merged    — merged PR sessions
+  //
+  // Returns { issues, inProgress, inReview, done }:
+  //   issues     — open issues with no proposal yet (headless none/failed/
+  //                absent) AND not linked to any open promoted proposal
+  //   inProgress — open issues whose headless proposal is generating/ready
+  //                (work started, not yet up for a vote), same dedup
+  //   inReview   — [{kind:'proposal'|'gov', item}] sorted by pin-rank then
+  //                recency, exactly as the list feed's proposal group
+  //   done       — merged proposals, most-recent-activity first
+  _bucketDevItems(data) {
+    const d = data || {};
+    const issues = Array.isArray(d.issues) ? d.issues : [];
+    const proposals = Array.isArray(d.proposals) ? d.proposals : [];
+    const gov = Array.isArray(d.gov) ? d.gov : [];
+    const merged = Array.isArray(d.merged) ? d.merged : [];
+
+    const ts = (v) => {
+      const t = Date.parse(v || '');
+      return Number.isFinite(t) ? t : 0;
+    };
+    const issueT = (i) => Math.max(ts(i.updatedAt), ts(i.lastMessageAt));
+    const prT = (p) => Math.max(ts(p.promoted_at || p.created_at), ts(p.last_message_at));
+    const govT = (g) => Math.max(ts(g.created_at), ts(g.last_message_at));
+    const mergedT = (m) => Math.max(ts(m.created_at), ts(m.last_message_at));
+    // Mirror of _proposalPinRank, inlined to keep this helper self-contained
+    // (merging > resolving > conflict-failed > normal).
+    const pinRank = (pr) => {
+      if (!pr) return 3;
+      if (pr.status === 'merging') return 0;
+      if (pr.resolving) return 1;
+      if (pr.merge_conflict_state === 'failed') return 2;
+      return 3;
+    };
+
+    // Issue numbers already represented by an open promoted proposal card
+    // (Column 3) — kept out of the issue columns so they don't double up.
+    const linked = new Set();
+    for (const p of proposals) {
+      const arr = Array.isArray(p.linked_issues) ? p.linked_issues : [];
+      for (const n of arr) {
+        const num = parseInt(n, 10);
+        if (Number.isFinite(num)) linked.add(num);
+      }
+    }
+
+    const col1 = [];
+    const col2 = [];
+    for (const i of issues) {
+      if (linked.has(i.number)) continue;
+      const s = i.headless && i.headless.status;
+      if (s === 'generating' || s === 'ready') col2.push(i);
+      else col1.push(i);
+    }
+    col1.sort((a, b) => issueT(b) - issueT(a));
+    col2.sort((a, b) => issueT(b) - issueT(a));
+
+    const review = [];
+    for (const p of proposals) review.push({ kind: 'proposal', item: p, _r: pinRank(p), _t: prT(p) });
+    for (const g of gov) review.push({ kind: 'gov', item: g, _r: 3, _t: govT(g) });
+    review.sort((a, b) => (a._r - b._r) || (b._t - a._t));
+
+    const done = merged.slice().sort((a, b) => mergedT(b) - mergedT(a));
+
+    return {
+      issues: col1,
+      inProgress: col2,
+      inReview: review.map((x) => ({ kind: x.kind, item: x.item })),
+      done,
+    };
+  },
+
+  // Render the kanban board (inner HTML for #dev-body) from cached data.
+  // Reuses the exact per-card renderers the list mode uses, so every card
+  // keeps its buttons, badges, and data-*-row open hooks.
+  _renderKanbanInner() {
+    const buckets = AppView._bucketDevItems({
+      issues: AppView._visibleGhIssues(),
+      proposals: AppView._proposals || [],
+      gov: AppView._govProposals || [],
+      merged: AppView._merged || [],
+    });
+    const meta = AppView._ghIssuesMeta || {};
+
+    // "More open issues on GitHub" link — the Issues column inherits the
+    // list footer's GitHub link when the repo has more open issues than
+    // the fetch ceiling, so the cap is never silent.
+    let issuesFooter = '';
+    if (meta.truncatedList && meta.repoUrl) {
+      const issuesUrl = `${meta.repoUrl.replace(/\.git$/, '').replace(/\/$/, '')}/issues`;
+      issuesFooter = `<a href="${issuesUrl}" target="_blank" rel="noopener" class="text-xs text-violet-400 hover:underline">More open issues on GitHub &rarr;</a>`;
+    }
+
+    // #433: the Done column header shows the true merged total (set in
+    // _loadDevData), not the loaded-page length. When the board has loaded
+    // fewer cards than the total, surface a static "+N more completed" hint
+    // — mirroring the Issues column's truncation footer — so the count and
+    // the visible cards stay reconciled and the page cap is never silent.
+    const doneTotal = (typeof AppView._mergedTotal === 'number')
+      ? AppView._mergedTotal
+      : buckets.done.length;
+    // When the server has more merged pages, the footer is a real "Load
+    // more" button wired to the same pager the list view uses — clicking
+    // it fetches the next keyset page and re-paints the board in place
+    // (loadMoreMerged is view-mode aware). Falls back to the static hint
+    // only in the degenerate case where the total exceeds the loaded rows
+    // yet the server reports no more pages (shouldn't normally happen,
+    // since total + hasMore derive from the same merged set).
+    let doneFooter = '';
+    if (doneTotal > buckets.done.length) {
+      const moreCount = doneTotal - buckets.done.length;
+      if (AppView._mergedHasMore) {
+        const loading = AppView._mergedLoadingMore;
+        doneFooter = `<button class="gc-vote-btn" ${loading ? 'disabled' : ''} onclick="AppView.loadMoreMerged()">${loading ? 'Loading…' : `Load more (${moreCount})`}</button>`;
+      } else {
+        doneFooter = `<span class="text-xs text-zinc-400 dark:text-zinc-500 italic">+${moreCount} more completed</span>`;
+      }
+    }
+
+    const cols = [
+      { title: 'Issues', items: buckets.issues, render: (i) => AppView._renderIssueRow(i), footer: issuesFooter },
+      { title: 'In progress', items: buckets.inProgress, render: (i) => AppView._renderIssueRow(i) },
+      { title: 'In review', items: buckets.inReview, render: (x) => (x.kind === 'proposal' ? AppView._renderProposalCard(x.item) : AppView._renderGovCard(x.item)) },
+      { title: 'Done', items: buckets.done, render: (m) => AppView._renderMergedCard(m), count: doneTotal, footer: doneFooter },
+    ];
+
+    let html = '<div id="dev-kanban" class="flex gap-3 overflow-x-auto pb-2">';
+    for (const col of cols) {
+      // Cards render from the in-memory (paged) items; the header count can
+      // be overridden (Done uses the server total) and falls back to the
+      // loaded length for every other column.
+      const count = (typeof col.count === 'number') ? col.count : col.items.length;
+      const cards = col.items.length
+        ? `<div class="space-y-2">${col.items.map(col.render).join('')}</div>`
+        : '<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">Nothing here yet</div>';
+      const footer = col.footer ? `<div class="mt-2">${col.footer}</div>` : '';
+      html += `
+        <div class="dev-kanban-col flex-1 basis-0 min-w-[16rem]">
+          <div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-2 px-0.5">
+            ${escapeHtml(col.title)} <span class="text-zinc-400 dark:text-zinc-500 font-mono">· ${count}</span>
+          </div>
+          ${cards}
+          ${footer}
+        </div>`;
+    }
+    html += '</div>';
+    return html;
   },
 
   // ── Your-sessions strip ─────────────────────────────────────────────
@@ -1698,6 +2099,100 @@ const AppView = {
       : '';
   },
 
+  // #396: is this comment author the platform bot? GitHub App actors
+  // comment as `<name>[bot]`; the platform bot account is `usernode-bot`.
+  // Tolerant of both so the bot's earlier auto-proposal questions are
+  // labelled distinctly from the reporter's replies. Mirrors the bot
+  // detection in buildHeadlessSeed (server-side).
+  _isBotCommentAuthor(author) {
+    const a = (author || '').toString().toLowerCase();
+    return /\[bot\]$/.test(a) || a === 'usernode-bot' || a.endsWith('-bot');
+  },
+
+  // #396: the GitHub comment thread for an issue, rendered beneath the
+  // issue body in the topic sub-view. One row per comment (author + date +
+  // markdown body), with bot comments tagged. When `truncated`, a final
+  // line notes older comments were omitted and links out to the full
+  // thread on GitHub. Returns '' when there are no comments so nothing
+  // renders. Markdown goes through the same DevChat.renderMarkdown pipeline
+  // as the body.
+  _issueCommentsHtml(comments, truncated, htmlUrl) {
+    const list = Array.isArray(comments) ? comments : [];
+    if (!list.length) return '';
+    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
+      ? (s) => DevChat.renderMarkdown(s)
+      : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
+
+    const rows = list.map((c) => {
+      const isBot = AppView._isBotCommentAuthor(c.author);
+      const author = c.author ? escapeHtml(c.author) : 'unknown';
+      const date = (c.createdAt || '').slice(0, 10);
+      const botTag = isBot
+        ? ' <span class="text-[10px] uppercase tracking-wide text-sky-600 dark:text-sky-400">bot</span>'
+        : '';
+      return `<div class="dev-issue-comment border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs font-medium text-zinc-700 dark:text-zinc-200">${author}</span>${botTag}
+            ${date ? `<span class="text-[10px] text-zinc-400 dark:text-zinc-500">${escapeHtml(date)}</span>` : ''}
+          </div>
+          <div class="text-xs text-zinc-600 dark:text-zinc-300">${renderMd(c.body || '')}</div>
+        </div>`;
+    });
+
+    const omitted = truncated
+      ? `<div class="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">Earlier comments omitted — ${
+          htmlUrl
+            ? `<a href="${escapeHtml(htmlUrl)}" target="_blank" rel="noopener" class="underline hover:text-zinc-600 dark:hover:text-zinc-300">view the full thread on GitHub</a>`
+            : 'view the full thread on GitHub'
+        }.</div>`
+      : '';
+
+    return `<div class="flex flex-col gap-2 mt-2">
+        <div class="text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500 px-1">Discussion</div>
+        ${omitted}
+        ${rows.join('')}
+      </div>`;
+  },
+
+  // #396: lazily fetch + render an issue's GitHub comment thread into the
+  // #dev-issue-comments placeholder. Cached per issue number in _ghComments
+  // so WS-driven _renderTopicHead refreshes paint from cache without a
+  // refetch. Best-effort: a failed fetch leaves the placeholder empty (the
+  // issue body still renders). Re-resolves the placeholder after the await
+  // since _renderTopicHead may have repainted, and bails if the user
+  // navigated away from this issue.
+  async _loadIssueComments(item) {
+    if (!item || item.number == null) return;
+    const number = item.number;
+
+    const paint = (data) => {
+      const t = AppView._devTopic;
+      if (!t || t.kind !== 'issue' || t.id !== number) return;
+      const slot = document.getElementById('dev-issue-comments');
+      if (!slot) return;
+      slot.innerHTML = AppView._issueCommentsHtml(data.comments, data.truncated, item.htmlUrl);
+    };
+
+    const cached = AppView._ghComments[number];
+    if (cached) { paint(cached); return; }
+
+    try {
+      const slug = AppView.appData && AppView.appData.slug;
+      if (!slug) return;
+      const res = await fetch(
+        `/api/apps/${slug}/github-issues/${number}/comments${AppView._demoQS()}`
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      const entry = {
+        comments: Array.isArray(data.comments) ? data.comments : [],
+        truncated: !!data.truncated,
+      };
+      AppView._ghComments[number] = entry;
+      paint(entry);
+    } catch (_) { /* best-effort: leave the placeholder empty */ }
+  },
+
   // The proposal's plain-language summary (pr_summary_md), rendered at the
   // top of the proposal topic sub-view above the proposer/linked-issues/
   // roster details. Mirrors _issueBodyHtml: light markdown through the same
@@ -1750,12 +2245,21 @@ const AppView = {
     const unvotedBadge = isUnvoted
       ? '<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 shrink-0" title="You haven\'t voted on this yet"><span class="relative flex h-1.5 w-1.5"><span class="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75 animate-ping"></span><span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-violet-500"></span></span>Vote</span>'
       : '';
-    // #239: resolving badge only when not already merging/merged — the
-    // merge pipeline states outrank the resolver's. No opacity-70 fade
-    // and no disabled vote controls: voting during resolution is valid.
-    const stateBadge = isMerging ? AppView.mergingBadgeHtml()
-      : isMerged ? AppView.mergedBadgeHtml()
-      : pr.resolving ? AppView.resolvingBadgeHtml() : '';
+    // #405: the merge-state slot is now driven by the shared MergeStatus
+    // lifecycle helper so labels/colours match the home strip and the dev
+    // session header exactly. It renders the merge-pipeline / conflict /
+    // ready states (merging > merged > resolving > conflict_failed > behind >
+    // ready); checks states keep their own detailed badge (checksBadgeHtml,
+    // with per-test counts) and in-vote/draft are conveyed by the vote pill.
+    // The lifecycle precedence preserves the prior priority order and adds
+    // the new "Passed — merging shortly" (ready) state for an eligible
+    // proposal that's past threshold + green-checks but not yet claimed.
+    const life = (window.MergeStatus && MergeStatus.lifecycle)
+      ? MergeStatus.lifecycle(pr, { majority, locked: ctx.locked })
+      : null;
+    const stateBadge = (life && MergeStatus.STATE_BADGE_KEYS.indexOf(life.key) !== -1)
+      ? MergeStatus.badgeHtml(life)
+      : '';
     // Sessions are owner-scoped (GET /api/sessions/:id), so the session
     // button only renders for the proposer.
     const chatN = parseInt(pr.chat_count) || 0;
@@ -1790,12 +2294,12 @@ const AppView = {
       ? `<template class="usn-visuals-tpl">${visualTiles}</template><div class="usn-visuals-body">${visualsOpen ? visualTiles : ''}</div>`
       : '';
 
-    // Merged proposals (topic-view fallback) drop the live vote buttons —
-    // the vote is settled; kudos stays open.
-    const actions = (isMerged
-      ? [kudosBtn, sessionBtn, askAiBtn, visualsBtn]
-      : [AppView.voteButtonsHtml(pr), kudosBtn, sessionBtn, archiveBtn, askAiBtn, visualsBtn]
-    ).filter(Boolean).join('');
+    // #404: all actions inline on one consistent row. Merged proposals
+    // (topic-view fallback) drop the live vote buttons — the vote is settled;
+    // kudos stays open.
+    const actions = isMerged
+      ? AppView._cardActionsHtml([kudosBtn, sessionBtn, askAiBtn, visualsBtn])
+      : AppView._cardActionsHtml([AppView.voteButtonsHtml(pr), kudosBtn, sessionBtn, archiveBtn, askAiBtn, visualsBtn]);
 
     return `
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}"${visualTiles ? ' data-visuals-scope="1"' : ''}${noNav ? '' : ` data-proposal-row="${pr.id}" title="Open this proposal's discussion"`}>
@@ -1809,9 +2313,12 @@ const AppView = {
             ${unvotedBadge}
             ${AppView.voteCountPill(pr, majority)}
             ${stateBadge}
+            ${AppView.checksBadgeHtml(pr)}
+            ${AppView.consoleWarningBadgeHtml(pr)}
+            ${AppView._attrChipsHtml('proposal', pr.id, pr, { readonly: isMerged })}
             ${AppView._devChatBadge(chatN)}
           </div>
-          ${actions ? `<div class="flex flex-wrap items-center gap-1.5 mt-1.5">${actions}</div>` : ''}
+          ${actions}
           ${visualsBlock}
         </div>
         ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
@@ -1844,8 +2351,211 @@ const AppView = {
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">
         <div>${details.join(' · ')}</div>
         ${chips ? `<div class="mt-1 flex flex-wrap gap-1 items-center"><span>Linked issues:</span> ${chips}</div>` : ''}
+        ${AppView._mergeConflictDetailHtml(pr)}
+        ${AppView._checksDetailHtml(pr)}
         ${roster}
         ${lockedNote}
+      </div>`;
+  },
+
+  // #47: expanded per-test detail for the proposal detail screen — the
+  // structured replacement for the old flat console-error list. Renders a
+  // green-tick / red-cross row per test with the screen it checked and, for
+  // a failure, the reason (failed load, missing element, or the console
+  // errors that fired). Only renders once a run exists with results; a
+  // passing/empty/legacy-null state falls back to the advisory console
+  // detail so mid-rollout proposals still surface something.
+  _checksDetailHtml(pr) {
+    if (!pr) return '';
+    const state = pr.check_state;
+    // #447: a never-recorded (legacy/clone) check still offers a manual
+    // re-run for owners/admins so it isn't stuck blocked with no way out.
+    if (!state) {
+      const fallback = AppView._consoleCheckDetailHtml(pr);
+      const rb = AppView._recheckBtnHtml(pr);
+      return rb ? `${fallback}<div class="mt-1">${rb}</div>` : fallback;
+    }
+    const results = Array.isArray(pr.test_results) ? pr.test_results : [];
+
+    if (state === 'pending') {
+      // #447: stuck-'pending' checks now self-heal (the platform re-runs them
+      // automatically once they've been running too long) and can be kicked
+      // manually — so this is no longer an indefinite, unexplained spinner.
+      return `
+        <div class="mt-2 rounded border border-zinc-300/40 dark:border-zinc-700/60 bg-zinc-500/5 px-2 py-1.5 text-zinc-600 dark:text-zinc-400">
+          <div class="font-medium">Checks are still running…</div>
+          <div class="mt-0.5 opacity-90">The staging build is being tested. Merge is blocked until all tests pass.</div>
+          <div class="mt-1 opacity-80">If this has been running for a while, the platform re-runs the checks automatically — or re-run them now.</div>
+          ${AppView._recheckBtnHtml(pr)}
+        </div>`;
+    }
+    if (state === 'error') {
+      return `
+        <div class="mt-2 rounded border border-red-500/30 bg-red-500/5 px-2 py-1.5 text-red-500">
+          <div class="font-medium">⚠ Checks couldn't run.</div>
+          <div class="mt-0.5 opacity-90">The staging build or the test run itself broke, so the platform can't confirm the app works. Merge is blocked until checks pass.</div>
+          <div class="mt-1 opacity-80">Pushing a fix rebuilds the preview and re-runs the checks.</div>
+          ${AppView._recheckBtnHtml(pr)}
+        </div>`;
+    }
+    if (state === 'skipped') {
+      // #461: an explicit terminal "nothing to test" verdict — grey and
+      // NON-blocking (the merge gate treats it like passing). The recorded
+      // reason rides in check_error_detail; owners/admins can still force a
+      // real run via the re-run button.
+      const reason = pr.check_error_detail
+        ? escapeHtml(String(pr.check_error_detail).slice(0, 280))
+        : 'there was nothing to test';
+      return `
+        <div class="mt-2 rounded border border-zinc-300/40 dark:border-zinc-700/60 bg-zinc-500/5 px-2 py-1.5 text-zinc-600 dark:text-zinc-400">
+          <div class="font-medium">Checks skipped.</div>
+          <div class="mt-0.5 opacity-90">Automated checks were skipped — ${reason}. This does not block the merge.</div>
+          ${AppView._recheckBtnHtml(pr)}
+        </div>`;
+    }
+    if (!results.length) return ''; // 'passing' with no detail to show — the green badge is enough.
+
+    const rows = results.map((r) => {
+      const pass = r && r.status === 'pass';
+      const icon = pass ? '✓' : '✗';
+      const iconCls = pass ? 'text-emerald-500' : 'text-red-500';
+      const name = escapeHtml(String((r && r.name) || 'test'));
+      const path = (r && r.path) ? `<span class="opacity-60 font-mono">${escapeHtml(String(r.path))}</span>` : '';
+      let detail = '';
+      if (!pass) {
+        const reason = (r && r.failureReason) ? escapeHtml(String(r.failureReason).slice(0, 500)) : 'failed';
+        const errs = Array.isArray(r && r.consoleErrors) ? r.consoleErrors : [];
+        const errItems = errs.map((e) => {
+          const msg = escapeHtml(String((e && e.message) || '').slice(0, 500));
+          const src = (e && e.source) ? escapeHtml(String(e.source).slice(0, 200)) : '';
+          const kind = (e && e.kind) ? escapeHtml(String(e.kind)) : 'console';
+          return `<li class="font-mono text-[0.7rem] break-all opacity-90"><span class="opacity-70">[${kind}]</span> ${msg}${src ? ` <span class="opacity-60">(${src})</span>` : ''}</li>`;
+        }).join('');
+        detail = `<div class="ml-4 opacity-90">${reason}</div>${errItems ? `<ul class="ml-6 list-disc space-y-0.5">${errItems}</ul>` : ''}`;
+      }
+      return `<li><span class="${iconCls} font-medium">${icon}</span> ${name} ${path}</li>${detail}`;
+    }).join('');
+
+    const failing = state === 'failing';
+    const wrapCls = failing
+      ? 'border-amber-500/30 bg-amber-500/5 text-amber-600 dark:text-amber-500'
+      : 'border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-500';
+    const heading = failing
+      ? '⚠ Some checks failed — merge is blocked until they pass.'
+      : '✓ All checks passed on the staging build.';
+    const checked = pr.checks_checked_at
+      ? `<div class="mt-1 opacity-80">Last checked ${escapeHtml(relTime(pr.checks_checked_at))}.</div>`
+      : '';
+    return `
+      <div class="mt-2 rounded border px-2 py-1.5 ${wrapCls}">
+        <div class="font-medium">${heading}</div>
+        <ul class="mt-1 ml-1 space-y-0.5">${rows}</ul>
+        ${checked}
+        ${failing ? '<div class="mt-1 opacity-80">Pushing a fix rebuilds the preview and re-runs the checks — the block clears when they pass.</div>' : ''}
+        ${failing ? AppView._recheckBtnHtml(pr) : ''}
+      </div>`;
+  },
+
+  // #447: the "Re-run checks" action. Renders for the proposal's owner or an
+  // admin when the checks are stuck running, couldn't run, were never
+  // recorded, or are failing — never for a clean 'passing' run. Hitting it
+  // rebuilds the staging preview if it's gone and re-runs the test suite; the
+  // badge updates in place off the existing checks broadcasts.
+  _recheckBtnHtml(pr) {
+    if (!pr) return '';
+    if (pr.check_state === 'passing') return '';
+    const owner = !!(App.user && pr.user_id === App.user.id);
+    // `recheckable` is a staging ?demo=1 hint (set only on mock rows) so the
+    // button is reviewable regardless of the demo viewer's owner/admin status;
+    // real proposals never carry it and stay owner/admin-only.
+    if (!owner && !App.user?.isAdmin && !pr.recheckable) return '';
+    return `<button type="button" class="gc-vote-btn mt-1" title="Rebuild the staging preview if needed and re-run the automated tests" onclick="AppView.castRecheck(${pr.id}, this)">Re-run checks</button>`;
+  },
+
+  // POST /api/sessions/:id/recheck (owner/admin). Fire-and-forget on the
+  // server; progress arrives via the checks_ready / staging_ready broadcasts
+  // that drive refreshDevData, so we just disable the button transiently.
+  _recheckInFlight: new Set(),
+  async castRecheck(sessionId, btn) {
+    if (AppView._recheckInFlight.has(sessionId)) return;
+    AppView._recheckInFlight.add(sessionId);
+    if (btn) { btn.disabled = true; btn.textContent = 'Re-running…'; }
+    try {
+      const resp = await fetch(`/api/sessions/${sessionId}/recheck`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        alert(data.error || `Re-run failed (HTTP ${resp.status}).`);
+        if (btn) { btn.disabled = false; btn.textContent = 'Re-run checks'; }
+      }
+    } catch (err) {
+      alert(`Re-run failed: ${err.message}`);
+      if (btn) { btn.disabled = false; btn.textContent = 'Re-run checks'; }
+    } finally {
+      AppView._recheckInFlight.delete(sessionId);
+    }
+  },
+
+  // #381: expanded console-error detail for the proposal detail screen.
+  // Lists the error messages the staging preview's headless browser
+  // captured, when it last ran, and the standing remediation (push a fix
+  // → rebuild → the check re-runs and clears the warning). Only renders for
+  // the 'errors' state; clean/unknown proposals show nothing (the absence
+  // of a badge is enough). Advisory — no vote/merge implications.
+  _consoleCheckDetailHtml(pr) {
+    if (!pr || pr.console_check_state !== 'errors') return '';
+    const errors = Array.isArray(pr.console_errors) ? pr.console_errors : [];
+    const items = errors.map((e) => {
+      const msg = escapeHtml(String((e && e.message) || '').slice(0, 500));
+      const src = (e && e.source) ? escapeHtml(String(e.source).slice(0, 200)) : '';
+      const kind = (e && e.kind) ? escapeHtml(String(e.kind)) : 'console';
+      return `<li class="font-mono text-[0.7rem] break-all"><span class="opacity-70">[${kind}]</span> ${msg}${src ? ` <span class="opacity-60">(${src})</span>` : ''}</li>`;
+    }).join('');
+    const list = items
+      ? `<ul class="mt-1 ml-3 list-disc space-y-0.5">${items}</ul>`
+      : '<div class="mt-1">Console errors were detected on the staging preview.</div>';
+    const checked = pr.console_checked_at
+      ? `<div class="mt-1 opacity-80">Last checked ${escapeHtml(relTime(pr.console_checked_at))}.</div>`
+      : '';
+    return `
+      <div class="mt-2 rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-amber-600 dark:text-amber-500">
+        <div class="font-medium">⚠ This change may break the app.</div>
+        <div class="mt-0.5 opacity-90">The staging preview logged these console errors when it loaded:</div>
+        ${list}
+        ${checked}
+        <div class="mt-1 opacity-80">Pushing a fix rebuilds the preview and re-runs the check — the warning clears if the errors are gone.</div>
+      </div>`;
+  },
+
+  // #361: expanded merge-conflict detail for the proposal detail screen.
+  // Lists the conflicting file paths and when the snapshot was last
+  // checked, plus the standing guidance to run "Sync with main" from the
+  // session's dev-chat.
+  // #386: only renders for the 'failed' state — an auto-resolve attempt
+  // actually ran and could not fix the conflict. A pre-attempt 'conflict'
+  // snapshot (or a clean/behind proposal) shows nothing here; the neutral
+  // card badge is enough while the auto-resolver does its work.
+  _mergeConflictDetailHtml(pr) {
+    const mcs = pr.merge_conflict_state;
+    if (mcs !== 'failed') return '';
+    const files = Array.isArray(pr.conflict_files) ? pr.conflict_files : [];
+    const heading = 'Automatic conflict resolution failed.';
+    const fileList = files.length
+      ? `<div class="mt-1">Conflicting files:</div>
+         <ul class="mt-0.5 ml-3 list-disc space-y-0.5">${files.map((f) =>
+           `<li class="font-mono text-[0.7rem] break-all">${escapeHtml(String(f))}</li>`).join('')}</ul>`
+      : '';
+    const checked = pr.conflict_checked_at
+      ? `<div class="mt-1 opacity-80">Last checked ${escapeHtml(relTime(pr.conflict_checked_at))}.</div>`
+      : '';
+    return `
+      <div class="mt-2 rounded border border-red-500/30 bg-red-500/5 px-2 py-1.5 text-red-500">
+        <div class="font-medium">${heading}</div>
+        ${fileList}
+        ${checked}
+        <div class="mt-1 opacity-80">The owner can run "Sync with main" from the session's dev-chat to resolve it.</div>
       </div>`;
   },
 
@@ -1902,12 +2612,7 @@ const AppView = {
             ${tallyPill}
             ${AppView._devChatBadge(govChatN)}
           </div>
-          <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
-            ${yesBtn}
-            ${noBtn}
-            ${adminBtn}
-            ${withdrawBtn}
-          </div>
+          ${AppView._cardActionsHtml([yesBtn, noBtn, adminBtn, withdrawBtn])}
         </div>
         ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
       </div>`;
@@ -1977,6 +2682,13 @@ const AppView = {
       return;
     }
     await AppView._loadDevFeed();
+    // _loadDevFeed's repaint no-ops in the opened-topic view (#dev-feed is
+    // absent), so the withdrawn proposal card would stay stale there. Repaint
+    // the topic head from the freshly-refetched data.
+    if (typeof App !== 'undefined' && App.currentSubTab === 'topic'
+        && document.getElementById('gc-thread-head')) {
+      AppView._renderTopicHead();
+    }
   },
 
   // Withdraw a governance proposal (secret_change / legacy rename) from its
@@ -2006,6 +2718,12 @@ const AppView = {
       return;
     }
     await AppView._loadDevFeed();
+    // Same as withdrawProposal: refresh the opened-topic card too, since
+    // _loadDevFeed's feed repaint no-ops when #dev-feed isn't mounted.
+    if (typeof App !== 'undefined' && App.currentSubTab === 'topic'
+        && document.getElementById('gc-thread-head')) {
+      AppView._renderTopicHead();
+    }
   },
 
   async createProposal() {
@@ -2025,6 +2743,289 @@ const AppView = {
   _devChatBadge(count) {
     const n = parseInt(count) || 0;
     return `<span class="dev-chat-badge inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded ${n ? 'bg-violet-500/10 text-violet-400' : 'hidden bg-zinc-500/10 text-zinc-500'}" data-count="${n}" title="Messages in this thread">&#128172; ${n}</span>`;
+  },
+
+  // ── Community-voted priority + assigned-person chips ─────────────────
+  // Two chips per issue / proposal card: the top-voted priority and the
+  // top-voted assignee. Clicking a chip opens a dropdown (see _attrInit /
+  // _openAttrPopover) to vote for an existing option or suggest a new one.
+  // Anyone may vote (including the filer / proposer / yourself); the chip
+  // shows whichever value currently leads. A social signal only — no feed
+  // re-sort, no notification, no merge-rule impact.
+  ATTR_PRIORITY_VALUES: ['low', 'medium', 'high'],
+
+  // Display label + colour classes for a priority value. Mirrors the
+  // existing badge palette (zinc/amber/red) used elsewhere on the cards.
+  // `cls` is the static two-tone tint (matching the 💬/★/#N pills); `hover`
+  // deepens that same tint to /20 on the interactive chip — the exact
+  // hover the linked-issue pills use, never a brightness filter.
+  _priorityMeta(value) {
+    switch (value) {
+      case 'high': return { label: 'High', cls: 'bg-red-500/10 text-red-500', hover: 'hover:bg-red-500/20' };
+      case 'medium': return { label: 'Medium', cls: 'bg-amber-500/10 text-amber-500', hover: 'hover:bg-amber-500/20' };
+      case 'low': return { label: 'Low', cls: 'bg-sky-500/10 text-sky-500', hover: 'hover:bg-sky-500/20' };
+      default: return null;
+    }
+  },
+
+  // One chip. `summary` is { top, count, myValue } as the feed routes
+  // attach it. Both the interactive <button> and the read-only (merged)
+  // <span> reuse the SAME pill recipe the sibling card badges use
+  // (text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-<c>-500/10
+  // text-<c>-500), leading with a single glyph like 💬/★ — so the chips
+  // are pixel-consistent with the other badges. The button-only `.attr-chip`
+  // CSS reset (app.css) strips UA chrome so it matches the span's height.
+  _attrChipHtml(field, targetType, targetRef, summary, readonly) {
+    const s = summary || { top: null, count: 0, myValue: null };
+    const count = parseInt(s.count) || 0;
+    let label;
+    let cls;
+    let hover;
+    if (field === 'priority') {
+      const meta = AppView._priorityMeta(s.top);
+      if (meta) { label = `&#9873; ${meta.label}`; cls = meta.cls; hover = meta.hover; }
+      else { label = '&#9873; Set priority'; cls = 'bg-zinc-500/10 text-zinc-500'; hover = 'hover:bg-zinc-500/20'; }
+    } else {
+      if (s.top) { label = `&#128100; @${escapeHtml(s.top)}`; cls = 'bg-violet-500/10 text-violet-400'; hover = 'hover:bg-violet-500/20'; }
+      else { label = '&#128100; Assign'; cls = 'bg-zinc-500/10 text-zinc-500'; hover = 'hover:bg-zinc-500/20'; }
+    }
+    // Faint trailing count, matching how the ★ bounty pill shows its number.
+    const countHtml = count > 1 ? ` <span class="opacity-60">&middot;${count}</span>` : '';
+    const base = 'attr-chip inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded';
+    const title = field === 'priority'
+      ? 'Vote on this card\'s priority'
+      : 'Suggest or vote on who should take this';
+    if (readonly) {
+      return `<span class="${base} ${cls}">${label}${countHtml}</span>`;
+    }
+    return `<button type="button" class="${base} ${cls} ${hover}" data-attr-chip data-attr-field="${field}" data-attr-target-type="${targetType}" data-attr-target-ref="${targetRef}" title="${escapeAttr(title)}">${label}${countHtml}</button>`;
+  },
+
+  // Both chips for a card, in the badge row. opts.readonly drops the
+  // dropdown (used on merged/completed proposals).
+  _attrChipsHtml(targetType, targetRef, item, opts) {
+    const readonly = !!(opts && opts.readonly);
+    return AppView._attrChipHtml('priority', targetType, targetRef, item && item.priority, readonly)
+      + AppView._attrChipHtml('assignee', targetType, targetRef, item && item.assignee, readonly);
+  },
+
+  // Install the one-time document-level handlers that open / close the
+  // chip dropdown. Idempotent — safe to call on every renderDevView.
+  _attrInit() {
+    if (AppView._attrInited) return;
+    AppView._attrInited = true;
+    document.addEventListener('click', (e) => {
+      const chip = e.target.closest('[data-attr-chip]');
+      if (chip) {
+        // Don't let the card's open-discussion handler fire.
+        e.preventDefault();
+        e.stopPropagation();
+        AppView._openAttrPopover(chip);
+        return;
+      }
+      // A click anywhere outside the open popover closes it.
+      if (!e.target.closest('#attr-popover')) AppView._closeAttrPopover();
+    });
+    // Reposition / close on scroll + resize so the popover never drifts
+    // away from its chip.
+    window.addEventListener('resize', () => AppView._closeAttrPopover());
+    document.addEventListener('scroll', () => AppView._closeAttrPopover(), true);
+  },
+
+  _closeAttrPopover() {
+    const el = document.getElementById('attr-popover');
+    if (el) el.remove();
+    AppView._attrPopover = null;
+  },
+
+  // Open the dropdown anchored under `chip`, fetch its full option tally,
+  // and render it. Re-clicking the same chip toggles it closed.
+  async _openAttrPopover(chip) {
+    const field = chip.dataset.attrField;
+    const targetType = chip.dataset.attrTargetType;
+    const targetRef = parseInt(chip.dataset.attrTargetRef, 10);
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug || !field || !targetType || !targetRef) return;
+
+    // Toggle: clicking the chip that owns the open popover closes it.
+    const open = AppView._attrPopover;
+    if (open && open.field === field && open.targetType === targetType && open.targetRef === targetRef) {
+      AppView._closeAttrPopover();
+      return;
+    }
+    AppView._closeAttrPopover();
+
+    const pop = document.createElement('div');
+    pop.id = 'attr-popover';
+    pop.className = 'attr-popover';
+    pop.innerHTML = '<div class="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400">Loading…</div>';
+    document.body.appendChild(pop);
+    AppView._attrPopover = { field, targetType, targetRef, slug };
+
+    // Position under the chip, clamped to the viewport.
+    const r = chip.getBoundingClientRect();
+    pop.style.position = 'fixed';
+    pop.style.top = `${Math.round(r.bottom + 4)}px`;
+    const left = Math.min(Math.round(r.left), window.innerWidth - 240);
+    pop.style.left = `${Math.max(8, left)}px`;
+
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/topics/${targetType}/${targetRef}/attributes?field=${field}`);
+      if (!res.ok) throw new Error('load failed');
+      const data = await res.json();
+      // The popover may have been closed/replaced while the fetch was in flight.
+      if (AppView._attrPopover && AppView._attrPopover.field === field
+          && AppView._attrPopover.targetRef === targetRef) {
+        AppView._renderAttrPopoverBody(data);
+      }
+    } catch {
+      const live = document.getElementById('attr-popover');
+      if (live) live.innerHTML = '<div class="px-3 py-2 text-xs text-red-500">Couldn\'t load options.</div>';
+    }
+  },
+
+  // Render the popover contents from a { field, options, myValue } payload
+  // and wire its controls. Re-run after each vote so counts/checks update
+  // in place without closing the dropdown.
+  _renderAttrPopoverBody(data) {
+    const pop = document.getElementById('attr-popover');
+    if (!pop) return;
+    const field = data.field;
+    const check = '<svg class="w-3.5 h-3.5 text-violet-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>';
+
+    const optRow = (label, value, count, mine) =>
+      `<button type="button" class="attr-opt" data-attr-opt-value="${escapeAttr(value)}">
+        <span class="attr-opt-label">${label}</span>
+        <span class="attr-opt-right">${count ? `<span class="attr-opt-count">${count}</span>` : ''}${mine ? check : ''}</span>
+      </button>`;
+
+    let inner = '';
+    if (field === 'priority') {
+      const byVal = new Map((data.options || []).map((o) => [o.value, o]));
+      inner += '<div class="attr-pop-head">Priority</div>';
+      for (const v of AppView.ATTR_PRIORITY_VALUES) {
+        const o = byVal.get(v);
+        const meta = AppView._priorityMeta(v);
+        inner += optRow(`<span class="attr-dot ${meta.cls}"></span>${meta.label}`, v, o ? o.count : 0, !!(o && o.mine));
+      }
+    } else {
+      inner += '<div class="attr-pop-head">Assigned person</div>';
+      const opts = data.options || [];
+      if (opts.length) {
+        for (const o of opts) {
+          inner += optRow(`@${escapeHtml(o.value)}`, o.value, o.count, !!o.mine);
+        }
+      } else {
+        inner += '<div class="px-3 py-1.5 text-xs text-zinc-400 dark:text-zinc-500">No suggestions yet.</div>';
+      }
+      inner += `<div class="attr-pop-add">
+        <input type="text" id="attr-assignee-input" class="attr-pop-input" placeholder="Type a name…" autocomplete="off" maxlength="64" />
+        <div id="attr-assignee-suggest" class="attr-pop-suggest hidden"></div>
+        <button type="button" id="attr-assignee-add" class="attr-pop-addbtn">Add</button>
+      </div>`;
+    }
+
+    pop.innerHTML = inner;
+
+    // Vote on an existing option.
+    pop.querySelectorAll('.attr-opt').forEach((b) => {
+      b.addEventListener('click', () => AppView._castAttrVote(b.dataset.attrOptValue));
+    });
+
+    if (field === 'assignee') {
+      const input = pop.querySelector('#attr-assignee-input');
+      const addBtn = pop.querySelector('#attr-assignee-add');
+      const suggest = pop.querySelector('#attr-assignee-suggest');
+      const submit = () => {
+        const v = (input.value || '').trim();
+        if (v) AppView._castAttrVote(v);
+      };
+      addBtn.addEventListener('click', submit);
+      input.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') { ev.preventDefault(); submit(); }
+      });
+      // Username typeahead off /api/users/search (same endpoint the invite
+      // typeahead uses). Free text is still allowed — these are hints only.
+      input.addEventListener('input', () => {
+        const q = (input.value || '').trim();
+        clearTimeout(AppView._attrSuggestTimer);
+        if (!q) { suggest.classList.add('hidden'); suggest.innerHTML = ''; return; }
+        AppView._attrSuggestTimer = setTimeout(async () => {
+          try {
+            const res = await fetch(`/api/users/search?q=${encodeURIComponent(q)}`);
+            if (!res.ok) return;
+            const { users } = await res.json();
+            if (!users || !users.length) { suggest.classList.add('hidden'); suggest.innerHTML = ''; return; }
+            suggest.innerHTML = users.map((u) =>
+              `<button type="button" class="attr-suggest-item" data-attr-suggest="${escapeAttr(u.username)}">@${escapeHtml(u.username)}</button>`).join('');
+            suggest.classList.remove('hidden');
+            suggest.querySelectorAll('[data-attr-suggest]').forEach((it) => {
+              it.addEventListener('click', () => AppView._castAttrVote(it.dataset.attrSuggest));
+            });
+          } catch { /* ignore */ }
+        }, 200);
+      });
+      input.focus();
+    }
+  },
+
+  // POST the caller's vote for `value`, then repaint the on-card chips and
+  // the open popover from the refreshed tally the server returns.
+  async _castAttrVote(value) {
+    const ctx = AppView._attrPopover;
+    if (!ctx || !value) return;
+    const { field, targetType, targetRef, slug } = ctx;
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/topics/${targetType}/${targetRef}/attributes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ field, value }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { alert(data.error || 'Could not save your vote.'); return; }
+      // Update the cached item's summary so re-renders show the new leader.
+      AppView._applyAttrSummary(targetType, targetRef, field, data);
+      // Repaint cards (feed if mounted, topic head if open) and the popover.
+      AppView._refreshAttrCards();
+      if (AppView._attrPopover && AppView._attrPopover.field === field
+          && AppView._attrPopover.targetRef === targetRef) {
+        AppView._renderAttrPopoverBody(data);
+      }
+    } catch (err) {
+      alert(`Could not save your vote: ${err.message}`);
+    }
+  },
+
+  // Find the cached issue / proposal object a chip refers to and write the
+  // new { top, count, myValue } summary onto it. options[0] is the leader
+  // (the server sorts the list), so the chip reads straight off it.
+  _applyAttrSummary(targetType, targetRef, field, data) {
+    const top = (data.options && data.options[0]) || null;
+    const summary = { top: top ? top.value : null, count: top ? top.count : 0, myValue: data.myValue || null };
+    let item = null;
+    if (targetType === 'issue') {
+      item = (AppView._ghIssues || []).find((i) => i.number === targetRef);
+    } else {
+      item = (AppView._proposals || []).find((p) => p.id === targetRef)
+        || (AppView._merged || []).find((p) => p.id === targetRef);
+    }
+    if (item) item[field] = summary;
+  },
+
+  // Repaint surfaces that show chips, without disturbing the popover (which
+  // lives on <body>, positioned by coordinates).
+  _refreshAttrCards() {
+    if (document.getElementById('dev-feed')) AppView._rerenderFeed();
+    if (typeof App !== 'undefined' && App.currentSubTab === 'topic'
+        && document.getElementById('gc-thread-head')) {
+      AppView._renderTopicHead();
+    }
+    const mergedEl = document.getElementById('gc-merged');
+    if (mergedEl && (AppView._merged || []).length) {
+      mergedEl.innerHTML = AppView._renderMergedInner();
+      if (window.Kudos) Kudos.attach(mergedEl);
+      AppView._applyAskAiCardAvailability(mergedEl);
+    }
   },
 
   // Live badge bump for a thread the viewer doesn't have open (called
@@ -2180,6 +3181,33 @@ const AppView = {
     return s === 'generating' ? 0 : s === 'ready' ? 1 : 2;
   },
 
+  // #388: merge-pipeline pin rank for the feed sort. Lower renders first
+  // within the proposal group, so a PR actually being merged (or having
+  // its conflicts resolved) surfaces at the top of the stack instead of
+  // sinking under proposals with newer chatter — "it's obvious it's the
+  // next one to merge". The precedence deliberately matches the card's
+  // state-badge precedence (#361/#386: merging > resolving > failed) so
+  // the list position always agrees with the badge the user sees:
+  //   0 — 'merging'  ("Merging…")            being merged right now
+  //   1 — resolving  ("Resolving conflicts…")  auto-resolver sync in flight
+  //   2 — merge_conflict_state 'failed'        ("⚠ Conflict resolution failed")
+  //   3 — everything else (normal, by recency)
+  // A bare 'behind'/'conflict' snapshot is NOT pinned: both render as the
+  // neutral "Behind main · N" badge (a fresh 'conflict' bumps behind_main
+  // and flips `resolving` true shortly after, at which point rank 1 takes
+  // over), and many PRs can be behind main.
+  _proposalPinRank(pr) {
+    if (!pr) return 4;
+    if (pr.status === 'merging') return 0;
+    if (pr.resolving) return 1;
+    if (pr.merge_conflict_state === 'failed') return 2;
+    // #47: a proposal whose checks failed / couldn't run blocks merge and
+    // needs the owner's attention — pin it just below the conflict-failed
+    // affordance so it stays visible above ordinary chatter.
+    if (pr.check_state === 'failing' || pr.check_state === 'error') return 3;
+    return 4;
+  },
+
   // The Open Issues list exactly as rendered: env-var-proposal twins
   // filtered out (#131 — those rows render in the dedicated Environment
   // variables section). Ordering is owned by _feedItems(), whose
@@ -2230,7 +3258,8 @@ const AppView = {
     // independent of the headless Generate-proposal path below — both can
     // show on the same row. The viewer's existing session is still reachable
     // from the Dev Chat tab.
-    const createBtn = issue.myPrSessionId
+    const hasMySession = !!issue.myPrSessionId;
+    const createBtn = hasMySession
       ? `<button class="gc-vote-btn" title="Start another dev chat for this issue" onclick="AppView.createPrForIssue(${n})">Create new proposal</button>`
       : `<button class="gc-vote-btn" title="Start a dev chat to solve this issue" onclick="AppView.createPrForIssue(${n})">Create proposal</button>`;
     // #155: headless auto-session button. Four states driven by the
@@ -2318,13 +3347,10 @@ const AppView = {
               <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta"><a href="${href}" target="_blank" rel="noopener" class="font-mono text-violet-400 hover:underline">#${n}</a>${issue.created_by_username ? ` · ${escapeHtml(issue.created_by_username)}` : ''}</div>
             </div>
             ${bountyPill}
+            ${AppView._attrChipsHtml('issue', n, issue)}
             ${AppView._devChatBadge(issue.chatCount)}
           </div>
-          <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
-            ${kudosBtn}
-            ${createBtn}
-            ${autoBtn}
-          </div>
+          ${AppView._cardActionsHtml([kudosBtn, createBtn, autoBtn])}
         </div>
         ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
       </div>`;
@@ -2350,59 +3376,160 @@ const AppView = {
 
     let html = `<div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-1">Completed</div><div class="space-y-2">`;
     for (let i = 0; i < shown; i++) {
-      const pr = merged[i];
-      const date = new Date(pr.created_at).toLocaleDateString();
-      const mergedLabel = pr.pr_title
-        ? `${escapeHtml(pr.pr_title)} <span class="text-zinc-500">· ${escapeHtml(pr.username)}</span>`
-        : `by ${escapeHtml(pr.username)}`;
-      const mergedQuoteTitle = pr.pr_title || `PR #${pr.pr_number || pr.id}`;
-      // Merged PRs are still eligible for kudos (promoted + merging
-      // + merged) — that's intentional. People often come back to
-      // a recently-merged PR and want to thank the author.
-      const kudosBtn = window.Kudos
-        ? Kudos.renderButton(pr, { compact: true })
-        : '';
-      // #313: Ask AI on the Completed list too, for proposals the viewer
-      // does not own (parallel to the live feed cards).
-      const mine = !!(App.user && pr.user_id === App.user.id);
-      const askAiBtn = !mine ? AppView._askAiCardBtnHtml(pr) : '';
+      html += AppView._renderMergedCard(merged[i], majority);
+    }
+    html += '</div>';
 
-      // #16: undo is a single direct action — clicking Undo opens a
-      // revert PR (like proposing a change) which then needs the
-      // normal merge vote to land. The button only renders on
-      // ordinary merged PRs that don't already have a revert in
-      // flight or merged:
-      //   - revert_of_session_id != null on this row means this
-      //     row IS itself a revert PR; undoing a revert would
-      //     create an infinite undo-undo loop.
-      //   - revert_session_id (from the LEFT JOIN) means a revert
-      //     PR already exists pointing at this row — show its
-      //     status as a label instead.
-      let undoUI = '';
-      if (pr.revert_of_session_id) {
-        // This row is a revert PR. (Shouldn't appear in the
-        // merged list often — revert PRs are short-lived in
-        // 'promoted' before they themselves merge — but show a
-        // breadcrumb if they do.)
-        undoUI = `<span class="text-xs text-zinc-500" title="This PR is itself a revert">↩ revert</span>`;
-      } else if (pr.revert_session_id) {
-        const rs = pr.revert_status;
-        const rpr = pr.revert_pr_number || pr.revert_session_id;
-        const label = rs === 'merged'
-          ? `Undone by PR#${rpr}`
-          : rs === 'merging'
-            ? `Revert merging (PR#${rpr})`
-            : `Revert in vote · PR#${rpr}`;
-        const linkHref = pr.revert_pr_url || '#';
-        undoUI = `<a href="${linkHref}" target="_blank" class="text-xs text-amber-500 hover:text-amber-400 font-medium">${label}</a>`;
-      } else {
-        undoUI = `
-          <button class="gc-vote-btn gc-vote-btn-undo"
-            title="Open a revert PR for this merge. It still needs a merge vote to land."
-            onclick="AppView.undoPr(${pr.id})">Undo</button>`;
+    // Footer pager, same styling as the Open Issues pager.
+    //   • collapsed (with more loaded rows) → "Show N more" reveals the
+    //     rest of the already-fetched page (client-side, no refetch).
+    //   • expanded, server has more pages → "Load more" fetches the next
+    //     keyset page from the server and appends it (#429).
+    //   • expanded, no more pages → "Show less" collapses back to 3.
+    const btns = [];
+    if (!AppView._mergedExpanded && merged.length > AppView._mergedShownDefault) {
+      btns.push(`<button class="gc-vote-btn" onclick="AppView.toggleMergedPrs()">Show ${merged.length - shown} more</button>`);
+    }
+    if (AppView._mergedExpanded) {
+      if (AppView._mergedHasMore) {
+        const loading = AppView._mergedLoadingMore;
+        btns.push(`<button class="gc-vote-btn" ${loading ? 'disabled' : ''} onclick="AppView.loadMoreMerged()">${loading ? 'Loading…' : 'Load more'}</button>`);
       }
+      if (merged.length > AppView._mergedShownDefault) {
+        btns.push(`<button class="gc-vote-btn" onclick="AppView.toggleMergedPrs()">Show less</button>`);
+      }
+    }
+    if (btns.length) {
+      html += `<div class="mt-1 flex gap-2">${btns.join('')}</div>`;
+    }
+    return html;
+  },
 
-      html += `
+  // #429: fetch the next keyset page of merged PRs and append it in place.
+  // Uses the (created_at, id) cursor of the last loaded row so paging is
+  // stable even as new PRs merge at the top. Re-renders #gc-merged and
+  // re-wires kudos / Ask-AI on the freshly painted cards, mirroring the
+  // mount in loadVotePanel.
+  async loadMoreMerged() {
+    if (AppView._mergedLoadingMore || !AppView._mergedHasMore) return;
+    if (!AppView.appData || !AppView._mergedCursor) return;
+    const slug = AppView.appData.slug;
+    AppView._mergedLoadingMore = true;
+    // Reflect the disabled/"Loading…" state immediately. In kanban mode the
+    // Done-column footer lives in #dev-kanban (there is no #gc-merged), so
+    // repaint the whole board; in list mode update the Completed section in
+    // place.
+    if (AppView._getViewMode() === 'kanban') {
+      AppView._repaintDevBody();
+    } else {
+      const el0 = document.getElementById('gc-merged');
+      if (el0) el0.innerHTML = AppView._renderMergedInner();
+    }
+    try {
+      const cur = AppView._mergedCursor;
+      const qs = AppView._demoQS();
+      const sep = qs ? '&' : '?';
+      const url = `/api/apps/${slug}/merged${qs}${sep}before=${encodeURIComponent(cur.created_at)}&before_id=${encodeURIComponent(cur.id)}`;
+      const res = await fetch(url);
+      const data = res.ok ? await res.json() : { merged: [], hasMore: false };
+      const more = data.merged || [];
+      // De-dup defensively in case the cursor straddled equal timestamps.
+      const have = new Set((AppView._merged || []).map((r) => r.id));
+      const fresh = more.filter((r) => !have.has(r.id));
+      AppView._merged = (AppView._merged || []).concat(fresh);
+      AppView._mergedHasMore = !!data.hasMore;
+      if (AppView._merged.length) {
+        const last = AppView._merged[AppView._merged.length - 1];
+        AppView._mergedCursor = { created_at: last.created_at, id: last.id };
+      }
+      // Keep inline vote/kudos state in sync so the newly loaded merged
+      // rows get their group-chat activity controls too.
+      if (AppView.voteState && AppView.voteState.bySession) {
+        for (const pr of fresh) {
+          AppView.voteState.bySession[String(pr.id)] = pr;
+          if (pr.pr_number != null) AppView.voteState.byPrNumber[String(pr.pr_number)] = pr;
+        }
+        if (typeof GroupChat !== 'undefined' && GroupChat.refreshVoteControls) {
+          GroupChat.refreshVoteControls();
+        }
+      }
+    } catch {
+      // Leave the existing rows in place; surface nothing destructive.
+    } finally {
+      AppView._mergedLoadingMore = false;
+      // Paint the freshly loaded cards into whichever view is active.
+      // _repaintDevBody re-renders #dev-kanban and re-attaches Kudos /
+      // Ask-AI for the kanban Done column; list mode updates #gc-merged.
+      if (AppView._getViewMode() === 'kanban') {
+        AppView._repaintDevBody();
+      } else {
+        const el = document.getElementById('gc-merged');
+        if (el) {
+          el.innerHTML = AppView._renderMergedInner();
+          if (window.Kudos) Kudos.attach(el);
+          AppView._applyAskAiCardAvailability(el);
+        }
+      }
+    }
+  },
+
+  // One merged ("Completed") proposal card. Extracted from
+  // _renderMergedInner so the kanban "Done" column can render the same
+  // markup per row without the section header / show-more footer.
+  // `majority` defaults to the cached merged context.
+  _renderMergedCard(pr, majority) {
+    const maj = majority != null
+      ? majority
+      : ((AppView._mergedCtx && AppView._mergedCtx.majority) || 1);
+    const date = new Date(pr.created_at).toLocaleDateString();
+    const mergedLabel = pr.pr_title
+      ? `${escapeHtml(pr.pr_title)} <span class="text-zinc-500">· ${escapeHtml(pr.username)}</span>`
+      : `by ${escapeHtml(pr.username)}`;
+    const mergedQuoteTitle = pr.pr_title || `PR #${pr.pr_number || pr.id}`;
+    // Merged PRs are still eligible for kudos (promoted + merging
+    // + merged) — that's intentional. People often come back to
+    // a recently-merged PR and want to thank the author.
+    const kudosBtn = window.Kudos
+      ? Kudos.renderButton(pr, { compact: true })
+      : '';
+    // #313: Ask AI on the Completed list too, for proposals the viewer
+    // does not own (parallel to the live feed cards).
+    const mine = !!(App.user && pr.user_id === App.user.id);
+    const askAiBtn = !mine ? AppView._askAiCardBtnHtml(pr) : '';
+
+    // #16: undo is a single direct action — clicking Undo opens a
+    // revert PR (like proposing a change) which then needs the
+    // normal merge vote to land. The button only renders on
+    // ordinary merged PRs that don't already have a revert in
+    // flight or merged:
+    //   - revert_of_session_id != null on this row means this
+    //     row IS itself a revert PR; undoing a revert would
+    //     create an infinite undo-undo loop.
+    //   - revert_session_id (from the LEFT JOIN) means a revert
+    //     PR already exists pointing at this row — show its
+    //     status as a label instead.
+    let undoUI = '';
+    if (pr.revert_of_session_id) {
+      // This row is a revert PR. (Shouldn't appear in the
+      // merged list often — revert PRs are short-lived in
+      // 'promoted' before they themselves merge — but show a
+      // breadcrumb if they do.)
+      undoUI = `<span class="text-xs text-zinc-500" title="This PR is itself a revert">↩ revert</span>`;
+    } else if (pr.revert_session_id) {
+      const rs = pr.revert_status;
+      const rpr = pr.revert_pr_number || pr.revert_session_id;
+      const label = rs === 'merged'
+        ? `Undone by PR#${rpr}`
+        : rs === 'merging'
+          ? `Revert merging (PR#${rpr})`
+          : `Revert in vote · PR#${rpr}`;
+      const linkHref = pr.revert_pr_url || '#';
+      undoUI = `<a href="${linkHref}" target="_blank" class="text-xs text-amber-500 hover:text-amber-400 font-medium">${label}</a>`;
+    } else {
+      undoUI = `<button class="gc-vote-btn gc-vote-btn-undo" title="Open a revert PR for this merge. It still needs a merge vote to land." onclick="AppView.undoPr(${pr.id})">Undo</button>`;
+    }
+
+    return `
         <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-ref-pr="${pr.pr_number || pr.id}" data-proposal-row="${pr.id}" title="Open this proposal's discussion">
           ${AppView._devCardIcon('done')}
           <div class="flex-1 min-w-0">
@@ -2411,29 +3538,14 @@ const AppView = {
                 <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words" title="${escapeHtml(mergedQuoteTitle)}">${mergedLabel}</div>
                 <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta"><a href="${pr.pr_url || '#'}" target="_blank" rel="noopener" class="font-mono text-emerald-400 hover:underline">PR#${pr.pr_number || pr.id}</a> · ${date}${AppView.closesPillHtml(pr) ? ` ${AppView.closesPillHtml(pr)}` : ''}</div>
               </div>
-              ${AppView.voteCountPill(pr, majority)}
+              ${AppView.voteCountPill(pr, maj)}
+              ${AppView._attrChipsHtml('proposal', pr.id, pr, { readonly: true })}
               ${AppView._devChatBadge(parseInt(pr.chat_count) || 0)}
             </div>
-            <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
-              ${AppView.voteButtonsHtml(pr, { collapseVoted: true })}
-              ${undoUI}
-              ${kudosBtn}
-              ${askAiBtn}
-            </div>
+            ${AppView._cardActionsHtml([AppView.voteButtonsHtml(pr, { collapseVoted: true }), undoUI, kudosBtn, askAiBtn])}
           </div>
           ${AppView.DEV_CARD_CHEVRON}
         </div>`;
-    }
-    html += '</div>';
-
-    // Show-more / show-less footer, same styling as the Open Issues pager.
-    if (merged.length > AppView._mergedShownDefault) {
-      const label = AppView._mergedExpanded
-        ? 'Show less'
-        : `Show ${merged.length - shown} more`;
-      html += `<div class="mt-1"><button class="gc-vote-btn" onclick="AppView.toggleMergedPrs()">${label}</button></div>`;
-    }
-    return html;
   },
 
   // Expand / collapse the Merged section in place (no panel reload).
@@ -2473,7 +3585,7 @@ const AppView = {
         issue.bounty_count = typeof data.bountyCount === 'number' ? data.bountyCount : (issue.bounty_count || 0) + 1;
       }
       if (typeof data.remaining === 'number') AppView._ghIssuesMeta.myRemaining = data.remaining;
-      AppView._rerenderFeed();
+      AppView._repaintCards();
     } catch (err) {
       alert(`Couldn't place bounty: ${err.message}`);
     } finally {
@@ -2502,7 +3614,7 @@ const AppView = {
     // /github-issues load confirms the link server-side.
     if (issue) {
       issue.myPrSessionId = session.id;
-      if (typeof AppView._rerenderFeed === 'function') AppView._rerenderFeed();
+      if (typeof AppView._repaintCards === 'function') AppView._repaintCards();
     }
 
     // Land on the Dev Chat tab focused on the new session. switchTab
@@ -2566,7 +3678,10 @@ const AppView = {
       }
       const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
       if (issue) issue.headless = { sessionId: data.session.id, status: 'generating' };
-      AppView._rerenderFeed();
+      AppView._repaintCards();
+      // Start the completion poller right away so a run begun from the opened
+      // topic view advances to its outcome label without a manual refresh.
+      AppView._syncHeadlessPolling();
     } catch (err) {
       alert(`Couldn't start generating the proposal: ${err.message}`);
     }
@@ -2713,7 +3828,15 @@ const AppView = {
     if (AppView._headlessPollTimer) return;
     AppView._headlessPollTimer = setInterval(async () => {
       const slug = AppView.appData && AppView.appData.slug;
-      if (!slug || !document.getElementById('dev-feed')) {
+      // Stop only when the user has actually left the Dev area — i.e. none
+      // of the card surfaces are mounted. Keying on #dev-feed alone would
+      // kill polling for a run watched from the opened topic view
+      // (#gc-thread-head, where the feed isn't present) or from the kanban
+      // board (#dev-kanban, where issue rows live in the columns instead).
+      const mounted = document.getElementById('dev-feed')
+        || document.getElementById('dev-kanban')
+        || document.getElementById('gc-thread-head');
+      if (!slug || !mounted) {
         clearInterval(AppView._headlessPollTimer);
         AppView._headlessPollTimer = null;
         return;
@@ -2729,7 +3852,7 @@ const AppView = {
         for (const issue of AppView._ghIssues || []) {
           if (byNumber.has(issue.number)) issue.headless = byNumber.get(issue.number);
         }
-        AppView._rerenderFeed();
+        AppView._repaintCards();
       } catch {}
     }, 8000);
   },
@@ -2837,6 +3960,85 @@ const AppView = {
     return `<span class="gc-merged-badge">✓ Merged</span>`;
   },
 
+  // #361: persistent merge-status badges. Unlike the transient
+  // resolving/merging badges these reflect the proposal's recorded
+  // relationship to main (merge_conflict_state + behind_main from
+  // GET /api/apps/:slug/promoted). Red "Conflict resolution failed" when
+  // an auto-resolve attempt ran and couldn't fix it; amber "Behind main ·
+  // N" when it's stale (or conflicting + auto-resolving) but no manual
+  // action is needed yet.
+  // #386: the speculative "Conflicts · N files" badge was removed — the
+  // red affordance now fires only on the 'failed' state, so a fresh
+  // 'conflict' snapshot renders as "Behind main" via behindBadgeHtml.
+  conflictFailedBadgeHtml() {
+    return `<span class="gc-conflict-badge" title="The last automatic conflict resolution failed — the owner needs to resolve manually">⚠ Conflict resolution failed</span>`;
+  },
+  behindBadgeHtml(pr) {
+    const n = parseInt(pr.behind_main, 10) || 0;
+    const label = n ? `Behind main · ${n}` : 'Behind main';
+    return `<span class="gc-behind-badge" title="This proposal is behind main but still merges cleanly">${escapeHtml(label)}</span>`;
+  },
+
+  // #381: advisory "may break the app" warning. Shown alongside (not
+  // instead of) the merge-state badge when the proposal's staging preview
+  // logged console errors / uncaught exceptions / a failed load. Amber, not
+  // red — it never blocks the vote (parallels "Behind main"). Only the
+  // 'errors' state badges; 'clean'/'unknown'/missing render nothing.
+  consoleWarningBadgeHtml(pr) {
+    if (!pr || pr.console_check_state !== 'errors') return '';
+    const n = Array.isArray(pr.console_errors) ? pr.console_errors.length : 0;
+    const label = n ? `Console errors · ${n}` : 'Console errors';
+    const title = n
+      ? `The staging preview logged ${n} console error${n === 1 ? '' : 's'} — this change may break the app. Open the discussion to see them.`
+      : 'The staging preview logged console errors — this change may break the app.';
+    return `<span class="gc-warning-badge" title="${escapeHtml(title)}">⚠ ${escapeHtml(label)}</span>`;
+  },
+
+  // #47: "CI for proposals" checks badge — the pass/fail status of the
+  // proposal's automated tests against its staging build (check_state from
+  // GET /api/apps/:slug/promoted). Unlike the advisory console badge this
+  // mirrors a real merge gate (votes.checkAndMerge blocks a non-'passing'
+  // proposal), so the badge is the user-facing signal for "can this land".
+  //   passing → green ✓        failing → amber ⚠ · N
+  //   pending → grey spinner    error  → red ⚠ couldn't run
+  // Legacy rows with no check_state fall back to the advisory console badge
+  // so a mid-rollout proposal still shows something useful.
+  checksBadgeHtml(pr) {
+    if (!pr) return '';
+    // A merged proposal passed the gate by definition — the "✓ Merged"
+    // badge says it all; don't stack a redundant "✓ Checks passing".
+    if (pr.status === 'merged') return '';
+    const state = pr.check_state;
+    if (!state) return AppView.consoleWarningBadgeHtml(pr);
+    if (state === 'passing') {
+      return `<span class="gc-merged-badge" title="All automated tests passed on the staging build">✓ Checks passing</span>`;
+    }
+    if (state === 'failing') {
+      const n = Array.isArray(pr.test_results)
+        ? pr.test_results.filter((r) => r && r.status !== 'pass').length : 0;
+      const label = n ? `Checks failing · ${n}` : 'Checks failing';
+      const title = n
+        ? `${n} automated test${n === 1 ? '' : 's'} failed on the staging build — merge is blocked until checks pass. Open the discussion to see them.`
+        : 'Automated tests failed on the staging build — merge is blocked until checks pass.';
+      return `<span class="gc-warning-badge" title="${escapeHtml(title)}">⚠ ${escapeHtml(label)}</span>`;
+    }
+    if (state === 'error') {
+      return `<span class="gc-conflict-badge" title="The staging build or the test run itself broke, so the platform can't confirm the app works — merge is blocked until checks pass.">⚠ Checks couldn't run</span>`;
+    }
+    if (state === 'skipped') {
+      // #461: explicit terminal "nothing to test" verdict — grey, no
+      // spinner, and NON-blocking (the merge gate treats it like passing).
+      const why = pr.check_error_detail
+        ? `Automated checks were skipped — ${String(pr.check_error_detail).slice(0, 280)}. This does not block the merge.`
+        : 'Automated checks were skipped — there was nothing to test. This does not block the merge.';
+      return `<span class="gc-checks-running-badge" title="${escapeHtml(why)}">Checks skipped</span>`;
+    }
+    // 'pending' (or anything else): tests are still running. #405: grey
+    // (gc-checks-running-badge), not amber, so a not-yet-started check is
+    // visibly distinct from the amber in-flight merge stages.
+    return `<span class="gc-checks-running-badge" title="Automated tests are still running on the staging build — merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks running…</span>`;
+  },
+
   // #195/#270: before/after visual tiles for a session's stored capture
   // artifacts. `visuals` is the server shape — either the grouped form
   // { captures: [ { index, path, before: {png,webm,gif}, after: {...} } ] }
@@ -2844,12 +4046,15 @@ const AppView = {
   // { before, after, capturedPath } which is normalized to a single group.
   // Shared by the vote-panel PR rows here and the dev-chat staging card
   // (which calls through window.AppView). Webm plays as a silent loop with
-  // the PNG as poster; PNG-only sets render a plain image. Click opens full
-  // size in a new tab. One labelled row per group — the label names the
-  // captured path so reviewers see which screen each pair shows; a single
-  // root-only group renders unlabelled, exactly as before. Deliberately
-  // dedicated DOM — the markdown sanitizer's whitelist stays untouched
-  // (<img>/<video> remain stripped from chat markdown).
+  // the PNG as poster; PNG-only sets render a plain image. Clicking a tile
+  // opens an in-app side-by-side comparison overlay (openVisualComparison)
+  // rather than the raw asset in a new tab (#353) — each tile carries the
+  // whole group's artifact ids as data-* attributes so the overlay can
+  // show before+after together. One labelled row per group — the label
+  // names the captured path so reviewers see which screen each pair shows;
+  // a single root-only group renders unlabelled, exactly as before.
+  // Deliberately dedicated DOM — the markdown sanitizer's whitelist stays
+  // untouched (<img>/<video> remain stripped from chat markdown).
   visualsTilesHtml(visuals) {
     if (!visuals) return '';
     const groups = Array.isArray(visuals.captures)
@@ -2863,30 +4068,52 @@ const AppView = {
     const esc = (s) => String(s).replace(/[&<>"]/g, (c) => (
       { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]
     ));
-    const tile = (label, v) => {
-      if (!v) return '';
+    // Sanitize one side's media ids into a `png|webm|gif`-keyed object of
+    // validated 32-hex ids (or null per slot). Reused by the data-*
+    // attribute encoder and the overlay builder.
+    const sideIds = (v) => {
+      if (!v) return null;
       const png = idOk(v.png) ? v.png : null;
       const webm = idOk(v.webm) ? v.webm : null;
       const gif = idOk(v.gif) ? v.gif : null;
-      if (!png && !webm && !gif) return '';
+      return (png || webm || gif) ? { png, webm, gif } : null;
+    };
+    // A clickable tile for one side. Carries the FULL group's ids (both
+    // sides) plus which side was clicked, so the overlay opens straight
+    // onto the matching pair. ids are 32-hex-validated, so they're safe
+    // inside the data-* attributes; path goes through esc().
+    const tile = (label, side, b, a, path) => {
+      const v = side === 'before' ? b : a;
+      if (!v) return '';
       const mediaStyle = 'display:block;width:100%;max-height:160px;object-fit:contain;object-position:top;background:rgba(0,0,0,0.25);border:1px solid rgba(127,127,127,0.25);border-radius:6px';
-      const media = webm
-        ? `<video src="/visuals/${webm}"${png ? ` poster="/visuals/${png}"` : ''} muted loop autoplay playsinline style="${mediaStyle}"></video>`
-        : `<img src="/visuals/${png || gif}" alt="${label}" loading="lazy" style="${mediaStyle}">`;
-      const href = `/visuals/${webm || gif || png}`;
-      return `<a href="${href}" target="_blank" rel="noopener" title="${label} — open full size" style="flex:1 1 0;min-width:0;display:block;text-decoration:none">
+      const media = v.webm
+        ? `<video src="/visuals/${v.webm}"${v.png ? ` poster="/visuals/${v.png}"` : ''} muted loop autoplay playsinline style="${mediaStyle}"></video>`
+        : `<img src="/visuals/${v.png || v.gif}" alt="${label}" loading="lazy" style="${mediaStyle}">`;
+      const dataAttrs = [
+        `data-visual-tile="${side}"`,
+        `data-path="${esc(path)}"`,
+        b && b.png ? `data-before-png="${b.png}"` : '',
+        b && b.webm ? `data-before-webm="${b.webm}"` : '',
+        b && b.gif ? `data-before-gif="${b.gif}"` : '',
+        a && a.png ? `data-after-png="${a.png}"` : '',
+        a && a.webm ? `data-after-webm="${a.webm}"` : '',
+        a && a.gif ? `data-after-gif="${a.gif}"` : '',
+      ].filter(Boolean).join(' ');
+      return `<button type="button" ${dataAttrs} title="${label} — open before/after comparison" style="flex:1 1 0;min-width:0;display:block;text-align:left;padding:0;border:0;background:none;cursor:pointer;font:inherit;color:inherit" onclick="AppView.openVisualComparison(this)">
         <div class="text-[0.65rem] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}</div>
         ${media}
-      </a>`;
+      </button>`;
     };
 
     const single = groups.length === 1;
     const rows = [];
     for (const g of groups) {
-      const before = tile('Before', g.before);
-      const after = tile('After', g.after);
-      if (!after && !before) continue;
+      const b = sideIds(g.before);
+      const a = sideIds(g.after);
       const path = g.path || '/';
+      const before = tile('Before', 'before', b, a, path);
+      const after = tile('After', 'after', b, a, path);
+      if (!after && !before) continue;
       // Label the row with its captured path unless it's the single
       // root-only group (unchanged from the pre-#270 single-tile output).
       const label = (single && (path === '/' || !path))
@@ -2895,6 +4122,99 @@ const AppView = {
       rows.push(`${label}<div class="usn-visual-tiles" style="display:flex;gap:8px;align-items:flex-start;margin:4px 0 2px">${before}${after}</div>`);
     }
     return rows.join('');
+  },
+
+  // #353: open the before/after comparison overlay from a clicked tile.
+  // Reads the group's artifact ids off the tile's data-* attributes
+  // (written by visualsTilesHtml; all 32-hex-validated at render time)
+  // and renders before + after side-by-side at full size — two columns on
+  // a wide screen, stacked on a narrow one. webm plays muted/looping with
+  // the PNG poster; otherwise the PNG (or GIF) shows as an image. Each
+  // column keeps an "open original" link so the raw asset is still one
+  // click away. A side with no artifacts renders a "no version" note
+  // (e.g. a brand-new screen with no production "before").
+  openVisualComparison(triggerEl) {
+    const overlay = document.getElementById('visual-compare-overlay');
+    const body = document.getElementById('visual-compare-body');
+    const labelEl = document.getElementById('visual-compare-label');
+    if (!overlay || !body || !triggerEl) return;
+    const d = triggerEl.dataset || {};
+    const idOk = (id) => typeof id === 'string' && /^[a-f0-9]{32}$/.test(id);
+    const pick = (...ids) => ids.find((id) => idOk(id)) || null;
+    const before = {
+      png: idOk(d.beforePng) ? d.beforePng : null,
+      webm: idOk(d.beforeWebm) ? d.beforeWebm : null,
+      gif: idOk(d.beforeGif) ? d.beforeGif : null,
+    };
+    const after = {
+      png: idOk(d.afterPng) ? d.afterPng : null,
+      webm: idOk(d.afterWebm) ? d.afterWebm : null,
+      gif: idOk(d.afterGif) ? d.afterGif : null,
+    };
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]
+    ));
+    const path = d.path || '/';
+    if (labelEl) labelEl.textContent = (path && path !== '/') ? path : '';
+
+    const colStyle = 'flex:1 1 320px;min-width:0;display:flex;flex-direction:column;gap:6px';
+    const mediaStyle = 'display:block;width:100%;max-height:78vh;object-fit:contain;object-position:top;background:rgba(0,0,0,0.35);border:1px solid rgba(127,127,127,0.25);border-radius:8px';
+    const column = (label, v) => {
+      const has = v && (v.png || v.webm || v.gif);
+      const heading = `<div class="text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-400">${label}</div>`;
+      if (!has) {
+        return `<div style="${colStyle}">${heading}<div class="text-xs text-zinc-500" style="padding:24px 0;text-align:center;border:1px dashed rgba(127,127,127,0.3);border-radius:8px">No ${label.toLowerCase()} version to compare.</div></div>`;
+      }
+      const media = v.webm
+        ? `<video src="/visuals/${v.webm}"${v.png ? ` poster="/visuals/${v.png}"` : ''} muted loop autoplay playsinline controls style="${mediaStyle}"></video>`
+        : `<img src="/visuals/${v.png || v.gif}" alt="${label}" style="${mediaStyle}">`;
+      const orig = pick(v.webm, v.gif, v.png);
+      const origLink = orig
+        ? `<a href="/visuals/${orig}" target="_blank" rel="noopener" class="text-[0.7rem] text-violet-400 hover:text-violet-300">Open original ↗</a>`
+        : '';
+      return `<div style="${colStyle}">${heading}${media}${origLink}</div>`;
+    };
+
+    const pathLabel = (path && path !== '/')
+      ? `<div class="text-xs text-zinc-400" style="margin-bottom:10px">Before / after — <code>${esc(path)}</code></div>`
+      : '';
+    body.innerHTML = `${pathLabel}<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">${column('Before', before)}${column('After', after)}</div>`;
+
+    // Reveal now + stamp openedAt so modalDismissGuarded can swallow the
+    // opening tap's ghost click (same as the share/members modals).
+    AppView.revealModal(overlay);
+
+    // Close affordances: Back button, backdrop click (the overlay root
+    // itself, not its children), and Escape. The Escape handler is added
+    // on open / removed on close so it never lingers. modalDismissGuarded
+    // swallows the opening tap's ghost click (matches the share modal).
+    const back = document.getElementById('visual-compare-back');
+    if (back) back.onclick = () => AppView.closeVisualComparison();
+    overlay.onclick = (e) => {
+      if (window.AppView && AppView.modalDismissGuarded && AppView.modalDismissGuarded(overlay)) return;
+      if (e.target === overlay) AppView.closeVisualComparison();
+    };
+    AppView._visualCompareKeyHandler = (e) => {
+      if (e.key === 'Escape') AppView.closeVisualComparison();
+    };
+    document.addEventListener('keydown', AppView._visualCompareKeyHandler);
+  },
+
+  // #353: tear down the comparison overlay. Clear the body innerHTML (not
+  // display:none) so any looping <video> actually stops, mirroring
+  // toggleVisuals, and remove the Escape handler installed on open.
+  closeVisualComparison() {
+    const overlay = document.getElementById('visual-compare-overlay');
+    const body = document.getElementById('visual-compare-body');
+    if (body) body.innerHTML = '';
+    if (overlay) {
+      overlay.classList.add('hidden');
+      overlay.onclick = null;
+    }
+    if (AppView._visualCompareKeyHandler) {
+      document.removeEventListener('keydown', AppView._visualCompareKeyHandler);
+      AppView._visualCompareKeyHandler = null;
+    }
   },
 
   // #211: sessions whose before/after tiles the viewer expanded in the
@@ -3012,8 +4332,7 @@ const AppView = {
     // #127: stash the PR's testing guidance in the by-session registry so
     // the Preview onclick passes it to the overlay (which renders its own
     // "Test this change" button + instructions panel) without the markdown
-    // ever transiting an HTML attribute. No new button here — the row is
-    // already dense.
+    // ever transiting an HTML attribute.
     if (pr.testing_md || pr.testing_path) {
       AppView._sessionTesting[pr.id] = { md: pr.testing_md || null, path: pr.testing_path || null };
     } else {
@@ -3455,6 +4774,130 @@ const AppView = {
     } catch {}
   },
 
+  // #353: the self-app is a hash-routed SPA — its internal screens live in
+  // location.hash (`#app/...`, `#leaderboard`, ...), so a testing path
+  // joined as a server pathname just loads the home feed. Mirror the
+  // server-side normalisation (src/services/visuals.js selfAppHashPath):
+  // when the path's first segment is one of the SPA hash routes, move it
+  // into the fragment; leave the bare '/', an already-'/#...' path, and
+  // standalone server pages (/dashboard, /admin, ...) untouched.
+  _SELF_APP_HASH_ROUTES: ['app', 'leaderboard', 'group-chat', 'individual-chat'],
+  _selfAppHashPath(p) {
+    const path = typeof p === 'string' ? p : null;
+    if (!path || !path.startsWith('/') || path.startsWith('/#')) return path;
+    const firstSeg = path.slice(1).split(/[/?#]/)[0];
+    if (!AppView._SELF_APP_HASH_ROUTES.includes(firstSeg)) return path;
+    return '/#' + path.slice(1);
+  },
+
+  // #439: ensure-then-open. Every Preview click routes through here so a
+  // preview that was torn down while the user was away (idle GC, lost
+  // container) is rebuilt on demand instead of opening a dead page. We open
+  // the overlay immediately with a "spinning back up" loader, ask the
+  // server whether the preview is live, and either open it as-is (`ready`)
+  // or wait for the rebuild's `staging_ready` WS event (`rebuilding`).
+  //
+  //   sessionId  — the session whose preview we're opening (drives the
+  //                ensure-staging POST and pending-marker match).
+  //   fallbackUrl — the last-known preview URL (may be stale/dead); used
+  //                only when the server says `ready` without echoing a URL.
+  //   testing    — the session's testing guidance ({ md, path } | null).
+  //   opts.jump  — open the deep link directly (the "Test this change" btn).
+  async ensureStaging(sessionId, fallbackUrl, testing, opts) {
+    const overlay = document.getElementById('staging-overlay');
+    if (!overlay) return;
+    const jump = !!(opts && opts.jump);
+
+    // Open the overlay + "spinning back up" loader right away, and take a
+    // fresh load id so backing out (closeStagingOverlay) cancels this wait.
+    overlay.classList.remove('hidden');
+    if (window.DevConsole) DevConsole.setButtonVisible(true);
+    const loadId = ++AppView._stagingLoadId;
+    document.getElementById('staging-iframe').src = '';
+    AppView._pendingStagingPreview = null;
+    AppView._setStagingLoader(true, {
+      title: 'Spinning your preview back up…',
+      sub: 'Your preview was paused after a while of inactivity. Rebuilding it '
+        + 'from your latest changes — this usually takes 20–60 seconds.',
+    });
+    document.getElementById('staging-back').onclick = () => AppView.closeStagingOverlay();
+
+    let data;
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/ensure-staging`, { method: 'POST' });
+      data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        AppView._showStagingUnavailable(loadId, data.error || 'This preview could not be rebuilt.');
+        return;
+      }
+    } catch {
+      AppView._showStagingUnavailable(loadId, 'Network error while rebuilding the preview. Try again in a moment.');
+      return;
+    }
+    // Backed out while we waited on the POST.
+    if (loadId !== AppView._stagingLoadId) return;
+
+    if (data.status === 'ready') {
+      AppView.swapToStaging(data.url || fallbackUrl, testing, { jump });
+      return;
+    }
+    if (data.status === 'unavailable') {
+      AppView._showStagingUnavailable(
+        loadId,
+        data.reason === 'demo'
+          ? 'Live previews can’t be rebuilt in this demo environment.'
+          : 'This preview isn’t available right now.'
+      );
+      return;
+    }
+    // status === 'rebuilding' — park a marker the staging_ready /
+    // staging_failed WS handlers match against, then keep the loader up.
+    // A client-side give-up keeps the loader honest if the event never
+    // lands (the server rebuild is still allowed to finish on its own).
+    AppView._pendingStagingPreview = { sessionId, jump, testing, loadId };
+    if (AppView._stagingRebuildTimer) clearTimeout(AppView._stagingRebuildTimer);
+    AppView._stagingRebuildTimer = setTimeout(() => {
+      if (loadId !== AppView._stagingLoadId) return;
+      if (!AppView._pendingStagingPreview || AppView._pendingStagingPreview.loadId !== loadId) return;
+      AppView._setStagingLoader(true, {
+        title: 'This is taking longer than expected',
+        sub: 'The rebuild is still running on the server. Close this and click '
+          + 'Preview again in a moment.',
+      });
+    }, 180000);
+  },
+
+  // #439: terminal loader state when a rebuild can't proceed (no changes,
+  // demo env, build failure). Shows the reason in the existing loader with
+  // the back button already wired by ensureStaging.
+  _showStagingUnavailable(loadId, message) {
+    if (loadId !== AppView._stagingLoadId) return;
+    AppView._pendingStagingPreview = null;
+    AppView._setStagingLoader(true, {
+      title: 'Preview unavailable',
+      sub: message,
+    });
+  },
+
+  // #439: called by the staging_ready / staging_failed WS handlers when a
+  // pending on-demand rebuild resolves. Opens the (new) URL on success, or
+  // surfaces the failure reason in the loader.
+  onStagingRebuildResult(sessionId, { url, failed, error } = {}) {
+    const pending = AppView._pendingStagingPreview;
+    if (!pending || pending.sessionId !== sessionId) return;
+    if (pending.loadId !== AppView._stagingLoadId) { AppView._pendingStagingPreview = null; return; }
+    if (AppView._stagingRebuildTimer) { clearTimeout(AppView._stagingRebuildTimer); AppView._stagingRebuildTimer = null; }
+    AppView._pendingStagingPreview = null;
+    if (failed) {
+      AppView._setStagingLoader(true, {
+        title: 'Preview couldn’t be rebuilt',
+        sub: error || 'The staging build failed. See the dev chat for details.',
+      });
+      return;
+    }
+    if (url) AppView.swapToStaging(url, pending.testing, { jump: pending.jump });
+  },
+
   // Open staging in fullscreen overlay.
   //
   // #127: `testing` is the session's bot-generated testing guidance
@@ -3482,9 +4925,14 @@ const AppView = {
 
     // Build iframe URLs with the URL API so a deep link carrying its own
     // query string composes with the token param (no '?token=' concat).
+    // The URL API also keeps a `#app/...` fragment after the token query,
+    // so the self-app deep link below loads correctly (#353).
     const buildSrc = (path) => {
+      const visit = AppView.appData && AppView.appData.self_hosted
+        ? AppView._selfAppHashPath(path)
+        : path;
       let url;
-      try { url = new URL(path || '/', resolved); } catch { return resolved; }
+      try { url = new URL(visit || '/', resolved); } catch { return resolved; }
       if (AppView.iframeToken) url.searchParams.set('token', AppView.iframeToken);
       return url.toString();
     };
@@ -3525,8 +4973,17 @@ const AppView = {
   // the testing guidance stashed by voteButtonsHtml at render time, so the
   // existing Preview button passes it through without any new UI there.
   swapToStagingForSession(sessionId, stagingUrl) {
-    AppView.swapToStaging(stagingUrl, (AppView._sessionTesting || {})[sessionId] || null);
+    // #439: route through ensure-then-open so a vote-panel preview that was
+    // torn down (idle GC, lost container) rebuilds on click instead of
+    // opening a dead page.
+    AppView.ensureStaging(sessionId, stagingUrl, (AppView._sessionTesting || {})[sessionId] || null, {});
   },
+
+  // #439: pending on-demand-rebuild marker ({ sessionId, jump, testing,
+  // loadId } | null), set by ensureStaging and consumed by the
+  // staging_ready / staging_failed WS handlers via onStagingRebuildResult.
+  _pendingStagingPreview: null,
+  _stagingRebuildTimer: null,
 
   // #127: per-render registry of { md, path } testing guidance keyed by
   // session id, populated by voteButtonsHtml. Exists so bot-authored
@@ -3665,6 +5122,10 @@ const AppView = {
     const iframe = document.getElementById('staging-iframe');
     // Invalidate any in-flight readiness poll and hide the loader.
     AppView._stagingLoadId += 1;
+    // #439: drop any pending on-demand rebuild marker + its give-up timer so
+    // a late staging_ready can't reopen the overlay after the user left.
+    AppView._pendingStagingPreview = null;
+    if (AppView._stagingRebuildTimer) { clearTimeout(AppView._stagingRebuildTimer); AppView._stagingRebuildTimer = null; }
     AppView._setStagingLoader(false);
     if (overlay) overlay.classList.add('hidden');
     if (iframe) iframe.src = '';
@@ -4229,4 +5690,8 @@ function relTime(iso) {
 // see `window.AppView === undefined` and never call openMembersModal /
 // openShareModal — the drawer closed but no panel ever opened. (Found via the
 // staging debug overlay: "drawer-row-members CLICK fired → window.AppView MISSING".)
-window.AppView = AppView;
+// Guarded so requiring this file in node (for the pure-helper unit tests,
+// see the module.exports block above) doesn't crash on a missing `window`.
+if (typeof window !== 'undefined') {
+  window.AppView = AppView;
+}

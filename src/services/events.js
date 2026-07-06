@@ -45,6 +45,15 @@ const EVENT_TYPES = Object.freeze({
   // Attributed to the session owner (sync bills the owner), recorded on
   // the terminal path with { syncResult, behind, sha, pushOk, trigger }.
   SYNC_MAIN: 'sync_main',
+  // Fable 5 classifier fallback: a platform-authored Anthropic call was
+  // served by the fallback model (usage.iterations detection). Recorded
+  // with { requested, served, category, source } via
+  // services/model-fallback.js. No backfill — detection didn't exist
+  // before these emitters shipped.
+  MODEL_FALLBACK: 'model_fallback',
+  // Whole-chain refusal: the requested model AND its fallback declined
+  // (or the fallback couldn't run and the direct retry declined too).
+  MODEL_REFUSAL: 'model_refusal',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

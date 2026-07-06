@@ -63,6 +63,19 @@ const ISSUES_MAX_PAGES = 10;          // 10 * 100 = up to 1000 open issues
 const ISSUE_BODY_MAX = 500;
 const ISSUES_FETCH_TIMEOUT_MS = 8000; // per-page request timeout
 
+// Issue-comment thread reads (fetchIssueComments). Comments are fetched
+// on demand (not cached) when an agent or the topic view drills into ONE
+// issue, so the page ceiling bounds worst-case work for a chatty thread:
+// 3 pages * 100/page = up to 300 comments collected. clipIssueComments
+// then caps what reaches a model's context / the UI at the most-recent
+// ISSUE_COMMENTS_KEEP, with each body clipped at ISSUE_COMMENT_BODY_MAX
+// (matching the headless seed's HEADLESS_SEED_COMMENT_MAX_CHARS).
+const ISSUE_COMMENTS_MAX_PAGES = 3;
+const ISSUE_COMMENTS_PER_PAGE = 100;
+const ISSUE_COMMENTS_MAX = 300;       // total collected cap (max option default)
+const ISSUE_COMMENTS_KEEP = 30;       // most-recent kept by clipIssueComments
+const ISSUE_COMMENT_BODY_MAX = 2000;  // per-comment body clip
+
 // #144: known-closed suppression. Cache busting alone can't keep the
 // "Open Issues" panel honest after a merge: fetchPublicIssues reads
 // GitHub's ANONYMOUS list endpoint, which is eventually consistent and
@@ -1055,62 +1068,110 @@ async function fetchPublicIssue(owner, repo, number) {
   }
 }
 
-// Fetch an issue's comments via the same public REST pattern as
+// Fetch an issue's comment thread via the same public REST pattern as
 // fetchPublicIssue (timeout, publicFetchHeaders auth, rate-limit
-// handling). Used by the headless auto-solve seed (#150) so answers the
-// reporter left as comments are visible to the run. NEVER throws: every
-// outcome resolves to `{ comments: [{ author, body, createdAt }], note? }`
-// — on any failure the list is empty with a `note` naming why. No
-// caching: it's called once per auto-solve click. GitHub returns issue
-// comments oldest-first; per_page bounds the fetch to one page.
-async function fetchIssueComments(owner, repo, number, { max = 20 } = {}) {
+// handling). Backs the headless auto-solve seed (#150 — so answers the
+// reporter left as comments are visible to the run) and, since #396, the
+// on-demand single-issue read surfaces (the Mayor's get_github_issue tool,
+// the worker's `usernode-issues <number>` CLI, and the Dev topic view).
+//
+// GitHub returns issue comments OLDEST-FIRST and paginates via the Link
+// header. We follow it like fetchPublicIssues does — up to
+// ISSUE_COMMENTS_MAX_PAGES pages of ISSUE_COMMENTS_PER_PAGE — collecting
+// the WHOLE thread (in order) up to `max`. `truncated` is true when more
+// pages remained at the ceiling or `max` was hit, so a caller can keep the
+// MOST RECENT comments (the tail) and know older ones were dropped. (The
+// old single-page fetch returned the OLDEST page, so a chatty thread's
+// recent answers were invisible despite the seed's "most recent" wording.)
+//
+// NEVER throws: every outcome resolves to
+// `{ comments: [{ author, body, createdAt }], truncated, note? }` — on any
+// failure the list is empty, `truncated` false, and `note` names why. No
+// caching: it's an on-demand read.
+async function fetchIssueComments(owner, repo, number, { max = ISSUE_COMMENTS_MAX } = {}) {
   const n = Number(number);
   if (!owner || !repo || !Number.isInteger(n) || n <= 0) {
-    return { comments: [], note: 'bad issue number' };
+    return { comments: [], truncated: false, note: 'bad issue number' };
   }
+
+  let url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`
+    + `/issues/${n}/comments?per_page=${ISSUE_COMMENTS_PER_PAGE}`;
+  const collected = [];
+  let page = 0;
 
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), ISSUES_FETCH_TIMEOUT_MS);
-    let resp;
-    try {
-      resp = await fetch(
-        `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${n}/comments?per_page=${max}`,
-        {
+    while (url && page < ISSUE_COMMENTS_MAX_PAGES) {
+      page += 1;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), ISSUES_FETCH_TIMEOUT_MS);
+      let resp;
+      try {
+        resp = await fetch(url, {
           headers: publicFetchHeaders(),
           signal: controller.signal,
-        }
-      );
-    } finally {
-      clearTimeout(timer);
-    }
+        });
+      } finally {
+        clearTimeout(timer);
+      }
 
-    if ((resp.status === 403 && resp.headers.get('x-ratelimit-remaining') === '0') || resp.status === 429) {
-      log.warn('github', 'Issue-comments fetch rate-limited', { repo: `${owner}/${repo}`, issue: n });
-      return { comments: [], note: 'rate limited' };
-    }
-    if (resp.status === 404) {
-      return { comments: [], note: 'not found' };
-    }
-    if (!resp.ok) {
-      return { comments: [], note: 'fetch failed' };
-    }
+      if ((resp.status === 403 && resp.headers.get('x-ratelimit-remaining') === '0') || resp.status === 429) {
+        log.warn('github', 'Issue-comments fetch rate-limited', { repo: `${owner}/${repo}`, issue: n });
+        return { comments: [], truncated: false, note: 'rate limited' };
+      }
+      if (resp.status === 404) {
+        return { comments: [], truncated: false, note: 'not found' };
+      }
+      if (!resp.ok) {
+        return { comments: [], truncated: false, note: 'fetch failed' };
+      }
 
-    const raw = await resp.json();
-    if (!Array.isArray(raw)) {
-      return { comments: [], note: 'fetch failed' };
+      const raw = await resp.json();
+      if (!Array.isArray(raw)) {
+        return { comments: [], truncated: false, note: 'fetch failed' };
+      }
+      for (const c of raw) {
+        collected.push({
+          author: (c && c.user && c.user.login) || '',
+          body: (c && c.body) || '',
+          createdAt: (c && c.created_at) || '',
+        });
+      }
+      // Hit the total cap mid-thread: stop and flag the rest as omitted.
+      if (collected.length >= max) {
+        return { comments: collected.slice(0, max), truncated: true };
+      }
+      url = parseNextLink(resp.headers.get('link'));
     }
-    return {
-      comments: raw.map((c) => ({
-        author: (c.user && c.user.login) || '',
-        body: c.body || '',
-        createdAt: c.created_at || '',
-      })),
-    };
+    // A next page still pending → the thread is longer than our ceiling.
+    return { comments: collected, truncated: !!url };
   } catch (err) {
     log.warn('github', 'Issue-comments fetch failed', { repo: `${owner}/${repo}`, issue: n, err: err.message });
-    return { comments: [], note: 'fetch failed' };
+    return { comments: [], truncated: false, note: 'fetch failed' };
   }
+}
+
+// Clip a comment thread for agent-facing surfaces and the topic view so a
+// chatty issue can't blow up a model's context (or the UI). Mirrors
+// truncateIssueBodies: keeps the MOST-RECENT `max` comments (GitHub orders
+// oldest-first, so we keep the tail), clips each body at `bodyMax` with an
+// explicit "… [truncated]" marker, and reports whether anything was
+// dropped. `wasTruncated` carries through an upstream truncation (a thread
+// longer than fetchIssueComments' page ceiling) so the combined flag is
+// honest even when the kept count is under `max`. Never mutates the input.
+// Returns `{ comments, truncated }`.
+function clipIssueComments(comments, { max = ISSUE_COMMENTS_KEEP, bodyMax = ISSUE_COMMENT_BODY_MAX, wasTruncated = false } = {}) {
+  const list = Array.isArray(comments) ? comments : [];
+  const kept = list.slice(-max);
+  const droppedOlder = list.length > kept.length;
+  const clipped = kept.map((c) => {
+    const body = typeof c.body === 'string' ? c.body : '';
+    return {
+      author: c.author || '',
+      body: body.length > bodyMax ? `${body.slice(0, bodyMax)}… [truncated]` : body,
+      createdAt: c.createdAt || '',
+    };
+  });
+  return { comments: clipped, truncated: !!wasTruncated || droppedOlder };
 }
 
 // Drop the cached open-issues list for a repo so the next fetchPublicIssues
@@ -1213,6 +1274,7 @@ module.exports = {
   fetchPublicIssues,
   fetchPublicIssue,
   fetchIssueComments,
+  clipIssueComments,
   refreshPublicIssues,
   truncateIssueBodies,
   invalidateIssuesCache,

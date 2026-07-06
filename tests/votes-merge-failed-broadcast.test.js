@@ -77,8 +77,11 @@ function loadVotesWithFailingMerge(mergeError) {
   stub(ids.staging, {});
   stub(ids.docker, {});
   stub(ids.resolver, {
-    checkAndResolveConflicts: async () => {},
-    resolveAndMaybeRetry: async (...args) => { resolverCalls.push(args); return { ok: true }; },
+    // The conflict / behind_main auto-resolve paths now funnel through the
+    // app-level drain (checkAndResolveConflicts) so resolves are serialized
+    // one-per-app, rather than firing a per-session resolveAndMaybeRetry.
+    checkAndResolveConflicts: async (...args) => { resolverCalls.push(args); return undefined; },
+    resolveAndMaybeRetry: async () => ({ ok: true }),
     isResolving: () => false,
   });
   stub(ids.ws, {
@@ -137,6 +140,37 @@ test('checkAndMerge catch: 405 conflict failure broadcasts mergeFailed with reso
     assert.equal(failed[0].selfHosted, true);
     assert.equal(failed[0].sessionId, 7);
     assert.equal(resolverCalls.length, 1, 'the auto-resolver was actually kicked off');
+  } finally {
+    restore();
+  }
+});
+
+// #384: the ⚠ "Conflicts" badge is only honest if the 'conflict'
+// snapshot is written by a REAL auto-merge attempt that failed. This is
+// the one legitimate writer (the speculative mergeability-check writer in
+// conflict-resolver.js was removed), so guard that it keeps persisting
+// merge_conflict_state='conflict' on a 405 conflict failure.
+test('#384: checkAndMerge catch persists merge_conflict_state=conflict on a 405 conflict failure', async () => {
+  const err = Object.assign(new Error('Pull Request is not mergeable'), { status: 405 });
+  const { subject, restore } = loadVotesWithFailingMerge(err);
+  try {
+    const calls = [];
+    const recordingPool = {
+      async query(sql, params) {
+        calls.push({ sql, params });
+        if (/SET behind_main = GREATEST/.test(sql)) return { rows: [{ behind_main: 1 }] };
+        if (/SET status = 'merging'/.test(sql)) return { rows: [{ id: 7 }] };
+        if (/SELECT COUNT\(\*\) as cnt FROM pr_votes/.test(sql)) return { rows: [{ cnt: '1' }] };
+        return { rows: [] };
+      },
+    };
+    const r = await subject.checkAndMerge({ jwtSecret: 's' }, recordingPool, { ...session }, { force: true });
+    assert.equal(r.conflict, true);
+
+    const bump = calls.find((c) => /SET behind_main = GREATEST/.test(c.sql));
+    assert.ok(bump, 'the conflict path issues the behind_main/merge_conflict_state bump');
+    assert.match(bump.sql, /merge_conflict_state = 'conflict'/,
+      'the real merge-time conflict still records the conflict snapshot');
   } finally {
     restore();
   }

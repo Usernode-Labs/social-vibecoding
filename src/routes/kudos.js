@@ -15,6 +15,56 @@ const WEEKLY_KUDOS_LIMIT = 5;
 // signal, not encouragement on private work.
 const ELIGIBLE_STATES = ['promoted', 'merging', 'merged'];
 
+// Canonical set of per-user fields the GET /api/leaderboard/users handler
+// returns, kept in sync with the SELECT aliases in that query. Used to
+// validate the optional `fields` allowlist query param: unknown names are
+// silently ignored (never reach SQL), so this Set is the single source of
+// truth for what a caller may ask for. `username` is always present
+// regardless of `fields` — it's listed here too so `?fields=username` works.
+const LEADERBOARD_USER_FIELDS = new Set([
+  'user_id',
+  'username',
+  'kudos_received',
+  'prs_kudosed',
+  'kudos_received_prs_merged',
+  'kudos_received_prs_unmerged',
+  'prs_merged',
+  'last_kudos_at',
+  'kudos_given',
+  'issues_created',
+  // The user's linked Usernode wallet address (the `ut1...` value stored in
+  // users.usernode_pubkey), or null when no wallet is linked. Aliased to
+  // `address` in the SELECT below.
+  'address',
+  // The apps this user is CURRENTLY active on — a JSON array of {slug, name}
+  // objects, built by the `active_apps` LATERAL below (mirrors the active-user
+  // rules in src/services/active-users.js). Empty array when active on nothing.
+  // Always reflects the rolling 10-day window; the `window` param does NOT
+  // scope it (same as prs_merged). Under include_0_values=0 an empty [] is
+  // KEPT (it's neither 0 nor null), consistent with the empty {} kudos_given map.
+  'active_apps',
+]);
+
+// Shape a single leaderboard/users row per the optional `fields` /
+// `include_0_values` query params. `selectedKeys` is null (return all keys)
+// or a Set of allowlisted field names to project down to. `dropEmpty` drops
+// any field whose value is literally 0 or null (strict equality — an empty
+// {} kudos_given map or a present timestamp is KEPT). `username` is ALWAYS
+// present, no matter the params. Projection happens first, then zero/null
+// filtering, then the username invariant is re-asserted.
+function shapeLeaderboardRow(row, selectedKeys, dropEmpty) {
+  // Start from username so it can never be projected or filtered away.
+  const out = { username: row.username };
+  for (const key of LEADERBOARD_USER_FIELDS) {
+    if (key === 'username') continue;
+    if (selectedKeys && !selectedKeys.has(key)) continue;
+    const value = row[key];
+    if (dropEmpty && (value === 0 || value === null)) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
 // Compute the Monday-00:00-UTC date that contains the given Date.
 // Mirror of Postgres's `date_trunc('week', t AT TIME ZONE 'UTC')::DATE`
 // for that same instant. JS getUTCDay() returns 0..6 with Sunday=0; we
@@ -693,6 +743,20 @@ function kudosRoutes(config) {
   //                                 regardless of window: chat_sessions has no
   //                                 merge timestamp, only a 'merged' status, so
   //                                 there's nothing to window it by.
+  //   issues_created              — count of issues the user filed (issues.created_by)
+  //                                 on public apps, window-filtered by created_at.
+  //                                 Display-only detail; NOT a sort key.
+  //   active_apps                 — JSON array of {slug, name} for the apps the
+  //                                 user is CURRENTLY active on, per the active-
+  //                                 user rules in src/services/active-users.js
+  //                                 (ever >=60s in a day on the app, AND visited
+  //                                 within the last 10 days; collab-private apps
+  //                                 only count members; self-hosted apps excluded).
+  //                                 Private-VIEW apps ARE included — this reflects
+  //                                 every app the user actually uses, not just
+  //                                 public-view ones. ALWAYS reflects the rolling
+  //                                 10-day window — NOT scoped by the `window`
+  //                                 param (like prs_merged). Display-only.
   // --------------------------------------------------------------
   router.get('/api/leaderboard/users', async (req, res) => {
     // Public endpoint (see PUBLIC_PATHS in middleware/auth.js) — no
@@ -700,6 +764,28 @@ function kudosRoutes(config) {
     const windowArg = req.query.window === 'week' ? 'week' : 'all';
     // `limit` is optional now: absent/blank => return all users.
     const hasLimit = req.query.limit !== undefined && req.query.limit !== '';
+    // Optional `fields` allowlist: comma-separated field names to project
+    // each item down to. Unset/blank => return all keys. Unknown names are
+    // silently ignored (intersect with LEADERBOARD_USER_FIELDS); `username`
+    // is always kept regardless. The intersection means user input never
+    // reaches SQL, so there's no injection surface.
+    const fieldsRaw = typeof req.query.fields === 'string' ? req.query.fields : '';
+    let selectedKeys = null;
+    if (fieldsRaw.trim() !== '') {
+      selectedKeys = new Set(
+        fieldsRaw
+          .split(',')
+          .map((s) => s.trim())
+          .filter((s) => s !== '' && LEADERBOARD_USER_FIELDS.has(s))
+      );
+      // `username` is always present; force it in so the projection never
+      // strips it (and so `?fields=username` is a valid no-op selection).
+      selectedKeys.add('username');
+    }
+    // Optional `include_0_values`: only the exact string '0' enables dropping
+    // fields whose value is literally 0 or null. Unset / '1' / anything else
+    // keeps them (default 1).
+    const dropEmpty = req.query.include_0_values === '0';
     try {
       const weekStart = weekStartUtc();
       const params = [];
@@ -713,11 +799,15 @@ function kudosRoutes(config) {
       // The awarded-bounty LATERAL (below) scopes by awarded_at, bucketed to
       // the same Monday-00:00-UTC week as weekStartUtc(), reusing the param.
       let bountyWindow = '';
+      // The issues-created LATERAL (below) scopes by created_at, bucketed to
+      // the same Monday-00:00-UTC week as weekStartUtc(), reusing the param.
+      let issuesWindow = '';
       if (windowArg === 'week') {
         params.push(weekStart);
         kudosWindow = `AND pk.week_start = $${params.length}`;
         givenWindow = `AND gk.week_start = $${params.length}`;
         bountyWindow = `AND date_trunc('week', ib.awarded_at AT TIME ZONE 'UTC')::date = $${params.length}`;
+        issuesWindow = `AND date_trunc('week', i.created_at AT TIME ZONE 'UTC')::date = $${params.length}`;
       }
       let limitClause = '';
       if (hasLimit) {
@@ -751,7 +841,10 @@ function kudosRoutes(config) {
                 COUNT(pk.id) FILTER (WHERE cs.status <> 'merged')::int AS kudos_received_prs_unmerged,
                 COUNT(DISTINCT cs.id) FILTER (WHERE cs.status = 'merged')::int AS prs_merged,
                 GREATEST(MAX(pk.created_at), ab.last_at) AS last_kudos_at,
-                kg.kudos_given
+                kg.kudos_given,
+                COALESCE(ic.cnt, 0)::int AS issues_created,
+                u.usernode_pubkey AS address,
+                aa.active_apps
            FROM users u
            LEFT JOIN chat_sessions cs ON cs.user_id = u.id
              AND EXISTS (SELECT 1 FROM apps ap
@@ -777,7 +870,56 @@ function kudosRoutes(config) {
                 AND EXISTS (SELECT 1 FROM apps ap
                             WHERE ap.id = ib.app_id AND ap.view_visibility = 'public')
            ) ab ON true
-           GROUP BY u.id, u.username, kg.kudos_given, ab.received, ab.last_at
+           LEFT JOIN LATERAL (
+             SELECT COUNT(*)::int AS cnt
+               FROM issues i
+              WHERE i.created_by = u.id ${issuesWindow}
+                AND EXISTS (SELECT 1 FROM apps ap
+                            WHERE ap.id = i.app_id AND ap.view_visibility = 'public')
+           ) ic ON true
+          -- The apps the user is CURRENTLY active on — a pure ACTIVITY signal
+          -- (the "active user"/"tested" definition), deliberately decoupled
+          -- from collab-eligibility. Uses the activity half of
+          -- src/services/active-users.js (hasQualifyingActivity); keep the
+          -- 60s bar / 10-day window in sync if either moves:
+          --   * non-self-hosted apps only (the self-app never accrues its own
+          --     app_activity rows). Private-VIEW apps ARE included — a user's
+          --     own activity on a private-view app is not private data about
+          --     anyone else, and the leaderboard should reflect all the apps
+          --     they use, not just the public-view ones.
+          --   * EVER qualified: some app_activity row with seconds_spent >= 60;
+          --   * visited recently: an app_activity row within the last 10 days.
+          -- NO collab-membership gate: a user who spent >=60s/day on an app has
+          -- "tested" it whether or not they're a member collaborator. Collab-
+          -- eligibility is a SEPARATE concern, enforced at the vote layer
+          -- (appAccess 'collab') and folded into the vote-majority denominator
+          -- (active-users.js getActiveUserStats = activity ∩ eligibility) — not
+          -- here, where it would hide collab-private apps (e.g. goalio) from
+          -- their own testers.
+          -- Intrinsically 10-day-windowed, so it is NOT scoped by the window arg.
+          -- COALESCE to an empty array so "active on nothing" is [] not null.
+          LEFT JOIN LATERAL (
+            SELECT COALESCE(
+                     jsonb_agg(
+                       jsonb_build_object('slug', ap.slug, 'name', ap.name)
+                       ORDER BY ap.name, ap.slug
+                     ),
+                     '[]'::jsonb
+                   ) AS active_apps
+              FROM apps ap
+             WHERE ap.self_hosted = FALSE
+               AND EXISTS (
+                 SELECT 1 FROM app_activity r
+                  WHERE r.app_id = ap.id AND r.user_id = u.id
+                    AND r.date >= CURRENT_DATE - 10
+               )
+               AND EXISTS (
+                 SELECT 1 FROM app_activity q
+                  WHERE q.app_id = ap.id AND q.user_id = u.id
+                    AND q.seconds_spent >= 60
+               )
+           ) aa ON true
+           GROUP BY u.id, u.username, u.usernode_pubkey, kg.kudos_given, ab.received, ab.last_at, ic.cnt, aa.active_apps
            ORDER BY kudos_received_prs_merged DESC,
                     prs_merged DESC,
                     kudos_received DESC,
@@ -786,10 +928,18 @@ function kudosRoutes(config) {
            ${limitClause}`,
         params
       );
+      // Shape each item per the optional `fields` / `include_0_values`
+      // params (projection then zero/null filtering, username always kept).
+      // When neither is set this is a no-op and rows pass through unchanged.
+      // The envelope (window/weekStart) is untouched.
+      const items =
+        selectedKeys || dropEmpty
+          ? rows.map((r) => shapeLeaderboardRow(r, selectedKeys, dropEmpty))
+          : rows;
       res.json({
         window: windowArg,
         weekStart: windowArg === 'week' ? weekStart : null,
-        items: rows,
+        items,
       });
     } catch (err) {
       log.error('kudos', 'leaderboard/users failed', { err: err.message });

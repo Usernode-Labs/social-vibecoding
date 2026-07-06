@@ -48,7 +48,7 @@ function loadSessions(mockPool, overrides = {}) {
   const githubStub = {
     isEnabled: () => true,
     fetchPublicIssue: async () => ({ issue: { number: 5, title: 'Make it better', body: 'please' } }),
-    fetchIssueComments: async () => ({ comments: [] }),
+    fetchIssueComments: async () => ({ comments: [], truncated: false }),
     getBotUsername: async () => 'usernode-bot',
     createBranch: async () => {},
     createIssueComment: async () => {},
@@ -407,6 +407,64 @@ test('describeMarkerlessExit maps every cause to plain terms', () => {
     // Unknown/legacy causes still get a sentence, never "-1".
     assert.match(d(null), /without reporting a result/);
   } finally {
+    loaded.restore();
+  }
+});
+
+// ── #358: the "Claude Code finished" completion row is reserved for runs
+// that actually changed code. A run that committed nothing emits an honest
+// non-success status instead, so a no-op never reads as a completed build.
+
+const BUILD_NOOP = {
+  lastResultText: 'I reviewed the relevant files; nothing needed changing.',
+  exitCode: 0, resultSeen: true, ahead: 0, behind: 0,
+  sha: null, pushOk: false, rawStderr: '', sessionId: 'cc-1', markerlessCause: null,
+};
+
+test('headless build success persists the "Claude Code finished" completion row', async () => {
+  const pool = makeMockPool();
+  const loaded = loadSessions(pool, {
+    llm: sequencedLlm([BUILD_CALL_TURN, WRAP_TURN]),
+    worker: {
+      execInWorker: async () => ({ ...BUILD_SUCCESS }),
+      stopTurn: async () => {},
+      isWorkerExecuting: async () => false,
+    },
+  });
+  const srv = await startTestServer(loaded);
+  try {
+    await startHeadlessRun(srv);
+    await waitFor(() => pool.state.terminal !== null);
+
+    assert.ok(pool.state.messages.some((m) => m.content === 'Claude Code finished'));
+    assert.ok(!pool.state.messages.some((m) => m.content === 'Claude Code made no changes'));
+  } finally {
+    await srv.close();
+    loaded.restore();
+  }
+});
+
+test('headless build that changes nothing emits an honest non-success status, never "finished"', async () => {
+  const pool = makeMockPool();
+  const loaded = loadSessions(pool, {
+    llm: sequencedLlm([BUILD_CALL_TURN, WRAP_TURN]),
+    worker: {
+      execInWorker: async () => ({ ...BUILD_NOOP }),
+      stopTurn: async () => {},
+      isWorkerExecuting: async () => false,
+    },
+  });
+  const srv = await startTestServer(loaded);
+  try {
+    await startHeadlessRun(srv);
+    await waitFor(() => pool.state.terminal !== null);
+
+    // The honest no-op status carries the agent's words; the green
+    // "Claude Code finished" completion row is never written.
+    assert.ok(pool.state.messages.some((m) => m.content === 'Claude Code made no changes'));
+    assert.ok(!pool.state.messages.some((m) => m.content === 'Claude Code finished'));
+  } finally {
+    await srv.close();
     loaded.restore();
   }
 });

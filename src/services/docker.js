@@ -210,7 +210,18 @@ async function waitForHealthy(name, port, healthPath, maxRetries = 30) {
     lastWgetErr: lastErr ? (lastErr.stderr || lastErr.message || String(lastErr)).slice(0, 500) : null,
     containerLogs: containerLogs.slice(-2000), // last 2kB is plenty for a stack trace
   });
-  throw new Error(`Healthcheck failed after ${maxRetries} attempts: ${name}`);
+  // Attach the collected boot diagnostics to the thrown error so callers
+  // (staging build → proposal-checks recovery) can persist a concise reason
+  // onto the session instead of leaving check_state NULL with the cause
+  // buried in platform logs. `healthcheckFailed` lets callers distinguish a
+  // boot/healthcheck failure (the app can't even start) from other build
+  // errors. See services/visuals.summarizeBootFailure for the reason
+  // extraction and staging-recovery.recheckSessionChecks for the persist.
+  const err = new Error(`Healthcheck failed after ${maxRetries} attempts: ${name}`);
+  err.healthcheckFailed = true;
+  err.containerStatus = containerStatus || null;
+  err.containerLogs = containerLogs ? containerLogs.slice(-2000) : '';
+  throw err;
 }
 
 function sleep(ms) {

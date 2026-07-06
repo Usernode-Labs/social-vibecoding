@@ -1,7 +1,7 @@
 // Admin analytics dashboard client. Fetches the /api/admin/analytics/*
 // endpoints and renders counters, the two funnels, growth time series,
-// and the retention cohort heatmap + WAU/MAU stickiness. Vanilla JS +
-// hand-rolled SVG so there's no chart-lib dependency to ship.
+// the retention cohort heatmap, and the General-users / Power-users daily
+// charts. Vanilla JS + hand-rolled SVG so there's no chart-lib dependency.
 
 const fmtInt = (n) => (n == null ? '—' : Number(n).toLocaleString());
 const pct = (num, den) => (den > 0 ? Math.round((num / den) * 100) : 0);
@@ -17,6 +17,11 @@ function esc(s) {
 // the kudos ramp). It only appears while the "Include admin users" box is
 // ticked; with the box off every chart looks exactly as it did before.
 const ADMIN_COLOR = '#f59e0b';
+
+// #361: system-token spend colour for the Daily-spend chart. A distinct
+// sky/cyan, clearly separate from platform violet (#8b5cf6), user-key
+// green (#34d399), and admin amber (#f59e0b).
+const SYSTEM_COLOR = '#06b6d4';
 
 // The small "Non-admin / Admin" swatch legend, reusing the inline-swatch
 // markup the spend "Both" legend already uses. Rendered only while admins
@@ -99,11 +104,13 @@ const INFO = {
   spend: 'LLM spend per day for the last 30 days. <b>Platform key</b> is spend billed to the platform key (this is what the daily caps track); <b>User key</b> is spend billed to users\' own Anthropic keys (display only); <b>Both</b> stacks them.',
   funnels: 'Each stage shows the count reaching that milestone and the step-over-step conversion. "Promoted" = a session opened for group vote; "Merged" = landed in production. Use the cohort buttons to scope to recent signups.',
   growth: 'New signups, apps, and promoted/merged PRs bucketed per ISO week. Hover any bar for that week\'s exact count.',
-  retention: 'Each row is a signup-week cohort; each cell is the share of that cohort active (any tracked action) N weeks later. Hover a cell for the exact counts. Below, WAU/MAU stickiness charts weekly active vs trailing-28-day active.',
-  engagement: 'Operator-defined engagement tiers (not the classic active-user counts above), charted weekly. Hover a bar for the exact value.',
+  'general-users': 'A general user is anyone active during the period (any tracked action — used a dapp, sent a chat message, or sent a dev-session message). <b>DAU</b> is distinct users active that day; <b>WAU</b> is a 7-day rolling window (distinct users in the trailing 7 days, recomputed every day); <b>MAU</b> is a 30-day rolling window. Daily points over the last 90 days. Hover for the exact date and count.',
+  retention: 'Each row is a signup-week cohort; each cell is the share of that cohort active (any tracked action) in a given week. Hover a cell for the exact counts. Use the <b>Align</b> toggle to line cohorts up on real calendar weeks (default) or by cohort age (Week 0, Week 1, …).',
+  'power-users': 'A power user, evaluated over a 7-day window, both used dapps &ge; 3 times that week (counting each use of any dapp) AND did &ge; 3 visible developer actions (each a kudos given, vote cast, or proposal made). <b>Power-user WAU</b> is a 7-day rolling count; <b>Consistency (L4)</b> stacks, per day, how many of the trailing 4 weeks each user was a power user (1/4…4/4). Hover for exact counts.',
   'top-users': 'The 30 most prolific builders by lifetime dev sessions started, highest on the left. Hover a bar for the per-outcome breakdown (PRs produced, promoted, voted, merged).',
   'spend-by-builder': 'The 30 biggest LLM spenders, highest on the left. The toggle re-ranks by <b>Platform key</b> spend, <b>User key</b> (BYOK) spend, or <b>Both</b>. Hover a bar for the full breakdown.',
   kudos: 'Per ISO week, how many users gave 0–5 kudos (everyone gets a budget of 5/week). The 0 bucket is registered users who gave none that week, making this a participation view rather than a raw count.',
+  'spend-distribution': 'Per day, how many users\' platform-key AI spend (what the daily caps track) fell into each dollar bucket. The <b>$0</b> bucket is every registered user (as of that day) with no platform spend — it usually dwarfs the paid buckets, so it is hidden by default; use the <b>Show $0</b> toggle to include it. The top tier splits <b>$20+ capped</b> (heavy spenders with no usable own key — blocked at the cap) from <b>$20+ own key</b> (heavy spenders who had a personal Anthropic key configured, or spent on it that day, so could keep going). The "has own key" signal is a current snapshot corrected by that day\'s own-key spend, so past-day attribution is approximate.',
 };
 
 // Per-card Overview definitions (#341). Keyed by a stable card id, mirroring
@@ -113,7 +120,7 @@ const CARD_INFO = {
   'total-users': 'Count of all registered accounts (admins excluded unless the box above is ticked).',
   'new-7d': 'Accounts that signed up in the last 7 days.',
   'new-30d': 'Accounts that signed up in the last 30 days.',
-  'wau-mau': 'Two independent counts, not a ratio. <b>WAU</b> = distinct users who took any tracked action (used a dapp, sent a chat message, or sent a dev-session message) in the last 7 days. <b>MAU</b> = the same, over the last 30 days. Different from the Engagement-tiers DAU/WAU bars lower down, which use custom operator definitions.',
+  'wau-mau': 'Two independent counts, not a ratio. <b>WAU</b> = distinct users who took any tracked action (used a dapp, sent a chat message, or sent a dev-session message) in the last 7 days. <b>MAU</b> = the same, over the last 30 days. The General-users section below charts these same definitions as daily rolling windows.',
   'apps': 'Published apps that aren\'t self-hosted and aren\'t deleted.',
   'promoted-open': 'Live count of dev sessions sitting in the "promoted" or "merging" state right now (not a lifetime total).',
   'promoted-all': 'Every dev session that was ever opened for a group vote.',
@@ -154,6 +161,12 @@ function weekLabel(d) {
   const dt = /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(s + 'T00:00:00Z') : new Date(s);
   if (isNaN(dt.getTime())) return '';
   return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
+// Short "Mar 3" style label for a single calendar day. Same formatting as
+// weekLabel — kept as its own name so day-resolution call sites read clearly.
+function dayLabel(d) {
+  return weekLabel(d);
 }
 
 async function getJSON(url) {
@@ -363,124 +376,242 @@ function renderGrowth(g) {
 }
 
 // ── Retention cohort heatmap ──────────────────────────────────
-function renderRetention(r) {
-  const cohorts = (r.cohorts || []).slice().sort((a, b) =>
-    a.cohortWeek < b.cohortWeek ? 1 : -1); // newest first
-  let maxOffset = 0;
-  for (const c of cohorts) {
-    for (const k of Object.keys(c.offsets)) maxOffset = Math.max(maxOffset, Number(k));
-  }
-  maxOffset = Math.min(maxOffset, 11); // keep the triangle readable
+// Empty-state markup shared by the daily charts.
+const EMPTY_MSG = '<p class="text-sm text-zinc-500">Not enough data yet.</p>';
+
+// ── Daily line chart ──────────────────────────────────────────
+// A polyline over ~90 daily points (too dense for per-day bars). Each
+// point gets a tiny dot plus a full-height transparent hit-band so the
+// whole column is hoverable. opts.grid / opts.tipPrefix + opts.tip(i)
+// mirror barChart; the caller must attachTooltip() afterwards.
+function lineChart(values, labels, color, opts = {}) {
+  const n = values.length;
+  const W = 320, H = 90, pad = 14;
+  const vals = values.map((v) => Number(v) || 0);
+  const max = Math.max(1, ...vals);
+  const grid = opts.grid ? gridLines(W, H, 4, pad) : '';
+  const step = n > 1 ? W / (n - 1) : W;
+  const x = (i) => i * step;
+  const y = (v) => H - (v / max) * (H - pad);
+  const pts = vals.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const rich = opts.tipPrefix && typeof opts.tip === 'function';
+  const overlay = vals.map((v, i) => {
+    let attrs = '';
+    if (rich) { const tipId = `${opts.tipPrefix}-${i}`; tipStore[tipId] = opts.tip(i); attrs = ` data-tip-id="${tipId}"`; }
+    const band = `<rect class="dc-hover" x="${(x(i) - step / 2).toFixed(1)}" y="0" width="${Math.max(1, step).toFixed(1)}" height="${H}" fill="${color}" fill-opacity="0" pointer-events="all"${attrs}></rect>`;
+    const dot = `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="1.5" fill="${color}"></circle>`;
+    return band + dot;
+  }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" class="w-full text-zinc-500" style="height:90px">${grid}` +
+    `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" />${overlay}</svg>`;
+}
+
+// ── Stacked bar chart ─────────────────────────────────────────
+// `stacks` is an array (one per column) of segment arrays, bottom-to-top.
+// `colors[si]` paints segment si. A full-height transparent hover rect per
+// column drives the rich tooltip. Used by the power-user L4 chart.
+function stackedBarChart(stacks, labels, colors, opts = {}) {
+  const n = stacks.length;
+  const W = 320, H = 90, pad = 14;
+  const totals = stacks.map((s) => s.reduce((a, b) => a + (Number(b) || 0), 0));
+  const max = Math.max(1, ...totals);
+  const grid = opts.grid ? gridLines(W, H, 4, pad) : '';
+  const bw = n > 0 ? (W / n) : W;
+  const rich = opts.tipPrefix && typeof opts.tip === 'function';
+  const bars = stacks.map((segs, i) => {
+    const x = i * bw;
+    const x0 = (x + 0.4).toFixed(1);
+    const w = Math.max(0.6, bw - 0.8).toFixed(1);
+    let cursor = H;
+    let rects = '';
+    segs.forEach((seg, si) => {
+      const val = Number(seg) || 0;
+      if (val <= 0) return;
+      const h = (val / max) * (H - pad);
+      cursor -= h;
+      rects += `<rect x="${x0}" y="${cursor.toFixed(1)}" width="${w}" height="${h.toFixed(1)}" fill="${colors[si]}"></rect>`;
+    });
+    let hover = '';
+    if (rich) {
+      const tipId = `${opts.tipPrefix}-${i}`;
+      tipStore[tipId] = opts.tip(i);
+      hover = `<rect class="dc-hover" x="${x.toFixed(1)}" y="0" width="${bw.toFixed(1)}" height="${H}" fill="${colors[colors.length - 1]}" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></rect>`;
+    }
+    return rects + hover;
+  }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" class="w-full text-zinc-500" preserveAspectRatio="none" style="height:90px">${grid}${bars}</svg>`;
+}
+
+// ── Retention cohort grid ─────────────────────────────────────
+// `mode` selects the alignment:
+//   'calendar' (default) — columns are absolute calendar weeks, so every
+//      cohort's cells line up on the same dates (overlapping weeks share a
+//      column). The calendar week for offset k is cohortWeek + k*7 days.
+//   'cohort' — columns are W0, W1, … measured from each cohort's own signup
+//      week (the original triangle). Re-pivots the same payload; no refetch.
+function addWeeksISO(dateStr, k) {
+  const dt = new Date(String(dateStr) + 'T00:00:00Z');
+  dt.setUTCDate(dt.getUTCDate() + k * 7);
+  return dt.toISOString().slice(0, 10);
+}
+
+function renderRetention(r, mode) {
+  const m = mode || retAlign || 'calendar';
+  const cohorts = ((r && r.cohorts) || []).slice().sort((a, b) =>
+    (a.cohortWeek < b.cohortWeek ? 1 : -1)); // newest first
+  const el = document.getElementById('retention-cohorts');
+  if (!el) return;
+  if (!cohorts.length) { el.innerHTML = EMPTY_MSG; return; }
+
+  // One coloured cell. `key` makes the tooltip id unique within the row.
+  const cell = (v, size, headLabel, ci, key) => {
+    if (v == null) return '<td class="px-2 py-1 text-center text-zinc-700">·</td>';
+    const p = pct(v, size);
+    const alpha = Math.max(0.06, Math.min(1, p / 100));
+    const tipId = `ret-${ci}-${key}`;
+    tipStore[tipId] = `<div class="font-semibold">${esc(headLabel)}</div>
+      <div class="text-zinc-300">${fmtInt(v)} of ${fmtInt(size)} active</div>
+      <div class="text-zinc-300">${p}% retained</div>`;
+    return `<td class="px-2 py-1 text-center" data-tip-id="${tipId}" style="background:rgba(139,92,246,${alpha});cursor:pointer">
+      <span class="text-[11px] ${p >= 45 ? 'text-white' : 'text-zinc-300'}">${p}%</span></td>`;
+  };
 
   const head = ['<th class="text-left px-2 py-1 font-medium text-zinc-400">Cohort</th>',
     '<th class="px-2 py-1 font-medium text-zinc-400">Users</th>'];
-  for (let k = 0; k <= maxOffset; k++) head.push(`<th class="px-2 py-1 font-medium text-zinc-400">W${k}</th>`);
+  let rows;
 
-  const rows = cohorts.map((c, ci) => {
-    const cells = [];
-    for (let k = 0; k <= maxOffset; k++) {
-      const v = c.offsets[k];
-      if (v == null) { cells.push('<td class="px-2 py-1 text-center text-zinc-700">·</td>'); continue; }
-      const p = pct(v, c.cohortSize);
-      const alpha = Math.max(0.06, Math.min(1, p / 100));
-      const tipId = `ret-${ci}-${k}`;
-      tipStore[tipId] = `<div class="font-semibold">${esc(weekLabel(c.cohortWeek))} cohort · Week ${k}</div>
-        <div class="text-zinc-300">${fmtInt(v)} of ${fmtInt(c.cohortSize)} active</div>
-        <div class="text-zinc-300">${p}% retained</div>`;
-      cells.push(`<td class="px-2 py-1 text-center" data-tip-id="${tipId}" style="background:rgba(139,92,246,${alpha});cursor:pointer">
-        <span class="text-[11px] ${p >= 45 ? 'text-white' : 'text-zinc-300'}">${p}%</span></td>`);
-    }
-    return `<tr>
-      <td class="px-2 py-1 whitespace-nowrap text-zinc-300">${esc(weekLabel(c.cohortWeek))}</td>
-      <td class="px-2 py-1 text-center text-zinc-400">${fmtInt(c.cohortSize)}</td>
-      ${cells.join('')}
-    </tr>`;
-  }).join('');
+  if (m === 'cohort') {
+    let maxOffset = 0;
+    for (const c of cohorts) for (const k of Object.keys(c.offsets)) maxOffset = Math.max(maxOffset, Number(k));
+    maxOffset = Math.min(maxOffset, 11); // keep the triangle readable
+    for (let k = 0; k <= maxOffset; k++) head.push(`<th class="px-2 py-1 font-medium text-zinc-400">W${k}</th>`);
+    rows = cohorts.map((c, ci) => {
+      const cells = [];
+      for (let k = 0; k <= maxOffset; k++) {
+        cells.push(cell(c.offsets[k], c.cohortSize, `${weekLabel(c.cohortWeek)} cohort · Week ${k}`, ci, `w${k}`));
+      }
+      return `<tr>
+        <td class="px-2 py-1 whitespace-nowrap text-zinc-300">${esc(weekLabel(c.cohortWeek))}</td>
+        <td class="px-2 py-1 text-center text-zinc-400">${fmtInt(c.cohortSize)}</td>
+        ${cells.join('')}
+      </tr>`;
+    }).join('');
+  } else {
+    // Calendar aligned — shared, sorted set of absolute week columns.
+    const weekSet = new Set();
+    const cal = cohorts.map((c) => {
+      const map = {};
+      for (const k of Object.keys(c.offsets)) {
+        const wk = addWeeksISO(c.cohortWeek, Number(k));
+        map[wk] = c.offsets[k];
+        weekSet.add(wk);
+      }
+      return map;
+    });
+    const allCols = Array.from(weekSet).sort(); // ascending YYYY-MM-DD
+    const cols = allCols.slice(Math.max(0, allCols.length - 12)); // keep readable
+    for (const wk of cols) head.push(`<th class="px-2 py-1 font-medium text-zinc-400 whitespace-nowrap">${esc(weekLabel(wk))}</th>`);
+    rows = cohorts.map((c, ci) => {
+      const map = cal[ci];
+      const cells = cols.map((wk) =>
+        cell(map[wk], c.cohortSize, `${weekLabel(c.cohortWeek)} cohort · week of ${weekLabel(wk)}`, ci, wk)).join('');
+      return `<tr>
+        <td class="px-2 py-1 whitespace-nowrap text-zinc-300">${esc(weekLabel(c.cohortWeek))}</td>
+        <td class="px-2 py-1 text-center text-zinc-400">${fmtInt(c.cohortSize)}</td>
+        ${cells}
+      </tr>`;
+    }).join('');
+  }
 
-  const el = document.getElementById('retention-cohorts');
-  el.innerHTML = cohorts.length
-    ? `<table class="text-xs border-collapse"><thead><tr>${head.join('')}</tr></thead><tbody>${rows}</tbody></table>`
-    : '<p class="text-sm text-zinc-500">Not enough data yet.</p>';
+  el.innerHTML = `<table class="text-xs border-collapse"><thead><tr>${head.join('')}</tr></thead><tbody>${rows}</tbody></table>`;
   attachTooltip(el);
 }
 
-function renderStickiness(rows) {
-  if (!rows || !rows.length) {
-    document.getElementById('stickiness').innerHTML = '<p class="text-sm text-zinc-500">Not enough data yet.</p>';
-    return;
-  }
-  const labels = rows.map((r) => weekLabel(r.wk));
-  const wau = rows.map((r) => Number(r.wau) || 0);
-  const mau = rows.map((r) => Number(r.mau) || 0);
-  const max = Math.max(1, ...mau, ...wau);
-  const W = 640, H = 120, n = rows.length;
-  const grid = gridLines(W, H, 4, 16);
-  const step = n > 1 ? W / (n - 1) : W;
-  const line = (vals, color) => {
-    const pts = vals.map((v, i) => `${(i * step).toFixed(1)},${(H - (v / max) * (H - 16)).toFixed(1)}`).join(' ');
-    return `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" />`;
-  };
-  const dots = rows.map((r, i) => {
-    const ratio = r.mau > 0 ? Math.round((r.wau / r.mau) * 100) : 0;
-    const x = (i * step).toFixed(1);
-    const y = (H - (wau[i] / max) * (H - 16)).toFixed(1);
-    const tipId = `stick-${i}`;
-    tipStore[tipId] = `<div class="font-semibold">Week of ${esc(labels[i])}</div>
-      <div class="text-zinc-300">WAU ${fmtInt(wau[i])} · MAU ${fmtInt(mau[i])}</div>
-      <div class="text-zinc-300">Stickiness ${ratio}%</div>`;
-    // A wide transparent hit-circle so the small dot is easy to hover.
-    return `<circle cx="${x}" cy="${y}" r="2.5" fill="#8b5cf6"></circle>` +
-      `<circle class="dc-hover" cx="${x}" cy="${y}" r="9" fill="#8b5cf6" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></circle>`;
-  }).join('');
-  const stickEl = document.getElementById('stickiness');
-  stickEl.innerHTML = `
-    <div class="flex items-center gap-4 text-xs text-zinc-400 mb-2">
-      <span><span class="inline-block w-3 h-0.5 align-middle" style="background:#8b5cf6"></span> WAU</span>
-      <span><span class="inline-block w-3 h-0.5 align-middle" style="background:#60a5fa"></span> MAU (28d)</span>
-    </div>
-    <svg viewBox="0 0 ${W} ${H}" class="w-full text-zinc-500" style="height:120px">
-      ${grid}${line(mau, '#60a5fa')}${line(wau, '#8b5cf6')}${dots}
-    </svg>
-    <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
-      <span>${esc(labels[0] || '')}</span>
-      <span>${esc(labels[labels.length - 1] || '')}</span>
-    </div>`;
-  attachTooltip(stickEl);
-}
-
-// ── Engagement tiers (custom DAU / WAU) ───────────────────────
-function renderEngagement(e) {
-  const weeks = e.weeks || [];
-  const labels = weeks.map((w) => weekLabel(w.wk));
-  const dau = weeks.map((w) => Number(w.dau) || 0);
-  const wau = weeks.map((w) => Number(w.wau) || 0);
-  const dauAdmin = weeks.map((w) => Number(w.dau_admin) || 0);
-  const wauAdmin = weeks.map((w) => Number(w.wau_admin) || 0);
-
-  const block = (containerId, latestId, vals, adminVals, color, prefix, def) => {
-    const tip = (i) => `<div class="font-semibold">${esc(prefix.toUpperCase())}</div>
-      <div class="text-zinc-300">Week of ${esc(labels[i] || '')}</div>
-      <div class="text-zinc-300">${fmtInt(vals[i] + adminVals[i])} users${includeAdmins && adminVals[i] > 0 ? ` · ${fmtInt(adminVals[i])} admin` : ''}</div>
-      <div class="text-zinc-500 mt-1 text-[11px]">${def}</div>`;
+// ── General users (DAU / WAU / MAU daily rolling windows) ──────
+function renderGeneralUsers(g) {
+  const daily = (g && g.daily) || [];
+  const labels = daily.map((r) => dayLabel(r.day));
+  const block = (containerId, latestId, key, color, def) => {
     const el = document.getElementById(containerId);
-    el.innerHTML = `
-      ${adminLegend(color)}
-      ${barChart(vals, labels, color, { grid: true, tipPrefix: `eng-${prefix}`, tip, adminValues: adminVals })}
+    if (!el) return;
+    const latestEl = document.getElementById(latestId);
+    if (!daily.length) { el.innerHTML = EMPTY_MSG; if (latestEl) latestEl.textContent = ''; return; }
+    const vals = daily.map((r) => Number(r[key]) || 0);
+    const tip = (i) => `<div class="font-semibold">${esc(labels[i] || '')}</div>
+      <div class="text-zinc-300">${fmtInt(vals[i])} users</div>
+      <div class="text-zinc-500 mt-1 text-[11px]">${def}</div>`;
+    el.innerHTML = `${lineChart(vals, labels, color, { grid: true, tipPrefix: `gu-${key}`, tip })}
       <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
         <span>${esc(labels[0] || '')}</span>
         <span>${esc(labels[labels.length - 1] || '')}</span>
       </div>`;
     attachTooltip(el);
-    const latest = vals[vals.length - 1];
-    const latestAdmin = adminVals[adminVals.length - 1] || 0;
-    document.getElementById(latestId).textContent =
-      latest == null ? '' : `${fmtInt(latest + latestAdmin)} this week`;
+    if (latestEl) latestEl.textContent = `${fmtInt(vals[vals.length - 1])} latest`;
   };
+  block('gu-dau', 'gu-dau-latest', 'dau', '#8b5cf6', 'Distinct users active that day.');
+  block('gu-wau', 'gu-wau-latest', 'wau', '#60a5fa', 'Distinct users active in the trailing 7 days.');
+  block('gu-mau', 'gu-mau-latest', 'mau', '#34d399', 'Distinct users active in the trailing 30 days.');
+}
 
-  block('eng-dau', 'eng-dau-latest', dau, dauAdmin, '#8b5cf6', 'dau',
-    'Used a dapp ≥ 4× OR promoted ≥ 1 session that week.');
-  block('eng-wau', 'eng-wau-latest', wau, wauAdmin, '#34d399', 'wau',
-    'Used a dapp ≥ 2× in the trailing 2 weeks.');
+// ── Power users (rolling WAU + L4 consistency) ────────────────
+// Four violet shades for the L4 buckets: light (1/4) → dark (4/4).
+const L4_COLORS = ['#ddd6fe', '#a78bfa', '#7c3aed', '#5b21b6'];
+
+function l4Legend() {
+  const items = [['1/4', L4_COLORS[0]], ['2/4', L4_COLORS[1]], ['3/4', L4_COLORS[2]], ['4/4', L4_COLORS[3]]];
+  return `<div class="flex items-center gap-3 text-[10px] text-zinc-400 mb-2">` +
+    items.map(([lab, c]) => `<span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${c}"></span> ${lab}</span>`).join('') +
+    `</div>`;
+}
+
+function renderPowerUsers(p) {
+  // Rolling power-user WAU (daily line).
+  const wau = (p && p.wau) || [];
+  const wEl = document.getElementById('pu-wau');
+  const wLatest = document.getElementById('pu-wau-latest');
+  if (wEl) {
+    if (!wau.length) { wEl.innerHTML = EMPTY_MSG; if (wLatest) wLatest.textContent = ''; }
+    else {
+      const labels = wau.map((r) => dayLabel(r.day));
+      const vals = wau.map((r) => Number(r.count) || 0);
+      const tip = (i) => `<div class="font-semibold">${esc(labels[i] || '')}</div>
+        <div class="text-zinc-300">${fmtInt(vals[i])} power users</div>
+        <div class="text-zinc-500 mt-1 text-[11px]">Trailing 7-day window.</div>`;
+      wEl.innerHTML = `${lineChart(vals, labels, '#8b5cf6', { grid: true, tipPrefix: 'pu-wau', tip })}
+        <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
+          <span>${esc(labels[0] || '')}</span>
+          <span>${esc(labels[labels.length - 1] || '')}</span>
+        </div>`;
+      attachTooltip(wEl);
+      if (wLatest) wLatest.textContent = `${fmtInt(vals[vals.length - 1])} latest`;
+    }
+  }
+
+  // L4 consistency (daily stacked bars: 1/4…4/4 of trailing four weeks).
+  const l4 = (p && p.l4) || [];
+  const lEl = document.getElementById('pu-l4');
+  const lLatest = document.getElementById('pu-l4-latest');
+  if (lEl) {
+    if (!l4.length) { lEl.innerHTML = EMPTY_MSG; if (lLatest) lLatest.textContent = ''; return; }
+    const labels = l4.map((r) => dayLabel(r.day));
+    const stacks = l4.map((r) => [Number(r.b1) || 0, Number(r.b2) || 0, Number(r.b3) || 0, Number(r.b4) || 0]);
+    const tip = (i) => {
+      const s = stacks[i];
+      const total = s.reduce((a, b) => a + b, 0);
+      return `<div class="font-semibold">${esc(labels[i] || '')}</div>
+        <div class="text-zinc-300">${fmtInt(total)} power users (trailing 4 wks)</div>
+        <div class="text-zinc-400 mt-1 text-[11px]">4/4 ${fmtInt(s[3])} · 3/4 ${fmtInt(s[2])} · 2/4 ${fmtInt(s[1])} · 1/4 ${fmtInt(s[0])}</div>`;
+    };
+    lEl.innerHTML = `${l4Legend()}
+      ${stackedBarChart(stacks, labels, L4_COLORS, { grid: true, tipPrefix: 'pu-l4', tip })}
+      <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
+        <span>${esc(labels[0] || '')}</span>
+        <span>${esc(labels[labels.length - 1] || '')}</span>
+      </div>`;
+    attachTooltip(lEl);
+    const last = stacks[stacks.length - 1] || [0, 0, 0, 0];
+    if (lLatest) lLatest.textContent = `${fmtInt(last.reduce((a, b) => a + b, 0))} latest`;
+  }
 }
 
 // ── Top users by dev sessions started ─────────────────────────
@@ -630,6 +761,101 @@ function renderKudos(d) {
   attachTooltip(el);
 }
 
+// ── Daily spend distribution (last 30 days) ───────────────────
+// One stacked bar per day. Segments = number of users whose platform-key
+// spend that day fell into a dollar bucket. The $0 bucket (drawn at the
+// bottom, muted) is registered users with no platform spend; the paid
+// buckets stack above in ascending spend order, and the $20+ tier splits
+// into "capped" (red, no usable own key) and "kept going on own key"
+// (violet) at the very top. Mirrors renderKudos: a full-height transparent
+// hover overlay per column makes every day hoverable.
+let lastSpendDistribution = null;
+// Whether the muted $0 (no-spend) bucket is drawn. Default OFF: the $0 block
+// dwarfs the paid buckets, so hiding it makes the paid distribution readable.
+// Purely client-side — the payload always carries b0; this just decides
+// whether it's rendered. Persisted like the include-admins checkbox.
+const SPEND_DIST_ZERO_KEY = 'dashSpendDistIncludeZero';
+let spendDistIncludeZero = localStorage.getItem(SPEND_DIST_ZERO_KEY) === 'true';
+
+function renderSpendDistribution() {
+  const d = lastSpendDistribution || {};
+  const days = d.days || [];
+  const el = document.getElementById('spend-distribution');
+  if (!el) return;
+  if (!days.length) {
+    el.innerHTML = '<p class="text-sm text-zinc-500">Not enough data yet.</p>';
+    return;
+  }
+  // b0 first (bottom, muted), paid buckets ascending, $20+ split at the top:
+  // capped (red) then kept-going-on-own-key (violet). The $0 bucket is dropped
+  // when the "Hide $0" toggle is active so the paid buckets rescale to fill the
+  // chart; totals/max, bars, legend and tooltip all derive from `segs`, so they
+  // follow automatically.
+  const allSegs = [
+    { key: 'b0', label: '$0', color: '#3f3f5a' },
+    { key: 'b1', label: '$0.01–$5', color: '#34d399' },
+    { key: 'b2', label: '$5–$10', color: '#a3e635' },
+    { key: 'b3', label: '$10–$15', color: '#fbbf24' },
+    { key: 'b4', label: '$15–$19.99', color: '#fb923c' },
+    { key: 'b5', label: '$20+ capped', color: '#ef4444' },
+    { key: 'b6', label: '$20+ own key', color: '#a855f7' },
+  ];
+  const segs = spendDistIncludeZero ? allSegs : allSegs.filter((s) => s.key !== 'b0');
+  const totals = days.map((x) => segs.reduce((a, s) => a + (Number(x[s.key]) || 0), 0));
+  const max = Math.max(1, ...totals);
+  const W = 640, H = 180, topPad = 14, botPad = 18, n = days.length;
+  const plot = H - topPad - botPad;
+  const bw = W / n;
+  const grid = (() => {
+    let out = '';
+    for (let i = 0; i <= 4; i++) {
+      const y = (topPad + (i / 4) * plot).toFixed(1);
+      out += `<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="currentColor" stroke-opacity="0.12" stroke-width="0.5" />`;
+    }
+    return out;
+  })();
+  const labels = days.map((x) => weekLabel(x.day));
+  const isCurrent = (i) => i === days.length - 1;
+  const bars = days.map((x, i) => {
+    let acc = 0; // running height from baseline, in value units
+    const barX = i * bw;
+    const segRects = segs.map((s) => {
+      const v = Number(x[s.key]) || 0;
+      if (v <= 0) return '';
+      const h = (v / max) * plot;
+      const yBottom = topPad + plot - (acc / max) * plot;
+      acc += v;
+      const y = yBottom - h;
+      return `<rect x="${(barX + 1).toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(1, bw - 2).toFixed(1)}" height="${h.toFixed(1)}" fill="${s.color}"></rect>`;
+    }).join('');
+    // Per-day breakdown tooltip covering the full column height.
+    const row = (label, color, v) =>
+      `<div class="flex justify-between gap-3"><span class="text-zinc-400"><span class="inline-block w-2 h-2 rounded-sm align-middle mr-1" style="background:${color}"></span>${label}</span><span>${fmtInt(v)}</span></div>`;
+    const tipId = `spend-dist-${i}`;
+    tipStore[tipId] = `<div class="font-semibold mb-1">${esc(labels[i])}${isCurrent(i) ? ' (today)' : ''}</div>
+      <div class="mb-1">${fmtInt(totals[i])} user${totals[i] === 1 ? '' : 's'}</div>
+      <div class="text-[11px] leading-tight">
+        ${segs.slice().reverse().map((s) => row(s.label, s.color, Number(x[s.key]) || 0)).join('')}
+      </div>`;
+    const overlay = `<rect class="dc-hover" x="${barX.toFixed(1)}" y="${topPad}" width="${bw.toFixed(1)}" height="${plot}"
+      fill="#8b5cf6" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></rect>`;
+    return segRects + overlay;
+  }).join('');
+  const legend = segs.slice().reverse().map((s) =>
+    `<span class="inline-flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm" style="background:${s.color}"></span>${s.label}</span>`
+  ).join('');
+  el.innerHTML = `
+    <div class="flex flex-wrap items-center gap-3 text-xs text-zinc-400 mb-2">${legend}</div>
+    <svg viewBox="0 0 ${W} ${H}" class="w-full text-zinc-500" preserveAspectRatio="none" style="height:180px">
+      ${grid}${bars}
+    </svg>
+    <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
+      <span>${esc(labels[0] || '')}</span>
+      <span>${esc(labels[labels.length - 1] || '')} (today)</span>
+    </div>`;
+  attachTooltip(el);
+}
+
 // ── Daily spend (last 30 days) ────────────────────────────────
 // One vertical bar per calendar day. Each bar carries a full-height
 // transparent hover overlay (data-tip-id) so even $0 days are hoverable
@@ -642,6 +868,9 @@ const SPEND_PLATFORM = '#8b5cf6';
 const SPEND_USERKEY = '#34d399';
 let lastSpend = null;
 let spendMode = 'platform'; // 'platform' | 'user' | 'both'
+// #361: the admin-configured system-token daily cap (cents), loaded
+// alongside the spend series so the "today / cap" readout can show it.
+let systemCapCents = 2500;
 
 function renderSpend() {
   const days = (lastSpend && lastSpend.days) || [];
@@ -661,8 +890,12 @@ function renderSpend() {
   // identical to before in that case.
   const platAdmin = days.map((x) => Number(x.platform_cents_admin) || 0);
   const byokAdmin = days.map((x) => Number(x.user_key_cents_admin) || 0);
+  // #361: system-token spend per day — its own budget, stacked as an
+  // extra cyan segment on top of every bar regardless of the toggle mode
+  // (it isn't platform/user/admin-attributed). Adds to each bar's height.
+  const sys = days.map((x) => Number(x.system_cents) || 0);
   const totals = days.map((_, i) =>
-    spendMode === 'platform' ? plat[i] : spendMode === 'user' ? byok[i] : plat[i] + byok[i]);
+    (spendMode === 'platform' ? plat[i] : spendMode === 'user' ? byok[i] : plat[i] + byok[i]) + sys[i]);
   const max = Math.max(1, ...totals);
   const W = 640, H = 180, topPad = 14, botPad = 18, n = days.length;
   const plot = H - topPad - botPad;
@@ -687,7 +920,7 @@ function renderSpend() {
     // admin portion from the non-admin segment keeps the total height equal
     // to totals[i]; Math.max(0, …) guards against float rounding where the
     // admin portion could marginally exceed the segment total.
-    const stack = spendMode === 'both'
+    const stack = (spendMode === 'both'
       ? [
           { value: Math.max(0, plat[i] - pAdmin), color: SPEND_PLATFORM },
           { value: Math.max(0, byok[i] - uAdmin), color: SPEND_USERKEY },
@@ -701,7 +934,9 @@ function renderSpend() {
         : [
             { value: Math.max(0, plat[i] - pAdmin), color: SPEND_PLATFORM },
             { value: pAdmin, color: ADMIN_COLOR },
-          ];
+          ])
+      // #361: system-token segment, always on top, in every mode.
+      .concat([{ value: sys[i], color: SYSTEM_COLOR }]);
     let yCursor = topPad + plot;
     let segs = '';
     for (const s of stack) {
@@ -722,7 +957,11 @@ function renderSpend() {
     const adminLine = includeAdmins && adminCents > 0
       ? `<div class="flex justify-between gap-3 text-[11px]" style="color:${ADMIN_COLOR}"><span>of which admin</span><span>${dollars(adminCents)}</span></div>`
       : '';
-    tipStore[tipId] = `<div class="font-semibold">${esc(labels[i])}</div>${detail}${adminLine}`;
+    // #361: system-token spend line, shown whenever the day had any.
+    const systemLine = sys[i] > 0
+      ? `<div class="flex justify-between gap-3 text-[11px]" style="color:${SYSTEM_COLOR}"><span>System tokens</span><span>${dollars(sys[i])}</span></div>`
+      : '';
+    tipStore[tipId] = `<div class="font-semibold">${esc(labels[i])}</div>${detail}${systemLine}${adminLine}`;
     const overlay = `<rect class="dc-hover" x="${barX.toFixed(1)}" y="${topPad}" width="${bw.toFixed(1)}" height="${plot}"
       fill="#8b5cf6" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></rect>`;
     return segs + overlay;
@@ -742,10 +981,20 @@ function renderSpend() {
   const adminSwatch = hasAdminSpend
     ? `<span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${ADMIN_COLOR}"></span> Admin spend</span>`
     : '';
-  const legend = (modeSwatches || adminSwatch)
-    ? `<div class="flex flex-wrap items-center gap-3 text-[10px] text-zinc-400 mb-2">${modeSwatches}${adminSwatch}</div>`
+  // #361: a "System tokens" swatch appears whenever any day in the window
+  // had system spend, in any mode (the segment is always charted).
+  const hasSystemSpend = sys.some((v) => v > 0);
+  const systemSwatch = hasSystemSpend
+    ? `<span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${SYSTEM_COLOR}"></span> System tokens</span>`
     : '';
-  el.innerHTML = `${legend}
+  const legend = (modeSwatches || adminSwatch || systemSwatch)
+    ? `<div class="flex flex-wrap items-center gap-3 text-[10px] text-zinc-400 mb-2">${modeSwatches}${adminSwatch}${systemSwatch}</div>`
+    : '';
+  // #361: "System tokens today: $X.XX / $cap" readout — today is the last
+  // day in the series; cap from /api/admin/limits (loaded in loadAll).
+  const systemToday = sys.length ? sys[sys.length - 1] : 0;
+  const systemReadout = `<div class="text-[11px] mb-2" style="color:${SYSTEM_COLOR}">System tokens today: ${dollars(systemToday)} / ${dollars(systemCapCents)}</div>`;
+  el.innerHTML = `${systemReadout}${legend}
     <svg viewBox="0 0 ${W} ${H}" class="w-full text-zinc-500" preserveAspectRatio="none" style="height:180px">
       ${grid}${bars}
     </svg>
@@ -867,8 +1116,38 @@ function wireSpendToggle(attr, onChange) {
   });
 }
 
+// Wire the two-way "Hide $0 / Show $0" toggle on the spend-distribution chart.
+// Reflects the persisted state on the buttons, then on click updates styling,
+// flips + persists `spendDistIncludeZero`, and re-renders from the cached
+// payload (no refetch).
+function wireZeroToggle() {
+  const group = document.querySelector('[data-zero-toggle="spend-distribution"]');
+  if (!group) return;
+  const want = spendDistIncludeZero ? 'show' : 'hide';
+  group.querySelectorAll('.zero-btn').forEach((b) => {
+    const active = b.dataset.zero === want;
+    b.className = `zero-btn px-2 py-1 rounded ${active ? 'bg-violet-600 text-white' : 'bg-zinc-200 dark:bg-zinc-800'}`;
+  });
+  group.querySelectorAll('.zero-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      spendDistIncludeZero = btn.dataset.zero === 'show';
+      localStorage.setItem(SPEND_DIST_ZERO_KEY, String(spendDistIncludeZero));
+      group.querySelectorAll('.zero-btn').forEach((b) => {
+        const active = b === btn;
+        b.className = `zero-btn px-2 py-1 rounded ${active ? 'bg-violet-600 text-white' : 'bg-zinc-200 dark:bg-zinc-800'}`;
+      });
+      renderSpendDistribution();
+    });
+  });
+}
+
 // ── Bootstrap ─────────────────────────────────────────────────
 let currentCohort = 'all';
+// Retention alignment toggle. 'calendar' (default) lines cohorts up on real
+// calendar weeks; 'cohort' shows W0/W1/… by cohort age. The last retention
+// payload is cached so the toggle re-pivots client-side with no refetch.
+let retAlign = 'calendar';
+let lastRetention = null;
 // Include-admins checkbox (#1). Default OFF (exclude admins); persisted
 // so an operator's preference survives reloads.
 const ADMIN_KEY = 'dashIncludeAdmins';
@@ -897,6 +1176,20 @@ function wireCohortButtons() {
   });
 }
 
+// Retention alignment buttons re-pivot the cached payload — no refetch.
+function wireRetAlign() {
+  document.querySelectorAll('.retalign-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      retAlign = btn.dataset.retalign;
+      document.querySelectorAll('.retalign-btn').forEach((b) => {
+        const active = b.dataset.retalign === retAlign;
+        b.className = `retalign-btn px-2 py-1 rounded ${active ? 'bg-violet-600 text-white' : 'bg-zinc-200 dark:bg-zinc-800'}`;
+      });
+      if (lastRetention) renderRetention(lastRetention, retAlign);
+    });
+  });
+}
+
 function showGate(msg) {
   document.getElementById('content').classList.add('hidden');
   const gate = document.getElementById('gate');
@@ -907,26 +1200,32 @@ function showGate(msg) {
 async function init() {
   // Admin check up front. The data endpoints are independently enforced
   // server-side; this is just for a clean redirect / message.
-  let me;
+  // We do NOT navigate away on an auth failure: a transient 401 shouldn't
+  // bounce an admin to /login, and keeping the page shell rendered (the data
+  // endpoints stay admin-enforced server-side) makes the page coherent under
+  // headless checks. Show an inline notice instead.
+  let me = null;
   try {
     me = await getJSON('/api/auth/me');
   } catch (_) {
-    window.location.href = '/login.html';
+    showGate('Sign in as an admin to view the dashboard.');
     return;
   }
   if (!me.user?.isAdmin) {
     showGate('Admin access required.');
-    setTimeout(() => { window.location.href = '/'; }, 1200);
     return;
   }
 
   document.getElementById('content').classList.remove('hidden');
   wireCohortButtons();
+  wireRetAlign();
   wireInfoIcons();
 
   // Spend toggles re-render from cached payloads (no refetch).
   wireSpendToggle('spend', (mode) => { spendMode = mode; renderSpend(); });
   wireSpendToggle('spend-by-builder', (mode) => { builderMode = mode; renderSpendByBuilder(); });
+  // Hide/Show $0 toggle on the spend-distribution chart (re-render, no refetch).
+  wireZeroToggle();
 
   // Include-admins checkbox: reflect persisted state, then reload all on change.
   const adminBox = document.getElementById('include-admins');
@@ -950,28 +1249,39 @@ async function init() {
 // Fetch every analytics endpoint (with the current includeAdmins flag)
 // and (re)render. Shared by first load and the admin-checkbox toggle.
 async function loadAll() {
-  const [overview, spend, growth, retention, engagement, topUsers, kudos, spendByBuilder] =
+  const [overview, spend, growth, retention, generalUsers, powerUsers, topUsers, kudos, spendByBuilder, spendDistribution, limits] =
     await Promise.all([
       getJSON(withAdmins('/api/admin/analytics/overview')),
       getJSON(withAdmins('/api/admin/analytics/spend')),
       getJSON(withAdmins('/api/admin/analytics/growth')),
       getJSON(withAdmins('/api/admin/analytics/retention')),
-      getJSON(withAdmins('/api/admin/analytics/engagement')),
+      getJSON(withAdmins('/api/admin/analytics/general-users')),
+      getJSON(withAdmins('/api/admin/analytics/power-users')),
       getJSON(withAdmins('/api/admin/analytics/top-users')),
       getJSON(withAdmins('/api/admin/analytics/kudos')),
       getJSON(withAdmins('/api/admin/analytics/spend-by-builder')),
+      getJSON(withAdmins('/api/admin/analytics/spend-distribution')),
+      // #361: system-token cap for the "today / cap" readout. Tolerate a
+      // failure (non-admin-write tokens still GET it) — default stays 2500.
+      getJSON('/api/admin/limits').catch(() => null),
     ]);
   renderCounters(overview);
+  if (limits && Number.isFinite(Number(limits.system_tokens_daily_limit_cents))) {
+    systemCapCents = Number(limits.system_tokens_daily_limit_cents);
+  }
   lastSpend = spend;
   renderSpend();
   renderGrowth(growth);
-  renderRetention(retention);
-  renderStickiness(retention.stickiness);
-  renderEngagement(engagement);
+  lastRetention = retention;
+  renderRetention(retention, retAlign);
+  renderGeneralUsers(generalUsers);
+  renderPowerUsers(powerUsers);
   renderTopUsers(topUsers);
   renderKudos(kudos);
   lastSpendByBuilder = spendByBuilder;
   renderSpendByBuilder();
+  lastSpendDistribution = spendDistribution;
+  renderSpendDistribution();
   await loadFunnels();
 }
 

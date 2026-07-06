@@ -55,7 +55,7 @@ function loadSessions(mockPool, overrides = {}) {
   const githubStub = {
     isEnabled: () => true,
     fetchPublicIssue: async () => ({ issue: { number: 5, title: 'Make it better', body: 'please' } }),
-    fetchIssueComments: async () => ({ comments: [] }),
+    fetchIssueComments: async () => ({ comments: [], truncated: false }),
     getBotUsername: async () => 'usernode-bot',
     createBranch: async () => {},
     createIssueComment: async () => {},
@@ -393,6 +393,7 @@ test('pure-text phase-1 turn posts the questions to the issue exactly once', asy
           { author: 'usernode-bot', body: 'Old question?', createdAt: '2026-06-01T00:00:00Z' },
           { author: 'reporter', body: 'An answer.', createdAt: '2026-06-02T00:00:00Z' },
         ],
+        truncated: false,
       }),
       createIssueComment: async (owner, repo, issueNumber, body) => {
         commentCalls.push({ owner, repo, issueNumber, body });
@@ -854,6 +855,52 @@ test('decision-turn question path persists empty metadata when suggest_answers i
 
     assert.deepEqual(pool.state.terminal, { status: 'ready', outcome: 'question' });
     assert.deepEqual(JSON.parse(lastAssistantMeta(pool)), {});
+  } finally {
+    await srv.close();
+    loaded.restore();
+  }
+});
+
+// #358: a fabricated "[CODING AGENT COMPLETED]" marker the Mayor writes
+// into a plain question turn (no dispatch) must be scrubbed before the
+// assistant row is persisted AND before the reporter-facing comment is
+// posted to the GitHub issue — a hallucinated completion must never reach
+// either surface.
+test('phase-1: a fabricated completion marker is stripped from the persisted message and the issue comment', async () => {
+  const commentCalls = [];
+  const pool = makeMockPool();
+  const loaded = loadSessions(pool, {
+    llm: sequencedLlm([
+      {
+        text: 'Could you clarify the intended scope?\n\n[CODING AGENT COMPLETED]:\nI already implemented it.',
+        toolUses: [],
+        usage: USAGE,
+        rawContent: [],
+      },
+    ]),
+    github: {
+      createIssueComment: async (owner, repo, issueNumber, body) => {
+        commentCalls.push({ issueNumber, body });
+      },
+    },
+  });
+  const srv = await startTestServer(loaded);
+  try {
+    await startHeadlessRun(srv);
+    await waitFor(() => commentCalls.length > 0);
+
+    assert.deepEqual(pool.state.terminal, { status: 'ready', outcome: 'question' });
+
+    // Persisted assistant text is scrubbed down to the real question.
+    const assistants = pool.state.messages.filter((m) => m.role === 'assistant');
+    const last = assistants[assistants.length - 1];
+    assert.equal(last.content, 'Could you clarify the intended scope?');
+    assert.ok(!last.content.includes('[CODING AGENT COMPLETED]'));
+
+    // The GitHub comment is scrubbed too (footer still appended).
+    assert.equal(commentCalls.length, 1);
+    assert.ok(commentCalls[0].body.startsWith('Could you clarify the intended scope?'));
+    assert.ok(!commentCalls[0].body.includes('[CODING AGENT COMPLETED]'));
   } finally {
     await srv.close();
     loaded.restore();

@@ -340,13 +340,13 @@ function dashboardRoutes(config) {
 
   // ── Retention ──────────────────────────────────────────────
   //
-  // Two views:
-  //   1. cohorts — the classic signup-week retention triangle. For each
-  //      signup cohort and each week offset since signup, the share of
-  //      the cohort that was active that week (active = any tracked
-  //      action). Capped to the most recent 12 cohorts for readability.
-  //   2. stickiness — per-week WAU and trailing-28-day MAU for the last
-  //      12 weeks, so the WAU/MAU ratio can be charted.
+  // The classic signup-week retention triangle. For each signup cohort
+  // and each week offset since signup, the share of the cohort that was
+  // active that week (active = any tracked action). Capped to the most
+  // recent 12 cohorts for readability. The frontend re-pivots this same
+  // payload into either a calendar-aligned or cohort-age-aligned grid;
+  // the old WAU/MAU stickiness series it used to return is superseded by
+  // the General-users daily charts (/api/admin/analytics/general-users).
   router.get('/api/admin/analytics/retention', async (req, res) => {
     const includeAdmins = wantsAdmins(req);
     try {
@@ -385,30 +385,6 @@ function dashboardRoutes(config) {
          ORDER BY s.cohort_wk, g.week_offset`
       );
 
-      const stickiness = await pool.query(
-        `WITH weeks AS (
-           SELECT generate_series(
-             date_trunc('week', NOW()) - INTERVAL '11 weeks',
-             date_trunc('week', NOW()),
-             INTERVAL '1 week'
-           )::date AS wk
-         ),
-         activity AS (
-           SELECT DISTINCT user_id, day FROM (${activityDaysSql(includeAdmins)}) a
-         )
-         SELECT to_char(w.wk, 'YYYY-MM-DD') AS wk,
-                COUNT(DISTINCT a.user_id) FILTER (
-                  WHERE a.day >= w.wk AND a.day < w.wk + 7
-                )::int AS wau,
-                COUNT(DISTINCT a.user_id) FILTER (
-                  WHERE a.day < w.wk + 7 AND a.day >= w.wk + 7 - 28
-                )::int AS mau
-         FROM weeks w
-         LEFT JOIN activity a ON a.day < w.wk + 7 AND a.day >= w.wk + 7 - 28
-         GROUP BY w.wk
-         ORDER BY w.wk`
-      );
-
       // Reshape the flat cohort grid into one row per cohort with a
       // sparse offset->count map the frontend renders as a heatmap.
       const byCohort = new Map();
@@ -427,7 +403,6 @@ function dashboardRoutes(config) {
 
       res.json({
         cohorts: Array.from(byCohort.values()),
-        stickiness: stickiness.rows,
       });
     } catch (err) {
       log.error('dashboard', 'retention failed', { message: err.message });
@@ -435,109 +410,144 @@ function dashboardRoutes(config) {
     }
   });
 
-  // ── Engagement tiers (custom DAU / WAU definitions) ────────
+  // ── General users (DAU / WAU / MAU, daily rolling windows) ──
   //
-  // These are NOT the classic active-user metrics — they are the
-  // operator-defined engagement bars requested for this dashboard, both
-  // charted as weekly time series over the last 12 ISO weeks. They read
-  // from the `events` log (its purpose): "using a dapp" = a
-  // dapp_active_day event (one per app per day), "promoting a session" =
-  // a pr_promoted event.
+  // "General user" = anyone counted active that day, using the same
+  // canonical activity surface as retention/overview (activityDaysSql:
+  // app_activity ∪ chat_messages ∪ user dev-session messages). There is
+  // no login/sign-in event and the sessions table has no created_at, so
+  // "active = any tracked action that day" is the faithful, historically
+  // complete proxy for "signed in".
   //
-  //   dau — per ISO week, distinct users who used a dapp on >= 4 distinct
-  //         calendar days that week OR promoted >= 1 session that week.
-  //   wau — per week point, distinct users who used a dapp on >= 2
-  //         distinct calendar days in the trailing 14-day window ending
-  //         that week ("twice each two weeks").
-  // "Distinct calendar days" means multiple apps used on the same day
-  // collapse to one — hence COUNT(DISTINCT ...::date) rather than COUNT(*)
-  // over the per-(app, day) dapp_active_day events.
-  router.get('/api/admin/analytics/engagement', async (req, res) => {
+  //   dau — distinct general users active on day d.
+  //   wau — distinct general users active in the trailing 7 days [d-6, d]
+  //         (a 7-day rolling window, recomputed for every day → a point
+  //         per day, not a stepped weekly bucket).
+  //   mau — distinct general users active in the trailing 30 days
+  //         [d-29, d] (a 30-day rolling window, point per day).
+  //
+  // One point per calendar day over the last 90 days. The widest window
+  // reaches 29 days before the first plotted day, so the activity scan is
+  // intentionally NOT clipped to the 90-day display range.
+  router.get('/api/admin/analytics/general-users', async (req, res) => {
     const includeAdmins = wantsAdmins(req);
     try {
-      const dau = await pool.query(
-        `WITH weeks AS (
-           SELECT generate_series(
-             date_trunc('week', NOW()) - INTERVAL '11 weeks',
-             date_trunc('week', NOW()),
-             INTERVAL '1 week'
-           )::date AS wk
+      const { rows } = await pool.query(
+        `WITH days AS (
+           SELECT generate_series(CURRENT_DATE - 89, CURRENT_DATE, INTERVAL '1 day')::date AS d
          ),
-         agg AS (
-           SELECT e.user_id,
-                  COALESCE(u.is_admin, FALSE) AS is_admin,
-                  date_trunc('week', e.created_at)::date AS wk,
-                  COUNT(DISTINCT e.created_at::date) FILTER (WHERE e.event_type = 'dapp_active_day') AS dapp_days,
-                  COUNT(*) FILTER (WHERE e.event_type = 'pr_promoted')     AS promo_ct
-           FROM events e
-           LEFT JOIN users u ON u.id = e.user_id
-           WHERE e.user_id IS NOT NULL
-             AND e.event_type IN ('dapp_active_day', 'pr_promoted')
-             ${adminFilter('e.user_id', includeAdmins)}
-           GROUP BY e.user_id, COALESCE(u.is_admin, FALSE), date_trunc('week', e.created_at)::date
+         activity AS (
+           SELECT DISTINCT user_id, day FROM (${activityDaysSql(includeAdmins)}) a
          )
-         SELECT to_char(w.wk, 'YYYY-MM-DD') AS wk,
-                COUNT(DISTINCT a.user_id) FILTER (
-                  WHERE (a.dapp_days >= 4 OR a.promo_ct >= 1) AND NOT a.is_admin
-                )::int AS dau,
-                COUNT(DISTINCT a.user_id) FILTER (
-                  WHERE (a.dapp_days >= 4 OR a.promo_ct >= 1) AND a.is_admin
-                )::int AS dau_admin
-         FROM weeks w
-         LEFT JOIN agg a ON a.wk = w.wk
-         GROUP BY w.wk
-         ORDER BY w.wk`
+         SELECT to_char(d.d, 'YYYY-MM-DD') AS day,
+                COUNT(DISTINCT a.user_id) FILTER (WHERE a.day = d.d)::int                    AS dau,
+                COUNT(DISTINCT a.user_id) FILTER (WHERE a.day BETWEEN d.d - 6  AND d.d)::int  AS wau,
+                COUNT(DISTINCT a.user_id) FILTER (WHERE a.day BETWEEN d.d - 29 AND d.d)::int  AS mau
+         FROM days d
+         LEFT JOIN activity a ON a.day BETWEEN d.d - 29 AND d.d
+         GROUP BY d.d
+         ORDER BY d.d`
       );
-
-      const wau = await pool.query(
-        `WITH weeks AS (
-           SELECT generate_series(
-             date_trunc('week', NOW()) - INTERVAL '11 weeks',
-             date_trunc('week', NOW()),
-             INTERVAL '1 week'
-           )::date AS wk
-         ),
-         dapp AS (
-           SELECT e.user_id, COALESCE(u.is_admin, FALSE) AS is_admin, e.created_at::date AS day
-           FROM events e
-           LEFT JOIN users u ON u.id = e.user_id
-           WHERE e.event_type = 'dapp_active_day' AND e.user_id IS NOT NULL
-             ${adminFilter('e.user_id', includeAdmins)}
-         ),
-         qualifying AS (
-           -- A user counts for week w if they used a dapp on >= 2 distinct
-           -- calendar days in the 14-day window [w-7, w+7) ending at that
-           -- week's close. bool_or carries the admin flag for the split.
-           SELECT w.wk, d.user_id, bool_or(d.is_admin) AS is_admin
-           FROM weeks w
-           JOIN dapp d ON d.day >= w.wk - 7 AND d.day < w.wk + 7
-           GROUP BY w.wk, d.user_id
-           HAVING COUNT(DISTINCT d.day) >= 2
-         )
-         SELECT to_char(w.wk, 'YYYY-MM-DD') AS wk,
-                COUNT(q.user_id) FILTER (WHERE NOT q.is_admin)::int AS wau,
-                COUNT(q.user_id) FILTER (WHERE q.is_admin)::int     AS wau_admin
-         FROM weeks w
-         LEFT JOIN qualifying q ON q.wk = w.wk
-         GROUP BY w.wk
-         ORDER BY w.wk`
-      );
-
-      // Merge the two weekly series on week for a single tidy payload.
-      const byWeek = new Map();
-      for (const r of dau.rows) {
-        byWeek.set(r.wk, { wk: r.wk, dau: r.dau, dau_admin: r.dau_admin || 0, wau: 0, wau_admin: 0 });
-      }
-      for (const r of wau.rows) {
-        const e = byWeek.get(r.wk) || { wk: r.wk, dau: 0, dau_admin: 0, wau: 0, wau_admin: 0 };
-        e.wau = r.wau;
-        e.wau_admin = r.wau_admin || 0;
-        byWeek.set(r.wk, e);
-      }
-      const weeks = Array.from(byWeek.values()).sort((a, b) => (a.wk < b.wk ? -1 : 1));
-      res.json({ weeks });
+      res.json({ daily: rows });
     } catch (err) {
-      log.error('dashboard', 'engagement failed', { message: err.message });
+      log.error('dashboard', 'general-users failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Power users (rolling WAU + L4 consistency) ─────────────
+  //
+  // A "power user", evaluated over a 7-day window, is a user who BOTH
+  //   (a) used dapps >= 3 times that week  — COUNT(*) of dapp_active_day
+  //       events in the window (each (app, day) row is one "use"; counting
+  //       rows, not distinct days/apps, is what "same or different dapps"
+  //       means), AND
+  //   (b) did >= 3 visible developer actions that week — at least three
+  //       events in {kudos_given, pr_vote_cast, pr_promoted} (kudos, voting,
+  //       and making a proposal respectively; "making a proposal" maps to
+  //       pr_promoted = a PR opened for group voting, the tracked action
+  //       that lives in the events log alongside the other two).
+  //
+  // Grounded entirely on the `events` table so dapp use and dev actions
+  // come from one scan. The per-(user, day) rollup below is shared by both
+  // result sets. We clip the rollup to the last ~120 days: the L4 chart's
+  // earliest plotted day (CURRENT_DATE - 89) looks back four weeks, i.e.
+  // to CURRENT_DATE - 116, so 120 days fully backs every window.
+  router.get('/api/admin/analytics/power-users', async (req, res) => {
+    const includeAdmins = wantsAdmins(req);
+    const rollupCte = `
+      rollup AS (
+        SELECT e.user_id,
+               e.created_at::date AS day,
+               COUNT(*) FILTER (WHERE e.event_type = 'dapp_active_day') AS dapp_ct,
+               COUNT(*) FILTER (WHERE e.event_type IN ('kudos_given','pr_vote_cast','pr_promoted')) AS dev_ct
+        FROM events e
+        WHERE e.user_id IS NOT NULL
+          AND e.created_at >= CURRENT_DATE - 120
+          AND e.event_type IN ('dapp_active_day','kudos_given','pr_vote_cast','pr_promoted')
+          ${adminFilter('e.user_id', includeAdmins)}
+        GROUP BY e.user_id, e.created_at::date
+      )`;
+    try {
+      // Power-user WAU: per day d, distinct users who were a power user
+      // over the trailing 7 days [d-6, d]. Point per day.
+      const wau = await pool.query(
+        `WITH days AS (
+           SELECT generate_series(CURRENT_DATE - 89, CURRENT_DATE, INTERVAL '1 day')::date AS d
+         ),
+         ${rollupCte},
+         qualifying AS (
+           SELECT d.d, r.user_id
+           FROM days d
+           JOIN rollup r ON r.day BETWEEN d.d - 6 AND d.d
+           GROUP BY d.d, r.user_id
+           HAVING SUM(r.dapp_ct) >= 3 AND SUM(r.dev_ct) >= 3
+         )
+         SELECT to_char(d.d, 'YYYY-MM-DD') AS day,
+                COUNT(q.user_id)::int AS count
+         FROM days d
+         LEFT JOIN qualifying q ON q.d = d.d
+         GROUP BY d.d
+         ORDER BY d.d`
+      );
+
+      // L4 consistency: per day d, look back over four consecutive trailing
+      // weeks w∈{0,1,2,3} (week w = [d-7w-6, d-7w]). A user qualifies for a
+      // week if they meet the power-user predicate within it; per user count
+      // how many of the four weeks qualified (1..4) and stack the buckets.
+      const l4 = await pool.query(
+        `WITH days AS (
+           SELECT generate_series(CURRENT_DATE - 89, CURRENT_DATE, INTERVAL '1 day')::date AS d
+         ),
+         weeks AS (SELECT generate_series(0, 3) AS w),
+         ${rollupCte},
+         qual AS (
+           SELECT d.d, gw.w, r.user_id
+           FROM days d
+           CROSS JOIN weeks gw
+           JOIN rollup r ON r.day BETWEEN d.d - 7 * gw.w - 6 AND d.d - 7 * gw.w
+           GROUP BY d.d, gw.w, r.user_id
+           HAVING SUM(r.dapp_ct) >= 3 AND SUM(r.dev_ct) >= 3
+         ),
+         counts AS (
+           SELECT d, user_id, COUNT(DISTINCT w) AS q
+           FROM qual
+           GROUP BY d, user_id
+         )
+         SELECT to_char(d.d, 'YYYY-MM-DD') AS day,
+                COUNT(*) FILTER (WHERE c.q = 1)::int AS b1,
+                COUNT(*) FILTER (WHERE c.q = 2)::int AS b2,
+                COUNT(*) FILTER (WHERE c.q = 3)::int AS b3,
+                COUNT(*) FILTER (WHERE c.q = 4)::int AS b4
+         FROM days d
+         LEFT JOIN counts c ON c.d = d.d
+         GROUP BY d.d
+         ORDER BY d.d`
+      );
+
+      res.json({ wau: wau.rows, l4: l4.rows });
+    } catch (err) {
+      log.error('dashboard', 'power-users failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -677,14 +687,25 @@ function dashboardRoutes(config) {
            WHERE lu.date >= CURRENT_DATE - 29
              ${adminFilter('lu.user_id', includeAdmins)}
            GROUP BY lu.date
+         ),
+         -- #361: system-token spend (merge-conflict / sync resolution).
+         -- One row per day, not user-attributed, so the admin filter
+         -- doesn't apply — the same value shows in both toggle modes.
+         sys AS (
+           SELECT stu.date AS day,
+                  stu.cost_cents AS system_cents
+           FROM system_token_usage stu
+           WHERE stu.date >= CURRENT_DATE - 29
          )
          SELECT to_char(s.day, 'YYYY-MM-DD') AS day,
                 COALESCE(a.platform_cents, 0)::float AS platform_cents,
                 COALESCE(a.user_key_cents, 0)::float AS user_key_cents,
                 COALESCE(a.platform_cents_admin, 0)::float AS platform_cents_admin,
-                COALESCE(a.user_key_cents_admin, 0)::float AS user_key_cents_admin
+                COALESCE(a.user_key_cents_admin, 0)::float AS user_key_cents_admin,
+                COALESCE(sy.system_cents, 0)::float AS system_cents
          FROM spine s
          LEFT JOIN agg a ON a.day = s.day
+         LEFT JOIN sys sy ON sy.day = s.day
          ORDER BY s.day`
       );
       res.json({ days: rows });
@@ -717,6 +738,83 @@ function dashboardRoutes(config) {
       res.json({ builders: rows });
     } catch (err) {
       log.error('dashboard', 'spend-by-builder failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Spend distribution (last 30 days, bucketed user counts) ────
+  //
+  // One stacked bar per calendar day for the last 30 days: each segment is
+  // the COUNT OF USERS whose platform-key spend (llm_usage.total_cost_cents,
+  // the metered spend the daily caps track) fell into a dollar bucket that
+  // day. Buckets in cents: $0; (0,5]; (5,10]; (10,15]; (15,20); and a $20+
+  // top tier split into "capped" vs "kept going on own key".
+  //
+  // The $20+ split answers "who hit the cap and stopped vs. who continued on
+  // their own Anthropic key". A user has a usable own key for a day when
+  // EITHER users.anthropic_key_enc IS NOT NULL (key configured — a CURRENT
+  // snapshot; there is no key-presence history table) OR that day's
+  // byok_cost_cents > 0 (own-key spend actually recorded). The two are OR'd
+  // so the snapshot captures capability and the per-day spend corrects past
+  // days for users whose key has since changed. limits.recordSpend only
+  // writes a row when cost > 0, so a literal "$0" row generally never exists:
+  // the $0 bucket is therefore DERIVED as (users registered as of that day)
+  // minus the users counted in the paid buckets — analogous to the kudos
+  // "gave 0" bucket. The registered-as-of-day count is a per-day subquery
+  // against users; trivial at current scale (30 small COUNTs).
+  //
+  // `date` is bucketed by CURRENT_DATE at write time, so the window uses
+  // CURRENT_DATE too (UTC calendar day, same as every other chart here).
+  router.get('/api/admin/analytics/spend-distribution', async (req, res) => {
+    const includeAdmins = wantsAdmins(req);
+    try {
+      // "Has a usable own key" predicate, reused for the $20+ split.
+      const byok = '(u.anthropic_key_enc IS NOT NULL OR lu.byok_cost_cents > 0)';
+      const { rows } = await pool.query(
+        `WITH spine AS (
+           SELECT generate_series(
+             CURRENT_DATE - 29,
+             CURRENT_DATE,
+             INTERVAL '1 day'
+           )::date AS day
+         ),
+         agg AS (
+           SELECT lu.date AS day,
+                  COUNT(*) FILTER (WHERE lu.total_cost_cents > 0    AND lu.total_cost_cents <= 500)  AS b1,
+                  COUNT(*) FILTER (WHERE lu.total_cost_cents > 500  AND lu.total_cost_cents <= 1000) AS b2,
+                  COUNT(*) FILTER (WHERE lu.total_cost_cents > 1000 AND lu.total_cost_cents <= 1500) AS b3,
+                  COUNT(*) FILTER (WHERE lu.total_cost_cents > 1500 AND lu.total_cost_cents <  2000) AS b4,
+                  COUNT(*) FILTER (WHERE lu.total_cost_cents >= 2000 AND NOT ${byok}) AS b5,
+                  COUNT(*) FILTER (WHERE lu.total_cost_cents >= 2000 AND ${byok})     AS b6
+             FROM llm_usage lu
+             LEFT JOIN users u ON u.id = lu.user_id
+            WHERE lu.date >= CURRENT_DATE - 29
+              ${adminFilter('lu.user_id', includeAdmins)}
+            GROUP BY lu.date
+         )
+         SELECT to_char(s.day, 'YYYY-MM-DD') AS day,
+                COALESCE(a.b1, 0)::int AS b1,
+                COALESCE(a.b2, 0)::int AS b2,
+                COALESCE(a.b3, 0)::int AS b3,
+                COALESCE(a.b4, 0)::int AS b4,
+                COALESCE(a.b5, 0)::int AS b5,
+                COALESCE(a.b6, 0)::int AS b6,
+                -- $0 bucket: everyone registered as of this day who isn't in a
+                -- paid bucket. GREATEST guards float/clock edge cases.
+                GREATEST(0,
+                  (SELECT COUNT(*) FROM users u2
+                    WHERE u2.created_at::date <= s.day
+                      ${adminFilter('u2.id', includeAdmins)})
+                  - (COALESCE(a.b1, 0) + COALESCE(a.b2, 0) + COALESCE(a.b3, 0)
+                     + COALESCE(a.b4, 0) + COALESCE(a.b5, 0) + COALESCE(a.b6, 0))
+                )::int AS b0
+           FROM spine s
+           LEFT JOIN agg a ON a.day = s.day
+          ORDER BY s.day`
+      );
+      res.json({ days: rows });
+    } catch (err) {
+      log.error('dashboard', 'spend-distribution failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

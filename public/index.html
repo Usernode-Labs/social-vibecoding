@@ -349,7 +349,7 @@
       Private preview — only you can see this until the app's users vote your change in.
     </div>
     <div class="relative flex-1">
-      <iframe id="staging-iframe" class="absolute inset-0 w-full h-full border-0" style="background:#08080f"></iframe>
+      <iframe id="staging-iframe" class="absolute inset-0 w-full h-full border-0" style="background:#08080f" allow="pointer-lock"></iframe>
       <!-- #127: collapsible "How to test" panel overlaying the top of the
            preview. Hidden until requested via the "Test this change" button
            (auto-shown only for that explicit entry path, #237). Content is
@@ -374,6 +374,24 @@
         <div id="staging-loader-sub" class="text-xs text-zinc-500 max-w-xs leading-relaxed">Issuing a TLS certificate for this preview. First load can take a minute.</div>
       </div>
     </div>
+  </div>
+
+  <!-- #353: before/after comparison (fullscreen overlay). Opened by
+       clicking either tile rendered by AppView.visualsTilesHtml — shows
+       the before + after for one capture group side-by-side at full size
+       (stacked on narrow screens), instead of dumping the raw asset into
+       a new tab. Built dynamically by AppView.openVisualComparison;
+       closed via Back / backdrop / Escape (closeVisualComparison). -->
+  <div id="visual-compare-overlay" class="hidden fixed inset-0 z-50 bg-zinc-950/95 flex flex-col" role="dialog" aria-modal="true" aria-label="Before / after comparison">
+    <div class="flex items-center gap-3 px-4 py-2 border-b border-zinc-800 shrink-0">
+      <button id="visual-compare-back" class="text-zinc-400 hover:text-zinc-100 text-sm flex items-center gap-1">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        Close
+      </button>
+      <span class="flex-1"></span>
+      <span id="visual-compare-label" class="text-xs text-zinc-400 font-mono truncate"></span>
+    </div>
+    <div id="visual-compare-body" class="usn-compare-body flex-1 overflow-auto p-4"></div>
   </div>
 
   <!-- Create app modal.
@@ -724,6 +742,59 @@
         <div id="llm-grants-status" class="text-sm mt-2 hidden"></div>
       </div>
 
+      <!-- Agent instructions & skills (issue #460). Per-user global files
+           the coding agent loads on every build/scout run this user
+           dispatches, in any app: instruction files are assembled into the
+           worker's ~/.claude/CLAUDE.md, skills land in ~/.claude/skills/.
+           Rendered by Settings._renderAgentFilesSection() on modal open
+           from GET /api/me/agent-files (?demo=1 passthrough in staging,
+           since user_agent_files is staging:private). -->
+      <div id="agent-files-section" class="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
+        <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Agent instructions &amp; skills</h3>
+        <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
+          Personal files the coding agent follows on every build or spec run you start, in any app. Markdown or plain text only, up to 10 of each kind, 48&nbsp;KB per file. Changes apply from your next run.
+        </p>
+
+        <div class="mb-4">
+          <div class="flex items-center justify-between mb-1.5">
+            <h4 class="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Instructions</h4>
+            <button data-agent-files-upload="instruction" class="rounded border border-zinc-300 dark:border-zinc-700 px-2 py-0.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Upload</button>
+          </div>
+          <div id="agent-files-instructions-list" class="space-y-1.5"></div>
+        </div>
+
+        <div class="mb-2">
+          <div class="flex items-center justify-between mb-1.5">
+            <h4 class="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Skills</h4>
+            <button data-agent-files-upload="skill" class="rounded border border-zinc-300 dark:border-zinc-700 px-2 py-0.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Upload</button>
+          </div>
+          <div id="agent-files-skills-list" class="space-y-1.5"></div>
+        </div>
+
+        <input id="agent-files-input" type="file" accept=".md,.txt,text/markdown,text/plain" class="hidden" />
+
+        <!-- Pending-upload form: revealed after a file is picked so the
+             user can adjust the (slugified) name and, for skills, the
+             one-line description before saving. -->
+        <div id="agent-files-form" class="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 mt-2 text-xs">
+          <div id="agent-files-form-title" class="font-medium text-zinc-700 dark:text-zinc-300 mb-2"></div>
+          <label class="block text-zinc-600 dark:text-zinc-400 mb-2">Name
+            <input id="agent-files-name" type="text" maxlength="64"
+              class="mt-1 w-full rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 font-mono text-zinc-900 dark:text-zinc-100" />
+          </label>
+          <label id="agent-files-desc-wrap" class="block text-zinc-600 dark:text-zinc-400 mb-2 hidden">Description
+            <input id="agent-files-desc" type="text" maxlength="200" placeholder="One line: what this skill does"
+              class="mt-1 w-full rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-zinc-900 dark:text-zinc-100" />
+          </label>
+          <div class="flex gap-2">
+            <button id="agent-files-save" class="rounded bg-violet-600 hover:bg-violet-500 px-3 py-1 font-medium text-white transition-colors">Save</button>
+            <button id="agent-files-cancel" class="rounded border border-zinc-300 dark:border-zinc-700 px-3 py-1 font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
+          </div>
+        </div>
+
+        <div id="agent-files-status" class="text-sm mt-2 hidden"></div>
+      </div>
+
       <!-- Wallet linking section -->
       <div id="wallet-section" class="hidden mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
         <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Usernode Wallet</h3>
@@ -898,6 +969,10 @@
        renderStreamingHtml / clipSpecSnippet to stop the task-checkbox
        flicker while output streams. -->
   <script src="/js/streaming-markdown.js"></script>
+  <!-- #405: canonical merge-lifecycle helper (window.MergeStatus). Loaded
+       before dev-chat.js / app-view.js / home.js so all three derive and
+       label proposal merge states from one place. -->
+  <script src="/js/merge-status.js"></script>
   <script src="/js/dev-chat.js"></script>
   <!-- Kudos widget (button + budget badge) and leaderboard screen.
        Loaded BEFORE app-view.js so the panel renderer can use

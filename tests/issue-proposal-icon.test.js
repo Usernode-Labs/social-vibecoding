@@ -32,11 +32,19 @@ test('the generating branch pulses the chip', () => {
   assert.match(src, /_devCardIcon\('issueProposal',\s*\{\s*pulse:\s*true/);
 });
 
-test('_renderIssueRow selects issueProposal for the ready status', () => {
+test('_renderIssueRow selects a sky proposal chip for the ready status (mine vs not)', () => {
+  // ready → issueProposalMine when the viewer already has a session cloned
+  // off this issue (h.mySessionId), else issueProposal. Both are sky
+  // document chips, so the "ready ⇒ sky proposal chip" invariant holds
+  // either way.
   assert.match(
     src,
-    /h\.status === 'ready'\s*\n?\s*\?\s*AppView\._devCardIcon\('issueProposal'/
+    /h\.status === 'ready'\s*\?\s*\(h\.mySessionId\s*\?\s*AppView\._devCardIcon\('issueProposalMine'[\s\S]*?:\s*AppView\._devCardIcon\('issueProposal'/
   );
+});
+
+test('DEV_CARD_ICONS issueProposalMine is also a sky chip', () => {
+  assert.match(src, /issueProposalMine:\s*\['bg-sky-500\/15 text-sky-500'/);
 });
 
 test('_devCardIcon supports the pulse and title opts', () => {

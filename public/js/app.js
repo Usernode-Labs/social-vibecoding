@@ -797,6 +797,13 @@ const App = {
                 && !document.getElementById('home-screen').classList.contains('hidden')) {
               Home.load();
             }
+            // #405: the merge that triggered this rebuild also flips the
+            // session to 'merged' — advance the open session's header pill +
+            // change card to "✓ Merged" if it's the one being viewed.
+            if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus
+                && DevChat.currentSession && DevChat.currentSession.app_slug === data.appSlug) {
+              DevChat.refreshCurrentSessionStatus(DevChat.currentSession.id);
+            }
             break;
           case 'app_redeploy_status':
             // Per-app rebuild started/ended. Flip both the header
@@ -918,22 +925,61 @@ const App = {
 
   handleSessionEvent(data) {
     console.log('[ws] session_event', data.event, data.sessionId, data._seq);
+    // #47: the checks badge can change on any open proposal, not just the
+    // dev session the viewer happens to have focused — refresh the vote
+    // panel + home strip globally before the currentSession early-return.
+    if (data.event === 'checks_ready') {
+      if (App.currentTab === 'dev' && App.currentSubTab !== 'sessions') {
+        AppView.refreshDevData('session');
+      }
+      App.refreshHomeProposals();
+    }
+    // #439: an on-demand preview rebuild (Preview-click → ensure-staging)
+    // can complete for a session that isn't the focused dev-chat one (e.g. a
+    // vote-panel preview), so drive the "spinning back up" overlay globally,
+    // before the currentSession gate below. onStagingRebuildResult is a
+    // no-op unless a matching pending marker is parked, so this is cheap.
+    if (data.event === 'staging_ready') {
+      AppView.onStagingRebuildResult(data.sessionId, { url: data.url });
+    } else if (data.event === 'staging_failed') {
+      AppView.onStagingRebuildResult(data.sessionId, { failed: true, error: data.error });
+    }
     if (!DevChat.currentSession || DevChat.currentSession.id !== data.sessionId) return;
     // Dedup by sequence number
     if (data._seq && DevChat._seenSeqs?.has(data._seq)) return;
     if (data._seq) {
       if (!DevChat._seenSeqs) DevChat._seenSeqs = new Set();
       DevChat._seenSeqs.add(data._seq);
-      DevChat._lastSeenSeq = data._seq;
+      // Deliberately do NOT advance DevChat._lastSeenSeq here. That cursor
+      // seeds the resumable GET /events `?since=` replay, and WS + SSE-only
+      // events interleave in ONE monotonic seq stream — advancing it from a
+      // WS delivery would make the replay skip SSE-only events (suggestions,
+      // quick_replies, tokens) that were never actually delivered. Replay
+      // overlap is harmless (_seenSeqs dedups it); cursor over-advancement
+      // loses events until refresh. Only the SSE channels move the cursor.
     }
 
     switch (data.event) {
-      case 'status':
+      case 'status': {
         DevChat._deactivateLastStatus();
-        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
+        // A status line always closes the current streaming bubble (#99 /
+        // #394): when the WS is the only channel that delivered the Mayor's
+        // phase-1 preamble (POST SSE dropped), seal it here so the phase-2
+        // 'mayor_reasoning' summary opens a fresh bubble below the status row
+        // instead of overwriting the preamble. Mirrors the POST-SSE and
+        // resumable status handlers (dev-chat.js).
+        for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+          if (DevChat.messages[i].role === 'assistant') { DevChat.messages[i]._finalized = true; break; }
+        }
+        // Carry the scout spec-preview card fields (#394) so the inline card
+        // renders live when the scout's final status arrives via the WS after
+        // a POST-SSE drop — parity with the POST-SSE (sessions.js) and
+        // resumable (_handleResumedEvent) status handlers.
+        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, scoutOutput: data.scoutOutput, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;
+      }
       case 'staging_ready':
         DevChat._deactivateLastStatus();
         DevChat.messages.push({ role: 'system', content: 'Staging deployed!', stagingUrl: data.url, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8) });
@@ -1002,10 +1048,98 @@ const App = {
           DevChat._startProgressPolling(data.sessionId, []);
         }
         break;
+      case 'mayor_reasoning': {
+        // #394: the Mayor's authoritative full-text reply (phase-1 preamble or
+        // phase-2 wrap-up summary). Broadcast on the WS now so the post-spec
+        // summary survives a dropped POST SSE — the global-WS 'done' used to
+        // tear down streaming before the resumable stream could replay it, so
+        // the summary only appeared after a manual refresh. Mirrors
+        // DevChat._handleResumedEvent's 'mayor_reasoning' branch. The _seq
+        // dedup above already skipped this if the POST SSE delivered it first.
+        if (!data.text) break;
+        let am = null;
+        for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+          if (DevChat.messages[i].role === 'assistant') { am = DevChat.messages[i]; break; }
+        }
+        // No live bubble yet (or the last one is sealed — phase-2 after a
+        // status row) → push a fresh bubble. Otherwise reconcile the existing
+        // live bubble to the server's authoritative text whenever it differs
+        // (the server may have shortened it by scrubbing a fake completion
+        // marker), patching the content node in place when present.
+        if (!am || am._finalized) {
+          DevChat.messages.push({ role: 'assistant', content: data.text, created_at: new Date().toISOString() });
+          DevChat.renderMessages();
+        } else if (am.content !== data.text) {
+          am.content = data.text;
+          const displayContent = am.content.replace(/^\[CHAT_ONLY\]\s*/i, '');
+          const els = document.querySelectorAll('#dc-messages .dc-msg-assistant .dc-msg-content');
+          const el = els[els.length - 1];
+          if (el && typeof DevChat._renderStreamingMarkdown === 'function') {
+            DevChat._renderStreamingMarkdown(el, displayContent);
+          } else {
+            DevChat.renderMessages();
+          }
+        }
+        DevChat.scrollToBottom();
+        break;
+      }
+      case 'suggestions': {
+        // Q/A suggested-answer chips, no longer SSE-only: they must survive a
+        // dropped POST SSE just like mayor_reasoning (#394). Attach to the
+        // live assistant bubble — the emit order guarantees mayor_reasoning
+        // (WS-handled above) pushed it first. A sealed bubble means a
+        // dispatch turn, where suggestions were already dropped server-side —
+        // skip rather than mis-attach (same guard as the resumable handler).
+        if (!Array.isArray(data.suggestions) || !data.suggestions.length) break;
+        let am = null;
+        for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+          if (DevChat.messages[i].role === 'assistant') { am = DevChat.messages[i]; break; }
+        }
+        if (am && !am._finalized) {
+          am.suggestions = data.suggestions;
+          DevChat.renderMessages();
+          DevChat.scrollToBottom();
+        }
+        break;
+      }
+      case 'quick_replies': {
+        // Quick-reply pills ("Build it", …), no longer SSE-only: the phase-2
+        // emit rides right behind the wrap-up mayor_reasoning, which a long
+        // scout/build turn frequently delivers only via this WS after the
+        // POST SSE died. Attach to the latest assistant bubble; the pill bar
+        // reads from it, so _renderQuickReplies redraws (hidden while
+        // streaming, surfaces when _finishStreaming re-renders).
+        if (!Array.isArray(data.replies) || !data.replies.length) break;
+        for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+          if (DevChat.messages[i].role === 'assistant') {
+            DevChat.messages[i].quickReplies = data.replies;
+            DevChat._renderQuickReplies();
+            break;
+          }
+        }
+        break;
+      }
+      case 'assistant_message_end': {
+        // #394: seal the current assistant bubble so a subsequent
+        // 'mayor_reasoning' / token starts a fresh one. Already broadcast on
+        // the WS but previously ignored here; mirrors the POST-SSE and
+        // resumable handlers (dev-chat.js).
+        if (typeof DevChat._flushStreamingFinal === 'function') DevChat._flushStreamingFinal();
+        for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+          if (DevChat.messages[i].role === 'assistant') { DevChat.messages[i]._finalized = true; break; }
+        }
+        break;
+      }
       case 'done':
         DevChat._deactivateLastStatus();
         DevChat._finishStreaming();
         DevChat.renderMessages();
+        // A 'done' arriving on the WS means the primary POST SSE never
+        // finished this turn (its own 'done' would have been seq-deduped
+        // first) — reconcile the timeline from the DB so anything that rode
+        // only the dead stream (chips, pills, a late wrap-up) shows without
+        // a manual refresh. See issue #446.
+        DevChat._reconcileAfterFallbackDone(data.sessionId);
         break;
       case 'spec_updated':
         // Mayor's dispatch_scout updated the live draft.
@@ -1015,6 +1149,33 @@ const App = {
         if (typeof DevChat._handleSpecUpdated === 'function') {
           DevChat._handleSpecUpdated(data);
         }
+        break;
+      // #437: these four are broadcast on the WS (not in SSE_ONLY), so once
+      // the WS path is live they MUST be handled here — handleSessionEvent
+      // records `data._seq` into _seenSeqs BEFORE this switch, so an
+      // unhandled type arriving first on the WS would mark the seq seen and
+      // then get the matching POST-SSE / resumable copy deduped-and-swallowed.
+      // Mirrors the resumable handlers in dev-chat.js (_handleResumedEvent).
+      case 'phase':
+        // Toggle the live-status UI between stop-button (interruptible) and
+        // spinner (wrap-up). Cheap + idempotent — just swaps the button glyph.
+        DevChat._setStreamingUI(true, data.phase);
+        break;
+      case 'stopped':
+        // The "Stopped by @user." status row was already persisted + emitted
+        // server-side via sendStatus, so just tear down the streaming UI.
+        DevChat._removeSpinner();
+        DevChat._deactivateLastStatus();
+        DevChat._finishStreaming();
+        break;
+      case 'cc_estimate':
+        // Experimental AI progress estimate (opt-in, server-gated).
+        DevChat._applyEstimate(data.text, data.remainingSeconds);
+        break;
+      case 'cc_log':
+        DevChat.messages.push({ role: 'system', ccLog: data.log, content: 'Claude Code log', created_at: new Date().toISOString() });
+        DevChat.renderMessages();
+        DevChat.scrollToBottom();
         break;
     }
   },
@@ -1143,6 +1304,12 @@ const App = {
     // this app's Dev view.
     if (App.currentApp === data.appSlug && App.currentTab === 'dev') {
       AppView.refreshDevData('vote');
+    }
+    // #405: advance the OPEN dev session's header pill + change card live
+    // (e.g. promoted → merging → merged) when this update is for the session
+    // the user is currently looking at. No-op otherwise.
+    if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus) {
+      DevChat.refreshCurrentSessionStatus(data.sessionId);
     }
     // Home screen's "Your proposals" strip tracks tallies live.
     App.refreshHomeProposals();

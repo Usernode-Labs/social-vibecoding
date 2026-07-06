@@ -444,9 +444,15 @@ const GroupChat = {
     const a = GroupChat.activeThread;
     if (a && a.type === type && Number(a.ref) === Number(ref)) {
       const el = document.getElementById('gc-thread-messages');
-      if (el) {
+      const scroll = GroupChat._threadScrollEl();
+      if (el && scroll) {
+        // #363: only stick to the newest message when the reader is already
+        // near the bottom — otherwise a live message would yank someone who
+        // has scrolled up to read the topic body or older replies.
+        const nearBottom =
+          scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
         el.insertAdjacentHTML('beforeend', GroupChat.renderMessageHtml(msg));
-        el.scrollTop = el.scrollHeight;
+        if (nearBottom) scroll.scrollTop = scroll.scrollHeight;
         return;
       }
     }
@@ -573,6 +579,11 @@ const GroupChat = {
     // the same input/Send sizing — instead of the boxed inline 40vh layout
     // kept for any legacy (non-fullHeight) caller.
     const fill = !!opts.fullHeight;
+    // #363: in fill (topic) mode, the caller can ask for an in-scroll header
+    // slot so the topic card/body and the discussion share ONE scroll region
+    // (the topic sub-view paints into #gc-thread-head after mount). Off by
+    // default, so the general-chat path and any legacy caller are unaffected.
+    const withHeader = fill && !!opts.withHeader;
     const composerHtml = opts.readOnly
       ? `<div class="px-3 py-2 text-xs text-zinc-500 border-t border-zinc-200 dark:border-zinc-800 shrink-0">${escapeHtml(opts.notice || 'This thread is read-only.')}</div>`
       : `<div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2">
@@ -584,9 +595,20 @@ const GroupChat = {
             <button type="submit" class="rounded-lg bg-violet-600 hover:bg-violet-500 ${fill ? 'px-4 py-2' : 'px-3 py-1.5'} text-sm font-medium text-white transition-colors shrink-0">Send</button>
           </form>
         </div>`;
+    // #363: fill mode wraps an optional header slot + the messages list in a
+    // SINGLE scroll container (#gc-thread-scroll), so a topic's card/body and
+    // its discussion scroll as one area (matching the general chat, where only
+    // the composer is pinned). The messages list itself no longer scrolls; the
+    // typing slot and composer stay as pinned shrink-0 siblings outside the
+    // scroller. The legacy (non-fill) boxed layout keeps the messages list as
+    // its own 40vh scroller.
+    const headSlot = withHeader ? '<div id="gc-thread-head"></div>' : '';
     container.innerHTML = fill
       ? `<div class="dev-thread flex flex-col h-full min-h-0">
-          <div id="gc-thread-messages" class="overflow-y-auto py-2 space-y-0.5 flex-1 min-h-0"></div>
+          <div id="gc-thread-scroll" class="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3">
+            ${headSlot}
+            <div id="gc-thread-messages" class="py-2 space-y-0.5"></div>
+          </div>
           <div id="gc-thread-typing" class="px-3 text-xs text-zinc-500 h-5 shrink-0"></div>
           ${composerHtml}
         </div>`
@@ -696,15 +718,27 @@ const GroupChat = {
     } catch { /* transient — re-open retries */ }
   },
 
+  // #363: the element that actually scrolls a mounted thread. In the unified
+  // topic layout it's the wrapper holding the header + messages; in the legacy
+  // boxed layout the messages list is itself the scroller.
+  _threadScrollEl() {
+    return document.getElementById('gc-thread-scroll')
+      || document.getElementById('gc-thread-messages');
+  },
+
   // Paint the active thread's cached messages into #gc-thread-messages.
   renderThread() {
     const a = GroupChat.activeThread;
     const el = document.getElementById('gc-thread-messages');
     if (!a || !el) return;
+    const scroll = GroupChat._threadScrollEl();
+    // Unified topic layout: header + messages share #gc-thread-scroll.
+    const unified = !!scroll && scroll.id === 'gc-thread-scroll';
     const st = GroupChat._threadState(a.type, a.ref);
-    // Preserve the reading position across "Load earlier" prepends.
-    const prevHeight = el.scrollHeight;
-    const prevTop = el.scrollTop;
+    // Preserve the reading position across "Load earlier" prepends. Read/write
+    // scroll on the scroll container, not the (now non-scrolling) message list.
+    const prevHeight = scroll ? scroll.scrollHeight : 0;
+    const prevTop = scroll ? scroll.scrollTop : 0;
     const wasLoaded = el.dataset.loaded === '1';
 
     const earlier = (st.loaded && st.hasMore && st.messages.length)
@@ -719,10 +753,15 @@ const GroupChat = {
     const btn = document.getElementById('gc-thread-earlier');
     if (btn) btn.addEventListener('click', () => GroupChat.loadThreadHistory(a.type, a.ref));
 
+    if (!scroll) return;
     if (wasLoaded) {
-      el.scrollTop = prevTop + (el.scrollHeight - prevHeight);
+      scroll.scrollTop = prevTop + (scroll.scrollHeight - prevHeight);
+    } else if (unified) {
+      // #363: open a topic at the TOP so its card/body reads first; the user
+      // scrolls down into the discussion (general chat lands at the bottom).
+      scroll.scrollTop = 0;
     } else {
-      el.scrollTop = el.scrollHeight;
+      scroll.scrollTop = scroll.scrollHeight;
     }
   },
 
@@ -1324,8 +1363,13 @@ const GroupChat = {
     setTimeout(() => {
       document.addEventListener('click', GroupChat._reactBarDismiss, true);
       document.addEventListener('keydown', GroupChat._reactBarDismiss, true);
+      // #363: dismiss on scroll of whichever stream is mounted — the general
+      // chat (#gc-messages) or a topic thread's unified scroller
+      // (#gc-thread-scroll).
       const msgs = document.getElementById('gc-messages');
       if (msgs) msgs.addEventListener('scroll', GroupChat._reactBarDismiss, true);
+      const tscroll = document.getElementById('gc-thread-scroll');
+      if (tscroll) tscroll.addEventListener('scroll', GroupChat._reactBarDismiss, true);
     }, 0);
   },
 
@@ -1337,6 +1381,8 @@ const GroupChat = {
       document.removeEventListener('keydown', GroupChat._reactBarDismiss, true);
       const msgs = document.getElementById('gc-messages');
       if (msgs) msgs.removeEventListener('scroll', GroupChat._reactBarDismiss, true);
+      const tscroll = document.getElementById('gc-thread-scroll');
+      if (tscroll) tscroll.removeEventListener('scroll', GroupChat._reactBarDismiss, true);
     }
   },
 

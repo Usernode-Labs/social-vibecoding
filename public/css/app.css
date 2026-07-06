@@ -482,6 +482,105 @@ html, body {
 }
 .dc-quick-pill:hover { background: var(--bg-tertiary); border-color: var(--accent); }
 
+/* ── File attachments (#450) ───────────────────────────── */
+
+/* Pending strip above the composer. Hidden when empty. */
+.dc-attach-strip { display: none; }
+.dc-attach-strip.dc-attach-strip-active {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.dc-attach-item {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  max-width: 100%;
+}
+
+.dc-attach-thumb {
+  display: block;
+  height: 48px;
+  max-width: 96px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.dc-attach-chip { padding: 4px 8px; font-size: 12px; }
+
+.dc-attach-name {
+  color: var(--text-secondary);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dc-attach-size { color: var(--text-muted); font-size: 11px; }
+
+.dc-attach-remove {
+  border: none;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  border-radius: 999px;
+  width: 18px;
+  height: 18px;
+  line-height: 16px;
+  font-size: 13px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.dc-attach-remove:hover { color: #ef4444; }
+
+.dc-attach-uploading { color: var(--text-muted); font-size: 12px; padding: 0 4px; }
+
+.dc-attach-error {
+  color: #ef4444;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+/* Attachments inside a sent user bubble — rendered OUTSIDE the
+   markdown pipeline (DOMPurify strips <img> from chat markdown by
+   design; these come from the trusted attachments route only). */
+.dc-msg-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.dc-msg-att-img {
+  display: block;
+  max-height: 120px;
+  max-width: 220px;
+  object-fit: contain;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.dc-msg-att-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-card-alt);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+  text-decoration: none;
+}
+.dc-msg-att-chip:hover { border-color: var(--accent); }
+
 /* ── Claude Code log (collapsible) ─────────────────────── */
 
 .dc-cc-log {
@@ -769,6 +868,20 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .gc-vote-voted-box-yes { color: #22c55e; }
 .gc-vote-voted-box-no { color: #ef4444; }
 
+/* #404: a card's action row. Every issue / proposal / governance / merged
+ * card routes its buttons through this one container so they all line up the
+ * same way — buttons stay inline at their natural width, with a single uniform
+ * gap both between buttons and between wrapped rows (so a busy card wraps onto
+ * an evenly-spaced second row instead of a scattered jumble). Pure layout; the
+ * per-button .gc-vote-btn* styles are unchanged. */
+.gc-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
 /* Inline vote buttons rendered on a "promoted / voted" group-chat
  * activity row. Sits right after the row text; wraps onto its own line
  * on narrow screens. Empty (no buttons) once the PR leaves the votable
@@ -831,21 +944,100 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
    when the pills wrap; without it a long meta line would push the
    pills down even when the title fits comfortably. */
 .dev-card-headline-meta { contain: inline-size; }
-/* "Merging…" badge shown next to the vote controls while a PR is merging. */
+/* "Merging…" badge shown next to the vote controls while a PR is merging.
+   #405: recoloured emerald → amber so every in-flight "working toward a
+   merge" stage (Merging…, Resolving conflicts…) reads amber-with-spinner,
+   and green is reserved for done/passing. Shared with group-chat.js rows. */
 .gc-merging-badge {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   font-size: 11px;
   font-weight: 600;
-  color: #10b981;
+  color: #f59e0b;
   white-space: nowrap;
 }
-/* #239: "Resolving conflicts…" badge — extends .gc-merging-badge, amber
-   instead of green so an in-flight auto-conflict-resolution reads as
-   "working on it" rather than "merging". */
+/* #239: "Resolving conflicts…" badge — extends .gc-merging-badge (now also
+   amber, so this override is a no-op kept for clarity). */
 .gc-resolving-badge {
   color: #f59e0b;
+}
+/* #405: "Checks running…" — not-yet-started check reads grey/neutral, not
+   amber, so it's visibly distinct from the amber in-flight merge stages. */
+.gc-checks-running-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #9ca3af;
+  white-space: nowrap;
+}
+/* #405: canonical merge-lifecycle badge/pill (see public/js/merge-status.js).
+   `.ms-badge` is the text-style chip used in the feed card + home strip;
+   `.ms-pill` is the filled pill used in the dev session header. Tone classes
+   carry the colour and keep the four surfaces consistent. */
+.ms-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ms-badge-neutral { color: #9ca3af; }
+.ms-badge-violet  { color: #8b5cf6; }
+.ms-badge-amber   { color: #f59e0b; }
+.ms-badge-green   { color: #22c55e; }
+.ms-badge-red     { color: #ef4444; }
+.ms-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  border: 1px solid transparent;
+}
+.ms-pill-neutral { color: #9ca3af; background: rgba(156, 163, 175, 0.12); }
+.ms-pill-violet  { color: #8b5cf6; background: rgba(139, 92, 246, 0.12); }
+.ms-pill-amber   { color: #f59e0b; background: rgba(245, 158, 11, 0.12); }
+.ms-pill-green   { color: #22c55e; background: rgba(34, 197, 94, 0.12); }
+.ms-pill-red     { color: #ef4444; background: rgba(239, 68, 68, 0.12); }
+/* #361: persistent merge-status badges. Mirror .gc-merging-badge's slot
+   treatment. Conflict (and conflict-resolution-failed) reads red; behind
+   reads amber-neutral so a merely-stale proposal doesn't alarm. */
+.gc-conflict-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #ef4444;
+  white-space: nowrap;
+}
+.gc-behind-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #f59e0b;
+  white-space: nowrap;
+}
+/* #381: advisory "may break the app" / console-error warning. Same slot
+   treatment as the merge-status badges; amber (like behind) rather than
+   red (conflict) because it never blocks the vote — it's a heads-up. */
+.gc-warning-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #f59e0b;
+  white-space: nowrap;
 }
 /* Settled "✓ Merged" badge — same slot as the merging badge, shown after a
    PR lands so the row's voting info stays put. */
@@ -2665,3 +2857,111 @@ html.in-native-webview #header-title {
   vertical-align: -2px;
 }
 @keyframes import-spin { to { transform: rotate(360deg); } }
+
+/* ── Priority / assigned-person chips + dropdown (community-voted) ───── */
+/* Strip the <button> UA chrome so an interactive chip is pixel-identical
+   to the sibling <span> badge pills (💬 / ★ / #N): inherit the surrounding
+   font (a <button> otherwise brings its own family + baseline), drop the
+   native appearance/border, and let `items-center` flexbox handle vertical
+   centring (no line-height override — that drifted the chip's height). The
+   utility `bg-…` class supplies the tint, so background stays none here. */
+.attr-chip {
+  cursor: default;
+  font: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  background: none;
+}
+button.attr-chip { cursor: pointer; }
+
+/* Floating dropdown anchored under a chip. Body-mounted + position:fixed
+   so it escapes the card's overflow clipping and survives feed re-renders. */
+.attr-popover {
+  z-index: 2000;
+  min-width: 200px;
+  max-width: 260px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+}
+.attr-pop-head {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  padding: 4px 8px 2px;
+}
+.attr-opt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.attr-opt:hover { background: var(--accent-tint); }
+.attr-opt-label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.attr-opt-right { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.attr-opt-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border-radius: 9999px;
+  padding: 0 6px;
+}
+.attr-dot { width: 8px; height: 8px; border-radius: 9999px; display: inline-block; }
+.attr-pop-add { position: relative; padding: 6px; border-top: 1px solid var(--border-light); margin-top: 4px; }
+.attr-pop-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+}
+.attr-pop-addbtn {
+  margin-top: 6px;
+  width: 100%;
+  padding: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+.attr-pop-addbtn:hover { background: var(--accent-light); }
+.attr-pop-suggest {
+  margin-top: 4px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.attr-suggest-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 5px 8px;
+  font-size: 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.attr-suggest-item:hover { background: var(--accent-tint); }

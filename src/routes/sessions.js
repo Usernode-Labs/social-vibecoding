@@ -1,5 +1,7 @@
 'use strict';
 
+const express = require('express');
+const crypto = require('crypto');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
@@ -16,14 +18,20 @@ const caddy = require('../services/caddy');
 const worker = require('../services/worker');
 const workerProgress = require('../services/worker-progress');
 const sessionLifecycle = require('../services/session-lifecycle');
+const stagingRecovery = require('../services/staging-recovery');
 const sessionBus = require('../services/session-bus');
 const { drainGuard } = require('../services/lifecycle');
 const { getAppConventions, getSelfHostedRefuseList } = require('../services/prompts');
+const { IN_LOOP_BROWSER_GUIDANCE } = require('../services/in-loop-browser');
 const models = require('../services/models');
 const limits = require('../services/limits');
 const events = require('../services/events');
-const { chatLimiter } = require('../middleware/rate-limits');
+const modelFallback = require('../services/model-fallback');
+const { getActiveUserStats } = require('../services/active-users');
+const { chatLimiter, attachmentUploadLimiter } = require('../middleware/rate-limits');
+const attachmentsSvc = require('../services/attachments');
 const appAccess = require('../services/app-access');
+const userAgentFiles = require('../services/user-agent-files');
 const notifications = require('../services/notifications');
 // runSyncMain + persistBehindMain now live in services/sync-main.js so
 // the conflict-resolver can drive a sync turn without a route-requires-
@@ -47,6 +55,20 @@ const { activeWorkers, getActiveWorkerCount } = require('../services/active-work
 // Phase 'mayor2' is intentionally stop-proof — by then CC has already
 // pushed a commit + opened a PR and we just want the summary to finish.
 const stopRegistry = new Map();
+
+// Per-session in-flight guard for on-demand staging rebuilds (the
+// ensure-staging route below). Repeated Preview clicks while a rebuild is
+// already running must not kick off a second concurrent docker build +
+// pg clone for the same session. Mirrors the stagingHealAttempts map the
+// sweeper uses in server.js. Cleared when the rebuild settles.
+const ensureStagingInFlight = new Set();
+
+// #447: per-session in-flight guard for the manual "Re-run checks" route
+// below. Coalesces repeat clicks so one stuck proposal can't kick off
+// several concurrent staging rebuilds + capture runs. Cleared when the
+// recheck settles. (captureForSession is _inFlight-guarded internally too;
+// this just avoids a redundant rebuild on the rebuild path.)
+const recheckInFlight = new Set();
 
 // getActiveWorkerCount is imported from services/active-workers and
 // re-exported at the bottom of this module (server.js imports it here).
@@ -445,8 +467,10 @@ function sessionRoutes(config) {
   // key when on file — the UI shows a confirmation warning + model
   // selector before calling this.
   //
-  // The run may create + push its branch, but never opens a PR and never
-  // builds a staging preview (see runClaudeCodeTool's `headless` flag).
+  // The run may create + push its branch and deliberately builds a staging
+  // preview, but never opens a PR — the PR is created lazily on a cloned
+  // session's branch at propose time (see runClaudeCodeTool's `headless`
+  // flag).
   router.post('/api/apps/:slug/issues/:number/headless-session', drainGuard, async (req, res) => {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
@@ -487,8 +511,10 @@ function sessionRoutes(config) {
       // Billed to the clicking user, limit-first (#212): their shared
       // daily allowance while it has headroom, their BYOK key once it's
       // exhausted — exactly like a chat turn. No headroom + no key → 429.
+      // The code lets the client tell budget exhaustion apart from a
+      // rate-limit 429 (#463).
       const billing = await limits.resolveBillingPath(pool, config.jwtSecret, req.user.id);
-      if (billing.error) return res.status(429).json({ error: billing.error });
+      if (billing.error) return res.status(429).json({ error: billing.error, code: 'budget_exceeded' });
       const userApiKey = billing.apiKey;
 
       // Headless sessions don't count against the clicking user's session
@@ -766,13 +792,26 @@ function sessionRoutes(config) {
   router.get('/api/sessions/:id', async (req, res) => {
     try {
       const { rows } = await pool.query(
-        `SELECT cs.*, a.slug as app_slug, a.name as app_name
+        `SELECT cs.*, a.slug as app_slug, a.name as app_name,
+                (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count,
+                (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'no') AS no_count
          FROM chat_sessions cs
          JOIN apps a ON cs.app_id = a.id
          WHERE cs.id = $1 AND cs.user_id = $2`,
         [req.params.id, req.user.id]
       );
       if (!rows.length) return res.status(404).json({ error: 'Session not found' });
+
+      // #405: the session view's merge-lifecycle pill needs the vote tally to
+      // resolve the In-vote / "Passed — merging shortly" states exactly as
+      // the proposal feed card does. yes_count/no_count come from the query
+      // above; majority is the app's live active-user threshold. Best-effort
+      // — a stats hiccup just leaves the pill on the tally-free states.
+      try {
+        const stats = await getActiveUserStats(pool, rows[0].app_id);
+        rows[0].majority = stats?.majority || 1;
+        rows[0].active_users = stats?.active || 1;
+      } catch { rows[0].majority = rows[0].majority || 1; }
 
       // Viewing a session counts as activity so the auto-pause sweeper
       // doesn't pause a session the user is actively reading. Fire-and-
@@ -1151,16 +1190,120 @@ function sessionRoutes(config) {
     }
   });
 
+  // ── Dev-chat file attachments (#450) ─────────────────────────────
+  //
+  // Upload happens BEFORE send: the client POSTs raw bytes here per
+  // file, gets back an attachment id, and passes the ids to /chat which
+  // links them to the user message row. The body is always
+  // application/octet-stream (real type is derived server-side from the
+  // filename extension + magic-byte sniff) — this deliberately sidesteps
+  // the global express.json() parser, which only consumes JSON bodies,
+  // so no server.js parser change is needed and a .json text file can
+  // never be swallowed as a JSON request body.
+  router.post(
+    '/api/sessions/:id/attachments',
+    attachmentUploadLimiter,
+    express.raw({ type: 'application/octet-stream', limit: '5mb' }),
+    async (req, res) => {
+      try {
+        const { rows: sessionRows } = await pool.query(
+          `SELECT cs.id FROM chat_sessions cs
+           WHERE cs.id = $1 AND cs.user_id = $2
+             AND cs.status IN ('active', 'promoted')
+             AND cs.is_headless = FALSE`,
+          [req.params.id, req.user.id]
+        );
+        if (!sessionRows.length) return res.status(404).json({ error: 'Active session not found' });
+        const sessionId = sessionRows[0].id;
+
+        const filename = String(req.query.filename || '').trim();
+        const data = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+        const verdict = attachmentsSvc.validateUpload({ filename, data });
+        if (!verdict.ok) return res.status(400).json({ error: verdict.error });
+
+        // Per-session storage cap — the retention bound for linked rows
+        // (orphans are GC'd by the server.js sweeper after 24h).
+        const { rows: sumRows } = await pool.query(
+          `SELECT COALESCE(SUM(size_bytes), 0)::bigint AS total
+             FROM chat_session_attachments WHERE session_id = $1`,
+          [sessionId]
+        );
+        if (Number(sumRows[0].total) + data.length > attachmentsSvc.MAX_SESSION_BYTES) {
+          return res.status(400).json({
+            error: `This session's attachment storage is full (${Math.round(attachmentsSvc.MAX_SESSION_BYTES / 1024 / 1024)} MB max)`,
+          });
+        }
+
+        const id = crypto.randomBytes(16).toString('hex');
+        await pool.query(
+          `INSERT INTO chat_session_attachments
+             (id, session_id, user_id, kind, filename, content_type, size_bytes, data)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [id, sessionId, req.user.id, verdict.kind, filename, verdict.contentType, data.length, data]
+        );
+        return res.json({
+          id, kind: verdict.kind, filename,
+          contentType: verdict.contentType, sizeBytes: data.length,
+        });
+      } catch (err) {
+        // express.raw over-limit bodies raise PayloadTooLargeError before
+        // the handler runs; anything landing here is a genuine failure.
+        log.error('sessions', 'Attachment upload failed', { sessionId: req.params.id, err: err.message });
+        return res.status(500).json({ error: 'Upload failed' });
+      }
+    }
+  );
+
+  // Serve attachment bytes. Authed + owner-gated (deliberately NOT the
+  // pre-auth /visuals/:id pattern — attachments are private chat content
+  // with no GitHub-camo requirement). Rows are immutable and ids are
+  // unguessable, so a long private immutable cache is safe.
+  router.get('/api/sessions/:id/attachments/:attId', async (req, res) => {
+    const attId = String(req.params.attId || '');
+    if (!/^[a-f0-9]{32}$/.test(attId)) return res.status(404).end();
+    try {
+      const { rows } = await pool.query(
+        `SELECT att.kind, att.filename, att.content_type, att.data
+           FROM chat_session_attachments att
+           JOIN chat_sessions cs ON cs.id = att.session_id
+          WHERE att.id = $1 AND att.session_id = $2 AND cs.user_id = $3`,
+        [attId, req.params.id, req.user.id]
+      );
+      if (!rows.length) return res.status(404).end();
+      const att = rows[0];
+      // Text always serves as text/plain (set at upload) and downloads as
+      // an attachment; images render inline. nosniff so a browser can
+      // never promote either into something executable.
+      const safeName = String(att.filename || 'file').replace(/["\\\r\n]/g, '_');
+      res.set('Content-Type', att.content_type || 'application/octet-stream');
+      res.set('X-Content-Type-Options', 'nosniff');
+      res.set('Content-Disposition', `${att.kind === 'image' ? 'inline' : 'attachment'}; filename="${safeName}"`);
+      res.set('Cache-Control', 'private, max-age=31536000, immutable');
+      return res.send(att.data);
+    } catch (err) {
+      log.error('sessions', 'Attachment serve failed', { attId, err: err.message });
+      return res.status(500).end();
+    }
+  });
+
   // Send a message in a dev chat session — Mayor + Claude Code pattern.
   // chatLimiter caps a single user at 30 chat turns/min so a runaway
   // script can't drain their daily LLM cap before checkBudget() can
   // even respond. See src/middleware/rate-limits.js.
   router.post('/api/sessions/:id/chat', chatLimiter, drainGuard, async (req, res) => {
-    const { message, model } = req.body;
+    const { message, model, attachmentIds } = req.body;
 
-    if (!message?.trim()) {
+    // #450: attachments may accompany (or replace) the typed message.
+    const attIds = attachmentsSvc.sanitizeAttachmentIds(attachmentIds);
+    if (attIds === null) {
+      return res.status(400).json({ error: `Bad attachments (max ${attachmentsSvc.MAX_PER_MESSAGE} per message)` });
+    }
+    if (!message?.trim() && !attIds.length) {
       return res.status(400).json({ error: 'Message required' });
     }
+    // Downstream code (prompt assembly, titling, dispatch args) never
+    // sees empty content — an attachments-only send gets a stub caption.
+    const messageText = message?.trim() || attachmentsSvc.ATTACHMENTS_ONLY_TEXT;
 
     try {
       const { rows: sessionRows } = await pool.query(
@@ -1183,15 +1326,51 @@ function sessionRoutes(config) {
       // the whole turn — null = platform-billed, non-null = the user's
       // own key — so every recordSpend(..., { byok: !!userApiKey })
       // below routes the cost to the right bucket. Allowance gone and
-      // no key on file → the same 429 as always.
+      // no key on file → the same 429 as always, tagged with a code so
+      // the client can tell it apart from a chatLimiter throttle (#463).
       const billing = await limits.resolveBillingPath(pool, config.jwtSecret, req.user.id);
-      if (billing.error) return res.status(429).json({ error: billing.error });
+      if (billing.error) return res.status(429).json({ error: billing.error, code: 'budget_exceeded' });
       const userApiKey = billing.apiKey;
 
-      await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content) VALUES ($1, 'user', $2)`,
-        [session.id, message.trim()]
+      // #450: verify every attachment id is this user's, this session's,
+      // and unlinked BEFORE inserting the message row (we're still in
+      // plain-JSON response land here — after the SSE writeHead below,
+      // 4xx replies are no longer possible).
+      let turnAttachments = [];
+      if (attIds.length) {
+        const { rows: attRows } = await pool.query(
+          `SELECT id, kind, filename, content_type, size_bytes
+             FROM chat_session_attachments
+            WHERE id = ANY($1) AND session_id = $2 AND user_id = $3
+              AND message_id IS NULL
+            ORDER BY created_at ASC, id ASC`,
+          [attIds, session.id, req.user.id]
+        );
+        if (attRows.length !== attIds.length) {
+          return res.status(400).json({ error: 'Unknown or already-sent attachment' });
+        }
+        turnAttachments = attRows;
+      }
+      const userMeta = turnAttachments.length
+        ? {
+            attachments: turnAttachments.map((a) => ({
+              id: a.id, kind: a.kind, filename: a.filename,
+              contentType: a.content_type, sizeBytes: a.size_bytes,
+            })),
+          }
+        : {};
+
+      const { rows: userMsgRows } = await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'user', $2, $3) RETURNING id`,
+        [session.id, messageText, JSON.stringify(userMeta)]
       );
+      if (turnAttachments.length) {
+        await pool.query(
+          `UPDATE chat_session_attachments SET message_id = $1 WHERE id = ANY($2)`,
+          [userMsgRows[0].id, attIds]
+        );
+      }
 
       // Mark the session as freshly active so the auto-pause sweeper
       // leaves it alone (see server.js session sweeper + schema
@@ -1223,21 +1402,48 @@ function sessionRoutes(config) {
       let eventSeq = 0;
       // Event types that are ONLY meaningful on the active SSE stream. They
       // must not also be broadcast on the global WebSocket because both
-      // channels share a _seq-based dedup on the client: if a token arrived
-      // first on the WS (which has no 'token' handler) it would be silently
-      // swallowed, and the matching SSE delivery would then be deduped-skipped
-      // — the mayor's response would be written to the DB but never appear in
-      // the live UI until the user refreshes.
-      // 'suggestions' (#32) follows mayor_reasoning's posture: SSE +
-      // session bus only — a refresh restores chips from the assistant
-      // row's metadata, so the global WS adds nothing but dedup risk.
-      const SSE_ONLY = new Set(['token', 'usage', 'error', 'mayor_reasoning', 'suggestions', 'quick_replies']);
+      // channels share a _seq-based dedup on the client: if such an event
+      // arrived first on the WS (which has NO handler for it) it would be
+      // silently swallowed, and the matching SSE delivery would then be
+      // deduped-skipped — the mayor's response would be written to the DB
+      // but never appear in the live UI until the user refreshes.
+      //
+      // 'token' stays SSE-only: it is high-frequency streaming and is fully
+      // recovered by the single full-text 'mayor_reasoning' event, so
+      // broadcasting every token on the WS buys nothing.
+      //
+      // 'mayor_reasoning' is NO LONGER SSE-only (#394). It is the authoritative
+      // full-text wrap-up the Mayor posts after a scout/spec or build turn, and
+      // it must survive a dropped POST SSE: a long scout run often kills the
+      // POST stream before phase-2, leaving the summary only on the session bus
+      // — and the global-WS 'done' (which IS broadcast) races ahead and tears
+      // down streaming before the resumable EventSource can replay it, so the
+      // summary lands in the DB but never live. Broadcasting it on the WS is
+      // safe now because (a) App.handleSessionEvent has a dedicated
+      // 'mayor_reasoning' case (no "swallowed then deduped" problem) and (b) it
+      // carries the COMPLETE text and is applied idempotently / last-write-wins,
+      // so overlap with the SSE/bus copy reconciles to the same result.
+      //
+      // 'suggestions'/'quick_replies' are NO LONGER SSE-only either: they ride
+      // right behind mayor_reasoning (the phase-2 quick_replies carry the
+      // "Build it" pill) and were hit by the exact same dropped-POST-SSE race —
+      // persisted in the assistant row's metadata but only visible after a
+      // refresh. Same safety argument as mayor_reasoning: App.handleSessionEvent
+      // has dedicated cases for both, and each event carries the COMPLETE
+      // chip/pill list, applied last-write-wins.
+      const SSE_ONLY = new Set(['token', 'usage', 'error']);
       const send = (type, data) => {
         const seq = `${seqPrefix}-${++eventSeq}`;
         const event = { type, _seq: seq, ...data };
         try { res.write(`data: ${JSON.stringify(event)}\n\n`); } catch {}
         if (!SSE_ONLY.has(type)) {
-          broadcastGlobal({ type: 'session_event', sessionId: session.id, event: type, ...event });
+          // Spread the event FIRST, then pin the envelope fields — otherwise
+          // `...event` (which carries the inner `type`, e.g. 'mayor_reasoning')
+          // clobbers `type: 'session_event'`, and the client's
+          // `switch (data.type)` never routes to handleSessionEvent. The
+          // envelope must keep `type: 'session_event'` while `event` carries
+          // the real event name and `_seq` + the data fields ride along.
+          broadcastGlobal({ ...event, sessionId: session.id, event: type, type: 'session_event' });
         }
         // Also publish to the per-session event bus so a client whose POST
         // SSE connection drops can reconnect via GET /events and replay any
@@ -1296,7 +1502,7 @@ function sessionRoutes(config) {
       const titledThisTurn = !session.session_title && !session.pr_number;
       if (titledThisTurn) {
         sessionTitles.maybeTitleFirstMessage({
-          pool, session, message: message.trim(),
+          pool, session, message: messageText,
           userId: req.user.id, apiKey: userApiKey, send,
         });
       }
@@ -1333,6 +1539,29 @@ function sessionRoutes(config) {
           ).catch(() => {});
         };
 
+        // Fable 5 classifier fallback: every fallback-served Mayor call
+        // gets an admin record (log.warn + events row), but the in-chat
+        // notice fires ONCE per turn — a multi-phase turn where both the
+        // plan and the wrap-up fell back shouldn't nag twice.
+        let fallbackNoticed = false;
+        const noteModelFallback = async (result) => {
+          if (!result || !result.fallbackServed) return;
+          const requested = selectedModel;
+          const served = result.servedModel || llm.FALLBACK_TARGET_MODEL;
+          const category = (result.stopDetails && result.stopDetails.category) || null;
+          await modelFallback.record(pool, {
+            kind: events.EVENT_TYPES.MODEL_FALLBACK,
+            userId: req.user.id, appId: session.app_id, sessionId: session.id,
+            requested, served, category, source: 'mayor',
+          });
+          if (!fallbackNoticed) {
+            fallbackNoticed = true;
+            await sendStatus(modelFallback.noticeText(requested, served, category), {
+              modelFallback: { requested, served, category },
+            });
+          }
+        };
+
         await sendStatus('Thinking about your request...');
 
         // Pull user+mayor turns AND the coding-agent's final summaries
@@ -1341,13 +1570,24 @@ function sessionRoutes(config) {
         // earlier turns, so questions like "what was the fix?" would
         // dispatch CC unnecessarily just to re-discover the answer.
         const { rows: history } = await pool.query(
-          `SELECT role, content, metadata FROM chat_session_messages
+          `SELECT id, role, content, metadata FROM chat_session_messages
            WHERE session_id = $1
              AND (role IN ('user', 'assistant')
                   OR (role = 'system' AND metadata->>'ccOutput' IS NOT NULL))
            ORDER BY id ASC`,
           [session.id]
         );
+
+        // #450: bulk-load attachment bytes for user rows that carry
+        // metadata.attachments so buildMayorMessages can emit vision
+        // blocks + inlined text files. Best-effort — on failure the
+        // Mayor just sees the plain text history.
+        let historyAttachments = new Map();
+        try {
+          historyAttachments = await attachmentsSvc.loadForHistory(pool, history);
+        } catch (err) {
+          log.warn('sessions', 'Failed to load history attachments', { sessionId: session.id, err: err.message });
+        }
 
         // Same "in-flight only — warm-idle ≠ busy" rationale as the
         // /status endpoint above. Pre-warm-CC, "container running"
@@ -1392,8 +1632,22 @@ function sessionRoutes(config) {
             log.warn('sessions', 'Open-proposals lookup failed (continuing without block)', { sessionId: session.id, err: err.message });
           }
         }
-        let mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext, openProposalsBlock);
-        const messages = buildMayorMessages(history);
+        // #460: compact metadata block listing the session owner's
+        // personal agent files (names + descriptions only — contents go
+        // to Claude Code via the CC-volume sync, never to the Mayor) so
+        // the Mayor can answer "what instructions are you using?".
+        // Advisory: any failure just drops the block.
+        let agentFilesBlock = '';
+        try {
+          if (session.user_id) {
+            const afMeta = await userAgentFiles.listForUser(pool, session.user_id);
+            agentFilesBlock = userAgentFiles.buildMayorAgentFilesBlock(afMeta);
+          }
+        } catch (err) {
+          log.warn('sessions', 'Agent-files metadata load failed (continuing without block)', { sessionId: session.id, err: err.message });
+        }
+        let mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext, openProposalsBlock, agentFilesBlock);
+        const messages = buildMayorMessages(history, historyAttachments);
 
         if (!llm.isEnabled()) {
           send('error', { error: 'LLM not configured' });
@@ -1454,6 +1708,7 @@ function sessionRoutes(config) {
               onToken: (text) => send('token', { text }),
               apiKey: userApiKey,
             });
+            await noteModelFallback(mayor1);
 
             const dataCalls = mayor1.toolUses.filter((t) => DATA_TOOL_NAMES.has(t.name));
             // Parallel tool use is enabled, so the Mayor may emit
@@ -1479,11 +1734,14 @@ function sessionRoutes(config) {
             // happened and is invoiced whether or not it produced text.
             // (The final iteration's spend is billed by the existing
             // phase-1 accounting just below the loop.)
+            // Price + attribute with the SERVED model — a fallback-served
+            // call bills at (and displays) the fallback model's identity.
+            const servedModelIter = mayor1.servedModel || selectedModel;
             let dataCost = 0;
             if (mayor1.usage) {
-              dataCost = llm.estimateCostCents(mayor1.usage, selectedModel);
+              dataCost = llm.estimateCostCents(mayor1.usage, servedModelIter);
               await limits.recordSpend(pool, req.user.id, dataCost, { byok: !!userApiKey });
-              send('usage', { costCents: dataCost, model: selectedModel, byok: !!userApiKey });
+              send('usage', { costCents: dataCost, model: servedModelIter, byok: !!userApiKey });
             }
 
             // Persist any preamble text this iteration produced ("Let me
@@ -1497,7 +1755,7 @@ function sessionRoutes(config) {
               await pool.query(
                 `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
                  VALUES ($1, 'assistant', $2, $3, $4, $5)`,
-                [session.id, mayor1.text, selectedModel,
+                [session.id, mayor1.text, servedModelIter,
                   mayor1.usage ? mayor1.usage.input_tokens + mayor1.usage.output_tokens : null,
                   dataCost]
               );
@@ -1555,10 +1813,27 @@ function sessionRoutes(config) {
           preview: mayorText1.substring(0, 200),
         });
 
-        // Fallback text when the model jumps straight to a tool_use
-        // with no preamble — the user otherwise stares at a silent
-        // "Thinking…" until CC spins up, which looks broken.
-        if (!mayorText1.trim() && mayor1.toolUses.length === 0) {
+        // Whole-chain refusal: Fable 5's classifiers declined AND the
+        // fallback couldn't complete it (or declined too). Replace the
+        // old silent empty reply with an explicit persisted status, and
+        // end the turn cleanly — a refused turn must never dispatch
+        // (any tool_use blocks are the declined model's).
+        if (mayor1.stopReason === 'refusal') {
+          const refusalCategory = (mayor1.stopDetails && mayor1.stopDetails.category) || null;
+          await modelFallback.record(pool, {
+            kind: events.EVENT_TYPES.MODEL_REFUSAL,
+            userId: req.user.id, appId: session.app_id, sessionId: session.id,
+            requested: selectedModel, served: mayor1.servedModel || selectedModel,
+            category: refusalCategory, source: 'mayor',
+          });
+          await sendStatus(modelFallback.refusalText(selectedModel, refusalCategory), {
+            modelRefusal: { requested: selectedModel, category: refusalCategory },
+          });
+          mayor1.toolUses = [];
+        } else if (!mayorText1.trim() && mayor1.toolUses.length === 0) {
+          // Fallback text when the model jumps straight to a tool_use
+          // with no preamble — the user otherwise stares at a silent
+          // "Thinking…" until CC spins up, which looks broken.
           mayorText1 = '_(Mayor returned no response — try sending again.)_';
           send('token', { text: mayorText1 });
         }
@@ -1570,16 +1845,16 @@ function sessionRoutes(config) {
         // it with a short note. The system prompt forbids this, but
         // models occasionally regress; without this check the user sees
         // a totally fabricated "fix summary" with no underlying commit.
-        const fakeMarker = mayorText1.includes('[CODING AGENT COMPLETED]');
-        const dispatched = mayor1.toolUses.some((t) => t.name === 'dispatch_claude_code');
-        if (fakeMarker && !dispatched) {
-          log.warn('sessions', 'Mayor wrote fake [CODING AGENT COMPLETED] without dispatching', {
-            sessionId: session.id,
-            preview: mayorText1.substring(0, 300),
-          });
-          mayorText1 = mayorText1
-            .replace(/\[CODING AGENT COMPLETED\][\s\S]*$/i, '')
-            .trim() || '(I described what should change, but didn\'t actually run the coding agent — try sending again.)';
+        // Strip unconditionally (#358): the marker is only ever produced by
+        // the harness (buildMayorMessages); an assistant turn must never
+        // carry it, whether or not a tool was also called. When the scrub
+        // empties the text, substitute an honest note.
+        {
+          const stripped = stripFakeCompletionMarker(mayorText1, { sessionId: session.id });
+          if (stripped !== mayorText1) {
+            mayorText1 = stripped
+              || '(I described what should change, but didn\'t actually run the coding agent — try sending again.)';
+          }
         }
 
         // Q/A mode (#32): suggested answers for clarifying questions.
@@ -1601,13 +1876,16 @@ function sessionRoutes(config) {
         // happened and was billed). chat_session_messages still gets
         // an assistant row only when there's actual reasoning text;
         // an empty assistant message would clutter the chat history.
-        const costCents1 = mayor1.usage ? llm.estimateCostCents(mayor1.usage, selectedModel) : 0;
+        // Served-model attribution: a fallback-served turn is priced,
+        // persisted, and displayed as the model that actually answered.
+        const servedModel1 = mayor1.servedModel || selectedModel;
+        const costCents1 = mayor1.usage ? llm.estimateCostCents(mayor1.usage, servedModel1) : 0;
         if (mayorText1.trim()) {
           send('mayor_reasoning', { text: mayorText1 });
           await pool.query(
             `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
              VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
-            [session.id, mayorText1, selectedModel, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1,
+            [session.id, mayorText1, servedModel1, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1,
              JSON.stringify({ ...(suggestions ? { suggestions } : {}), ...(quickReplies ? { quickReplies } : {}) })]
           );
           if (suggestions) send('suggestions', { suggestions });
@@ -1618,7 +1896,7 @@ function sessionRoutes(config) {
         // platform-key spend counts against the daily caps.
         if (mayor1.usage) {
           await limits.recordSpend(pool, req.user.id, costCents1, { byok: !!userApiKey });
-          send('usage', { costCents: costCents1, model: selectedModel, byok: !!userApiKey });
+          send('usage', { costCents: costCents1, model: servedModel1, byok: !!userApiKey });
         }
 
         // Pick which tool the Mayor invoked, with server-side priority
@@ -1692,17 +1970,32 @@ function sessionRoutes(config) {
         }
 
         // --- Run the chosen tool ---
+        // #450: forward this turn's attachments to the dispatched agent —
+        // text files inlined verbatim, images referenced by id with
+        // usernode-attachments download instructions. Best-effort: a load
+        // failure must not block the dispatch.
+        let attachmentsBlock = '';
+        if (turnAttachments.length) {
+          try {
+            attachmentsBlock = attachmentsSvc.buildDispatchBlock(
+              await attachmentsSvc.loadByIds(pool, turnAttachments.map((a) => a.id))
+            );
+          } catch (err) {
+            log.warn('sessions', 'Failed to build dispatch attachments block', { sessionId: session.id, err: err.message });
+          }
+        }
         let toolResult;
         if (toolKind === 'scout') {
           const toolPromptArg = typeof activeToolCall.input?.prompt === 'string' && activeToolCall.input.prompt.trim()
             ? activeToolCall.input.prompt.trim()
-            : message.trim();
+            : messageText;
 
           setPhase('cc');
           toolResult = await runScoutTool({
             pool, config, req, res, session, selectedModel,
-            userMessage: message.trim(),
+            userMessage: messageText,
             toolPromptArg,
+            attachmentsBlock,
             repoOwner, repoName,
             send, sendStatus,
             stopHandle,
@@ -1722,13 +2015,14 @@ function sessionRoutes(config) {
         } else {
           const toolPromptArg = typeof activeToolCall.input?.prompt === 'string' && activeToolCall.input.prompt.trim()
             ? activeToolCall.input.prompt.trim()
-            : message.trim();
+            : messageText;
 
           setPhase('cc');
           toolResult = await runClaudeCodeTool({
             pool, config, req, res, session, selectedModel,
-            userMessage: message.trim(),
+            userMessage: messageText,
             toolPromptArg,
+            attachmentsBlock,
             repoOwner, repoName,
             send, sendStatus,
             stopHandle,
@@ -1820,7 +2114,7 @@ function sessionRoutes(config) {
         // Same open-proposals block as phase-1 so the wrap-up turn sees a
         // consistent prompt (the instruction is scoped to "before
         // dispatching", so it's inert after a tool has already run).
-        mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext2, openProposalsBlock);
+        mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext2, openProposalsBlock, agentFilesBlock);
         const mayor2 = await llm.streamChat({
           messages: followUpMessages,
           systemPrompt: mayorPrompt,
@@ -1834,20 +2128,36 @@ function sessionRoutes(config) {
           onToken: (text) => send('token', { text }),
           apiKey: userApiKey,
         });
+        await noteModelFallback(mayor2);
 
         // Quick-reply pills (#285): the wrap-up reflects the final post-build
         // state, so this is where dispatch turns get their pills. The
         // tool_use is terminal (end of turn) — no tool_result round-trip.
         const quickReplies2 = resolveQuickReplies(mayor2.toolUses);
 
-        let mayorText2 = mayor2.text;
+        let mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
         log.info('sessions', 'Mayor phase-2 response', {
           sessionId: session.id,
           textLen: mayorText2.length,
           stopReason: mayor2.stopReason,
           preview: mayorText2.substring(0, 200),
         });
-        if (!mayorText2.trim()) {
+        if (mayor2.stopReason === 'refusal') {
+          // The wrap-up itself was refused end-to-end. The dispatched
+          // work already happened — record it and substitute an honest
+          // line rather than leaving the build unexplained.
+          const refusalCategory2 = (mayor2.stopDetails && mayor2.stopDetails.category) || null;
+          await modelFallback.record(pool, {
+            kind: events.EVENT_TYPES.MODEL_REFUSAL,
+            userId: req.user.id, appId: session.app_id, sessionId: session.id,
+            requested: selectedModel, served: mayor2.servedModel || selectedModel,
+            category: refusalCategory2, source: 'mayor',
+          });
+          if (!mayorText2.trim()) {
+            mayorText2 = '_The wrap-up was declined by the model\'s safety classifiers — the dispatched work above still completed; see the status messages for the outcome._';
+            send('token', { text: mayorText2 });
+          }
+        } else if (!mayorText2.trim()) {
           // Cheap guard: we still want to show *something* after the
           // tool runs, even if the Mayor produces no wrap-up text.
           if (toolResult.isError) {
@@ -1865,16 +2175,17 @@ function sessionRoutes(config) {
         }
         send('mayor_reasoning', { text: mayorText2 });
 
-        const costCents2 = llm.estimateCostCents(mayor2.usage, selectedModel);
+        const servedModel2 = mayor2.servedModel || selectedModel;
+        const costCents2 = llm.estimateCostCents(mayor2.usage, servedModel2);
         await pool.query(
           `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
            VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
-          [session.id, mayorText2, selectedModel, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2,
+          [session.id, mayorText2, servedModel2, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2,
            JSON.stringify(quickReplies2 ? { quickReplies: quickReplies2 } : {})]
         );
         if (quickReplies2) send('quick_replies', { replies: quickReplies2 });
         await limits.recordSpend(pool, req.user.id, costCents2, { byok: !!userApiKey });
-        send('usage', { costCents: costCents2, model: selectedModel, byok: !!userApiKey });
+        send('usage', { costCents: costCents2, model: servedModel2, byok: !!userApiKey });
       } catch (err) {
         activeWorkers.delete(session.id);
         workerProgress.clear(session.id);
@@ -2481,6 +2792,17 @@ function sessionRoutes(config) {
           // gate keys off it); otherwise the warm is refused and the first
           // click hits a cold hostname.
           await staging.warmStagingCert(session, result.hostname, result.stagingUrl);
+          // #461: run the proposal checks against the fresh build, matching
+          // every other staging-deploy path. Before this, a preview built
+          // via this button left check_state NULL — the promote path then
+          // skipped its own build+capture (staging_url already set) and the
+          // proposal sat merge-blocked on "still running its tests" until a
+          // sweep happened to heal it. Fire-and-forget; captureForSession
+          // owns all failure handling and is _inFlight-guarded.
+          visuals.captureForSession(config, session, app, commitHash === 'latest' ? null : commitHash, result, { send: () => {} })
+            .catch((err) => log.warn('visuals', 'Deploy-staging capture failed (non-fatal)', {
+              sessionId: session.id, err: err.message,
+            }));
         })
         .catch((err) => {
           log.error('sessions', 'Staging deploy failed', { sessionId: session.id, err: err.message });
@@ -2488,6 +2810,152 @@ function sessionRoutes(config) {
     } catch (err) {
       log.error('sessions', 'Deploy staging error', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // On-demand staging restore (#439). The Preview button calls this before
+  // opening the overlay. When the preview is already live we tell the
+  // client to open it as-is; when it was torn down (idle GC, lost
+  // container) we kick off a rebuild from the branch's latest commit and
+  // let rebuildSessionStaging's existing `staging_ready` broadcast drive
+  // the front end's "spinning back up" loader to completion.
+  //
+  // The sessionCollabGuard above already gates this to app members; the
+  // ownership check below scopes WHO may trigger a rebuild.
+  router.post('/api/sessions/:id/ensure-staging', drainGuard, async (req, res) => {
+    try {
+      const sessionId = parseInt(req.params.id, 10);
+      const { rows } = await pool.query(
+        `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
+         FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
+         WHERE cs.id = $1`,
+        [sessionId]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Session not found' });
+      const session = rows[0];
+
+      // Authorize: the session owner always; for promoted/merging sessions
+      // (whose preview backs a group vote) any app member who passed the
+      // collab guard may trigger a rebuild, matching the vote panel showing
+      // them the Preview button.
+      const isOwner = session.user_id === req.user.id;
+      const voteBacked = session.status === 'promoted' || session.status === 'merging';
+      if (!isOwner && !voteBacked) {
+        return res.status(403).json({ error: 'Not allowed' });
+      }
+
+      // Staging containers have no Docker socket (SELF-HOSTING.md Phase 2g)
+      // and cannot build nested previews. Short-circuit so a Preview click
+      // inside a staging preview of this platform shows a friendly message
+      // instead of spinning forever on a rebuild that can never run.
+      if (process.env.USERNODE_ENV === 'staging') {
+        return res.json({ status: 'unavailable', reason: 'demo' });
+      }
+
+      // Already live (container running, URL set)? Open it as-is.
+      if (!(await stagingRecovery.stagingNeedsRebuild(session))) {
+        return res.json({ status: 'ready', url: session.staging_url });
+      }
+
+      // Dedup concurrent clicks: at most one rebuild per session in flight.
+      if (ensureStagingInFlight.has(sessionId)) {
+        return res.json({ status: 'rebuilding' });
+      }
+      ensureStagingInFlight.add(sessionId);
+      res.json({ status: 'rebuilding' });
+
+      // Fire-and-forget. On success rebuildSessionStaging broadcasts
+      // `staging_ready` with the (new, commit-hash-bearing) URL, which the
+      // front end opens. On a no-op ('skipped' — branch not ahead of main)
+      // or a build failure (missing secrets, docker error) we broadcast
+      // `staging_failed` so the loader surfaces a concrete reason.
+      const { broadcastGlobal } = require('../services/ws');
+      stagingRecovery.rebuildSessionStaging({ config, pool, session, reason: 'preview-click' })
+        .then((result) => {
+          if (result === 'skipped') {
+            broadcastGlobal({
+              type: 'session_event', sessionId,
+              event: 'staging_failed',
+              error: 'This branch has no changes to preview yet.',
+              errorName: 'NothingToPreview',
+              missingKeys: [],
+            });
+          }
+        })
+        .catch((err) => {
+          const { errMsg, errName, missingKeys } = describeStagingFailure(err);
+          log.error('sessions', 'ensure-staging rebuild failed', {
+            sessionId, errName, err: errMsg, missingKeys,
+          });
+          broadcastGlobal({
+            type: 'session_event', sessionId,
+            event: 'staging_failed',
+            error: errMsg, errorName: errName, missingKeys,
+          });
+        })
+        .finally(() => {
+          ensureStagingInFlight.delete(sessionId);
+        });
+    } catch (err) {
+      log.error('sessions', 'ensure-staging error', { message: err.message });
+      if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #447: manual "Re-run checks" for a proposal whose automated checks are
+  // stuck. Before this the only way out of a stuck 'pending'/NULL verdict was
+  // the owner pushing a brand-new commit — useless for an already-correct PR
+  // whose build succeeded — or an admin force-merge that skips checks
+  // entirely. This re-runs the checks: rebuild staging if the preview is
+  // gone, else re-run against the live container. Progress flows through the
+  // existing checks_ready / staging_ready broadcasts so the badge updates in
+  // place. Owner + admins only.
+  router.post('/api/sessions/:id/recheck', drainGuard, async (req, res) => {
+    try {
+      const sessionId = parseInt(req.params.id, 10);
+      const { rows } = await pool.query(
+        `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
+         FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
+         WHERE cs.id = $1`,
+        [sessionId]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Session not found' });
+      const session = rows[0];
+
+      // Owner or admin only — re-running checks costs a staging build +
+      // headless run, so it's not opened to every collaborator (deferred).
+      const isOwner = session.user_id === req.user.id;
+      if (!isOwner && !req.user?.is_admin) {
+        return res.status(403).json({ error: 'Not allowed' });
+      }
+
+      // Staging containers can't build nested previews (no Docker socket),
+      // so a recheck can never run inside a staging preview of the platform.
+      if (process.env.USERNODE_ENV === 'staging') {
+        return res.json({ status: 'unavailable', reason: 'demo' });
+      }
+
+      // Coalesce repeat clicks.
+      if (recheckInFlight.has(sessionId)) {
+        return res.json({ status: 'running' });
+      }
+      recheckInFlight.add(sessionId);
+      res.json({ status: 'running' });
+
+      // Fire-and-forget. recheckSessionChecks rebuilds staging when the
+      // preview is missing (the rebuild re-runs the checks) or re-runs the
+      // checks directly against the live container otherwise. All progress +
+      // failure surfacing rides the existing capture/broadcast paths.
+      stagingRecovery.recheckSessionChecks({ config, pool, session, reason: 'manual-recheck' })
+        .catch((err) => {
+          log.error('sessions', 'manual recheck failed', { sessionId, err: err.message });
+        })
+        .finally(() => {
+          recheckInFlight.delete(sessionId);
+        });
+    } catch (err) {
+      log.error('sessions', 'recheck error', { message: err.message });
+      if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
     }
   });
 
@@ -2521,9 +2989,9 @@ function buildHeadlessFollowUpMessage(src) {
     case 'spec':
       return `${intro}\n\nWhere things stand: the auto session investigated the repo and drafted a spec — open the spec viewer to review it. When you're happy with it, tell me to build it and I'll dispatch the coding agent (that turn also opens the PR and staging preview).`;
     case 'code':
-      return `${intro}\n\nWhere things stand: the code change is already committed and pushed on this branch, and a staging preview was built — see the "Changes ready" card above ("Preview staging" / "Test this change"). No PR exists yet. Review the change, iterate if you want, and when you're ready hit "Propose to group" on the card — that opens the PR on this branch and starts the vote (or just ask me).`;
+      return `${intro}\n\nWhere things stand: the code change is already committed and pushed on this branch — see the "Changes ready" card above. A staging preview may be shown there ("Preview staging" / "Test this change") if one built; if it didn't, the card still lets you propose and the preview is rebuilt then. No PR exists yet. Review the change, iterate if you want, and when you're ready hit "Propose to group" on the card — that opens the PR on this branch and starts the vote (or just ask me).`;
     case 'spec_code':
-      return `${intro}\n\nWhere things stand: the auto session drafted a spec (open the spec viewer to review it) AND implemented it — the change is committed and pushed on this branch, and a staging preview was built (see the "Changes ready" card above). No PR exists yet. Review the spec and the change, iterate if you want, and when you're ready hit "Propose to group" on the card — that opens the PR on this branch and starts the vote (or just ask me).`;
+      return `${intro}\n\nWhere things stand: the auto session drafted a spec (open the spec viewer to review it) AND implemented it — the change is committed and pushed on this branch. See the "Changes ready" card above; a staging preview may be shown there if one built, and either way the card lets you propose (the preview is rebuilt at propose time if needed). No PR exists yet. Review the spec and the change, iterate if you want, and when you're ready hit "Propose to group" on the card — that opens the PR on this branch and starts the vote (or just ask me).`;
     default:
       return `${intro}\n\nWhere things stand: the auto session ran into something that needs a human decision — see its last message above (the same questions were also posted as a comment on the GitHub issue). Answer here and we'll continue from where it left off.${(src.spec_md || '').trim() ? ' The auto session also drafted a spec — open the spec viewer to review it alongside the questions.' : ''}`;
   }
@@ -2766,7 +3234,12 @@ async function runHeadlessSession({
   let eventSeq = 0;
   const send = (type, data) => {
     const event = { type, _seq: `${seqPrefix}-${++eventSeq}`, ...data };
-    broadcastGlobal({ type: 'session_event', sessionId: session.id, event: type, ...event });
+    // #437: spread the event FIRST, then pin the envelope — otherwise
+    // `...event` re-adds the inner `type` and clobbers `type: 'session_event'`,
+    // so the client's `switch (data.type)` never reaches handleSessionEvent.
+    // Headless sessions have no POST SSE (res is a write-sink), so the global
+    // WS is their ONLY live channel — the clobber is especially costly here.
+    broadcastGlobal({ ...event, sessionId: session.id, event: type, type: 'session_event' });
     sessionBus.publish(session.id, event);
   };
   const sendStatus = async (text, metadata) => {
@@ -2783,12 +3256,34 @@ async function runHeadlessSession({
   const fakeReq = { user: { id: user.id, username: user.username } };
   const fakeRes = { write() {} };
 
-  const debitMayorUsage = async (usage) => {
+  const debitMayorUsage = async (usage, servedModel) => {
     if (!usage) return;
-    const cost = llm.estimateCostCents(usage, selectedModel);
+    const billModel = servedModel || selectedModel;
+    const cost = llm.estimateCostCents(usage, billModel);
     await limits.recordSpend(pool, user.id, cost, { byok: !!userApiKey });
-    send('usage', { costCents: cost, model: selectedModel, byok: !!userApiKey });
+    send('usage', { costCents: cost, model: billModel, byok: !!userApiKey });
     return cost;
+  };
+
+  // Fable 5 classifier fallback: same once-per-run notice + per-call
+  // admin record as the interactive chat handler.
+  let fallbackNoticed = false;
+  const noteModelFallback = async (result) => {
+    if (!result || !result.fallbackServed) return;
+    const requested = selectedModel;
+    const served = result.servedModel || llm.FALLBACK_TARGET_MODEL;
+    const category = (result.stopDetails && result.stopDetails.category) || null;
+    await modelFallback.record(pool, {
+      kind: events.EVENT_TYPES.MODEL_FALLBACK,
+      userId: user.id, appId: session.app_id, sessionId: session.id,
+      requested, served, category, source: 'headless',
+    });
+    if (!fallbackNoticed) {
+      fallbackNoticed = true;
+      await sendStatus(modelFallback.noticeText(requested, served, category), {
+        modelFallback: { requested, served, category },
+      });
+    }
   };
 
   let outcome = 'question';
@@ -2832,6 +3327,7 @@ async function runHeadlessSession({
         tools,
         apiKey: userApiKey,
       });
+      await noteModelFallback(mayor1);
 
       const dataCalls = mayor1.toolUses.filter((t) => DATA_TOOL_NAMES.has(t.name));
       // suggest_answers (#32) is terminal here too — same dangling-
@@ -2842,7 +3338,7 @@ async function runHeadlessSession({
       if (!dataCalls.length || hasTerminalTool || dataIters >= MAYOR_DATA_TOOLS_MAX_ITERS) break;
       dataIters += 1;
 
-      await debitMayorUsage(mayor1.usage);
+      await debitMayorUsage(mayor1.usage, mayor1.servedModel);
       const dataResults = await Promise.all(
         dataCalls.map((tc) => resolveDataToolResult(tc, repoOwner, repoName))
       );
@@ -2860,22 +3356,41 @@ async function runHeadlessSession({
       ];
     }
 
-    const mayorText1 = mayor1.text;
+    // Whole-chain refusal (mirrors the interactive handler): record it,
+    // persist an explicit status, and clear the tool calls so the run
+    // finalizes on the no-dispatch path instead of acting on the
+    // declined model's truncated tool_use blocks.
+    if (mayor1.stopReason === 'refusal') {
+      const refusalCategory = (mayor1.stopDetails && mayor1.stopDetails.category) || null;
+      await modelFallback.record(pool, {
+        kind: events.EVENT_TYPES.MODEL_REFUSAL,
+        userId: user.id, appId: session.app_id, sessionId: session.id,
+        requested: selectedModel, served: mayor1.servedModel || selectedModel,
+        category: refusalCategory, source: 'headless',
+      });
+      await sendStatus(modelFallback.refusalText(selectedModel, refusalCategory), {
+        modelRefusal: { requested: selectedModel, category: refusalCategory },
+      });
+      mayor1.toolUses = [];
+    }
+
+    const mayorText1 = stripFakeCompletionMarker(mayor1.text, { sessionId: session.id });
     // Q/A mode (#32): same suggestion handling as the interactive route —
     // persisted on the assistant row so the cloned session a human picks
     // up renders the answer chips. Dropped if a dispatch co-occurred.
     const { suggestions: headlessSuggestions } = resolveSuggestedAnswers(mayor1.toolUses);
-    const costCents1 = mayor1.usage ? llm.estimateCostCents(mayor1.usage, selectedModel) : 0;
+    const servedModel1 = mayor1.servedModel || selectedModel;
+    const costCents1 = mayor1.usage ? llm.estimateCostCents(mayor1.usage, servedModel1) : 0;
     if (mayorText1.trim()) {
       send('mayor_reasoning', { text: mayorText1 });
       await pool.query(
         `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
          VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
-        [session.id, mayorText1, selectedModel, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1,
+        [session.id, mayorText1, servedModel1, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1,
          JSON.stringify(headlessSuggestions ? { suggestions: headlessSuggestions } : {})]
       );
     }
-    await debitMayorUsage(mayor1.usage);
+    await debitMayorUsage(mayor1.usage, mayor1.servedModel);
 
     const scoutCall = mayor1.toolUses.find((t) => t.name === 'dispatch_scout');
     const dispatchCall = mayor1.toolUses.find((t) => t.name === 'dispatch_claude_code');
@@ -2979,10 +3494,12 @@ async function runHeadlessSession({
           tools: [DISPATCH_TOOL],
           apiKey: userApiKey,
         });
+        await noteModelFallback(mayor2);
+        const servedModel2 = mayor2.servedModel || selectedModel;
         const buildCall = mayor2.toolUses.find((t) => t.name === 'dispatch_claude_code');
         const strayCalls = mayor2.toolUses.filter((t) => t.name !== 'dispatch_claude_code');
-        const mayorText2 = mayor2.text;
-        const costCents2 = llm.estimateCostCents(mayor2.usage, selectedModel);
+        const mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
+        const costCents2 = llm.estimateCostCents(mayor2.usage, servedModel2);
 
         if (!mayor2.toolUses.length) {
           // Text only. Without open Questions the decision text IS the
@@ -3004,9 +3521,9 @@ async function runHeadlessSession({
           await pool.query(
             `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
              VALUES ($1, 'assistant', $2, $3, $4, $5)`,
-            [session.id, finalText, selectedModel, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2]
+            [session.id, finalText, servedModel2, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2]
           );
-          await debitMayorUsage(mayor2.usage);
+          await debitMayorUsage(mayor2.usage, mayor2.servedModel);
         } else {
           // The Mayor called a tool — persist its stated rationale first
           // (same text-plus-dispatch pattern phase-1 uses).
@@ -3015,10 +3532,10 @@ async function runHeadlessSession({
             await pool.query(
               `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
                VALUES ($1, 'assistant', $2, $3, $4, $5)`,
-              [session.id, mayorText2, selectedModel, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2]
+              [session.id, mayorText2, servedModel2, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2]
             );
           }
-          await debitMayorUsage(mayor2.usage);
+          await debitMayorUsage(mayor2.usage, mayor2.servedModel);
 
           const decisionToolResults = [];
           if (buildCall && specHasQuestions) {
@@ -3105,7 +3622,8 @@ async function runHeadlessSession({
             tools: [SUGGEST_ANSWERS_TOOL],
             apiKey: userApiKey,
           });
-          let mayorText3 = mayor3.text;
+          await noteModelFallback(mayor3);
+          let mayorText3 = stripFakeCompletionMarker(mayor3.text, { sessionId: session.id });
           // #32: persist suggestions only on the question outcome — that's
           // the row a cloned session forwards onto its follow-up to render
           // the answer chips. Non-question wrap-ups carry no metadata.
@@ -3124,14 +3642,15 @@ async function runHeadlessSession({
                 : '_Spec drafted — the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
           }
           send('mayor_reasoning', { text: mayorText3 });
-          const costCents3 = llm.estimateCostCents(mayor3.usage, selectedModel);
+          const servedModel3 = mayor3.servedModel || selectedModel;
+          const costCents3 = llm.estimateCostCents(mayor3.usage, servedModel3);
           await pool.query(
             `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
              VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
-            [session.id, mayorText3, selectedModel, mayor3.usage.input_tokens + mayor3.usage.output_tokens, costCents3,
+            [session.id, mayorText3, servedModel3, mayor3.usage.input_tokens + mayor3.usage.output_tokens, costCents3,
              JSON.stringify(decisionSuggestions ? { suggestions: decisionSuggestions } : {})]
           );
-          await debitMayorUsage(mayor3.usage);
+          await debitMayorUsage(mayor3.usage, mayor3.servedModel);
         }
       } else {
         // --- Phase 2: Mayor wrap-up (mirrors the chat handler) — scout
@@ -3144,21 +3663,23 @@ async function runHeadlessSession({
           toolChoice: { type: 'none' },
           apiKey: userApiKey,
         });
+        await noteModelFallback(mayor2);
 
-        let mayorText2 = mayor2.text;
+        let mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
         if (!mayorText2.trim()) {
           mayorText2 = toolResult.isError
             ? "_The auto session's dispatch didn't finish successfully — see the status above._"
             : '_Change committed and pushed — start a session from this auto session to review it and propose it to the group._';
         }
         send('mayor_reasoning', { text: mayorText2 });
-        const costCents2 = llm.estimateCostCents(mayor2.usage, selectedModel);
+        const servedModelW = mayor2.servedModel || selectedModel;
+        const costCents2 = llm.estimateCostCents(mayor2.usage, servedModelW);
         await pool.query(
           `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
            VALUES ($1, 'assistant', $2, $3, $4, $5)`,
-          [session.id, mayorText2, selectedModel, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2]
+          [session.id, mayorText2, servedModelW, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2]
         );
-        await debitMayorUsage(mayor2.usage);
+        await debitMayorUsage(mayor2.usage, mayor2.servedModel);
       }
     }
 
@@ -3436,12 +3957,76 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
             'UPDATE chat_sessions SET testing_md = $1, testing_path = $2, testing_paths = $3 WHERE id = $4',
             [testing.testingMd, testing.testingPath, JSON.stringify(testing.testingPaths || []), session.id]
           ).catch(() => {});
+          session.testing_md = testing.testingMd;
+          session.testing_path = testing.testingPath;
+          session.testing_paths = testing.testingPaths || [];
         }
         outcome = session.spec_md ? 'spec_code' : 'code';
-        dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}. `
-          + 'Headless mode: no PR was opened and no staging preview was built.'
-          + (session.spec_md ? ' The change implements the spec drafted earlier this run (in the session spec doc).' : '')
-          + (testing.cleanedText ? `\n\nWhat the agent did:\n${testing.cleanedText.slice(0, 2000)}` : '');
+
+        // #361/#183 parity (chat 735 / issue #370): the LIVE headless path
+        // builds a staging preview and persists a `changesReady: true` system
+        // message — that marker is what makes a dev chat cloned from this auto
+        // session render the "Changes ready" card (Preview / Test / Propose),
+        // since the clone copies this session's messages verbatim. A
+        // restart-resumed run reaches the same committed-and-pushed state, so
+        // it must emit the same marker; without it, a proposal interrupted by
+        // a platform restart silently loses its card even though the branch
+        // has a reviewable commit. Build best-effort and persist the marker
+        // whether or not staging succeeds, exactly like the live path.
+        const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
+        let stagingResult = null;
+        let stagingErr = null;
+        // #461: pend the checks for the NEW commit before the build, so the
+        // previous commit's verdict (e.g. a stale 'passing') can't satisfy
+        // the merge gate while this build runs — or after it fails.
+        await visuals.setChecksPending(pool, session.id, result.sha)
+          .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
+        try {
+          stagingResult = await staging.buildAndDeployStaging(config, session, app, result.sha);
+        } catch (e) {
+          stagingErr = e;
+        }
+        if (stagingResult) {
+          await pool.query(
+            'UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3',
+            [stagingResult.containerId, stagingResult.stagingUrl, session.id]
+          ).catch(() => {});
+          await staging.warmStagingCert(session, stagingResult.hostname, stagingResult.stagingUrl).catch(() => {});
+          await pool.query(
+            `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+             VALUES ($1, 'system', $2, $3)`,
+            [session.id, 'Staging preview built',
+              JSON.stringify({ stagingUrl: stagingResult.stagingUrl, changesReady: true, prNumber: null })]
+          ).catch(() => {});
+          // Before/after visuals: best-effort, never throws; there is no live
+          // client to stream to on a resumed run, so the no-op send is fine.
+          visuals.captureForSession(config, session, app, result.sha, stagingResult, { send: () => {} })
+            .catch((err) => log.warn('visuals', 'Resumed headless capture failed (non-fatal)', { sessionId: session.id, err: err.message }));
+          dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}, and a staging preview was built. `
+            + 'Headless mode: no PR was opened (it is created on a clone at propose time).'
+            + (session.spec_md ? ' The change implements the spec drafted earlier this run (in the session spec doc).' : '')
+            + (testing.cleanedText ? `\n\nWhat the agent did:\n${testing.cleanedText.slice(0, 2000)}` : '');
+        } else {
+          const { errMsg, errName, missingKeys } = describeStagingFailure(stagingErr);
+          await pool.query(
+            `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+             VALUES ($1, 'system', $2, $3)`,
+            [session.id, 'Staging build failed',
+              JSON.stringify({ error: errMsg, changesReady: true, stagingFailed: true, stagingErrorName: errName, stagingMissingKeys: missingKeys, prNumber: null })]
+          ).catch(() => {});
+          // #461: record the failure as a terminal 'error' checks verdict
+          // (with reason + once-per-streak owner nudge) instead of leaving
+          // the pending state to look "still running" forever.
+          await stagingRecovery.recordStagingBootFailure({ config, pool, session, commitHash: result.sha, err: stagingErr })
+            .catch((e) => log.warn('staging', 'recordStagingBootFailure failed (non-fatal)', { sessionId: session.id, err: e.message }));
+          log.warn('staging', 'Resumed headless staging build failed (non-fatal — commit pushed)', {
+            sessionId: session.id, errName, err: errMsg, missingKeys,
+          });
+          dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}. `
+            + 'Headless mode: no PR was opened. The staging preview could not be built, but the commit is reviewable — the "Changes ready" card still appears on a clone.'
+            + (session.spec_md ? ' The change implements the spec drafted earlier this run (in the session spec doc).' : '')
+            + (testing.cleanedText ? `\n\nWhat the agent did:\n${testing.cleanedText.slice(0, 2000)}` : '');
+        }
       } else {
         outcome = session.spec_md ? 'spec' : 'question';
         dispatchSummary = (result.fatalError
@@ -3491,6 +4076,17 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
     model: selectedModel,
     apiKey: userApiKey,
   });
+  // Fable 5 fallback: admin record only on this rare resume path (there's
+  // no sendStatus plumbing here); attribution below uses the served model.
+  if (mayor2.fallbackServed) {
+    await modelFallback.record(pool, {
+      kind: events.EVENT_TYPES.MODEL_FALLBACK,
+      userId: user.id, appId: session.app_id, sessionId: session.id,
+      requested: selectedModel, served: mayor2.servedModel || llm.FALLBACK_TARGET_MODEL,
+      category: (mayor2.stopDetails && mayor2.stopDetails.category) || null,
+      source: 'headless-resume',
+    });
+  }
 
   let mayorText2 = (mayor2.text || '').trim();
   if (!mayorText2) {
@@ -3502,11 +4098,12 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
           ? '_Change committed and pushed — start a session from this auto session to open the PR._'
           : "_The auto session's dispatch didn't finish successfully — see the status above._";
   }
-  const costCents2 = mayor2.usage ? llm.estimateCostCents(mayor2.usage, selectedModel) : 0;
+  const servedModelR = mayor2.servedModel || selectedModel;
+  const costCents2 = mayor2.usage ? llm.estimateCostCents(mayor2.usage, servedModelR) : 0;
   await pool.query(
     `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
      VALUES ($1, 'assistant', $2, $3, $4, $5)`,
-    [session.id, mayorText2, selectedModel,
+    [session.id, mayorText2, servedModelR,
       mayor2.usage ? mayor2.usage.input_tokens + mayor2.usage.output_tokens : 0, costCents2]
   );
   await limits.recordSpend(pool, user.id, costCents2, { byok: !!userApiKey });
@@ -3624,7 +4221,7 @@ const LIST_GITHUB_ISSUES_TOOL = {
     "List the OPEN GitHub issues on this app's repository (read-only). "
     + 'Returns JSON `{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }` — '
     + 'pull requests are excluded and long bodies are clipped with an explicit '
-    + '"[truncated — use get_github_issue(N) for full text]" marker; call get_github_issue for the full body. '
+    + '"[truncated — use get_github_issue(N) for full text]" marker; call get_github_issue for the full body AND the issue\'s comment thread. '
     + 'Call this when the user mentions the issue tracker, asks what issues or bugs are filed, '
     + 'or when planning work that may already be reported, so your reply is grounded in real issues. '
     + 'It only READS issues — it cannot create, comment on, edit, or close them. Takes no input.',
@@ -3642,12 +4239,15 @@ const LIST_GITHUB_ISSUES_TOOL = {
 const GET_GITHUB_ISSUE_TOOL = {
   name: 'get_github_issue',
   description:
-    "Fetch ONE GitHub issue from this app's repository with its FULL, untruncated body (read-only). "
-    + 'Returns JSON `{ issue: { number, title, body, labels, updatedAt, htmlUrl } }`, or '
-    + '`{ issue: null, note }` when it cannot be resolved. '
+    "Fetch ONE GitHub issue from this app's repository with its FULL, untruncated body AND its comment thread (read-only). "
+    + 'Returns JSON `{ issue: { number, title, body, labels, updatedAt, htmlUrl }, comments: [{ author, body, createdAt }], commentsTruncated }`, or '
+    + '`{ issue: null, comments: [], note }` when it cannot be resolved. '
+    + 'Comments are oldest-first; long threads keep the most recent ones with `commentsTruncated: true`, and very long '
+    + 'comment bodies end with a "[truncated]" marker. Read the comments to catch clarifications, decisions, and answers '
+    + 'the reporter left after the original post. '
     + 'Use it when a body from list_github_issues ends with a "[truncated …]" marker and you need the rest, '
-    + 'or when the user asks about a specific issue number. Also resolves recently-closed issues. '
-    + 'It only READS the issue — it cannot create, comment on, edit, or close it.',
+    + 'when you need the discussion on an issue, or when the user asks about a specific issue number. Also resolves recently-closed issues. '
+    + 'It only READS the issue and its comments — it cannot create, comment on, edit, or close anything.',
   input_schema: {
     type: 'object',
     properties: {
@@ -3879,13 +4479,28 @@ async function resolveGithubIssuesToolResult(repoOwner, repoName) {
   return JSON.stringify(github.truncateIssueBodies(result, (n) => `get_github_issue(${n})`));
 }
 
-// Resolve a get_github_issue tool call: ONE issue, FULL body (#158).
-// github.fetchPublicIssue never throws and validates the number itself.
+// Resolve a get_github_issue tool call: ONE issue, FULL body (#158), plus
+// its comment thread (#396). Calls both fetchPublicIssue and
+// fetchIssueComments (mirroring the headless seed) and merges them — the
+// thread is clipped via clipIssueComments so a chatty issue can't blow up
+// the turn's context. Both fetchers never throw; `comments` is always an
+// array and `commentsNote` carries a comment-fetch failure independently of
+// the issue's own `note`. `commentsTruncated` is true when older comments
+// were omitted (long thread or kept-count cap).
 async function resolveGithubIssueToolResult(repoOwner, repoName, number) {
   if (!repoOwner || !repoName) {
-    return JSON.stringify({ issue: null, note: 'no repo' });
+    return JSON.stringify({ issue: null, comments: [], commentsTruncated: false, note: 'no repo' });
   }
-  return JSON.stringify(await github.fetchPublicIssue(repoOwner, repoName, number));
+  const { issue, note } = await github.fetchPublicIssue(repoOwner, repoName, number);
+  const raw = await github.fetchIssueComments(repoOwner, repoName, number);
+  const { comments, truncated } = github.clipIssueComments(raw.comments, { wasTruncated: raw.truncated });
+  return JSON.stringify({
+    issue,
+    comments,
+    commentsTruncated: truncated,
+    ...(note ? { note } : {}),
+    ...(raw.note ? { commentsNote: raw.note } : {}),
+  });
 }
 
 // Resolve a web_fetch tool call (#30). webFetch.fetchUrl never throws —
@@ -3940,7 +4555,35 @@ function prettyModelLabel(modelId) {
   return modelId;
 }
 
-function buildMayorMessages(history) {
+// The synthetic label the harness folds a REAL coding-agent run under
+// when replaying history into the Mayor's context (see buildMayorMessages
+// below). It is reserved for the harness — the system prompt forbids the
+// Mayor from ever typing it, and stripFakeCompletionMarker enforces that
+// server-side. Centralized so the generator, the scrub, and the system
+// prompt can't drift apart.
+const CODING_AGENT_COMPLETED_MARKER = '[CODING AGENT COMPLETED]';
+const COMPLETION_MARKER_RE = /\[CODING AGENT COMPLETED\][\s\S]*$/i;
+
+// Defense in depth (#358): remove a hallucinated completion marker (and
+// anything after it) from Mayor-authored text. The marker is ONLY ever
+// legitimately produced by buildMayorMessages from a ccOutput system row,
+// so it must never survive in a persisted assistant row — if the Mayor
+// reproduces it, it is faking a coding-agent run that never happened. Pure
+// + trims; returns the input unchanged when no marker is present. Pass
+// sessionId to have the (rare) regression logged.
+function stripFakeCompletionMarker(text, { sessionId } = {}) {
+  if (typeof text !== 'string') return '';
+  // Fast path: most Mayor turns never contain the marker, so bail early.
+  if (!COMPLETION_MARKER_RE.test(text)) return text;
+  if (sessionId) {
+    log.warn('sessions', 'Mayor wrote fake [CODING AGENT COMPLETED] without a real run — stripping', {
+      sessionId, preview: text.substring(0, 300),
+    });
+  }
+  return text.replace(COMPLETION_MARKER_RE, '').trim();
+}
+
+function buildMayorMessages(history, attachmentsByMessageId = new Map()) {
   const CC_SUMMARY_MAX = 2000;
   const messages = [];
   const pushAssistant = (text) => {
@@ -3950,14 +4593,49 @@ function buildMayorMessages(history) {
       messages.push({ role: 'assistant', content: text });
     }
   };
+
+  // #450: image replay plan. Only user turns within the replay window
+  // re-send their images as vision blocks (all-or-nothing per turn, max
+  // total per request); older turns degrade to a textual placeholder.
+  // Text-file attachments are inlined for ALL turns, consistent with the
+  // uncapped text history replay.
+  const userRows = history.filter((r) => r.role === 'user');
+  const imageCounts = userRows.map((r) => (
+    (attachmentsByMessageId.get(r.id) || []).filter((a) => a.kind === 'image').length
+  ));
+  const includeImagesPlan = attachmentsSvc.planImageInclusion(imageCounts);
+  const includeByRowId = new Map(userRows.map((r, i) => [r.id, includeImagesPlan[i]]));
+
   for (const row of history) {
     if (row.role === 'system' && row.metadata?.ccOutput) {
       const summary = String(row.metadata.ccOutput).slice(0, CC_SUMMARY_MAX);
-      pushAssistant(`[CODING AGENT COMPLETED]:\n${summary}`);
+      // Outcome-aware label (#358): only a run that actually changed code is
+      // folded under the "COMPLETED" marker. No-op / error runs carry a
+      // distinct label so the Mayor doesn't see (and imitate) a "completed"
+      // entry for work that never landed. Rows without ccOutcome — legacy
+      // history and the staging seeds — keep the legacy completed label.
+      const outcome = row.metadata.ccOutcome;
+      const label = outcome === 'no_changes'
+        ? '[CODING AGENT RAN — NO CHANGES]'
+        : outcome === 'error'
+          ? '[CODING AGENT FAILED]'
+          : CODING_AGENT_COMPLETED_MARKER;
+      pushAssistant(`${label}:\n${summary}`);
     } else if (row.role === 'assistant') {
       pushAssistant(row.content);
     } else if (row.role === 'user') {
-      messages.push({ role: 'user', content: row.content });
+      // #450: rows with attachments become content-block arrays (image
+      // blocks + one text block); plain rows stay strings. Assistant-row
+      // merging above only ever touches strings, so this is safe.
+      const atts = attachmentsByMessageId.get(row.id) || [];
+      messages.push({
+        role: 'user',
+        content: attachmentsSvc.buildUserMessageContent({
+          text: row.content,
+          attachments: atts,
+          includeImages: includeByRowId.get(row.id) === true,
+        }),
+      });
     }
   }
   return messages;
@@ -3973,6 +4651,10 @@ function buildMayorMessages(history) {
 async function runScoutTool({
   pool, config, req, res, session, selectedModel,
   userMessage, toolPromptArg,
+  // #450: pre-rendered "==== USER-ATTACHED FILES ====" block for the
+  // current turn (text files inlined, images via usernode-attachments).
+  // '' when the turn carried no attachments (incl. every headless path).
+  attachmentsBlock = '',
   repoOwner, repoName,
   send, sendStatus,
   stopHandle,
@@ -4006,6 +4688,24 @@ ${existingSpec}
 ==== END CURRENT SPEC DOC ====`
     : '';
 
+  // #460: the dispatching user's personal agent files — same load as the
+  // build path (see runClaudeCodeTool). Synced into the CC volume after
+  // ensureWorker below; the one-line prompt pointer only appears when
+  // files exist. Non-fatal on any failure.
+  let personalFiles = [];
+  try {
+    if (session.user_id) {
+      personalFiles = await userAgentFiles.loadAllForUser(pool, session.user_id);
+    }
+  } catch (err) {
+    log.warn('sessions', 'Personal agent files load failed (continuing without)', { sessionId: session.id, err: err.message });
+  }
+  const personalFilesNote = personalFiles.length
+    ? `
+
+PERSONAL AGENT FILES: the user who dispatched this run has personal instruction files (already loaded for you at \`~/.claude/CLAUDE.md\`) and/or personal skills (under \`~/.claude/skills/\`). Honor them as the dispatching user's personal preferences when writing this spec, wherever they don't conflict with platform rules or the repo's own \`CLAUDE.md\` on app-specific matters.`
+    : '';
+
   // Scout-specific prompt. Deliberately omits the platform-conventions
   // block and commit/push instructions used in the build prompt — scout
   // never edits anything. The "final message is the spec" contract is
@@ -4014,9 +4714,9 @@ ${existingSpec}
   const scoutPrompt = `SCOUT TASK (from the Mayor):
 ${toolPromptArg}
 
-USER REQUEST: "${userMessage}"
+USER REQUEST: "${userMessage}"${attachmentsBlock}
 
-You are running in PLAN MODE: you can read files (Read, Glob, Grep) but you cannot edit, commit, or push anything. Do not attempt to.${revisionBlock}
+You are running in PLAN MODE: you can read files (Read, Glob, Grep) but you cannot edit, commit, or push anything. Do not attempt to.${personalFilesNote}${revisionBlock}
 
 A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`); long bodies are clipped with a "[truncated …]" marker, and \`usernode-issues <number>\` fetches that one issue with its FULL body (\`{ issue, note? }\`). Use it if the open issues are relevant context for this spec; do not try to reach GitHub any other way.
 
@@ -4057,6 +4757,15 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
   // signal travels through worker.stopTurn (in-container pkill) so the
   // warm container survives stop and the next dispatch is fast.
   if (stopHandle) stopHandle.workerName = containerName;
+
+  // #460: wipe-and-rewrite the personal agent files in the CC volume —
+  // runs even with an empty list so Settings deletions take effect on
+  // the next dispatch. Never fails the scout turn.
+  try {
+    await worker.syncUserAgentFiles(session.id, personalFiles);
+  } catch (err) {
+    log.warn('sessions', 'Personal agent files sync failed (continuing without)', { sessionId: session.id, err: err.message });
+  }
 
   let isError = false;
   const summaryParts = [];
@@ -4327,6 +5036,8 @@ function describeStagingFailure(stagingErr) {
 async function runClaudeCodeTool({
   pool, config, req, res, session, selectedModel,
   userMessage, toolPromptArg,
+  // #450: current-turn user attachments block — see runScoutTool.
+  attachmentsBlock = '',
   repoOwner, repoName,
   send, sendStatus,
   stopHandle,
@@ -4384,10 +5095,35 @@ not re-derive intent from it when the spec covers the same ground.
 Platform conventions still override the spec on any platform-wide
 rule (auth, public/private tables, etc.).`
     : '';
+
+  // #460: the dispatching user's personal agent files. Loaded here (by
+  // session OWNER — headless sessions with no resolvable owner simply
+  // get none) and materialized into the warm worker's CC volume right
+  // after ensureWorker below. The prompt note is only added when files
+  // exist so everyone else's prompt stays byte-identical. Failures are
+  // non-fatal: the build proceeds without personal files.
+  let personalFiles = [];
+  try {
+    if (session.user_id) {
+      personalFiles = await userAgentFiles.loadAllForUser(pool, session.user_id);
+    }
+  } catch (err) {
+    log.warn('sessions', 'Personal agent files load failed (continuing without)', { sessionId: session.id, err: err.message });
+  }
+  const personalFilesNote = personalFiles.length
+    ? `
+
+PERSONAL AGENT FILES: the user who dispatched this run has personal
+instruction files (already loaded for you at \`~/.claude/CLAUDE.md\`)
+and/or personal skills (under \`~/.claude/skills/\`). Treat them as the
+dispatching user's personal preferences: follow them wherever they don't
+conflict with the PLATFORM CONVENTIONS block above (which always wins)
+or the repo's own \`CLAUDE.md\` on app-specific matters.`
+    : '';
   const claudePrompt = `USER REQUEST: "${userMessage}"
 
 CODING TASK (from the Mayor):
-${toolPromptArg}
+${toolPromptArg}${attachmentsBlock}
 
 ==== PLATFORM CONVENTIONS (authoritative) ====
 
@@ -4406,7 +5142,7 @@ The repo's \`CLAUDE.md\` may reference a hosted copy of the platform
 conventions at \`https://${process.env.USERNODE_DOMAIN || 'social-vibecoding.usernodelabs.org'}/claude.md\` —
 in dev-chat you already have those rules injected above, so ignore
 that instruction here. It's for humans or Claude Code invocations
-that run against this repo outside the harness.
+that run against this repo outside the harness.${personalFilesNote}
 
 A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`); long bodies are clipped with a "[truncated …]" marker, and \`usernode-issues <number>\` fetches that one issue with its FULL body (\`{ issue, note? }\`). Consult it if an open issue is relevant to what you're building; do not try to reach GitHub any other way.
 
@@ -4418,6 +5154,7 @@ INSTRUCTIONS:
 - After all changes are made, stage everything with "git add -A" and commit
   with a clear message describing what was built.
 - Do NOT ask questions or request clarification. Just build it.
+${IN_LOOP_BROWSER_GUIDANCE}
 - End your FINAL message with a testing block (optional, but strongly
   encouraged whenever the change is user-visible) so reviewers can try the
   change in the staging preview:
@@ -4444,6 +5181,17 @@ path: /another/changed/view
     e.g. a new nav item plus the page it opens. Each becomes its own
     labelled before/after row. The FIRST path is also the deep link the
     "Test this change" button jumps to.
+  - SELF-APP (social-vibecoding) ONLY: this app is a hash-routed SPA — its
+    internal screens live in the URL fragment ("#app/<slug>/dev/...",
+    "#leaderboard"), NOT in the server pathname. Write the "path:" using
+    the in-app route segments exactly as they appear after the "#"
+    (e.g. "path: /app/<self-slug>/dev/proposals/<id>" or
+    "path: /leaderboard") — the platform moves it into the fragment when
+    capturing screenshots and when the "Test this change" button opens the
+    preview, so the shot lands on the changed screen instead of the home
+    feed. Standalone server pages ("/dashboard", "/admin", "/status",
+    "/node-status") stay as plain pathnames. (This only applies to the
+    self-app; ordinary apps are path-routed and need no special handling.)
   - The steps are short markdown (numbered list preferred), written for a
     non-technical tester looking at a staging preview seeded with a copy of
     production data.
@@ -4487,6 +5235,15 @@ path: /another/changed/view
   // pkill) so the warm container is preserved across stop — eviction is
   // the only path that destroys it.
   if (stopHandle) stopHandle.workerName = containerName;
+
+  // #460: wipe-and-rewrite the personal agent files in the CC volume
+  // every dispatch — runs even when the list is empty so a deletion in
+  // Settings takes effect on the very next turn. Never fails the build.
+  try {
+    await worker.syncUserAgentFiles(session.id, personalFiles);
+  } catch (err) {
+    log.warn('sessions', 'Personal agent files sync failed (continuing without)', { sessionId: session.id, err: err.message });
+  }
 
   let ccLog = null;
   let stagingUrl = null;
@@ -4824,6 +5581,11 @@ path: /another/changed/view
       const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
       let stagingResult = null;
       let stagingErr = null;
+      // #461: pend the checks for the NEW commit before the build starts, so
+      // the previous commit's verdict (e.g. a stale 'passing') can't satisfy
+      // the merge gate while this build runs — or after it fails.
+      await visuals.setChecksPending(pool, session.id, commitHash)
+        .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
       try {
         stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
       } catch (e) {
@@ -4842,10 +5604,14 @@ path: /another/changed/view
         stagingUrl = stagingResult.stagingUrl;
         // The stagingUrl metadata is what makes this row render as the
         // "Changes ready" staging card (Preview / Test / Propose buttons)
-        // in every dev chat later cloned from this auto session.
-        await sendStatus('Staging preview built', { stagingUrl });
+        // in every dev chat later cloned from this auto session. The
+        // explicit `changesReady: true` flag is what now DRIVES the card
+        // (rather than incidentally `stagingUrl`), so the card renders the
+        // same whether or not staging succeeded — see the failure branch.
+        await sendStatus('Staging preview built', { stagingUrl, changesReady: true, prNumber: null });
         send('staging_ready', {
           url: stagingUrl,
+          changesReady: true,
           testingMd: session.testing_md || null,
           testingPath: session.testing_path || null,
         });
@@ -4867,12 +5633,35 @@ path: /another/changed/view
         // problems surface in the Mayor's wrap-up summary — but isError
         // stays false and the run's outcome is unchanged.
         const { fix, missingKeys, errMsg, errName } = describeStagingFailure(stagingErr);
-        await sendStatus('Staging preview failed to build — you can build one from a cloned session', { error: errMsg });
-        send('staging_failed', { error: errMsg, errorName: errName, missingKeys });
+        // The commit IS pushed and reviewable — `changesReady: true` makes
+        // the "Changes ready" card render (with a disabled Preview button +
+        // missing-secret hint) on any clone, exactly as the success branch
+        // does, instead of leaving a card-less "build failed" line. Headless
+        // never opens a PR, so prNumber/prUrl are null.
+        await sendStatus('Staging build failed', {
+          error: errMsg,
+          changesReady: true,
+          stagingFailed: true,
+          stagingErrorName: errName,
+          stagingMissingKeys: missingKeys,
+          prNumber: null,
+        });
+        send('staging_failed', {
+          error: errMsg,
+          errorName: errName,
+          missingKeys,
+          changesReady: true,
+          prNumber: null,
+        });
         summaryParts.push(
           `Staging preview failed to build (non-fatal — commit ${commitHash.substring(0, 8)} is pushed; `
           + `a preview can be built from a cloned session).\n\n${fix}`
         );
+        // #461: record the failure as a terminal 'error' checks verdict
+        // (with reason + once-per-streak owner nudge) instead of leaving
+        // the pending state to look "still running" forever.
+        await stagingRecovery.recordStagingBootFailure({ config, pool, session, commitHash, err: stagingErr })
+          .catch((e) => log.warn('staging', 'recordStagingBootFailure failed (non-fatal)', { sessionId: session.id, err: e.message }));
         log.error('staging', 'Headless staging build failed (non-fatal)', {
           sessionId: session.id, slug: app.slug, errName, err: errMsg, missingKeys,
         });
@@ -4949,6 +5738,11 @@ path: /another/changed/view
       // "Chat error" toast and has no breadcrumb to follow.
       let stagingResult = null;
       let stagingErr = null;
+      // #461: pend the checks for the NEW commit before the build starts, so
+      // the previous commit's verdict (e.g. a stale 'passing') can't satisfy
+      // the merge gate while this build runs — or after it fails.
+      await visuals.setChecksPending(pool, session.id, commitHash)
+        .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
       try {
         stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
       } catch (e) {
@@ -4969,12 +5763,22 @@ path: /another/changed/view
         await staging.warmStagingCert(session, stagingResult.hostname, stagingResult.stagingUrl);
 
         stagingUrl = stagingResult.stagingUrl;
-        await sendStatus('Staging deployed!', { stagingUrl });
+        // `changesReady: true` is now what drives the "Changes ready" card
+        // (rather than incidentally `stagingUrl`), so the same card renders
+        // on the staging-failed branch below. prNumber/prUrl ride along so
+        // the card header + "View on GitHub" survive a reload from metadata.
+        await sendStatus('Staging deployed!', {
+          stagingUrl,
+          changesReady: true,
+          prNumber: session.pr_number || null,
+          prUrl: session.pr_url || null,
+        });
         // #127: ship the session's testing guidance (this turn's block, or
         // the kept-previous one off the session row) alongside the staging
         // URL so the client can offer "Test this change" without a refetch.
         send('staging_ready', {
           url: stagingUrl,
+          changesReady: true,
           testingMd: session.testing_md || null,
           testingPath: session.testing_path || null,
         });
@@ -5047,13 +5851,35 @@ path: /another/changed/view
           `. Only the staging preview container is missing — there is no preview URL for this commit.\n\n` +
           fix;
 
-        await sendStatus('Staging build failed', { error: errMsg });
+        // The commit (and PR, if any) already landed — `changesReady: true`
+        // keeps the "Changes ready" card + Propose button on screen (with a
+        // disabled Preview button and the missing-secret hint), so a failed
+        // preview no longer hides a perfectly proposable change. Propose
+        // rebuilds staging itself (routes/votes.js), so this stays usable.
+        await sendStatus('Staging build failed', {
+          error: errMsg,
+          changesReady: true,
+          stagingFailed: true,
+          stagingErrorName: errName,
+          stagingMissingKeys: missingKeys,
+          prNumber: session.pr_number || null,
+          prUrl: session.pr_url || null,
+        });
         send('staging_failed', {
           error: errMsg,
           errorName: errName,
           missingKeys,
+          changesReady: true,
+          prNumber: session.pr_number || null,
+          prUrl: session.pr_url || null,
         });
         summaryParts.push(message);
+
+        // #461: record the failure as a terminal 'error' checks verdict
+        // (with reason + once-per-streak owner nudge) instead of leaving
+        // the pending state to look "still running" forever.
+        await stagingRecovery.recordStagingBootFailure({ config, pool, session, commitHash, err: stagingErr })
+          .catch((e) => log.warn('staging', 'recordStagingBootFailure failed (non-fatal)', { sessionId: session.id, err: e.message }));
 
         log.error('staging', 'Staging build failed (surfaced to Mayor)', {
           sessionId: session.id,
@@ -5081,7 +5907,21 @@ path: /another/changed/view
     }
 
     if (ccText) {
-      await sendStatus('Claude Code finished', { ccOutput: ccText, durationMs: Date.now() - turnStartedMs });
+      // Outcome-aware completion row (#358): the green "Claude Code finished"
+      // card + the [CODING AGENT COMPLETED] fold-in are reserved for runs
+      // that actually changed code. A run that committed nothing (no-op) or
+      // errored gets an honest header instead, and a ccOutcome discriminator
+      // so buildMayorMessages labels the Mayor's context accordingly — a
+      // no-op/failure must never masquerade as a completed build.
+      const ccOutcome = hasChanges
+        ? 'success'
+        : ((result.fatalError || result.ccIsError) ? 'error' : 'no_changes');
+      const statusText = ccOutcome === 'success'
+        ? 'Claude Code finished'
+        : ccOutcome === 'no_changes'
+          ? 'Claude Code made no changes'
+          : 'Claude Code did not complete';
+      await sendStatus(statusText, { ccOutput: ccText, ccOutcome, durationMs: Date.now() - turnStartedMs });
       // Prepend CC's own description so the Mayor leads with what was
       // actually built, with our outcome bullets as supplementary context.
       summaryParts.unshift(`What the agent did:\n${ccText}`);
@@ -5102,7 +5942,7 @@ path: /another/changed/view
   return { toolResultText, ccLog, stagingUrl, isError, commitSha: commitHash || null };
 }
 
-function getMayorSystemPrompt(appName, isWorkerBusy, currentSpec, selfHosted, prContext, openProposalsBlock = '') {
+function getMayorSystemPrompt(appName, isWorkerBusy, currentSpec, selfHosted, prContext, openProposalsBlock = '', agentFilesBlock = '') {
   const specIsEmpty = !((currentSpec || '').trim());
 
   const toolNote = isWorkerBusy
@@ -5226,12 +6066,15 @@ A dispatch_claude_code tool_result may report that the commit/push/PR succeeded 
   * Missing required secret in the platform secret store — the agent CANNOT fix this; the user (or admin) needs to set the value in Settings → Secrets. Tell them which key, point them at the Settings UI, and offer to retry once it's set.
 For other staging failures (Docker build, network, image cache), explain briefly and offer to retry. Do NOT pretend a failed staging build succeeded — the user can see the build status in the chat.
 
+USER FILE ATTACHMENTS:
+The user can attach images and text files to their messages. Images appear to you directly as vision input on recent turns (older ones are replaced by an "[image attachment: …]" placeholder to keep costs bounded); text files are inlined in the message inside "==== ATTACHED FILE: <name> ====" blocks (long files truncated with a marker). When you dispatch the scout or the coding agent, the CURRENT turn's attachments are forwarded to it automatically — reference the relevant filenames in your dispatch prompt (e.g. "match the attached mockup dashboard.png") so the agent knows to consult them.
+
 HISTORY CONTEXT:
-Some assistant turns in this conversation contain "[CODING AGENT COMPLETED]:" — that is a summary from a PAST coding-agent run, written by the system, not by you. You may reference it when the user asks an INFORMATIONAL question about a past turn (e.g. "what did you do?", "why did you change X?", "what files were touched?") — quote or paraphrase to answer.
+Some assistant turns in this conversation contain "${CODING_AGENT_COMPLETED_MARKER}:" — that is a summary from a PAST coding-agent run, written by the system, not by you. You may reference it when the user asks an INFORMATIONAL question about a past turn (e.g. "what did you do?", "why did you change X?", "what files were touched?") — quote or paraphrase to answer.
 
 You MUST NOT, under any circumstances:
-- Write the literal string "[CODING AGENT COMPLETED]" in your reply. That marker is reserved for the harness; emitting it yourself fakes a coding-agent run that never happened.
-- Paraphrase a past summary as a substitute for dispatching a new run. If the user reports a bug, regression, or "still not quite right" — even if a previous run targeted the same area — that is a NEW change request and you MUST call dispatch_claude_code (assuming the tool is available per STATUS). Past summaries are read-only history; they cannot fix new bugs.${toolNote}${conventionsBlock}${selfHosted ? getSelfHostedRefuseList() : ''}${prBlock}${openProposalsBlock || ''}${specBlock}`;
+- Write the literal string "${CODING_AGENT_COMPLETED_MARKER}" in your reply. That marker is reserved for the harness; emitting it yourself fakes a coding-agent run that never happened.
+- Paraphrase a past summary as a substitute for dispatching a new run. If the user reports a bug, regression, or "still not quite right" — even if a previous run targeted the same area — that is a NEW change request and you MUST call dispatch_claude_code (assuming the tool is available per STATUS). Past summaries are read-only history; they cannot fix new bugs.${toolNote}${conventionsBlock}${selfHosted ? getSelfHostedRefuseList() : ''}${prBlock}${openProposalsBlock || ''}${agentFilesBlock || ''}${specBlock}`;
 }
 
 async function getFilesFromContainer(appSlug) {
@@ -5377,4 +6220,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, describeMarkerlessExit, shouldRetryHeadlessTurn };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER };

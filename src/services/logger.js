@@ -92,5 +92,12 @@ module.exports = {
   error: (cat, msg, data) => log('ERROR', cat, msg, data),
   setLevel,
   redact,
+  // redactString scrubs a single string against SENSITIVE_PATTERNS;
+  // redactDeep walks an object/array doing the same to every string value.
+  // Exported so the merge-debug capture (services/merge-debug.js) can apply
+  // the SAME secret-scrubbing policy to the step messages + detail blobs it
+  // persists, rather than re-implementing the pattern list.
+  redactString,
+  redactDeep,
   tail,
 };

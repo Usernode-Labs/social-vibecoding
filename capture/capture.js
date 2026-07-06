@@ -49,13 +49,77 @@
 const fs = require('fs');
 const { execFile } = require('child_process');
 
-const VIEWPORT = { width: 1280, height: 800, deviceScaleFactor: 1 };
+// Pixel density of the captured shots. Default 2× (HiDPI/retina) so the
+// whole class of "only broken on retina" bugs surfaces as a visible
+// before/after diff for free (#360). Apps that genuinely want 1× (pixel
+// art, deliberately low-res canvases) opt out via dapp.json's
+// `screenshot.deviceScaleFactor`, which the orchestrator plumbs in as
+// DEVICE_SCALE_FACTOR. Only 1 and 2 are accepted; anything else (unset,
+// garbage, out of range) falls back to 2 — so even an old orchestrator
+// that doesn't set the var still gets 2× from a freshly-built image.
+// Chromium launch flags for the headless capture browser.
+//
+// Software WebGL: apps that use WebGL / Three.js / a <canvas> 3D context
+// must be able to create a context here, or they crash on load with
+// "Could not create a WebGL context" — a console error that fails their
+// proposal checks (see runTest) and leaves the before/after screenshots
+// blank. The distro Chromium has no GPU in the container, so the fix is
+// SwiftShader, Chromium's bundled CPU rasterizer, routed through ANGLE:
+//   --use-gl=angle --use-angle=swiftshader
+// On modern Chromium (bookworm ships a recent stable) unaccelerated
+// SwiftShader for WebGL is gated behind an explicit opt-in, without which
+// getContext() still returns null and logs a deprecation error:
+//   --enable-unsafe-swiftshader
+// This REPLACES the old --disable-gpu flag, which turned the GPU stack off
+// entirely and made any WebGL context (hardware or software) impossible.
+// Rendering is CPU-bound and deterministic across runs; non-WebGL pages
+// are unaffected.
+const CHROMIUM_LAUNCH_ARGS = [
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-dev-shm-usage',
+  '--use-gl=angle',
+  '--use-angle=swiftshader',
+  '--enable-unsafe-swiftshader',
+  '--hide-scrollbars',
+  '--mute-audio',
+  '--force-color-profile=srgb',
+];
+
+function resolveDeviceScaleFactor(raw) {
+  return parseInt(raw, 10) === 1 ? 1 : 2;
+}
+const VIEWPORT = {
+  width: 1280,
+  height: 800,
+  deviceScaleFactor: resolveDeviceScaleFactor(process.env.DEVICE_SCALE_FACTOR),
+};
 const NAV_TIMEOUT_MS = 30000;
 const SETTLE_MS = 500;
 const PRE_SCROLL_HOLD_MS = 1500;
 const SHORT_PAGE_HOLD_MS = 4000;
 const GIF_WIDTH = 640;
 const GIF_FPS = 10;
+
+// #381: console-error check. Listeners on the staging "after" page collect
+// console.error output, uncaught exceptions, unhandled rejections and
+// failed loads so the platform can flag a proposal that "may break the
+// app". The list is deduped by message, capped, and each message
+// truncated so a chatty app can't blow stdout. After a console-only run
+// (MEDIA=0) the page gets a little extra settle so deferred async errors
+// surface before we report.
+const MAX_CONSOLE_ERRORS = 20;
+const MAX_CONSOLE_MSG_LEN = 500;
+const CONSOLE_ONLY_SETTLE_MS = 1500;
+
+// Whether this run also produces the before/after media artifacts. The
+// orchestrator sets MEDIA=0 for the always-on console-only check on a
+// non-UI-affecting proposal (visuals.js) — the page is still navigated
+// and console errors still reported, but screenshots/recordings and the
+// prod "before" leg are skipped to keep the always-on cost to one load.
+function mediaEnabled(env) {
+  return (env || {}).MEDIA !== '0';
+}
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -86,6 +150,36 @@ function emit(kind, media, status, buf, index) {
 function emitFail(kind, media, reason, index) {
   const enc = encodeURIComponent(String(reason || 'unknown').slice(0, 300));
   process.stdout.write(`__USERNODE_SHOT_FAIL__ kind=${kind} media=${media} index=${index || 0} reason=${enc}\n`);
+}
+
+// #381: one console-result frame per "after" target, mirroring the shot
+// protocol. The error list is a single base64 JSON line so arbitrary
+// messages survive without colliding with the protocol delimiters.
+//   __USERNODE_CONSOLE__ index=<n> errors=<count> loadStatus=<n>
+//   <base64 JSON array of { kind, message, source }>
+//   __USERNODE_CONSOLE_END__
+function emitConsole(index, errors, loadStatus) {
+  const json = JSON.stringify(Array.isArray(errors) ? errors : []);
+  process.stdout.write(
+    `__USERNODE_CONSOLE__ index=${index || 0} errors=${(errors || []).length} loadStatus=${loadStatus || 0}\n`
+  );
+  process.stdout.write(Buffer.from(json, 'utf8').toString('base64'));
+  process.stdout.write('\n__USERNODE_CONSOLE_END__\n');
+}
+
+// #47: one test-result frame per declared test, mirroring the console
+// protocol. Everything bar the pass/fail status lives in the base64 JSON
+// payload so arbitrary names / messages survive the protocol delimiters.
+//   __USERNODE_TEST__ index=<n> status=<pass|fail> loadStatus=<n>
+//   <base64 JSON { name, path, consoleErrors:[{kind,message,source}], failureReason }>
+//   __USERNODE_TEST_END__
+function emitTest(index, status, loadStatus, payload) {
+  const json = JSON.stringify(payload || {});
+  process.stdout.write(
+    `__USERNODE_TEST__ index=${index || 0} status=${status === 'pass' ? 'pass' : 'fail'} loadStatus=${loadStatus || 0}\n`
+  );
+  process.stdout.write(Buffer.from(json, 'utf8').toString('base64'));
+  process.stdout.write('\n__USERNODE_TEST_END__\n');
 }
 
 function execFileAsync(cmd, args, opts = {}) {
@@ -140,8 +234,52 @@ async function scrollPass(page) {
   }, SHORT_PAGE_HOLD_MS);
 }
 
-async function captureTarget(browser, kind, url, fallbackUrl, cookie, index) {
+async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opts = {}) {
+  // #381: media off → console-only mode (no screenshots/recordings). The
+  // console check only judges the staging build, so error collection is
+  // wired for the "after" target regardless of media.
+  const media = opts.media !== false;
+  // #47: when a TESTS suite runs, it owns console-error collection on the
+  // staging build — the orchestrator sets collectConsole:false here so the
+  // legacy __USERNODE_CONSOLE__ frame isn't double-counted against the
+  // per-test frames. Defaults to the #381 behaviour (after-target only).
+  const collectConsole = (opts.collectConsole != null ? opts.collectConsole : (kind === 'after'));
+  const consoleErrors = [];
+  const pushErr = (errKind, message, source) => {
+    if (consoleErrors.length >= MAX_CONSOLE_ERRORS) return;
+    const msg = String(message == null ? '' : message).slice(0, MAX_CONSOLE_MSG_LEN);
+    if (!msg) return;
+    if (consoleErrors.some((e) => e.message === msg)) return; // dedupe by message
+    consoleErrors.push({
+      kind: errKind,
+      message: msg,
+      source: source ? String(source).slice(0, MAX_CONSOLE_MSG_LEN) : '',
+    });
+  };
+
   const page = await browser.newPage();
+  if (collectConsole) {
+    // Native Chromium events catch errors whether or not the app embeds
+    // the dev-console forwarder (which only forwards via postMessage to a
+    // parent frame that doesn't exist headless). console 'error' covers
+    // console.error(); pageerror covers uncaught exceptions; Chromium
+    // surfaces unhandled rejections through pageerror too.
+    page.on('console', (msg) => {
+      try {
+        if (msg.type() !== 'error') return;
+        const loc = typeof msg.location === 'function' ? msg.location() : null;
+        const src = loc && loc.url
+          ? `${loc.url}${loc.lineNumber != null ? ':' + loc.lineNumber : ''}`
+          : '';
+        pushErr('console', msg.text(), src);
+      } catch { /* ignore a single malformed console message */ }
+    });
+    page.on('pageerror', (err) => {
+      try { pushErr('pageerror', (err && (err.stack || err.message)) || String(err), ''); }
+      catch { /* ignore */ }
+    });
+  }
+
   let navigated = false;
   let status = 200;
   try {
@@ -168,14 +306,37 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index) {
     }
     if (!navigated) throw new Error('navigation failed');
   } catch (err) {
-    emitFail(kind, 'png', err.message, index);
-    emitFail(kind, 'webm', err.message, index);
-    emitFail(kind, 'gif', err.message, index);
+    // A failed load is itself a "may break the app" signal — report it on
+    // the console frame (loadStatus 0) before the media-fail frames.
+    if (collectConsole) {
+      pushErr('load', `navigation failed: ${err.message}`, url);
+      emitConsole(index, consoleErrors, 0);
+    }
+    if (media) {
+      emitFail(kind, 'png', err.message, index);
+      emitFail(kind, 'webm', err.message, index);
+      emitFail(kind, 'gif', err.message, index);
+    }
     await page.close().catch(() => {});
     return;
   }
 
   await sleep(SETTLE_MS);
+
+  // An HTTP error status that still rendered a body is a failed load too.
+  if (collectConsole && status >= 400) {
+    pushErr('load', `page returned HTTP ${status}`, url);
+  }
+
+  // Console-only mode: give async errors a moment to fire, report, done.
+  if (!media) {
+    if (collectConsole) {
+      await sleep(CONSOLE_ONLY_SETTLE_MS);
+      emitConsole(index, consoleErrors, status);
+    }
+    await page.close().catch(() => {});
+    return;
+  }
 
   // 1. Still: viewport-only PNG of the loaded page.
   try {
@@ -218,6 +379,12 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index) {
     }
   } else {
     emitFail(kind, 'gif', 'no webm to transcode', index);
+  }
+
+  // #381: report console errors collected across the whole load + scroll
+  // lifecycle (errors can surface mid-scroll), after the media frames.
+  if (collectConsole) {
+    emitConsole(index, consoleErrors, status);
   }
 
   await page.close().catch(() => {});
@@ -267,10 +434,137 @@ function resolveTargets(env) {
   return out;
 }
 
+// #47: resolve the declared test suite from the TESTS env. Each entry is
+// pre-resolved by the orchestrator (services/visuals.js) to a fully-formed
+// staging `url` (with the capture token) plus the assertion fields. An
+// unset / empty / unparseable TESTS yields [] — the run then falls back to
+// the legacy console-only behaviour on the "after" target (rolling-deploy
+// safety, same shape as resolveTargets' TARGETS-vs-scalar fallback).
+function resolveTests(env) {
+  const raw = (env.TESTS || '').trim();
+  if (!raw) return [];
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { return []; }
+  if (!Array.isArray(parsed)) return [];
+  const out = [];
+  for (let i = 0; i < parsed.length; i++) {
+    const t = parsed[i] || {};
+    const url = String(t.url || '').trim();
+    if (!url) continue;
+    out.push({
+      index: Number.isInteger(t.index) ? t.index : i,
+      name: String(t.name || t.path || `test ${i + 1}`).slice(0, 200),
+      path: String(t.path || '').slice(0, 512),
+      url,
+      expectSelector: t.expectSelector ? String(t.expectSelector).slice(0, 256) : '',
+      expectText: t.expectText ? String(t.expectText).slice(0, 256) : '',
+      allowConsoleErrors: !!t.allowConsoleErrors,
+    });
+  }
+  return out;
+}
+
+// #47: run one declared test against the staging build. Navigates the
+// test's route, collects console errors / uncaught exceptions / failed
+// loads (the #381 baseline, now per-test), then evaluates the optional
+// presence assertions. Emits exactly one __USERNODE_TEST__ frame. Never
+// throws — an unexpected error is itself reported as a failed test.
+async function runTest(browser, test) {
+  const consoleErrors = [];
+  const pushErr = (errKind, message, source) => {
+    if (consoleErrors.length >= MAX_CONSOLE_ERRORS) return;
+    const msg = String(message == null ? '' : message).slice(0, MAX_CONSOLE_MSG_LEN);
+    if (!msg) return;
+    if (consoleErrors.some((e) => e.message === msg)) return;
+    consoleErrors.push({
+      kind: errKind,
+      message: msg,
+      source: source ? String(source).slice(0, MAX_CONSOLE_MSG_LEN) : '',
+    });
+  };
+
+  let page;
+  let status = 0;
+  let failureReason = '';
+  try {
+    page = await browser.newPage();
+    await page.setViewport(VIEWPORT);
+    page.on('console', (msg) => {
+      try {
+        if (msg.type() !== 'error') return;
+        const loc = typeof msg.location === 'function' ? msg.location() : null;
+        const src = loc && loc.url
+          ? `${loc.url}${loc.lineNumber != null ? ':' + loc.lineNumber : ''}`
+          : '';
+        pushErr('console', msg.text(), src);
+      } catch { /* ignore a single malformed console message */ }
+    });
+    page.on('pageerror', (err) => {
+      try { pushErr('pageerror', (err && (err.stack || err.message)) || String(err), ''); }
+      catch { /* ignore */ }
+    });
+
+    try {
+      const resp = await page.goto(test.url, { waitUntil: 'networkidle2', timeout: NAV_TIMEOUT_MS });
+      status = resp ? resp.status() : 200;
+    } catch (err) {
+      pushErr('load', `navigation failed: ${err.message}`, test.url);
+      emitTest(test.index, 'fail', 0, {
+        name: test.name, path: test.path, consoleErrors,
+        failureReason: `Page failed to load: ${err.message}`,
+      });
+      await page.close().catch(() => {});
+      return;
+    }
+
+    await sleep(SETTLE_MS);
+    if (status >= 400) {
+      pushErr('load', `page returned HTTP ${status}`, test.url);
+      failureReason = `Page returned HTTP ${status}`;
+    }
+    // Give deferred async errors a moment to fire before we judge.
+    await sleep(CONSOLE_ONLY_SETTLE_MS);
+
+    // Presence assertions (only when the page loaded OK).
+    if (!failureReason && test.expectSelector) {
+      let found = false;
+      try { found = !!(await page.$(test.expectSelector)); } catch { found = false; }
+      if (!found) failureReason = `Expected element "${test.expectSelector}" was not found`;
+    }
+    if (!failureReason && test.expectText) {
+      let found = false;
+      try {
+        found = await page.evaluate(
+          (text) => (document.body ? document.body.innerText : '').includes(text),
+          test.expectText
+        );
+      } catch { found = false; }
+      if (!found) failureReason = `Expected text "${test.expectText}" was not found on the page`;
+    }
+  } catch (err) {
+    failureReason = failureReason || `Test run error: ${err.message}`;
+  }
+
+  // Console errors fail the test unless the test opted out. A failed load
+  // / missing assertion already set failureReason.
+  const consoleFails = !test.allowConsoleErrors && consoleErrors.length > 0;
+  if (!failureReason && consoleFails) {
+    failureReason = `${consoleErrors.length} console error${consoleErrors.length === 1 ? '' : 's'} on load`;
+  }
+  const pass = !failureReason;
+  emitTest(test.index, pass ? 'pass' : 'fail', status, {
+    name: test.name, path: test.path,
+    consoleErrors: test.allowConsoleErrors ? [] : consoleErrors,
+    failureReason: pass ? '' : failureReason,
+  });
+  if (page) await page.close().catch(() => {});
+}
+
 async function main() {
   const targets = resolveTargets(process.env);
-  if (!targets.length) {
-    process.stderr.write('capture: no usable TARGETS / BEFORE_URL / AFTER_URL set\n');
+  const tests = resolveTests(process.env);
+  if (!targets.length && !tests.length) {
+    process.stderr.write('capture: no usable TARGETS / BEFORE_URL / AFTER_URL / TESTS set\n');
     return;
   }
 
@@ -281,24 +575,36 @@ async function main() {
   const browser = await puppeteer.launch({
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
     headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--hide-scrollbars',
-      '--mute-audio',
-      '--force-color-profile=srgb',
-    ],
+    args: CHROMIUM_LAUNCH_ARGS,
   });
 
+  const media = mediaEnabled(process.env);
+  const haveTests = tests.length > 0;
   try {
     // Sequential per target (a shared browser, one newPage per shot), and
     // before-then-after within each target so the per-target before/after
-    // pair lands together. Per-target failures stay independent.
+    // pair lands together. Per-target failures stay independent. In
+    // console-only mode (MEDIA=0, #381) the prod "before" leg is skipped —
+    // the console check only judges the staging "after" build.
+    //
+    // #47: when a TESTS suite is present it owns the staging-build console
+    // check (per-test frames). So: suppress the after-target's legacy
+    // console collection (collectConsole:false), and when media is off skip
+    // the after-target navigation entirely — the tests cover that load.
     for (const t of targets) {
-      if (t.beforeUrl) await captureTarget(browser, 'before', t.beforeUrl, t.beforeFallbackUrl, t.beforeCookie, t.index);
-      if (t.afterUrl) await captureTarget(browser, 'after', t.afterUrl, '', t.afterCookie, t.index);
+      if (media && t.beforeUrl) {
+        await captureTarget(browser, 'before', t.beforeUrl, t.beforeFallbackUrl, t.beforeCookie, t.index, { media });
+      }
+      if (t.afterUrl && (media || !haveTests)) {
+        await captureTarget(browser, 'after', t.afterUrl, '', t.afterCookie, t.index,
+          { media, collectConsole: !haveTests });
+      }
+    }
+    // #47: run the declared test suite (assertions + per-test console
+    // check). Sequential, one page each; per-test failures stay independent
+    // and a thrown test is reported as a failed frame, never aborts the run.
+    for (const test of tests) {
+      await runTest(browser, test);
     }
   } finally {
     await browser.close().catch(() => {});
@@ -315,4 +621,4 @@ if (require.main === module) {
     .then(() => process.exit(0));
 }
 
-module.exports = { parseCookie, resolveTargets };
+module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, mediaEnabled, resolveTests, CHROMIUM_LAUNCH_ARGS };

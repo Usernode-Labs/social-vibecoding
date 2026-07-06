@@ -125,41 +125,75 @@
         <div id="growth" class="grid sm:grid-cols-2 gap-6"></div>
       </section>
 
-      <!-- Retention -->
+      <!-- General users (DAU / WAU / MAU, daily rolling windows) + retention -->
       <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
-        <h2 class="text-lg font-semibold mb-1 inline-flex items-center">Retention
-          <span class="dc-info" data-info="retention" tabindex="0" role="button" aria-label="What is this?">?</span>
+        <h2 class="text-lg font-semibold mb-1 inline-flex items-center">General users
+          <span class="dc-info" data-info="general-users" tabindex="0" role="button" aria-label="What is this?">?</span>
         </h2>
-        <p class="text-xs text-zinc-500 mb-4">
-          Cohort = signup week. Each cell is the share of that cohort active (any action) N weeks later.
-        </p>
-        <div id="retention-cohorts" class="overflow-x-auto"></div>
-        <h3 class="text-sm font-semibold text-zinc-400 mt-6 mb-3">WAU / MAU stickiness</h3>
-        <div id="stickiness"></div>
-      </section>
-
-      <!-- Engagement tiers (custom DAU / WAU) -->
-      <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
-        <h2 class="text-lg font-semibold mb-1 inline-flex items-center">Engagement tiers
-          <span class="dc-info" data-info="engagement" tabindex="0" role="button" aria-label="What is this?">?</span>
-        </h2>
-        <p class="text-xs text-zinc-500 mb-4">Custom engagement bars, charted weekly. These are not the classic active-user counts above.</p>
-        <div class="grid sm:grid-cols-2 gap-6">
+        <p class="text-xs text-zinc-500 mb-4">Anyone active during the period. Daily over the last 90 days — DAU per day, WAU a 7-day rolling window, MAU a 30-day rolling window.</p>
+        <div class="grid lg:grid-cols-3 gap-6">
           <div>
             <div class="flex items-center justify-between text-sm mb-1">
               <span class="font-semibold text-zinc-300">DAU</span>
-              <span id="eng-dau-latest" class="text-zinc-500"></span>
+              <span id="gu-dau-latest" class="text-zinc-500"></span>
             </div>
-            <p class="text-[11px] text-zinc-500 mb-2">Per week: used a dapp &ge; 4&times; OR promoted &ge; 1 session.</p>
-            <div id="eng-dau"></div>
+            <p class="text-[11px] text-zinc-500 mb-2">Distinct users active that day.</p>
+            <div id="gu-dau"></div>
           </div>
           <div>
             <div class="flex items-center justify-between text-sm mb-1">
               <span class="font-semibold text-zinc-300">WAU</span>
-              <span id="eng-wau-latest" class="text-zinc-500"></span>
+              <span id="gu-wau-latest" class="text-zinc-500"></span>
             </div>
-            <p class="text-[11px] text-zinc-500 mb-2">Per week: used a dapp &ge; 2&times; in the trailing 2 weeks.</p>
-            <div id="eng-wau"></div>
+            <p class="text-[11px] text-zinc-500 mb-2">Distinct users active in the trailing 7 days.</p>
+            <div id="gu-wau"></div>
+          </div>
+          <div>
+            <div class="flex items-center justify-between text-sm mb-1">
+              <span class="font-semibold text-zinc-300">MAU</span>
+              <span id="gu-mau-latest" class="text-zinc-500"></span>
+            </div>
+            <p class="text-[11px] text-zinc-500 mb-2">Distinct users active in the trailing 30 days.</p>
+            <div id="gu-mau"></div>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between flex-wrap gap-2 mt-8 mb-3">
+          <h3 class="text-sm font-semibold text-zinc-400">Retention cohorts</h3>
+          <div class="flex flex-wrap items-center gap-1 text-xs">
+            <span class="text-zinc-500 mr-1">Align:</span>
+            <button data-retalign="calendar" class="retalign-btn px-2 py-1 rounded bg-violet-600 text-white">Calendar aligned</button>
+            <button data-retalign="cohort" class="retalign-btn px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">By cohort age</button>
+          </div>
+        </div>
+        <p class="text-xs text-zinc-500 mb-3">
+          Cohort = signup week. Each cell is the share of that cohort active (any action) in a given week.
+        </p>
+        <div id="retention-cohorts" class="overflow-x-auto"></div>
+      </section>
+
+      <!-- Power users (rolling WAU + L4 consistency) -->
+      <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <h2 class="text-lg font-semibold mb-1 inline-flex items-center">Power users
+          <span class="dc-info" data-info="power-users" tabindex="0" role="button" aria-label="What is this?">?</span>
+        </h2>
+        <p class="text-xs text-zinc-500 mb-4">A power user (per week) used dapps &ge; 3&times; AND did &ge; 3 developer actions (kudos, votes, or proposals). Daily over the last 90 days.</p>
+        <div class="grid lg:grid-cols-2 gap-6">
+          <div>
+            <div class="flex items-center justify-between text-sm mb-1">
+              <span class="font-semibold text-zinc-300">Power-user WAU</span>
+              <span id="pu-wau-latest" class="text-zinc-500"></span>
+            </div>
+            <p class="text-[11px] text-zinc-500 mb-2">Distinct power users over the trailing 7 days.</p>
+            <div id="pu-wau"></div>
+          </div>
+          <div>
+            <div class="flex items-center justify-between text-sm mb-1">
+              <span class="font-semibold text-zinc-300">Consistency (L4)</span>
+              <span id="pu-l4-latest" class="text-zinc-500"></span>
+            </div>
+            <p class="text-[11px] text-zinc-500 mb-2">Per day, users stacked by how many of the trailing 4 weeks they were a power user.</p>
+            <div id="pu-l4"></div>
           </div>
         </div>
       </section>
@@ -187,6 +221,23 @@
         </div>
         <p class="text-xs text-zinc-500 mb-4">Top 30 users by lifetime LLM spend, highest on the left. Hover a bar for the platform / user-key breakdown.</p>
         <div id="spend-by-builder"></div>
+      </section>
+
+      <!-- Daily spend distribution (user counts per spend bucket) -->
+      <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <div class="flex items-center justify-between mb-1">
+          <h2 class="text-lg font-semibold inline-flex items-center">Daily spend distribution
+            <span class="dc-info" data-info="spend-distribution" tabindex="0" role="button" aria-label="What is this?">?</span>
+          </h2>
+          <div class="flex items-center gap-1 text-xs" data-zero-toggle="spend-distribution">
+            <button data-zero="hide" class="zero-btn px-2 py-1 rounded bg-violet-600 text-white">Hide $0</button>
+            <button data-zero="show" class="zero-btn px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">Show $0</button>
+          </div>
+        </div>
+        <p class="text-xs text-zinc-500 mb-4">
+          Number of users by daily AI spend bucket, last 30 days. The two $20+ bars split users who hit the daily cap from those who continued on their own API key. $0 (no-spend) users are hidden by default — use "Show $0" to include them.
+        </p>
+        <div id="spend-distribution"></div>
       </section>
 
       <!-- Kudos giving distribution -->

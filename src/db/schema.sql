@@ -233,6 +233,108 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS pr_title VARCHAR(256
 -- turn (no separate migration backfill — pre-#8 sessions just show no
 -- banner until they next run).
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS behind_main INTEGER NOT NULL DEFAULT 0;
+-- #361: persisted merge-conflict snapshot so proposal cards can render a
+-- rich merge-status badge (clean | behind | conflict | resolving |
+-- failed) without a live GitHub call per render. Derived/written by
+-- services/sync-main.js (persistConflictState) and
+-- services/conflict-resolver.js; `behind` is derived when behind_main>0
+-- and the branch still merges cleanly. conflict_files holds the file
+-- paths that contained conflict markers on the last detection, and
+-- conflict_checked_at is when the snapshot was last computed.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS merge_conflict_state TEXT;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS conflict_files JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS conflict_checked_at TIMESTAMPTZ;
+-- #381: console-error "may break the app" check. After each staging build
+-- the capture pipeline's headless browser records console errors / uncaught
+-- exceptions / failed loads on the staging "after" target(s). Written by
+-- services/visuals.js (captureForSession → storeConsoleCheck), latest run
+-- only. console_check_state is 'clean' | 'errors' | 'unknown' (NULL until
+-- the first check); console_errors is the captured {kind,message,source}
+-- list; console_checked_at is when it last ran. Advisory only — never gates
+-- voting or merge.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS console_check_state TEXT;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS console_errors JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS console_checked_at TIMESTAMPTZ;
+-- #47: "CI for proposals". The console-error check above is now the
+-- built-in baseline of a general "tests run against staging" framework: a
+-- proposal carries automated headless-browser tests (declared in the app's
+-- dapp.json `tests` array, accumulating across proposals like CI in a
+-- GitHub repo), each navigating one staging route and asserting the page
+-- loads, throws no console errors, and (optionally) shows an expected
+-- selector/text. After every staging build services/visuals.js runs them
+-- (captureForSession → storeChecks) and records the outcome here, latest
+-- run only.
+--   check_state       : 'passing' | 'failing' | 'pending' | 'error' |
+--                       'skipped' | 'unknown' (NULL until the first run).
+--                       'pending' is set the moment a (re)build starts so a
+--                       stale pass can't slip through; 'error'/'unknown' mean
+--                       the staging build or capture run itself broke.
+--   test_results      : array of { name, path, status:'pass'|'fail',
+--                       consoleErrors:[{kind,message,source}], failureReason }
+--   checks_commit_sha : the commit the results describe (staleness signal).
+--   checks_checked_at : when the suite last ran.
+-- Unlike the advisory console columns above, check_state GATES merge:
+-- routes/votes.js checkAndMerge blocks a non-'passing' proposal (admin
+-- force-merge still bypasses). The console_* columns are kept written in
+-- parallel for one release so a rolling deploy's old readers still work.
+-- #447: 'pending' is only ever advanced out by the same captureForSession
+-- run that set it, so a restart mid-capture (or a staging rebuild that
+-- predated the capture wiring) could leave a promoted PR 'pending'/NULL and
+-- permanently merge-blocked. A 'pending' row whose checks_checked_at is
+-- older than CHECKS_STALE_MS (default 10m) is now treated as STUCK and
+-- re-run: by server.js reconcileStuckChecks (boot + session-sweeper Pass 4),
+-- by a vote that reaches threshold (checkAndMerge stale-pending kick), by any
+-- staging rebuild (staging-recovery.rebuildSessionStaging now re-runs checks),
+-- and by the manual POST /api/sessions/:id/recheck ("Re-run checks" button).
+-- #461: 'skipped' is a TERMINAL, GATE-PASSING verdict recorded when the
+-- checks genuinely cannot / need not run — the branch carries no commits
+-- beyond main, or GitHub isn't configured so no checks infrastructure
+-- exists. Written by visuals.storeChecksSkipped (via
+-- staging-recovery.recordChecksSkipped) with the human-readable reason in
+-- check_error_detail (same column the badge tooltip already surfaces); the
+-- merge gate treats it exactly like 'passing', and the next pushed commit
+-- returns the row to 'pending' via setChecksPending as usual. Before #461
+-- these paths returned silently, leaving check_state NULL — merge-blocked
+-- as "still running its tests" forever while the stuck-checks sweeper
+-- re-skipped the same row every pass.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_state TEXT;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS test_results JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS checks_commit_sha VARCHAR(40);
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS checks_checked_at TIMESTAMPTZ;
+-- Deadlock-diagnosis columns. Before these, a staging build that crashed on
+-- boot threw before any verdict was written, leaving check_state NULL — the
+-- merge gate fail-closes on NULL with no signal, and the stuck-checks sweeper
+-- retried the identical failing build every ~2 min forever (an "unclear
+-- deadlock": votes pass, nothing merges, nobody is told why). Now a build/boot
+-- failure is recorded as a terminal 'error' verdict carrying:
+--   check_error_detail       : a concise, human-readable reason for the LAST
+--                              failure (e.g. the Postgres error / crash line
+--                              pulled from the container's boot logs). Surfaced
+--                              in the merge-gate message, the proposal thread,
+--                              and the proposal's checks badge tooltip.
+--   consecutive_check_failures : count of back-to-back failed check runs for
+--                              the current commit. Reset to 0 on any passing/
+--                              failing verdict and when a NEW commit starts a
+--                              check run (see visuals.setChecksPending). Drives
+--                              the sweeper's exponential backoff + the
+--                              crash-loop short-circuit (stop auto-retrying a
+--                              deterministically-failing build after N tries).
+--   first_check_failure_at / last_check_failure_at : streak bounds, for "stuck
+--                              for X hours" escalation + diagnostics.
+--   check_next_retry_at      : earliest time the sweeper may re-attempt this
+--                              errored check. Set to NOW()+backoff on each
+--                              failure; the sweeper only re-picks an 'error'
+--                              row once this has elapsed, replacing the old
+--                              fixed ~2 min retry with 2m → 4m → 8m → … → 30m.
+--   check_error_notified_at  : stamped when the proposal owner is notified of
+--                              the failure, so they're nudged once per streak
+--                              (cleared when a new commit resets the streak).
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_error_detail TEXT;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS consecutive_check_failures INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS first_check_failure_at TIMESTAMPTZ;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS last_check_failure_at TIMESTAMPTZ;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_next_retry_at TIMESTAMPTZ;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_error_notified_at TIMESTAMPTZ;
 -- #11: vote-to-undo a merged PR. When the undo majority is reached we
 -- open a `git revert <merge_commit_sha>` PR and insert a new
 -- chat_sessions row pointing back here via revert_of_session_id.
@@ -571,6 +673,35 @@ CREATE TABLE IF NOT EXISTS pr_votes (
 -- User-first scan for the "My history" view (GET /api/me/history).
 CREATE INDEX IF NOT EXISTS idx_pr_votes_user ON pr_votes (user_id, created_at DESC);
 
+-- Community-voted "priority" + "assigned person" on issues and PR
+-- proposals. ONE unified table because both fields share identical
+-- voting mechanics (one movable vote per user per field per card; the
+-- top-voted value is what the card shows). target_ref points at the
+-- GitHub issue NUMBER when target_type='issue' (mirroring issue_bounties,
+-- which is keyed by (app_id, github_issue_number) because the Dev feed
+-- lists repo GitHub issues that may have no internal `issues` row) and at
+-- the chat_sessions.id (session id) when target_type='proposal'.
+-- value holds 'low'|'medium'|'high' for priority, or the typed display
+-- name (raw casing) for assignee — assignee dedupe is case-insensitive at
+-- read time, never restricted to registered users. NOT staging:private:
+-- the tally is a public governance-style signal (closer to issue_votes
+-- than to the privacy-flavoured bounty/kudos ledgers), so leaving it
+-- copyable lets staging previews show real seeded data.
+CREATE TABLE IF NOT EXISTS topic_attribute_votes (
+  id          SERIAL PRIMARY KEY,
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  target_type VARCHAR(16) NOT NULL,   -- 'issue' | 'proposal'
+  target_ref  INTEGER NOT NULL,       -- github_issue_number | chat_sessions.id
+  field       VARCHAR(16) NOT NULL,   -- 'priority' | 'assignee'
+  value       TEXT NOT NULL,
+  user_id     INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(app_id, target_type, target_ref, field, user_id)
+);
+-- Per-card tally read (group by value within one target+field).
+CREATE INDEX IF NOT EXISTS idx_topic_attribute_votes_target
+  ON topic_attribute_votes (app_id, target_type, target_ref, field);
+
 -- LLM usage tracking
 CREATE TABLE IF NOT EXISTS llm_usage (
   id              SERIAL PRIMARY KEY,
@@ -578,6 +709,19 @@ CREATE TABLE IF NOT EXISTS llm_usage (
   date            DATE NOT NULL DEFAULT CURRENT_DATE,
   total_cost_cents NUMERIC(10,4) NOT NULL DEFAULT 0,
   UNIQUE(user_id, date)
+);
+
+-- #361: dedicated "system tokens" daily ledger for platform-driven
+-- merge-conflict / sync-with-main resolution turns. One row per day (not
+-- per user — this spend isn't attributable to a person). Mirrors the
+-- llm_usage upsert shape. Kept separate from llm_usage so this
+-- housekeeping spend never pollutes per-user analytics or the global
+-- cap aggregation. Written via limits.recordSystemSpend, gated via
+-- limits.checkSystemBudget against system_tokens_daily_limit_cents.
+CREATE TABLE IF NOT EXISTS system_token_usage (
+  date       DATE PRIMARY KEY DEFAULT CURRENT_DATE,
+  cost_cents NUMERIC(10,4) NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- #119: split daily spend by who paid Anthropic.
@@ -604,7 +748,10 @@ CREATE TABLE IF NOT EXISTS platform_settings (
 -- NOTHING means existing operator-set values survive every boot.
 INSERT INTO platform_settings (key, value) VALUES
   ('user_daily_limit_cents',   '2500'),
-  ('global_daily_limit_cents', '20000')
+  ('global_daily_limit_cents', '20000'),
+  -- #361: separate "system tokens" budget that funds platform-driven
+  -- merge-conflict / sync-with-main resolution turns. Defaults to $25/day.
+  ('system_tokens_daily_limit_cents', '2500')
 ON CONFLICT (key) DO NOTHING;
 
 -- One-shot backfill of users.app_quota from the legacy can_create_apps
@@ -900,6 +1047,18 @@ BEGIN
   END IF;
 END $$;
 
+-- Pixel density the platform captures this app's before/after preview
+-- screenshots at (issue #360). 2 = HiDPI/retina (the default, matching
+-- real laptops/phones — surfaces "only broken on retina" bugs as a
+-- visible before/after diff); 1 = standard density, opted into by apps
+-- that genuinely need it (pixel art). Source of truth is dapp.json's
+-- top-level `screenshot.deviceScaleFactor`, reconciled here on every
+-- deploy (services/app-manifest.js reconcileAppScreenshot) and read by
+-- the capture orchestrator (services/visuals.js captureForSession).
+-- DEFAULT 2 means every pre-migration app captures at 2× with no
+-- manifest edit.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS screenshot_device_scale SMALLINT NOT NULL DEFAULT 2;
+
 -- App membership + invites in one table. A row with status='invited' is
 -- a pending invite (grants NO access — every check requires 'member');
 -- declining deletes the row so re-invites work. The creator gets a
@@ -1106,3 +1265,108 @@ CREATE TABLE IF NOT EXISTS proposal_ai_messages (
 CREATE INDEX IF NOT EXISTS idx_proposal_ai_messages_convo
   ON proposal_ai_messages (app_id, proposal_kind, proposal_ref, user_id, id);
 COMMENT ON TABLE proposal_ai_messages IS 'staging:private';
+
+-- Admin /debug merge & conflict-resolution logs. Each merge attempt (or
+-- automatic conflict-resolution attempt) is a "run"; every step inside it
+-- (gate check, GitHub merge call, worker sync phase, outcome) is a child
+-- row ordered by `seq`. Written fire-and-forget by services/merge-debug.js
+-- and read only by the admin-gated /api/debug/* endpoints.
+CREATE TABLE IF NOT EXISTS merge_debug_runs (
+  id          BIGSERIAL PRIMARY KEY,
+  app_id      INTEGER REFERENCES apps(id) ON DELETE SET NULL,
+  session_id  INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL,
+  pr_number   INTEGER,
+  -- 'merge' | 'conflict_resolution'
+  kind        VARCHAR(32) NOT NULL DEFAULT 'merge',
+  -- 'vote' | 'force' | 'post_merge_sweep' | 'drift' | 'behind_main' | 'merge_conflict'
+  trigger     VARCHAR(48),
+  -- running | merged | blocked | conflict_resolving | conflict_failed
+  --   | awaiting_github | noop | error
+  status      VARCHAR(32) NOT NULL DEFAULT 'running',
+  summary     TEXT,
+  started_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ended_at    TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_merge_debug_runs_app     ON merge_debug_runs (app_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_merge_debug_runs_session ON merge_debug_runs (session_id);
+CREATE INDEX IF NOT EXISTS idx_merge_debug_runs_started ON merge_debug_runs (started_at DESC);
+
+CREATE TABLE IF NOT EXISTS merge_debug_steps (
+  id         BIGSERIAL PRIMARY KEY,
+  run_id     BIGINT NOT NULL REFERENCES merge_debug_runs(id) ON DELETE CASCADE,
+  seq        INTEGER NOT NULL,
+  phase      VARCHAR(48),
+  -- info | warn | error
+  level      VARCHAR(8) NOT NULL DEFAULT 'info',
+  message    TEXT,
+  detail     JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_merge_debug_steps_run ON merge_debug_steps (run_id, seq);
+
+-- staging:private — these rows carry internal session ids, conflict file
+-- paths, error text and resolution details that mirror private build
+-- history; they're TRUNCATEd in staging clones rather than leaking into
+-- previews (same policy as the events / proposal_ai_messages tables). The
+-- /debug view seeds its own mock runs under IS_STAGING + ?demo=1.
+COMMENT ON TABLE merge_debug_runs  IS 'staging:private';
+COMMENT ON TABLE merge_debug_steps IS 'staging:private';
+
+-- #460: per-user global agent instruction & skill files. Uploaded in the
+-- account Settings modal ("Agent instructions & skills") and materialized
+-- into the per-session CC volume (~/.claude/CLAUDE.md + ~/.claude/skills/)
+-- at every build/scout dispatch the user owns — see
+-- services/user-agent-files.js + worker.syncUserAgentFiles. Contents are
+-- plain user-authored text (NOT secrets — no encryption), but they are
+-- personal scratch config with no value in a staging clone, so the table
+-- ships schema-only + empty there (staging:private); the Settings section
+-- uses ?demo=1 fabricated rows for staging previews instead.
+CREATE TABLE IF NOT EXISTS user_agent_files (
+  id          SERIAL PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- 'instruction' | 'skill'
+  kind        VARCHAR(16) NOT NULL CHECK (kind IN ('instruction', 'skill')),
+  -- normalized slug: ^[a-z0-9][a-z0-9-]{0,63}$
+  name        VARCHAR(64) NOT NULL,
+  description VARCHAR(200) NOT NULL DEFAULT '',
+  content     TEXT NOT NULL,
+  size_bytes  INTEGER NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id, kind, name)
+);
+CREATE INDEX IF NOT EXISTS idx_user_agent_files_user ON user_agent_files (user_id, kind, name);
+COMMENT ON TABLE user_agent_files IS 'staging:private';
+
+-- Dev-chat file attachments (#450). Users attach images / text files to
+-- dev-chat messages as extra context for the Mayor, scout, and coding
+-- agent. Bytea-in-Postgres like session_visuals (the platform container
+-- has no persistent file volume); ids are random 32-hex tokens generated
+-- in Node. message_id is NULL between upload and send — the chat handler
+-- links it when the message posts, and server.js's session sweeper GCs
+-- orphans older than 24h. Retention otherwise follows the parent session
+-- (ON DELETE CASCADE), bounded by a 25 MB per-session cap at upload time.
+CREATE TABLE IF NOT EXISTS chat_session_attachments (
+  id           VARCHAR(32) PRIMARY KEY,
+  session_id   INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  message_id   INTEGER REFERENCES chat_session_messages(id) ON DELETE CASCADE,
+  user_id      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  -- 'image' (png/jpeg/gif/webp, magic-byte verified) | 'text' (UTF-8)
+  kind         VARCHAR(8)   NOT NULL,
+  filename     VARCHAR(256) NOT NULL,
+  content_type VARCHAR(64)  NOT NULL,
+  size_bytes   INTEGER      NOT NULL,
+  data         BYTEA        NOT NULL,
+  created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_chat_session_attachments_session ON chat_session_attachments(session_id);
+CREATE INDEX IF NOT EXISTS idx_chat_session_attachments_message ON chat_session_attachments(message_id);
+CREATE INDEX IF NOT EXISTS idx_chat_session_attachments_orphan
+  ON chat_session_attachments(created_at) WHERE message_id IS NULL;
+
+-- Private like its parent chat_sessions (public-FK-to-private is the
+-- combination the migration linter forbids), and the bytes are private
+-- chat content in their own right — screenshots and files a user shared
+-- with their own dev session only. Schema-only in staging clones;
+-- migrate.js seeds a demo fixture so the UI is exercisable there.
+COMMENT ON TABLE chat_session_attachments IS 'staging:private';

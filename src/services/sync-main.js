@@ -51,6 +51,28 @@ async function persistBehindMain(pool, session, behind) {
   }
 }
 
+// #361: persist the derived merge-conflict snapshot used by proposal
+// cards (merge_conflict_state + conflict_files + conflict_checked_at).
+// state ∈ clean | behind | conflict | resolving | failed. Best-effort —
+// a failed write just leaves the prior snapshot in place; the next
+// drift/sync refreshes it. Broadcasts nothing itself; callers (the
+// conflict-resolver lifecycle, the /promoted refetch on vote_update)
+// own the live update.
+async function persistConflictState(pool, session, { state, files }) {
+  try {
+    await pool.query(
+      `UPDATE chat_sessions
+         SET merge_conflict_state = $1,
+             conflict_files = $2::jsonb,
+             conflict_checked_at = NOW()
+       WHERE id = $3`,
+      [state || null, JSON.stringify(Array.isArray(files) ? files : []), session.id]
+    );
+  } catch (err) {
+    log.warn('sync-main', 'persistConflictState failed', { sessionId: session?.id, err: err.message });
+  }
+}
+
 // #252: in-flight sync registry. One entry per session while a
 // MODE=sync turn is running, holding the coarse phase the UI banner
 // shows. Process-local — same single-Node-process assumption as the
@@ -122,7 +144,12 @@ async function runSyncMain(config, pool, sessionId, opts = {}) {
   return entry.promise;
 }
 
-async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger } = {}, entry) {
+async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, debugRunId } = {}, entry) {
+  // Admin /debug: when the conflict-resolver passes its run id, narrate each
+  // worker sync phase + the outcome into that run. Fire-and-forget; a null
+  // runId (manual sync / resume auto-sync) makes every call a no-op.
+  const md = require('./merge-debug');
+  const dstep = (o) => md.step(pool, debugRunId, o);
   let session = sessionRow;
   if (!session) {
     const { rows } = await pool.query(
@@ -225,7 +252,10 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger }
     const pm = line.match(/^\[(sync_[a-z_]+)\]$/);
     if (!pm) return;
     const label = SYNC_PROGRESS_LABELS[pm[1]];
-    if (label) appendProgress(label);
+    if (label) {
+      appendProgress(label);
+      dstep({ phase: `sync:${pm[1]}`, message: `Worker sync: ${label}` });
+    }
     const phase = SYNC_PHASE_MAP[pm[1]];
     if (!phase || entry.phase === phase) return;
     entry.phase = phase;
@@ -233,16 +263,17 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger }
   };
 
   try {
-    // Sync turns charge to the session owner — they're the one who
-    // benefits from the integration. Limit-first (#212), matching the
-    // build-turn flow: the owner's daily allowance while it has headroom
-    // (worker bills the platform proxy via WORKER_JWT), then their BYOK
-    // key once it's exhausted. Allowance gone and no key → throw; the
-    // route 500s with the budget message and the conflict-resolver gates
-    // with the same resolver before ever calling us.
-    const billing = await limits.resolveBillingPath(pool, config.jwtSecret, session.user_id);
-    if (billing.error) throw new Error(billing.error);
-    const userApiKey = billing.apiKey;
+    // #361: merge-conflict / sync turns are platform housekeeping, not
+    // work the owner asked for, so they draw from the dedicated
+    // "system tokens" budget rather than any individual's allowance.
+    // Gate on the system cap up front; when it's exhausted, throw — the
+    // route 500s with the message and the conflict-resolver group-chats
+    // it (it also pre-checks the same gate before calling us). Always run
+    // with the platform key (anthropicApiKey: null → proxy path); system
+    // work must never touch a user's BYOK key.
+    const sysBudget = await limits.checkSystemBudget(pool);
+    if (sysBudget.error) throw new Error(sysBudget.error);
+    const userApiKey = null;
 
     await worker.ensureWorkerImage();
     await worker.ensureWorker(session.id, {
@@ -261,7 +292,7 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger }
         prompt: '(sync turn — see MODE=sync block in run-cc.sh)',
         // Use a small fast model — the prompt is short and the task is
         // mechanical. The route's caller doesn't get to pick.
-        model: 'claude-sonnet-4-6',
+        model: 'claude-sonnet-5',
         commitMsg: '',
         // Don't pass cc_session_id — we don't want sync turns polluting
         // the session's main CC conversation thread.
@@ -277,6 +308,12 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger }
     // Persist the new behind count regardless of outcome (a failed
     // sync still teaches us how stale we are).
     await persistBehindMain(pool, session, result.behind || 0);
+
+    // #361: record the turn's cost against the system-token budget. Same
+    // costUsd→cents conversion build turns use. Closes the long-standing
+    // gap where conflict turns were enforced live but never persisted to
+    // any ledger.
+    await limits.recordSystemSpend(pool, Math.round((result.costUsd || 0) * 100));
 
     const syncResult = result.syncResult || (result.exitCode === 0 ? 'clean' : 'conflict');
     let message;
@@ -294,6 +331,19 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger }
       default:
         message = 'Tried to sync with main but Claude couldn\'t resolve the conflicts. The branch is unchanged; try again or resolve locally.';
         break;
+    }
+
+    // #361: persist the derived merge-conflict snapshot for proposal
+    // cards. An unresolved conflict leaves the branch broken → 'failed'
+    // (record which files conflicted, from the worker's CONFLICT_FILES);
+    // every other outcome (clean / resolved / already_synced) means the
+    // branch now merges → 'clean' with an empty file list.
+    if (syncResult === 'conflict') {
+      await persistConflictState(pool, session, { state: 'failed', files: result.conflictFiles || [] });
+      dstep({ phase: 'sync_result', level: 'error', message: 'Worker sync: Claude could not resolve the conflicts.', detail: { syncResult, conflictFiles: result.conflictFiles || [], costUsd: result.costUsd || 0 } });
+    } else {
+      await persistConflictState(pool, session, { state: 'clean', files: [] });
+      dstep({ phase: 'sync_result', message: `Worker sync ${syncResult}${result.sha ? ` — pushed ${String(result.sha).slice(0, 9)}` : ''}.`, detail: { syncResult, sha: result.sha || null, behind: result.behind || 0, conflictFiles: result.conflictFiles || [], costUsd: result.costUsd || 0 } });
     }
 
     // Close the activity with a terminal status. Routing through
@@ -344,6 +394,7 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger }
       behind: result.behind || 0,
       sha: result.sha || null,
       pushOk: !!result.pushOk,
+      conflictFiles: result.conflictFiles || [],
       message,
     };
   } catch (err) {
@@ -361,4 +412,4 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger }
   }
 }
 
-module.exports = { runSyncMain, persistBehindMain, getSyncState };
+module.exports = { runSyncMain, persistBehindMain, persistConflictState, getSyncState };

@@ -165,6 +165,13 @@ async function createApp(config, appRow) {
     await appManifest.reconcileAppVisibility(pool, { id: appId, slug }, manifest)
       .catch((err) => log.warn('app-creator', 'Visibility reconcile failed', { appId, err: err.message }));
 
+    // And the manifest's `screenshot.deviceScaleFactor` (issue #360):
+    // persist the density the before/after preview shots are captured at
+    // onto apps.screenshot_device_scale so the capture orchestrator can
+    // read it without re-cloning. Default 2× when the block is absent.
+    await appManifest.reconcileAppScreenshot(pool, { id: appId, slug }, manifest)
+      .catch((err) => log.warn('app-creator', 'Screenshot reconcile failed', { appId, err: err.message }));
+
     const storedValues = await appSecrets.getRawValues(pool, appId, config.jwtSecret);
     const merge = appSecrets.mergeForDeploy(
       manifest, storedValues, appSecrets.platformDefaultsFromEnv()

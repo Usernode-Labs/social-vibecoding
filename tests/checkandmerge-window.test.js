@@ -38,6 +38,11 @@ function makePool(opts) {
         // self_hosted app → checkAndMerge skips rebuildProduction.
         return { rows: [{ id: opts.appId, self_hosted: true, slug: 'widget' }] };
       }
+      // #47 checks gate: this suite exercises the vote/window gates, so the
+      // proposal's checks are always green here.
+      if (/SELECT check_state, test_results, checks_checked_at/.test(sql)) {
+        return { rows: [{ check_state: 'passing', test_results: [], checks_checked_at: new Date().toISOString() }] };
+      }
       if (/UPDATE chat_sessions SET status = 'merged'/.test(sql)) {
         updates.push(params);
         return { rows: [] };
@@ -64,6 +69,7 @@ function loadVotes() {
     events: require.resolve('../src/services/events'),
     appAccess: require.resolve('../src/services/app-access'),
     worker: require.resolve('../src/services/worker'),
+    mergeDebug: require.resolve('../src/services/merge-debug'),
     subject: require.resolve('../src/routes/votes'),
   };
   const orig = {};
@@ -100,6 +106,9 @@ function loadVotes() {
   stub(ids.events, { record() {}, EVENT_TYPES: { PR_MERGED: 'pr_merged', BOUNTY_AWARDED: 'bounty_awarded' } });
   stub(ids.appAccess, { sessionCollabGuard: () => (_req, _res, next) => next() });
   stub(ids.worker, { destroyCcVolume: async () => {}, isInFlight: () => false });
+  stub(ids.mergeDebug, {
+    startRun: async () => 1, step() {}, endRun() {}, pruneOldRuns: async () => {},
+  });
 
   delete require.cache[ids.subject];
   const subject = require(ids.subject);

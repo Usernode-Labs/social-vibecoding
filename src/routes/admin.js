@@ -74,7 +74,7 @@ function adminRoutes(config) {
     try {
       const { rows } = await pool.query(
         `SELECT u.id, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.created_at,
-                u.daily_limit_cents,
+                u.daily_limit_cents, u.usernode_pubkey,
                 (u.id = $1) AS is_self,
                 ac.code as activation_code,
                 COALESCE(lu.total_cost_cents, 0) as cost_today_cents,
@@ -425,9 +425,11 @@ function adminRoutes(config) {
     try {
       const userCents = await limits.getDefaultUserLimitCents(pool);
       const globalCents = await limits.getGlobalLimitCents(pool);
+      const systemCents = await limits.getSystemTokensLimitCents(pool);
       res.json({
         user_daily_limit_cents: userCents,
         global_daily_limit_cents: globalCents,
+        system_tokens_daily_limit_cents: systemCents,
       });
     } catch (err) {
       log.error('admin', 'Read limits failed', { message: err.message });
@@ -436,7 +438,7 @@ function adminRoutes(config) {
   });
 
   router.put('/api/admin/limits', requireAdminWrite, async (req, res) => {
-    const { user, global } = req.body || {};
+    const { user, global, system } = req.body || {};
     const updates = [];
     const validate = (label, v) => {
       if (v === undefined) return null;
@@ -450,11 +452,14 @@ function adminRoutes(config) {
     if (typeof userN === 'string') return res.status(400).json({ error: userN });
     const globalN = validate('global', global);
     if (typeof globalN === 'string') return res.status(400).json({ error: globalN });
-    if (userN === null && globalN === null) {
-      return res.status(400).json({ error: 'Provide at least one of: user, global' });
+    const systemN = validate('system', system);
+    if (typeof systemN === 'string') return res.status(400).json({ error: systemN });
+    if (userN === null && globalN === null && systemN === null) {
+      return res.status(400).json({ error: 'Provide at least one of: user, global, system' });
     }
     if (userN !== null) updates.push([limits.KEY_USER, String(userN)]);
     if (globalN !== null) updates.push([limits.KEY_GLOBAL, String(globalN)]);
+    if (systemN !== null) updates.push([limits.KEY_SYSTEM, String(systemN)]);
 
     try {
       for (const [key, value] of updates) {
@@ -471,13 +476,15 @@ function adminRoutes(config) {
       limits.invalidate(...updates.map(([k]) => k));
       log.info('admin', 'Platform limits updated', {
         by: req.user.username,
-        user: userN, global: globalN,
+        user: userN, global: globalN, system: systemN,
       });
       const userCents = await limits.getDefaultUserLimitCents(pool);
       const globalCents = await limits.getGlobalLimitCents(pool);
+      const systemCents = await limits.getSystemTokensLimitCents(pool);
       res.json({
         user_daily_limit_cents: userCents,
         global_daily_limit_cents: globalCents,
+        system_tokens_daily_limit_cents: systemCents,
       });
     } catch (err) {
       log.error('admin', 'Update limits failed', { message: err.message });
@@ -521,6 +528,153 @@ function adminRoutes(config) {
       res.json({ ok: true, daily_limit_cents: rows[0].daily_limit_cents });
     } catch (err) {
       log.error('admin', 'Per-user limit update failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Linked wallet (issue #422) ─────────────────────────────
+  //
+  // Set / change / clear a user's linked Usernode wallet
+  // (users.usernode_pubkey). Mirrors the per-user daily-limit handler.
+  // Body `{ pubkey }`:
+  //   - null or '' → CLEAR: usernode_pubkey = NULL, and the link-flow
+  //     columns (token/expiry) are nulled too, matching the user-facing
+  //     DELETE /api/me/wallet-link unlink.
+  //   - non-empty  → SET, after a wallet-shape check.
+  //
+  // There is NO unique constraint on usernode_pubkey (only username is
+  // unique), and wallet login resolves the account by pubkey alone — so
+  // two rows sharing a pubkey is the "accounts mixed up" failure mode this
+  // route exists to fix. We therefore enforce single-ownership here: if
+  // another user already holds the target pubkey we return 409 unless the
+  // caller explicitly opts into reassigning it. Reassign clears the other
+  // user and sets this one inside one transaction so there's never a
+  // transient duplicate. We intentionally do NOT gate on
+  // genesisAccounts.isGenesisAddress — that's for user-initiated linking
+  // and returns true when the genesis set is unloaded; an admin correcting
+  // an association must not be blocked by it.
+  router.put('/api/admin/users/:id/wallet', requireAdminWrite, async (req, res) => {
+    const userId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(userId)) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+
+    const raw = req.body?.pubkey;
+    const reassign = req.body?.reassign === true;
+
+    // Normalize to either a clean string to set, or null to clear.
+    let pubkey = null;
+    if (raw !== null && raw !== undefined && raw !== '') {
+      if (typeof raw !== 'string') {
+        return res.status(400).json({ error: 'pubkey must be a string, null, or empty' });
+      }
+      const trimmed = raw.trim();
+      if (trimmed === '') {
+        pubkey = null;
+      } else if (/\s/.test(trimmed)) {
+        return res.status(400).json({ error: 'Wallet address must not contain whitespace' });
+      } else if (!trimmed.startsWith('ut1')) {
+        return res.status(400).json({ error: 'Wallet address must start with "ut1"' });
+      } else if (trimmed.length < 8 || trimmed.length > 255) {
+        return res.status(400).json({ error: 'Wallet address has an invalid length' });
+      } else {
+        pubkey = trimmed;
+      }
+    }
+
+    try {
+      // Clear is unconditional — no conflict possible when setting NULL.
+      if (pubkey === null) {
+        const { rows } = await pool.query(
+          `UPDATE users
+             SET usernode_pubkey = NULL,
+                 wallet_link_token = NULL,
+                 wallet_link_expires_at = NULL
+           WHERE id = $1
+           RETURNING id, username, usernode_pubkey`,
+          [userId]
+        );
+        if (!rows.length) return res.status(404).json({ error: 'User not found' });
+        log.info('admin', 'Wallet updated', {
+          id: rows[0].id, username: rows[0].username,
+          to: null, by: req.user.username,
+        });
+        return res.json({ ok: true, usernode_pubkey: null });
+      }
+
+      // Does another user already hold this pubkey?
+      const { rows: holders } = await pool.query(
+        'SELECT id, username FROM users WHERE usernode_pubkey = $1 AND id <> $2',
+        [pubkey, userId]
+      );
+      if (holders.length && !reassign) {
+        return res.status(409).json({
+          error: `This wallet is already linked to "${holders[0].username}". Reassign it to move the wallet.`,
+          conflictUser: { id: holders[0].id, username: holders[0].username },
+        });
+      }
+
+      if (holders.length) {
+        // Reassign: clear every other holder, then set the target — one
+        // transaction so there's never a transient duplicate.
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          await client.query(
+            `UPDATE users
+               SET usernode_pubkey = NULL,
+                   wallet_link_token = NULL,
+                   wallet_link_expires_at = NULL
+             WHERE usernode_pubkey = $1 AND id <> $2`,
+            [pubkey, userId]
+          );
+          const { rows } = await client.query(
+            `UPDATE users
+               SET usernode_pubkey = $1,
+                   wallet_link_token = NULL,
+                   wallet_link_expires_at = NULL
+             WHERE id = $2
+             RETURNING id, username, usernode_pubkey`,
+            [pubkey, userId]
+          );
+          if (!rows.length) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'User not found' });
+          }
+          await client.query('COMMIT');
+          log.info('admin', 'Wallet updated', {
+            id: rows[0].id, username: rows[0].username,
+            to: pubkey.slice(0, 12) + '…',
+            reassignedFrom: holders.map((h) => h.username),
+            by: req.user.username,
+          });
+          return res.json({ ok: true, usernode_pubkey: rows[0].usernode_pubkey });
+        } catch (err) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw err;
+        } finally {
+          client.release();
+        }
+      }
+
+      // No conflict — straight set.
+      const { rows } = await pool.query(
+        `UPDATE users
+           SET usernode_pubkey = $1,
+               wallet_link_token = NULL,
+               wallet_link_expires_at = NULL
+         WHERE id = $2
+         RETURNING id, username, usernode_pubkey`,
+        [pubkey, userId]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'User not found' });
+      log.info('admin', 'Wallet updated', {
+        id: rows[0].id, username: rows[0].username,
+        to: pubkey.slice(0, 12) + '…', by: req.user.username,
+      });
+      res.json({ ok: true, usernode_pubkey: rows[0].usernode_pubkey });
+    } catch (err) {
+      log.error('admin', 'Wallet update failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

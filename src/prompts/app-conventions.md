@@ -109,21 +109,61 @@ When it merges, the branch is redeployed to the **production**
 container.
 
 Apps receive `USERNODE_ENV=staging` or `USERNODE_ENV=production`.
-Use it to branch behavior where the environments must differ —
-most commonly:
-
-- Seeding fake data for tables whose content doesn't get copied into
-  staging (see "Public vs private tables").
-- Skipping side effects: don't send real emails, charge real cards,
-  post to real webhooks, etc. while `USERNODE_ENV === 'staging'`.
-- Displaying a "staging" indicator in the UI so testers know what
-  they're looking at.
+The staging container exists so a tester approves **the exact app that
+will ship**. That only holds if staging and production run the *same
+code path* — `USERNODE_ENV` may swap the **data** behind that path and
+suppress **real-world outbound side effects**, but it must never change
+which features exist or how the core logic behaves.
 
 Canonical helper:
 
 ```js
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 ```
+
+### Gate data and side effects — never features or logic
+
+✅ **Legitimate uses of `IS_STAGING`:**
+
+- **Seed mock data** for tables that aren't copied into staging
+  (newly created tables, `staging:private` tables, hard-to-reach
+  states). See "Staging mock data" below.
+- **Suppress irreversible outbound side effects** — don't send real
+  emails, charge real cards, post to real webhooks, or broadcast real
+  on-chain transactions from staging. Point at a sandbox endpoint or
+  no-op instead, but keep the surrounding code path identical (same
+  validation, same DB writes, same response shape) so the path is
+  actually exercised by the tester.
+- **Show a "staging" indicator** in the UI so testers know what
+  they're looking at.
+
+🚫 **Never gate these on `USERNODE_ENV`:**
+
+- **Feature availability.** No feature, screen, button, or endpoint
+  may exist in one environment and be absent in the other. If a tester
+  approves it, production must have it; if production lacks it, the
+  tester must not see it.
+- **Auth / permissions.** Don't auto-grant admin, bypass login, or
+  seed yourself into a privileged table only in staging. Admin and
+  permission flows must be reachable in production the same way.
+  (If a feature needs an admin to operate, it's broken in production
+  the moment its admin only exists in staging.)
+- **The default core logic path.** A "testing mode" that swaps the
+  real implementation for a fake one (mock wallets, fake balances,
+  short-circuited game logic) is fine **as an explicit, opt-in tool
+  available in both environments** — but it must NOT be the silent
+  default a tester sees, and it must NOT be env-exclusive. If staging
+  defaults to the mock path, the tester approves the mock — not the
+  real feature — and ships a product nobody actually exercised. Keep
+  the real path as the default everywhere; let mock mode be something
+  you deliberately turn on (query param, settings flag, admin
+  toggle).
+
+Rule of thumb: if flipping `USERNODE_ENV` to `production` would make a
+feature **stop working** (rather than just operate on real data /
+real endpoints), you've gated the wrong thing. Move the difference to
+**data** (seed it) or to a **single outbound boundary** (the email /
+charge / chain call), and leave everything else identical.
 
 ## Staging mock data
 
@@ -174,6 +214,87 @@ Seed rules:
 Tie-in with testing instructions: the testing steps you emit must
 reference the seeded entities by name ("Open the thread 'Staging demo
 thread' and …"), so a tester knows exactly what they should be seeing.
+
+### Testing `path:` for a hash-routed SPA (the self-app)
+
+The before/after screenshots and the "Test this change" button visit the
+testing block's `path:` joined onto the staging origin. Most apps are
+path-routed, so a plain pathname (`/board`, `/settings?demo=1`) lands on
+the right screen.
+
+**The self-app (social-vibecoding) is a hash-routed single-page app**:
+its internal screens are addressed by the URL **fragment**
+(`#app/<slug>/dev/proposals/<id>`, `#leaderboard`,
+`#app/<slug>/dev/sessions/<id>`, …), never by server pathname — a
+pathname just loads `index.html`, which boots to the home feed. So when
+your change is to a self-app screen, write the `path:` using the in-app
+route segments exactly as they appear after the `#`, with a leading
+slash:
+
+- `path: /app/<self-slug>/dev/proposals/<id>`
+- `path: /leaderboard`
+
+The platform recognises these self-app routes and moves them into the
+fragment when capturing and when previewing, so the shot shows the
+changed screen instead of the homepage. Standalone server-rendered pages
+(`/dashboard`, `/admin`, `/status`, `/node-status`) stay as plain
+pathnames. **Always point a deep `path:` at the specific changed
+self-app screen** — omitting it defaults to `/` (the home feed), which
+no capture fix can rescue.
+
+## Proposal tests — "CI for proposals"
+
+Every proposal carries a **checks** status: after each staging build the
+platform runs a set of automated headless-browser tests against the
+proposal's staging preview and records a pass/fail result. **A proposal
+whose checks are not passing — failing, still running, or couldn't run —
+is BLOCKED from merging even with a winning vote** (admins can still
+force-merge). This is the platform's safeguard against merges that break
+the app.
+
+A **test** navigates one staging route and asserts that the page loads
+(HTTP < 400), throws no console errors / uncaught exceptions, and —
+optionally — that an expected element or text is present. The
+console-error check is the built-in baseline: every proposal gets a
+"loads with no console errors" test on its routes for free, even with no
+tests declared.
+
+Declare tests in a top-level `tests` array in `dapp.json`. They live in
+the repo and **accumulate across proposals** — once a proposal merges, its
+tests run on every future proposal, exactly like CI tests in a GitHub
+repo. Shape:
+
+```json
+{
+  "tests": [
+    { "name": "Board renders", "path": "/board?demo=1", "expectSelector": ".board" },
+    { "name": "Settings opens", "path": "/settings", "expectText": "Preferences" }
+  ]
+}
+```
+
+Per-test fields:
+
+- `path` — **required.** A relative route within the app (same rules as a
+  testing-block `path:`: starts with a single `/`, no scheme/host). For
+  the hash-routed self-app, use the in-app route segments (e.g.
+  `/leaderboard`) — the platform normalises them into the fragment.
+- `name` — short label shown in the checks detail. Defaults to the path.
+- `expectSelector` — optional CSS selector that must be present after the
+  page settles.
+- `expectText` — optional text that must appear in the page body.
+- `allowConsoleErrors` — set `true` only for a route that legitimately
+  logs errors; it opts that one test out of the baseline no-console-errors
+  rule.
+
+When you add or change a user-visible screen, **add or extend a test for
+it** in the same commit, pointing it at the same route(s) you put in the
+TESTING block's `path:` lines. The test's route renders against a FRESH,
+EMPTY staging database, so seed any data the route needs per "Staging mock
+data" above (a blank page usually means missing seed data, not a bug). A
+test that depends on missing seed data will fail and block your merge.
+Because checks gate merge, verify your declared tests pass (use the in-loop
+browser on a build turn) before you commit.
 
 ## Public vs private tables — **IMPORTANT**
 
@@ -748,6 +869,95 @@ tagged `// usernode-dev-console@1`. It captures `console.*` output
 and uncaught errors and forwards them via `postMessage` so the
 platform's developer console can surface them. Don't remove or
 modify that block when editing the HTML shell.
+
+## Rendering invariants — opt-in self-checks
+
+The bridge (see "Bridge") exposes an **opt-in** API for registering
+cheap correctness checks that run in the live preview and report
+failures into the same developer console as `console.error`. It is
+fully **no-op by default**: an app that registers nothing behaves
+exactly as before. Use it to catch *structural* rendering bugs that a
+screenshot might not make obvious — the canonical example being a
+canvas that should exactly fill its window but renders at the wrong
+pixel density on HiDPI screens.
+
+A check is a function returning a truthy value when the invariant
+holds, or `false` / a string reason when it's violated. Register it
+once the bridge is loaded:
+
+```js
+usernode.invariants.register('canvas-fills-window', function () {
+  var c = document.querySelector('canvas');
+  if (!c) return true; // nothing to check yet
+  var expectedW = Math.round(window.innerWidth * window.devicePixelRatio);
+  var expectedH = Math.round(window.innerHeight * window.devicePixelRatio);
+  if (c.width !== expectedW || c.height !== expectedH) {
+    return 'canvas ' + c.width + 'x' + c.height +
+           ' != window ' + expectedW + 'x' + expectedH;
+  }
+  return true;
+});
+```
+
+Behaviour:
+
+- Registered checks run on `resize` / `orientationchange` and once
+  immediately at registration (so an already-violated invariant
+  reports without waiting for a resize).
+- A violation posts an `error`-level entry (kind `invariant`) to the
+  dev console — it badges red like any other error. A check that
+  throws is reported, never propagated.
+- Failures are **debounced**: a check reports once when it starts
+  failing and once when it recovers, not every tick.
+- Requires the hosted bridge `<script>` (it lives in the bridge, not
+  the vendored forwarder, so there's nothing to re-vendor). Add the
+  bridge tag if your shell doesn't already load it.
+
+## In-loop browser (build turns) — optional, encouraged
+
+On a **build** turn (not scout/sync) Claude Code has a headless browser
+available through the **Playwright MCP server** — `browser_navigate`,
+`browser_console_messages`, `browser_take_screenshot`, and friends. It
+lets the agent load the app it just edited and *see* the result —
+catching a blank page, a JS crash on load, a broken layout, or a failing
+API call that source-reading alone would miss — and fix it before
+committing.
+
+It is **optional and encouraged, never a gate.** Reach for it when a
+change is user-visible and a visual check is genuinely informative; skip
+it for backend-only / refactor / docs work where rendering tells you
+nothing. Turns that don't use it behave exactly as before, and Chromium
+only launches on the first browser tool call, so there's no cost when
+it's unused. Scout and sync turns have no browser at all.
+
+### Launch contract
+
+The app must actually be running for the browser to load it. Boot it
+locally inside the worker the same way a staging container does:
+
+- **`USERNODE_ENV=staging`** against a **fresh, empty local database** —
+  the build turn exposes `INLOOP_ENV`, `INLOOP_PORT`, and
+  `INLOOP_DATABASE_URL` for exactly this. Typical launch:
+  `USERNODE_ENV=$INLOOP_ENV PORT=$INLOOP_PORT DATABASE_URL=$INLOOP_DATABASE_URL node server.js &`
+  (or this app's declared `dapp.json` entrypoint).
+- Private secrets resolve from the manifest's `staging_default` /
+  `default` only, same as a real staging build — never the prod store.
+- Navigate to `http://127.0.0.1:$INLOOP_PORT` joined with the SAME
+  route(s) you put in the TESTING block's `path:` lines. For the
+  hash-routed self-app, put the route after the `#`.
+- A **blank or empty page usually means missing seed data, not a bug** —
+  the local DB starts empty. Add the `IS_STAGING` seed (or a `?demo=1`
+  route) per "Staging mock data" and re-check, rather than "fixing"
+  code that already works.
+- Keep it tight (a couple of launch→check→fix cycles, a minute or two).
+  **If the app won't boot** — no local Postgres, a missing required
+  secret, a crash on start — don't fight it: note that you skipped the
+  visual check and commit anyway. The in-loop browser must never block
+  or fail the turn.
+
+This is an agent-facing quality aid. The before/after screenshots and
+the "Test this change" button (driven by the TESTING block) remain the
+reviewer-facing tools and are unchanged.
 
 ## Outputting file edits
 

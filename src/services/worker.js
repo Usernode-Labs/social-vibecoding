@@ -6,6 +6,7 @@ const log = require('./logger');
 const docker = require('./docker');
 const github = require('./github');
 const models = require('./models');
+const inLoopBrowser = require('./in-loop-browser');
 
 const WORKER_IMAGE = 'usernode-worker:latest';
 // Per-session worker container resource limits. Read from env (mirrored
@@ -209,6 +210,10 @@ function parseLine(line, onProgress, state) {
       else if (k === 'sha') state.sha = v || null;
       else if (k === 'push_ok') state.pushOk = v === '1';
       else if (k === 'sync_result') state.syncResult = v || null;
+      // #361: comma-delimited conflicted file paths (MODE=sync). Empty
+      // string → no conflicts. Threaded out as result.conflictFiles so
+      // sync-main.js can persist the merge-conflict snapshot.
+      else if (k === 'conflict_files') state.conflictFiles = v ? v.split(',').filter(Boolean) : [];
     }
     state.resultSeen = true;
     return;
@@ -265,6 +270,9 @@ function newWatchState() {
     // #8: clean|resolved|conflict|already_synced (MODE=sync only). The
     // route handler routes the chat message off this.
     syncResult: null,
+    // #361: conflicted file paths from a MODE=sync turn's
+    // __USERNODE_RESULT__ line. Defaults empty.
+    conflictFiles: [],
     phase: null,
     fatalError: null,
     resultSeen: false,
@@ -299,7 +307,7 @@ async function ensureWorkerImage() {
   // `npm install -g @anthropic-ai/claude-code` layer once per calendar
   // day so the worker tracks the latest CLI. Without this, that layer is
   // cached indefinitely and the worker freezes at a stale CLI version —
-  // newer models (Sonnet 4.6 / Opus 4.8) then 400 with
+  // newer models (Sonnet 5 / Opus 4.8) then 400 with
   // "thinking.type.enabled is not supported for this model" because the
   // old CLI emits the legacy thinking shape. Day-granular so steady-state
   // session bootstraps stay cache-fast (no per-session npm reinstall).
@@ -843,6 +851,13 @@ async function execInWorker(sessionId, {
     ...(useProxy
       ? { ANTHROPIC_BASE_URL: `${PLATFORM_INTERNAL_URL}/api/internal/anthropic` }
       : {}),
+    // Optional in-loop browser: build-only INLOOP_* env (port,
+    // USERNODE_ENV=staging, throwaway DB pointer) the agent uses to boot
+    // the edited app locally for a headless visual check. Empty for
+    // scout/sync. This is purely local app/browser config — distinct from
+    // ANTHROPIC_BASE_URL, which only retargets the Anthropic SDK and is
+    // never used by the local launch. See services/in-loop-browser.js.
+    ...inLoopBrowser.browserEnvForMode(mode),
   };
   // Journal transport: the turn runs DETACHED from this process. The
   // wrapper below redirects run-cc.sh's combined output to a journal
@@ -871,7 +886,10 @@ async function execInWorker(sessionId, {
       + 'echo "__USERNODE_EXIT__ $?" >> "$TURN_JOURNAL"',
   ];
 
-  _registryUpsert(sessionId, { inFlight: true });
+  // #361: record the in-flight turn's mode in the warm registry so the
+  // Anthropic proxy can synchronously tell a sync turn from a build turn
+  // and gate it against the system-token budget instead of the owner's.
+  _registryUpsert(sessionId, { inFlight: true, activeTurnMode: mode });
   await _persistActiveTurn(sessionId, {
     mode,
     journal,
@@ -911,9 +929,17 @@ async function execInWorker(sessionId, {
     }
     return state;
   } finally {
-    _registryUpsert(sessionId, { inFlight: false, lastUsedMs: Date.now() });
+    _registryUpsert(sessionId, { inFlight: false, lastUsedMs: Date.now(), activeTurnMode: null });
     await clearActiveTurn(sessionId);
   }
+}
+
+// #361: synchronous read of the mode of the turn currently in flight for
+// a session ('build' | 'sync' | 'scout' | …), or null when idle. Used by
+// the Anthropic proxy to route sync turns onto the system-token cap.
+function getActiveTurnMode(sessionId) {
+  const meta = _warmRegistry.get(Number(sessionId));
+  return (meta && meta.inFlight) ? (meta.activeTurnMode || null) : null;
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -1155,6 +1181,49 @@ async function stopTurn(sessionId) {
   log.info('worker', 'Stop signal sent (in-container turn-process kill)', { containerName, sessionId });
 }
 
+// #460: materialize the dispatching user's personal agent files into the
+// warm worker's CC volume before a build/scout turn. Wipe-and-rewrite of
+// two managed paths — ~/.claude/CLAUDE.md (user-level memory Claude Code
+// loads natively) and ~/.claude/skills/ (personal skills) — so deletions
+// in Settings take effect on the next dispatch. Both live OUTSIDE the
+// repo checkout, so run-cc.sh's `git add -A` can never commit them.
+//
+// The script travels on the exec child's STDIN (contents base64-inlined
+// within it), never as a CLI arg, so user file contents don't show up in
+// `ps` or `docker inspect`. Callers treat failures as non-fatal: the
+// dispatch proceeds without personal files rather than failing the turn.
+async function syncUserAgentFiles(sessionId, files) {
+  const meta = _registryGet(sessionId);
+  if (!meta) {
+    throw new Error(`syncUserAgentFiles: no warm worker registered for session ${sessionId}`);
+  }
+  const { buildSyncShellScript } = require('./user-agent-files');
+  const script = buildSyncShellScript(files || []);
+  await new Promise((resolve, reject) => {
+    const proc = spawn('docker', ['exec', '-i', meta.containerName, 'sh'], {
+      stdio: ['pipe', 'ignore', 'pipe'],
+    });
+    const timer = setTimeout(() => {
+      try { proc.kill('SIGKILL'); } catch {}
+      reject(new Error('syncUserAgentFiles: timed out'));
+    }, 20000);
+    let stderr = '';
+    proc.stderr.on('data', (d) => { stderr += String(d); });
+    proc.on('error', (err) => { clearTimeout(timer); reject(err); });
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) return resolve();
+      reject(new Error(`syncUserAgentFiles: docker exec exited ${code}: ${stderr.slice(0, 300)}`));
+    });
+    proc.stdin.on('error', () => {});
+    proc.stdin.write(script);
+    proc.stdin.end();
+  });
+  log.info('worker', 'Personal agent files synced', {
+    sessionId, count: (files || []).length,
+  });
+}
+
 // Boot-time resume: pick an in-flight (or finished-while-we-were-down)
 // turn back up from its journal. The caller (server.js adoption) owns
 // post-turn processing and clearing chat_sessions.active_turn; this
@@ -1370,8 +1439,17 @@ async function cloneCcVolume(srcSessionId, destSessionId) {
   // failed before its first worker bootstrap).
   await docker.execFileAsync('docker', ['volume', 'inspect', src], { timeout: 5000 });
   await docker.ensureVolume(dest);
+  // Run the copy as root (`--user 0:0`). A freshly-created named volume is
+  // owned root:root (0755), but the worker image's default user is non-root,
+  // so a non-root copy container can't create entries under /to — the exact
+  // failures seen cloning chat 735 ("cp: cannot create directory
+  // '/to/./backups': Permission denied", "cp: preserving times for '/to/.':
+  // Operation not permitted"), which left the clone with fresh CC memory.
+  // `cp -a` still preserves each source entry's original uid/gid, so the
+  // worker user can read its own ~/.claude files afterward.
   await docker.execFileAsync('docker', [
     'run', '--rm',
+    '--user', '0:0',
     '-v', `${src}:/from:ro`,
     '-v', `${dest}:/to`,
     '--entrypoint', 'sh',
@@ -1473,6 +1551,7 @@ module.exports = {
   ensureWorker,
   execInWorker,
   stopTurn,
+  syncUserAgentFiles,
   resumeTurnFromJournal,
   clearActiveTurn,
   evictWorker,
@@ -1480,6 +1559,7 @@ module.exports = {
   adoptWarmWorker,
   isInFlight,
   isWorkerExecuting,
+  getActiveTurnMode,
   // legacy / shared helpers
   watchWorker,
   listOrphanWorkers,

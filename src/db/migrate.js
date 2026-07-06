@@ -22,13 +22,16 @@ async function migrate(config) {
 
   await seedAdmin(pool, config);
   await seedCaptureUser(pool);
+  await seedCaptureAdminUser(pool);
   await seedSelfApp(pool, config);
   await seedStagingNotifications(pool, config);
   await seedStagingEnvProposal(pool, config);
   await seedStagingMergedPrs(pool, config);
   await seedStagingMyOpenPr(pool, config);
+  await seedStagingRestartEligibleMerge(pool, config);
   await seedStagingProposalDiscussion(pool, config);
   await seedStagingOtherUserProposal(pool, config);
+  await seedStagingTopicScrollThreads(pool, config);
   await seedStagingArchiveProposalFixtures(pool, config);
   await seedStagingActiveSessions(pool, config);
   await seedStagingCcProgressRun(pool, config);
@@ -37,11 +40,14 @@ async function migrate(config) {
   await seedStagingMembersPanel(pool);
   await seedStagingAppQuotaUsers(pool);
   await seedStagingViewOnlyAdmin(pool);
+  await seedStagingWalletUsers(pool);
+  await seedStagingPublicApiContributors(pool);
   await seedStagingVisuals(pool);
   await seedStagingLeaderboardProfile(pool);
   await seedStagingQaSession(pool, config);
   await seedStagingCloneQuestionSuggestions(pool, config);
   await seedStagingCloneSpecPills(pool, config);
+  await seedStagingChatAttachments(pool, config);
   await seedStagingSpecViewerSessions(pool, config);
   await seedStagingDemoProposal(pool, config);
   await seedStagingSpecUserShareFixtures(pool, config);
@@ -49,7 +55,13 @@ async function migrate(config) {
   await seedStagingSyncActivity(pool, config);
   await seedStagingChatEditFixtures(pool, config);
   await seedStagingLlmUsage(pool);
+  await seedStagingSpendDistribution(pool);
+  await seedStagingCapReached(pool, config);
+  await seedStagingAppCapApps(pool, config);
+  await seedStagingSystemTokenUsage(pool);
   await seedStagingDashboardAdminSplit(pool);
+  await seedStagingAnalyticsCharts(pool);
+  await seedStagingTopicAttributes(pool, config);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
   // Must run BEFORE backfillOrphanedSpecDrafts: unwrapping spec_md after that
@@ -526,6 +538,49 @@ async function seedCaptureUser(pool) {
     // Best-effort: a missing capture user only degrades screenshots back
     // to today's unauthenticated behaviour — never abort boot over it.
     log.warn('db', 'Capture user seed failed', { err: err.message });
+  }
+}
+
+// Dedicated identity for the proposal-checks ASSERTION suite (#47 fix).
+// services/visuals.js signs the per-test navigations as this user so the
+// admin-only check routes (/admin, /dashboard) render their gated content
+// instead of "Admin access required" — the two declared admin checks
+// failed for every proposal otherwise (they ran as the non-admin
+// usernode-capture above).
+//
+// A VIEW-ONLY admin (is_admin = TRUE, admin_readonly = TRUE): it can SEE
+// admin reads (adminMiddleware lets any admin through GETs) but is blocked
+// from every mutating route (requireAdminWrite → 403), so a leaked token
+// can never change platform state. Unlike usernode-capture this identity
+// signs NO public artifact — test frames are pass/fail + console errors,
+// never a published image — so granting it admin visibility leaks nothing.
+// can_create_apps stays FALSE; the discarded-random-bytes bcrypt password
+// blocks interactive login (visuals.js mints a JWT directly). Idempotent:
+// keyed on the unique username, DO NOTHING on conflict. Runs unconditionally
+// on boot so the platform (prod) DB has it for token minting; the staging
+// clone inherits the row from prod, same as usernode-capture.
+async function seedCaptureAdminUser(pool) {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id FROM users WHERE username = $1',
+      ['usernode-capture-admin']
+    );
+    if (rows.length) {
+      log.debug('db', 'Capture admin user already exists');
+      return;
+    }
+    const hash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12);
+    await pool.query(
+      `INSERT INTO users (username, password, is_admin, admin_readonly, can_create_apps)
+       VALUES ($1, $2, TRUE, TRUE, FALSE)
+       ON CONFLICT (username) DO NOTHING`,
+      ['usernode-capture-admin', hash]
+    );
+    log.info('db', 'Capture admin user created', { username: 'usernode-capture-admin' });
+  } catch (err) {
+    // Best-effort: a missing capture-admin user only degrades the admin
+    // check routes back to today's non-admin behaviour — never abort boot.
+    log.warn('db', 'Capture admin user seed failed', { err: err.message });
   }
 }
 
@@ -1388,16 +1443,31 @@ async function seedStagingCcProgressRun(pool, config) {
     '- Persisted run durations on finished statuses.',
   ].join('\n');
 
+  // #358: a no-op outcome demo so QA can see the non-success card, which is
+  // visually distinct from the green "Claude Code finished" card and never
+  // shows the [CODING AGENT COMPLETED] marker. The ccOutcome:'no_changes'
+  // discriminator is what makes the harness fold this into the Mayor's
+  // context under a non-completed label rather than a fake completion.
+  const ccNoOpOutput = [
+    '[staging fixture] I reviewed the relevant files but the requested',
+    'behaviour was already in place — nothing needed changing, so no commit',
+    'was made.',
+  ].join('\n');
+
   // Timeline order matters: the dev-chat pairing pre-pass attaches the
   // 'Claude Code progress' row to the nearest PRECEDING "Claude Code is
   // running" status, so insert status → progress → finished with
   // ascending timestamps.
   const messages = [
     { role: 'user', content: '[staging fixture] Please add a progress indicator for Claude Code runs.', metadata: {}, minutesAgo: 39 },
-    { role: 'system', content: 'Spinning up coding agent (Claude Sonnet 4.6)...', metadata: {}, minutesAgo: 38 },
+    { role: 'system', content: 'Spinning up coding agent (Claude Sonnet 5)...', metadata: {}, minutesAgo: 38 },
     { role: 'system', content: 'Claude Code is running...', metadata: {}, minutesAgo: 38 },
     { role: 'system', content: 'Claude Code progress', metadata: { progressLog }, minutesAgo: 38 },
-    { role: 'system', content: 'Claude Code finished', metadata: { ccOutput, durationMs: 252000 }, minutesAgo: 34 },
+    { role: 'system', content: 'Claude Code finished', metadata: { ccOutput, ccOutcome: 'success', durationMs: 252000 }, minutesAgo: 34 },
+    { role: 'user', content: '[staging fixture] Make sure the elapsed timer never disappears.', metadata: {}, minutesAgo: 33 },
+    { role: 'system', content: 'Spinning up coding agent (Claude Sonnet 5)...', metadata: {}, minutesAgo: 32 },
+    { role: 'system', content: 'Claude Code is running...', metadata: {}, minutesAgo: 32 },
+    { role: 'system', content: 'Claude Code made no changes', metadata: { ccOutput: ccNoOpOutput, ccOutcome: 'no_changes', durationMs: 41000 }, minutesAgo: 31 },
   ];
 
   for (const m of messages) {
@@ -1495,11 +1565,14 @@ async function seedStagingCcEstimateRun(pool, config) {
   // `_active` and whose `_estimate` the summary reads.
   const messages = [
     { role: 'user', content: '[staging fixture] Please add the new route handler.', metadata: {}, minutesAgo: 3 },
-    { role: 'system', content: 'Spinning up coding agent (Claude Sonnet 4.6)...', metadata: {}, minutesAgo: 2 },
+    { role: 'system', content: 'Spinning up coding agent (Claude Sonnet 5)...', metadata: {}, minutesAgo: 2 },
     {
       role: 'system',
       content: 'Claude Code is running...',
-      metadata: { estimate: { text: 'wiring up the new route', remainingSeconds: 120 } },
+      // #359: a low remainingSeconds so a reviewer opening the seeded run
+      // watches the live count-down tick down and cross into "due now" within
+      // ~½m (the count-down re-anchors from load time — see dev-chat hydration).
+      metadata: { estimate: { text: 'wiring up the new route', remainingSeconds: 35 } },
       minutesAgo: 2,
     },
     { role: 'system', content: 'Claude Code progress', metadata: { progressLog }, minutesAgo: 2 },
@@ -1611,6 +1684,33 @@ async function seedStagingSyncActivity(pool, config) {
          VALUES ($1, $2, $3, 'sync_main', $4::jsonb)`,
         [owner.id, appId, SESSION_ID,
          JSON.stringify({ syncResult: 'clean', behind: 2, sha, pushOk: true, trigger: 'manual' })]
+      );
+    }
+
+    // Fable 5 fallback-notice fixture: one persisted system row (the
+    // in-chat notice the fallback detection emits) plus its matching
+    // analytics event, so the notice rendering is reviewable in staging —
+    // a real classifier fallback can't be triggered on demand. Keyed off
+    // its own metadata marker so it seeds exactly once, independent of
+    // the sync rows above.
+    const { rows: fallbackRows } = await pool.query(
+      `SELECT 1 FROM chat_session_messages
+        WHERE session_id = $1 AND metadata->'modelFallback' IS NOT NULL LIMIT 1`,
+      [SESSION_ID]
+    );
+    if (!fallbackRows.length) {
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'system', $2, $3)`,
+        [SESSION_ID,
+         'Fable 5 declined part of this request (safety classifier: cyber) — it was completed by Opus 4.8.',
+         JSON.stringify({ modelFallback: { requested: 'claude-fable-5', served: 'claude-opus-4-8', category: 'cyber' } })]
+      );
+      await pool.query(
+        `INSERT INTO events (user_id, app_id, session_id, event_type, metadata)
+         VALUES ($1, $2, $3, 'model_fallback', $4::jsonb)`,
+        [owner.id, appId, SESSION_ID,
+         JSON.stringify({ requested: 'claude-fable-5', served: 'claude-opus-4-8', category: 'cyber', source: 'staging-seed' })]
       );
     }
 
@@ -1737,21 +1837,26 @@ async function seedStagingAppQuotaUsers(pool) {
 
   try {
     // CAN-create and CANNOT-create fixture users. Sentinel passwords mean
-    // these accounts can never log in interactively.
+    // these accounts can never log in interactively. The third account has a
+    // deliberately long username (#424 follow-up) so the admin Users list's
+    // full-username rendering (no ellipsis, wraps cleanly) is verifiable in a
+    // staging preview — cloned prod usernames may all be short.
     await pool.query(
       `INSERT INTO users (id, username, password, app_quota)
        VALUES
          (900020, 'staging-demo-quota-ok',   '!staging-fixture-no-login!', 5),
-         (900021, 'staging-demo-quota-zero', '!staging-fixture-no-login!', 0)
+         (900021, 'staging-demo-quota-zero', '!staging-fixture-no-login!', 0),
+         (900024, 'staging-demo-very-long-username-overflow-check-0000000000', '!staging-fixture-no-login!', 3)
        ON CONFLICT (id) DO NOTHING`
     );
 
-    // Pin the three quotas explicitly so reboots keep the intended states
-    // even if a tester edited them, and so staging-demo-user lands "at
-    // limit" (quota 1, owns the 1 live demo app from seedStagingDemoAppCard).
+    // Pin the quotas explicitly so reboots keep the intended states even if a
+    // tester edited them, and so staging-demo-user lands "at limit" (quota 1,
+    // owns the 1 live demo app from seedStagingDemoAppCard).
     await pool.query('UPDATE users SET app_quota = 1 WHERE id = 900001');
     await pool.query('UPDATE users SET app_quota = 5 WHERE id = 900020');
     await pool.query('UPDATE users SET app_quota = 0 WHERE id = 900021');
+    await pool.query('UPDATE users SET app_quota = 3 WHERE id = 900024');
 
     log.info('db', 'Staging app-quota fixtures seeded');
   } catch (err) {
@@ -1791,6 +1896,110 @@ async function seedStagingViewOnlyAdmin(pool) {
   }
 }
 
+// Linked-wallet fixtures (issue #422). The admin Users list now shows each
+// user's linked Usernode wallet and lets a full admin edit it inline. The
+// wallet column (users.usernode_pubkey) is NOT staging-scrubbed, so cloned
+// prod rows keep their addresses — but to demonstrate every path
+// deterministically (display, the "none" placeholder, and the
+// already-linked 409 + reassign flow) we seed an obviously-fake pair: one
+// account WITH a wallet and one WITHOUT. A reviewer can then type the
+// linked account's address into the unlinked one to trigger the reassign
+// confirmation. Sentinel passwords mean neither can log in interactively.
+// Idempotent via fixed ids + ON CONFLICT and pinned UPDATEs on reboot;
+// strict no-op outside staging.
+async function seedStagingWalletUsers(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password, usernode_pubkey)
+       VALUES
+         (900022, 'staging-demo-wallet-linked', '!staging-fixture-no-login!', 'ut1stagingdemowalletlinked000000000000001'),
+         (900023, 'staging-demo-wallet-none',   '!staging-fixture-no-login!', NULL)
+       ON CONFLICT (id) DO NOTHING`
+    );
+    // Pin the wallet states explicitly so a reboot (or a tester editing
+    // them) restores the intended linked / unlinked pair.
+    await pool.query(
+      `UPDATE users SET usernode_pubkey = 'ut1stagingdemowalletlinked000000000000001'
+       WHERE id = 900022`
+    );
+    await pool.query('UPDATE users SET usernode_pubkey = NULL WHERE id = 900023');
+
+    log.info('db', 'Staging wallet fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Staging wallet fixtures seeding failed', { message: err.message });
+  }
+}
+
+// Fixtures for the public read-only apps + contributors API
+// (src/routes/public-api.js, GET /api/public/apps). The endpoint lists
+// view-public apps with an embedded contributor list (creator + accepted
+// members + merged-PR authors). `apps`, `users`, and `app_collaborators`
+// are NOT staging:private (they survive cloning), but `chat_sessions` IS
+// (schema-only, always empty in a clone), so the merged-PR contributor
+// branch has nothing to surface without seeding. Seed a self-contained set
+// in the 9007x id range so the route can be exercised deterministically:
+//   - 3 obviously-fake users: a creator + member with linked wallets, and a
+//     merged-PR author with NO wallet (so the null-address path shows).
+//   - 2 view-public apps, one collab-public and one collab-private, so both
+//     "build" visibility statuses appear in the list (both are listed,
+//     since only VIEW visibility gates listing).
+//   - app_collaborators member rows + a merged chat_sessions row, so the
+//     contributor union spans all three sources (and the merged author is
+//     NOT a member — proving the union goes beyond membership).
+// Idempotent via fixed ids + ON CONFLICT DO NOTHING; sentinel passwords mean
+// none can log in; strict no-op outside staging.
+async function seedStagingPublicApiContributors(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password, usernode_pubkey)
+       VALUES
+         (900070, 'staging-demo-api-creator', '!staging-fixture-no-login!', 'ut1stagingdemoapicreator0000000000000001'),
+         (900071, 'staging-demo-api-merger',  '!staging-fixture-no-login!', NULL),
+         (900072, 'staging-demo-api-member',  '!staging-fixture-no-login!', 'ut1stagingdemoapimember00000000000000001')
+       ON CONFLICT (id) DO NOTHING`
+    );
+    // Two view-public apps: one anyone can build (collab public), one
+    // invite-only to build (collab private). Both appear in the public list
+    // because only view_visibility gates listing.
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by)
+       VALUES
+         (900070, 'Staging demo public API app', 'staging-demo-public-api-app', 'running',
+          'public',  'public', 900070),
+         (900071, 'Staging demo collab-private app', 'staging-demo-public-api-collab-private', 'running',
+          'private', 'public', 900070)
+       ON CONFLICT (id) DO NOTHING`
+    );
+    // Members: creator is a member of both (the creator-always-a-member
+    // invariant); the extra member joins the collab-public app.
+    await pool.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, invited_by, accepted_at)
+       VALUES
+         (900070, 900070, 'member', 900070, NOW()),
+         (900070, 900072, 'member', 900070, NOW()),
+         (900071, 900070, 'member', 900070, NOW())
+       ON CONFLICT (app_id, user_id) DO NOTHING`
+    );
+    // A merged proposal authored by the merger, who is NOT a member — so it
+    // surfaces ONLY via the merged-PR branch of the contributor union.
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_title, status, merged_at)
+       VALUES
+         (900070, 900070, 900071, 'staging-demo/public-api-merged-pr', 900070,
+          'Staging demo merged PR — public API contributor', 'merged', NOW())
+       ON CONFLICT (id) DO NOTHING`
+    );
+    log.info('db', 'Staging public-api contributor fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Staging public-api contributor seeding failed', { message: err.message });
+  }
+}
+
 // (#270) Fixtures for the multi-route before/after gallery. The grouped
 // gallery renders one labelled before/after row per captured route, but
 // session_visuals is staging:private (schema-only in staging, always
@@ -1806,36 +2015,56 @@ async function seedStagingViewOnlyAdmin(pool) {
 async function seedStagingVisuals(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
-  // 1x1 transparent PNG — valid image bytes for the <img>/embed surfaces.
+  // 1x1 transparent PNG — valid image bytes for the <img>/embed surfaces
+  // and the <video> poster.
   const PNG_1X1 = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
     'base64'
   );
+  // Tiny placeholder webm: enough to exercise the comparison overlay's
+  // <video> branch (#353). It isn't a decodable clip — the point is that
+  // the renderer picks the webm and falls back to the PNG poster — so QA
+  // can confirm the video tile/column renders without a real recording.
+  const WEBM_PLACEHOLDER = Buffer.from(
+    'GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQRChYECGFOAZwEAAAAAAAAR',
+    'base64'
+  );
+  const CT = { png: 'image/png', webm: 'video/webm', gif: 'image/gif' };
   const DEMO_SESSION_ID = 900001;
   // 32-hex ids (match the /^[a-f0-9]{32}$/ token the renderers validate).
+  // Group 2 (#353) uses a self-app hash deep-link path so the captured
+  // path label + the hash-route normalisation are visible/testable in
+  // staging, and carries a webm (+ PNG poster) per side so the comparison
+  // overlay's video branch is exercised too.
+  const SELF_APP_DEEP_PATH = '/app/social-vibecoding/dev/proposals/900301';
   const rows = [
-    { id: 'a'.repeat(32), kind: 'before', media: 'png', idx: 0, path: '/' },
-    { id: 'b'.repeat(32), kind: 'after',  media: 'png', idx: 0, path: '/' },
-    { id: 'c'.repeat(32), kind: 'before', media: 'png', idx: 1, path: '/board' },
-    { id: 'd'.repeat(32), kind: 'after',  media: 'png', idx: 1, path: '/board' },
+    { id: 'a'.repeat(32), kind: 'before', media: 'png',  idx: 0, path: '/' },
+    { id: 'b'.repeat(32), kind: 'after',  media: 'png',  idx: 0, path: '/' },
+    { id: 'c'.repeat(32), kind: 'before', media: 'png',  idx: 1, path: '/board' },
+    { id: 'd'.repeat(32), kind: 'after',  media: 'png',  idx: 1, path: '/board' },
+    { id: 'e'.repeat(32), kind: 'before', media: 'png',  idx: 2, path: SELF_APP_DEEP_PATH },
+    { id: 'f'.repeat(32), kind: 'before', media: 'webm', idx: 2, path: SELF_APP_DEEP_PATH },
+    { id: '0'.repeat(32), kind: 'after',  media: 'png',  idx: 2, path: SELF_APP_DEEP_PATH },
+    { id: '1'.repeat(32), kind: 'after',  media: 'webm', idx: 2, path: SELF_APP_DEEP_PATH },
   ];
 
   try {
-    // Point the demo session's testing_paths at the two captured routes so
-    // the persisted annotation matches the seeded capture groups.
+    // Point the demo session's testing_paths at the captured routes so the
+    // persisted annotation matches the seeded capture groups.
     await pool.query(
       `UPDATE chat_sessions SET testing_paths = $1::jsonb
          WHERE id = $2 AND testing_paths IS NULL`,
-      [JSON.stringify(['/', '/board']), DEMO_SESSION_ID]
+      [JSON.stringify(['/', '/board', SELF_APP_DEEP_PATH]), DEMO_SESSION_ID]
     );
     for (const r of rows) {
+      const data = r.media === 'webm' ? WEBM_PLACEHOLDER : PNG_1X1;
       await pool.query(
         `INSERT INTO session_visuals
            (id, session_id, commit_hash, kind, media, content_type, data, captured_path, capture_index)
-         SELECT $1, $2, NULL, $3, $4, 'image/png', $5, $6, $7
+         SELECT $1, $2, NULL, $3, $4, $5, $6, $7, $8
           WHERE EXISTS (SELECT 1 FROM chat_sessions WHERE id = $2)
          ON CONFLICT (id) DO NOTHING`,
-        [r.id, DEMO_SESSION_ID, r.kind, r.media, PNG_1X1, r.path, r.idx]
+        [r.id, DEMO_SESSION_ID, r.kind, r.media, CT[r.media], data, r.path, r.idx]
       );
     }
     log.info('db', 'Staging multi-path visuals fixtures seeded', { sessionId: DEMO_SESSION_ID });
@@ -1928,7 +2157,71 @@ async function seedStagingLeaderboardProfile(pool) {
     );
   }
 
-  log.info('db', 'Staging leaderboard-profile fixtures seeded', { appId });
+  // Issues filed by the same two leaderboard users so the Top-users tab's
+  // new "N issues" chip is non-zero and differs between rows. created_at
+  // is a mix of this-week and older so the all-time and This-week windows
+  // show different counts: author = 3 all-time / 2 this week, giver = 1 in
+  // both. github_issue_number stays NULL (in-app proposals need no twin);
+  // kind/status take their table defaults. Idempotent on the fixed ids.
+  const demoIssues = [
+    { id: 9003001, by: AUTHOR_ID, daysAgo: 1,
+      title: '[Mock] Staging demo issue — persist dark-mode toggle' },
+    { id: 9003002, by: AUTHOR_ID, daysAgo: 3,
+      title: '[Mock] Staging demo issue — keyboard shortcut for voting' },
+    { id: 9003003, by: AUTHOR_ID, daysAgo: 20,
+      title: '[Mock] Staging demo issue — topic cards overflow on phones' },
+    { id: 9003004, by: GIVER_ID, daysAgo: 2,
+      title: '[Mock] Staging demo issue — debounce the search box' },
+  ];
+  for (const it of demoIssues) {
+    await pool.query(
+      `INSERT INTO issues (id, app_id, title, description, created_by, created_at)
+       VALUES ($1, $2, $3,
+               'Staging demo issue so the Top-users leaderboard issues chip has rows to count.',
+               $4, NOW() - ($5::int * INTERVAL '1 day'))
+       ON CONFLICT (id) DO NOTHING`,
+      [it.id, appId, it.title, it.by, it.daysAgo]
+    );
+  }
+
+  // app_activity so the Top-users "active on N apps" chip / the API's
+  // active_apps field is non-empty and DIFFERS between the two fixture users.
+  // "Active on an app" = ever >=60s in a day on it AND a visit within the last
+  // 10 days (the active-users.js definition). We pick the first two public,
+  // non-self-hosted apps:
+  //   - author: qualifying (120s) + recent on BOTH apps → active_apps has 2.
+  //   - giver:  qualifying + recent on the FIRST app, plus a recent-but-never-
+  //             >=60s (30s) row on the second → that second app is correctly
+  //             EXCLUDED, exercising the "ever-qualified" gate, not just presence.
+  const { rows: activeAppRows } = await pool.query(
+    `SELECT id FROM apps
+       WHERE view_visibility = 'public' AND self_hosted = FALSE
+       ORDER BY id LIMIT 2`
+  );
+  const appA = activeAppRows[0]?.id;
+  const appB = activeAppRows[1]?.id;
+  // Each (app_id, user_id, date) pair is unique; spread rows across distinct
+  // recent dates so a same-day UNIQUE collision can't drop a qualifying row.
+  const activityRows = [];
+  if (appA) {
+    activityRows.push({ appId: appA, userId: AUTHOR_ID, secs: 120, daysAgo: 1 });
+    activityRows.push({ appId: appA, userId: GIVER_ID, secs: 120, daysAgo: 2 });
+  }
+  if (appB) {
+    activityRows.push({ appId: appB, userId: AUTHOR_ID, secs: 120, daysAgo: 1 });
+    // Recent but never >=60s → giver is NOT active on appB.
+    activityRows.push({ appId: appB, userId: GIVER_ID, secs: 30, daysAgo: 2 });
+  }
+  for (const a of activityRows) {
+    await pool.query(
+      `INSERT INTO app_activity (app_id, user_id, seconds_spent, date)
+       VALUES ($1, $2, $3, CURRENT_DATE - ($4::int))
+       ON CONFLICT (app_id, user_id, date) DO NOTHING`,
+      [a.appId, a.userId, a.secs, a.daysAgo]
+    );
+  }
+
+  log.info('db', 'Staging leaderboard-profile fixtures seeded', { appId, appA, appB });
 }
 
 // LLM-spend fixtures for the admin dashboard's Daily-spend and
@@ -1971,6 +2264,259 @@ async function seedStagingLlmUsage(pool) {
   }
 
   log.info('db', 'Staging llm_usage fixtures seeded', { users: users.length });
+}
+
+// Daily spend distribution fixtures (the seven-bucket stacked chart on
+// /dashboard). The chart counts users per platform-spend bucket per day,
+// with the $20+ tier split into "capped" (no usable own key) vs "kept going
+// on own key". Two staging facts force a dedicated seed:
+//   1. llm_usage is staging:private (schema-only clone → empty), so there is
+//      no per-day spend to bucket at all without seeding it here.
+//   2. users.anthropic_key_enc is a staging:private COLUMN (scrubbed to NULL
+//      on clone), so the "has own key" branch would never populate from real
+//      users — the $20+/own-key segment would always be empty.
+// We create obviously-fake users (staging-demo-spend-*) at fixed high ids,
+// give a subset a non-null anthropic_key_enc sentinel so the own-key branch
+// lights up, and write 30 days of llm_usage spanning every bucket. A couple
+// are is_admin so the "Include admin users" toggle visibly changes the bars.
+// Idempotent (fixed ids + ON CONFLICT DO NOTHING); strict no-op outside
+// staging; never references real users.
+async function seedStagingSpendDistribution(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    // 10 fake users. `tier` decides the daily platform-spend band each lands
+    // in; `key` marks who has a configured own key (drives the $20+ split);
+    // two are admins. Spend is varied by day in SQL so the stacks shift.
+    //   tier 0 → no spend (stays in the $0 bucket)
+    //   tier 1 → $0.01–$5     tier 2 → $5–$10     tier 3 → $10–$15
+    //   tier 4 → $15–$19.99
+    //   tier 5 → $20+ (capped — no own key)
+    //   tier 6 → $20+ (own key)
+    const fixtures = [
+      { id: 9300001, name: 'staging-demo-spend-zero-a',   tier: 0, key: false, admin: false },
+      { id: 9300002, name: 'staging-demo-spend-zero-b',   tier: 0, key: false, admin: false },
+      { id: 9300003, name: 'staging-demo-spend-low',      tier: 1, key: false, admin: false },
+      { id: 9300004, name: 'staging-demo-spend-mid',      tier: 2, key: false, admin: false },
+      { id: 9300005, name: 'staging-demo-spend-high',     tier: 3, key: false, admin: false },
+      { id: 9300006, name: 'staging-demo-spend-higher',   tier: 4, key: false, admin: false },
+      { id: 9300007, name: 'staging-demo-spend-capped',   tier: 5, key: false, admin: false },
+      { id: 9300008, name: 'staging-demo-spend-ownkey',   tier: 6, key: true,  admin: false },
+      { id: 9300009, name: 'staging-demo-spend-admin-cap',tier: 5, key: false, admin: true },
+      { id: 9300010, name: 'staging-demo-spend-admin-key',tier: 6, key: true,  admin: true },
+    ];
+
+    for (const f of fixtures) {
+      // Sentinel password → never an interactive login. Sentinel
+      // anthropic_key_enc (non-null) → "has own key" without a real key;
+      // the chart only tests IS NOT NULL, never decrypts it.
+      await pool.query(
+        `INSERT INTO users (id, username, password, is_admin, anthropic_key_enc, anthropic_key_last4)
+         VALUES ($1, $2, '!staging-fixture-no-login!', $3, $4, $5)
+         ON CONFLICT (id) DO NOTHING`,
+        [f.id, f.name, f.admin,
+         f.key ? 'v1:staging-demo-fake-key' : null,
+         f.key ? 'demo' : null]
+      );
+      // Pin role + key on reboot so a tester flipping them doesn't drift the
+      // intended buckets across container rebuilds.
+      await pool.query(
+        `UPDATE users SET is_admin = $2, anthropic_key_enc = $3, anthropic_key_last4 = $4 WHERE id = $1`,
+        [f.id, f.admin,
+         f.key ? 'v1:staging-demo-fake-key' : null,
+         f.key ? 'demo' : null]
+      );
+      // Backdate signup so every fixture user counts toward the $0
+      // (registered-as-of-day) baseline across the whole 30-day window.
+      await pool.query(
+        `UPDATE users SET created_at = NOW() - INTERVAL '45 days'
+          WHERE id = $1 AND created_at > NOW() - INTERVAL '45 days'`,
+        [f.id]
+      );
+
+      if (f.tier === 0) continue; // no spend rows → stays in the $0 bucket
+
+      // Cents/day for this tier, kept safely inside the bucket bounds and
+      // nudged by the day index (g) so the stacked heights vary day to day.
+      // tier 5/6 → $20+ ; only the own-key tier writes byok_cost_cents.
+      const base = { 1: 250, 2: 750, 3: 1250, 4: 1750, 5: 2200, 6: 2500 }[f.tier];
+      const byokExpr = f.tier === 6 ? '(800 + (g % 5) * 40)' : '0';
+      await pool.query(
+        `INSERT INTO llm_usage (user_id, date, total_cost_cents, byok_cost_cents)
+         SELECT $1,
+                CURRENT_DATE - g,
+                LEAST($2 + (g % 5) * 10, $3)::numeric(10,4),
+                ${byokExpr}::numeric(10,4)
+           FROM generate_series(0, 29) g
+         ON CONFLICT (user_id, date) DO NOTHING`,
+        // Cap the jitter so a tier-4 user never crosses $20 into the top tier.
+        [f.id, base, f.tier === 4 ? 1999 : base + 40]
+      );
+    }
+
+    log.info('db', 'Staging spend-distribution fixtures seeded', { users: fixtures.length });
+  } catch (err) {
+    log.warn('db', 'Staging spend-distribution seeding failed', { message: err.message });
+  }
+}
+
+// #370: make the token/spend cap reproducible in a staging preview so a
+// tester can verify that hitting the cap on send no longer wipes the
+// composer text. Three idempotent, staging-only steps against the
+// tester's own login (the admin / first user — the account staging
+// previews sign in as):
+//   1. Pin their per-user daily limit to 1¢ (users.daily_limit_cents).
+//   2. Ensure today's recorded spend is well over that (≥ 50¢), so
+//      limits.checkBudget reports "Daily limit reached" → the chat POST
+//      returns 429 { error } on the very next send.
+//   3. Seed a clearly-named ACTIVE dev session on the self-app for them
+//      to type into.
+// The result: opening that session, typing a message and pressing Send
+// bounces with the cap notice while the typed text stays in the box.
+// Strictly a no-op outside staging; only this ephemeral PR preview's DB
+// is touched (never prod).
+async function seedStagingCapReached(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging cap-reached fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username FROM users ORDER BY is_admin DESC, id ASC LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging cap-reached fixture skipped: no users');
+    return;
+  }
+  const tester = userRows[0];
+
+  // 1. Pin the per-user daily cap to 1¢.
+  await pool.query(
+    'UPDATE users SET daily_limit_cents = 1 WHERE id = $1',
+    [tester.id]
+  );
+
+  // 2. Guarantee today's spend exceeds the 1¢ cap (raise-only, so the
+  //    dashboard's own llm_usage fixtures aren't reduced on re-runs).
+  await pool.query(
+    `INSERT INTO llm_usage (user_id, date, total_cost_cents)
+     VALUES ($1, CURRENT_DATE, 50)
+     ON CONFLICT (user_id, date)
+       DO UPDATE SET total_cost_cents = GREATEST(llm_usage.total_cost_cents, 50)`,
+    [tester.id]
+  );
+
+  // 3. An active dev session to type into, named so the testing steps
+  //    can reference it. Idempotent via branch-name lookup.
+  const branch = 'staging-fixture/token-cap';
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, branch]
+  );
+  if (!existing.length) {
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, session_title, status, created_at)
+       VALUES ($1, $2, $3, $4, 'active', NOW() - INTERVAL '2 minutes')`,
+      [appId, tester.id, branch,
+       '[staging fixture] Token cap — your text is preserved']
+    );
+  }
+
+  log.info('db', 'Staging cap-reached fixture seeded', {
+    appId, tester: tester.username,
+  });
+}
+
+// Seed ~29 synthetic non-errored app rows so the server-wide MAX_APPS
+// cap (default 30; src/config.js -> src/routes/apps.js) is observable on
+// a staging clone. With 29 fixture apps a tester can create one more
+// (reaching the cap) and then watch the next non-admin create attempt
+// get the "This server is at its app limit (30)…" message. Errored apps
+// don't count toward the cap, so every fixture is status 'deployed'.
+// Idempotent: rows are keyed off a fixed slug prefix and checked before
+// insert. Tagged "[staging fixture]" so they're never mistaken for real
+// apps. Strictly a no-op outside staging.
+async function seedStagingAppCapApps(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  // How close to the cap to fill. One below MAX_APPS so a tester can
+  // create exactly one app to hit the wall, without pre-tripping it.
+  const target = Math.max(0, (config.maxApps || 30) - 1);
+  if (target <= 0) {
+    log.info('db', 'Staging app-cap fixtures skipped (cap disabled or <= 1)');
+    return;
+  }
+
+  // Attribute the fixtures to some existing user (FK is ON DELETE SET
+  // NULL, so a null creator is fine too, but a real id keeps them
+  // realistic on the home cards).
+  const { rows: userRows } = await pool.query(
+    'SELECT id FROM users ORDER BY is_admin DESC, id ASC LIMIT 1'
+  );
+  const creatorId = userRows[0]?.id ?? null;
+
+  // Count apps that ALREADY count toward the cap (non-errored, including
+  // the self-app row) so we top up to `target` rather than blindly
+  // inserting `target` extra rows on top of real data.
+  const { rows: liveRows } = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM apps WHERE status <> 'error'`
+  );
+  const live = liveRows[0].n;
+
+  let inserted = 0;
+  for (let i = 1; i <= target; i++) {
+    if (live + inserted >= target) break;
+    const slug = `staging-fixture-cap-app-${String(i).padStart(2, '0')}`;
+    const { rows: existing } = await pool.query(
+      'SELECT id FROM apps WHERE slug = $1 LIMIT 1',
+      [slug]
+    );
+    if (existing.length) continue;
+    await pool.query(
+      `INSERT INTO apps (name, slug, status, created_by, created_at)
+       VALUES ($1, $2, 'deployed', $3, NOW() - ($4::int * INTERVAL '1 minute'))`,
+      [`[staging fixture] Cap filler app ${i}`, slug, creatorId, i]
+    );
+    inserted++;
+  }
+
+  log.info('db', 'Staging app-cap fixtures seeded', {
+    target, liveBefore: live, inserted,
+  });
+}
+
+// #361: seed ~30 days of system-token spend so the dashboard's Daily
+// spend chart renders its new cyan "System tokens" segment and the
+// "System tokens today: $X.XX / $25.00" readout has real data. A modest
+// daily figure (a few hundred cents) tapering down, staying under the
+// $25 cap most days and brushing it on one or two so the readout looks
+// realistic. Idempotent via ON CONFLICT (date); a no-op outside staging.
+async function seedStagingSystemTokenUsage(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  // Cost (cents) per day-offset g (0 = today). Base ~480¢ ($4.80) tapering
+  // with a wobble; two recent days near the $25 cap (2300–2450¢).
+  await pool.query(
+    `INSERT INTO system_token_usage (date, cost_cents)
+     SELECT CURRENT_DATE - g,
+            CASE
+              WHEN g = 0 THEN 2310
+              WHEN g = 3 THEN 2440
+              ELSE GREATEST(60, 480 - g * 9 + (g % 4) * 70)
+            END::numeric(10,4)
+       FROM generate_series(0, 29) g
+     ON CONFLICT (date) DO NOTHING`
+  );
+  log.info('db', 'Staging system_token_usage fixtures seeded');
 }
 
 // Admin-attributed footprint for the dashboard's amber admin-split charts
@@ -2083,6 +2629,106 @@ async function seedStagingDashboardAdminSplit(pool) {
     log.info('db', 'Staging dashboard admin-split fixtures seeded', { appId });
   } catch (err) {
     log.warn('db', 'Staging dashboard admin-split seeding failed', { message: err.message });
+  }
+}
+
+// Fixtures for the dashboard's General-users and Power-users sections.
+// Both read empty on a fresh/cloned staging DB (the General-users daily
+// charts need spread-out activity; the Power-users charts read the events
+// log, and chat_sessions/events fixtures don't survive into staging), so
+// seed:
+//   - Six fixture users whose created_at spans several signup weeks → a
+//     non-trivial retention triangle (both alignment views).
+//   - app_activity across many days per user, distinct strides, so the
+//     General-users DAU line varies day-to-day and the 7/30-day rolling
+//     WAU/MAU windows are fully backed.
+//   - Power-user events (dapp_active_day >=3/week + three developer actions —
+//     kudos/vote/proposal — per qualifying week) across the trailing four
+//     weeks, with each user qualifying in a different number of weeks so the
+//     L4 stacked bar shows distinct 1/4…4/4 buckets and the rolling
+//     power-user WAU is non-zero.
+// High synthetic ids + ON CONFLICT DO NOTHING keep it idempotent across the
+// every-boot re-run; a strict no-op outside staging.
+async function seedStagingAnalyticsCharts(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    const { rows: appRows } = await pool.query(
+      `SELECT id FROM apps
+         WHERE COALESCE(self_hosted, FALSE) = FALSE AND status <> 'deleted'
+         ORDER BY id LIMIT 1`
+    );
+    const appId = appRows[0]?.id;
+    if (!appId) {
+      log.warn('db', 'Staging analytics-charts skipped: no public app');
+      return;
+    }
+
+    // Fixture users across several signup weeks. Sentinel password → no login.
+    const users = [
+      { id: 900060, createdDaysAgo: 38, stride: 2 },
+      { id: 900061, createdDaysAgo: 31, stride: 3 },
+      { id: 900062, createdDaysAgo: 24, stride: 2 },
+      { id: 900063, createdDaysAgo: 17, stride: 3 },
+      { id: 900064, createdDaysAgo: 10, stride: 2 },
+      { id: 900065, createdDaysAgo: 4,  stride: 1 },
+    ];
+    for (const u of users) {
+      await pool.query(
+        `INSERT INTO users (id, username, password, created_at)
+         VALUES ($1, $2, '!staging-fixture-no-login!', NOW() - ($3::int * INTERVAL '1 day'))
+         ON CONFLICT (id) DO NOTHING`,
+        [u.id, `staging-demo-analytics-${u.id}`, u.createdDaysAgo]
+      );
+      // app_activity on every `stride`-th day from signup to now → the
+      // activityDaysSql surface the General-users + retention queries read.
+      await pool.query(
+        `INSERT INTO app_activity (app_id, user_id, seconds_spent, date)
+         SELECT $1, $2, 120, CURRENT_DATE - g
+           FROM generate_series(1, $3, $4) g
+         ON CONFLICT (app_id, user_id, date) DO NOTHING`,
+        [appId, u.id, u.createdDaysAgo, u.stride]
+      );
+    }
+
+    // Power-user events. Per qualifying week: 3 dapp_active_day events (>=3
+    // "uses") + 3 developer actions (>=3). Week w (days ago) spans
+    // [7w+1, 7w+7].
+    const weekDappDays = [[1, 2, 3], [8, 9, 10], [15, 16, 17], [22, 23, 24]];
+    const weekDevDays = [[2, 3, 4], [9, 10, 11], [16, 17, 18], [23, 24, 25]];
+    const devTypes = ['kudos_given', 'pr_vote_cast', 'pr_promoted'];
+    // Trailing weeks each user qualifies in (1..4) → distinct L4 buckets.
+    const qualWeeks = [
+      { id: 900060, weeks: 4 },
+      { id: 900061, weeks: 3 },
+      { id: 900062, weeks: 2 },
+      { id: 900063, weeks: 1 },
+    ];
+    let evId = 90006000;
+    for (const q of qualWeeks) {
+      for (let w = 0; w < q.weeks; w++) {
+        for (const d of weekDappDays[w]) {
+          await pool.query(
+            `INSERT INTO events (id, user_id, app_id, event_type, created_at)
+             VALUES ($1, $2, $3, 'dapp_active_day', NOW() - ($4::int * INTERVAL '1 day'))
+             ON CONFLICT (id) DO NOTHING`,
+            [evId++, q.id, appId, d]
+          );
+        }
+        for (let i = 0; i < weekDevDays[w].length; i++) {
+          await pool.query(
+            `INSERT INTO events (id, user_id, app_id, event_type, created_at)
+             VALUES ($1, $2, $3, $4, NOW() - ($5::int * INTERVAL '1 day'))
+             ON CONFLICT (id) DO NOTHING`,
+            [evId++, q.id, appId, devTypes[i % devTypes.length], weekDevDays[w][i]]
+          );
+        }
+      }
+    }
+
+    log.info('db', 'Staging analytics-charts fixtures seeded', { appId });
+  } catch (err) {
+    log.warn('db', 'Staging analytics-charts seeding failed', { message: err.message });
   }
 }
 
@@ -2366,6 +3012,114 @@ async function seedStagingCloneSpecPills(pool, config) {
 }
 
 
+// Dev-chat attachment fixture (#450). chat_sessions /
+// chat_session_messages / chat_session_attachments are all
+// staging:private (schema-only in staging), so without this seed the
+// attachment UI — the thumbnail + file chip inside a sent user bubble,
+// the full-size image open, and the text-file download — would be
+// invisible on a staging preview. One fixture session owned by the
+// first admin (the user the tester logs in as) carrying a user message
+// with one tiny PNG and one small text file, plus an assistant reply so
+// the conversation reads naturally. Idempotent via the branch-name
+// existence check; attachment ids are fixed 32-hex constants with
+// ON CONFLICT DO NOTHING.
+async function seedStagingChatAttachments(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging chat-attachments fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging chat-attachments fixture skipped: no users');
+    return;
+  }
+  const owner = userRows[0];
+
+  const branch = 'staging-fixture/chat-attachments';
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, branch]
+  );
+  if (existing.length) return;
+
+  const { rows: sessionRows } = await pool.query(
+    `INSERT INTO chat_sessions
+       (app_id, user_id, branch_name, session_title, status, created_at)
+     VALUES ($1, $2, $3, $4, 'active', NOW() - INTERVAL '10 minutes')
+     RETURNING id`,
+    [appId, owner.id, branch, '[staging fixture] Staging demo: message with attachments']
+  );
+  const sessionId = sessionRows[0].id;
+
+  // Fixed ids (32-hex) so re-seeding after a partial run stays clean.
+  const pngId = 'a11ac4e5fabc4450a11ac4e5fabc4450';
+  const txtId = 'b22bd5f60bcd5450b22bd5f60bcd5450';
+
+  // 1×1 red PNG — a real, valid image so the thumbnail and the
+  // full-size open both work against the serving route.
+  const pngData = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64'
+  );
+  const txtData = Buffer.from(
+    'Staging demo notes\n\nThis text file was attached to a dev-chat message so the\nattachment chip and its download can be tested in staging.\n',
+    'utf8'
+  );
+
+  const { rows: msgRows } = await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+     VALUES ($1, 'user', $2, $3, NOW() - INTERVAL '9 minutes')
+     RETURNING id`,
+    [
+      sessionId,
+      'Here\'s a mockup screenshot and my notes — can you match the header color to the mockup?',
+      JSON.stringify({
+        attachments: [
+          { id: pngId, kind: 'image', filename: 'staging-demo-mockup.png', contentType: 'image/png', sizeBytes: pngData.length },
+          { id: txtId, kind: 'text', filename: 'staging-demo-notes.txt', contentType: 'text/plain', sizeBytes: txtData.length },
+        ],
+      }),
+    ]
+  );
+  const messageId = msgRows[0].id;
+
+  await pool.query(
+    `INSERT INTO chat_session_attachments
+       (id, session_id, message_id, user_id, kind, filename, content_type, size_bytes, data, created_at)
+     VALUES
+       ($1, $2, $3, $4, 'image', 'staging-demo-mockup.png', 'image/png', $5, $6, NOW() - INTERVAL '9 minutes'),
+       ($7, $2, $3, $4, 'text', 'staging-demo-notes.txt', 'text/plain', $8, $9, NOW() - INTERVAL '9 minutes')
+     ON CONFLICT (id) DO NOTHING`,
+    [pngId, sessionId, messageId, owner.id, pngData.length, pngData, txtId, txtData.length, txtData]
+  );
+
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, created_at)
+     VALUES ($1, 'assistant', $2, NOW() - INTERVAL '8 minutes')`,
+    [sessionId, 'Got it — I can see the mockup and your notes. Tell me when you want me to build the header change.']
+  );
+
+  log.info('db', 'Staging chat-attachments fixture seeded', {
+    appId, owner: owner.username, sessionId,
+  });
+}
+
+
 // Spec-viewer fixtures (#233): three dev-chat sessions in differing
 // spec states so a tester can verify that switching sessions never
 // shows another session's spec. A and C each carry a (different) spec —
@@ -2619,7 +3373,7 @@ async function seedStagingDemoProposal(pool, config) {
     { role: 'user', content: '[staging fixture] Please draft a proposal for a demo widget.', metadata: {}, minutesAgo: 45 },
     { role: 'system', content: `Scout drafted a ${specLines}-line spec from the codebase.`,
       metadata: { specPreview, specLines, specVersion: 1 }, minutesAgo: 44 },
-    { role: 'system', content: 'Claude Code finished', metadata: { ccOutput, durationMs: 198000 }, minutesAgo: 40 },
+    { role: 'system', content: 'Claude Code finished', metadata: { ccOutput, ccOutcome: 'success', durationMs: 198000 }, minutesAgo: 40 },
   ];
 
   for (const m of messages) {
@@ -2806,6 +3560,9 @@ async function seedStagingHeadlessFixtures(pool, config) {
     { branch: 'staging-fixture/headless-question', status: 'ready', outcome: 'question', issue: 900003, step: null },
     { branch: 'staging-fixture/headless-spec', status: 'ready', outcome: 'spec', issue: 900004, step: null },
     { branch: 'staging-fixture/headless-failed', status: 'failed', outcome: null, issue: 900005, step: null },
+    // #361: a `code` outcome — the auto-run produced a reviewable commit.
+    // Its viewer-owned clones (below) carry "Changes ready" cards.
+    { branch: 'staging-fixture/headless-code', status: 'ready', outcome: 'code', issue: 900006, step: null },
   ];
 
   const sessionIds = {};
@@ -2856,6 +3613,85 @@ async function seedStagingHeadlessFixtures(pool, config) {
          VALUES ($1, $2, $3, 'active', FALSE, $4,
                  NOW() - INTERVAL '20 minutes')`,
         [appId, target.id, cloneBranch, specHeadlessId]
+      );
+      cloneInserted++;
+    }
+  }
+
+  // #361: two viewer-owned clones of the `code` headless session, each
+  // seeded with a "Changes ready" system status message so both card
+  // variants are reviewable in staging WITHOUT running a real build:
+  //   - preview-OK clone: changesReady + a (fake) stagingUrl → full card
+  //     (Preview staging + Propose to group).
+  //   - preview-failed clone: changesReady + stagingFailed + a missing-key
+  //     hint → card with a disabled Preview button + working Propose.
+  // Both also carry the cloned follow-up assistant message (reusing the
+  // real builders) so the intro copy + quick replies sit alongside the
+  // card, exactly like a freshly-cloned auto session. Owned by `target`
+  // (the tester), non-headless, 'active' (so the Propose button renders).
+  const codeHeadlessId = sessionIds['staging-fixture/headless-code'];
+  if (codeHeadlessId) {
+    const { buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies } =
+      require('../routes/sessions');
+    // Mirror the `src` shape buildHeadlessFollowUp* reads off a session row.
+    const cloneSrc = { headless_issue_number: 900006, headless_outcome: 'code', spec_md: null };
+    const followUp = buildHeadlessFollowUpMessage(cloneSrc);
+    const followUpQuickReplies = buildHeadlessFollowUpQuickReplies(cloneSrc);
+    const followUpMeta = JSON.stringify(
+      followUpQuickReplies ? { quickReplies: followUpQuickReplies } : {}
+    );
+
+    const codeClones = [
+      {
+        branch: 'staging-fixture/headless-code-myclone-ok',
+        statusText: 'Staging preview built',
+        metadata: {
+          changesReady: true,
+          stagingUrl: `https://staging-fixture-code-ok.${process.env.USERNODE_DOMAIN || 'social-vibecoding.usernodelabs.org'}`,
+          prNumber: null,
+        },
+      },
+      {
+        branch: 'staging-fixture/headless-code-myclone-failed',
+        statusText: 'Staging build failed',
+        metadata: {
+          changesReady: true,
+          stagingFailed: true,
+          stagingErrorName: 'MissingSecretsError',
+          stagingMissingKeys: ['EXAMPLE_KEY'],
+          prNumber: null,
+        },
+      },
+    ];
+
+    for (const c of codeClones) {
+      const { rows: existingClone } = await pool.query(
+        'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+        [appId, c.branch]
+      );
+      if (existingClone.length) continue;
+      const { rows: cloneRows } = await pool.query(
+        `INSERT INTO chat_sessions
+           (app_id, user_id, branch_name, status, is_headless,
+            cloned_from_session_id, created_at)
+         VALUES ($1, $2, $3, 'active', FALSE, $4,
+                 NOW() - INTERVAL '18 minutes')
+         RETURNING id`,
+        [appId, target.id, c.branch, codeHeadlessId]
+      );
+      const cloneId = cloneRows[0].id;
+      // Cloned follow-up assistant message (intro copy + quick replies).
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+         VALUES ($1, 'assistant', $2, $3, NOW() - INTERVAL '17 minutes')`,
+        [cloneId, followUp, followUpMeta]
+      );
+      // The "Changes ready" card driver — a system status row whose
+      // metadata carries the staging-independent marker.
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+         VALUES ($1, 'system', $2, $3, NOW() - INTERVAL '16 minutes')`,
+        [cloneId, c.statusText, JSON.stringify(c.metadata)]
       );
       cloneInserted++;
     }
@@ -2976,11 +3812,272 @@ async function seedStagingMyOpenPr(pool, config) {
     );
   }
 
+  // #361/#384/#386: give the main fixture the 'conflict' state (idempotent
+  // UPDATE on re-runs). Post-#384 'conflict' means "an auto-merge was
+  // attempted, GitHub rejected it for a real conflict, and the auto-
+  // resolver is now running" — and post-#386 that no longer paints the red
+  // warning. With behind_main = 2 it falls through to the neutral amber
+  // "Behind main · 2" badge, which is exactly what this fixture should
+  // demonstrate (the 'failed' sibling below is the one that shows the red
+  // affordance).
+  await pool.query(
+    `UPDATE chat_sessions
+        SET merge_conflict_state = 'conflict',
+            conflict_files = '["src/app.js","public/index.html"]'::jsonb,
+            behind_main = 2,
+            conflict_checked_at = NOW()
+      WHERE id = $1`,
+    [sessionId]
+  );
+
+  // #361: two sibling promoted fixtures so all the new badge states show
+  // at once — a red "Conflict resolution failed" card and an amber
+  // "Behind main · 2" card. Idempotent via branch-name lookup.
+  const siblings = [
+    {
+      branch: 'staging-fixture/conflict-failed',
+      pr: 9201,
+      title: '[staging fixture] Conflict resolution failed',
+      state: 'failed',
+      files: '["src/server.js"]',
+      behind: 1,
+    },
+    {
+      branch: 'staging-fixture/behind-main',
+      pr: 9202,
+      title: '[staging fixture] Behind main — still mergeable',
+      state: 'behind',
+      files: '[]',
+      behind: 2,
+    },
+  ];
+  for (const s of siblings) {
+    const { rows: have } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, s.branch]
+    );
+    let sibId = have[0]?.id;
+    if (!sibId) {
+      const { rows } = await pool.query(
+        `INSERT INTO chat_sessions
+           (app_id, user_id, branch_name, pr_number, pr_title, pr_summary_md, status,
+            votes_required, behind_main, merge_conflict_state, conflict_files,
+            conflict_checked_at, created_at)
+         VALUES
+           ($1, $2, $3, $4, $5,
+            'In plain terms: a demo proposal showing the new merge-status badge.',
+            'promoted', $6, $7, $8, $9::jsonb, NOW(), NOW() - INTERVAL '20 minutes')
+         RETURNING id`,
+        [appId, target.id, s.branch, s.pr, s.title,
+         Math.max(1, Math.ceil(users.length / 2)), s.behind, s.state, s.files]
+      );
+      sibId = rows[0].id;
+    } else {
+      await pool.query(
+        `UPDATE chat_sessions
+            SET behind_main = $2, merge_conflict_state = $3,
+                conflict_files = $4::jsonb, conflict_checked_at = NOW()
+          WHERE id = $1`,
+        [sibId, s.behind, s.state, s.files]
+      );
+    }
+    await pool.query(
+      `INSERT INTO pr_votes (session_id, user_id, vote, created_at)
+       VALUES ($1, $2, 'yes', NOW() - INTERVAL '18 minutes')
+       ON CONFLICT (session_id, user_id) DO NOTHING`,
+      [sibId, target.id]
+    );
+  }
+
   log.info('db', 'Staging my-open-PR fixture seeded', {
     appId,
     targetUser: target.username,
     sessionId,
   });
+}
+
+// #390: fixtures for the boot-time auto-merge reconcile sweep. Auto-merge
+// used to fire only in the background of a live vote, so a proposal that
+// crossed the vote-majority threshold while the platform was down stayed
+// stuck "up for voting" forever. The boot sweep (reconcileEligibleMerges in
+// server.js) now re-evaluates every open proposal at startup and merges the
+// eligible ones. These fixtures make that scenario visible in the Dev vote
+// panel without live voting:
+//
+//   1. An OVER-THRESHOLD promoted proposal (more yes votes than the active-
+//      user majority, clean/no-conflict, no merged_at) — "approved while the
+//      platform was down". This is what the boot sweep would merge.
+//   2. A BELOW-THRESHOLD promoted proposal (no yes votes) — must be left
+//      untouched by the sweep (the #380 "no pre-emptive resolution" bar).
+//   3. A row stuck in 'merging' with no real GitHub merge (crash mid-merge).
+//      recoverStuckMerges demotes it back to 'promoted' on boot, then the
+//      reconcile sweep re-evaluates it — demonstrating the chained ordering.
+//
+// All three use fake high pr_numbers and obviously-fake "[staging fixture]"
+// titles, keyed off their unique branch names for idempotency. The 'merging'
+// row is reset to 'merging' on each seed run (it runs during migrate, before
+// recoverStuckMerges) so the ordering is re-demonstrated on every boot. A
+// strict no-op outside staging.
+async function seedStagingRestartEligibleMerge(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging restart-eligible-merge fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: users } = await pool.query(
+    `SELECT id, username FROM users ORDER BY is_admin DESC, id ASC LIMIT 3`
+  );
+  if (!users.length) {
+    log.warn('db', 'Staging restart-eligible-merge fixture skipped: no users');
+    return;
+  }
+  const votesRequired = Math.max(1, Math.ceil(users.length / 2));
+
+  // Helper: ensure a promoted fixture session exists for a branch, returning
+  // its id. Clean (behind_main = 0, no conflict snapshot) so it reads as
+  // directly mergeable.
+  const ensureSession = async (branch, prNumber, title, status) => {
+    const { rows: have } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, branch]
+    );
+    if (have.length) {
+      // Keep the 'merging' fixture pinned to 'merging' on each boot so the
+      // recoverStuckMerges → reconcile ordering is re-demonstrated; leave the
+      // promoted fixtures as-is (a real merge during testing should stick).
+      if (status === 'merging') {
+        await pool.query(
+          `UPDATE chat_sessions SET status = 'merging' WHERE id = $1 AND status <> 'merged'`,
+          [have[0].id]
+        );
+      }
+      return have[0].id;
+    }
+    const { rows } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_number, pr_title, pr_summary_md, status,
+          votes_required, behind_main, merge_conflict_state, conflict_checked_at, created_at)
+       VALUES
+         ($1, $2, $3, $4, $5,
+          'In plain terms: a seeded demo proposal used to exercise the boot-time auto-merge sweep.',
+          $6, $7, 0, 'clean', NOW(), NOW() - INTERVAL '40 minutes')
+       RETURNING id`,
+      [appId, users[0].id, branch, prNumber, title, status, votesRequired]
+    );
+    return rows[0].id;
+  };
+
+  const addYesVote = async (sessionId, userId, minutesAgo) => {
+    await pool.query(
+      `INSERT INTO pr_votes (session_id, user_id, vote, created_at)
+       VALUES ($1, $2, 'yes', NOW() - ($3::int * INTERVAL '1 minute'))
+       ON CONFLICT (session_id, user_id) DO NOTHING`,
+      [sessionId, userId, minutesAgo]
+    );
+  };
+
+  // 1. Over-threshold "approved while the platform was down" proposal: every
+  //    available user (up to 3) has voted yes, comfortably past the majority.
+  const eligibleId = await ensureSession(
+    'staging-fixture/restart-eligible-merge', 9210,
+    '[staging fixture] Approved while platform was down — should auto-merge on boot',
+    'promoted'
+  );
+  for (let i = 0; i < users.length; i++) await addYesVote(eligibleId, users[i].id, 38 - i);
+
+  // 2. Below-threshold proposal: no yes votes, so the sweep must skip it.
+  await ensureSession(
+    'staging-fixture/restart-below-threshold', 9211,
+    '[staging fixture] Not enough votes yet — must NOT auto-merge',
+    'promoted'
+  );
+
+  // 3. Crash-mid-merge row: stuck in 'merging' with a fake PR. recoverStuckMerges
+  //    demotes it to 'promoted' on boot; the reconcile sweep then re-evaluates it.
+  const mergingId = await ensureSession(
+    'staging-fixture/restart-stuck-merging', 9212,
+    '[staging fixture] Stuck mid-merge across a restart — should recover',
+    'merging'
+  );
+  for (let i = 0; i < users.length; i++) await addYesVote(mergingId, users[i].id, 36 - i);
+
+  log.info('db', 'Staging restart-eligible-merge fixtures seeded', {
+    appId, eligibleId, mergingId, votesRequired,
+  });
+}
+
+// Community-voted priority + assigned-person votes on the staging
+// my-open-PR fixture proposal, so a prod-cloned staging preview shows the
+// chips backed by REAL topic_attribute_votes rows — a clear winner, more
+// than one voter, and the viewer's own pick highlighted in the dropdown
+// (the admin/target user votes, and the admin is who staging logs in as).
+// Idempotent via the UNIQUE(app_id, target_type, target_ref, field,
+// user_id) constraint. No-op outside staging.
+async function seedStagingTopicAttributes(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) return;
+
+  const { rows: sessRows } = await pool.query(
+    `SELECT id FROM chat_sessions
+      WHERE app_id = $1 AND branch_name = $2 LIMIT 1`,
+    [appId, 'staging-fixture/my-open-pr']
+  );
+  if (!sessRows.length) {
+    log.warn('db', 'Staging topic-attribute fixture skipped: open-PR fixture missing');
+    return;
+  }
+  const sessionId = sessRows[0].id;
+
+  const { rows: users } = await pool.query(
+    `SELECT id, username FROM users ORDER BY is_admin DESC, id ASC LIMIT 3`
+  );
+  if (!users.length) return;
+  const u0 = users[0];
+  const u1 = users[1] || users[0];
+  const u2 = users[2] || users[0];
+
+  // priority: u0 + u1 → 'high' (clear winner, includes the viewer), u2 → 'low'.
+  // assignee: u0 + u1 → @<u1.username> (winner), u2 → @<u0.username>.
+  const votes = [
+    ['priority', 'high', u0.id, "NOW() - INTERVAL '30 minutes'"],
+    ['priority', 'high', u1.id, "NOW() - INTERVAL '25 minutes'"],
+    ['priority', 'low', u2.id, "NOW() - INTERVAL '20 minutes'"],
+    ['assignee', u1.username, u0.id, "NOW() - INTERVAL '28 minutes'"],
+    ['assignee', u1.username, u1.id, "NOW() - INTERVAL '24 minutes'"],
+    ['assignee', u0.username, u2.id, "NOW() - INTERVAL '22 minutes'"],
+  ];
+  // De-dup the per-user upserts when the staging DB has fewer than 3 users
+  // (u1/u2 collapse onto u0): keep the first vote seen per (field, user).
+  const seen = new Set();
+  for (const [field, value, uid, when] of votes) {
+    const key = `${field}:${uid}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    await pool.query(
+      `INSERT INTO topic_attribute_votes
+         (app_id, target_type, target_ref, field, value, user_id, created_at)
+       VALUES ($1, 'proposal', $2, $3, $4, $5, ${when})
+       ON CONFLICT (app_id, target_type, target_ref, field, user_id) DO NOTHING`,
+      [appId, sessionId, field, value, uid]
+    );
+  }
+
+  log.info('db', 'Staging topic-attribute votes seeded', { appId, sessionId });
 }
 
 // #297: seed a short "Ask AI" advisor conversation on the staging
@@ -3026,11 +4123,129 @@ async function seedStagingProposalDiscussion(pool, config) {
       `INSERT INTO proposal_ai_messages (id, app_id, proposal_kind, proposal_ref, user_id, role, content, model)
        VALUES ($1, $2, 'pr', $3, $4, $5, $6, $7)
        ON CONFLICT (id) DO NOTHING`,
-      [id, appId, proposalRef, userId, role, content, role === 'assistant' ? 'claude-sonnet-4-6' : null]
+      [id, appId, proposalRef, userId, role, content, role === 'assistant' ? 'claude-sonnet-5' : null]
     );
   }
 
   log.info('db', 'Staging proposal-discuss fixture seeded', { appId, proposalRef, userId });
+}
+
+// #363: the topic sub-view (issue / PR proposal / governance proposal) now
+// scrolls as ONE region — the topic card/body and the discussion share a
+// single scroller, with only the back bar and composer pinned. That unified
+// scroll is only visible when a topic carries enough content to overflow one
+// screen, so seed a long human discussion thread for one topic of EACH kind:
+//
+//   - a GitHub issue   → thread_type 'issue',      ref = mock issue #900001
+//   - a PR proposal    → thread_type 'session',    ref = the open-PR fixture
+//   - a governance prop → thread_type 'governance', ref = the env-var fixture
+//
+// Idempotent: each row is keyed on (app_id, thread_type, thread_ref, content)
+// and skipped if already present (chat_messages.id is SERIAL, so we don't pin
+// ids). Strictly a no-op outside staging. Anchors are the fixtures seeded
+// earlier in this run; any missing anchor is skipped with a warning.
+async function seedStagingTopicScrollThreads(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging topic-scroll threads skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  // A few authors so the thread reads like a real back-and-forth. Falls back
+  // to a single author when staging has only one user.
+  const { rows: userRows } = await pool.query(
+    `SELECT id FROM users ORDER BY is_admin DESC, id ASC LIMIT 3`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging topic-scroll threads skipped: no users');
+    return;
+  }
+  const authorIds = userRows.map((u) => u.id);
+
+  // Resolve the PR-proposal anchor (the open-PR fixture session).
+  const { rows: sessRows } = await pool.query(
+    `SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1`,
+    [appId, 'staging-fixture/my-open-pr']
+  );
+  const sessionRef = sessRows[0]?.id || null;
+
+  // Resolve the governance anchor (the env-var change proposal fixture).
+  const { rows: govRows } = await pool.query(
+    `SELECT id FROM issues WHERE app_id = $1 AND title = $2 LIMIT 1`,
+    [appId, 'Set secret "STAGING_DEMO_KEY"']
+  );
+  const govRef = govRows[0]?.id || null;
+
+  // The GitHub-issue anchor: mock issue #900001, always served in staging by
+  // the mock-issues fallback in routes/issues.js. Thread ref = issue number.
+  const issueRef = 900001;
+
+  // 18 human turns — long enough that header + messages overflow one screen
+  // and the single scroller is genuinely exercised on every preview.
+  const bodies = [
+    'Kicking off the discussion here — does the proposed direction match what we agreed in the last round?',
+    'I think it does, but I want to double-check the edge cases before we commit.',
+    'Good point. The main risk I see is the narrow-phone layout — has anyone tried it at 360px?',
+    'Tried it on my end; the action row wraps cleanly now, no overflow past the card edge.',
+    'Nice. What about dark mode — does the contrast still pass on the muted text?',
+    'Contrast is fine in dark mode. Light mode the secondary text is a touch low but acceptable.',
+    'Can we keep the change scoped? I’d rather not expand into a full redesign in one pass.',
+    'Agreed, let’s keep it tight. Follow-ups can be their own proposals.',
+    'One more thing: how does this behave when the body is really long?',
+    'That’s exactly the case we’re testing — the whole thing should scroll as one continuous area.',
+    'So the header and the conversation move together, and only the reply box stays put?',
+    'Right, only the back bar at the top and the composer at the bottom are pinned.',
+    'That matches the main group chat, which is what people kept asking for.',
+    'Reading from the top down feels much more natural than two boxes fighting for space.',
+    'Did the vote roster and the Ask-AI button survive the move into the scroll area?',
+    'They did — still interactive, they just scroll up with the rest of the header now.',
+    'Great. I’m comfortable voting this through once the preview looks right.',
+    'Same here. Scroll all the way down to confirm the composer never gets pushed off-screen.',
+  ];
+
+  const seedThread = async (threadType, threadRef, label) => {
+    if (!threadRef) {
+      log.warn('db', 'Staging topic-scroll thread skipped: missing anchor', { threadType });
+      return 0;
+    }
+    let inserted = 0;
+    for (let i = 0; i < bodies.length; i++) {
+      // Prefix makes each row's content unique per thread, which doubles as
+      // the idempotency key and an obviously-fake "Staging demo" marker.
+      const content = `[Staging demo] ${label} #${i + 1}: ${bodies[i]}`;
+      const { rows: existing } = await pool.query(
+        `SELECT 1 FROM chat_messages
+          WHERE app_id = $1 AND thread_type = $2 AND thread_ref = $3 AND content = $4
+          LIMIT 1`,
+        [appId, threadType, threadRef, content]
+      );
+      if (existing.length) continue;
+      const minutesAgo = (bodies.length - i) * 4; // oldest first, newest last
+      await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, created_at)
+         VALUES ($1, $2, $3, 'message', $4, $5, NOW() - ($6::int * INTERVAL '1 minute'))`,
+        [appId, authorIds[i % authorIds.length], content, threadType, threadRef, minutesAgo]
+      );
+      inserted++;
+    }
+    return inserted;
+  };
+
+  const n1 = await seedThread('issue', issueRef, 'issue thread');
+  const n2 = await seedThread('session', sessionRef, 'proposal thread');
+  const n3 = await seedThread('governance', govRef, 'governance thread');
+
+  log.info('db', 'Staging topic-scroll threads seeded', {
+    appId, issueRef, sessionRef, govRef, inserted: n1 + n2 + n3,
+  });
 }
 
 // #313/#321: a PROMOTED proposal owned by a user OTHER than the tester, so
@@ -3124,7 +4339,7 @@ async function seedStagingOtherUserProposal(pool, config) {
       `INSERT INTO proposal_ai_messages (id, app_id, proposal_kind, proposal_ref, user_id, role, content, model)
        VALUES ($1, $2, 'pr', $3, $4, $5, $6, $7)
        ON CONFLICT (id) DO NOTHING`,
-      [id, appId, sessionId, tester.id, role, content, role === 'assistant' ? 'claude-sonnet-4-6' : null]
+      [id, appId, sessionId, tester.id, role, content, role === 'assistant' ? 'claude-sonnet-5' : null]
     );
   }
 

@@ -10,10 +10,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # CLAUDE_CODE_CACHE_BUST, so the layer is reused within a calendar day and
 # re-pulls `latest` on the first build of each new day. Stale CLIs are the
 # cause of "thinking.type.enabled is not supported for this model" 400s on
-# newer models (Sonnet 4.6 / Opus 4.8), which require thinking.type.adaptive.
+# newer models (Sonnet 5 / Opus 4.8), which require thinking.type.adaptive.
 ARG CLAUDE_CODE_CACHE_BUST=unset
 RUN echo "claude-code cache bust: ${CLAUDE_CODE_CACHE_BUST}" \
   && npm install -g @anthropic-ai/claude-code
+
+# ── Optional in-loop browser (build-mode turns only) ───────────────────
+# Playwright + a pinned Chromium and the Playwright MCP server give the
+# build-mode agent first-class browser_navigate / browser_console /
+# screenshot tools, so it can load the app it just edited and catch
+# render/JS errors before committing (see app-conventions.md "In-loop
+# browser", worker/run-cc.sh, src/services/in-loop-browser.js).
+#
+# Unlike the Claude Code layer above, these versions are PINNED (not
+# day-bumped): the Chromium build is tied to the Playwright version, so a
+# floating `latest` would re-download a different browser unpredictably.
+# Bump deliberately. `playwright install --with-deps chromium` pulls the
+# matching Chromium plus its apt runtime deps (runs as root, before the
+# USER node switch below). The browser launches LAZILY — only when the
+# agent actually calls a browser tool — so turns that never reach for it
+# pay no runtime cost; scout/sync never wire the MCP server at all.
+ARG PLAYWRIGHT_VERSION=1.49.1
+ARG PLAYWRIGHT_MCP_VERSION=0.0.41
+ENV PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
+RUN npm install -g playwright@${PLAYWRIGHT_VERSION} @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
+  && npx --yes playwright@${PLAYWRIGHT_VERSION} install --with-deps chromium
 
 COPY worker-run.sh   /usr/local/bin/worker-run.sh
 COPY run-cc.sh       /usr/local/bin/run-cc.sh
@@ -29,6 +50,12 @@ COPY usernode-push   /usr/local/bin/usernode-push
 # untruncated body via `usernode-issues <number>` — in both build and
 # scout modes. Authenticates with the read-only ISSUES_JWT, never WORKER_JWT.
 COPY usernode-issues /usr/local/bin/usernode-issues
+# usernode-attachments is read-only like usernode-issues (same ISSUES_JWT
+# auth, works in scout + build): it lists the session's user-attached
+# dev-chat files, or downloads one into the container so Claude Code can
+# Read it (images especially — text files are already inlined in the
+# prompt). See src/routes/internal.js attachments routes (#450).
+COPY usernode-attachments /usr/local/bin/usernode-attachments
 # `.claude` must exist (owned by node) in the image so that when we mount a
 # named volume at that path for persistent CC sessions, Docker initialises the
 # volume with node ownership instead of defaulting to root.
@@ -36,6 +63,7 @@ RUN chmod +x /usr/local/bin/worker-run.sh \
               /usr/local/bin/run-cc.sh \
               /usr/local/bin/usernode-push \
               /usr/local/bin/usernode-issues \
+              /usr/local/bin/usernode-attachments \
   && mkdir -p /home/node/workspace /home/node/.claude \
   && chown -R node:node /home/node
 
