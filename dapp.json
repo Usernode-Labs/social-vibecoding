@@ -106,6 +106,16 @@
       "name": "Dev tab defaults to kanban board on wide screens",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban"
+    },
+    {
+      "name": "Home feed renders with the app search bar",
+      "path": "/",
+      "expectSelector": "#home-search-input"
+    },
+    {
+      "name": "Home 'Your apps' section renders for the seeded admin",
+      "path": "/",
+      "expectText": "Your apps"
     }
   ]
 }

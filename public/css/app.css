@@ -96,7 +96,7 @@ html, body {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* ── Favorites section headers ─────────────────────────── */
+/* ── Home section headers ──────────────────────────────── */
 
 .home-section-header {
   font-size: 0.75rem;
@@ -105,6 +105,36 @@ html, body {
   color: var(--text-muted);
   padding: 0.25rem 0;
 }
+
+/* ── App-card "…" actions menu ─────────────────────────────
+   Popover built by Home.openCardMenu (appended to <body>, fixed-
+   positioned against the trigger rect). Plain CSS rather than
+   Tailwind utilities so the dynamically-inserted panel doesn't
+   depend on the CDN JIT having generated classes at scan time. */
+
+.card-menu {
+  position: fixed;
+  z-index: 1001;
+  min-width: 11rem;
+  padding: 0.25rem 0;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  background-color: var(--bg-primary);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.card-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.5rem 0.875rem;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+.card-menu-item:hover:not(:disabled) { background-color: var(--bg-secondary); }
+.card-menu-item:disabled { opacity: 0.6; }
+.card-menu-item-danger { color: #ef4444; }
 
 /* ── Status dots ───────────────────────────────────────── */
 
