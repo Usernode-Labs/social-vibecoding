@@ -10,6 +10,8 @@ const worker = require('../services/worker');
 const github = require('../services/github');
 const { USERNODE_DOMAIN } = require('../services/caddy');
 const appAccess = require('../services/app-access');
+const { broadcastGlobal } = require('../services/ws');
+const sessionBus = require('../services/session-bus');
 
 // On-demand-TLS gate for Caddy. Caddy GETs this before issuing a Let's
 // Encrypt cert for a hostname it has never seen (see Caddyfile's
@@ -620,6 +622,192 @@ function internalRoutes(_config) {
         });
         return res.status(502).json({ ok: false, code: 'pr_failed', message: err.message });
       }
+    }
+  );
+
+  // ── Platform-issue escalation valve (build-turn coding agent) ─────────
+  //
+  // The worker can only edit + push ITS OWN app repo. Some blockers live
+  // outside it — the shared bridge, wallet / native WebView, the
+  // staging/preview pipeline, the checks gate. When the build-turn agent
+  // is confident the root cause is platform-level (rather than looping on
+  // a fix it structurally cannot make), it calls this to DRAFT a report.
+  // Backs the worker's usernode-report-platform-issue CLI (WORKER_JWT,
+  // build-only).
+  //
+  // Human-gated: this endpoint files NOTHING on GitHub. It persists a
+  // pending draft as a system row in the session timeline (metadata.
+  // platformIssueDraft) and pushes a live session event so the dev-chat
+  // UI renders a card with "Report to platform" / "Dismiss" buttons. The
+  // actual GitHub issue is only created when a user taps confirm — see
+  // POST /api/sessions/:id/platform-issue/:msgId/confirm in
+  // src/routes/sessions.js.
+  //
+  // Guardrails: session-scoped auth (like push/pr), a hard per-session
+  // rate cap, and a normalised-title de-dupe against open agent reports
+  // AND this session's earlier drafts, so a stuck turn can't spam either
+  // the tracker or the timeline.
+  const platformIssueLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 3,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    keyGenerator: (req) => `session:${req.workerSession?.sessionId || 'anon'}`,
+    handler: (req, res) => {
+      log.warn('internal-api', 'Platform-issue proxy rate-limited', {
+        sessionId: req.workerSession?.sessionId,
+      });
+      res.status(429).json({ ok: false, code: 'rate_limited' });
+    },
+  });
+
+  router.post(
+    '/api/internal/sessions/:sessionId/platform-issue',
+    internalAuth,
+    platformIssueLimiter,
+    async (req, res) => {
+      const sessionId = parseInt(req.params.sessionId, 10);
+      if (!Number.isFinite(sessionId)) {
+        return res.status(400).json({ ok: false, code: 'bad_session_id' });
+      }
+      if (req.workerSession.sessionId !== sessionId) {
+        return res.status(403).json({ ok: false, code: 'session_mismatch' });
+      }
+
+      const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+      const detail = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
+      if (!title) return res.status(400).json({ ok: false, code: 'bad_title' });
+      if (title.length > 160) return res.status(400).json({ ok: false, code: 'title_too_long' });
+      if (detail.length > 4000) return res.status(400).json({ ok: false, code: 'body_too_long' });
+
+      // The confirm route needs the platform repo + bot PAT to actually
+      // file; refuse the draft up front if that can never succeed, so the
+      // agent gets a clear "not supported here" instead of the user
+      // hitting a dead confirm button later.
+      if (!process.env.GITHUB_BOT_TOKEN) {
+        return res.status(503).json({ ok: false, code: 'github_unconfigured' });
+      }
+      const platformRepo = (_config.platformRepoUrl || '')
+        .match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+      if (!platformRepo) {
+        return res.status(500).json({ ok: false, code: 'no_platform_repo' });
+      }
+      const [, owner, repo] = platformRepo;
+
+      let session;
+      try {
+        const { rows } = await pool.query(
+          `SELECT cs.id, cs.app_id, a.slug AS app_slug, a.name AS app_name
+             FROM chat_sessions cs
+             JOIN apps a ON a.id = cs.app_id
+            WHERE cs.id = $1`,
+          [sessionId]
+        );
+        if (!rows.length) return res.status(404).json({ ok: false, code: 'session_not_found' });
+        session = rows[0];
+      } catch (err) {
+        log.error('internal-api', 'Platform-issue session lookup failed', {
+          sessionId, err: err.message,
+        });
+        return res.status(500).json({ ok: false, code: 'db_error' });
+      }
+
+      const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+      // De-dupe #1: an open issue with the same normalised title already
+      // exists on the platform repo (anonymous cached fetch, never
+      // throws). Tell the agent instead of drafting — best-effort, so a
+      // fetch miss still lets a genuine escalation through.
+      try {
+        const existing = await github.fetchPublicIssues(owner, repo);
+        if (!existing.note && Array.isArray(existing.issues)) {
+          const dupe = existing.issues.find((i) => norm(i.title) === norm(title));
+          if (dupe) {
+            log.info('internal-api', 'Platform issue deduped', { sessionId, number: dupe.number });
+            return res.json({ ok: true, deduped: true, number: dupe.number, url: dupe.htmlUrl });
+          }
+        }
+      } catch (err) {
+        log.warn('internal-api', 'Platform-issue dedup check failed', {
+          sessionId, err: err.message,
+        });
+      }
+
+      // De-dupe #2: this session already carries a draft with the same
+      // normalised title (any state — pending, filed, or dismissed).
+      // Re-suggesting a card the user already saw (and possibly dismissed)
+      // is exactly the spam the human gate exists to prevent.
+      try {
+        const { rows } = await pool.query(
+          `SELECT id, metadata FROM chat_session_messages
+            WHERE session_id = $1 AND metadata ? 'platformIssueDraft'
+            ORDER BY id DESC LIMIT 20`,
+          [sessionId]
+        );
+        const prior = rows.find(
+          (r) => norm(r.metadata?.platformIssueDraft?.title) === norm(title)
+        );
+        if (prior) {
+          const d = prior.metadata.platformIssueDraft;
+          return res.json({
+            ok: true,
+            deduped: true,
+            draftStatus: d.status,
+            ...(d.issueUrl ? { url: d.issueUrl, number: d.issueNumber } : {}),
+          });
+        }
+      } catch (err) {
+        log.warn('internal-api', 'Platform-issue draft-dedup check failed', {
+          sessionId, err: err.message,
+        });
+      }
+
+      // Persist the pending draft as a system row in the session timeline
+      // (same table every other card rehydrates from), then push a live
+      // session event so an open dev-chat renders the card immediately.
+      const draft = {
+        title,
+        body: detail,
+        status: 'pending',
+        appSlug: session.app_slug,
+        appName: session.app_name,
+      };
+      const content = 'The AI thinks this may be a platform-level issue';
+      let msgId;
+      try {
+        const { rows } = await pool.query(
+          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+           VALUES ($1, 'system', $2, $3) RETURNING id`,
+          [sessionId, content, JSON.stringify({ platformIssueDraft: draft })]
+        );
+        msgId = rows[0].id;
+      } catch (err) {
+        log.error('internal-api', 'Platform-issue draft insert failed', {
+          sessionId, err: err.message,
+        });
+        return res.status(500).json({ ok: false, code: 'db_error' });
+      }
+
+      // Live push. A dedicated event type (NOT 'status') so the client
+      // handlers don't run the status side effects — a draft can land
+      // mid-build-turn, and a status event would deactivate the live
+      // "Claude Code is running" spinner line. Same envelope contract as
+      // sendStatus / sync-main.js otherwise.
+      try {
+        const event = {
+          type: 'platform_issue_draft',
+          _seq: `pi${Date.now().toString(36)}`,
+          text: content,
+          platformIssueDraft: { ...draft, msgId },
+        };
+        broadcastGlobal({ ...event, sessionId, event: 'platform_issue_draft', type: 'session_event' });
+        sessionBus.publish(sessionId, event);
+      } catch (_) { /* live push is best-effort; reload rehydrates */ }
+
+      log.info('internal-api', 'Platform issue drafted by agent', {
+        sessionId, appSlug: session.app_slug, msgId,
+      });
+      return res.json({ ok: true, suggested: true, msgId });
     }
   );
 
