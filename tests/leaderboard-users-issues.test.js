@@ -167,7 +167,14 @@ async function startTestServer(pool) {
 function fixtureState() {
   const thisWeek = weekStartUtc();
   const old = new Date(Date.now() - 40 * 24 * 3600 * 1000).toISOString();
-  const recent = new Date(Date.now() - 1 * 24 * 3600 * 1000).toISOString();
+  // "Recent" must land inside the CURRENT UTC week for the window=week
+  // assertions. A plain now-1d crosses the week boundary when the suite runs
+  // on the week's first day (every Monday), so clamp to just after the week
+  // start when yesterday would fall outside it.
+  const weekStartMs = Date.parse(`${thisWeek}T00:00:00.000Z`);
+  const recent = new Date(
+    Math.max(Date.now() - 1 * 24 * 3600 * 1000, weekStartMs + 60 * 1000)
+  ).toISOString();
   return {
     users: [{ id: 1, username: 'alice' }, { id: 2, username: 'bob' }],
     sessions: [
