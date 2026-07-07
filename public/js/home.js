@@ -1058,7 +1058,7 @@ const Home = {
     } catch (_) {
       Home._widgetItems = null;
     }
-    Home._healWidgetIcons();
+    await Home._healWidgetIcons();
   },
 
   // Registry entries whose icon PNG never landed in the app's widget
@@ -1067,20 +1067,41 @@ const Home = {
   // re-pinning the same URL is an in-place refresh, so order is kept and
   // no instruction walkthrough pops. One attempt per shortcut id per
   // page load so a persistently failing icon can't loop.
+  //
+  // WIDGET_ICON_GEN versions the canvas-tile rendering. Saved tiles
+  // report has_icon:true and would otherwise never refresh, so when the
+  // rendering changes (bump the gen), canvas tiles are re-sent once and
+  // the reached gen is remembered in localStorage. Image-icon apps skip
+  // this — their PNGs don't come from the canvas.
+  //   gen 2: pixel-centered glyphs (_drawGlyphCentered) — emoji tiles
+  //          used to come out anchored bottom-left on iOS WebKit.
+  WIDGET_ICON_GEN: 2,
+  _iconGenKey: 'sv:widget_icon_gen',
   _iconHealTried: null,
   async _healWidgetIcons() {
     if (Home._shortcutSupport?.mechanism !== 'widget') return;
     const bridge = window.usernode;
     if (!bridge || typeof bridge.addHomeScreenShortcut !== 'function') return;
     const tried = (Home._iconHealTried ||= new Set());
+    let storedGen = null;
+    try { storedGen = localStorage.getItem(Home._iconGenKey); } catch (_) { /* private mode */ }
+    const genStale = storedGen !== String(Home.WIDGET_ICON_GEN);
     let healed = false;
+    // An SV-slugged entry we couldn't match yet (apps list still
+    // loading) keeps the gen marker un-burned so a later pass retries.
+    let unmatchedSvEntry = false;
     for (const item of Home._widgetItems || []) {
-      if (item.has_icon !== false || tried.has(item.id)) continue;
+      if (tried.has(item.id)) continue;
       const slug = Home._widgetSlugFor(item);
       const app = slug ? (Home._apps || []).find((a) => a.slug === slug) : null;
-      // No match yet (apps list still loading, or a non-SV shortcut):
-      // don't mark tried — a later refresh may be able to heal it.
-      if (!app) continue;
+      const needsIcon = item.has_icon === false;
+      const staleTile = genStale && app && !app.icon_url;
+      if (!needsIcon && !staleTile) continue;
+      if (!app) {
+        if (slug) unmatchedSvEntry = true;
+        // Foreign shortcuts (no SV slug) can never be healed here.
+        continue;
+      }
       tried.add(item.id);
       try {
         await bridge.addHomeScreenShortcut({
@@ -1089,6 +1110,11 @@ const Home = {
         });
         healed = true;
       } catch (_) { /* denied / old build — leave the fallback tile */ }
+    }
+    if (genStale && (Home._apps || []).length && !unmatchedSvEntry) {
+      try {
+        localStorage.setItem(Home._iconGenKey, String(Home.WIDGET_ICON_GEN));
+      } catch (_) { /* private mode — retried next load, sends deduped by `tried` */ }
     }
     if (healed) {
       try {
@@ -1432,6 +1458,49 @@ const Home = {
     );
   },
 
+  // Draws `text` onto a scratch canvas, finds its ink (alpha) bounding
+  // box, and blits it centered into the size x size target. Returns
+  // false when the 2D APIs needed aren't available or nothing was
+  // drawn, so callers can fall back to plain fillText.
+  _drawGlyphCentered(ctx, size, text, font, color) {
+    try {
+      const scratch = document.createElement('canvas');
+      const s = size * 2; // headroom for glyphs that overflow their box
+      scratch.width = s;
+      scratch.height = s;
+      const sctx = scratch.getContext('2d');
+      if (!sctx || typeof sctx.getImageData !== 'function'
+        || typeof ctx.drawImage !== 'function') return false;
+      sctx.textAlign = 'center';
+      sctx.textBaseline = 'middle';
+      sctx.font = font;
+      if (color) sctx.fillStyle = color;
+      sctx.fillText(text, s / 2, s / 2);
+      const data = sctx.getImageData(0, 0, s, s).data;
+      let minX = s, minY = s, maxX = -1, maxY = -1;
+      for (let y = 0; y < s; y++) {
+        for (let x = 0; x < s; x++) {
+          if (data[(y * s + x) * 4 + 3] !== 0) {
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+          }
+        }
+      }
+      if (maxX < 0) return false; // nothing drawn (blank glyph?)
+      const w = maxX - minX + 1;
+      const h = maxY - minY + 1;
+      ctx.drawImage(
+        scratch, minX, minY, w, h,
+        Math.round((size - w) / 2), Math.round((size - h) / 2), w, h
+      );
+      return true;
+    } catch (_) {
+      return false;
+    }
+  },
+
   // Renders the SV emoji/letter tile to a PNG data URI so the native
   // homescreen widget shows the exact tile the app shows — same violet
   // tint (violet-600/20 background, violet-400 letter) over a
@@ -1448,18 +1517,23 @@ const Home = {
       if (!ctx) return null;
       ctx.fillStyle = 'rgba(124, 58, 237, 0.20)'; // violet-600/20
       ctx.fillRect(0, 0, size, size);
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      if (app.icon_emoji) {
-        ctx.font = '72px system-ui, sans-serif';
-        ctx.fillText(app.icon_emoji, size / 2, size / 2 + 4);
-      } else {
-        ctx.fillStyle = '#a78bfa'; // violet-400
-        ctx.font = 'bold 64px system-ui, sans-serif';
-        ctx.fillText(
-          String(app.name || '?').charAt(0).toUpperCase(),
-          size / 2, size / 2 + 2
-        );
+      const text = app.icon_emoji
+        || String(app.name || '?').charAt(0).toUpperCase();
+      const font = app.icon_emoji
+        ? '72px system-ui, sans-serif'
+        : 'bold 64px system-ui, sans-serif';
+      const color = app.icon_emoji ? null : '#a78bfa'; // violet-400
+      // Pixel-centering first: textAlign/textBaseline metrics misplace
+      // emoji glyphs in iOS WebKit (tiles came out anchored bottom-left),
+      // and measured glyph bounds are just as unreliable across engines.
+      // Ink bounds never lie. Fall back to the anchor heuristic where
+      // getImageData isn't available.
+      if (!Home._drawGlyphCentered(ctx, size, text, font, color)) {
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = font;
+        if (color) ctx.fillStyle = color;
+        ctx.fillText(text, size / 2, size / 2 + (app.icon_emoji ? 4 : 2));
       }
       return canvas.toDataURL('image/png');
     } catch (_) {

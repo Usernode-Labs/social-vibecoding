@@ -59,6 +59,14 @@ function makeHomeEnv(user) {
       removeEventListener: () => {},
     },
     fetch: async () => ({ ok: true, json: async () => ({}) }),
+    localStorage: (() => {
+      const m = new Map();
+      return {
+        getItem: (k) => (m.has(k) ? m.get(k) : null),
+        setItem: (k, v) => m.set(k, String(v)),
+        removeItem: (k) => m.delete(k),
+      };
+    })(),
     alert: () => {},
     confirm: () => true,
     setTimeout, clearTimeout, setInterval, clearInterval,
@@ -645,7 +653,12 @@ test('icon heal: has_icon:false entries are silently re-added once', async () =>
     }),
   };
   Home._shortcutSupport = { mechanism: 'widget' };
-  Home._apps = [baseApp(), baseApp({ slug: 'iconed', name: 'Iconed' })];
+  // 'Iconed' has a real image icon: exempt from the canvas-tile gen
+  // refresh, so with has_icon:true nothing re-sends it.
+  Home._apps = [
+    baseApp(),
+    baseApp({ slug: 'iconed', name: 'Iconed', icon_url: '/icons/x.png' }),
+  ];
   await Home._refreshWidgetItems();
   // Only the SV app missing its icon is re-added; the healthy entry and
   // the foreign shortcut are left alone. The re-add is marked silent so
@@ -682,6 +695,46 @@ test('icon heal: retries entries skipped while apps were still loading', async (
   Home._apps = [baseApp()];
   await Home._healWidgetIcons();
   assert.equal(added.length, 1, 'healed once the apps list landed');
+});
+
+test('icon heal: gen bump re-sends canvas tiles, skips image icons', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  sandbox.document.createElement = () => ({
+    getContext: () => ({ fillRect() {}, fillText() {} }),
+    toDataURL: () => 'data:image/png;base64,FAKE',
+  });
+  const added = [];
+  sandbox.usernode = {
+    isNative: true,
+    addHomeScreenShortcut: async (opts) => { added.push(opts); return { added: true }; },
+    getHomeScreenShortcuts: async () => ({
+      items: [
+        // Canvas letter tile, already saved — refreshed on gen bump.
+        { id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app', has_icon: true },
+        // Real image icon, already saved — not canvas-rendered, left alone.
+        { id: 'w2', name: 'Iconed', url: 'https://sv.test/#app/iconed', has_icon: true },
+      ],
+    }),
+  };
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._apps = [
+    baseApp(),
+    baseApp({ slug: 'iconed', name: 'Iconed', icon_url: '/icons/x.png' }),
+  ];
+  // Fresh env: no stored gen → stale → canvas tiles re-sent once.
+  await Home._refreshWidgetItems();
+  assert.equal(added.length, 1, 'only the canvas-tile app is refreshed');
+  assert.match(added[0].url, /#app\/demo-app/);
+  assert.equal(added[0].silent, true);
+  assert.equal(
+    sandbox.localStorage.getItem('sv:widget_icon_gen'),
+    String(Home.WIDGET_ICON_GEN),
+    'reached gen recorded'
+  );
+  // Gen now current → later refreshes send nothing.
+  Home._iconHealTried = null; // even across a fresh page load
+  await Home._refreshWidgetItems();
+  assert.equal(added.length, 1, 'no repeat once the gen marker is stored');
 });
 
 test('menu: shortcut item hidden when unsupported or app not running', () => {
