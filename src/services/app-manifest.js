@@ -42,6 +42,7 @@
  * an absent manifest; only on declared-required-but-unset values.
  */
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const log = require('./logger');
@@ -246,15 +247,91 @@ function readScreenshot(parsed) {
   return { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE };
 }
 
+// Bounds for the optional top-level `icon` block. The emoji cap of 16
+// UTF-16 code units covers ZWJ sequences (👨‍👩‍👧‍👦 is 11) without letting a
+// paragraph through; ASCII is deliberately NOT banned — keycap emoji
+// like 1️⃣ contain a digit, and a silly non-emoji string is harmless
+// (it's the app's own tile and changes arrive via voted PRs). The
+// image byte cap is generous for a tile rendered at 56 CSS px (112 px
+// at 2×) while keeping the app_icons rows small.
+const MAX_ICON_EMOJI_LENGTH = 16;
+const MAX_ICON_IMAGE_PATH_LENGTH = 256;
+const MAX_ICON_IMAGE_BYTES = 256 * 1024;
+
+// Magic-byte sniffing for the icon image — the committed file's bytes,
+// not its extension, decide the served Content-Type. SVG is deliberately
+// absent: served inline it can execute script when navigated directly.
+function sniffIconContentType(buf) {
+  if (!buf || buf.length < 12) return null;
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47
+    && buf[4] === 0x0d && buf[5] === 0x0a && buf[6] === 0x1a && buf[7] === 0x0a) return 'image/png';
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  const head6 = buf.subarray(0, 6).toString('latin1');
+  if (head6 === 'GIF87a' || head6 === 'GIF89a') return 'image/gif';
+  if (buf.subarray(0, 4).toString('latin1') === 'RIFF'
+    && buf.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
+  return null;
+}
+
+// Validate the icon block's `image` value: a repo-relative file path.
+// Anything absolute, traversing, scheme-ish, or containing whitespace /
+// backslashes resolves to null (the realpath containment check in
+// loadIconImage is the authoritative escape guard; this just rejects
+// the obviously-wrong shapes early with a warn).
+function normalizeIconImagePath(raw) {
+  if (typeof raw !== 'string') return null;
+  const p = raw.trim();
+  if (!p || p.length > MAX_ICON_IMAGE_PATH_LENGTH) return null;
+  if (p.startsWith('/') || p.includes('\\') || /\s/.test(p)) return null;
+  if (p.includes('://') || p.startsWith('data:')) return null;
+  if (p.split('/').some((seg) => seg === '..' || seg === '')) return null;
+  return p;
+}
+
+// Normalize the optional top-level `icon` block:
+//   "icon": { "emoji": "🎮" }  or  "icon": { "image": "public/icon.png" }
+// Returns `{ emoji, image }` (each string-or-null) or null when the
+// block is absent / carries nothing usable. Both keys are retained when
+// both are valid — the image takes precedence at reconcile time, with
+// the emoji as the fallback should the committed file fail validation.
+// Lenient like the rest of the reader; never throws.
+function readIcon(parsed) {
+  const raw = parsed?.icon;
+  if (raw == null) return null;
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    log.warn('app-manifest', 'Ignoring non-object icon block');
+    return null;
+  }
+  let emoji = null;
+  if (raw.emoji != null) {
+    const e = typeof raw.emoji === 'string' ? raw.emoji.trim() : '';
+    if (e.length >= 1 && e.length <= MAX_ICON_EMOJI_LENGTH && !/\s/.test(e)) {
+      emoji = e;
+    } else {
+      log.warn('app-manifest', 'Ignoring invalid icon.emoji', { value: raw.emoji });
+    }
+  }
+  let image = null;
+  if (raw.image != null) {
+    image = normalizeIconImagePath(raw.image);
+    if (!image) log.warn('app-manifest', 'Ignoring invalid icon.image path', { value: raw.image });
+  }
+  if (emoji != null && image != null) {
+    log.warn('app-manifest', 'icon declares both emoji and image; image takes precedence');
+  }
+  if (emoji == null && image == null) return null;
+  return { emoji, image };
+}
+
 function read(cloneDir) {
   const filePath = path.join(cloneDir, MANIFEST_FILENAME);
   let raw;
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
-    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [] };
+    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null };
     log.warn('app-manifest', 'Read failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [] };
+    return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null };
   }
 
   let parsed;
@@ -262,7 +339,7 @@ function read(cloneDir) {
     parsed = JSON.parse(raw);
   } catch (err) {
     log.warn('app-manifest', 'Parse failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [] };
+    return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null };
   }
 
   const secretsIn = Array.isArray(parsed?.secrets) ? parsed.secrets : [];
@@ -305,6 +382,7 @@ function read(cloneDir) {
     visibility: readVisibility(parsed),
     screenshot: readScreenshot(parsed),
     tests: readTests(parsed),
+    icon: readIcon(parsed),
   };
 }
 
@@ -519,6 +597,137 @@ async function reconcileAppScreenshot(pool, app, manifest) {
   return true;
 }
 
+/**
+ * Load + validate the icon image file the manifest points at, from the
+ * freshly-cloned working tree. Returns `{ data, contentType, sha256 }`
+ * or null on any validation failure (missing file, symlink escaping the
+ * clone, oversized, unrecognized format) — always with a warn, never a
+ * throw. The realpath containment check is the authoritative guard
+ * against a committed symlink pointing outside the clone.
+ */
+async function loadIconImage(cloneDir, relPath, appSlug) {
+  try {
+    const rootReal = await fs.promises.realpath(cloneDir);
+    let real;
+    try {
+      real = await fs.promises.realpath(path.resolve(rootReal, relPath));
+    } catch {
+      log.warn('app-manifest', 'Icon image file missing', { slug: appSlug, image: relPath });
+      return null;
+    }
+    if (real !== rootReal && !real.startsWith(rootReal + path.sep)) {
+      log.warn('app-manifest', 'Icon image path escapes the repo', { slug: appSlug, image: relPath });
+      return null;
+    }
+    const stat = await fs.promises.stat(real);
+    if (!stat.isFile() || stat.size > MAX_ICON_IMAGE_BYTES) {
+      log.warn('app-manifest', 'Icon image not a regular file or over size cap', {
+        slug: appSlug, image: relPath, size: stat.size, cap: MAX_ICON_IMAGE_BYTES,
+      });
+      return null;
+    }
+    const data = await fs.promises.readFile(real);
+    const contentType = sniffIconContentType(data);
+    if (!contentType) {
+      log.warn('app-manifest', 'Icon image is not PNG/JPEG/WebP/GIF', { slug: appSlug, image: relPath });
+      return null;
+    }
+    return { data, contentType, sha256: crypto.createHash('sha256').update(data).digest('hex') };
+  } catch (err) {
+    log.warn('app-manifest', 'Icon image load failed', { slug: appSlug, image: relPath, err: err.message });
+    return null;
+  }
+}
+
+/**
+ * Deploy-time icon reconcile — sibling of reconcileAppName /
+ * reconcileAppVisibility / reconcileAppScreenshot. The manifest's
+ * optional top-level `icon` block is the source of truth for the
+ * homescreen tile: an image file committed in the repo (stored into
+ * app_icons, served at /app-icons/:id) or an emoji (apps.icon_emoji).
+ *
+ * Unlike `name`/`visibility` and like `screenshot`, the manifest is
+ * FULLY authoritative: an absent block clears both columns and deletes
+ * the app_icons row, restoring the letter-tile fallback. There is no
+ * platform-side icon setter to clobber, so "what's in dapp.json is
+ * what you get" holds unconditionally.
+ *
+ * Precedence: a valid, loadable image wins; the emoji applies when no
+ * image is declared or the declared file fails validation; neither →
+ * clear. A re-deploy with unchanged image bytes keeps the existing
+ * app_icons id (the /app-icons/:id cache header is immutable, so the
+ * id only rotates when the bytes change — rotation doubles as the
+ * cache-buster).
+ *
+ * Broadcasts an `icon_changed` app update on a real change so open
+ * home screens patch the tile in place (public/js/app.js
+ * handleAppUpdate). Best-effort like its siblings: callers
+ * fire-and-log; a failure here must never fail the deploy.
+ */
+async function reconcileAppIcon(pool, app, manifest, cloneDir) {
+  const icon = manifest?.icon || null;
+
+  let image = null;
+  if (icon?.image && cloneDir) {
+    image = await loadIconImage(cloneDir, icon.image, app.slug);
+  }
+  const emoji = !image && icon?.emoji ? icon.emoji : null;
+
+  const { rows } = await pool.query(
+    'SELECT icon_emoji, icon_image_id FROM apps WHERE id = $1', [app.id]
+  );
+  if (!rows.length) return false;
+  const cur = rows[0];
+
+  let imageId = null;
+  if (image) {
+    const { rows: iconRows } = await pool.query(
+      'SELECT id, sha256 FROM app_icons WHERE app_id = $1', [app.id]
+    );
+    if (iconRows.length && iconRows[0].sha256 === image.sha256
+      && cur.icon_image_id === iconRows[0].id) {
+      // Unchanged bytes: keep the stored id so immutable caches stay valid.
+      imageId = iconRows[0].id;
+    } else {
+      imageId = crypto.randomBytes(16).toString('hex');
+      await pool.query('DELETE FROM app_icons WHERE app_id = $1', [app.id]);
+      await pool.query(
+        `INSERT INTO app_icons (id, app_id, content_type, data, sha256)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [imageId, app.id, image.contentType, image.data, image.sha256]
+      );
+    }
+  } else if (cur.icon_image_id) {
+    await pool.query('DELETE FROM app_icons WHERE app_id = $1', [app.id]);
+  }
+
+  if ((cur.icon_emoji || null) === emoji && (cur.icon_image_id || null) === imageId) {
+    return false;
+  }
+
+  await pool.query(
+    'UPDATE apps SET icon_emoji = $1, icon_image_id = $2 WHERE id = $3',
+    [emoji, imageId, app.id]
+  );
+  log.info('app-manifest', 'Reconciled app icon from dapp.json', {
+    appId: app.id, slug: app.slug, emoji, imageId,
+  });
+
+  try {
+    const { pushAppUpdate } = require('./ws');
+    pushAppUpdate({
+      action: 'icon_changed',
+      appId: app.id,
+      slug: app.slug,
+      iconEmoji: emoji,
+      iconUrl: imageId ? `/app-icons/${imageId}` : null,
+    });
+  } catch (err) {
+    log.warn('app-manifest', 'Icon broadcast failed', { appId: app.id, err: err.message });
+  }
+  return true;
+}
+
 module.exports = {
   read,
   readName,
@@ -526,11 +735,15 @@ module.exports = {
   readVisibility,
   readScreenshot,
   readTests,
+  readIcon,
   MAX_TESTS,
+  MAX_ICON_EMOJI_LENGTH,
+  MAX_ICON_IMAGE_BYTES,
   describeVisibility,
   reconcileAppName,
   reconcileAppVisibility,
   reconcileAppScreenshot,
+  reconcileAppIcon,
   applyVisibilityChange,
   RESERVED_KEYS,
   RESERVED_KEY_PREFIXES,

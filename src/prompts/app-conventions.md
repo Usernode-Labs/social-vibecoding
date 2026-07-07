@@ -461,6 +461,43 @@ Rules, mirroring the top-level `name`:
 - Inviting individual users to a private app is a separate, in-app
   flow — it is NOT represented in `dapp.json`.
 
+### Top-level `icon` — the app's homescreen icon
+
+`dapp.json` may carry an optional top-level `icon` block — the
+**source of truth for the app's homescreen tile icon**. Two forms:
+
+```json
+{ "icon": { "emoji": "🎮" } }
+```
+
+```json
+{ "icon": { "image": "public/icon.png" } }
+```
+
+- `emoji` — a single emoji (trimmed, 1–16 UTF-16 code units, no
+  whitespace). Rendered large on the tile's violet background.
+- `image` — a **repo-relative path to an image file committed in the
+  app's repo**. The platform reads the file at deploy time, validates
+  it, and serves it so the image completely fills the rounded tile
+  (cropped to fit). Constraints: ≤ 256 KB; PNG, JPEG, WebP, or GIF
+  only (sniffed from the file's bytes — SVG is not accepted); the
+  path must be relative, inside the repo, with no `..` segments.
+
+Rules:
+
+- On every production deploy the platform reads the block and
+  reconciles the app's stored icon to it. Unlike `name`/`visibility`,
+  the block is **fully authoritative: an absent block (or an invalid
+  one) clears the icon**, restoring the default first-letter tile —
+  so removing the declaration is how an icon is removed.
+- If both `emoji` and `image` are declared, the image wins; the emoji
+  is the fallback should the image file fail validation (missing,
+  oversized, wrong format).
+- **Changing the icon is just a PR that edits this block** (and, for
+  an image, commits the file). The change takes effect when the PR is
+  voted in, merged, and redeployed — not before. Don't mutate the
+  icon through any other channel.
+
 Per-field rules:
 
 - `key` — `UPPER_SNAKE_CASE`. The literal name `process.env.<KEY>` will be.

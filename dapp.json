@@ -1,4 +1,5 @@
 {
+  "icon": { "emoji": "🏗️" },
   "secrets": [
     {
       "key": "GITHUB_APP_ID",
@@ -115,7 +116,12 @@
     {
       "name": "Home 'Your apps' section renders for the seeded admin",
       "path": "/",
-      "expectText": "Your apps"
+      "expectSelector": ".app-card[data-yours='true']"
+    },
+    {
+      "name": "Home demo icon tiles render",
+      "path": "/?demo=1",
+      "expectSelector": ".app-card [data-icon='emoji']"
     }
   ]
 }

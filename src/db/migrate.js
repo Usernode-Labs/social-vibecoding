@@ -654,6 +654,12 @@ async function seedSelfApp(pool, config) {
   if (selfRows.length) {
     await appManifest.reconcileAppName(pool, selfRows[0], manifest)
       .catch((err) => log.warn('db', 'Self-app name reconcile failed', { err: err.message }));
+    // Same deal for the manifest's `icon` block — the self-app deploys
+    // via GitHub Actions, so this boot-time reconcile is where its
+    // homescreen icon (and icon removals) actually apply. The running
+    // repo root stands in for the clone dir when the icon is an image.
+    await appManifest.reconcileAppIcon(pool, selfRows[0], manifest, repoRoot)
+      .catch((err) => log.warn('db', 'Self-app icon reconcile failed', { err: err.message }));
   }
 
   log.info('db', 'Self-app row seeded', {

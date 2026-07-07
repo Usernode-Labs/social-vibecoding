@@ -1191,14 +1191,25 @@ const App = {
       if (card) {
         const nameEl = card.querySelector('.font-medium');
         if (nameEl) nameEl.textContent = data.newName;
-        const avatar = card.querySelector('div.rounded-xl');
-        if (avatar) avatar.textContent = (data.newName || '?').charAt(0).toUpperCase();
+        // Only letter-fallback tiles track the name; a custom icon
+        // (emoji/image from dapp.json) must not be clobbered by a rename.
+        const avatar = card.querySelector('[data-icon]') || card.querySelector('div.rounded-xl');
+        if (avatar && (avatar.dataset?.icon || 'letter') === 'letter') {
+          avatar.textContent = (data.newName || '?').charAt(0).toUpperCase();
+        }
       }
       if (App.currentApp === data.slug) {
         App.setHeaderTitle(data.newName);
         if (typeof AppView !== 'undefined' && AppView.applyRename) {
           AppView.applyRename(data.newName);
         }
+      }
+    } else if (data.action === 'icon_changed') {
+      // A deploy reconciled this app's dapp.json icon block (emoji /
+      // image / cleared back to the letter). Patch the mounted home
+      // tile in place — no full Home.load().
+      if (typeof Home !== 'undefined' && Home.updateAppCardIcon) {
+        Home.updateAppCardIcon(data.slug, data.iconEmoji, data.iconUrl);
       }
     } else if (data.action === 'lock_changed') {
       // The admin-gated change lock flipped on this app (see

@@ -534,8 +534,15 @@ async function runTest(browser, test) {
     if (!failureReason && test.expectText) {
       let found = false;
       try {
+        // innerText reflects RENDERED text, including CSS text-transform —
+        // a `text-transform: uppercase` header turns "Your apps" into
+        // "YOUR APPS" and a case-sensitive includes() can never match the
+        // human-written expectation. Compare case-insensitively: keeps the
+        // "visible on the page" semantics (hidden text still fails) while
+        // making the assertion robust to styling-only casing.
         found = await page.evaluate(
-          (text) => (document.body ? document.body.innerText : '').includes(text),
+          (text) => (document.body ? document.body.innerText : '')
+            .toLowerCase().includes(String(text).toLowerCase()),
           test.expectText
         );
       } catch { found = false; }
