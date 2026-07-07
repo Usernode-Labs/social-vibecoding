@@ -523,19 +523,20 @@ const Home = {
       ? `<p class="text-xs mt-0.5 ${isAwaiting ? 'text-amber-500' : 'text-yellow-500'}">${statusLabel}</p>`
       : '';
 
-    // Visibility chip for non-default settings. View-private dominates
+    // Visibility chip for non-default settings, rendered inline in the
+    // pills row alongside the activity chips. View-private dominates
     // (it implies collab-private); collab-private alone reads as
     // "invite-only build" since anyone can still see/use the app.
-    const visChipCls = 'inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-violet-500/10 text-violet-500 dark:text-violet-400';
+    const visChipCls = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-violet-500/10 text-violet-500 dark:text-violet-400';
     // Inline currentColor SVGs (Heroicons v1 outline) instead of emoji
     // so the glyphs tint violet with the chip in both themes.
     const visChipIcon = (d) => `<svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="${d}"/></svg>`;
     const lockIcon = visChipIcon('M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z');
     const mailIcon = visChipIcon('M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z');
-    const visBadgeHtml = app.view_visibility === 'private'
-      ? `<p><span class="${visChipCls}" title="Only collaborators can see and use this app">${lockIcon} Private</span></p>`
+    const visChipHtml = app.view_visibility === 'private'
+      ? `<span class="${visChipCls}" title="Only collaborators can see and use this app">${lockIcon} Private</span>`
       : (app.collab_visibility === 'private'
-        ? `<p><span class="${visChipCls}" title="Anyone can use this app; only invited collaborators can build it">${mailIcon} Invite-only build</span></p>`
+        ? `<span class="${visChipCls}" title="Anyone can use this app; only invited collaborators can build it">${mailIcon} Invite-only build</span>`
         : '');
 
     // Development-activity chips (#57): PRs awaiting votes, dev sessions
@@ -590,67 +591,70 @@ const Home = {
     }
     const chipsClickable = isRunning || isAwaiting;
     const chipBaseCls = 'activity-chip inline-flex items-center px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium';
-    const chipsRowHtml = chipDefs.length
-      ? `<div class="flex flex-wrap items-center gap-1.5">${chipDefs.map((c) => (
-          c.target && chipsClickable
-            ? `<button class="${chipBaseCls} ${c.cls} hover:opacity-75 transition-opacity" data-slug="${app.slug}" data-target="${c.target}" title="${c.tip}">${c.label}</button>`
-            : `<span class="${chipBaseCls} ${c.cls}" title="${c.tip}">${c.label}</span>`
-        )).join('')}</div>`
+    // One pills row: activity chips first, privacy chip last. Empty
+    // when there's nothing to flag, same self-trimming as warningHtml.
+    const chipsHtml = chipDefs.map((c) => (
+      c.target && chipsClickable
+        ? `<button class="${chipBaseCls} ${c.cls} hover:opacity-75 transition-opacity" data-slug="${app.slug}" data-target="${c.target}" title="${c.tip}">${c.label}</button>`
+        : `<span class="${chipBaseCls} ${c.cls}" title="${c.tip}">${c.label}</span>`
+    )).join('');
+    const pillsRowHtml = (chipsHtml || visChipHtml)
+      ? `<div class="flex flex-wrap items-center gap-1.5">${chipsHtml}${visChipHtml}</div>`
       : '';
 
     const statsHtml = activeUsers > 0
       ? `<div class="text-xs text-zinc-500 dark:text-zinc-400 min-w-0 truncate"><span class="font-semibold text-zinc-700 dark:text-zinc-300">${activeUsers}</span> active user${activeUsers === 1 ? '' : 's'}</div>`
       : `<div class="text-xs text-zinc-400 dark:text-zinc-500 min-w-0 truncate">No active users yet</div>`;
 
-    // Corner controls collapsed to a single "…" actions-menu trigger
-    // (secondary actions — star/lock/check-updates/delete — live in
-    // the popover it opens; see openCardMenu). The one inline
-    // exception is Retry on errored cards: it's the card's primary
-    // recovery action, so it stays visible (creator-or-full-admin,
-    // same gate as before — view-only admins excluded, issue #311).
+    // Card actions live on the footer row, to the right of the meta
+    // line: the "…" actions-menu trigger (secondary actions —
+    // add/remove Your apps, lock, check-updates, delete — live in the
+    // popover it opens; see openCardMenu), plus inline Retry on
+    // errored cards — the card's primary recovery action stays
+    // visible (creator-or-full-admin, same gate as before — view-only
+    // admins excluded, issue #311).
     const showRetry = isError && (App.user?.canAdminWrite || App.user?.id === app.created_by);
     const isLocked = !!app.locked;
-    const titlePadClass = showRetry ? 'pr-20' : 'pr-8';
-    const cornerBtnsHtml = `
-      <div class="absolute top-2 right-2 flex items-center gap-1">
+    const actionsHtml = `
+      <div class="flex items-center gap-1 shrink-0">
         ${showRetry ? `<button class="retry-btn text-xs text-emerald-500 hover:text-emerald-400 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors" data-slug="${app.slug}">Retry</button>` : ''}
         <button class="card-menu-btn w-6 h-6 flex items-center justify-center rounded-md text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-500/10 transition-colors text-base leading-none" data-slug="${app.slug}" title="App actions" aria-label="App actions" aria-haspopup="menu">⋯</button>
       </div>`;
 
-    // Single meta line at the foot of the tile. The commit/version
-    // pill no longer renders on the card face — build info lives in
-    // the "…" menu's header now (see renderMenuHeaderHtml), where the
-    // full name and deployed commit have room to breathe. `mt-auto`
-    // pushes the line to the foot of the card so tiles in the same
-    // grid row line up nicely.
+    // Footer row at the bottom of the right-hand column: meta line on
+    // the left, actions on the right. `mt-auto` pins it to the foot of
+    // the column so tiles in the same grid row line up nicely.
     const footerHtml = `
-      <div class="flex items-end pt-1 mt-auto">
+      <div class="flex items-center justify-between gap-2 mt-auto pt-1">
         ${statsHtml}
+        ${actionsHtml}
       </div>`;
 
-    // Every card carries app-card-draggable + touch-pan-y now (not
-    // just the reorderable ones): the long-press actions menu applies
-    // to every card, so text selection / the mobile callout must be
+    // Layout: big icon on the left, everything else stacked in a
+    // right-hand column — title row (name + status dot + status
+    // warning), pills row, then the footer (meta + actions).
+    //
+    // Every card carries app-card-draggable + touch-pan-y (not just
+    // the reorderable ones): the long-press actions menu applies to
+    // every card, so text selection / the mobile callout must be
     // suppressed card-wide, while touch-pan-y keeps vertical
     // scrolling alive until a long-press actually fires (see app.css).
     return `
-      <div class="app-card app-card-draggable touch-pan-y relative rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 hover:border-violet-300 dark:hover:border-violet-700 transition-colors p-3 flex flex-col gap-2 ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}">
-        ${cornerBtnsHtml}
-        <div class="flex items-start gap-2.5 ${titlePadClass}">
-          <div class="w-9 h-9 rounded-lg bg-violet-600/20 flex items-center justify-center text-violet-400 font-bold text-sm shrink-0">
-            ${app.name.charAt(0).toUpperCase()}
-          </div>
-          <div class="flex-1 min-w-0">
+      <div class="app-card app-card-draggable touch-pan-y relative rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 hover:border-violet-300 dark:hover:border-violet-700 transition-colors p-3 flex items-stretch gap-3 ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}">
+        <div class="w-14 h-14 rounded-xl bg-violet-600/20 flex items-center justify-center text-violet-400 font-bold text-xl shrink-0 self-center">
+          ${app.name.charAt(0).toUpperCase()}
+        </div>
+        <div class="flex-1 min-w-0 flex flex-col gap-1">
+          <div class="min-w-0">
             <div class="flex items-center gap-2">
               <span class="font-medium text-sm truncate">${escapeHtml(app.name)}</span>
               <span class="status-dot ${statusClass}" title="${app.status}"></span>
             </div>
             ${warningHtml}
-            ${visBadgeHtml}
           </div>
+          ${pillsRowHtml}
+          ${footerHtml}
         </div>
-        ${chipsRowHtml}
-        ${footerHtml}
       </div>
     `;
   },
@@ -666,9 +670,9 @@ const Home = {
   // hover surface". Hover/active styles live on the pill itself.
   renderCreateTile() {
     return `
-      <div class="home-create-tile rounded-xl border border-transparent bg-violet-500/[0.02] dark:bg-violet-500/[0.04] p-4 flex flex-col gap-3">
+      <div class="home-create-tile rounded-xl border border-transparent bg-violet-500/[0.02] dark:bg-violet-500/[0.04] p-3 flex flex-col gap-3">
         <div class="flex items-center gap-3">
-          <div class="w-11 h-11 rounded-xl bg-violet-600/20 flex items-center justify-center text-violet-400 font-bold text-base shrink-0">
+          <div class="w-14 h-14 rounded-xl bg-violet-600/20 flex items-center justify-center text-violet-400 font-bold text-xl shrink-0">
             Y
           </div>
           <div class="flex-1 min-w-0">

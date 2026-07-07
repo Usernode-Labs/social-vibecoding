@@ -102,6 +102,38 @@ test('card: one "…" trigger, none of the old corner buttons', () => {
   assert.doesNotMatch(html, /check-updates-btn/, 'no inline check-updates');
 });
 
+test('card layout: big icon left, footer row carries meta + ⋯ (no corner pin)', () => {
+  const Home = makeHome({ id: ME });
+  const html = Home.renderAppCard(baseApp({ active_users: '3' }));
+  assert.match(html, /w-14 h-14/, 'large left icon');
+  assert.doesNotMatch(html, /absolute top-2 right-2/, 'actions no longer corner-pinned');
+  // The ⋯ trigger sits AFTER the meta line in the footer row (meta on
+  // the left, actions to its right).
+  const metaIdx = html.indexOf('active user');
+  const menuIdx = html.indexOf('card-menu-btn');
+  assert.ok(metaIdx !== -1 && menuIdx !== -1 && metaIdx < menuIdx,
+    '⋯ renders to the right of the active-users meta line');
+  // Pills row (when present) renders between the title and the footer.
+  const withChips = Home.renderAppCard(baseApp({ open_prs: 2 }));
+  const titleIdx = withChips.indexOf('Demo App');
+  const chipIdx = withChips.indexOf('2 to vote');
+  const footIdx = withChips.indexOf('card-menu-btn');
+  assert.ok(titleIdx < chipIdx && chipIdx < footIdx, 'title → pills → footer order');
+});
+
+test('card: privacy badge renders inline in the pills row', () => {
+  const Home = makeHome({ id: ME });
+  const html = Home.renderAppCard(baseApp({ view_visibility: 'private', open_prs: 1 }));
+  assert.match(html, />\s*Private</, 'privacy chip present');
+  // Same row container as the activity chips — the badge follows the
+  // chips inside one flex-wrap row rather than its own <p> under the
+  // title.
+  assert.doesNotMatch(html, /<p><span[^>]*>[^<]*<\/span><\/p>/, 'no paragraph-wrapped badge');
+  const chipIdx = html.indexOf('1 to vote');
+  const visIdx = html.indexOf('Private<');
+  assert.ok(chipIdx !== -1 && visIdx !== -1 && chipIdx < visIdx, 'badge after activity chips');
+});
+
 test('card: meta line is active-users only — no Created/updated rows, no version pill', () => {
   const Home = makeHome({ id: ME });
   const html = Home.renderAppCard(baseApp({ active_users: '3' }));
