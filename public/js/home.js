@@ -14,8 +14,6 @@ const Home = {
       return;
     }
     const listEl = document.getElementById('app-list');
-    const emptyEl = document.getElementById('empty-state');
-    const canCreate = Home.canCreate();
 
     try {
       // #194: the viewer's own open proposals ride along with the app
@@ -50,174 +48,231 @@ const Home = {
       // section has rows to show (see _syncSessionPolling).
       if (mySessions.some((s) => s.status === 'active')) Home._syncSessionPolling();
 
-      if (apps.length === 0) {
-        listEl.innerHTML = '';
-        emptyEl.classList.remove('hidden');
-        // Toggle the empty-state CTA vs. a "ask an admin" hint based on
-        // whether this user is allowed to create. The static HTML in
-        // index.html holds both children — we just flip visibility.
-        Home.applyEmptyStateForPermissions(canCreate);
-        // Only wire the create button when it's actually visible.
-        // Wiring it for non-permitted users would do nothing because
-        // the button is hidden, but skipping the call keeps the DOM
-        // free of dangling listeners.
-        if (canCreate) Home.wireCreateButtons();
-        return;
+      Home._apps = apps;
+      Home.render();
+    } catch (err) {
+      listEl.innerHTML = `<div class="p-4 text-red-400 text-sm">Failed to load apps</div>`;
+    }
+  },
+
+  // ===== Rendering (from the Home._apps cache) =====
+  //
+  // load() fetches then renders; search keystrokes call render() alone,
+  // re-deriving the grid from the cached list + Home._query with no
+  // network round trip. The search input itself lives OUTSIDE #app-list
+  // (see index.html) so these wholesale innerHTML re-renders never
+  // destroy its focus/caret.
+  _apps: [],
+  _query: '',
+
+  // "Your apps" = apps the viewer is a member of (creator or accepted
+  // invite — the server's is_collaborator flag, see app_collaborators
+  // in schema.sql) OR apps they manually added (a favorite row; the
+  // old "star", now the menu's "Add to Your apps").
+  isYours(app) {
+    return !!(app && (app.is_collaborator || app.is_favorited));
+  },
+
+  // Split the full list into { yours, rest }. Personal ordering
+  // (issue #128) inside "Your apps": explicit favorite_order first
+  // (ascending), NULLs after. Array.prototype.sort is stable, so
+  // returning 0 for two NULLs preserves the server's activity order
+  // among un-ordered entries (member apps that were never dragged).
+  partitionApps(apps) {
+    const yours = (apps || []).filter(Home.isYours);
+    const rest = (apps || []).filter((a) => !Home.isYours(a));
+    yours.sort((x, y) => {
+      if (x.favorite_order == null && y.favorite_order == null) return 0;
+      if (x.favorite_order == null) return 1;
+      if (y.favorite_order == null) return -1;
+      return x.favorite_order - y.favorite_order;
+    });
+    return { yours, rest };
+  },
+
+  // Case-insensitive substring match on name and slug. An empty /
+  // whitespace-only query matches everything (the default view).
+  matchesQuery(app, query) {
+    const q = String(query || '').trim().toLowerCase();
+    if (!q) return true;
+    return String(app?.name || '').toLowerCase().includes(q)
+      || String(app?.slug || '').toLowerCase().includes(q);
+  },
+
+  filterApps(apps, query) {
+    return (apps || []).filter((a) => Home.matchesQuery(a, query));
+  },
+
+  render() {
+    // Same deferral as load(): a search keystroke must not yank the
+    // grid out from under an in-flight drag either.
+    if (Home._dragActive) {
+      Home._reloadPending = true;
+      return;
+    }
+    const listEl = document.getElementById('app-list');
+    const emptyEl = document.getElementById('empty-state');
+    if (!listEl || !emptyEl) return;
+    const canCreate = Home.canCreate();
+    const apps = Home._apps || [];
+    Home._wireSearch();
+    // Nothing to search through with zero apps — hide the bar so the
+    // empty state stays centered and uncluttered.
+    const searchBar = document.getElementById('home-search-bar');
+    if (searchBar) searchBar.classList.toggle('hidden', apps.length === 0);
+
+    if (apps.length === 0) {
+      listEl.innerHTML = '';
+      emptyEl.classList.remove('hidden');
+      // Toggle the empty-state CTA vs. a "ask an admin" hint based on
+      // whether this user is allowed to create. The static HTML in
+      // index.html holds both children — we just flip visibility.
+      Home.applyEmptyStateForPermissions(canCreate);
+      // Only wire the create button when it's actually visible.
+      // Wiring it for non-permitted users would do nothing because
+      // the button is hidden, but skipping the call keeps the DOM
+      // free of dangling listeners.
+      if (canCreate) Home.wireCreateButtons();
+      return;
+    }
+
+    emptyEl.classList.add('hidden');
+    const query = (Home._query || '').trim();
+    let html = '';
+    let canDragYours = false;
+
+    if (query) {
+      // Active search: one flat grid of matches. The proposals /
+      // sessions strips, section headers, create tile and drag
+      // affordance all step aside until the query clears — reorder
+      // is only meaningful against the sectioned view.
+      const matches = Home.filterApps(apps, query);
+      if (!matches.length) {
+        html = `<div class="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">No apps match &ldquo;${escapeHtml(query)}&rdquo;</div>`;
+      } else {
+        html = `<div class="home-section-header col-span-full">${matches.length} result${matches.length === 1 ? '' : 's'}</div>`;
+        html += matches.map(Home.renderAppCard).join('');
       }
-
-      emptyEl.classList.add('hidden');
-      const starred = apps.filter((a) => a.is_favorited);
-      const rest = apps.filter((a) => !a.is_favorited);
-      const hasStarred = starred.length > 0;
-      // Personal ordering (issue #128): explicit favorite_order first
-      // (ascending), NULLs after. Array.prototype.sort is stable, so
-      // returning 0 for two NULLs preserves the server's activity
-      // order among un-ordered favorites.
-      starred.sort((x, y) => {
-        if (x.favorite_order == null && y.favorite_order == null) return 0;
-        if (x.favorite_order == null) return 1;
-        if (y.favorite_order == null) return -1;
-        return x.favorite_order - y.favorite_order;
-      });
+    } else {
+      const { yours, rest } = Home.partitionApps(apps);
       // Reordering is meaningless with a single card — skip the grab
-      // affordance and the drag wiring below when there's only one.
-      const canDragStars = starred.length >= 2;
-
-      let html = Home.renderMyProposalsSection();
+      // affordance and the drag wiring when there's only one.
+      canDragYours = yours.length >= 2;
+      html = Home.renderMyProposalsSection();
       html += Home.renderActiveSessionsSection();
-      if (hasStarred) {
-        html += '<div class="home-section-header col-span-full">Starred</div>';
-        // Starred apps only ever render in this section, so tag the
-        // cards at render time: data-starred drives the drag wiring's
-        // selector, touch-pan-y keeps vertical scrolling alive until a
-        // long-press actually starts a drag, app-card-draggable kills
-        // text selection / the mobile callout during that long-press
-        // (see app.css), and cursor-grab replaces cursor-pointer as
-        // the discoverability hint.
-        html += starred.map((a) => {
+      if (yours.length) {
+        html += '<div class="home-section-header col-span-full">Your apps</div>';
+        // Tag the cards at render time: data-yours drives both the
+        // drag wiring's selector and the long-press menu→drag
+        // promotion; cursor-grab replaces cursor-pointer as the
+        // discoverability hint when reordering is possible.
+        html += yours.map((a) => {
           let card = Home.renderAppCard(a);
-          card = card.replace('class="app-card ', 'data-starred="true" class="app-card ');
-          if (canDragStars) {
-            card = card.replace('class="app-card ', 'class="app-card app-card-draggable touch-pan-y ');
-            card = card.replace('cursor-pointer', 'cursor-grab');
-          }
+          card = card.replace('class="app-card ', 'data-yours="true" class="app-card ');
+          if (canDragYours) card = card.replace('cursor-pointer', 'cursor-grab');
           return card;
         }).join('');
         html += '<div class="home-section-header col-span-full mt-2">All Apps</div>';
       }
       html += rest.map(Home.renderAppCard).join('');
       html += canCreate ? Home.renderCreateTile() : '';
-      listEl.innerHTML = html;
-      if (canCreate) Home.wireCreateButtons();
-
-      listEl.querySelectorAll('.app-card').forEach((card) => {
-        card.addEventListener('click', (e) => {
-          // A completed drag ends with the pointer still on the card,
-          // so the browser fires a click right after pointerup — eat
-          // it so dropping a card doesn't also open the app.
-          if (Home._suppressClick) {
-            Home._suppressClick = false;
-            return;
-          }
-          if (
-            e.target.closest('.retry-btn') ||
-            e.target.closest('.delete-btn') ||
-            e.target.closest('.check-updates-btn') ||
-            e.target.closest('.activity-chip')
-          ) return;
-          // Disabled while spinning up / errored — there's no iframe or
-          // chat history to render and the WS `app_status` handler will
-          // re-bind the card as soon as the container goes live.
-          if (card.dataset.status !== 'running' && card.dataset.status !== 'awaiting_secrets') return;
-          App.navigateToApp(card.dataset.slug);
-        });
-      });
-
-      // Activity-chip deep links (#57). Only clickable chips carry
-      // data-target (inert spans on non-interactive cards don't), so
-      // this selector is also the interactivity gate. stopPropagation
-      // keeps the card's own open-the-app navigation from double-firing.
-      listEl.querySelectorAll('.activity-chip[data-target]').forEach((chip) => {
-        chip.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const slug = chip.dataset.slug;
-          const target = chip.dataset.target === 'dev'
-            ? `#app/${slug}/dev`
-            : `#app/${slug}/dev/${chip.dataset.target}`;
-          window.location.hash = target;
-        });
-      });
-
-      listEl.querySelectorAll('.retry-btn').forEach((btn) => {
-        btn.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          btn.textContent = '...';
-          await fetch(`/api/apps/${btn.dataset.slug}/retry`, { method: 'POST' });
-          Home.load();
-        });
-      });
-
-      listEl.querySelectorAll('.delete-btn').forEach((btn) => {
-        btn.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          if (!confirm('Delete this app?')) return;
-          btn.textContent = '...';
-          const res = await fetch(`/api/apps/${btn.dataset.slug}`, { method: 'DELETE' });
-          if (res.ok) {
-            btn.closest('.app-card').remove();
-          }
-          await Home.load();
-        });
-      });
-
-      // Lock/unlock toggle. Admin-only; the corner button renders as an
-      // open padlock when the app is unlocked (default for every app) and
-      // as a closed padlock when locked. When locked, applying any group-
-      // voted change additionally requires at least one admin yes/up vote
-      // (enforced server-side in routes/votes.js + routes/issues.js).
-      // The click handler optimistically swaps the icon; the WS
-      // `app_update` event reconciles every other open tab.
-      listEl.querySelectorAll('.lock-btn').forEach((btn) => {
-        btn.addEventListener('click', (e) => Home.handleLockClick(e, btn));
-      });
-
-      listEl.querySelectorAll('.star-btn').forEach((btn) => {
-        btn.addEventListener('click', (e) => Home.handleStarClick(e, btn));
-      });
-
-      if (canDragStars) Home.wireStarredDrag(listEl);
-
-      listEl.querySelectorAll('.check-updates-btn').forEach((btn) => {
-        btn.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          // Disable + spinner while the request is in flight. The
-          // server-side check can take 30-90s if drift is detected
-          // (rebuild + healthcheck), so the visual feedback matters.
-          const original = btn.innerHTML;
-          btn.disabled = true;
-          btn.innerHTML = '⟳';
-          btn.classList.add('animate-spin');
-          try {
-            const res = await fetch(`/api/apps/${btn.dataset.slug}/check-updates`, { method: 'POST' });
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) {
-              alert(data.error || `Check failed (HTTP ${res.status})`);
-            } else {
-              Home.reportCheckResult(data);
-            }
-          } catch (err) {
-            alert(`Check failed: ${err.message}`);
-          } finally {
-            btn.disabled = false;
-            btn.classList.remove('animate-spin');
-            btn.innerHTML = original;
-            await Home.load();
-          }
-        });
-      });
-    } catch (err) {
-      listEl.innerHTML = `<div class="p-4 text-red-400 text-sm">Failed to load apps</div>`;
     }
+
+    listEl.innerHTML = html;
+    if (!query && canCreate) Home.wireCreateButtons();
+    Home._wireCards(listEl, canDragYours);
+  },
+
+  // ===== Search bar =====
+  //
+  // Bound once, lazily, from render() — the input is static markup in
+  // index.html so there's no per-render listener churn and no focus
+  // loss. ~100ms debounce is plenty; the list is small and filtering
+  // is a pure client-side re-render.
+  _searchWired: false,
+  _searchDebounce: null,
+
+  _wireSearch() {
+    if (Home._searchWired) return;
+    const input = document.getElementById('home-search-input');
+    const clearBtn = document.getElementById('home-search-clear');
+    if (!input) return;
+    Home._searchWired = true;
+    const apply = () => {
+      Home._query = input.value;
+      if (clearBtn) clearBtn.classList.toggle('hidden', !input.value);
+      Home.render();
+    };
+    input.addEventListener('input', () => {
+      clearTimeout(Home._searchDebounce);
+      Home._searchDebounce = setTimeout(apply, 100);
+    });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && input.value) {
+        e.preventDefault();
+        input.value = '';
+        clearTimeout(Home._searchDebounce);
+        apply();
+      }
+    });
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () => {
+        input.value = '';
+        clearTimeout(Home._searchDebounce);
+        apply();
+        input.focus();
+      });
+    }
+  },
+
+  // ===== Per-render card wiring =====
+
+  _wireCards(listEl, canDragYours) {
+    listEl.querySelectorAll('.app-card').forEach((card) => {
+      card.addEventListener('click', (e) => {
+        // A completed drag (or a long-press that opened the menu) ends
+        // with the pointer still on the card, so the browser fires a
+        // click right after pointerup — eat it so the gesture doesn't
+        // also open the app.
+        if (Home._suppressClick) {
+          Home._suppressClick = false;
+          return;
+        }
+        if (
+          e.target.closest('.retry-btn') ||
+          e.target.closest('.card-menu-btn')
+        ) return;
+        // Disabled while spinning up / errored — there's no iframe or
+        // chat history to render and the WS `app_status` handler will
+        // re-bind the card as soon as the container goes live.
+        if (card.dataset.status !== 'running' && card.dataset.status !== 'awaiting_secrets') return;
+        App.navigateToApp(card.dataset.slug);
+      });
+      // One pointerdown handler per card: touch long-press opens the
+      // actions menu everywhere, and "Your apps" cards additionally
+      // promote to drag-to-reorder (mouse-move, or held-move on touch).
+      card.addEventListener('pointerdown', (e) => Home._onCardPointerDown(
+        e, card, listEl, canDragYours && card.dataset.yours === 'true'
+      ));
+    });
+
+    // Retry stays visible on errored cards (it's the card's primary
+    // recovery action); it is also offered in the hamburger menu.
+    listEl.querySelectorAll('.retry-btn').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        btn.textContent = '...';
+        await fetch(`/api/apps/${btn.dataset.slug}/retry`, { method: 'POST' });
+        Home.load();
+      });
+    });
+
+    listEl.querySelectorAll('.card-menu-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        Home.openCardMenu(btn.dataset.slug, btn.getBoundingClientRect());
+      });
+    });
   },
 
   // Map structured drift-check result → a short, user-readable
@@ -271,7 +326,7 @@ const Home = {
 
   // #194: "Your proposals" — one compact row per proposal the viewer
   // currently has open for voting, across all apps. Hidden when empty.
-  // Rendered above the Starred / All Apps sections inside the #app-list
+  // Rendered above the Your apps / All Apps sections inside the #app-list
   // grid (col-span-full rows, same section-header pattern). Each row
   // deep-links to the proposal's detail in that app's Proposals tab;
   // refreshed live via the vote_update / session_update WS events
@@ -407,6 +462,75 @@ const Home = {
     }, 15000);
   },
 
+  // Pill builder for an app's status/activity flags, rendered ONLY in
+  // the hamburger menu's build-info header now — the card face
+  // carries no chips. Order: missing secrets (most urgent), PRs
+  // awaiting votes, dev sessions in flight, open issues, privacy chip
+  // last. All display-only spans. Returns joined HTML, '' when
+  // there's nothing to flag.
+  //
+  // Development-activity counts (#57) come straight from /api/apps
+  // (DB-derived, no GitHub calls); zero-count chips are dropped. The
+  // missing-secrets chip deliberately omits the key NAMES — those
+  // live in the app view's Secrets panel.
+  renderAppPillsHtml(app) {
+    const openPrs = parseInt(app.open_prs || 0);
+    const activeSessions = parseInt(app.active_sessions || 0);
+    const openIssues = parseInt(app.open_issues || 0);
+    const hasMissing = Array.isArray(app.missingSecrets) && app.missingSecrets.length;
+    const chipDefs = [];
+    if (hasMissing) {
+      const n = app.missingSecrets.length;
+      chipDefs.push({
+        cls: 'bg-red-500/10 text-red-500',
+        label: 'Missing secrets',
+        tip: `${n} required secret${n === 1 ? '' : 's'} unset — set values in the app's Secrets panel`,
+      });
+    }
+    if (openPrs > 0) {
+      chipDefs.push({
+        cls: 'bg-amber-500/10 text-amber-500',
+        label: `${openPrs} to vote`,
+        tip: `${openPrs} change${openPrs === 1 ? '' : 's'} awaiting community votes`,
+      });
+    }
+    if (activeSessions > 0) {
+      chipDefs.push({
+        cls: 'bg-sky-500/10 text-sky-500',
+        label: `${activeSessions} in dev`,
+        tip: `${activeSessions} build session${activeSessions === 1 ? '' : 's'} in progress`,
+      });
+    }
+    if (openIssues > 0) {
+      chipDefs.push({
+        cls: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400',
+        label: `${openIssues} issue${openIssues === 1 ? '' : 's'}`,
+        tip: `${openIssues} open issue${openIssues === 1 ? '' : 's'}`,
+      });
+    }
+    const chipBaseCls = 'activity-chip inline-flex items-center px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium';
+    const chipsHtml = chipDefs.map((c) =>
+      `<span class="${chipBaseCls} ${c.cls}" title="${c.tip}">${c.label}</span>`
+    ).join('');
+
+    // Visibility chip for non-default settings. View-private dominates
+    // (it implies collab-private); collab-private alone reads as
+    // "invite-only build" since anyone can still see/use the app.
+    // Inline currentColor SVGs (Heroicons v1 outline) instead of emoji
+    // so the glyphs tint violet with the chip in both themes.
+    const visChipCls = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-violet-500/10 text-violet-500 dark:text-violet-400';
+    const visChipIcon = (d) => `<svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="${d}"/></svg>`;
+    const lockIcon = visChipIcon('M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z');
+    const mailIcon = visChipIcon('M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z');
+    const visChipHtml = app.view_visibility === 'private'
+      ? `<span class="${visChipCls}" title="Only collaborators can see and use this app">${lockIcon} Private</span>`
+      : (app.collab_visibility === 'private'
+        ? `<span class="${visChipCls}" title="Anyone can use this app; only invited collaborators can build it">${mailIcon} Invite-only build</span>`
+        : '');
+
+    return `${chipsHtml}${visChipHtml}`;
+  },
+
   renderAppCard(app) {
     const isAwaiting = app.status === 'awaiting_secrets';
     // The status dot is the home tile's single signal for "this app
@@ -428,197 +552,81 @@ const Home = {
       : 'Error';
     const isError = app.status === 'error';
     const isRunning = app.status === 'running';
-    const hasMissing = Array.isArray(app.missingSecrets) && app.missingSecrets.length;
-    // Three at-a-glance signals rendered as stacked rows in the tile
-    // body (see statRows below). activeUsers uses the same sticky
-    // 10-day rule as the group-chat dashboard tile (see
-    // src/services/active-users.js), so the home card and the
-    // dashboard agree on the count. createdRel comes straight from
-    // created_at; updatedRel falls back to created_at when
-    // last_deploy_at is null (pre-migration apps that haven't
-    // redeployed — backfill in schema.sql sets last_deploy_at =
-    // created_at, so this path is mostly defensive).
+    // The active-users count (the same sticky 10-day rule as the
+    // group-chat dashboard tile — see src/services/active-users.js —
+    // so the home card and the dashboard agree) renders as a compact
+    // badge beside the title; the tooltip spells it out.
     const activeUsers = parseInt(app.active_users || 0);
-    const createdRel = formatRelativeTime(app.created_at);
-    const updatedRel = formatRelativeTime(app.last_deploy_at || app.created_at);
     // Awaiting-secrets cards stay clickable so the user can open the
     // app view + Secrets modal to fill values; other non-running
     // statuses show no app surface.
     const cursorClass = (isRunning || isAwaiting) ? 'cursor-pointer' : 'cursor-not-allowed opacity-70';
 
-    // Same per-app pill renderer as the header (AppView), so the two
-    // surfaces stay visually identical and turn yellow + spin in
-    // lockstep when a redeploy is in flight. The home pill omits the
-    // PR-context tooltip — that's only meaningful in the app view.
-    // NOTE: classic-script `const AppView` from app-view.js is in the
-    // shared script-global lexical env but is NOT a property of window,
-    // so we reference it directly (a `window.AppView` guard would
-    // silently short-circuit to false and drop the pill).
-    const pillHtml = (typeof AppView !== 'undefined' && AppView.renderAppVersionPillHTML)
-      ? AppView.renderAppVersionPillHTML({
-          slug: app.slug,
-          version: app.version || null,
-          deployProgress: app.deployProgress || null,
-          includePrContext: false,
-          // Quiet on home tiles — the status dot up top covers the
-          // "redeploying" signal, so this pill only ever shows the
-          // idle border-only chip.
-          quiet: true,
-        })
-      : '';
-
     // Per-tile sections, computed up front so the template stays
     // readable. Anything that may be empty is collapsed to '' so the
-    // tile self-trims without leaving stray padding. Stat rows are
-    // each on their own line so they read cleanly inside the
-    // constrained tile width — at 3 columns the dot-separated single-
-    // line variant we use elsewhere wraps awkwardly.
+    // tile self-trims without leaving stray padding.
+    //
+    // The warning line is status-only: the missing-secret detail (and
+    // every other pill — to vote / in dev / issues / privacy) lives
+    // ONLY in the hamburger menu's build-info header now
+    // (renderMenuHeaderHtml → renderAppPillsHtml); the card face
+    // carries no chips at all.
     const warningHtml = statusLabel
-      ? `<p class="text-xs mt-0.5 ${isAwaiting ? 'text-amber-500' : 'text-yellow-500'}">${statusLabel}${
-          isAwaiting && hasMissing ? `: ${escapeHtml(app.missingSecrets.join(', '))}` : ''
-        }</p>`
-      : (hasMissing
-        ? `<p class="text-xs mt-0.5 text-red-500">Missing secrets: ${escapeHtml(app.missingSecrets.join(', '))}</p>`
-        : '');
-
-    // Visibility chip for non-default settings. View-private dominates
-    // (it implies collab-private); collab-private alone reads as
-    // "invite-only build" since anyone can still see/use the app.
-    const visChipCls = 'inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-violet-500/10 text-violet-500 dark:text-violet-400';
-    // Inline currentColor SVGs (Heroicons v1 outline) instead of emoji
-    // so the glyphs tint violet with the chip in both themes.
-    const visChipIcon = (d) => `<svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="${d}"/></svg>`;
-    const lockIcon = visChipIcon('M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z');
-    const mailIcon = visChipIcon('M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z');
-    const visBadgeHtml = app.view_visibility === 'private'
-      ? `<p><span class="${visChipCls}" title="Only collaborators can see and use this app">${lockIcon} Private</span></p>`
-      : (app.collab_visibility === 'private'
-        ? `<p><span class="${visChipCls}" title="Anyone can use this app; only invited collaborators can build it">${mailIcon} Invite-only build</span></p>`
-        : '');
-
-    // Development-activity chips (#57): PRs awaiting votes, dev sessions
-    // in flight, open issues. Counts come straight from /api/apps (DB-
-    // derived, no GitHub calls). Zero-count chips are dropped so quiet
-    // apps keep today's clean tile; an all-zero card collapses the row
-    // entirely, same self-trimming pattern as warningHtml/visBadgeHtml.
-    // Chips deep-link into the app's dev surfaces, but only when the
-    // card itself is interactive (same running/awaiting condition as
-    // the card click handler) — otherwise they render as inert spans.
-    const openPrs = parseInt(app.open_prs || 0);
-    const activeSessions = parseInt(app.active_sessions || 0);
-    const openIssues = parseInt(app.open_issues || 0);
-    const chipDefs = [];
-    if (openPrs > 0) {
-      chipDefs.push({
-        target: 'proposals',
-        cls: 'bg-amber-500/10 text-amber-500',
-        label: `${openPrs} to vote`,
-        tip: `${openPrs} change${openPrs === 1 ? '' : 's'} awaiting community votes`,
-      });
-    }
-    if (activeSessions > 0) {
-      chipDefs.push({
-        target: 'dev',
-        cls: 'bg-sky-500/10 text-sky-500',
-        label: `${activeSessions} in dev`,
-        tip: `${activeSessions} build session${activeSessions === 1 ? '' : 's'} in progress`,
-      });
-    }
-    if (openIssues > 0) {
-      chipDefs.push({
-        target: 'issues',
-        cls: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400',
-        label: `${openIssues} issue${openIssues === 1 ? '' : 's'}`,
-        tip: `${openIssues} open issue${openIssues === 1 ? '' : 's'}`,
-      });
-    }
-    const chipsClickable = isRunning || isAwaiting;
-    const chipBaseCls = 'activity-chip inline-flex items-center px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium';
-    const chipsRowHtml = chipDefs.length
-      ? `<div class="flex flex-wrap items-center gap-1.5">${chipDefs.map((c) => (
-          chipsClickable
-            ? `<button class="${chipBaseCls} ${c.cls} hover:opacity-75 transition-opacity" data-slug="${app.slug}" data-target="${c.target}" title="${c.tip}">${c.label}</button>`
-            : `<span class="${chipBaseCls} ${c.cls}" title="${c.tip}">${c.label}</span>`
-        )).join('')}</div>`
+      ? `<p class="text-xs mt-0.5 ${isAwaiting ? 'text-amber-500' : 'text-yellow-500'}">${statusLabel}</p>`
       : '';
 
-    const statRows = [];
-    if (activeUsers > 0) {
-      statRows.push(`<div><span class="font-semibold text-zinc-700 dark:text-zinc-300">${activeUsers}</span> active user${activeUsers === 1 ? '' : 's'}</div>`);
-    } else {
-      statRows.push(`<div class="text-zinc-400 dark:text-zinc-500">No active users yet</div>`);
-    }
-    if (createdRel) statRows.push(`<div>Created ${createdRel}</div>`);
-    if (updatedRel && updatedRel !== createdRel) statRows.push(`<div>Updated ${updatedRel}</div>`);
-    // `min-w-0` on the stats column lets it shrink under the pill on
-    // narrow tiles instead of forcing the pill off the right edge.
-    const statsHtml = `<div class="text-xs text-zinc-500 dark:text-zinc-400 space-y-0.5 min-w-0">${statRows.join('')}</div>`;
+    // Active-users badge beside the title: a tiny person glyph + the
+    // bare count, neutral grey, display-only. Always rendered (0
+    // included) so the signal is uniform across cards.
+    const usersBadgeHtml = `
+      <span class="users-badge inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-zinc-500/10 text-zinc-500 dark:text-zinc-400 shrink-0" title="${activeUsers} active user${activeUsers === 1 ? '' : 's'}"><svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>${activeUsers}</span>`;
 
-    // Admin / creator buttons — all corner-pinned at the top-right of
-    // the tile so the bottom of the card is reserved for the muted
-    // commit pill alone. Retry is creator-or-admin (only on errored
-    // apps); check-updates and delete are admin-only. The corner div
-    // is rendered conditionally so we don't reserve right padding on
-    // tiles that have no buttons there at all.
-    const isFavorited = !!app.is_favorited;
-    // Mutating controls gate on canAdminWrite (full admin) — view-only
-    // admins don't get them (issue #311). Retry stays creator-or-full-admin.
+    // Hamburger actions-menu trigger, rendered as a round badge
+    // overlapping the icon's top-right corner — always in that spot
+    // (secondary actions live in the popover it opens; see
+    // openCardMenu). Retry on errored cards is the one inline
+    // exception: the card's primary recovery action pins to the
+    // card's top-right corner (creator-or-full-admin, same gate as
+    // before — view-only admins excluded, issue #311).
     const showRetry = isError && (App.user?.canAdminWrite || App.user?.id === app.created_by);
-    const showCheck = App.user?.canAdminWrite && app.repo_url && isRunning && !app.self_hosted;
-    const showDelete = !!App.user?.canAdminWrite;
-    const showLock = !!App.user?.canAdminWrite;
     const isLocked = !!app.locked;
-    const hasCornerBtns = true;
-    // `Retry` is text rather than a glyph so we widen the title-row's
-    // right padding when it's present; otherwise pr-14 is enough for
-    // the two icon buttons + gap. With lock added we widen slightly
-    // when there are 3 glyph buttons (check + lock + delete).
-    const glyphCount = 1 + (showCheck ? 1 : 0) + (showLock ? 1 : 0) + (showDelete ? 1 : 0);
-    const titlePadClass = showRetry
-      ? 'pr-24'
-      : (glyphCount >= 3 ? 'pr-20' : 'pr-14');
-    const starBtnHtml = `<button class="star-btn w-6 h-6 flex items-center justify-center rounded-md transition-colors text-sm leading-none ${isFavorited ? 'text-amber-400 hover:text-amber-300' : 'text-zinc-400 hover:text-amber-400 hover:bg-amber-500/10'}" data-slug="${app.slug}" data-favorited="${isFavorited}" title="${isFavorited ? 'Unstar app' : 'Star app'}" aria-label="${isFavorited ? 'Unstar app' : 'Star app'}">${isFavorited ? '★' : '☆'}</button>`;
-    const cornerBtnsHtml = `
-      <div class="absolute top-2 right-2 flex items-center gap-1">
-        ${starBtnHtml}
-        ${showRetry ? `<button class="retry-btn text-xs text-emerald-500 hover:text-emerald-400 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors" data-slug="${app.slug}">Retry</button>` : ''}
-        ${showCheck ? `<button class="check-updates-btn w-6 h-6 flex items-center justify-center rounded-md text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors text-sm leading-none" data-slug="${app.slug}" title="Check for updates and redeploy if changed" aria-label="Check for updates">⟳</button>` : ''}
-        ${showLock ? Home.renderLockButton(app.slug, isLocked) : ''}
-        ${showDelete ? `<button class="delete-btn w-6 h-6 flex items-center justify-center rounded-md text-zinc-400 hover:text-red-500 hover:bg-red-500/10 transition-colors text-base leading-none" data-slug="${app.slug}" title="Delete app" aria-label="Delete app">&times;</button>` : ''}
-      </div>`;
+    const menuBadgeHtml = `
+      <button class="card-menu-btn absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300 hover:text-zinc-700 dark:hover:text-zinc-100 hover:border-zinc-300 dark:hover:border-zinc-500 transition-colors" data-slug="${app.slug}" title="App actions" aria-label="App actions" aria-haspopup="menu"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>`;
+    const retryHtml = showRetry
+      ? `<button class="retry-btn absolute top-2 right-2 text-xs text-emerald-500 hover:text-emerald-400 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors" data-slug="${app.slug}">Retry</button>`
+      : '';
 
-    // Stats column (left) + commit pill (right) share one flex row at
-    // the bottom of the tile. `items-end` baselines the pill against
-    // the last stat row ("Updated Yt ago") so the two read across
-    // horizontally; `mt-auto` pushes the whole block to the foot of
-    // the card so tiles in the same grid row line up nicely. The pill
-    // slot is always rendered (the renderer emits a "<slug> · dev"
-    // placeholder when there's no SHA) so .app-version-pill-slot is
-    // reachable by Home.updateAppCardPill on WS deploy events.
-    const statsAndPillHtml = `
-      <div class="flex items-end justify-between gap-3 pt-1 mt-auto">
-        ${statsHtml}
-        <span class="app-version-pill-slot min-w-0 truncate text-right shrink-0" data-slug="${app.slug}">${pillHtml}</span>
-      </div>`;
-
+    // Layout: icon first at the top (hamburger badged on its corner),
+    // title row centered below it (name + status dot + active-users
+    // badge), then the status warning when present. Everything is
+    // horizontally centered in the tile — homescreen-launcher style —
+    // and the card draws NO border: the violet hover/drop-slot tint
+    // (.app-card:hover in app.css) is the affordance. The title row
+    // is width-capped (max-w-full + min-w-0) so long names truncate
+    // with an ellipsis instead of stretching the layout.
+    //
+    // Every card carries app-card-draggable + touch-pan-y (not just
+    // the reorderable ones): the long-press actions menu applies to
+    // every card, so text selection / the mobile callout must be
+    // suppressed card-wide, while touch-pan-y keeps vertical
+    // scrolling alive until a long-press actually fires (see app.css).
     return `
-      <div class="app-card relative rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 hover:border-violet-300 dark:hover:border-violet-700 transition-colors p-4 flex flex-col gap-3 ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}">
-        ${cornerBtnsHtml}
-        <div class="flex items-start gap-3 ${titlePadClass}">
-          <div class="w-11 h-11 rounded-xl bg-violet-600/20 flex items-center justify-center text-violet-400 font-bold text-base shrink-0">
+      <div class="app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-2 ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}">
+        ${retryHtml}
+        <div class="relative w-14 h-14 shrink-0">
+          <div class="w-14 h-14 rounded-xl bg-violet-600/20 flex items-center justify-center text-violet-400 font-bold text-xl">
             ${app.name.charAt(0).toUpperCase()}
           </div>
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-2">
-              <span class="font-medium truncate">${escapeHtml(app.name)}</span>
-              <span class="status-dot ${statusClass}" title="${app.status}"></span>
-            </div>
-            ${warningHtml}
-            ${visBadgeHtml}
-          </div>
+          ${menuBadgeHtml}
         </div>
-        ${chipsRowHtml}
-        ${statsAndPillHtml}
+        <div class="w-full min-w-0">
+          <div class="flex items-center justify-center gap-1.5 min-w-0 max-w-full">
+            <span class="font-medium text-sm truncate min-w-0">${escapeHtml(app.name)}</span>
+            <span class="status-dot ${statusClass} shrink-0" title="${app.status}"></span>
+            ${usersBadgeHtml}
+          </div>
+          ${warningHtml}
+        </div>
       </div>
     `;
   },
@@ -634,82 +642,271 @@ const Home = {
   // hover surface". Hover/active styles live on the pill itself.
   renderCreateTile() {
     return `
-      <div class="home-create-tile rounded-xl border border-transparent bg-violet-500/[0.02] dark:bg-violet-500/[0.04] p-4 flex flex-col gap-3">
-        <div class="flex items-center gap-3">
-          <div class="w-11 h-11 rounded-xl bg-violet-600/20 flex items-center justify-center text-violet-400 font-bold text-base shrink-0">
-            Y
-          </div>
-          <div class="flex-1 min-w-0">
-            <div class="italic text-zinc-500 dark:text-zinc-400 truncate">Your app here</div>
-          </div>
+      <div class="home-create-tile rounded-xl bg-violet-500/[0.02] dark:bg-violet-500/[0.04] p-3 flex flex-col items-center text-center gap-2">
+        <div class="w-14 h-14 rounded-xl bg-violet-600/20 flex items-center justify-center text-violet-400 font-bold text-xl shrink-0">
+          Y
         </div>
-        <button type="button" class="home-create-btn self-start inline-flex items-center gap-2 rounded-full border border-violet-500 dark:border-violet-400 px-4 py-2 text-sm font-medium text-violet-600 dark:text-violet-400 bg-white dark:bg-zinc-900 hover:bg-violet-50 dark:hover:bg-violet-950 transition-colors">
+        <div class="italic text-sm text-zinc-500 dark:text-zinc-400 truncate max-w-full">Your app here</div>
+        <button type="button" class="home-create-btn inline-flex items-center gap-2 rounded-full border border-violet-500 dark:border-violet-400 px-4 py-2 text-sm font-medium text-violet-600 dark:text-violet-400 bg-white dark:bg-zinc-900 hover:bg-violet-50 dark:hover:bg-violet-950 transition-colors">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
           Create new app
         </button>
       </div>`;
   },
 
-  // Lock-toggle button renderer. Two visual states keyed off `locked`:
-  //   - unlocked (default): open-padlock glyph, zinc/violet hover. The
-  //     icon tells the user "click to lock this app".
-  //   - locked: closed-padlock glyph, violet text + violet-tinted hover
-  //     background. The icon tells the user "this app is locked; click
-  //     to unlock". We tint locked icons violet (rather than red or
-  //     amber) because a lock is a governance setting, not an error —
-  //     red would read as "danger / something is wrong".
-  //
-  // Both states share the same `.lock-btn` class so the click handler
-  // in Home.load() can wire them uniformly. `data-locked` carries the
-  // current state so the handler knows which direction to toggle. The
-  // tooltip text adapts so admins know what clicking will do.
-  renderLockButton(slug, isLocked) {
-    const lockedSvg = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/></svg>`;
-    const unlockedSvg = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 10.5V6.75a4.5 4.5 0 119 0v3.75M3.75 21.75h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H3.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/></svg>`;
-    const cls = isLocked
-      ? 'lock-btn w-6 h-6 flex items-center justify-center rounded-md text-violet-500 hover:text-violet-400 hover:bg-violet-500/10 transition-colors leading-none'
-      : 'lock-btn w-6 h-6 flex items-center justify-center rounded-md text-zinc-400 hover:text-violet-400 hover:bg-violet-500/10 transition-colors leading-none';
-    const title = isLocked
-      ? 'App locked — merges also need an admin yes vote. Click to unlock.'
-      : 'Lock this app — admin yes vote will also be required to merge changes.';
-    const label = isLocked ? 'Unlock app' : 'Lock app';
-    return `<button class="${cls}" data-slug="${slug}" data-locked="${isLocked}" title="${title}" aria-label="${label}">${isLocked ? lockedSvg : unlockedSvg}</button>`;
-  },
-
-  // Targeted lock-button refresh for a single app card. Both the
-  // optimistic-click path (in Home.load) and the WS app_update handler
-  // (in app.js handleAppUpdate) route through here so the icon swap is
-  // identical, and so we don't blow away hover/scroll state on other
-  // cards with a full Home.load(). Safe no-op if the card isn't
-  // mounted (different screen, not loaded yet, etc.).
+  // Targeted lock-state refresh for a single app card, called from the
+  // WS app_update handler (app.js handleAppUpdate) and the menu's own
+  // toggle. The menu is built lazily from the Home._apps cache at open
+  // time, so keeping the cache + the card's data-locked attribute fresh
+  // is all that's needed — no live button swap, and no full Home.load()
+  // that would blow away hover/scroll state on other cards. Safe no-op
+  // if the card isn't mounted (different screen, not loaded yet, etc.).
   updateAppCardLock(slug, isLocked) {
     if (!slug) return;
+    const app = (Home._apps || []).find((a) => a.slug === slug);
+    if (app) app.locked = !!isLocked;
     const card = document.querySelector(`.app-card[data-slug="${slug}"]`);
-    if (!card) return;
-    card.dataset.locked = String(!!isLocked);
-    const btn = card.querySelector('.lock-btn');
-    if (!btn) return;
-    const replacement = document.createElement('div');
-    replacement.innerHTML = Home.renderLockButton(slug, isLocked).trim();
-    const fresh = replacement.firstChild;
-    if (!fresh) return;
-    fresh.addEventListener('click', (e) => Home.handleLockClick(e, fresh));
-    btn.replaceWith(fresh);
+    if (card) card.dataset.locked = String(!!isLocked);
   },
 
-  // Click-handler body for the lock button. Shared by Home.load (on the
-  // first render of each card) and Home.updateAppCardLock (on every
-  // subsequent re-render driven by either the optimistic local swap or
-  // a WS app_update event). One source of truth so the toggle behavior
-  // can't drift between the two paths.
-  async handleLockClick(e, btn) {
-    e.stopPropagation();
-    const slug = btn.dataset.slug;
-    const wasLocked = btn.dataset.locked === 'true';
-    const nextLocked = !wasLocked;
-    btn.disabled = true;
+  // ===== "…" card actions menu =====
+  //
+  // One popover implementation shared by the desktop "⋯" button and
+  // the mobile long-press (see _onCardPointerDown). Built lazily on
+  // open from the app object in the Home._apps cache — no hidden
+  // per-card menus in the DOM. Anchored to the trigger rect, appended
+  // to document.body, closed on outside pointerdown / Escape / scroll
+  // / resize / (by default) running an action.
+  _menuEl: null,
+  _menuCleanup: null,
+
+  // Pure item builder, separate from the DOM so tests can pin the
+  // permission gating. Mutating controls gate on canAdminWrite (full
+  // admin) — view-only admins don't get them (issue #311); Retry stays
+  // creator-or-full-admin.
+  //
+  // The Your-apps entry renders for EVERY app so the affordance is
+  // always discoverable. Membership (is_collaborator — you created or
+  // help build the app) isn't removable, so member apps get a
+  // disabled, informational "In Your apps" row instead of a Remove —
+  // without it, a user who is a member of every app they open (e.g.
+  // the creator of most apps on an instance) would never see the
+  // selector anywhere and reasonably conclude it's missing.
+  menuItemsFor(app) {
+    const items = [];
+    const user = App.user || {};
+    const isRunning = app.status === 'running';
+    const isError = app.status === 'error';
+    if (app.is_collaborator) {
+      items.push({
+        key: 'favorite',
+        label: '✓ In Your apps',
+        disabled: true,
+        title: 'You build this app, so it is always in Your apps.',
+      });
+    } else {
+      items.push({
+        key: 'favorite',
+        label: app.is_favorited ? 'Remove from Your apps' : 'Add to Your apps',
+        run: () => Home._menuToggleFavorite(app),
+      });
+    }
+    if (isError && (user.canAdminWrite || user.id === app.created_by)) {
+      items.push({ key: 'retry', label: 'Retry', run: () => Home._menuRetry(app) });
+    }
+    if (user.canAdminWrite && app.repo_url && isRunning && !app.self_hosted) {
+      // keepOpen: the drift check can take 30-90s when a rebuild kicks
+      // off, so the item flips to "Checking…" in place instead of the
+      // menu vanishing with zero feedback.
+      items.push({
+        key: 'check-updates',
+        label: 'Check for updates',
+        keepOpen: true,
+        run: (itemEl) => Home._menuCheckUpdates(app, itemEl),
+      });
+    }
+    if (user.canAdminWrite) {
+      items.push({
+        key: 'lock',
+        label: app.locked ? 'Unlock app' : 'Lock app',
+        title: app.locked
+          ? 'App locked — merges also need an admin yes vote. Click to unlock.'
+          : 'Lock this app — admin yes vote will also be required to merge changes.',
+        run: () => Home._menuToggleLock(app),
+      });
+      items.push({ key: 'delete', label: 'Delete app', danger: true, run: () => Home._menuDelete(app) });
+    }
+    return items;
+  },
+
+  // Build-info header at the top of the "…" menu: the app's FULL,
+  // untruncated name (the card face truncates it), the slug, and the
+  // currently deployed commit — the version pill that used to sit on
+  // the card face. Reuses AppView.renderAppVersionPillHTML (non-quiet,
+  // like the AppView header) so the commit chip looks identical
+  // everywhere and shows the live deploying state when a redeploy is
+  // in flight. NOTE: classic-script `const AppView` from app-view.js
+  // is in the shared script-global lexical env but is NOT a property
+  // of window, so we reference it directly (a `window.AppView` guard
+  // would silently short-circuit to false and drop the pill).
+  renderMenuHeaderHtml(app) {
+    const pillHtml = (typeof AppView !== 'undefined' && AppView.renderAppVersionPillHTML)
+      ? AppView.renderAppVersionPillHTML({
+          slug: app.slug,
+          version: app.version || null,
+          deployProgress: app.deployProgress || null,
+          includePrContext: false,
+        })
+      : `<span class="text-xs font-mono">${escapeHtml(app.slug)} · ${escapeHtml(app.version?.shortSha || 'dev')}</span>`;
+    // "Updated Xh ago" lives here rather than on the card face; falls
+    // back to created_at when last_deploy_at is null (pre-migration
+    // apps — schema.sql backfills last_deploy_at = created_at, so this
+    // is mostly defensive).
+    const updatedRel = formatRelativeTime(app.last_deploy_at || app.created_at);
+    // The app's FULL pill set (missing secrets / to vote / in dev /
+    // issues / privacy) — the card face carries no chips at all, so
+    // this header is the one place they render.
+    const pillsHtml = Home.renderAppPillsHtml(app);
+    return `
+      <div class="card-menu-title">${escapeHtml(app.name || app.slug)}</div>
+      <div class="card-menu-slug">${escapeHtml(app.slug)}</div>
+      <div class="card-menu-version">${pillHtml}</div>
+      ${updatedRel ? `<div class="card-menu-updated">Updated ${escapeHtml(updatedRel)}</div>` : ''}
+      ${pillsHtml ? `<div class="card-menu-pills">${pillsHtml}</div>` : ''}`;
+  },
+
+  openCardMenu(slug, anchorRect) {
+    Home.closeCardMenu();
+    const app = (Home._apps || []).find((a) => a.slug === slug);
+    if (!app) return;
+    const items = Home.menuItemsFor(app);
+    if (!items.length) return;
+
+    const el = document.createElement('div');
+    el.className = 'card-menu';
+    el.setAttribute('role', 'menu');
+    const header = document.createElement('div');
+    header.className = 'card-menu-header';
+    header.innerHTML = Home.renderMenuHeaderHtml(app);
+    el.appendChild(header);
+    for (const item of items) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'card-menu-item' + (item.danger ? ' card-menu-item-danger' : '');
+      btn.textContent = item.label;
+      btn.dataset.key = item.key;
+      if (item.title) btn.title = item.title;
+      if (item.disabled) {
+        // Informational row (e.g. "In Your apps" on member apps):
+        // rendered but inert, so the affordance stays discoverable.
+        btn.disabled = true;
+      } else {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (!item.keepOpen) Home.closeCardMenu();
+          item.run(btn);
+        });
+      }
+      el.appendChild(btn);
+    }
+
+    // Measure hidden, then anchor below the rect LEFT-aligned — the
+    // panel's left edge lines up with the hamburger and the list
+    // opens rightward (right-edge alignment made it hang leftward
+    // across the card). Clamp back toward the left when the right
+    // edge would overflow the viewport; flip above when it would poke
+    // past the bottom edge.
+    el.style.visibility = 'hidden';
+    document.body.appendChild(el);
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    const left = Math.max(8, Math.min(anchorRect.left, window.innerWidth - w - 8));
+    let top = anchorRect.bottom + 4;
+    if (top + h > window.innerHeight - 8) top = Math.max(8, anchorRect.top - h - 4);
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+    el.style.visibility = '';
+
+    const onDocPointerDown = (ev) => {
+      if (!el.contains(ev.target)) Home.closeCardMenu();
+    };
+    const onKeyDown = (ev) => { if (ev.key === 'Escape') Home.closeCardMenu(); };
+    const onScroll = () => Home.closeCardMenu();
+    document.addEventListener('pointerdown', onDocPointerDown, true);
+    document.addEventListener('keydown', onKeyDown);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onScroll);
+    Home._menuEl = el;
+    Home._menuCleanup = () => {
+      document.removeEventListener('pointerdown', onDocPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onScroll);
+    };
+  },
+
+  closeCardMenu() {
+    if (Home._menuCleanup) {
+      Home._menuCleanup();
+      Home._menuCleanup = null;
+    }
+    if (Home._menuEl) {
+      Home._menuEl.remove();
+      Home._menuEl = null;
+    }
+  },
+
+  // ── Menu actions ──────────────────────────────────────────────────
+
+  async _menuToggleFavorite(app) {
+    const next = !app.is_favorited;
     try {
-      const res = await fetch(`/api/apps/${slug}/lock`, {
+      const res = await fetch(`/api/apps/${app.slug}/favorite`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ favorited: next }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      app.is_favorited = next;
+      await Home.load();
+    } catch (err) {
+      alert(`Update failed: ${err.message}`);
+    }
+  },
+
+  async _menuRetry(app) {
+    await fetch(`/api/apps/${app.slug}/retry`, { method: 'POST' });
+    Home.load();
+  },
+
+  async _menuCheckUpdates(app, itemEl) {
+    if (itemEl) {
+      itemEl.disabled = true;
+      itemEl.textContent = 'Checking…';
+    }
+    try {
+      const res = await fetch(`/api/apps/${app.slug}/check-updates`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || `Check failed (HTTP ${res.status})`);
+      } else {
+        Home.reportCheckResult(data);
+      }
+    } catch (err) {
+      alert(`Check failed: ${err.message}`);
+    } finally {
+      Home.closeCardMenu();
+      await Home.load();
+    }
+  },
+
+  async _menuToggleLock(app) {
+    const nextLocked = !app.locked;
+    try {
+      const res = await fetch(`/api/apps/${app.slug}/lock`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ locked: nextLocked }),
@@ -719,50 +916,23 @@ const Home = {
         alert(data.error || `Lock toggle failed (HTTP ${res.status})`);
         return;
       }
-      Home.updateAppCardLock(slug, nextLocked);
+      Home.updateAppCardLock(app.slug, nextLocked);
     } catch (err) {
       alert(`Lock toggle failed: ${err.message}`);
-    } finally {
-      btn.disabled = false;
     }
   },
 
-  async handleStarClick(e, btn) {
-    e.stopPropagation();
-    const slug = btn.dataset.slug;
-    const wasFavorited = btn.dataset.favorited === 'true';
-    const next = !wasFavorited;
-    btn.dataset.favorited = String(next);
-    btn.textContent = next ? '★' : '☆';
-    btn.classList.toggle('text-amber-400', next);
-    btn.classList.toggle('hover:text-amber-300', next);
-    btn.classList.toggle('text-zinc-400', !next);
-    btn.classList.toggle('hover:text-amber-400', !next);
-    btn.classList.toggle('hover:bg-amber-500/10', !next);
-    btn.title = next ? 'Unstar app' : 'Star app';
-    btn.disabled = true;
-    try {
-      const res = await fetch(`/api/apps/${slug}/favorite`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ favorited: next }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `HTTP ${res.status}`);
-      }
-      await Home.load();
-    } catch (err) {
-      btn.dataset.favorited = String(wasFavorited);
-      btn.textContent = wasFavorited ? '★' : '☆';
-      btn.title = wasFavorited ? 'Unstar app' : 'Star app';
-      alert(`Star toggle failed: ${err.message}`);
-    } finally {
-      btn.disabled = false;
+  async _menuDelete(app) {
+    if (!confirm('Delete this app?')) return;
+    const res = await fetch(`/api/apps/${app.slug}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || `Delete failed (HTTP ${res.status})`);
     }
+    await Home.load();
   },
 
-  // ===== Starred-section drag-and-drop (issue #128) =====
+  // ===== "Your apps" drag-and-drop (issue #128) =====
   //
   // Vanilla Pointer Events (same pattern as the spec-viewer resizer in
   // dev-chat.js — setPointerCapture + move/up/cancel on the captured
@@ -771,7 +941,7 @@ const Home = {
   // Homescreen-style visuals: picking a card up spawns a floating
   // clone ("ghost") that tracks the pointer, while the real card stays
   // in the grid restyled as a dashed drop slot. As the slot moves
-  // among its starred siblings, the siblings FLIP-animate into their
+  // among its "Your apps" siblings, the siblings FLIP-animate into their
   // new grid positions; on drop the ghost glides into the slot and the
   // real card is swapped back in. The in-flow card doubles as the drop
   // indicator, so the 1/2/3-column grid layout stays correct for free.
@@ -784,13 +954,16 @@ const Home = {
   // pointerup that ends a drag (see the card click handler in load()).
   _suppressClick: false,
 
-  wireStarredDrag(listEl) {
-    listEl.querySelectorAll('.app-card[data-starred="true"]').forEach((card) => {
-      card.addEventListener('pointerdown', (e) => Home._onStarredPointerDown(e, card, listEl));
-    });
-  },
-
-  _onStarredPointerDown(e, card, listEl) {
+  // Unified card pointer handler, attached to EVERY card by
+  // _wireCards. Two gestures share it:
+  //   - touch long-press (~350ms, finger still) → opens the "…"
+  //     actions menu for any card;
+  //   - drag-to-reorder (canDrag — "Your apps" cards only, and only
+  //     in the sectioned view): mouse promotes on >6px movement as
+  //     before; on touch, keeping the finger down after the menu
+  //     opened and moving >10px dismisses the menu and picks the card
+  //     up, so both gestures coexist on one press.
+  _onCardPointerDown(e, card, listEl, canDrag) {
     if (e.button !== 0) return;
     // A previous drag may still be settling (the ghost glides into the
     // slot for ~190ms after pointerup, with _dragActive held true).
@@ -798,13 +971,11 @@ const Home = {
     // teardown clear _dragActive and sibling styles under the new one.
     if (Home._dragActive) return;
     // Same guard list as the navigation click handler — a press that
-    // starts on a corner button is a button press, never a drag.
+    // starts on a button is a button press, never a drag or a
+    // long-press.
     if (
-      e.target.closest('.star-btn') ||
-      e.target.closest('.lock-btn') ||
-      e.target.closest('.delete-btn') ||
-      e.target.closest('.retry-btn') ||
-      e.target.closest('.check-updates-btn')
+      e.target.closest('.card-menu-btn') ||
+      e.target.closest('.retry-btn')
     ) return;
 
     const startX = e.clientX;
@@ -812,6 +983,7 @@ const Home = {
     const pointerId = e.pointerId;
     const isTouch = e.pointerType === 'touch';
     let dragging = false;
+    let menuOpened = false;
     let longPressTimer = null;
     let ghost = null;
     // Pointer position at pickup + the ghost's fixed-position origin;
@@ -832,8 +1004,8 @@ const Home = {
     // feature working if the markup ever changes.
     const scrollEl = listEl.closest('.overflow-y-auto') || document.scrollingElement;
 
-    const starredCards = () =>
-      [...listEl.querySelectorAll('.app-card[data-starred="true"]')];
+    const yoursCards = () =>
+      [...listEl.querySelectorAll('.app-card[data-yours="true"]')];
 
     const beginDrag = (refX, refY) => {
       dragging = true;
@@ -857,7 +1029,7 @@ const Home = {
       ghostLeft = rect.left;
       ghostTop = rect.top;
       ghost = card.cloneNode(true);
-      ghost.removeAttribute('data-starred');
+      ghost.removeAttribute('data-yours');
       Object.assign(ghost.style, {
         position: 'fixed',
         left: `${rect.left}px`,
@@ -876,9 +1048,12 @@ const Home = {
       // The real card stays in the grid as the drop slot: contents
       // hidden, box restyled as a dashed violet gap. Inline styles
       // rather than Tailwind utilities so the look doesn't depend on
-      // the CDN JIT generating classes mid-gesture.
+      // the CDN JIT generating classes mid-gesture. The explicit
+      // borderWidth matters: the resting card is borderless now, so
+      // dashed style alone would render nothing.
       for (const child of card.children) child.style.visibility = 'hidden';
       Object.assign(card.style, {
+        borderWidth: '1px',
         borderStyle: 'dashed',
         borderColor: 'rgba(139, 92, 246, 0.55)',
         backgroundColor: 'rgba(139, 92, 246, 0.07)',
@@ -899,11 +1074,23 @@ const Home = {
       document.body.style.cursor = 'grabbing';
     };
 
-    // Touch: a drag starts only after a ~350ms long-press during which
-    // the finger stays put (< 10px). Movement before the timer fires
-    // means the user is scrolling — bail and let the browser pan
-    // (touch-pan-y on the card keeps that path native).
-    if (isTouch) longPressTimer = setTimeout(() => beginDrag(startX, startY), 350);
+    // Touch: a ~350ms long-press during which the finger stays put
+    // (< 10px) opens the "…" actions menu (every card). On a
+    // draggable card, continuing to hold and moving the finger then
+    // promotes to a drag (see onMove). Movement before the timer
+    // fires means the user is scrolling — bail and let the browser
+    // pan (touch-pan-y on the card keeps that path native).
+    if (isTouch) {
+      longPressTimer = setTimeout(() => {
+        menuOpened = true;
+        // Eat the synthetic click the browser fires when the finger
+        // lifts, so releasing the long-press doesn't also open the
+        // app. The card click handler resets the flag; onUp's timeout
+        // clears it when no click follows.
+        Home._suppressClick = true;
+        Home.openCardMenu(card.dataset.slug, card.getBoundingClientRect());
+      }, 350);
+    }
 
     // Pointer Events alone can't hold off the browser's pan once the
     // long-press promotes to a drag: the card's touch-action (pan-y)
@@ -916,10 +1103,13 @@ const Home = {
     // registered non-passive (document-level touchmove defaults to
     // passive). While the gesture is still ambiguous (!dragging) it
     // does nothing and scrolling stays native.
-    const onTouchMove = (ev) => { if (dragging) ev.preventDefault(); };
+    // (menuOpened counts too: once the long-press menu is up we keep
+    // the gesture claimed, so held-move can still promote to a drag
+    // instead of scrolling the page out from under the open menu.)
+    const onTouchMove = (ev) => { if (dragging || menuOpened) ev.preventDefault(); };
     // Android fires contextmenu at ~500ms of long-press — after our
-    // 350ms pickup — which would pop a menu mid-drag; eat it.
-    const onContextMenu = (ev) => { if (dragging) ev.preventDefault(); };
+    // 350ms menu/pickup — which would pop the native menu on top; eat it.
+    const onContextMenu = (ev) => { if (dragging || menuOpened) ev.preventDefault(); };
     if (isTouch) {
       document.addEventListener('touchmove', onTouchMove, { passive: false });
       document.addEventListener('contextmenu', onContextMenu);
@@ -930,13 +1120,13 @@ const Home = {
         `translate(${x - grabX}px, ${y - grabY}px) scale(1.04)`;
     };
 
-    // FLIP-animate the other starred cards when the drop slot moves:
-    // measure where each sibling is right now (mid-animation positions
-    // included, so rapid slot changes retarget smoothly), apply the
-    // reorder, then play each one from its old spot to its new grid
-    // position.
+    // FLIP-animate the other "Your apps" cards when the drop slot
+    // moves: measure where each sibling is right now (mid-animation
+    // positions included, so rapid slot changes retarget smoothly),
+    // apply the reorder, then play each one from its old spot to its
+    // new grid position.
     const flipReorder = (applyReorder) => {
-      const sibs = starredCards().filter((c) => c !== card);
+      const sibs = yoursCards().filter((c) => c !== card);
       const firstRects = new Map(sibs.map((c) => [c, c.getBoundingClientRect()]));
       applyReorder();
       // Clear in-flight transforms so the post-reorder measurement is
@@ -964,14 +1154,15 @@ const Home = {
     };
 
     // Move the drop slot to wherever (x, y) points. Hit-tests against
-    // the other starred cards (the ghost is pointer-events: none, so it
-    // never occludes this). Hits on "All Apps" cards, the create tile,
-    // or section headers fall through (no [data-starred] ancestor) and
-    // the slot stays put — drops are constrained to the Starred section
-    // by construction. Shared by pointer moves and the auto-scroll loop.
+    // the other "Your apps" cards (the ghost is pointer-events: none,
+    // so it never occludes this). Hits on "All Apps" cards, the create
+    // tile, or section headers fall through (no [data-yours] ancestor)
+    // and the slot stays put — drops are constrained to the Your apps
+    // section by construction. Shared by pointer moves and the
+    // auto-scroll loop.
     const updateSlot = (x, y) => {
       const over = document.elementFromPoint(x, y)
-        ?.closest('.app-card[data-starred="true"]');
+        ?.closest('.app-card[data-yours="true"]');
       if (!over || over === card || !listEl.contains(over)) return;
       // Insert before when the pointer is in the leading half of the
       // hovered card, after otherwise. "Leading" follows reading order:
@@ -1071,11 +1262,12 @@ const Home = {
         ghost = null;
       }
       for (const child of card.children) child.style.visibility = '';
+      card.style.borderWidth = '';
       card.style.borderStyle = '';
       card.style.borderColor = '';
       card.style.backgroundColor = '';
       card.style.touchAction = '';
-      for (const c of starredCards()) {
+      for (const c of yoursCards()) {
         c.style.transition = '';
         c.style.transform = '';
       }
@@ -1097,9 +1289,16 @@ const Home = {
       if (!dragging) {
         const dist = Math.hypot(ev.clientX - startX, ev.clientY - startY);
         if (isTouch) {
-          // Finger moved before the long-press fired → it's a scroll.
-          if (dist > 10) detach();
-        } else if (dist > 6) {
+          if (!menuOpened) {
+            // Finger moved before the long-press fired → it's a scroll.
+            if (dist > 10) detach();
+          } else if (canDrag && dist > 10) {
+            // Held past the long-press and moved on a reorderable
+            // card: the menu steps aside and the drag takes over.
+            Home.closeCardMenu();
+            beginDrag(ev.clientX, ev.clientY);
+          }
+        } else if (canDrag && dist > 6) {
           // Mouse/pen: > 6px from the down point promotes to a drag;
           // below that it stays a click for the navigation handler.
           beginDrag(ev.clientX, ev.clientY);
@@ -1120,6 +1319,11 @@ const Home = {
       const didDrag = dragging;
       detach();
       if (!didDrag) {
+        // A long-press that opened the menu set _suppressClick so the
+        // release doesn't navigate; clear it on the next tick in case
+        // no synthetic click follows (it would otherwise eat a later
+        // genuine tap).
+        if (menuOpened) setTimeout(() => { Home._suppressClick = false; }, 0);
         runPendingReload();
         return;
       }
@@ -1139,7 +1343,7 @@ const Home = {
         `translate(${target.left - ghostLeft}px, ${target.top - ghostTop}px) scale(1)`;
       setTimeout(async () => {
         restoreCard();
-        await Home._saveStarredOrder(listEl);
+        await Home._saveYoursOrder(listEl);
         runPendingReload();
       }, 190);
     };
@@ -1172,12 +1376,14 @@ const Home = {
     listEl.addEventListener('pointercancel', onCancel);
   },
 
-  // Persist the order currently shown in the DOM. On success the DOM
-  // is already correct — no reload needed, the server now agrees. On
-  // failure, alert + full Home.load() to restore server truth (same
-  // optimistic-then-revert shape as handleStarClick).
-  async _saveStarredOrder(listEl) {
-    const order = [...listEl.querySelectorAll('.app-card[data-starred="true"]')]
+  // Persist the "Your apps" order currently shown in the DOM (the
+  // server upserts app_favorites rows, so member apps that were never
+  // manually added hold a position too). On success the DOM is already
+  // correct — no reload needed, the server now agrees. On failure,
+  // alert + full Home.load() to restore server truth (same
+  // optimistic-then-revert shape as _menuToggleFavorite).
+  async _saveYoursOrder(listEl) {
+    const order = [...listEl.querySelectorAll('.app-card[data-yours="true"]')]
       .map((c) => c.dataset.slug);
     try {
       const res = await fetch('/api/favorites/order', {
@@ -1244,20 +1450,31 @@ const Home = {
     });
   },
 
-  // Targeted pill update for a single app card. Called from the
-  // `app_redeploy_status` and `app_version_changed` WS handlers so
-  // the home screen flips into the deploying state (and back) without
-  // a full Home.load() re-render that would also blow away pending
-  // hover/scroll state on other cards.
+  // Targeted deploy-state update for a single app. Called from the
+  // `app_redeploy_status` WS handler (deploy END triggers a full
+  // Home.load() instead — see app.js) so the home screen flips into
+  // the deploying state without a full re-render that would blow away
+  // pending hover/scroll state on other cards.
   //
-  // Also re-classes the card's status dot, since the home tile uses
-  // the dot (not the pill's `--deploying` modifier) as the visible
-  // "this app is redeploying" signal. Without this, a redeploy that
-  // arrives over WS on an already-running card wouldn't change any
-  // visible state — the pill stays quiet (we ask for it that way) and
-  // the dot would remain green until a full Home.load().
+  // The commit pill no longer renders on the card face — build info
+  // lives in the "…" menu's header, which is built lazily from the
+  // Home._apps cache at open time. So this (1) refreshes the cached
+  // app's version/deployProgress so an already-open-next-time menu
+  // shows fresh info, and (2) re-classes the card's status dot — the
+  // tile's only visible "this app is redeploying" signal. Without the
+  // dot update, a redeploy arriving over WS on an already-running card
+  // wouldn't change any visible state until a full Home.load().
   updateAppCardPill(slug, opts) {
     if (!slug) return;
+    const app = (Home._apps || []).find((a) => a.slug === slug);
+    if (app) {
+      app.deployProgress = opts && opts.deployProgress ? opts.deployProgress : null;
+      // The deploy-start event carries version: null (the old SHA is
+      // hidden while deploying anyway); keep the cached SHA so the
+      // menu's fallback text stays meaningful, and only overwrite when
+      // an event actually supplies one.
+      if (opts && opts.version) app.version = opts.version;
+    }
     const card = document.querySelector(`.app-card[data-slug="${slug}"]`);
     if (!card) return;
     const isInFlightDeploy = !!(opts && opts.deployProgress && opts.deployProgress.deploying);
@@ -1271,17 +1488,6 @@ const Home = {
       dot.classList.remove('running', 'creating', 'error');
       dot.classList.add(next);
     }
-    const slot = card.querySelector('.app-version-pill-slot');
-    if (!slot || typeof AppView === 'undefined' || !AppView.renderAppVersionPillHTML) return;
-    slot.innerHTML = AppView.renderAppVersionPillHTML({
-      slug,
-      version: opts && opts.version ? opts.version : null,
-      deployProgress: opts && opts.deployProgress ? opts.deployProgress : null,
-      includePrContext: false,
-      // Same quiet rule as renderAppCard above — this pill never shows
-      // the yellow deploying state on home tiles; the status dot does.
-      quiet: true,
-    });
   },
 };
 

@@ -1168,22 +1168,29 @@ function appRoutes(config) {
     }
   });
 
-  // Persist the caller's personal ordering of starred apps (issue #128).
-  // Deliberately NOT under /api/apps/… so it can never collide with the
-  // :slug-parameterised routes above. Body is the user's complete starred
-  // list, first-to-last: { order: ["slug-a", "slug-b", ...] }.
+  // Persist the caller's personal ordering of their "Your apps" cards
+  // (issue #128; homepage restructure). Deliberately NOT under
+  // /api/apps/… so it can never collide with the :slug-parameterised
+  // routes above. Body is the user's complete section list,
+  // first-to-last: { order: ["slug-a", "slug-b", ...] }.
   //
   // The save is a self-healing full rewrite inside one transaction:
   // every one of the caller's favorites is reset to NULL, then each
-  // submitted slug that is actually favorited gets sort_order = its
-  // array index. Submitted slugs that aren't favorited (or don't exist)
-  // are silently ignored — favorites are non-sensitive (same trust
-  // level as the toggle's DELETE) and a stale client list shouldn't
-  // 400 the whole save. Favorites missing from the array end up NULL
-  // and fall to the back via the client's fallback ordering. No
-  // per-app access re-check needed: only rows keyed by req.user.id are
-  // touched, and a user can only have favorited apps they could view
-  // at star time.
+  // submitted slug gets an UPSERTED app_favorites row with sort_order
+  // = its array index. Upsert rather than update-only because "Your
+  // apps" contains member apps (app_collaborators) that were never
+  // explicitly favorited — dragging one into position must still
+  // persist, and app_favorites doubles as the single personal-ordering
+  // table. Inserting the row is invisible to section membership
+  // (members are included regardless).
+  //
+  // Unknown slugs fall out of the JOIN and are silently ignored — a
+  // stale client list shouldn't 400 the whole save. Because rows can
+  // now spring into being, the insert is restricted to apps the caller
+  // could view (public, or member of a private one, or admin; plus the
+  // self_hosted gate) so slug-guessing can't mint favorites for hidden
+  // apps. Favorites missing from the array end up NULL and fall to the
+  // back via the client's fallback ordering.
   router.put('/api/favorites/order', async (req, res) => {
     const { order } = req.body || {};
     if (
@@ -1201,16 +1208,23 @@ function appRoutes(config) {
         [req.user.id]
       );
       if (order.length > 0) {
+        const isAdmin = !!req.user?.isAdmin;
+        const showSelfHosted = isAdmin || !!config.selfAppPublicVoting;
         await client.query(
-          `UPDATE app_favorites f
-           SET sort_order = ord.idx
+          `INSERT INTO app_favorites (app_id, user_id, sort_order)
+           SELECT a.id, $1, ord.idx
            FROM (
              SELECT slug, (ordinality - 1)::int AS idx
              FROM unnest($2::text[]) WITH ORDINALITY AS t(slug, ordinality)
            ) ord
            JOIN apps a ON a.slug = ord.slug
-           WHERE f.user_id = $1 AND f.app_id = a.id`,
-          [req.user.id, order]
+           WHERE (NOT a.self_hosted OR $3::boolean)
+             AND ($4::boolean OR a.view_visibility = 'public' OR EXISTS (
+               SELECT 1 FROM app_collaborators c
+               WHERE c.app_id = a.id AND c.user_id = $1 AND c.status = 'member'
+             ))
+           ON CONFLICT (app_id, user_id) DO UPDATE SET sort_order = EXCLUDED.sort_order`,
+          [req.user.id, order, showSelfHosted, isAdmin]
         );
       }
       await client.query('COMMIT');

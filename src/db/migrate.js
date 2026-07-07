@@ -38,6 +38,7 @@ async function migrate(config) {
   await seedStagingCcEstimateRun(pool, config);
   await seedStagingDemoAppCard(pool);
   await seedStagingMembersPanel(pool);
+  await seedStagingYourApps(pool, config);
   await seedStagingAppQuotaUsers(pool);
   await seedStagingViewOnlyAdmin(pool);
   await seedStagingWalletUsers(pool);
@@ -1816,6 +1817,72 @@ async function seedStagingMembersPanel(pool) {
     log.info('db', 'Staging members-panel fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging members-panel seeding failed', { message: err.message });
+  }
+}
+
+// Fixtures for the home screen's "Your apps" section + search bar
+// (homepage restructure). The section is the union of membership
+// (app_collaborators status='member') and manual favorites
+// (app_favorites), keyed to the VIEWER — and the staging tester logs
+// in as the admin account seedAdmin creates, whose personal rows won't
+// exist in a fresh clone. Seed both inclusion paths for that account:
+//   - a membership row on 'Staging demo app' (900001, from
+//     seedStagingDemoAppCard above) → the automatic path;
+//   - a favorite row (with sort_order) on a demo app the admin is NOT
+//     a member of → the manual "Add to Your apps" path + ordering.
+// Also seed a handful of extra running public apps with distinct,
+// searchable names so the search bar has something to filter and the
+// denser multi-column grid actually wraps. All idempotent (fixed
+// 900xxx ids + ON CONFLICT DO NOTHING), obviously fake ("Staging
+// demo …" prefix), and a strict no-op outside staging.
+async function seedStagingYourApps(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    // Searchable demo apps, owned by the existing staging-demo-user
+    // (900001). Must exist before the favorite row below references
+    // one of them.
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, view_visibility, created_by)
+       VALUES
+         (900040, 'Staging demo Chess Arena',  'staging-demo-chess-arena',  'running', 'public', 900001),
+         (900041, 'Staging demo Puzzle Chain', 'staging-demo-puzzle-chain', 'running', 'public', 900001),
+         (900042, 'Staging demo Word Garden',  'staging-demo-word-garden',  'running', 'public', 900001),
+         (900043, 'Staging demo Pixel Racer',  'staging-demo-pixel-racer',  'running', 'public', 900001)
+       ON CONFLICT DO NOTHING`
+    );
+
+    // Grant the rows to every identity a tester's eyes look through:
+    // the interactive admin login (config.adminUsername), plus the two
+    // capture identities — screenshots sign as usernode-capture and
+    // the proposal-checks suite signs as usernode-capture-admin (see
+    // services/visuals.js) — so the section renders in the before/
+    // after shots and the declared dapp.json test alike.
+    const { rows: viewerRows } = await pool.query(
+      'SELECT id FROM users WHERE username = ANY($1::text[])',
+      [[config.adminUsername, 'usernode-capture', 'usernode-capture-admin']]
+    );
+    for (const { id: viewerId } of viewerRows) {
+      // Automatic-membership path: viewer is a member of the demo app.
+      await pool.query(
+        `INSERT INTO app_collaborators (app_id, user_id, status, invited_by, accepted_at)
+         SELECT 900001, $1, 'member', $1, NOW()
+         WHERE EXISTS (SELECT 1 FROM apps WHERE id = 900001)
+         ON CONFLICT (app_id, user_id) DO NOTHING`,
+        [viewerId]
+      );
+      // Manual-favorite path: viewer added Chess Arena (not a member).
+      await pool.query(
+        `INSERT INTO app_favorites (app_id, user_id, sort_order)
+         SELECT 900040, $1, 0
+         WHERE EXISTS (SELECT 1 FROM apps WHERE id = 900040)
+         ON CONFLICT (app_id, user_id) DO NOTHING`,
+        [viewerId]
+      );
+    }
+    log.info('db', 'Staging your-apps fixtures seeded', { viewers: viewerRows.length });
+  } catch (err) {
+    log.warn('db', 'Staging your-apps seeding failed', { message: err.message });
   }
 }
 
