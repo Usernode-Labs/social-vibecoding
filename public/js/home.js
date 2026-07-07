@@ -500,16 +500,12 @@ const Home = {
     const isError = app.status === 'error';
     const isRunning = app.status === 'running';
     const hasMissing = Array.isArray(app.missingSecrets) && app.missingSecrets.length;
-    // Two at-a-glance signals collapsed onto one meta line (compact
-    // cards — the old "Created X ago" row is dropped). activeUsers
-    // uses the same sticky 10-day rule as the group-chat dashboard
-    // tile (see src/services/active-users.js), so the home card and
-    // the dashboard agree on the count. updatedRel falls back to
-    // created_at when last_deploy_at is null (pre-migration apps that
-    // haven't redeployed — backfill in schema.sql sets last_deploy_at
-    // = created_at, so this path is mostly defensive).
+    // One at-a-glance signal on the card meta line: the active-users
+    // count (the same sticky 10-day rule as the group-chat dashboard
+    // tile — see src/services/active-users.js — so the home card and
+    // the dashboard agree). "Updated Xh ago" moved into the "…" menu's
+    // build-info header alongside the commit pill.
     const activeUsers = parseInt(app.active_users || 0);
-    const updatedRel = formatRelativeTime(app.last_deploy_at || app.created_at);
     // Awaiting-secrets cards stay clickable so the user can open the
     // app view + Secrets modal to fill values; other non-running
     // statuses show no app surface.
@@ -517,17 +513,15 @@ const Home = {
 
     // Per-tile sections, computed up front so the template stays
     // readable. Anything that may be empty is collapsed to '' so the
-    // tile self-trims without leaving stray padding. Stat rows are
-    // each on their own line so they read cleanly inside the
-    // constrained tile width — at 3 columns the dot-separated single-
-    // line variant we use elsewhere wraps awkwardly.
+    // tile self-trims without leaving stray padding.
+    //
+    // The warning line is status-only now: the specific missing-secret
+    // KEYS no longer render on the card face — a compact red "Missing
+    // secrets" chip (chipDefs below) flags the state, and the key list
+    // lives in the app view's Secrets panel.
     const warningHtml = statusLabel
-      ? `<p class="text-xs mt-0.5 ${isAwaiting ? 'text-amber-500' : 'text-yellow-500'}">${statusLabel}${
-          isAwaiting && hasMissing ? `: ${escapeHtml(app.missingSecrets.join(', '))}` : ''
-        }</p>`
-      : (hasMissing
-        ? `<p class="text-xs mt-0.5 text-red-500">Missing secrets: ${escapeHtml(app.missingSecrets.join(', '))}</p>`
-        : '');
+      ? `<p class="text-xs mt-0.5 ${isAwaiting ? 'text-amber-500' : 'text-yellow-500'}">${statusLabel}</p>`
+      : '';
 
     // Visibility chip for non-default settings. View-private dominates
     // (it implies collab-private); collab-private alone reads as
@@ -556,6 +550,20 @@ const Home = {
     const activeSessions = parseInt(app.active_sessions || 0);
     const openIssues = parseInt(app.open_issues || 0);
     const chipDefs = [];
+    // Missing-secrets flag, first in the row (most urgent). No deep-
+    // link target — the Secrets modal isn't hash-routable — so it
+    // always renders as an inert span; opening the app is the path to
+    // fixing it. Deliberately generic: the key NAMES stay off the card
+    // (they're in the app view's Secrets panel).
+    if (hasMissing) {
+      const n = app.missingSecrets.length;
+      chipDefs.push({
+        target: null,
+        cls: 'bg-red-500/10 text-red-500',
+        label: 'Missing secrets',
+        tip: `${n} required secret${n === 1 ? '' : 's'} unset — set values in the app's Secrets panel`,
+      });
+    }
     if (openPrs > 0) {
       chipDefs.push({
         target: 'proposals',
@@ -584,22 +592,15 @@ const Home = {
     const chipBaseCls = 'activity-chip inline-flex items-center px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium';
     const chipsRowHtml = chipDefs.length
       ? `<div class="flex flex-wrap items-center gap-1.5">${chipDefs.map((c) => (
-          chipsClickable
+          c.target && chipsClickable
             ? `<button class="${chipBaseCls} ${c.cls} hover:opacity-75 transition-opacity" data-slug="${app.slug}" data-target="${c.target}" title="${c.tip}">${c.label}</button>`
             : `<span class="${chipBaseCls} ${c.cls}" title="${c.tip}">${c.label}</span>`
         )).join('')}</div>`
       : '';
 
-    const statBits = [];
-    if (activeUsers > 0) {
-      statBits.push(`<span class="font-semibold text-zinc-700 dark:text-zinc-300">${activeUsers}</span> active user${activeUsers === 1 ? '' : 's'}`);
-    } else {
-      statBits.push(`<span class="text-zinc-400 dark:text-zinc-500">No active users yet</span>`);
-    }
-    if (updatedRel) statBits.push(`updated ${updatedRel}`);
-    // `min-w-0 truncate` lets the single meta line shrink under the
-    // pill on narrow tiles instead of forcing the pill off the edge.
-    const statsHtml = `<div class="text-xs text-zinc-500 dark:text-zinc-400 min-w-0 truncate">${statBits.join(' · ')}</div>`;
+    const statsHtml = activeUsers > 0
+      ? `<div class="text-xs text-zinc-500 dark:text-zinc-400 min-w-0 truncate"><span class="font-semibold text-zinc-700 dark:text-zinc-300">${activeUsers}</span> active user${activeUsers === 1 ? '' : 's'}</div>`
+      : `<div class="text-xs text-zinc-400 dark:text-zinc-500 min-w-0 truncate">No active users yet</div>`;
 
     // Corner controls collapsed to a single "…" actions-menu trigger
     // (secondary actions — star/lock/check-updates/delete — live in
@@ -785,10 +786,16 @@ const Home = {
           includePrContext: false,
         })
       : `<span class="text-xs font-mono">${escapeHtml(app.slug)} · ${escapeHtml(app.version?.shortSha || 'dev')}</span>`;
+    // "Updated Xh ago" lives here rather than on the card face; falls
+    // back to created_at when last_deploy_at is null (pre-migration
+    // apps — schema.sql backfills last_deploy_at = created_at, so this
+    // is mostly defensive).
+    const updatedRel = formatRelativeTime(app.last_deploy_at || app.created_at);
     return `
       <div class="card-menu-title">${escapeHtml(app.name || app.slug)}</div>
       <div class="card-menu-slug">${escapeHtml(app.slug)}</div>
-      <div class="card-menu-version">${pillHtml}</div>`;
+      <div class="card-menu-version">${pillHtml}</div>
+      ${updatedRel ? `<div class="card-menu-updated">Updated ${escapeHtml(updatedRel)}</div>` : ''}`;
   },
 
   openCardMenu(slug, anchorRect) {

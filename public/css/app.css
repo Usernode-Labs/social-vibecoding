@@ -153,6 +153,12 @@ html, body {
   color: var(--text-muted);
 }
 
+.card-menu-updated {
+  margin-top: 0.25rem;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
 .card-menu-item {
   display: block;
   width: 100%;

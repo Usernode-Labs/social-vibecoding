@@ -102,14 +102,52 @@ test('card: one "…" trigger, none of the old corner buttons', () => {
   assert.doesNotMatch(html, /check-updates-btn/, 'no inline check-updates');
 });
 
-test('card: single collapsed meta line, no "Created" row, no version pill', () => {
+test('card: meta line is active-users only — no Created/updated rows, no version pill', () => {
   const Home = makeHome({ id: ME });
   const html = Home.renderAppCard(baseApp({ active_users: '3' }));
-  assert.match(html, />3<\/span> active users · updated /, 'stats collapse onto one line');
+  assert.match(html, />3<\/span> active users/, 'active-users count present');
   assert.doesNotMatch(html, /Created /, 'the Created row is gone');
+  // "updated Xh ago" moved into the "…" menu header with the rest of
+  // the build info.
+  assert.doesNotMatch(html, /updated /, 'no updated segment on the card');
   // Build info moved into the "…" menu header — the card face carries
   // no commit pill / pill slot anymore.
   assert.doesNotMatch(html, /app-version-pill-slot/, 'no pill slot on the card');
+});
+
+// ── Missing-secrets chip ──────────────────────────────────────────
+
+test('card: missing secrets render as a red chip, never the key names', () => {
+  const Home = makeHome({ id: ME });
+  const html = Home.renderAppCard(baseApp({
+    missingSecrets: ['STRIPE_SECRET_KEY', 'SENDGRID_API_KEY'],
+  }));
+  assert.match(html, /activity-chip[^>]*bg-red-500\/10 text-red-500[^>]*>Missing secrets</,
+    'red chip styled like the other activity chips');
+  assert.doesNotMatch(html, /STRIPE_SECRET_KEY/, 'key names stay off the card');
+  assert.doesNotMatch(html, /SENDGRID_API_KEY/, 'key names stay off the card');
+  assert.doesNotMatch(html, /Missing secrets:/, 'old key-listing warning line is gone');
+  // No deep-link target (the Secrets modal is not hash-routable) —
+  // the chip is an inert span even on a clickable running card.
+  assert.doesNotMatch(html, /<button[^>]*>Missing secrets</, 'chip is not a button');
+});
+
+test('card: awaiting-secrets keeps its status line, without the key list', () => {
+  const Home = makeHome({ id: ME });
+  const html = Home.renderAppCard(baseApp({
+    status: 'awaiting_secrets',
+    missingSecrets: ['STRIPE_SECRET_KEY'],
+  }));
+  assert.match(html, />Awaiting secrets</, 'status label stays');
+  assert.doesNotMatch(html, /Awaiting secrets:/, 'no key suffix on the label');
+  assert.doesNotMatch(html, /STRIPE_SECRET_KEY/, 'key names stay off the card');
+  assert.match(html, />Missing secrets</, 'red chip flags the state');
+});
+
+test('card: no missing-secrets chip when nothing is missing', () => {
+  const Home = makeHome({ id: ME });
+  const html = Home.renderAppCard(baseApp({ missingSecrets: null }));
+  assert.doesNotMatch(html, /Missing secrets/);
 });
 
 // ── Menu build-info header ────────────────────────────────────────
@@ -129,6 +167,8 @@ test('menu header: full untruncated name, slug and deployed commit', () => {
   // AppView is absent in this sandbox, so the fallback commit text
   // renders — it must carry the deployed shortSha.
   assert.ok(html.includes('abc1234'), 'deployed commit shown');
+  // "Updated Xh ago" lives here now, not on the card face.
+  assert.match(html, /card-menu-updated[^>]*>Updated /, 'updated line present');
 });
 
 test('menu header: no SHA yet falls back to the dev placeholder', () => {
