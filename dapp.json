@@ -116,7 +116,7 @@
     {
       "name": "Home 'Your apps' section renders for the seeded admin",
       "path": "/",
-      "expectText": "Your apps"
+      "expectSelector": ".app-card[data-yours='true']"
     },
     {
       "name": "Home demo icon tiles render",
