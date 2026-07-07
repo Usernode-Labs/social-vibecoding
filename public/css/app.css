@@ -121,6 +121,10 @@ html, body {
   border: 1px solid var(--border);
   background-color: var(--bg-primary);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  /* Explicit: the panel is body-appended, so don't let any inherited
+     alignment (or UA button centering) shift its content — the header
+     and items always read left-aligned. */
+  text-align: left;
 }
 
 /* Build-info header (Home.renderMenuHeaderHtml): full untruncated app

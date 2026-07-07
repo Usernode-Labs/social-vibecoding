@@ -810,14 +810,17 @@ const Home = {
       el.appendChild(btn);
     }
 
-    // Measure hidden, then anchor below the rect right-aligned; flip
-    // above when it would poke past the bottom edge; clamp into the
-    // viewport either way.
+    // Measure hidden, then anchor below the rect LEFT-aligned — the
+    // panel's left edge lines up with the hamburger and the list
+    // opens rightward (right-edge alignment made it hang leftward
+    // across the card). Clamp back toward the left when the right
+    // edge would overflow the viewport; flip above when it would poke
+    // past the bottom edge.
     el.style.visibility = 'hidden';
     document.body.appendChild(el);
     const w = el.offsetWidth;
     const h = el.offsetHeight;
-    const left = Math.max(8, Math.min(anchorRect.right - w, window.innerWidth - w - 8));
+    const left = Math.max(8, Math.min(anchorRect.left, window.innerWidth - w - 8));
     let top = anchorRect.bottom + 4;
     if (top + h > window.innerHeight - 8) top = Math.max(8, anchorRect.top - h - 4);
     el.style.left = `${left}px`;
