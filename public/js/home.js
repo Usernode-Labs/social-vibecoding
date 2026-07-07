@@ -702,6 +702,10 @@ const Home = {
   // homescreen widget renders. Tiles are the device registry, in widget
   // order; entries pinned by other dapps show up too (letter icon, no
   // SV app match) and are just as removable/reorderable.
+  // Toggled by the ⓘ button in the section header; survives re-renders
+  // within the session like _widgetSectionVisible.
+  _widgetHelpVisible: false,
+
   renderWidgetSection() {
     if (!Home._widgetUiActive()) return '';
     const items = Home._widgetItems;
@@ -709,14 +713,30 @@ const Home = {
     const hint = items.length
       ? 'Drag tiles to reorder. Drag app cards here to add them.'
       : 'Drag an app card here (or use its menu) to add it to the Usernode widget on your home screen.';
+    const helpPanel = Home._widgetHelpVisible
+      ? `
+      <div id="widget-help-panel" class="w-full text-[0.7rem] leading-relaxed text-zinc-600 dark:text-zinc-300 rounded-lg bg-violet-500/5 dark:bg-violet-500/10 border border-violet-500/20 px-3 py-2">
+        <span class="font-medium">Add the widget to your home screen:</span>
+        touch and hold an empty area of your iPhone home screen, tap
+        <span class="font-medium">Edit</span> → <span class="font-medium">Add Widget</span>
+        (or the <span class="font-medium">+</span>), search for
+        <span class="font-medium">Usernode</span>, pick a size and tap
+        <span class="font-medium">Add Widget</span>. The apps below appear on it automatically.
+      </div>`
+      : '';
     return `
       <div class="home-section-header col-span-full flex items-center justify-between">
-        <span>Usernode widget</span>
+        <span class="flex items-center gap-1.5">Usernode widget
+          <button id="widget-section-help" class="w-4 h-4 flex items-center justify-center rounded-full text-zinc-400 dark:text-zinc-500 hover:text-violet-500 dark:hover:text-violet-400 transition-colors" title="How to add the widget to your home screen" aria-label="How to add the widget to your home screen" aria-expanded="${Home._widgetHelpVisible}">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          </button>
+        </span>
         <button id="widget-section-close" class="flex items-center gap-1 text-xs font-normal normal-case tracking-normal text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors" title="Close the widget section" aria-label="Close the widget section">Done
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
         </button>
       </div>
       <div id="widget-strip" class="col-span-full flex flex-wrap items-start gap-3 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-600 p-3 transition-colors">
+        ${helpPanel}
         ${tiles}
         <div class="widget-strip-hint w-full text-[0.7rem] text-zinc-500 dark:text-zinc-400 ${items.length ? '' : 'py-3 text-center'}">${hint}</div>
       </div>`;
@@ -755,6 +775,15 @@ const Home = {
       closeBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         Home._widgetSectionVisible = false;
+        Home._widgetHelpVisible = false;
+        Home.render();
+      });
+    }
+    const helpBtn = listEl.querySelector('#widget-section-help');
+    if (helpBtn) {
+      helpBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        Home._widgetHelpVisible = !Home._widgetHelpVisible;
         Home.render();
       });
     }
@@ -851,15 +880,27 @@ const Home = {
         left: `${rect.left}px`,
         top: `${rect.top}px`,
         width: `${rect.width}px`,
+        height: `${rect.height}px`,
         margin: '0',
         zIndex: '1000',
         pointerEvents: 'none',
-        transform: 'scale(1.08)',
+        boxShadow: '0 16px 40px rgba(0, 0, 0, 0.3)',
+        transform: 'scale(1.04)',
         transition: 'none',
       });
       document.body.appendChild(ghost);
+      // Same drop-slot treatment as app-card drags: contents hidden,
+      // box restyled as a dashed violet gap (inline styles so the look
+      // doesn't depend on the CDN JIT mid-gesture).
       tile.style.transform = '';
-      tile.style.opacity = '0.35';
+      for (const child of tile.children) child.style.visibility = 'hidden';
+      Object.assign(tile.style, {
+        borderWidth: '1px',
+        borderStyle: 'dashed',
+        borderColor: 'rgba(139, 92, 246, 0.55)',
+        backgroundColor: 'rgba(139, 92, 246, 0.07)',
+        borderRadius: '0.75rem',
+      });
       document.body.style.userSelect = 'none';
       document.body.style.webkitUserSelect = 'none';
       document.body.style.cursor = 'grabbing';
@@ -877,8 +918,13 @@ const Home = {
 
     const teardown = () => {
       if (ghost) { ghost.remove(); ghost = null; }
-      tile.style.opacity = '';
       tile.style.transform = '';
+      for (const child of tile.children) child.style.visibility = '';
+      tile.style.borderWidth = '';
+      tile.style.borderStyle = '';
+      tile.style.borderColor = '';
+      tile.style.backgroundColor = '';
+      tile.style.borderRadius = '';
       document.body.style.userSelect = '';
       document.body.style.webkitUserSelect = '';
       document.body.style.cursor = '';
@@ -1344,6 +1390,41 @@ const Home = {
     );
   },
 
+  // Renders the SV emoji/letter tile to a PNG data URI so the native
+  // homescreen widget shows the exact tile the app shows — same violet
+  // tint (violet-600/20 background, violet-400 letter) over a
+  // transparent background that adapts to the widget's light/dark
+  // surface. Apps with a real icon image skip this (the image URL is
+  // passed through instead).
+  _widgetIconDataUrl(app) {
+    try {
+      const size = 128;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      ctx.fillStyle = 'rgba(124, 58, 237, 0.20)'; // violet-600/20
+      ctx.fillRect(0, 0, size, size);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      if (app.icon_emoji) {
+        ctx.font = '72px system-ui, sans-serif';
+        ctx.fillText(app.icon_emoji, size / 2, size / 2 + 4);
+      } else {
+        ctx.fillStyle = '#a78bfa'; // violet-400
+        ctx.font = 'bold 64px system-ui, sans-serif';
+        ctx.fillText(
+          String(app.name || '?').charAt(0).toUpperCase(),
+          size / 2, size / 2 + 2
+        );
+      }
+      return canvas.toDataURL('image/png');
+    } catch (_) {
+      return null;
+    }
+  },
+
   // Shared by the hamburger item and the drag-onto-strip drop. On iOS a
   // successful add lands in the widget registry, so the strip is
   // re-fetched and re-rendered to show the new tile.
@@ -1352,9 +1433,12 @@ const Home = {
       await window.usernode.addHomeScreenShortcut({
         name: app.name,
         url: `${location.origin}/#app/${encodeURIComponent(app.slug)}`,
-        // Absolute URL — the app downloads it outside this page's
-        // origin. Letter-tile fallback on the app side when unset.
-        icon_url: app.icon_url ? new URL(app.icon_url, location.origin).href : null,
+        // Real icon image: absolute URL the app downloads. Emoji/letter
+        // tiles: canvas-rendered PNG data URI so the widget matches the
+        // in-app tile exactly.
+        icon_url: app.icon_url
+          ? new URL(app.icon_url, location.origin).href
+          : Home._widgetIconDataUrl(app),
       });
       if (Home._shortcutSupport?.mechanism === 'widget') {
         await Home._refreshWidgetItems();

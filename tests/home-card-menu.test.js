@@ -62,6 +62,7 @@ function makeHomeEnv(user) {
     alert: () => {},
     confirm: () => true,
     setTimeout, clearTimeout, setInterval, clearInterval,
+    URL,
     location: { search: '', origin: 'https://sv.test' },
     addEventListener: () => {},
     removeEventListener: () => {},
@@ -589,6 +590,40 @@ test('widget section: tiles in registry order, each with a remove button', () =>
   assert.match(empty, /id="widget-strip"/);
   assert.doesNotMatch(empty, /widget-tile /);
   assert.match(empty, /Drag an app card here/);
+});
+
+test('widget section: help icon toggles the add-widget instructions', () => {
+  const Home = makeHome({ id: ME });
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._widgetSectionVisible = true;
+  Home._widgetItems = [];
+  let html = Home.renderWidgetSection();
+  assert.match(html, /id="widget-section-help"/, 'header has the info button');
+  assert.doesNotMatch(html, /widget-help-panel/, 'panel hidden by default');
+  Home._widgetHelpVisible = true;
+  html = Home.renderWidgetSection();
+  assert.match(html, /id="widget-help-panel"/, 'panel shown after toggle');
+  assert.match(html, /Add Widget/, 'panel explains the iOS add-widget flow');
+});
+
+test('shortcut icons: emoji/letter apps get a canvas data URI, image apps a URL', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  // Fake 2D canvas — the vm sandbox has no real DOM.
+  sandbox.document.createElement = () => ({
+    getContext: () => ({ fillRect() {}, fillText() {} }),
+    toDataURL: () => 'data:image/png;base64,FAKE',
+  });
+  const added = [];
+  sandbox.usernode = {
+    isNative: true,
+    addHomeScreenShortcut: async (opts) => { added.push(opts); return { added: true }; },
+    getHomeScreenShortcuts: async () => ({ items: [] }),
+  };
+  Home._shortcutSupport = { mechanism: 'widget' };
+  await Home._addShortcutForApp(baseApp({ icon_emoji: '\u{1F3AF}' }));
+  assert.equal(added[0].icon_url, 'data:image/png;base64,FAKE', 'emoji tile rendered to data URI');
+  await Home._addShortcutForApp(baseApp({ icon_url: '/icons/x.png' }));
+  assert.equal(added[1].icon_url, 'https://sv.test/icons/x.png', 'real icons pass through as absolute URLs');
 });
 
 test('menu: shortcut item hidden when unsupported or app not running', () => {
