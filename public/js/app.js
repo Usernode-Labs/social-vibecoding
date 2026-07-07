@@ -980,6 +980,10 @@ const App = {
         DevChat.scrollToBottom();
         break;
       }
+      case 'platform_issue_draft':
+        // Agent-suggested platform report (human gate) — see dev-chat.js.
+        DevChat._pushPlatformIssueDraft(data);
+        break;
       case 'staging_ready':
         DevChat._deactivateLastStatus();
         DevChat.messages.push({ role: 'system', content: 'Staging deployed!', stagingUrl: data.url, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8) });

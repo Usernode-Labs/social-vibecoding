@@ -841,6 +841,13 @@ const DevChat = {
           if (Array.isArray(m.metadata.attachments) && m.metadata.attachments.length) {
             m.attachments = m.metadata.attachments;
           }
+          // Platform-issue drafts: the agent suggested escalating a
+          // platform-level blocker; the card's confirm/dismiss buttons
+          // post to /api/sessions/:id/platform-issue/:msgId/*. The DB row
+          // id doubles as the draft's msgId on rehydrate.
+          if (m.metadata.platformIssueDraft) {
+            m.platformIssueDraft = { ...m.metadata.platformIssueDraft, msgId: m.id };
+          }
         }
         return m;
       });
@@ -1160,6 +1167,12 @@ const DevChat = {
                 DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
                 DevChat.renderMessages();
                 DevChat.scrollToBottom();
+                break;
+              case 'platform_issue_draft':
+                // Agent-suggested platform report (human gate). Deliberately
+                // NOT a status event: it lands mid-turn and must not seal
+                // bubbles or deactivate the running spinner line.
+                DevChat._pushPlatformIssueDraft(data);
                 break;
               case 'staging_ready':
                 DevChat._removeSpinner();
@@ -1608,6 +1621,9 @@ const DevChat = {
         DevChat.scrollToBottom();
         break;
       }
+      case 'platform_issue_draft':
+        DevChat._pushPlatformIssueDraft(data);
+        break;
       case 'staging_ready':
         DevChat._removeSpinner();
         DevChat._deactivateLastStatus();
@@ -2323,6 +2339,64 @@ const DevChat = {
     }
   },
 
+  // Append a live agent-suggested platform-report card to the timeline.
+  // Called from every live channel (POST SSE, resumable SSE, WS), so
+  // dedupe by the draft's DB msgId — the channels overlap by design.
+  _pushPlatformIssueDraft(data) {
+    const draft = data && data.platformIssueDraft;
+    if (!draft || !draft.msgId) return;
+    if (DevChat.messages.some(
+      (m) => m.platformIssueDraft && m.platformIssueDraft.msgId === draft.msgId
+    )) return;
+    DevChat.messages.push({
+      role: 'system',
+      content: data.text || 'The AI thinks this may be a platform-level issue',
+      platformIssueDraft: draft,
+      created_at: new Date().toISOString(),
+      _slug: Math.random().toString(36).slice(2, 8),
+    });
+    DevChat.renderMessages();
+    DevChat.scrollToBottom();
+  },
+
+  // Human gate for agent-drafted platform issue reports: confirm files
+  // the GitHub issue (server-side, bot PAT), dismiss kills the draft.
+  // Either way the card's state flips in place — no refetch needed.
+  async resolvePlatformIssueDraft(msgId, action, btn) {
+    if (!DevChat.currentSession?.id || !msgId) return;
+    // Disable both buttons on the card so a double-tap can't double-file
+    // (the server also claims the draft atomically, this is just UX).
+    const card = btn?.closest ? btn.closest('.dc-pr-card') : null;
+    if (card) card.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+    try {
+      const res = await fetch(
+        `/api/sessions/${DevChat.currentSession.id}/platform-issue/${msgId}/${action}`,
+        { method: 'POST' }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok && res.status !== 409) {
+        alert(data.error || 'Failed — try again');
+        if (card) card.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+        return;
+      }
+      // 409 means another member resolved it first — fold in whatever
+      // final state the server reports, same as a success.
+      const msg = DevChat.messages.find(
+        (m) => m.platformIssueDraft && m.platformIssueDraft.msgId === msgId
+      );
+      if (msg) {
+        msg.platformIssueDraft.status = data.status
+          || (action === 'dismiss' ? 'dismissed' : 'filed');
+        if (data.url) msg.platformIssueDraft.issueUrl = data.url;
+        if (data.number) msg.platformIssueDraft.issueNumber = data.number;
+        DevChat.renderMessages();
+      }
+    } catch {
+      alert('Network error');
+      if (card) card.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+    }
+  },
+
   // ── Rendering ─────────────────────────────────────────────
 
   
@@ -2467,6 +2541,40 @@ const DevChat = {
                 <span class="dc-spec-preview-cta">View full spec →</span>
               </div>
               <div class="dc-spec-preview-snippet">${DevChat.renderMarkdown(snippet, { breaks: false })}</div>
+            </div>`;
+        }
+        // Platform-issue draft card (human gate): the agent suggested
+        // escalating a platform-level blocker. Nothing is filed until a
+        // user taps "Report to platform"; Dismiss kills the draft. Both
+        // buttons need the DB msgId — a live-pushed draft carries it in
+        // the event, a rehydrated one gets it from the row id.
+        if (msg.platformIssueDraft) {
+          const d = msg.platformIssueDraft;
+          const pTs = msg.created_at ? new Date(msg.created_at).getTime() : '';
+          const pId = msg.id || msg._slug || '';
+          const bodyPreview = String(d.body || '').length > 300
+            ? `${String(d.body).slice(0, 300)}…` : String(d.body || '');
+          let actionsHtml = '';
+          if (d.status === 'filed' && d.issueUrl) {
+            actionsHtml = `<a href="${escapeHtml(d.issueUrl)}" target="_blank" class="dc-pr-btn dc-pr-btn-preview" style="text-decoration:none">Reported — issue #${d.issueNumber}</a>`;
+          } else if (d.status === 'filed') {
+            actionsHtml = '<span style="color:var(--text-muted);font-size:12px">Reported to the platform</span>';
+          } else if (d.status === 'dismissed') {
+            actionsHtml = '<span style="color:var(--text-muted);font-size:12px">Dismissed</span>';
+          } else if (d.msgId) {
+            actionsHtml = `
+              <button class="dc-pr-btn dc-pr-btn-promote" onclick="DevChat.resolvePlatformIssueDraft(${d.msgId}, 'confirm', this)">Report to platform</button>
+              <button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.resolvePlatformIssueDraft(${d.msgId}, 'dismiss', this)">Dismiss</button>`;
+          }
+          return `
+            <div class="dc-status-line"><span class="dc-status-icon dc-status-check" aria-hidden="true">&#9873;</span> ${escapeHtml(msg.content || 'The AI thinks this may be a platform-level issue')}<span style="font-size:9px;opacity:0.4;margin-left:auto">${pId} ${pTs}</span></div>
+            <div class="dc-pr-card" data-platform-issue-msg="${d.msgId || ''}">
+              <div class="dc-pr-card-header">
+                <span style="color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">Suggested platform report</span>
+              </div>
+              <div style="font-weight:600;margin:4px 0 2px">${escapeHtml(d.title || '')}</div>
+              ${bodyPreview ? `<div style="font-size:13px;color:var(--text-muted);white-space:pre-wrap;margin-bottom:6px">${escapeHtml(bodyPreview)}</div>` : ''}
+              <div class="dc-pr-card-actions">${actionsHtml}</div>
             </div>`;
         }
         if (msg.ccLog) {

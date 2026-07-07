@@ -1,0 +1,82 @@
+#!/bin/sh
+# Suggest escalating a PLATFORM-LEVEL problem from a build turn.
+#
+# The worker can only edit + push its own app repo. Some blockers live
+# outside it — the shared bridge, wallet / native mobile WebView, the
+# staging/preview pipeline, the checks gate. When the build-turn agent
+# is confident the root cause is platform-level (rather than looping on
+# a fix it structurally cannot make), it uses this to DRAFT a report
+# instead of faking a workaround.
+#
+# Human-gated: nothing is filed on GitHub by this call. The platform
+# persists a draft card into the dev-chat timeline; a user must tap
+# "Report to platform" on that card before the issue is created (they
+# can also dismiss it).
+#
+# The worker container carries no GitHub credentials. Like usernode-push,
+# this is a thin wrapper over the platform's internal API: it POSTs to
+#   POST /api/internal/sessions/$SESSION_ID/platform-issue
+# with `Authorization: Bearer $WORKER_JWT`. The platform validates the
+# session, de-dupes against open reports and earlier drafts, and pushes
+# the card into the dev chat.
+#
+# Usage:  usernode-report-platform-issue "<short title>"   (detail on stdin)
+#
+#   usernode-report-platform-issue "File picker never opens in the app" <<'EOF'
+#   Tapping "Upload" calls <input type=file> but nothing happens inside
+#   the Usernode mobile WebView. Works in a desktop browser. Repro: open
+#   <app>, tap Upload on the profile screen.
+#   EOF
+
+set -u
+
+# Build-only, exactly like usernode-push: scout is read-only and never
+# receives WORKER_JWT, so refuse outright to keep the intent clear even
+# if CC invokes this script directly via Bash.
+if [ "${MODE:-build}" = "scout" ]; then
+  echo "__USERNODE_WARN__ usernode-report-platform-issue: not available in scout mode" >&2
+  exit 2
+fi
+
+: "${WORKER_JWT:?WORKER_JWT required}"
+: "${SESSION_ID:?SESSION_ID required}"
+: "${PLATFORM_URL:=http://usernode:3000}"
+
+TITLE="${1:-}"
+if [ -z "$TITLE" ]; then
+  echo 'usage: usernode-report-platform-issue "<short title>"   (issue detail on stdin)' >&2
+  exit 2
+fi
+
+# Detail is read from stdin (may be empty). Encode the JSON body with
+# node — always present in this image — so arbitrary characters in the
+# title/body are escaped safely rather than hand-rolled in sh.
+BODY="$(cat)"
+PAYLOAD=$(TITLE="$TITLE" BODY="$BODY" node -e 'process.stdout.write(JSON.stringify({title:process.env.TITLE||"",body:process.env.BODY||""}))') || {
+  echo "__USERNODE_WARN__ usernode-report-platform-issue: failed to encode payload" >&2
+  exit 1
+}
+
+URL="${PLATFORM_URL%/}/api/internal/sessions/${SESSION_ID}/platform-issue"
+
+RESP=$(curl -sS -X POST \
+  -H "Authorization: Bearer $WORKER_JWT" \
+  -H "Content-Type: application/json" \
+  -d "$PAYLOAD" \
+  -w "\n%{http_code}" \
+  --max-time 60 \
+  "$URL" 2>&1) || {
+  echo "__USERNODE_WARN__ usernode-report-platform-issue: curl failed: $(echo "$RESP" | sed 's/Bearer [^ ]*/Bearer ***/g' | tr '\n' ' ')"
+  exit 1
+}
+
+CODE=$(printf '%s' "$RESP" | tail -n1)
+BODY_OUT=$(printf '%s' "$RESP" | sed '$d')
+
+if [ "$CODE" = "200" ]; then
+  echo "usernode-report-platform-issue: ok ($BODY_OUT)"
+  exit 0
+fi
+
+echo "__USERNODE_WARN__ usernode-report-platform-issue: HTTP $CODE: $BODY_OUT"
+exit 1
