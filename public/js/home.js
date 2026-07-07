@@ -1110,11 +1110,12 @@ const Home = {
         && Array.isArray(Home._widgetItems)
         && Home._widgetSlugs().has(app.slug);
       if (inWidget) {
+        // Already pinned: the item becomes the way back to the (hidden
+        // by default) management section — reorder or remove from there.
         items.push({
           key: 'add-to-homescreen',
-          label: '✓ In Usernode widget',
-          disabled: true,
-          title: 'Manage it in the Usernode widget section above.',
+          label: 'Edit in Usernode widget',
+          run: () => Home._revealWidgetSection(),
         });
       } else {
         items.push({
@@ -1292,16 +1293,23 @@ const Home = {
       // management section to show.
       return Home._addShortcutForApp(app);
     }
-    Home._widgetSectionVisible = true;
-    Home.render();
-    const strip = document.getElementById('widget-strip');
-    if (strip) strip.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    Home._revealWidgetSection();
     if (Home._widgetSlugs().has(app.slug)) return; // already in — just reveal
     if (Home._widgetItems.length >= Home.WIDGET_CAPACITY) {
       Home._shakeWidgetStrip();
       return;
     }
     return Home._addShortcutForApp(app);
+  },
+
+  // Show the widget management section (idempotent) and bring it into
+  // view. Shared by "Add to Usernode widget" and "Edit in Usernode
+  // widget".
+  _revealWidgetSection() {
+    Home._widgetSectionVisible = true;
+    Home.render();
+    const strip = document.getElementById('widget-strip');
+    if (strip) strip.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   },
 
   _shakeWidgetStrip() {

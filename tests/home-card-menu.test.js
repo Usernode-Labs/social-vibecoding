@@ -474,24 +474,26 @@ test('menu: shortcut item only offered on "Your apps"', () => {
   );
 });
 
-test('menu: shortcut item flips to a disabled ✓ when already in the widget', () => {
+test('menu: shortcut item becomes "Edit in Usernode widget" once added', () => {
   const Home = makeHome({ id: ME });
   Home._shortcutSupport = { mechanism: 'widget', widgetInstalled: true };
   Home._widgetItems = [
     { id: 'abc', name: 'Demo App', url: 'https://sv.test/#app/demo-app' },
   ];
-  // The ✓ is data-based: it must show even while the widget section
+  // The flip is data-based: it must apply even while the widget section
   // itself is still hidden (_widgetSectionVisible false).
   assert.equal(Home._widgetSectionVisible, false);
   const item = Home.menuItemsFor(baseApp({ is_favorited: true }))
     .find((i) => i.key === 'add-to-homescreen');
   assert.ok(item, 'item still renders');
-  assert.equal(item.disabled, true);
-  assert.match(item.label, /In Usernode widget/);
-  // A different app stays actionable.
+  assert.equal(item.label, 'Edit in Usernode widget');
+  assert.ok(!item.disabled, 'stays actionable — it opens the section');
+  // Running it reveals the management section.
+  item.run();
+  assert.equal(Home._widgetSectionVisible, true, 'edit opens the widget section');
+  // An app not yet in the widget keeps the add label.
   const other = Home.menuItemsFor(baseApp({ slug: 'other-app', is_favorited: true }))
     .find((i) => i.key === 'add-to-homescreen');
-  assert.equal(other.disabled, undefined);
   assert.equal(other.label, 'Add to Usernode widget');
 });
 
