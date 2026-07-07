@@ -515,27 +515,6 @@ const Home = {
     // statuses show no app surface.
     const cursorClass = (isRunning || isAwaiting) ? 'cursor-pointer' : 'cursor-not-allowed opacity-70';
 
-    // Same per-app pill renderer as the header (AppView), so the two
-    // surfaces stay visually identical and turn yellow + spin in
-    // lockstep when a redeploy is in flight. The home pill omits the
-    // PR-context tooltip — that's only meaningful in the app view.
-    // NOTE: classic-script `const AppView` from app-view.js is in the
-    // shared script-global lexical env but is NOT a property of window,
-    // so we reference it directly (a `window.AppView` guard would
-    // silently short-circuit to false and drop the pill).
-    const pillHtml = (typeof AppView !== 'undefined' && AppView.renderAppVersionPillHTML)
-      ? AppView.renderAppVersionPillHTML({
-          slug: app.slug,
-          version: app.version || null,
-          deployProgress: app.deployProgress || null,
-          includePrContext: false,
-          // Quiet on home tiles — the status dot up top covers the
-          // "redeploying" signal, so this pill only ever shows the
-          // idle border-only chip.
-          quiet: true,
-        })
-      : '';
-
     // Per-tile sections, computed up front so the template stays
     // readable. Anything that may be empty is collapsed to '' so the
     // tile self-trims without leaving stray padding. Stat rows are
@@ -637,18 +616,15 @@ const Home = {
         <button class="card-menu-btn w-6 h-6 flex items-center justify-center rounded-md text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-500/10 transition-colors text-base leading-none" data-slug="${app.slug}" title="App actions" aria-label="App actions" aria-haspopup="menu">⋯</button>
       </div>`;
 
-    // Stats column (left) + commit pill (right) share one flex row at
-    // the bottom of the tile. `items-end` baselines the pill against
-    // the last stat row ("Updated Yt ago") so the two read across
-    // horizontally; `mt-auto` pushes the whole block to the foot of
-    // the card so tiles in the same grid row line up nicely. The pill
-    // slot is always rendered (the renderer emits a "<slug> · dev"
-    // placeholder when there's no SHA) so .app-version-pill-slot is
-    // reachable by Home.updateAppCardPill on WS deploy events.
-    const statsAndPillHtml = `
-      <div class="flex items-end justify-between gap-3 pt-1 mt-auto">
+    // Single meta line at the foot of the tile. The commit/version
+    // pill no longer renders on the card face — build info lives in
+    // the "…" menu's header now (see renderMenuHeaderHtml), where the
+    // full name and deployed commit have room to breathe. `mt-auto`
+    // pushes the line to the foot of the card so tiles in the same
+    // grid row line up nicely.
+    const footerHtml = `
+      <div class="flex items-end pt-1 mt-auto">
         ${statsHtml}
-        <span class="app-version-pill-slot min-w-0 truncate text-right shrink-0" data-slug="${app.slug}">${pillHtml}</span>
       </div>`;
 
     // Every card carries app-card-draggable + touch-pan-y now (not
@@ -673,7 +649,7 @@ const Home = {
           </div>
         </div>
         ${chipsRowHtml}
-        ${statsAndPillHtml}
+        ${footerHtml}
       </div>
     `;
   },
@@ -790,6 +766,31 @@ const Home = {
     return items;
   },
 
+  // Build-info header at the top of the "…" menu: the app's FULL,
+  // untruncated name (the card face truncates it), the slug, and the
+  // currently deployed commit — the version pill that used to sit on
+  // the card face. Reuses AppView.renderAppVersionPillHTML (non-quiet,
+  // like the AppView header) so the commit chip looks identical
+  // everywhere and shows the live deploying state when a redeploy is
+  // in flight. NOTE: classic-script `const AppView` from app-view.js
+  // is in the shared script-global lexical env but is NOT a property
+  // of window, so we reference it directly (a `window.AppView` guard
+  // would silently short-circuit to false and drop the pill).
+  renderMenuHeaderHtml(app) {
+    const pillHtml = (typeof AppView !== 'undefined' && AppView.renderAppVersionPillHTML)
+      ? AppView.renderAppVersionPillHTML({
+          slug: app.slug,
+          version: app.version || null,
+          deployProgress: app.deployProgress || null,
+          includePrContext: false,
+        })
+      : `<span class="text-xs font-mono">${escapeHtml(app.slug)} · ${escapeHtml(app.version?.shortSha || 'dev')}</span>`;
+    return `
+      <div class="card-menu-title">${escapeHtml(app.name || app.slug)}</div>
+      <div class="card-menu-slug">${escapeHtml(app.slug)}</div>
+      <div class="card-menu-version">${pillHtml}</div>`;
+  },
+
   openCardMenu(slug, anchorRect) {
     Home.closeCardMenu();
     const app = (Home._apps || []).find((a) => a.slug === slug);
@@ -800,6 +801,10 @@ const Home = {
     const el = document.createElement('div');
     el.className = 'card-menu';
     el.setAttribute('role', 'menu');
+    const header = document.createElement('div');
+    header.className = 'card-menu-header';
+    header.innerHTML = Home.renderMenuHeaderHtml(app);
+    el.appendChild(header);
     for (const item of items) {
       const btn = document.createElement('button');
       btn.type = 'button';
@@ -1455,20 +1460,31 @@ const Home = {
     });
   },
 
-  // Targeted pill update for a single app card. Called from the
-  // `app_redeploy_status` and `app_version_changed` WS handlers so
-  // the home screen flips into the deploying state (and back) without
-  // a full Home.load() re-render that would also blow away pending
-  // hover/scroll state on other cards.
+  // Targeted deploy-state update for a single app. Called from the
+  // `app_redeploy_status` WS handler (deploy END triggers a full
+  // Home.load() instead — see app.js) so the home screen flips into
+  // the deploying state without a full re-render that would blow away
+  // pending hover/scroll state on other cards.
   //
-  // Also re-classes the card's status dot, since the home tile uses
-  // the dot (not the pill's `--deploying` modifier) as the visible
-  // "this app is redeploying" signal. Without this, a redeploy that
-  // arrives over WS on an already-running card wouldn't change any
-  // visible state — the pill stays quiet (we ask for it that way) and
-  // the dot would remain green until a full Home.load().
+  // The commit pill no longer renders on the card face — build info
+  // lives in the "…" menu's header, which is built lazily from the
+  // Home._apps cache at open time. So this (1) refreshes the cached
+  // app's version/deployProgress so an already-open-next-time menu
+  // shows fresh info, and (2) re-classes the card's status dot — the
+  // tile's only visible "this app is redeploying" signal. Without the
+  // dot update, a redeploy arriving over WS on an already-running card
+  // wouldn't change any visible state until a full Home.load().
   updateAppCardPill(slug, opts) {
     if (!slug) return;
+    const app = (Home._apps || []).find((a) => a.slug === slug);
+    if (app) {
+      app.deployProgress = opts && opts.deployProgress ? opts.deployProgress : null;
+      // The deploy-start event carries version: null (the old SHA is
+      // hidden while deploying anyway); keep the cached SHA so the
+      // menu's fallback text stays meaningful, and only overwrite when
+      // an event actually supplies one.
+      if (opts && opts.version) app.version = opts.version;
+    }
     const card = document.querySelector(`.app-card[data-slug="${slug}"]`);
     if (!card) return;
     const isInFlightDeploy = !!(opts && opts.deployProgress && opts.deployProgress.deploying);
@@ -1482,17 +1498,6 @@ const Home = {
       dot.classList.remove('running', 'creating', 'error');
       dot.classList.add(next);
     }
-    const slot = card.querySelector('.app-version-pill-slot');
-    if (!slot || typeof AppView === 'undefined' || !AppView.renderAppVersionPillHTML) return;
-    slot.innerHTML = AppView.renderAppVersionPillHTML({
-      slug,
-      version: opts && opts.version ? opts.version : null,
-      deployProgress: opts && opts.deployProgress ? opts.deployProgress : null,
-      includePrContext: false,
-      // Same quiet rule as renderAppCard above — this pill never shows
-      // the yellow deploying state on home tiles; the status dot does.
-      quiet: true,
-    });
   },
 };
 

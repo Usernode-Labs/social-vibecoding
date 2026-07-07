@@ -102,13 +102,61 @@ test('card: one "…" trigger, none of the old corner buttons', () => {
   assert.doesNotMatch(html, /check-updates-btn/, 'no inline check-updates');
 });
 
-test('card: single collapsed meta line, no "Created" row', () => {
+test('card: single collapsed meta line, no "Created" row, no version pill', () => {
   const Home = makeHome({ id: ME });
   const html = Home.renderAppCard(baseApp({ active_users: '3' }));
   assert.match(html, />3<\/span> active users · updated /, 'stats collapse onto one line');
   assert.doesNotMatch(html, /Created /, 'the Created row is gone');
-  // The version-pill slot survives (Home.updateAppCardPill targets it).
-  assert.match(html, /app-version-pill-slot/);
+  // Build info moved into the "…" menu header — the card face carries
+  // no commit pill / pill slot anymore.
+  assert.doesNotMatch(html, /app-version-pill-slot/, 'no pill slot on the card');
+});
+
+// ── Menu build-info header ────────────────────────────────────────
+
+test('menu header: full untruncated name, slug and deployed commit', () => {
+  const Home = makeHome({ id: ME });
+  const longName = 'A Very Long Application Name That The Card Face Truncates';
+  const html = Home.renderMenuHeaderHtml(baseApp({
+    name: longName,
+    version: { sha: 'abc1234def', shortSha: 'abc1234' },
+  }));
+  assert.match(html, /card-menu-title/, 'title block present');
+  assert.ok(html.includes(longName), 'full name, untruncated');
+  assert.match(html, /card-menu-slug/, 'slug line present');
+  assert.ok(html.includes('demo-app'), 'slug shown');
+  assert.match(html, /card-menu-version/, 'version block present');
+  // AppView is absent in this sandbox, so the fallback commit text
+  // renders — it must carry the deployed shortSha.
+  assert.ok(html.includes('abc1234'), 'deployed commit shown');
+});
+
+test('menu header: no SHA yet falls back to the dev placeholder', () => {
+  const Home = makeHome({ id: ME });
+  const html = Home.renderMenuHeaderHtml(baseApp({ version: null }));
+  assert.match(html, /·\s*dev/, 'placeholder when nothing is deployed');
+});
+
+test('menu header: app name is HTML-escaped', () => {
+  const Home = makeHome({ id: ME });
+  const html = Home.renderMenuHeaderHtml(baseApp({ name: 'Evil <img> & Co' }));
+  assert.doesNotMatch(html, /<img>/, 'raw tag never lands in the markup');
+  assert.ok(html.includes('Evil &lt;img&gt; &amp; Co'), 'escaped name present');
+});
+
+test('updateAppCardPill: refreshes the cached app so the menu header stays fresh', () => {
+  const Home = makeHome({ id: ME });
+  const app = baseApp({ version: { sha: 'abc1234def', shortSha: 'abc1234' } });
+  Home._apps = [app];
+  // Deploy-start event: deployProgress lands in the cache, the cached
+  // SHA is preserved (the event deliberately carries version: null).
+  Home.updateAppCardPill('demo-app', { deployProgress: { deploying: true }, version: null });
+  assert.equal(app.deployProgress.deploying, true);
+  assert.equal(app.version.shortSha, 'abc1234', 'cached SHA survives deploy start');
+  // A version-carrying event replaces it.
+  Home.updateAppCardPill('demo-app', { deployProgress: null, version: { shortSha: 'def5678' } });
+  assert.equal(app.deployProgress, null);
+  assert.equal(app.version.shortSha, 'def5678');
 });
 
 test('card: Retry renders inline only on errored cards, creator or full admin', () => {

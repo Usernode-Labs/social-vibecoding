@@ -123,6 +123,36 @@ html, body {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
 }
 
+/* Build-info header (Home.renderMenuHeaderHtml): full untruncated app
+   name + slug + the deployed-commit pill that used to sit on the card
+   face. max-width bounds long names — they wrap, never truncate. */
+.card-menu-header {
+  max-width: 18rem;
+  padding: 0.5rem 0.875rem 0.55rem;
+  margin-bottom: 0.25rem;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.card-menu-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.card-menu-slug {
+  font-size: 0.7rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.card-menu-version {
+  margin-top: 0.375rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
 .card-menu-item {
   display: block;
   width: 100%;
