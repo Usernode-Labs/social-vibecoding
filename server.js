@@ -23,6 +23,7 @@ const { collaboratorRoutes } = require('./src/routes/collaborators');
 const { statusRoutes } = require('./src/routes/status');
 const { internalRoutes } = require('./src/routes/internal');
 const { visualsRoutes } = require('./src/routes/visuals');
+const { appIconRoutes } = require('./src/routes/app-icons');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
 const appLlmProxyRoutes = require('./src/routes/app-llm-proxy');
 const { llmGrantsRoutes } = require('./src/routes/llm-grants');
@@ -292,6 +293,11 @@ app.use(appLlmProxyRoutes(config));
 // proxy fetches the PR-body embeds anonymously, so this must not redirect
 // to login. Access control is the unguessable 32-hex artifact id.
 app.use(visualsRoutes(config));
+
+// App homescreen icon images. Public for the same reason as visuals:
+// home tiles load them with plain <img> tags; access control is the
+// unguessable 32-hex icon id.
+app.use(appIconRoutes(config));
 
 app.use(authMiddleware(config));
 app.use(authRoutes(config));

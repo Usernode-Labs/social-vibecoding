@@ -52,6 +52,47 @@ function accessFlags(app, user, isCollaborator) {
 // network) — so DOCKER_NETWORK is no longer a clean signal. Set
 // USERNODE_LOCAL_DEV=1 in your local .env to get the localhost fallback.
 const IS_LOCAL_DEV = process.env.NODE_ENV === 'development' || process.env.USERNODE_LOCAL_DEV === '1';
+const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+
+// Staging-gated (?demo=1) home-feed rows so a tester can see the new
+// homescreen icon tiles (emoji / custom image / letter fallback) — the
+// staging clone's real app rows predate the feature and would all
+// render letter tiles. Read-only request-time injection per the
+// "Staging mock data" convention: never persisted, strictly a no-op
+// outside staging. The image row carries a tiny inline data-URI PNG so
+// no app_icons blob needs to exist in the clone (the client renders
+// whatever icon_url it's given).
+const DEMO_ICON_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAAAg0lEQVR42r3NuRGAMAwEQNdFbXRAIVRHAyQwDmB4/MjS3QUbb5qn7VBKymxddl2YM1l4ZZLwmdHDb0YNSxktrGWUsJXBw14GDS0ZLLRmkHAkC4ejWSj0ZO7Qm7nCSDYcRrOhEJGZQ1RmCpFZN0RnzZCRVUNWVgyZ2S9kZ69Qkd2hKstOLPva44BQr+EAAAAASUVORK5CYII=';
+function demoIconApps() {
+  const base = {
+    status: 'running',
+    self_hosted: false,
+    locked: false,
+    collab_visibility: 'public',
+    view_visibility: 'public',
+    created_at: new Date().toISOString(),
+    last_deploy_at: new Date().toISOString(),
+    url: null,
+    version: null,
+    deployProgress: null,
+    missingSecrets: null,
+    active_users: 0,
+    is_favorited: false,
+    favorite_order: null,
+    is_collaborator: false,
+    open_prs: 0,
+    active_sessions: 0,
+    open_issues: 0,
+    icon_emoji: null,
+    icon_url: null,
+    can_collaborate: false,
+    can_manage: false,
+  };
+  return [
+    { ...base, id: 900001, slug: 'staging-demo-emoji-icon', name: 'Staging demo emoji icon', icon_emoji: '🎮' },
+    { ...base, id: 900002, slug: 'staging-demo-image-icon', name: 'Staging demo image icon', icon_url: DEMO_ICON_PNG },
+  ];
+}
 
 // SELF-HOSTING.md sub-step 2k: helper for the import-flow guards.
 // Compares a parsed {owner, repo} against config.platformRepoUrl,
@@ -303,6 +344,9 @@ function appRoutes(config) {
           version,
           deployProgress: appDeployStatus.read(a.slug),
           missingSecrets,
+          // Server-built icon URL so the client never assembles ids into
+          // paths (and staging demo rows can inject arbitrary sources).
+          icon_url: a.icon_image_id ? `/app-icons/${a.icon_image_id}` : null,
           is_favorited: !!a.is_favorited,
           favorite_order: a.favorite_order ?? null,
           open_prs: parseInt(a.open_prs, 10) || 0,
@@ -311,6 +355,10 @@ function appRoutes(config) {
           ...accessFlags(a, req.user, a.is_collaborator),
         };
       }));
+      // Staging demo tiles for the icon feature (see demoIconApps above).
+      if (IS_STAGING && req.query.demo === '1') {
+        apps.unshift(...demoIconApps());
+      }
       res.json({ apps });
     } catch (err) {
       log.error('apps', 'Failed to list apps', { message: err.message });
