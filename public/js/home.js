@@ -597,8 +597,13 @@ const Home = {
       : '';
 
     // Layout: icon first at the top (hamburger badged on its corner),
-    // title row below it (name + status dot + active-users badge),
-    // then the status warning when present.
+    // title row centered below it (name + status dot + active-users
+    // badge), then the status warning when present. Everything is
+    // horizontally centered in the tile — homescreen-launcher style —
+    // and the card draws NO border: the violet hover/drop-slot tint
+    // (.app-card:hover in app.css) is the affordance. The title row
+    // is width-capped (max-w-full + min-w-0) so long names truncate
+    // with an ellipsis instead of stretching the layout.
     //
     // Every card carries app-card-draggable + touch-pan-y (not just
     // the reorderable ones): the long-press actions menu applies to
@@ -606,7 +611,7 @@ const Home = {
     // suppressed card-wide, while touch-pan-y keeps vertical
     // scrolling alive until a long-press actually fires (see app.css).
     return `
-      <div class="app-card app-card-draggable touch-pan-y relative rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 hover:border-violet-300 dark:hover:border-violet-700 transition-colors p-3 flex flex-col gap-2 ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}">
+      <div class="app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-2 ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}">
         ${retryHtml}
         <div class="relative w-14 h-14 shrink-0">
           <div class="w-14 h-14 rounded-xl bg-violet-600/20 flex items-center justify-center text-violet-400 font-bold text-xl">
@@ -614,9 +619,9 @@ const Home = {
           </div>
           ${menuBadgeHtml}
         </div>
-        <div class="min-w-0">
-          <div class="flex items-center gap-1.5 min-w-0">
-            <span class="font-medium text-sm truncate">${escapeHtml(app.name)}</span>
+        <div class="w-full min-w-0">
+          <div class="flex items-center justify-center gap-1.5 min-w-0 max-w-full">
+            <span class="font-medium text-sm truncate min-w-0">${escapeHtml(app.name)}</span>
             <span class="status-dot ${statusClass} shrink-0" title="${app.status}"></span>
             ${usersBadgeHtml}
           </div>
@@ -637,12 +642,12 @@ const Home = {
   // hover surface". Hover/active styles live on the pill itself.
   renderCreateTile() {
     return `
-      <div class="home-create-tile rounded-xl border border-transparent bg-violet-500/[0.02] dark:bg-violet-500/[0.04] p-3 flex flex-col gap-2">
+      <div class="home-create-tile rounded-xl bg-violet-500/[0.02] dark:bg-violet-500/[0.04] p-3 flex flex-col items-center text-center gap-2">
         <div class="w-14 h-14 rounded-xl bg-violet-600/20 flex items-center justify-center text-violet-400 font-bold text-xl shrink-0">
           Y
         </div>
-        <div class="italic text-sm text-zinc-500 dark:text-zinc-400 truncate">Your app here</div>
-        <button type="button" class="home-create-btn self-start inline-flex items-center gap-2 rounded-full border border-violet-500 dark:border-violet-400 px-4 py-2 text-sm font-medium text-violet-600 dark:text-violet-400 bg-white dark:bg-zinc-900 hover:bg-violet-50 dark:hover:bg-violet-950 transition-colors">
+        <div class="italic text-sm text-zinc-500 dark:text-zinc-400 truncate max-w-full">Your app here</div>
+        <button type="button" class="home-create-btn inline-flex items-center gap-2 rounded-full border border-violet-500 dark:border-violet-400 px-4 py-2 text-sm font-medium text-violet-600 dark:text-violet-400 bg-white dark:bg-zinc-900 hover:bg-violet-50 dark:hover:bg-violet-950 transition-colors">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
           Create new app
         </button>
@@ -1040,9 +1045,12 @@ const Home = {
       // The real card stays in the grid as the drop slot: contents
       // hidden, box restyled as a dashed violet gap. Inline styles
       // rather than Tailwind utilities so the look doesn't depend on
-      // the CDN JIT generating classes mid-gesture.
+      // the CDN JIT generating classes mid-gesture. The explicit
+      // borderWidth matters: the resting card is borderless now, so
+      // dashed style alone would render nothing.
       for (const child of card.children) child.style.visibility = 'hidden';
       Object.assign(card.style, {
+        borderWidth: '1px',
         borderStyle: 'dashed',
         borderColor: 'rgba(139, 92, 246, 0.55)',
         backgroundColor: 'rgba(139, 92, 246, 0.07)',
@@ -1251,6 +1259,7 @@ const Home = {
         ghost = null;
       }
       for (const child of card.children) child.style.visibility = '';
+      card.style.borderWidth = '';
       card.style.borderStyle = '';
       card.style.borderColor = '';
       card.style.backgroundColor = '';

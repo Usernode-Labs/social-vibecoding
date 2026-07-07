@@ -162,6 +162,22 @@ test('card layout: icon first with the hamburger badged on its corner, title bel
   assert.doesNotMatch(html, /card-title-row/, 'no fit-pass title hooks');
 });
 
+test('card layout: centered launcher tile, no visible border, capped title width', () => {
+  const Home = makeHome({ id: ME });
+  const html = Home.renderAppCard(baseApp());
+  // Icon + title block center horizontally in the tile.
+  assert.match(html, /app-card[^"]*flex flex-col items-center text-center/, 'centered column');
+  assert.match(html, /flex items-center justify-center[^"]*max-w-full/, 'centered, width-capped title row');
+  // Long names truncate with an ellipsis instead of stretching:
+  // min-w-0 lets the flex item shrink, truncate clips it.
+  assert.match(html, /font-medium text-sm truncate min-w-0/, 'name truncates');
+  // The card element itself draws no border — hover tint (app.css) is
+  // the affordance. (The hamburger badge keeps its own tiny border.)
+  const cardCls = html.match(/class="(app-card [^"]*)"/)[1];
+  assert.ok(!/\bborder\b|border-zinc|hover:border/.test(cardCls),
+    `no border classes on the card element (got: ${cardCls})`);
+});
+
 test('card: Retry pins to the card corner on errored cards, outside the hamburger badge', () => {
   const Home = makeHome({ id: ME });
   const html = Home.renderAppCard(baseApp({ status: 'error', created_by: ME }));
