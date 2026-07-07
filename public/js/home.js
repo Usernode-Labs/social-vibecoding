@@ -181,133 +181,6 @@ const Home = {
     listEl.innerHTML = html;
     if (!query && canCreate) Home.wireCreateButtons();
     Home._wireCards(listEl, canDragYours);
-    Home._fitPillRows(listEl);
-    Home._wireResize();
-  },
-
-  // ===== Per-card measured fit =====
-  //
-  // After every render (and on resize) each card gets a fit pass
-  // (_fitCard) that does two measured jobs:
-  //   1. Float the actions block (hamburger + inline Retry) as high
-  //      as it can go — the title's top line when the full name fits
-  //      beside it, else the pills line, else the footer.
-  //   2. Cap the pills row to ONE line: when the flex-wrap layout
-  //      would spill onto a second line, hide trailing pills behind a
-  //      small display-only "…" chip. Nothing is lost — the hamburger
-  //      menu's header always renders the app's full pill set
-  //      (renderMenuHeaderHtml).
-  // Measure-then-adjust (offsetTop / scrollWidth) rather than width
-  // math, so gaps/padding/fonts are accounted for exactly as the
-  // browser laid them out.
-  //
-  // One shared observer re-fits any CARD whose size changes after the
-  // initial pass — the first fit often measures before late style
-  // application (the Tailwind CDN JIT injects generated classes
-  // asynchronously, webfonts swap in) re-wraps what fit. Re-running
-  // converges (the post-fit layout is stable, so the observer goes
-  // quiet). disconnect()-and-reobserve per render keeps it from
-  // accumulating dead cards.
-  _cardFitObserver: null,
-
-  _fitPillRows(listEl) {
-    if (!listEl || !listEl.querySelectorAll) return;
-    if (typeof ResizeObserver !== 'undefined') {
-      if (!Home._cardFitObserver) {
-        Home._cardFitObserver = new ResizeObserver((entries) => {
-          for (const entry of entries) Home._fitCard(entry.target);
-        });
-      }
-      Home._cardFitObserver.disconnect();
-    }
-    listEl.querySelectorAll('.app-card').forEach((card) => {
-      Home._fitCard(card);
-      if (Home._cardFitObserver) Home._cardFitObserver.observe(card);
-    });
-  },
-
-  // Per-card fit: (1) float the actions block (hamburger + inline
-  // Retry) as high as it can go without interfering with anything —
-  // onto the title's top line when the full name still fits beside
-  // it, else onto the pills line (the pill fit accounts for its
-  // width), else the footer; then (2) cap the pills row to a single
-  // line. The actions block is one DOM node moved between the three
-  // slots, so its click wiring rides along and it can never overlap
-  // the title, dot, or pills — flexbox lays it out beside them.
-  _fitCard(card) {
-    const actions = card.querySelector('.card-actions');
-    const titleRow = card.querySelector('.card-title-row');
-    const pillsRow = card.querySelector('.card-pills');
-    const footer = card.querySelector('.card-footer');
-    if (actions && titleRow && footer) {
-      // Trial the title slot, then check the name span: if placing
-      // the actions there squeezes it into (further) truncation, the
-      // slot interferes — drop to the pills line, or the footer when
-      // there are no pills. scrollWidth rounds up, hence the 1px slack.
-      titleRow.appendChild(actions);
-      const name = titleRow.querySelector('.card-title-name');
-      const fits = name && name.scrollWidth <= name.clientWidth + 1;
-      if (!fits) (pillsRow || footer).appendChild(actions);
-    }
-    if (pillsRow) Home._fitPillRow(pillsRow);
-  },
-
-  _fitPillRow(row) {
-    // Reset any previous pass so every fit starts from the full set.
-    // The actions block may live in this row (see _fitCard) — it is
-    // never a pill: exempt from hiding, but it participates in the
-    // wrap measurement so pills yield the line space it needs.
-    row.querySelector('.pill-overflow')?.remove();
-    const actions = row.querySelector(':scope > .card-actions');
-    const pills = [...row.children].filter((el) => el !== actions);
-    if (!pills.length) return;
-    pills.forEach((p) => p.classList.remove('hidden'));
-    // Line membership by threshold, not exact offsetTop equality: the
-    // row is items-center, so shorter items (the "…" marker) sit a
-    // few px below a pill's top even on the SAME line. An element
-    // counts as wrapped only once its top clears a full first-pill
-    // height below the row's first line.
-    const lineBreakY = pills[0].offsetTop + pills[0].offsetHeight;
-    const wraps = () => [...row.children].some(
-      (el) => !el.classList.contains('hidden') && el.offsetTop >= lineBreakY
-    );
-    if (!wraps()) return;
-    // Display-only overflow marker (never a button — the per-card
-    // hamburger is where the rest lives). Inserted BEFORE hiding so
-    // the loop accounts for the space the marker itself takes, and
-    // before the actions block so it stays visually with the pills.
-    const ind = document.createElement('span');
-    ind.className = 'pill-overflow';
-    ind.textContent = '…';
-    ind.title = 'More — open the app’s menu for the full list';
-    ind.setAttribute('aria-hidden', 'true');
-    if (actions) row.insertBefore(ind, actions);
-    else row.appendChild(ind);
-    for (let i = pills.length - 1; i >= 0 && wraps(); i--) {
-      pills[i].classList.add('hidden');
-    }
-  },
-
-  // Re-fit pill rows when pill widths can change after the initial
-  // pass: viewport resize (card width changes), and the one-shot
-  // webfont swap — the first render often measures against the
-  // fallback font, and the real font's wider glyphs can re-wrap a row
-  // that fit. Bound once; the pass itself is a few layout reads per
-  // card, so a cheap debounce is plenty.
-  _resizeWired: false,
-  _resizeDebounce: null,
-
-  _wireResize() {
-    if (Home._resizeWired) return;
-    Home._resizeWired = true;
-    const refit = () => Home._fitPillRows(document.getElementById('app-list'));
-    window.addEventListener('resize', () => {
-      clearTimeout(Home._resizeDebounce);
-      Home._resizeDebounce = setTimeout(refit, 150);
-    });
-    if (document.fonts && document.fonts.ready) {
-      document.fonts.ready.then(refit).catch(() => {});
-    }
   },
 
   // ===== Search bar =====
@@ -367,8 +240,7 @@ const Home = {
         }
         if (
           e.target.closest('.retry-btn') ||
-          e.target.closest('.card-menu-btn') ||
-          e.target.closest('.activity-chip')
+          e.target.closest('.card-menu-btn')
         ) return;
         // Disabled while spinning up / errored — there's no iframe or
         // chat history to render and the WS `app_status` handler will
@@ -384,23 +256,8 @@ const Home = {
       ));
     });
 
-    // Activity-chip deep links (#57). Only clickable chips carry
-    // data-target (inert spans on non-interactive cards don't), so
-    // this selector is also the interactivity gate. stopPropagation
-    // keeps the card's own open-the-app navigation from double-firing.
-    listEl.querySelectorAll('.activity-chip[data-target]').forEach((chip) => {
-      chip.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const slug = chip.dataset.slug;
-        const target = chip.dataset.target === 'dev'
-          ? `#app/${slug}/dev`
-          : `#app/${slug}/dev/${chip.dataset.target}`;
-        window.location.hash = target;
-      });
-    });
-
-    // Retry stays inline on errored cards (it's the card's primary
-    // recovery action); it is also offered in the "…" menu.
+    // Retry stays visible on errored cards (it's the card's primary
+    // recovery action); it is also offered in the hamburger menu.
     listEl.querySelectorAll('.retry-btn').forEach((btn) => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -605,22 +462,18 @@ const Home = {
     }, 15000);
   },
 
-  // Shared pill builder for an app's status/activity flags — used by
-  // the card face (clickable deep-link chips where possible) AND the
-  // hamburger menu's header (always inert spans), so the two surfaces
-  // can never drift. Order: missing secrets (most urgent), PRs
+  // Pill builder for an app's status/activity flags, rendered ONLY in
+  // the hamburger menu's build-info header now — the card face
+  // carries no chips. Order: missing secrets (most urgent), PRs
   // awaiting votes, dev sessions in flight, open issues, privacy chip
-  // last. Returns joined HTML, '' when there's nothing to flag.
+  // last. All display-only spans. Returns joined HTML, '' when
+  // there's nothing to flag.
   //
   // Development-activity counts (#57) come straight from /api/apps
-  // (DB-derived, no GitHub calls); zero-count chips are dropped so
-  // quiet apps keep a clean tile. Chips deep-link into the app's dev
-  // surfaces only when `clickable` (the card's running/awaiting
-  // condition) — otherwise they render as inert spans. The
-  // missing-secrets chip never links (the Secrets modal isn't
-  // hash-routable) and deliberately omits the key NAMES — those live
-  // in the app view's Secrets panel.
-  renderAppPillsHtml(app, clickable) {
+  // (DB-derived, no GitHub calls); zero-count chips are dropped. The
+  // missing-secrets chip deliberately omits the key NAMES — those
+  // live in the app view's Secrets panel.
+  renderAppPillsHtml(app) {
     const openPrs = parseInt(app.open_prs || 0);
     const activeSessions = parseInt(app.active_sessions || 0);
     const openIssues = parseInt(app.open_issues || 0);
@@ -629,7 +482,6 @@ const Home = {
     if (hasMissing) {
       const n = app.missingSecrets.length;
       chipDefs.push({
-        target: null,
         cls: 'bg-red-500/10 text-red-500',
         label: 'Missing secrets',
         tip: `${n} required secret${n === 1 ? '' : 's'} unset — set values in the app's Secrets panel`,
@@ -637,7 +489,6 @@ const Home = {
     }
     if (openPrs > 0) {
       chipDefs.push({
-        target: 'proposals',
         cls: 'bg-amber-500/10 text-amber-500',
         label: `${openPrs} to vote`,
         tip: `${openPrs} change${openPrs === 1 ? '' : 's'} awaiting community votes`,
@@ -645,7 +496,6 @@ const Home = {
     }
     if (activeSessions > 0) {
       chipDefs.push({
-        target: 'dev',
         cls: 'bg-sky-500/10 text-sky-500',
         label: `${activeSessions} in dev`,
         tip: `${activeSessions} build session${activeSessions === 1 ? '' : 's'} in progress`,
@@ -653,18 +503,15 @@ const Home = {
     }
     if (openIssues > 0) {
       chipDefs.push({
-        target: 'issues',
         cls: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400',
         label: `${openIssues} issue${openIssues === 1 ? '' : 's'}`,
         tip: `${openIssues} open issue${openIssues === 1 ? '' : 's'}`,
       });
     }
     const chipBaseCls = 'activity-chip inline-flex items-center px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium';
-    const chipsHtml = chipDefs.map((c) => (
-      c.target && clickable
-        ? `<button class="${chipBaseCls} ${c.cls} hover:opacity-75 transition-opacity" data-slug="${app.slug}" data-target="${c.target}" title="${c.tip}">${c.label}</button>`
-        : `<span class="${chipBaseCls} ${c.cls}" title="${c.tip}">${c.label}</span>`
-    )).join('');
+    const chipsHtml = chipDefs.map((c) =>
+      `<span class="${chipBaseCls} ${c.cls}" title="${c.tip}">${c.label}</span>`
+    ).join('');
 
     // Visibility chip for non-default settings. View-private dominates
     // (it implies collab-private); collab-private alone reads as
@@ -705,11 +552,10 @@ const Home = {
       : 'Error';
     const isError = app.status === 'error';
     const isRunning = app.status === 'running';
-    // One at-a-glance signal on the card meta line: the active-users
-    // count (the same sticky 10-day rule as the group-chat dashboard
-    // tile — see src/services/active-users.js — so the home card and
-    // the dashboard agree). "Updated Xh ago" moved into the "…" menu's
-    // build-info header alongside the commit pill.
+    // The active-users count (the same sticky 10-day rule as the
+    // group-chat dashboard tile — see src/services/active-users.js —
+    // so the home card and the dashboard agree) renders as a compact
+    // badge beside the title; the tooltip spells it out.
     const activeUsers = parseInt(app.active_users || 0);
     // Awaiting-secrets cards stay clickable so the user can open the
     // app view + Secrets modal to fill values; other non-running
@@ -720,64 +566,39 @@ const Home = {
     // readable. Anything that may be empty is collapsed to '' so the
     // tile self-trims without leaving stray padding.
     //
-    // The warning line is status-only now: the specific missing-secret
-    // KEYS no longer render on the card face — a compact red "Missing
-    // secrets" chip (renderAppPillsHtml) flags the state, and the key
-    // list lives in the app view's Secrets panel.
+    // The warning line is status-only: the missing-secret detail (and
+    // every other pill — to vote / in dev / issues / privacy) lives
+    // ONLY in the hamburger menu's build-info header now
+    // (renderMenuHeaderHtml → renderAppPillsHtml); the card face
+    // carries no chips at all.
     const warningHtml = statusLabel
       ? `<p class="text-xs mt-0.5 ${isAwaiting ? 'text-amber-500' : 'text-yellow-500'}">${statusLabel}</p>`
       : '';
 
-    // One pills row (shared builder with the menu header — see
-    // renderAppPillsHtml): activity chips first, privacy chip last.
-    // Empty when there's nothing to flag, same self-trimming as
-    // warningHtml. `.card-pills` is the hook for the post-render
-    // single-line fit pass (_fitPillRows): pills that would wrap get
-    // hidden behind a display-only "…" indicator, with the full set
-    // always visible in the hamburger menu's header.
-    const chipsClickable = isRunning || isAwaiting;
-    const pillsHtml = Home.renderAppPillsHtml(app, chipsClickable);
-    const pillsRowHtml = pillsHtml
-      ? `<div class="card-pills flex flex-wrap items-center gap-1.5">${pillsHtml}</div>`
-      : '';
+    // Active-users badge beside the title: a tiny person glyph + the
+    // bare count, neutral grey, display-only. Always rendered (0
+    // included) so the signal is uniform across cards.
+    const usersBadgeHtml = `
+      <span class="users-badge inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-zinc-500/10 text-zinc-500 dark:text-zinc-400 shrink-0" title="${activeUsers} active user${activeUsers === 1 ? '' : 's'}"><svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>${activeUsers}</span>`;
 
-    const statsHtml = activeUsers > 0
-      ? `<div class="text-xs text-zinc-500 dark:text-zinc-400 min-w-0 truncate"><span class="font-semibold text-zinc-700 dark:text-zinc-300">${activeUsers}</span> active user${activeUsers === 1 ? '' : 's'}</div>`
-      : `<div class="text-xs text-zinc-400 dark:text-zinc-500 min-w-0 truncate">No active users yet</div>`;
-
-    // Card actions block: the hamburger actions-menu trigger
-    // (secondary actions — add/remove Your apps, lock, check-updates,
-    // delete — live in the popover it opens; see openCardMenu), plus
-    // inline Retry on errored cards — the card's primary recovery
-    // action stays visible (creator-or-full-admin, same gate as
+    // Hamburger actions-menu trigger, rendered as a round badge
+    // overlapping the icon's top-right corner — always in that spot
+    // (secondary actions live in the popover it opens; see
+    // openCardMenu). Retry on errored cards is the one inline
+    // exception: the card's primary recovery action pins to the
+    // card's top-right corner (creator-or-full-admin, same gate as
     // before — view-only admins excluded, issue #311).
-    //
-    // It renders in the footer, then the per-card fit pass (_fitCard)
-    // floats it as high as it can go without interfering: onto the
-    // title's top line for short names, else the pills line, else it
-    // stays here. `ml-auto` right-aligns it in whichever flex row it
-    // lands in; the wiring travels with the node.
     const showRetry = isError && (App.user?.canAdminWrite || App.user?.id === app.created_by);
     const isLocked = !!app.locked;
-    const actionsHtml = `
-      <div class="card-actions flex items-center gap-1 shrink-0 ml-auto">
-        ${showRetry ? `<button class="retry-btn text-xs text-emerald-500 hover:text-emerald-400 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors" data-slug="${app.slug}">Retry</button>` : ''}
-        <button class="card-menu-btn w-6 h-6 flex items-center justify-center rounded-md text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-500/10 transition-colors" data-slug="${app.slug}" title="App actions" aria-label="App actions" aria-haspopup="menu"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>
-      </div>`;
+    const menuBadgeHtml = `
+      <button class="card-menu-btn absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300 hover:text-zinc-700 dark:hover:text-zinc-100 hover:border-zinc-300 dark:hover:border-zinc-500 transition-colors" data-slug="${app.slug}" title="App actions" aria-label="App actions" aria-haspopup="menu"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>`;
+    const retryHtml = showRetry
+      ? `<button class="retry-btn absolute top-2 right-2 text-xs text-emerald-500 hover:text-emerald-400 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors" data-slug="${app.slug}">Retry</button>`
+      : '';
 
-    // Footer row at the bottom of the right-hand column: meta line on
-    // the left, the actions' canonical slot on the right. `mt-auto`
-    // pins it to the foot of the column so tiles in the same grid row
-    // line up nicely.
-    const footerHtml = `
-      <div class="card-footer flex items-center justify-between gap-2 mt-auto pt-1">
-        ${statsHtml}
-        ${actionsHtml}
-      </div>`;
-
-    // Layout: big icon on the left, everything else stacked in a
-    // right-hand column — title row (name + status dot + status
-    // warning), pills row, then the footer (meta + actions).
+    // Layout: icon first at the top (hamburger badged on its corner),
+    // title row below it (name + status dot + active-users badge),
+    // then the status warning when present.
     //
     // Every card carries app-card-draggable + touch-pan-y (not just
     // the reorderable ones): the long-press actions menu applies to
@@ -785,20 +606,21 @@ const Home = {
     // suppressed card-wide, while touch-pan-y keeps vertical
     // scrolling alive until a long-press actually fires (see app.css).
     return `
-      <div class="app-card app-card-draggable touch-pan-y relative rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 hover:border-violet-300 dark:hover:border-violet-700 transition-colors p-3 flex items-stretch gap-3 ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}">
-        <div class="w-14 h-14 rounded-xl bg-violet-600/20 flex items-center justify-center text-violet-400 font-bold text-xl shrink-0 self-center">
-          ${app.name.charAt(0).toUpperCase()}
-        </div>
-        <div class="flex-1 min-w-0 flex flex-col gap-1">
-          <div class="min-w-0">
-            <div class="card-title-row flex items-center gap-2">
-              <span class="card-title-name font-medium text-sm truncate">${escapeHtml(app.name)}</span>
-              <span class="status-dot ${statusClass} shrink-0" title="${app.status}"></span>
-            </div>
-            ${warningHtml}
+      <div class="app-card app-card-draggable touch-pan-y relative rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 hover:border-violet-300 dark:hover:border-violet-700 transition-colors p-3 flex flex-col gap-2 ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}">
+        ${retryHtml}
+        <div class="relative w-14 h-14 shrink-0">
+          <div class="w-14 h-14 rounded-xl bg-violet-600/20 flex items-center justify-center text-violet-400 font-bold text-xl">
+            ${app.name.charAt(0).toUpperCase()}
           </div>
-          ${pillsRowHtml}
-          ${footerHtml}
+          ${menuBadgeHtml}
+        </div>
+        <div class="min-w-0">
+          <div class="flex items-center gap-1.5 min-w-0">
+            <span class="font-medium text-sm truncate">${escapeHtml(app.name)}</span>
+            <span class="status-dot ${statusClass} shrink-0" title="${app.status}"></span>
+            ${usersBadgeHtml}
+          </div>
+          ${warningHtml}
         </div>
       </div>
     `;
@@ -815,15 +637,11 @@ const Home = {
   // hover surface". Hover/active styles live on the pill itself.
   renderCreateTile() {
     return `
-      <div class="home-create-tile rounded-xl border border-transparent bg-violet-500/[0.02] dark:bg-violet-500/[0.04] p-3 flex flex-col gap-3">
-        <div class="flex items-center gap-3">
-          <div class="w-14 h-14 rounded-xl bg-violet-600/20 flex items-center justify-center text-violet-400 font-bold text-xl shrink-0">
-            Y
-          </div>
-          <div class="flex-1 min-w-0">
-            <div class="italic text-zinc-500 dark:text-zinc-400 truncate">Your app here</div>
-          </div>
+      <div class="home-create-tile rounded-xl border border-transparent bg-violet-500/[0.02] dark:bg-violet-500/[0.04] p-3 flex flex-col gap-2">
+        <div class="w-14 h-14 rounded-xl bg-violet-600/20 flex items-center justify-center text-violet-400 font-bold text-xl shrink-0">
+          Y
         </div>
+        <div class="italic text-sm text-zinc-500 dark:text-zinc-400 truncate">Your app here</div>
         <button type="button" class="home-create-btn self-start inline-flex items-center gap-2 rounded-full border border-violet-500 dark:border-violet-400 px-4 py-2 text-sm font-medium text-violet-600 dark:text-violet-400 bg-white dark:bg-zinc-900 hover:bg-violet-50 dark:hover:bg-violet-950 transition-colors">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
           Create new app
@@ -940,11 +758,10 @@ const Home = {
     // apps — schema.sql backfills last_deploy_at = created_at, so this
     // is mostly defensive).
     const updatedRel = formatRelativeTime(app.last_deploy_at || app.created_at);
-    // The FULL pill set (inert), regardless of what fit on the card
-    // face — the card's row is capped at one line and hides overflow
-    // behind a display-only "…", so this header is the guaranteed
-    // place to see everything (see _fitPillRows).
-    const pillsHtml = Home.renderAppPillsHtml(app, false);
+    // The app's FULL pill set (missing secrets / to vote / in dev /
+    // issues / privacy) — the card face carries no chips at all, so
+    // this header is the one place they render.
+    const pillsHtml = Home.renderAppPillsHtml(app);
     return `
       <div class="card-menu-title">${escapeHtml(app.name || app.slug)}</div>
       <div class="card-menu-slug">${escapeHtml(app.slug)}</div>
@@ -1146,12 +963,11 @@ const Home = {
     // teardown clear _dragActive and sibling styles under the new one.
     if (Home._dragActive) return;
     // Same guard list as the navigation click handler — a press that
-    // starts on a corner button / chip is a button press, never a
-    // drag or a long-press.
+    // starts on a button is a button press, never a drag or a
+    // long-press.
     if (
       e.target.closest('.card-menu-btn') ||
-      e.target.closest('.retry-btn') ||
-      e.target.closest('.activity-chip')
+      e.target.closest('.retry-btn')
     ) return;
 
     const startX = e.clientX;

@@ -106,31 +106,24 @@ test('card: one hamburger trigger, none of the old corner buttons', () => {
   assert.doesNotMatch(html, /check-updates-btn/, 'no inline check-updates');
 });
 
-// ── Pills: shared builder + single-line row hooks ─────────────────
+// ── Pills: menu-header-only builder ───────────────────────────────
 
-test('renderAppPillsHtml: clickable chips deep-link, inert mode renders spans only', () => {
+test('renderAppPillsHtml: always display-only spans, ordered, self-trimming', () => {
   const Home = makeHome({ id: ME });
   const app = baseApp({ open_prs: 2, active_sessions: 1, open_issues: 3, missingSecrets: ['K'], view_visibility: 'private' });
-  const clickable = Home.renderAppPillsHtml(app, true);
-  assert.match(clickable, /<button[^>]*data-target="proposals"[^>]*>2 to vote</);
-  assert.match(clickable, /<button[^>]*data-target="dev"[^>]*>1 in dev</);
-  assert.match(clickable, /<button[^>]*data-target="issues"[^>]*>3 issues</);
-  assert.match(clickable, /<span[^>]*>Missing secrets</, 'missing-secrets never a button');
-  assert.match(clickable, /Private</, 'privacy chip last');
-  const inert = Home.renderAppPillsHtml(app, false);
-  assert.doesNotMatch(inert, /<button/, 'inert mode has no buttons at all');
-  assert.match(inert, /2 to vote/);
-  assert.match(inert, /Missing secrets/);
+  const html = Home.renderAppPillsHtml(app);
+  assert.doesNotMatch(html, /<button/, 'no buttons — pills are informational');
+  assert.match(html, /Missing secrets/);
+  assert.match(html, /2 to vote/);
+  assert.match(html, /1 in dev/);
+  assert.match(html, /3 issues/);
+  assert.match(html, /Private</, 'privacy chip last');
+  const order = ['Missing secrets', '2 to vote', '1 in dev', '3 issues', 'Private']
+    .map((s) => html.indexOf(s));
+  assert.ok(order.every((idx, i) => idx !== -1 && (i === 0 || idx > order[i - 1])),
+    'urgency-first ordering preserved');
   // Nothing to flag → empty string, so callers can self-trim.
-  assert.equal(Home.renderAppPillsHtml(baseApp(), true), '');
-});
-
-test('card: pills row carries the .card-pills hook for the single-line fit pass', () => {
-  const Home = makeHome({ id: ME });
-  const html = Home.renderAppCard(baseApp({ open_prs: 1 }));
-  assert.match(html, /class="card-pills /, 'fit-pass hook present');
-  // No pills → no row at all (nothing for the fit pass to do).
-  assert.doesNotMatch(Home.renderAppCard(baseApp()), /card-pills/);
+  assert.equal(Home.renderAppPillsHtml(baseApp()), '');
 });
 
 test('menu header: always carries the app’s FULL pill set, inert', () => {
@@ -148,86 +141,92 @@ test('menu header: always carries the app’s FULL pill set, inert', () => {
   assert.doesNotMatch(Home.renderMenuHeaderHtml(baseApp()), /card-menu-pills/);
 });
 
-test('card layout: big icon left, footer row is the actions’ canonical slot (no corner pin)', () => {
+test('card layout: icon first with the hamburger badged on its corner, title below', () => {
   const Home = makeHome({ id: ME });
   const html = Home.renderAppCard(baseApp({ active_users: '3' }));
-  assert.match(html, /w-14 h-14/, 'large left icon');
-  assert.doesNotMatch(html, /absolute top-2 right-2/, 'actions not corner-pinned');
-  // The menu trigger's canonical markup slot is the footer row, after
-  // the meta line (the runtime fit pass may promote the whole
-  // .card-actions node to the title/pills line — DOM move, not markup).
-  const metaIdx = html.indexOf('active user');
+  assert.match(html, /w-14 h-14/, 'large icon');
+  // The hamburger badge lives inside the icon wrapper, overlapping its
+  // top-right corner — so in markup order: icon initial → menu button
+  // → title name.
+  const iconIdx = html.indexOf('bg-violet-600/20');
   const menuIdx = html.indexOf('card-menu-btn');
-  assert.ok(metaIdx !== -1 && menuIdx !== -1 && metaIdx < menuIdx,
-    'menu trigger renders after the active-users meta line');
-  // Pills row (when present) renders between the title and the footer.
-  const withChips = Home.renderAppCard(baseApp({ open_prs: 2 }));
-  const titleIdx = withChips.indexOf('Demo App');
-  const chipIdx = withChips.indexOf('2 to vote');
-  const footIdx = withChips.indexOf('card-menu-btn');
-  assert.ok(titleIdx < chipIdx && chipIdx < footIdx, 'title → pills → footer order');
+  const nameIdx = html.indexOf('Demo App');
+  assert.ok(iconIdx !== -1 && iconIdx < menuIdx && menuIdx < nameIdx,
+    'icon → hamburger badge → title order');
+  assert.match(html, /card-menu-btn[^"]*absolute -top-1\.5 -right-1\.5/,
+    'badge overlaps the icon corner');
+  assert.match(html, /card-menu-btn[^"]*rounded-full/, 'badge is round');
+  // The old measured-slot machinery is gone from the markup.
+  assert.doesNotMatch(html, /card-actions/, 'no floating actions block');
+  assert.doesNotMatch(html, /card-footer/, 'no footer row');
+  assert.doesNotMatch(html, /card-title-row/, 'no fit-pass title hooks');
 });
 
-test('card layout: fit-pass hooks present for the floating actions block', () => {
+test('card: Retry pins to the card corner on errored cards, outside the hamburger badge', () => {
   const Home = makeHome({ id: ME });
   const html = Home.renderAppCard(baseApp({ status: 'error', created_by: ME }));
-  // _fitCard moves the .card-actions node between these slots; all
-  // four hooks must exist in the markup, and Retry must live INSIDE
-  // the actions block so it travels with the hamburger.
-  assert.match(html, /card-title-row/, 'title-row slot hook');
-  assert.match(html, /card-title-name/, 'name span hook (fit measurement)');
-  assert.match(html, /card-footer/, 'footer slot hook');
-  assert.equal((html.match(/card-actions/g) || []).length, 1, 'one actions block');
-  const actionsIdx = html.indexOf('card-actions');
-  const retryIdx = html.indexOf('retry-btn');
-  const menuIdx = html.indexOf('card-menu-btn');
-  assert.ok(actionsIdx < retryIdx && retryIdx < menuIdx,
-    'Retry and the hamburger both live inside .card-actions');
-  // ml-auto right-aligns the block in whichever flex row it lands in.
-  assert.match(html, /card-actions[^"]*ml-auto/, 'actions block right-aligns');
+  assert.match(html, /retry-btn[^"]*absolute top-2 right-2/, 'Retry corner-pinned');
+  assert.match(html, /card-menu-btn/, 'hamburger badge still present');
+  // No Retry on a running card.
+  assert.doesNotMatch(Home.renderAppCard(baseApp({ created_by: ME })), /retry-btn/);
 });
 
-test('card: privacy badge renders inline in the pills row', () => {
+test('card: active users render as a compact badge beside the title', () => {
   const Home = makeHome({ id: ME });
-  const html = Home.renderAppCard(baseApp({ view_visibility: 'private', open_prs: 1 }));
-  assert.match(html, />\s*Private</, 'privacy chip present');
-  // Same row container as the activity chips — the badge follows the
-  // chips inside one flex-wrap row rather than its own <p> under the
-  // title.
-  assert.doesNotMatch(html, /<p><span[^>]*>[^<]*<\/span><\/p>/, 'no paragraph-wrapped badge');
-  const chipIdx = html.indexOf('1 to vote');
-  const visIdx = html.indexOf('Private<');
-  assert.ok(chipIdx !== -1 && visIdx !== -1 && chipIdx < visIdx, 'badge after activity chips');
+  const html = Home.renderAppCard(baseApp({ active_users: '12' }));
+  assert.match(html, /users-badge[^>]*title="12 active users"[\s\S]*?>12</, 'count + tooltip');
+  assert.doesNotMatch(html, /active user(s)?</, 'no spelled-out footer line');
+  // Uniform signal: the badge renders at zero too.
+  const zero = Home.renderAppCard(baseApp({ active_users: '0' }));
+  assert.match(zero, /users-badge[^>]*title="0 active users"/);
+  assert.doesNotMatch(zero, /No active users yet/, 'old empty-state line gone');
 });
 
-test('card: meta line is active-users only — no Created/updated rows, no version pill', () => {
+test('card: no pills/chips of any kind on the card face', () => {
+  const Home = makeHome({ id: ME });
+  const html = Home.renderAppCard(baseApp({
+    open_prs: 2, active_sessions: 1, open_issues: 3,
+    missingSecrets: ['STRIPE_SECRET_KEY'], view_visibility: 'private',
+  }));
+  assert.doesNotMatch(html, /activity-chip/, 'no activity chips');
+  assert.doesNotMatch(html, /card-pills/, 'no pills row');
+  assert.doesNotMatch(html, /to vote|in dev|issue/, 'no activity labels');
+  assert.doesNotMatch(html, /Missing secrets/, 'no missing-secrets chip');
+  assert.doesNotMatch(html, /Private</, 'no privacy badge');
+  assert.doesNotMatch(html, /pill-overflow/, 'no overflow marker');
+  // …but the SAME app's menu header carries the full set.
+  const header = Home.renderMenuHeaderHtml(baseApp({
+    open_prs: 2, active_sessions: 1, open_issues: 3,
+    missingSecrets: ['STRIPE_SECRET_KEY'], view_visibility: 'private',
+  }));
+  assert.match(header, /Missing secrets/);
+  assert.match(header, /2 to vote/);
+  assert.match(header, /1 in dev/);
+  assert.match(header, /3 issues/);
+  assert.match(header, /Private</);
+});
+
+test('card: no Created/updated rows and no version pill on the card face', () => {
   const Home = makeHome({ id: ME });
   const html = Home.renderAppCard(baseApp({ active_users: '3' }));
-  assert.match(html, />3<\/span> active users/, 'active-users count present');
   assert.doesNotMatch(html, /Created /, 'the Created row is gone');
-  // "updated Xh ago" moved into the "…" menu header with the rest of
-  // the build info.
+  // "updated Xh ago" lives in the hamburger menu header with the rest
+  // of the build info.
   assert.doesNotMatch(html, /updated /, 'no updated segment on the card');
-  // Build info moved into the "…" menu header — the card face carries
-  // no commit pill / pill slot anymore.
   assert.doesNotMatch(html, /app-version-pill-slot/, 'no pill slot on the card');
 });
 
-// ── Missing-secrets chip ──────────────────────────────────────────
+// ── Missing secrets ───────────────────────────────────────────────
 
-test('card: missing secrets render as a red chip, never the key names', () => {
+test('missing secrets: key names never render; the chip lives in the menu header only', () => {
   const Home = makeHome({ id: ME });
-  const html = Home.renderAppCard(baseApp({
-    missingSecrets: ['STRIPE_SECRET_KEY', 'SENDGRID_API_KEY'],
-  }));
-  assert.match(html, /activity-chip[^>]*bg-red-500\/10 text-red-500[^>]*>Missing secrets</,
-    'red chip styled like the other activity chips');
-  assert.doesNotMatch(html, /STRIPE_SECRET_KEY/, 'key names stay off the card');
-  assert.doesNotMatch(html, /SENDGRID_API_KEY/, 'key names stay off the card');
-  assert.doesNotMatch(html, /Missing secrets:/, 'old key-listing warning line is gone');
-  // No deep-link target (the Secrets modal is not hash-routable) —
-  // the chip is an inert span even on a clickable running card.
-  assert.doesNotMatch(html, /<button[^>]*>Missing secrets</, 'chip is not a button');
+  const app = baseApp({ missingSecrets: ['STRIPE_SECRET_KEY', 'SENDGRID_API_KEY'] });
+  const card = Home.renderAppCard(app);
+  assert.doesNotMatch(card, /Missing secrets/, 'no chip on the card face');
+  assert.doesNotMatch(card, /STRIPE_SECRET_KEY|SENDGRID_API_KEY/, 'key names stay off the card');
+  const header = Home.renderMenuHeaderHtml(app);
+  assert.match(header, /bg-red-500\/10 text-red-500[^>]*>Missing secrets</, 'red chip in the header');
+  assert.doesNotMatch(header, /STRIPE_SECRET_KEY|SENDGRID_API_KEY/, 'key names stay out of the header too');
 });
 
 test('card: awaiting-secrets keeps its status line, without the key list', () => {
@@ -239,13 +238,11 @@ test('card: awaiting-secrets keeps its status line, without the key list', () =>
   assert.match(html, />Awaiting secrets</, 'status label stays');
   assert.doesNotMatch(html, /Awaiting secrets:/, 'no key suffix on the label');
   assert.doesNotMatch(html, /STRIPE_SECRET_KEY/, 'key names stay off the card');
-  assert.match(html, />Missing secrets</, 'red chip flags the state');
 });
 
-test('card: no missing-secrets chip when nothing is missing', () => {
+test('menu header: no missing-secrets chip when nothing is missing', () => {
   const Home = makeHome({ id: ME });
-  const html = Home.renderAppCard(baseApp({ missingSecrets: null }));
-  assert.doesNotMatch(html, /Missing secrets/);
+  assert.doesNotMatch(Home.renderMenuHeaderHtml(baseApp({ missingSecrets: null })), /Missing secrets/);
 });
 
 // ── Menu build-info header ────────────────────────────────────────
