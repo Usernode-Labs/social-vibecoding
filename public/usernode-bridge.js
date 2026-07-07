@@ -3619,6 +3619,81 @@
   }
 
   // =====================================================================
+  //  Public API: homescreen shortcuts
+  //  (usernode.getHomeScreenShortcutSupport / addHomeScreenShortcut)
+  // =====================================================================
+  //
+  // Native-only feature (Flutter WebView JS channel). Support probe
+  // resolves one of:
+  //   { mechanism: "pinned-shortcut" }                 — Android launcher pin
+  //   { mechanism: "widget", widgetInstalled: bool }   — iOS WidgetKit grid
+  //   { mechanism: "unsupported" }                     — everywhere else
+  //
+  // Older app builds silently drop unknown JS-channel methods (the
+  // promise would hang forever), so the probe is raced against a short
+  // timeout that resolves as unsupported instead of rejecting. Callers
+  // can therefore always `await` this and branch on `mechanism`.
+  var _SHORTCUT_PROBE_TIMEOUT_MS = 4000;
+
+  window.usernode.getHomeScreenShortcutSupport = function () {
+    if (!window.usernode.isNative) {
+      return Promise.resolve({ mechanism: "unsupported" });
+    }
+    return new Promise(function (resolve) {
+      var done = false;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        console.log(_BRIDGE_TAG, "getHomeScreenShortcutSupport probe timed" +
+          " out (app build predates the feature?) — reporting unsupported");
+        resolve({ mechanism: "unsupported" });
+      }, _SHORTCUT_PROBE_TIMEOUT_MS);
+      callNative("getHomeScreenShortcutSupport", {}).then(
+        function (support) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve(support && support.mechanism
+            ? support
+            : { mechanism: "unsupported" });
+        },
+        function (err) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          console.warn(_BRIDGE_TAG, "getHomeScreenShortcutSupport failed:",
+            err && err.message);
+          resolve({ mechanism: "unsupported" });
+        }
+      );
+    });
+  };
+
+  // addHomeScreenShortcut({ name, url, icon_url }) asks the app to add a
+  // homescreen entry that reopens `url` inside the Usernode app. The app
+  // shows its own native confirmation UI. Resolves the app's result
+  // object ({ added: bool, mechanism, ... }); rejects when the user
+  // declines or the environment has no native channel.
+  window.usernode.addHomeScreenShortcut = function (opts) {
+    opts = opts || {};
+    if (!opts.name || !opts.url) {
+      return Promise.reject(new Error(
+        "addHomeScreenShortcut requires { name, url }"
+      ));
+    }
+    if (!window.usernode.isNative) {
+      return Promise.reject(new Error(
+        "Homescreen shortcuts are only available inside the Usernode mobile app."
+      ));
+    }
+    return callNative("addHomeScreenShortcut", {
+      name: opts.name,
+      url: opts.url,
+      icon_url: opts.icon_url || null,
+    });
+  };
+
+  // =====================================================================
   //  Public API: LLM access (usernode.requestLlmAccess / getLlmAccess)
   // =====================================================================
   //

@@ -13,6 +13,7 @@ const Home = {
       Home._reloadPending = true;
       return;
     }
+    Home._probeShortcutSupport();
     const listEl = document.getElementById('app-list');
 
     try {
@@ -669,6 +670,26 @@ const Home = {
     if (card) card.dataset.locked = String(!!isLocked);
   },
 
+  // ── Native homescreen-shortcut support ─────────────────────────────
+  //
+  // Probed once per page via the bridge (usernode-bridge.js is loaded
+  // by index.html). The bridge resolves { mechanism: "unsupported" } in
+  // plain browsers AND on old app builds (it races the native call
+  // against a timeout), so this never hangs — worst case the cache just
+  // stays null and the menu item doesn't render. Fired from load(), so
+  // it has long settled by the time a user opens a card menu.
+  _shortcutSupport: null,
+  _shortcutProbeStarted: false,
+  _probeShortcutSupport() {
+    if (Home._shortcutProbeStarted) return;
+    Home._shortcutProbeStarted = true;
+    const bridge = window.usernode;
+    if (!bridge || typeof bridge.getHomeScreenShortcutSupport !== 'function') return;
+    bridge.getHomeScreenShortcutSupport().then((support) => {
+      Home._shortcutSupport = (support && support.mechanism) ? support : null;
+    }).catch(() => { /* stay null — item simply never renders */ });
+  },
+
   // ===== "…" card actions menu =====
   //
   // One popover implementation shared by the desktop "⋯" button and
@@ -709,6 +730,18 @@ const Home = {
         key: 'favorite',
         label: app.is_favorited ? 'Remove from Your apps' : 'Add to Your apps',
         run: () => Home._menuToggleFavorite(app),
+      });
+    }
+    // Native homescreen shortcut — only when the page runs inside a
+    // Usernode app build whose bridge reports the feature (see
+    // _probeShortcutSupport; Home._shortcutSupport stays null in plain
+    // browsers and on old app builds, so the item never renders there).
+    const shortcutSupport = Home._shortcutSupport;
+    if (isRunning && shortcutSupport && shortcutSupport.mechanism !== 'unsupported') {
+      items.push({
+        key: 'add-to-homescreen',
+        label: 'Add to phone home screen',
+        run: () => Home._menuAddShortcut(app),
       });
     }
     if (isError && (user.canAdminWrite || user.id === app.created_by)) {
@@ -857,6 +890,24 @@ const Home = {
   },
 
   // ── Menu actions ──────────────────────────────────────────────────
+
+  // Ask the Usernode app to pin this app to the device homescreen. The
+  // shortcut URL is the platform's own hash deep link (#app/<slug>), so
+  // tapping it reopens the SV shell already navigated to the app — same
+  // surface as tapping the card, with the platform session intact. The
+  // app shows its own native confirmation screen; a user decline
+  // surfaces as a rejection, which we swallow (it's not an error).
+  async _menuAddShortcut(app) {
+    try {
+      await window.usernode.addHomeScreenShortcut({
+        name: app.name,
+        url: `${location.origin}/#app/${encodeURIComponent(app.slug)}`,
+      });
+    } catch (err) {
+      const msg = String((err && err.message) || err);
+      if (!/denied/i.test(msg)) alert(`Add to home screen failed: ${msg}`);
+    }
+  },
 
   async _menuToggleFavorite(app) {
     const next = !app.is_favorited;

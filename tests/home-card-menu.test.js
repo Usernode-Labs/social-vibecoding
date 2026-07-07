@@ -415,3 +415,50 @@ test('menu: errored app adds Retry for the creator', () => {
   const items = Home.menuItemsFor(baseApp({ status: 'error', created_by: ME }));
   assert.deepEqual(keys(items), ['favorite', 'retry']);
 });
+
+// ── Native homescreen-shortcut item ───────────────────────────────
+//
+// The item is gated on Home._shortcutSupport, populated by the bridge
+// probe (_probeShortcutSupport). Null (plain browser, probe not run,
+// old app build → bridge resolves unsupported) must hide it — pinned
+// by every exact-key assertion above running with the default null.
+
+test('menu: shortcut item hidden by default (no support probed)', () => {
+  const Home = makeHome({ id: ME });
+  assert.equal(Home._shortcutSupport, null, 'probe cache starts null');
+  assert.doesNotMatch(
+    JSON.stringify(keys(Home.menuItemsFor(baseApp()))),
+    /add-to-homescreen/
+  );
+});
+
+test('menu: shortcut item renders when the bridge reports support', () => {
+  const Home = makeHome({ id: ME });
+  Home._shortcutSupport = { mechanism: 'pinned-shortcut' };
+  const items = Home.menuItemsFor(baseApp());
+  assert.deepEqual(keys(items), ['favorite', 'add-to-homescreen']);
+  assert.equal(
+    items.find((i) => i.key === 'add-to-homescreen').label,
+    'Add to phone home screen'
+  );
+  // iOS widget mechanism counts as supported too.
+  Home._shortcutSupport = { mechanism: 'widget', widgetInstalled: false };
+  assert.ok(keys(Home.menuItemsFor(baseApp())).includes('add-to-homescreen'));
+});
+
+test('menu: shortcut item hidden when unsupported or app not running', () => {
+  const Home = makeHome({ id: ME });
+  Home._shortcutSupport = { mechanism: 'unsupported' };
+  assert.equal(
+    keys(Home.menuItemsFor(baseApp())).includes('add-to-homescreen'), false,
+    'explicit unsupported hides it'
+  );
+  Home._shortcutSupport = { mechanism: 'pinned-shortcut' };
+  for (const status of ['error', 'creating', 'awaiting_secrets']) {
+    assert.equal(
+      keys(Home.menuItemsFor(baseApp({ status }))).includes('add-to-homescreen'),
+      false,
+      `hidden on ${status} apps`
+    );
+  }
+});
