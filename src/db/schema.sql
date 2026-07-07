@@ -1059,6 +1059,36 @@ END $$;
 -- manifest edit.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS screenshot_device_scale SMALLINT NOT NULL DEFAULT 2;
 
+-- Homescreen icon, source of truth: dapp.json's optional top-level
+-- `icon` block ({"emoji": "🎮"} or {"image": "public/icon.png"}),
+-- reconciled on every deploy (services/app-manifest.js
+-- reconcileAppIcon). Both NULL = the letter-tile fallback the home
+-- card always rendered. icon_image_id points at an app_icons row and
+-- deliberately carries no FK: the reconcile owns both sides' lifecycle
+-- and rotates the id only when the committed bytes change (the
+-- /app-icons/:id cache header is immutable, so a new id doubles as
+-- the cache-buster).
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_emoji VARCHAR(32);
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_image_id VARCHAR(32);
+
+-- Icon image bytes, one row per app, keyed by an unguessable random id
+-- (same access stance as session_visuals: /app-icons/:id is served
+-- unauthenticated so home tiles load it with a plain <img>, and the
+-- 32-hex id is the only access control — an icon discloses only
+-- itself). Bytes live OFF the apps row on purpose: GET /api/apps
+-- spreads SELECT a.* into JSON, and a BYTEA column there would
+-- serialize into every list response. NOT staging:private — icons
+-- render on the public home feed and should survive into staging
+-- clones.
+CREATE TABLE IF NOT EXISTS app_icons (
+  id           VARCHAR(32) PRIMARY KEY,
+  app_id       INTEGER UNIQUE NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  content_type VARCHAR(32) NOT NULL,
+  data         BYTEA       NOT NULL,
+  sha256       VARCHAR(64) NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- App membership + invites in one table. A row with status='invited' is
 -- a pending invite (grants NO access — every check requires 'member');
 -- declining deletes the row so re-invites work. The creator gets a

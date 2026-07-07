@@ -374,6 +374,13 @@ async function rebuildProductionInner(config, app) {
     // apps.screenshot_device_scale current on every prod rebuild.
     await appManifest.reconcileAppScreenshot(prodPool, app, manifest)
       .catch((err) => log.warn('staging', 'Screenshot reconcile failed', { app: app.slug, err: err.message }));
+    // And the manifest's `icon` block: a merged PR that changes the
+    // homescreen icon (emoji or committed image file) applies here, on
+    // the rebuild its merge triggered. The manifest is fully
+    // authoritative for the icon — an absent block clears it back to
+    // the letter tile. Best-effort; needs cloneDir for the image bytes.
+    await appManifest.reconcileAppIcon(prodPool, app, manifest, cloneDir)
+      .catch((err) => log.warn('staging', 'Icon reconcile failed', { app: app.slug, err: err.message }));
     const stored = await appSecrets.getRawValues(prodPool, app.id, config.jwtSecret);
     const merge = appSecrets.mergeForDeploy(
       manifest, stored, appSecrets.platformDefaultsFromEnv()

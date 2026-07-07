@@ -172,6 +172,13 @@ async function createApp(config, appRow) {
     await appManifest.reconcileAppScreenshot(pool, { id: appId, slug }, manifest)
       .catch((err) => log.warn('app-creator', 'Screenshot reconcile failed', { appId, err: err.message }));
 
+    // And the manifest's `icon` block: an imported repo whose dapp.json
+    // declares a homescreen icon (emoji or committed image file) gets it
+    // applied on this first deploy. The clone dir is still on disk here,
+    // so the image bytes are read from it directly. Best-effort.
+    await appManifest.reconcileAppIcon(pool, { id: appId, slug }, manifest, tempDir)
+      .catch((err) => log.warn('app-creator', 'Icon reconcile failed', { appId, err: err.message }));
+
     const storedValues = await appSecrets.getRawValues(pool, appId, config.jwtSecret);
     const merge = appSecrets.mergeForDeploy(
       manifest, storedValues, appSecrets.platformDefaultsFromEnv()

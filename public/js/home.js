@@ -24,7 +24,9 @@ const Home = {
       // staging demo fixtures. No-op outside a ?demo=1 staging preview.
       const demoQS = new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
       const [res, proposalsRes, sessionsRes] = await Promise.all([
-        fetch('/api/apps'),
+        // ?demo=1 also rides on /api/apps: staging injects the icon-demo
+        // tiles there (routes/apps.js demoIconApps). No-op in production.
+        fetch(`/api/apps${demoQS}`),
         fetch(`/api/me/proposals${demoQS}`).catch(() => null),
         fetch('/api/me/active-sessions').catch(() => null),
       ]);
@@ -531,6 +533,29 @@ const Home = {
     return `${chipsHtml}${visChipHtml}`;
   },
 
+  // Icon-tile inner markup + kind, shared by renderAppCard and the
+  // targeted icon_changed refresh (updateAppCardIcon below). Priority:
+  // custom image (dapp.json icon.image, served via /app-icons/:id or a
+  // staging demo data-URI) > emoji (dapp.json icon.emoji) > the
+  // first-letter fallback every app always had. The kind lands on the
+  // tile as data-icon so tests and the rename handler (app.js) can tell
+  // a custom icon from the letter placeholder.
+  iconTileFor(app) {
+    if (app.icon_url) {
+      return {
+        kind: 'image',
+        html: `<img src="${escapeHtml(app.icon_url)}" alt="" loading="lazy" draggable="false" class="w-14 h-14 rounded-xl object-cover">`,
+      };
+    }
+    if (app.icon_emoji) {
+      return {
+        kind: 'emoji',
+        html: `<span class="text-3xl leading-none" aria-hidden="true">${escapeHtml(app.icon_emoji)}</span>`,
+      };
+    }
+    return { kind: 'letter', html: escapeHtml((app.name || '?').charAt(0).toUpperCase()) };
+  },
+
   renderAppCard(app) {
     const isAwaiting = app.status === 'awaiting_secrets';
     // The status dot is the home tile's single signal for "this app
@@ -596,6 +621,8 @@ const Home = {
       ? `<button class="retry-btn absolute top-2 right-2 text-xs text-emerald-500 hover:text-emerald-400 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors" data-slug="${app.slug}">Retry</button>`
       : '';
 
+    const icon = Home.iconTileFor(app);
+
     // Layout: icon first at the top (hamburger badged on its corner),
     // title row centered below it (name + status dot + active-users
     // badge), then the status warning when present. Everything is
@@ -614,8 +641,8 @@ const Home = {
       <div class="app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-2 ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}">
         ${retryHtml}
         <div class="relative w-14 h-14 shrink-0">
-          <div class="w-14 h-14 rounded-xl bg-violet-600/20 flex items-center justify-center text-violet-400 font-bold text-xl">
-            ${app.name.charAt(0).toUpperCase()}
+          <div class="w-14 h-14 rounded-xl bg-violet-600/20 overflow-hidden flex items-center justify-center text-violet-400 font-bold text-xl" data-icon="${icon.kind}">
+            ${icon.html}
           </div>
           ${menuBadgeHtml}
         </div>
@@ -667,6 +694,28 @@ const Home = {
     if (app) app.locked = !!isLocked;
     const card = document.querySelector(`.app-card[data-slug="${slug}"]`);
     if (card) card.dataset.locked = String(!!isLocked);
+  },
+
+  // Targeted icon refresh for a single app card, called from the WS
+  // app_update handler (app.js handleAppUpdate, action 'icon_changed')
+  // after a deploy reconciled the dapp.json icon block. Same shape as
+  // updateAppCardLock: patch the Home._apps cache + the mounted tile in
+  // place, no full Home.load() that would blow away hover/scroll state.
+  // Safe no-op if the card isn't mounted.
+  updateAppCardIcon(slug, iconEmoji, iconUrl) {
+    if (!slug) return;
+    const app = (Home._apps || []).find((a) => a.slug === slug);
+    if (app) {
+      app.icon_emoji = iconEmoji || null;
+      app.icon_url = iconUrl || null;
+    }
+    const card = document.querySelector(`.app-card[data-slug="${slug}"]`);
+    const tile = card?.querySelector('[data-icon]');
+    if (!tile) return;
+    const name = app?.name || card.querySelector('.font-medium')?.textContent || '?';
+    const icon = Home.iconTileFor({ icon_emoji: iconEmoji || null, icon_url: iconUrl || null, name });
+    tile.dataset.icon = icon.kind;
+    tile.innerHTML = icon.html;
   },
 
   // ===== "…" card actions menu =====
