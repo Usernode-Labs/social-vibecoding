@@ -181,6 +181,97 @@ const Home = {
     listEl.innerHTML = html;
     if (!query && canCreate) Home.wireCreateButtons();
     Home._wireCards(listEl, canDragYours);
+    Home._fitPillRows(listEl);
+    Home._wireResize();
+  },
+
+  // ===== Single-line pill fit =====
+  //
+  // Card pill rows are capped at ONE line: after every render (and on
+  // resize) this pass measures each `.card-pills` row and, when the
+  // flex-wrap layout would spill onto a second line, hides trailing
+  // pills and appends a small display-only "…" indicator instead. The
+  // hidden pills aren't lost — the hamburger menu's header always
+  // renders the app's full pill set (renderMenuHeaderHtml). Measure-
+  // then-hide (offsetTop vs the first pill) rather than width math so
+  // gaps/padding/fonts are accounted for exactly as the browser laid
+  // them out.
+  // One shared observer re-fits any row whose SIZE changes after the
+  // initial pass — the first fit often measures before late style
+  // application (the Tailwind CDN JIT injects generated classes
+  // asynchronously, webfonts swap in) re-wraps a row that fit. A
+  // row's height change is exactly the "my pills re-wrapped" signal;
+  // re-running the fit converges (post-fit height is stable, so the
+  // observer goes quiet). disconnect()-and-reobserve per render keeps
+  // it from accumulating dead rows.
+  _pillRowObserver: null,
+
+  _fitPillRows(listEl) {
+    if (!listEl || !listEl.querySelectorAll) return;
+    if (typeof ResizeObserver !== 'undefined') {
+      if (!Home._pillRowObserver) {
+        Home._pillRowObserver = new ResizeObserver((entries) => {
+          for (const entry of entries) Home._fitPillRow(entry.target);
+        });
+      }
+      Home._pillRowObserver.disconnect();
+    }
+    listEl.querySelectorAll('.card-pills').forEach((row) => {
+      Home._fitPillRow(row);
+      if (Home._pillRowObserver) Home._pillRowObserver.observe(row);
+    });
+  },
+
+  _fitPillRow(row) {
+    // Reset any previous pass so every fit starts from the full set.
+    row.querySelector('.pill-overflow')?.remove();
+    const pills = [...row.children];
+    if (!pills.length) return;
+    pills.forEach((p) => p.classList.remove('hidden'));
+    // Line membership by threshold, not exact offsetTop equality: the
+    // row is items-center, so shorter items (the "…" marker) sit a
+    // few px below a pill's top even on the SAME line. An element
+    // counts as wrapped only once its top clears a full first-pill
+    // height below the row's first line.
+    const lineBreakY = pills[0].offsetTop + pills[0].offsetHeight;
+    const wraps = () => [...row.children].some(
+      (el) => !el.classList.contains('hidden') && el.offsetTop >= lineBreakY
+    );
+    if (!wraps()) return;
+    // Display-only overflow marker (never a button — the per-card
+    // hamburger is where the rest lives). Appended BEFORE hiding so
+    // the loop accounts for the space the marker itself takes.
+    const ind = document.createElement('span');
+    ind.className = 'pill-overflow';
+    ind.textContent = '…';
+    ind.title = 'More — open the app’s menu for the full list';
+    ind.setAttribute('aria-hidden', 'true');
+    row.appendChild(ind);
+    for (let i = pills.length - 1; i >= 0 && wraps(); i--) {
+      pills[i].classList.add('hidden');
+    }
+  },
+
+  // Re-fit pill rows when pill widths can change after the initial
+  // pass: viewport resize (card width changes), and the one-shot
+  // webfont swap — the first render often measures against the
+  // fallback font, and the real font's wider glyphs can re-wrap a row
+  // that fit. Bound once; the pass itself is a few layout reads per
+  // card, so a cheap debounce is plenty.
+  _resizeWired: false,
+  _resizeDebounce: null,
+
+  _wireResize() {
+    if (Home._resizeWired) return;
+    Home._resizeWired = true;
+    const refit = () => Home._fitPillRows(document.getElementById('app-list'));
+    window.addEventListener('resize', () => {
+      clearTimeout(Home._resizeDebounce);
+      Home._resizeDebounce = setTimeout(refit, 150);
+    });
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(refit).catch(() => {});
+    }
   },
 
   // ===== Search bar =====
@@ -478,84 +569,27 @@ const Home = {
     }, 15000);
   },
 
-  renderAppCard(app) {
-    const isAwaiting = app.status === 'awaiting_secrets';
-    // The status dot is the home tile's single signal for "this app
-    // is doing something right now" — so an in-flight redeploy on an
-    // already-running app flips the dot back to its pulsing-yellow
-    // state, even though `app.status` is still 'running'. This is
-    // what makes it safe to render the per-app pill in `quiet` mode
-    // below (it skips the yellow `--deploying` modifier and stays a
-    // border-only chip; the dot carries the signal instead).
-    const isInFlightDeploy = !!(app.deployProgress && app.deployProgress.deploying);
-    const statusClass = isInFlightDeploy ? 'creating'
-      : app.status === 'running' ? 'running'
-      : app.status === 'creating' ? 'creating'
-      : isAwaiting ? 'creating'
-      : 'error';
-    const statusLabel = app.status === 'running' ? ''
-      : app.status === 'creating' ? 'Spinning up...'
-      : isAwaiting ? 'Awaiting secrets'
-      : 'Error';
-    const isError = app.status === 'error';
-    const isRunning = app.status === 'running';
-    const hasMissing = Array.isArray(app.missingSecrets) && app.missingSecrets.length;
-    // One at-a-glance signal on the card meta line: the active-users
-    // count (the same sticky 10-day rule as the group-chat dashboard
-    // tile — see src/services/active-users.js — so the home card and
-    // the dashboard agree). "Updated Xh ago" moved into the "…" menu's
-    // build-info header alongside the commit pill.
-    const activeUsers = parseInt(app.active_users || 0);
-    // Awaiting-secrets cards stay clickable so the user can open the
-    // app view + Secrets modal to fill values; other non-running
-    // statuses show no app surface.
-    const cursorClass = (isRunning || isAwaiting) ? 'cursor-pointer' : 'cursor-not-allowed opacity-70';
-
-    // Per-tile sections, computed up front so the template stays
-    // readable. Anything that may be empty is collapsed to '' so the
-    // tile self-trims without leaving stray padding.
-    //
-    // The warning line is status-only now: the specific missing-secret
-    // KEYS no longer render on the card face — a compact red "Missing
-    // secrets" chip (chipDefs below) flags the state, and the key list
-    // lives in the app view's Secrets panel.
-    const warningHtml = statusLabel
-      ? `<p class="text-xs mt-0.5 ${isAwaiting ? 'text-amber-500' : 'text-yellow-500'}">${statusLabel}</p>`
-      : '';
-
-    // Visibility chip for non-default settings, rendered inline in the
-    // pills row alongside the activity chips. View-private dominates
-    // (it implies collab-private); collab-private alone reads as
-    // "invite-only build" since anyone can still see/use the app.
-    const visChipCls = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-violet-500/10 text-violet-500 dark:text-violet-400';
-    // Inline currentColor SVGs (Heroicons v1 outline) instead of emoji
-    // so the glyphs tint violet with the chip in both themes.
-    const visChipIcon = (d) => `<svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="${d}"/></svg>`;
-    const lockIcon = visChipIcon('M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z');
-    const mailIcon = visChipIcon('M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z');
-    const visChipHtml = app.view_visibility === 'private'
-      ? `<span class="${visChipCls}" title="Only collaborators can see and use this app">${lockIcon} Private</span>`
-      : (app.collab_visibility === 'private'
-        ? `<span class="${visChipCls}" title="Anyone can use this app; only invited collaborators can build it">${mailIcon} Invite-only build</span>`
-        : '');
-
-    // Development-activity chips (#57): PRs awaiting votes, dev sessions
-    // in flight, open issues. Counts come straight from /api/apps (DB-
-    // derived, no GitHub calls). Zero-count chips are dropped so quiet
-    // apps keep today's clean tile; an all-zero card collapses the row
-    // entirely, same self-trimming pattern as warningHtml/visBadgeHtml.
-    // Chips deep-link into the app's dev surfaces, but only when the
-    // card itself is interactive (same running/awaiting condition as
-    // the card click handler) — otherwise they render as inert spans.
+  // Shared pill builder for an app's status/activity flags — used by
+  // the card face (clickable deep-link chips where possible) AND the
+  // hamburger menu's header (always inert spans), so the two surfaces
+  // can never drift. Order: missing secrets (most urgent), PRs
+  // awaiting votes, dev sessions in flight, open issues, privacy chip
+  // last. Returns joined HTML, '' when there's nothing to flag.
+  //
+  // Development-activity counts (#57) come straight from /api/apps
+  // (DB-derived, no GitHub calls); zero-count chips are dropped so
+  // quiet apps keep a clean tile. Chips deep-link into the app's dev
+  // surfaces only when `clickable` (the card's running/awaiting
+  // condition) — otherwise they render as inert spans. The
+  // missing-secrets chip never links (the Secrets modal isn't
+  // hash-routable) and deliberately omits the key NAMES — those live
+  // in the app view's Secrets panel.
+  renderAppPillsHtml(app, clickable) {
     const openPrs = parseInt(app.open_prs || 0);
     const activeSessions = parseInt(app.active_sessions || 0);
     const openIssues = parseInt(app.open_issues || 0);
+    const hasMissing = Array.isArray(app.missingSecrets) && app.missingSecrets.length;
     const chipDefs = [];
-    // Missing-secrets flag, first in the row (most urgent). No deep-
-    // link target — the Secrets modal isn't hash-routable — so it
-    // always renders as an inert span; opening the app is the path to
-    // fixing it. Deliberately generic: the key NAMES stay off the card
-    // (they're in the app view's Secrets panel).
     if (hasMissing) {
       const n = app.missingSecrets.length;
       chipDefs.push({
@@ -589,17 +623,86 @@ const Home = {
         tip: `${openIssues} open issue${openIssues === 1 ? '' : 's'}`,
       });
     }
-    const chipsClickable = isRunning || isAwaiting;
     const chipBaseCls = 'activity-chip inline-flex items-center px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium';
-    // One pills row: activity chips first, privacy chip last. Empty
-    // when there's nothing to flag, same self-trimming as warningHtml.
     const chipsHtml = chipDefs.map((c) => (
-      c.target && chipsClickable
+      c.target && clickable
         ? `<button class="${chipBaseCls} ${c.cls} hover:opacity-75 transition-opacity" data-slug="${app.slug}" data-target="${c.target}" title="${c.tip}">${c.label}</button>`
         : `<span class="${chipBaseCls} ${c.cls}" title="${c.tip}">${c.label}</span>`
     )).join('');
-    const pillsRowHtml = (chipsHtml || visChipHtml)
-      ? `<div class="flex flex-wrap items-center gap-1.5">${chipsHtml}${visChipHtml}</div>`
+
+    // Visibility chip for non-default settings. View-private dominates
+    // (it implies collab-private); collab-private alone reads as
+    // "invite-only build" since anyone can still see/use the app.
+    // Inline currentColor SVGs (Heroicons v1 outline) instead of emoji
+    // so the glyphs tint violet with the chip in both themes.
+    const visChipCls = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-violet-500/10 text-violet-500 dark:text-violet-400';
+    const visChipIcon = (d) => `<svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="${d}"/></svg>`;
+    const lockIcon = visChipIcon('M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z');
+    const mailIcon = visChipIcon('M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z');
+    const visChipHtml = app.view_visibility === 'private'
+      ? `<span class="${visChipCls}" title="Only collaborators can see and use this app">${lockIcon} Private</span>`
+      : (app.collab_visibility === 'private'
+        ? `<span class="${visChipCls}" title="Anyone can use this app; only invited collaborators can build it">${mailIcon} Invite-only build</span>`
+        : '');
+
+    return `${chipsHtml}${visChipHtml}`;
+  },
+
+  renderAppCard(app) {
+    const isAwaiting = app.status === 'awaiting_secrets';
+    // The status dot is the home tile's single signal for "this app
+    // is doing something right now" — so an in-flight redeploy on an
+    // already-running app flips the dot back to its pulsing-yellow
+    // state, even though `app.status` is still 'running'. This is
+    // what makes it safe to render the per-app pill in `quiet` mode
+    // below (it skips the yellow `--deploying` modifier and stays a
+    // border-only chip; the dot carries the signal instead).
+    const isInFlightDeploy = !!(app.deployProgress && app.deployProgress.deploying);
+    const statusClass = isInFlightDeploy ? 'creating'
+      : app.status === 'running' ? 'running'
+      : app.status === 'creating' ? 'creating'
+      : isAwaiting ? 'creating'
+      : 'error';
+    const statusLabel = app.status === 'running' ? ''
+      : app.status === 'creating' ? 'Spinning up...'
+      : isAwaiting ? 'Awaiting secrets'
+      : 'Error';
+    const isError = app.status === 'error';
+    const isRunning = app.status === 'running';
+    // One at-a-glance signal on the card meta line: the active-users
+    // count (the same sticky 10-day rule as the group-chat dashboard
+    // tile — see src/services/active-users.js — so the home card and
+    // the dashboard agree). "Updated Xh ago" moved into the "…" menu's
+    // build-info header alongside the commit pill.
+    const activeUsers = parseInt(app.active_users || 0);
+    // Awaiting-secrets cards stay clickable so the user can open the
+    // app view + Secrets modal to fill values; other non-running
+    // statuses show no app surface.
+    const cursorClass = (isRunning || isAwaiting) ? 'cursor-pointer' : 'cursor-not-allowed opacity-70';
+
+    // Per-tile sections, computed up front so the template stays
+    // readable. Anything that may be empty is collapsed to '' so the
+    // tile self-trims without leaving stray padding.
+    //
+    // The warning line is status-only now: the specific missing-secret
+    // KEYS no longer render on the card face — a compact red "Missing
+    // secrets" chip (renderAppPillsHtml) flags the state, and the key
+    // list lives in the app view's Secrets panel.
+    const warningHtml = statusLabel
+      ? `<p class="text-xs mt-0.5 ${isAwaiting ? 'text-amber-500' : 'text-yellow-500'}">${statusLabel}</p>`
+      : '';
+
+    // One pills row (shared builder with the menu header — see
+    // renderAppPillsHtml): activity chips first, privacy chip last.
+    // Empty when there's nothing to flag, same self-trimming as
+    // warningHtml. `.card-pills` is the hook for the post-render
+    // single-line fit pass (_fitPillRows): pills that would wrap get
+    // hidden behind a display-only "…" indicator, with the full set
+    // always visible in the hamburger menu's header.
+    const chipsClickable = isRunning || isAwaiting;
+    const pillsHtml = Home.renderAppPillsHtml(app, chipsClickable);
+    const pillsRowHtml = pillsHtml
+      ? `<div class="card-pills flex flex-wrap items-center gap-1.5">${pillsHtml}</div>`
       : '';
 
     const statsHtml = activeUsers > 0
@@ -618,7 +721,7 @@ const Home = {
     const actionsHtml = `
       <div class="flex items-center gap-1 shrink-0">
         ${showRetry ? `<button class="retry-btn text-xs text-emerald-500 hover:text-emerald-400 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors" data-slug="${app.slug}">Retry</button>` : ''}
-        <button class="card-menu-btn w-6 h-6 flex items-center justify-center rounded-md text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-500/10 transition-colors text-base leading-none" data-slug="${app.slug}" title="App actions" aria-label="App actions" aria-haspopup="menu">⋯</button>
+        <button class="card-menu-btn w-6 h-6 flex items-center justify-center rounded-md text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-500/10 transition-colors" data-slug="${app.slug}" title="App actions" aria-label="App actions" aria-haspopup="menu"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>
       </div>`;
 
     // Footer row at the bottom of the right-hand column: meta line on
@@ -795,11 +898,17 @@ const Home = {
     // apps — schema.sql backfills last_deploy_at = created_at, so this
     // is mostly defensive).
     const updatedRel = formatRelativeTime(app.last_deploy_at || app.created_at);
+    // The FULL pill set (inert), regardless of what fit on the card
+    // face — the card's row is capped at one line and hides overflow
+    // behind a display-only "…", so this header is the guaranteed
+    // place to see everything (see _fitPillRows).
+    const pillsHtml = Home.renderAppPillsHtml(app, false);
     return `
       <div class="card-menu-title">${escapeHtml(app.name || app.slug)}</div>
       <div class="card-menu-slug">${escapeHtml(app.slug)}</div>
       <div class="card-menu-version">${pillHtml}</div>
-      ${updatedRel ? `<div class="card-menu-updated">Updated ${escapeHtml(updatedRel)}</div>` : ''}`;
+      ${updatedRel ? `<div class="card-menu-updated">Updated ${escapeHtml(updatedRel)}</div>` : ''}
+      ${pillsHtml ? `<div class="card-menu-pills">${pillsHtml}</div>` : ''}`;
   },
 
   openCardMenu(slug, anchorRect) {

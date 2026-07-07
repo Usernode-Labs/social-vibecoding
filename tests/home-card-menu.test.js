@@ -92,14 +92,60 @@ const baseApp = (over) => ({
 
 // ── Compact card markup ───────────────────────────────────────────
 
-test('card: one "…" trigger, none of the old corner buttons', () => {
+test('card: one hamburger trigger, none of the old corner buttons', () => {
   const Home = makeHome({ id: ME, canAdminWrite: true });
   const html = Home.renderAppCard(baseApp());
-  assert.equal((html.match(/card-menu-btn/g) || []).length, 1, 'exactly one ⋯ trigger');
+  assert.equal((html.match(/card-menu-btn/g) || []).length, 1, 'exactly one menu trigger');
+  // The trigger is a hamburger SVG (three horizontal lines), not the
+  // old "⋯" glyph.
+  assert.match(html, /card-menu-btn[\s\S]*?M4 6h16M4 12h16M4 18h16/, 'hamburger icon path');
+  assert.doesNotMatch(html, /⋯/, 'no ⋯ glyph anywhere on the card');
   assert.doesNotMatch(html, /star-btn/, 'no inline star');
   assert.doesNotMatch(html, /lock-btn/, 'no inline lock');
   assert.doesNotMatch(html, /delete-btn/, 'no inline delete');
   assert.doesNotMatch(html, /check-updates-btn/, 'no inline check-updates');
+});
+
+// ── Pills: shared builder + single-line row hooks ─────────────────
+
+test('renderAppPillsHtml: clickable chips deep-link, inert mode renders spans only', () => {
+  const Home = makeHome({ id: ME });
+  const app = baseApp({ open_prs: 2, active_sessions: 1, open_issues: 3, missingSecrets: ['K'], view_visibility: 'private' });
+  const clickable = Home.renderAppPillsHtml(app, true);
+  assert.match(clickable, /<button[^>]*data-target="proposals"[^>]*>2 to vote</);
+  assert.match(clickable, /<button[^>]*data-target="dev"[^>]*>1 in dev</);
+  assert.match(clickable, /<button[^>]*data-target="issues"[^>]*>3 issues</);
+  assert.match(clickable, /<span[^>]*>Missing secrets</, 'missing-secrets never a button');
+  assert.match(clickable, /Private</, 'privacy chip last');
+  const inert = Home.renderAppPillsHtml(app, false);
+  assert.doesNotMatch(inert, /<button/, 'inert mode has no buttons at all');
+  assert.match(inert, /2 to vote/);
+  assert.match(inert, /Missing secrets/);
+  // Nothing to flag → empty string, so callers can self-trim.
+  assert.equal(Home.renderAppPillsHtml(baseApp(), true), '');
+});
+
+test('card: pills row carries the .card-pills hook for the single-line fit pass', () => {
+  const Home = makeHome({ id: ME });
+  const html = Home.renderAppCard(baseApp({ open_prs: 1 }));
+  assert.match(html, /class="card-pills /, 'fit-pass hook present');
+  // No pills → no row at all (nothing for the fit pass to do).
+  assert.doesNotMatch(Home.renderAppCard(baseApp()), /card-pills/);
+});
+
+test('menu header: always carries the app’s FULL pill set, inert', () => {
+  const Home = makeHome({ id: ME });
+  const html = Home.renderMenuHeaderHtml(baseApp({
+    open_prs: 2, open_issues: 1, missingSecrets: ['K'], view_visibility: 'private',
+  }));
+  assert.match(html, /card-menu-pills/, 'pills block present');
+  assert.match(html, /Missing secrets/);
+  assert.match(html, /2 to vote/);
+  assert.match(html, /1 issue/);
+  assert.match(html, /Private</);
+  assert.doesNotMatch(html, /<button/, 'header pills are display-only');
+  // No flags → block omitted entirely.
+  assert.doesNotMatch(Home.renderMenuHeaderHtml(baseApp()), /card-menu-pills/);
 });
 
 test('card layout: big icon left, footer row carries meta + ⋯ (no corner pin)', () => {
