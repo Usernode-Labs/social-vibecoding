@@ -32,6 +32,12 @@ const HOME_SRC = fs.readFileSync(
 );
 
 function makeHome(user) {
+  return makeHomeEnv(user).Home;
+}
+
+// Like makeHome, but also hands back the vm sandbox (=== window inside
+// the script) so tests can stub `window.usernode` for bridge-call flows.
+function makeHomeEnv(user) {
   const sandbox = {
     console,
     App: { user },
@@ -64,7 +70,7 @@ function makeHome(user) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
-  return sandbox.__Home;
+  return { Home: sandbox.__Home, sandbox };
 }
 
 const ME = 42;
@@ -435,7 +441,8 @@ test('menu: shortcut item hidden by default (no support probed)', () => {
 test('menu: shortcut item renders when the bridge reports support', () => {
   const Home = makeHome({ id: ME });
   Home._shortcutSupport = { mechanism: 'pinned-shortcut' };
-  const items = Home.menuItemsFor(baseApp());
+  // "Your apps" only — favorited (or collaborator) apps get the item.
+  const items = Home.menuItemsFor(baseApp({ is_favorited: true }));
   assert.deepEqual(keys(items), ['favorite', 'add-to-homescreen']);
   assert.equal(
     items.find((i) => i.key === 'add-to-homescreen').label,
@@ -444,11 +451,27 @@ test('menu: shortcut item renders when the bridge reports support', () => {
   // iOS widget mechanism counts as supported too, and names the widget
   // as the destination.
   Home._shortcutSupport = { mechanism: 'widget', widgetInstalled: false };
-  const widgetItems = Home.menuItemsFor(baseApp());
+  const widgetItems = Home.menuItemsFor(baseApp({ is_collaborator: true }));
   const shortcutItem = widgetItems.find((i) => i.key === 'add-to-homescreen');
   assert.ok(shortcutItem, 'item present for widget mechanism');
   assert.equal(shortcutItem.label, 'Add to Usernode widget');
   assert.ok(!shortcutItem.disabled, 'actionable when not yet in the widget');
+});
+
+test('menu: shortcut item only offered on "Your apps"', () => {
+  const Home = makeHome({ id: ME });
+  Home._shortcutSupport = { mechanism: 'widget', widgetInstalled: true };
+  // Not favorited, not a collaborator → no item even with support.
+  assert.equal(
+    keys(Home.menuItemsFor(baseApp())).includes('add-to-homescreen'), false,
+    'directory apps do not get the widget item'
+  );
+  assert.ok(
+    keys(Home.menuItemsFor(baseApp({ is_favorited: true }))).includes('add-to-homescreen')
+  );
+  assert.ok(
+    keys(Home.menuItemsFor(baseApp({ is_collaborator: true }))).includes('add-to-homescreen')
+  );
 });
 
 test('menu: shortcut item flips to a disabled ✓ when already in the widget', () => {
@@ -457,13 +480,16 @@ test('menu: shortcut item flips to a disabled ✓ when already in the widget', (
   Home._widgetItems = [
     { id: 'abc', name: 'Demo App', url: 'https://sv.test/#app/demo-app' },
   ];
-  const item = Home.menuItemsFor(baseApp())
+  // The ✓ is data-based: it must show even while the widget section
+  // itself is still hidden (_widgetSectionVisible false).
+  assert.equal(Home._widgetSectionVisible, false);
+  const item = Home.menuItemsFor(baseApp({ is_favorited: true }))
     .find((i) => i.key === 'add-to-homescreen');
   assert.ok(item, 'item still renders');
   assert.equal(item.disabled, true);
   assert.match(item.label, /In Usernode widget/);
   // A different app stays actionable.
-  const other = Home.menuItemsFor(baseApp({ slug: 'other-app' }))
+  const other = Home.menuItemsFor(baseApp({ slug: 'other-app', is_favorited: true }))
     .find((i) => i.key === 'add-to-homescreen');
   assert.equal(other.disabled, undefined);
   assert.equal(other.label, 'Add to Usernode widget');
@@ -477,19 +503,66 @@ test('menu: shortcut item flips to a disabled ✓ when already in the widget', (
 // builds time out to null and plain browsers never probe, so the
 // section (and its management calls) can't appear where they'd fail.
 
-test('widget section: hidden unless widget mechanism + fetched registry', () => {
+test('widget section: hidden unless revealed + widget mechanism + registry', () => {
   const Home = makeHome({ id: ME });
   assert.equal(Home.renderWidgetSection(), '', 'no probe → nothing');
   Home._shortcutSupport = { mechanism: 'widget' };
+  Home._widgetItems = [
+    { id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app' },
+  ];
+  // Everything supported and fetched, but the user hasn't clicked
+  // "Add to Usernode widget" yet → still hidden by default.
+  assert.equal(Home.renderWidgetSection(), '', 'hidden until revealed');
+  Home._widgetSectionVisible = true;
+  assert.match(Home.renderWidgetSection(), /id="widget-strip"/, 'revealed');
+  Home._widgetItems = null;
   assert.equal(Home.renderWidgetSection(), '', 'no registry fetched → nothing');
   Home._shortcutSupport = { mechanism: 'pinned-shortcut' };
   Home._widgetItems = [];
   assert.equal(Home.renderWidgetSection(), '', 'Android pins → no section');
 });
 
+test('menu click: reveals the section and auto-adds when there is room', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  const added = [];
+  sandbox.usernode = {
+    isNative: true,
+    addHomeScreenShortcut: async (opts) => { added.push(opts); return { added: true }; },
+    getHomeScreenShortcuts: async () => ({ items: [] }),
+  };
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._widgetItems = [];
+  assert.equal(Home._widgetSectionVisible, false, 'hidden before the click');
+  await Home._menuAddShortcut(baseApp({ is_favorited: true }));
+  assert.equal(Home._widgetSectionVisible, true, 'click reveals the section');
+  assert.equal(added.length, 1, 'app auto-added when the widget has room');
+  assert.match(added[0].url, /#app\/demo-app/);
+});
+
+test('menu click: full widget shakes instead of adding', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  const added = [];
+  sandbox.usernode = {
+    isNative: true,
+    addHomeScreenShortcut: async (opts) => { added.push(opts); return { added: true }; },
+    getHomeScreenShortcuts: async () => ({ items: [] }),
+  };
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._widgetItems = Array.from({ length: Home.WIDGET_CAPACITY }, (_, i) => (
+    { id: `w${i}`, name: `Dapp ${i}`, url: `https://elsewhere.test/${i}` }
+  ));
+  let shook = false;
+  Home._shakeWidgetStrip = () => { shook = true; };
+  await Home._menuAddShortcut(baseApp({ is_favorited: true }));
+  assert.equal(Home._widgetSectionVisible, true, 'section still revealed');
+  assert.equal(added.length, 0, 'nothing added past capacity');
+  assert.equal(shook, true, 'the widget strip shakes');
+});
+
 test('widget section: tiles in registry order, each with a remove button', () => {
   const Home = makeHome({ id: ME });
   Home._shortcutSupport = { mechanism: 'widget' };
+  Home._widgetSectionVisible = true;
   Home._apps = [baseApp()];
   Home._widgetItems = [
     { id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app' },

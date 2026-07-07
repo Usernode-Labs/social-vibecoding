@@ -955,11 +955,13 @@ const Home = {
     if (!bridge || typeof bridge.getHomeScreenShortcutSupport !== 'function') return;
     bridge.getHomeScreenShortcutSupport().then((support) => {
       Home._shortcutSupport = (support && support.mechanism) ? support : null;
-      // iOS: shortcuts live in a shared widget grid, which SV mirrors as
-      // a manageable section above "Your apps" (see renderWidgetSection).
-      // Android launcher pins are fire-and-forget — no section there.
+      // iOS: shortcuts live in a shared widget grid, which SV can mirror
+      // as a manageable section above "Your apps" (see
+      // renderWidgetSection). Fetch the registry eagerly — the menu's
+      // ✓-state and the capacity check need it — but the section itself
+      // stays hidden until the user asks for it (_widgetSectionVisible).
       if (Home._shortcutSupport?.mechanism === 'widget') {
-        return Home._refreshWidgetItems().then(() => Home.render());
+        return Home._refreshWidgetItems();
       }
     }).catch(() => { /* stay null — item simply never renders */ });
   },
@@ -972,6 +974,15 @@ const Home = {
   // the section entirely — old app builds resolve null (bridge timeout),
   // so the management UI only appears where every management call works.
   _widgetItems: null,
+  // The section is opt-in per page load: hidden until the user clicks
+  // "Add to Usernode widget" (see _menuAddShortcut), then it stays up
+  // for the rest of the session as the management surface.
+  _widgetSectionVisible: false,
+  // The iOS medium widget renders at most 8 tiles (see
+  // UsernodeDappsWidget.swift, mediumView prefix(8)); adds beyond that
+  // wouldn't be visible on the homescreen, so SV refuses them with a
+  // shake instead.
+  WIDGET_CAPACITY: 8,
 
   async _refreshWidgetItems() {
     const bridge = window.usernode;
@@ -985,10 +996,11 @@ const Home = {
   },
 
   // The widget section (and drag-into-widget affordance) is active only
-  // when the app reports the widget mechanism AND the registry fetch
-  // succeeded.
+  // when the app reports the widget mechanism, the registry fetch
+  // succeeded, AND the user has revealed the section this session.
   _widgetUiActive() {
-    return Home._shortcutSupport?.mechanism === 'widget'
+    return Home._widgetSectionVisible
+      && Home._shortcutSupport?.mechanism === 'widget'
       && Array.isArray(Home._widgetItems);
   },
 
@@ -1085,12 +1097,17 @@ const Home = {
     // _probeShortcutSupport; Home._shortcutSupport stays null in plain
     // browsers and on old app builds, so the item never renders there).
     const shortcutSupport = Home._shortcutSupport;
-    if (isRunning && shortcutSupport && shortcutSupport.mechanism !== 'unsupported') {
+    // "Your apps" only: the homescreen widget is for the apps you keep,
+    // not something to offer on every card in the directory.
+    if (isRunning && Home.isYours(app)
+        && shortcutSupport && shortcutSupport.mechanism !== 'unsupported') {
       // iOS shortcuts land in the shared widget grid, so the item names
       // that destination; Android pins straight to the launcher.
       const isWidget = shortcutSupport.mechanism === 'widget';
+      // Data-based, not visibility-based: the ✓ must show even while
+      // the widget section itself is still hidden.
       const inWidget = isWidget
-        && Home._widgetUiActive()
+        && Array.isArray(Home._widgetItems)
         && Home._widgetSlugs().has(app.slug);
       if (inWidget) {
         items.push({
@@ -1260,8 +1277,48 @@ const Home = {
   // surface as tapping the card, with the platform session intact. The
   // app shows its own native confirmation screen; a user decline
   // surfaces as a rejection, which we swallow (it's not an error).
-  _menuAddShortcut(app) {
+  // Menu entry point. Android: direct launcher pin, unchanged. iOS: the
+  // click is what reveals the widget section — then the app is added
+  // automatically when the widget has room, and when it's full the
+  // section shakes instead so the user sees why nothing was added (and
+  // can ✕ something to make room).
+  async _menuAddShortcut(app) {
+    if (Home._shortcutSupport?.mechanism !== 'widget') {
+      return Home._addShortcutForApp(app);
+    }
+    if (!Array.isArray(Home._widgetItems)) await Home._refreshWidgetItems();
+    if (!Array.isArray(Home._widgetItems)) {
+      // Registry unreachable (old build mid-probe?) — plain add, no
+      // management section to show.
+      return Home._addShortcutForApp(app);
+    }
+    Home._widgetSectionVisible = true;
+    Home.render();
+    const strip = document.getElementById('widget-strip');
+    if (strip) strip.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    if (Home._widgetSlugs().has(app.slug)) return; // already in — just reveal
+    if (Home._widgetItems.length >= Home.WIDGET_CAPACITY) {
+      Home._shakeWidgetStrip();
+      return;
+    }
     return Home._addShortcutForApp(app);
+  },
+
+  _shakeWidgetStrip() {
+    const strip = document.getElementById('widget-strip');
+    if (!strip || typeof strip.animate !== 'function') return;
+    strip.animate(
+      [
+        { transform: 'translateX(0)' },
+        { transform: 'translateX(-8px)' },
+        { transform: 'translateX(7px)' },
+        { transform: 'translateX(-5px)' },
+        { transform: 'translateX(4px)' },
+        { transform: 'translateX(-2px)' },
+        { transform: 'translateX(0)' },
+      ],
+      { duration: 450, easing: 'ease-in-out' }
+    );
   },
 
   // Shared by the hamburger item and the drag-onto-strip drop. On iOS a
@@ -1816,6 +1873,12 @@ const Home = {
         setTimeout(async () => {
           restoreCard();
           runPendingReload();
+          // Same capacity rule as the menu path: a full widget shakes
+          // instead of accepting the drop.
+          if ((Home._widgetItems || []).length >= Home.WIDGET_CAPACITY) {
+            Home._shakeWidgetStrip();
+            return;
+          }
           const app = (Home._apps || []).find((a) => a.slug === slug);
           if (app) await Home._addShortcutForApp(app);
         }, 190);
