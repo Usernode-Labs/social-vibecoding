@@ -710,7 +710,12 @@ const Home = {
       ? 'Drag tiles to reorder. Drag app cards here to add them.'
       : 'Drag an app card here (or use its menu) to add it to the Usernode widget on your home screen.';
     return `
-      <div class="home-section-header col-span-full">Usernode widget</div>
+      <div class="home-section-header col-span-full flex items-center justify-between">
+        <span>Usernode widget</span>
+        <button id="widget-section-close" class="flex items-center gap-1 text-xs font-normal normal-case tracking-normal text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors" title="Close the widget section" aria-label="Close the widget section">Done
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
       <div id="widget-strip" class="col-span-full flex flex-wrap items-start gap-3 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-600 p-3 transition-colors">
         ${tiles}
         <div class="widget-strip-hint w-full text-[0.7rem] text-zinc-500 dark:text-zinc-400 ${items.length ? '' : 'py-3 text-center'}">${hint}</div>
@@ -743,6 +748,16 @@ const Home = {
   _wireWidgetStrip(listEl) {
     const strip = listEl.querySelector('#widget-strip');
     if (!strip) return;
+    // "Done": hide the section again. State on the device is untouched —
+    // "Add/Edit in Usernode widget" brings it back.
+    const closeBtn = listEl.querySelector('#widget-section-close');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        Home._widgetSectionVisible = false;
+        Home.render();
+      });
+    }
     strip.querySelectorAll('.widget-remove-btn').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();

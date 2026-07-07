@@ -572,6 +572,7 @@ test('widget section: tiles in registry order, each with a remove button', () =>
   ];
   const html = Home.renderWidgetSection();
   assert.match(html, /Usernode widget/, 'section header');
+  assert.match(html, /id="widget-section-close"/, 'header has a Done/close button');
   assert.match(html, /id="widget-strip"/);
   assert.equal((html.match(/class="widget-tile /g) || []).length, 2);
   assert.equal((html.match(/widget-remove-btn/g) || []).length, 2);

@@ -259,6 +259,23 @@
       }
       if (data.__usernode_relay !== "request") return;
       var origId = data.id;
+      // Homescreen-shortcut management is top-frame-only: the app auto-
+      // approves these calls based on the top frame's origin, so relaying
+      // them for a child iframe would let any embedded sub-app piggyback
+      // on the parent's trust. Refuse here instead of forwarding.
+      if (typeof data.method === "string" &&
+          data.method.indexOf("HomeScreenShortcut") !== -1) {
+        console.warn(_BRIDGE_TAG, "refusing to relay", data.method,
+          "for child iframe", origin);
+        try {
+          source.postMessage(
+            { __usernode_relay: "response", id: origId, value: null,
+              error: "Homescreen shortcuts can only be managed by the top-level page" },
+            origin
+          );
+        } catch (_) { /* iframe gone, ignore */ }
+        return;
+      }
       var nativeId = "relay-" + String(Date.now()) + "-" +
         Math.random().toString(16).slice(2);
       console.log(_BRIDGE_TAG, "← relay request",

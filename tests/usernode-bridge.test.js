@@ -46,6 +46,20 @@ test('hosted bridge exposes the LLM-access consent API', () => {
   assert.match(bridge, /_LLM_DECISION_TIMEOUT_MS/);
 });
 
+// Homescreen shortcuts are trust-gated by the app on the TOP frame's
+// origin (no per-add confirmation screen anymore), so the parent relay
+// must refuse to forward shortcut calls for child iframes — otherwise
+// any embedded sub-app could piggyback on the parent's trust.
+test('hosted bridge relay refuses homescreen-shortcut calls from iframes', () => {
+  const bridge = readBridge(versionedBridgePath);
+  assert.match(bridge, /refusing to relay/);
+  assert.match(bridge, /indexOf\("HomeScreenShortcut"\)/);
+  assert.match(
+    bridge,
+    /Homescreen shortcuts can only be managed by the top-level page/
+  );
+});
+
 test('shell side handles the same LLM message family', () => {
   const shell = fs.readFileSync(path.join(root, 'public', 'js', 'app-view.js'), 'utf8');
   assert.match(shell, /handleLlmBridgeMessage/);
