@@ -3707,6 +3707,10 @@
       name: opts.name,
       url: opts.url,
       icon_url: opts.icon_url || null,
+      // Background refresh (e.g. re-sending a missing widget icon): the
+      // app skips user-facing follow-ups like the add-the-widget
+      // walkthrough.
+      silent: opts.silent === true,
     });
   };
 

@@ -626,6 +626,64 @@ test('shortcut icons: emoji/letter apps get a canvas data URI, image apps a URL'
   assert.equal(added[1].icon_url, 'https://sv.test/icons/x.png', 'real icons pass through as absolute URLs');
 });
 
+test('icon heal: has_icon:false entries are silently re-added once', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  sandbox.document.createElement = () => ({
+    getContext: () => ({ fillRect() {}, fillText() {} }),
+    toDataURL: () => 'data:image/png;base64,FAKE',
+  });
+  const added = [];
+  sandbox.usernode = {
+    isNative: true,
+    addHomeScreenShortcut: async (opts) => { added.push(opts); return { added: true }; },
+    getHomeScreenShortcuts: async () => ({
+      items: [
+        { id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app', has_icon: false },
+        { id: 'w2', name: 'Iconed', url: 'https://sv.test/#app/iconed', has_icon: true },
+        { id: 'w3', name: 'Foreign', url: 'https://elsewhere.test/x', has_icon: false },
+      ],
+    }),
+  };
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._apps = [baseApp(), baseApp({ slug: 'iconed', name: 'Iconed' })];
+  await Home._refreshWidgetItems();
+  // Only the SV app missing its icon is re-added; the healthy entry and
+  // the foreign shortcut are left alone. The re-add is marked silent so
+  // the app skips the add-the-widget walkthrough.
+  assert.equal(added.length, 1);
+  assert.match(added[0].url, /#app\/demo-app/);
+  assert.equal(added[0].silent, true);
+  // Second refresh: already tried — no repeat even though the mock
+  // still reports has_icon:false.
+  await Home._refreshWidgetItems();
+  assert.equal(added.length, 1, 'one heal attempt per id per page load');
+});
+
+test('icon heal: retries entries skipped while apps were still loading', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  sandbox.document.createElement = () => ({
+    getContext: () => ({ fillRect() {}, fillText() {} }),
+    toDataURL: () => 'data:image/png;base64,FAKE',
+  });
+  const added = [];
+  sandbox.usernode = {
+    isNative: true,
+    addHomeScreenShortcut: async (opts) => { added.push(opts); return { added: true }; },
+    getHomeScreenShortcuts: async () => ({
+      items: [
+        { id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app', has_icon: false },
+      ],
+    }),
+  };
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._apps = []; // probe ran before /api/apps resolved
+  await Home._refreshWidgetItems();
+  assert.equal(added.length, 0, 'nothing healable without app objects');
+  Home._apps = [baseApp()];
+  await Home._healWidgetIcons();
+  assert.equal(added.length, 1, 'healed once the apps list landed');
+});
+
 test('menu: shortcut item hidden when unsupported or app not running', () => {
   const Home = makeHome({ id: ME });
   Home._shortcutSupport = { mechanism: 'unsupported' };

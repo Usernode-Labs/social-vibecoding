@@ -53,6 +53,10 @@ const Home = {
 
       Home._apps = apps;
       Home.render();
+      // The shortcut probe's heal pass may have run before _apps was
+      // populated (it needs the app objects for icon payloads); retry
+      // now that they're here. No-op when everything has an icon.
+      Home._healWidgetIcons();
     } catch (err) {
       listEl.innerHTML = `<div class="p-4 text-red-400 text-sm">Failed to load apps</div>`;
     }
@@ -1054,6 +1058,44 @@ const Home = {
     } catch (_) {
       Home._widgetItems = null;
     }
+    Home._healWidgetIcons();
+  },
+
+  // Registry entries whose icon PNG never landed in the app's widget
+  // store (pinned by an older page build, or the download failed) report
+  // has_icon:false. Re-add them silently with the current icon payload —
+  // re-pinning the same URL is an in-place refresh, so order is kept and
+  // no instruction walkthrough pops. One attempt per shortcut id per
+  // page load so a persistently failing icon can't loop.
+  _iconHealTried: null,
+  async _healWidgetIcons() {
+    if (Home._shortcutSupport?.mechanism !== 'widget') return;
+    const bridge = window.usernode;
+    if (!bridge || typeof bridge.addHomeScreenShortcut !== 'function') return;
+    const tried = (Home._iconHealTried ||= new Set());
+    let healed = false;
+    for (const item of Home._widgetItems || []) {
+      if (item.has_icon !== false || tried.has(item.id)) continue;
+      const slug = Home._widgetSlugFor(item);
+      const app = slug ? (Home._apps || []).find((a) => a.slug === slug) : null;
+      // No match yet (apps list still loading, or a non-SV shortcut):
+      // don't mark tried — a later refresh may be able to heal it.
+      if (!app) continue;
+      tried.add(item.id);
+      try {
+        await bridge.addHomeScreenShortcut({
+          ...Home._shortcutPayloadFor(app),
+          silent: true,
+        });
+        healed = true;
+      } catch (_) { /* denied / old build — leave the fallback tile */ }
+    }
+    if (healed) {
+      try {
+        const resp = await bridge.getHomeScreenShortcuts();
+        if (resp && Array.isArray(resp.items)) Home._widgetItems = resp.items;
+      } catch (_) { /* keep the pre-heal snapshot */ }
+    }
   },
 
   // The widget section (and drag-into-widget affordance) is active only
@@ -1425,21 +1467,27 @@ const Home = {
     }
   },
 
+  // The addHomeScreenShortcut payload for an SV app — shared by the add
+  // flows and the icon-heal pass so every path sends the same icon.
+  _shortcutPayloadFor(app) {
+    return {
+      name: app.name,
+      url: `${location.origin}/#app/${encodeURIComponent(app.slug)}`,
+      // Real icon image: absolute URL the app downloads. Emoji/letter
+      // tiles: canvas-rendered PNG data URI so the widget matches the
+      // in-app tile exactly.
+      icon_url: app.icon_url
+        ? new URL(app.icon_url, location.origin).href
+        : Home._widgetIconDataUrl(app),
+    };
+  },
+
   // Shared by the hamburger item and the drag-onto-strip drop. On iOS a
   // successful add lands in the widget registry, so the strip is
   // re-fetched and re-rendered to show the new tile.
   async _addShortcutForApp(app) {
     try {
-      await window.usernode.addHomeScreenShortcut({
-        name: app.name,
-        url: `${location.origin}/#app/${encodeURIComponent(app.slug)}`,
-        // Real icon image: absolute URL the app downloads. Emoji/letter
-        // tiles: canvas-rendered PNG data URI so the widget matches the
-        // in-app tile exactly.
-        icon_url: app.icon_url
-          ? new URL(app.icon_url, location.origin).href
-          : Home._widgetIconDataUrl(app),
-      });
+      await window.usernode.addHomeScreenShortcut(Home._shortcutPayloadFor(app));
       if (Home._shortcutSupport?.mechanism === 'widget') {
         await Home._refreshWidgetItems();
         Home.render();
