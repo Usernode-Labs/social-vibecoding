@@ -185,47 +185,81 @@ const Home = {
     Home._wireResize();
   },
 
-  // ===== Single-line pill fit =====
+  // ===== Per-card measured fit =====
   //
-  // Card pill rows are capped at ONE line: after every render (and on
-  // resize) this pass measures each `.card-pills` row and, when the
-  // flex-wrap layout would spill onto a second line, hides trailing
-  // pills and appends a small display-only "…" indicator instead. The
-  // hidden pills aren't lost — the hamburger menu's header always
-  // renders the app's full pill set (renderMenuHeaderHtml). Measure-
-  // then-hide (offsetTop vs the first pill) rather than width math so
-  // gaps/padding/fonts are accounted for exactly as the browser laid
-  // them out.
-  // One shared observer re-fits any row whose SIZE changes after the
+  // After every render (and on resize) each card gets a fit pass
+  // (_fitCard) that does two measured jobs:
+  //   1. Float the actions block (hamburger + inline Retry) as high
+  //      as it can go — the title's top line when the full name fits
+  //      beside it, else the pills line, else the footer.
+  //   2. Cap the pills row to ONE line: when the flex-wrap layout
+  //      would spill onto a second line, hide trailing pills behind a
+  //      small display-only "…" chip. Nothing is lost — the hamburger
+  //      menu's header always renders the app's full pill set
+  //      (renderMenuHeaderHtml).
+  // Measure-then-adjust (offsetTop / scrollWidth) rather than width
+  // math, so gaps/padding/fonts are accounted for exactly as the
+  // browser laid them out.
+  //
+  // One shared observer re-fits any CARD whose size changes after the
   // initial pass — the first fit often measures before late style
   // application (the Tailwind CDN JIT injects generated classes
-  // asynchronously, webfonts swap in) re-wraps a row that fit. A
-  // row's height change is exactly the "my pills re-wrapped" signal;
-  // re-running the fit converges (post-fit height is stable, so the
-  // observer goes quiet). disconnect()-and-reobserve per render keeps
-  // it from accumulating dead rows.
-  _pillRowObserver: null,
+  // asynchronously, webfonts swap in) re-wraps what fit. Re-running
+  // converges (the post-fit layout is stable, so the observer goes
+  // quiet). disconnect()-and-reobserve per render keeps it from
+  // accumulating dead cards.
+  _cardFitObserver: null,
 
   _fitPillRows(listEl) {
     if (!listEl || !listEl.querySelectorAll) return;
     if (typeof ResizeObserver !== 'undefined') {
-      if (!Home._pillRowObserver) {
-        Home._pillRowObserver = new ResizeObserver((entries) => {
-          for (const entry of entries) Home._fitPillRow(entry.target);
+      if (!Home._cardFitObserver) {
+        Home._cardFitObserver = new ResizeObserver((entries) => {
+          for (const entry of entries) Home._fitCard(entry.target);
         });
       }
-      Home._pillRowObserver.disconnect();
+      Home._cardFitObserver.disconnect();
     }
-    listEl.querySelectorAll('.card-pills').forEach((row) => {
-      Home._fitPillRow(row);
-      if (Home._pillRowObserver) Home._pillRowObserver.observe(row);
+    listEl.querySelectorAll('.app-card').forEach((card) => {
+      Home._fitCard(card);
+      if (Home._cardFitObserver) Home._cardFitObserver.observe(card);
     });
+  },
+
+  // Per-card fit: (1) float the actions block (hamburger + inline
+  // Retry) as high as it can go without interfering with anything —
+  // onto the title's top line when the full name still fits beside
+  // it, else onto the pills line (the pill fit accounts for its
+  // width), else the footer; then (2) cap the pills row to a single
+  // line. The actions block is one DOM node moved between the three
+  // slots, so its click wiring rides along and it can never overlap
+  // the title, dot, or pills — flexbox lays it out beside them.
+  _fitCard(card) {
+    const actions = card.querySelector('.card-actions');
+    const titleRow = card.querySelector('.card-title-row');
+    const pillsRow = card.querySelector('.card-pills');
+    const footer = card.querySelector('.card-footer');
+    if (actions && titleRow && footer) {
+      // Trial the title slot, then check the name span: if placing
+      // the actions there squeezes it into (further) truncation, the
+      // slot interferes — drop to the pills line, or the footer when
+      // there are no pills. scrollWidth rounds up, hence the 1px slack.
+      titleRow.appendChild(actions);
+      const name = titleRow.querySelector('.card-title-name');
+      const fits = name && name.scrollWidth <= name.clientWidth + 1;
+      if (!fits) (pillsRow || footer).appendChild(actions);
+    }
+    if (pillsRow) Home._fitPillRow(pillsRow);
   },
 
   _fitPillRow(row) {
     // Reset any previous pass so every fit starts from the full set.
+    // The actions block may live in this row (see _fitCard) — it is
+    // never a pill: exempt from hiding, but it participates in the
+    // wrap measurement so pills yield the line space it needs.
     row.querySelector('.pill-overflow')?.remove();
-    const pills = [...row.children];
+    const actions = row.querySelector(':scope > .card-actions');
+    const pills = [...row.children].filter((el) => el !== actions);
     if (!pills.length) return;
     pills.forEach((p) => p.classList.remove('hidden'));
     // Line membership by threshold, not exact offsetTop equality: the
@@ -239,14 +273,16 @@ const Home = {
     );
     if (!wraps()) return;
     // Display-only overflow marker (never a button — the per-card
-    // hamburger is where the rest lives). Appended BEFORE hiding so
-    // the loop accounts for the space the marker itself takes.
+    // hamburger is where the rest lives). Inserted BEFORE hiding so
+    // the loop accounts for the space the marker itself takes, and
+    // before the actions block so it stays visually with the pills.
     const ind = document.createElement('span');
     ind.className = 'pill-overflow';
     ind.textContent = '…';
     ind.title = 'More — open the app’s menu for the full list';
     ind.setAttribute('aria-hidden', 'true');
-    row.appendChild(ind);
+    if (actions) row.insertBefore(ind, actions);
+    else row.appendChild(ind);
     for (let i = pills.length - 1; i >= 0 && wraps(); i--) {
       pills[i].classList.add('hidden');
     }
@@ -709,26 +745,32 @@ const Home = {
       ? `<div class="text-xs text-zinc-500 dark:text-zinc-400 min-w-0 truncate"><span class="font-semibold text-zinc-700 dark:text-zinc-300">${activeUsers}</span> active user${activeUsers === 1 ? '' : 's'}</div>`
       : `<div class="text-xs text-zinc-400 dark:text-zinc-500 min-w-0 truncate">No active users yet</div>`;
 
-    // Card actions live on the footer row, to the right of the meta
-    // line: the "…" actions-menu trigger (secondary actions —
-    // add/remove Your apps, lock, check-updates, delete — live in the
-    // popover it opens; see openCardMenu), plus inline Retry on
-    // errored cards — the card's primary recovery action stays
-    // visible (creator-or-full-admin, same gate as before — view-only
-    // admins excluded, issue #311).
+    // Card actions block: the hamburger actions-menu trigger
+    // (secondary actions — add/remove Your apps, lock, check-updates,
+    // delete — live in the popover it opens; see openCardMenu), plus
+    // inline Retry on errored cards — the card's primary recovery
+    // action stays visible (creator-or-full-admin, same gate as
+    // before — view-only admins excluded, issue #311).
+    //
+    // It renders in the footer, then the per-card fit pass (_fitCard)
+    // floats it as high as it can go without interfering: onto the
+    // title's top line for short names, else the pills line, else it
+    // stays here. `ml-auto` right-aligns it in whichever flex row it
+    // lands in; the wiring travels with the node.
     const showRetry = isError && (App.user?.canAdminWrite || App.user?.id === app.created_by);
     const isLocked = !!app.locked;
     const actionsHtml = `
-      <div class="flex items-center gap-1 shrink-0">
+      <div class="card-actions flex items-center gap-1 shrink-0 ml-auto">
         ${showRetry ? `<button class="retry-btn text-xs text-emerald-500 hover:text-emerald-400 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors" data-slug="${app.slug}">Retry</button>` : ''}
         <button class="card-menu-btn w-6 h-6 flex items-center justify-center rounded-md text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-500/10 transition-colors" data-slug="${app.slug}" title="App actions" aria-label="App actions" aria-haspopup="menu"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>
       </div>`;
 
     // Footer row at the bottom of the right-hand column: meta line on
-    // the left, actions on the right. `mt-auto` pins it to the foot of
-    // the column so tiles in the same grid row line up nicely.
+    // the left, the actions' canonical slot on the right. `mt-auto`
+    // pins it to the foot of the column so tiles in the same grid row
+    // line up nicely.
     const footerHtml = `
-      <div class="flex items-center justify-between gap-2 mt-auto pt-1">
+      <div class="card-footer flex items-center justify-between gap-2 mt-auto pt-1">
         ${statsHtml}
         ${actionsHtml}
       </div>`;
@@ -749,9 +791,9 @@ const Home = {
         </div>
         <div class="flex-1 min-w-0 flex flex-col gap-1">
           <div class="min-w-0">
-            <div class="flex items-center gap-2">
-              <span class="font-medium text-sm truncate">${escapeHtml(app.name)}</span>
-              <span class="status-dot ${statusClass}" title="${app.status}"></span>
+            <div class="card-title-row flex items-center gap-2">
+              <span class="card-title-name font-medium text-sm truncate">${escapeHtml(app.name)}</span>
+              <span class="status-dot ${statusClass} shrink-0" title="${app.status}"></span>
             </div>
             ${warningHtml}
           </div>

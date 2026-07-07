@@ -148,23 +148,43 @@ test('menu header: always carries the app’s FULL pill set, inert', () => {
   assert.doesNotMatch(Home.renderMenuHeaderHtml(baseApp()), /card-menu-pills/);
 });
 
-test('card layout: big icon left, footer row carries meta + ⋯ (no corner pin)', () => {
+test('card layout: big icon left, footer row is the actions’ canonical slot (no corner pin)', () => {
   const Home = makeHome({ id: ME });
   const html = Home.renderAppCard(baseApp({ active_users: '3' }));
   assert.match(html, /w-14 h-14/, 'large left icon');
-  assert.doesNotMatch(html, /absolute top-2 right-2/, 'actions no longer corner-pinned');
-  // The ⋯ trigger sits AFTER the meta line in the footer row (meta on
-  // the left, actions to its right).
+  assert.doesNotMatch(html, /absolute top-2 right-2/, 'actions not corner-pinned');
+  // The menu trigger's canonical markup slot is the footer row, after
+  // the meta line (the runtime fit pass may promote the whole
+  // .card-actions node to the title/pills line — DOM move, not markup).
   const metaIdx = html.indexOf('active user');
   const menuIdx = html.indexOf('card-menu-btn');
   assert.ok(metaIdx !== -1 && menuIdx !== -1 && metaIdx < menuIdx,
-    '⋯ renders to the right of the active-users meta line');
+    'menu trigger renders after the active-users meta line');
   // Pills row (when present) renders between the title and the footer.
   const withChips = Home.renderAppCard(baseApp({ open_prs: 2 }));
   const titleIdx = withChips.indexOf('Demo App');
   const chipIdx = withChips.indexOf('2 to vote');
   const footIdx = withChips.indexOf('card-menu-btn');
   assert.ok(titleIdx < chipIdx && chipIdx < footIdx, 'title → pills → footer order');
+});
+
+test('card layout: fit-pass hooks present for the floating actions block', () => {
+  const Home = makeHome({ id: ME });
+  const html = Home.renderAppCard(baseApp({ status: 'error', created_by: ME }));
+  // _fitCard moves the .card-actions node between these slots; all
+  // four hooks must exist in the markup, and Retry must live INSIDE
+  // the actions block so it travels with the hamburger.
+  assert.match(html, /card-title-row/, 'title-row slot hook');
+  assert.match(html, /card-title-name/, 'name span hook (fit measurement)');
+  assert.match(html, /card-footer/, 'footer slot hook');
+  assert.equal((html.match(/card-actions/g) || []).length, 1, 'one actions block');
+  const actionsIdx = html.indexOf('card-actions');
+  const retryIdx = html.indexOf('retry-btn');
+  const menuIdx = html.indexOf('card-menu-btn');
+  assert.ok(actionsIdx < retryIdx && retryIdx < menuIdx,
+    'Retry and the hamburger both live inside .card-actions');
+  // ml-auto right-aligns the block in whichever flex row it lands in.
+  assert.match(html, /card-actions[^"]*ml-auto/, 'actions block right-aligns');
 });
 
 test('card: privacy badge renders inline in the pills row', () => {
