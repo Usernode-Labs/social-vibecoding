@@ -163,6 +163,10 @@ const Home = {
       canDragYours = yours.length >= 2;
       html = Home.renderMyProposalsSection();
       html += Home.renderActiveSessionsSection();
+      // iOS-in-app only: mirror of the homescreen widget's pinned grid,
+      // manageable in place (drag in / reorder / ✕). Empty string
+      // everywhere else — see _widgetUiActive.
+      html += Home.renderWidgetSection();
       if (yours.length) {
         html += '<div class="home-section-header col-span-full">Your apps</div>';
         // Tag the cards at render time: data-yours drives both the
@@ -184,6 +188,7 @@ const Home = {
     listEl.innerHTML = html;
     if (!query && canCreate) Home.wireCreateButtons();
     Home._wireCards(listEl, canDragYours);
+    Home._wireWidgetStrip(listEl);
   },
 
   // ===== Search bar =====
@@ -231,6 +236,9 @@ const Home = {
   // ===== Per-render card wiring =====
 
   _wireCards(listEl, canDragYours) {
+    // Cards already in the widget aren't drag-into-widget candidates —
+    // computed once per render, not per card.
+    const widgetSlugs = Home._widgetUiActive() ? Home._widgetSlugs() : null;
     listEl.querySelectorAll('.app-card').forEach((card) => {
       card.addEventListener('click', (e) => {
         // A completed drag (or a long-press that opened the menu) ends
@@ -254,8 +262,14 @@ const Home = {
       // One pointerdown handler per card: touch long-press opens the
       // actions menu everywhere, and "Your apps" cards additionally
       // promote to drag-to-reorder (mouse-move, or held-move on touch).
+      // When the widget strip is showing, every running card not yet in
+      // the widget can also be picked up and dropped onto the strip.
       card.addEventListener('pointerdown', (e) => Home._onCardPointerDown(
-        e, card, listEl, canDragYours && card.dataset.yours === 'true'
+        e, card, listEl,
+        canDragYours && card.dataset.yours === 'true',
+        !!widgetSlugs
+          && card.dataset.status === 'running'
+          && !widgetSlugs.has(card.dataset.slug)
       ));
     });
 
@@ -682,6 +696,233 @@ const Home = {
       </div>`;
   },
 
+  // ── Usernode widget section (iOS in-app only) ──────────────────────
+  //
+  // A strip above "Your apps" mirroring the pinned grid the iOS
+  // homescreen widget renders. Tiles are the device registry, in widget
+  // order; entries pinned by other dapps show up too (letter icon, no
+  // SV app match) and are just as removable/reorderable.
+  renderWidgetSection() {
+    if (!Home._widgetUiActive()) return '';
+    const items = Home._widgetItems;
+    const tiles = items.map((it) => Home.renderWidgetTile(it)).join('');
+    const hint = items.length
+      ? 'Drag tiles to reorder. Drag app cards here to add them.'
+      : 'Drag an app card here (or use its menu) to add it to the Usernode widget on your home screen.';
+    return `
+      <div class="home-section-header col-span-full">Usernode widget</div>
+      <div id="widget-strip" class="col-span-full flex flex-wrap items-start gap-3 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-600 p-3 transition-colors">
+        ${tiles}
+        <div class="widget-strip-hint w-full text-[0.7rem] text-zinc-500 dark:text-zinc-400 ${items.length ? '' : 'py-3 text-center'}">${hint}</div>
+      </div>`;
+  },
+
+  renderWidgetTile(item) {
+    const slug = Home._widgetSlugFor(item);
+    const app = slug ? (Home._apps || []).find((a) => a.slug === slug) : null;
+    const name = (app && app.name) || item.name || '?';
+    let iconHtml;
+    if (app && app.icon_url) {
+      iconHtml = `<img src="${escapeHtml(app.icon_url)}" alt="" loading="lazy" draggable="false" class="w-10 h-10 rounded-lg object-cover">`;
+    } else if (app && app.icon_emoji) {
+      iconHtml = `<span class="text-xl leading-none" aria-hidden="true">${escapeHtml(app.icon_emoji)}</span>`;
+    } else {
+      iconHtml = escapeHtml(String(name).charAt(0).toUpperCase());
+    }
+    // touch-pan-y + select-none for the same reason as app cards: keep
+    // vertical scroll native until the tile drag actually claims the
+    // gesture (see _onWidgetTilePointerDown).
+    return `
+      <div class="widget-tile app-card-draggable touch-pan-y relative flex flex-col items-center gap-1 w-16 cursor-grab" data-wid="${escapeHtml(item.id)}"${slug ? ` data-wslug="${escapeHtml(slug)}"` : ''}>
+        <div class="w-10 h-10 rounded-lg bg-violet-600/20 overflow-hidden flex items-center justify-center text-violet-400 font-bold text-base">${iconHtml}</div>
+        <span class="text-[0.65rem] leading-tight truncate w-full text-center">${escapeHtml(name)}</span>
+        <button class="widget-remove-btn absolute -top-1.5 right-0 w-5 h-5 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-[0.6rem] text-zinc-500 dark:text-zinc-300 hover:text-red-500" data-wid="${escapeHtml(item.id)}" title="Remove from widget" aria-label="Remove ${escapeHtml(name)} from widget">✕</button>
+      </div>`;
+  },
+
+  _wireWidgetStrip(listEl) {
+    const strip = listEl.querySelector('#widget-strip');
+    if (!strip) return;
+    strip.querySelectorAll('.widget-remove-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        Home._removeWidgetItem(btn.dataset.wid);
+      });
+    });
+    strip.querySelectorAll('.widget-tile').forEach((tile) => {
+      tile.addEventListener('pointerdown', (e) =>
+        Home._onWidgetTilePointerDown(e, tile, strip));
+    });
+  },
+
+  // Optimistic remove: the tile disappears immediately; on bridge
+  // failure the registry is re-fetched so the UI snaps back to device
+  // truth (same optimistic-then-revert shape as _menuToggleFavorite).
+  async _removeWidgetItem(id) {
+    Home._widgetItems = (Home._widgetItems || []).filter((it) => it.id !== id);
+    Home.render();
+    try {
+      await window.usernode.removeHomeScreenShortcut(id);
+    } catch (err) {
+      alert(`Remove from widget failed: ${(err && err.message) || err}`);
+      await Home._refreshWidgetItems();
+      Home.render();
+    }
+  },
+
+  // Persist whatever order the strip currently shows. The app answers
+  // with the authoritative order (unknown ids dropped, missing ids
+  // appended), which we mirror back into _widgetItems.
+  async _saveWidgetOrder(strip) {
+    const ids = [...strip.querySelectorAll('.widget-tile')].map((t) => t.dataset.wid);
+    const byId = new Map((Home._widgetItems || []).map((it) => [it.id, it]));
+    Home._widgetItems = ids.map((id) => byId.get(id)).filter(Boolean);
+    try {
+      await window.usernode.reorderHomeScreenShortcuts(ids);
+    } catch (err) {
+      alert(`Widget reorder failed: ${(err && err.message) || err}`);
+      await Home._refreshWidgetItems();
+      Home.render();
+    }
+  },
+
+  // Drag-to-reorder for widget tiles. A slimmed-down cousin of the app
+  // card drag below: same ghost-plus-in-flow-slot idea, but tiles are
+  // small and live in one flex row, so there's no FLIP animation or
+  // edge auto-scroll. Mouse promotes on >6px movement; touch arms
+  // after a ~250ms hold (no actions menu on tiles, so the hold goes
+  // straight to pickup).
+  _onWidgetTilePointerDown(e, tile, strip) {
+    if (e.button !== 0) return;
+    if (Home._dragActive) return;
+    if (e.target.closest('.widget-remove-btn')) return;
+    // Only one tile: nothing to reorder.
+    if (strip.querySelectorAll('.widget-tile').length < 2) return;
+
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const pointerId = e.pointerId;
+    const isTouch = e.pointerType === 'touch';
+    let armed = !isTouch;
+    let dragging = false;
+    let longPressTimer = null;
+    let ghost = null;
+    let grabX = 0;
+    let grabY = 0;
+
+    if (isTouch) {
+      longPressTimer = setTimeout(() => {
+        armed = true;
+        tile.style.transform = 'scale(1.08)';
+      }, 250);
+    }
+    const onTouchMove = (ev) => { if (dragging || armed) ev.preventDefault(); };
+    const onContextMenu = (ev) => { if (dragging || armed) ev.preventDefault(); };
+    if (isTouch) {
+      document.addEventListener('touchmove', onTouchMove, { passive: false });
+      document.addEventListener('contextmenu', onContextMenu);
+    }
+
+    const beginDrag = (refX, refY) => {
+      dragging = true;
+      Home._dragActive = true;
+      grabX = refX;
+      grabY = refY;
+      try { strip.setPointerCapture(pointerId); } catch {}
+      const rect = tile.getBoundingClientRect();
+      ghost = tile.cloneNode(true);
+      Object.assign(ghost.style, {
+        position: 'fixed',
+        left: `${rect.left}px`,
+        top: `${rect.top}px`,
+        width: `${rect.width}px`,
+        margin: '0',
+        zIndex: '1000',
+        pointerEvents: 'none',
+        transform: 'scale(1.08)',
+        transition: 'none',
+      });
+      document.body.appendChild(ghost);
+      tile.style.transform = '';
+      tile.style.opacity = '0.35';
+      document.body.style.userSelect = 'none';
+      document.body.style.webkitUserSelect = 'none';
+      document.body.style.cursor = 'grabbing';
+    };
+
+    const detach = () => {
+      clearTimeout(longPressTimer);
+      strip.removeEventListener('pointermove', onMove);
+      strip.removeEventListener('pointerup', onUp);
+      strip.removeEventListener('pointercancel', onCancel);
+      document.removeEventListener('touchmove', onTouchMove);
+      document.removeEventListener('contextmenu', onContextMenu);
+      try { strip.releasePointerCapture(pointerId); } catch {}
+    };
+
+    const teardown = () => {
+      if (ghost) { ghost.remove(); ghost = null; }
+      tile.style.opacity = '';
+      tile.style.transform = '';
+      document.body.style.userSelect = '';
+      document.body.style.webkitUserSelect = '';
+      document.body.style.cursor = '';
+      Home._dragActive = false;
+      if (Home._reloadPending) {
+        Home._reloadPending = false;
+        Home.load();
+      }
+    };
+
+    const onMove = (ev) => {
+      if (ev.pointerId !== pointerId) return;
+      if (!dragging) {
+        const dist = Math.hypot(ev.clientX - startX, ev.clientY - startY);
+        if (!armed) {
+          // Finger moved before the hold armed the drag → scrolling.
+          if (dist > 10) detach();
+          return;
+        }
+        if (dist > (isTouch ? 10 : 6)) beginDrag(ev.clientX, ev.clientY);
+        if (!dragging) return;
+      }
+      ev.preventDefault();
+      ghost.style.transform =
+        `translate(${ev.clientX - grabX}px, ${ev.clientY - grabY}px) scale(1.08)`;
+      const over = document.elementFromPoint(ev.clientX, ev.clientY)
+        ?.closest('.widget-tile');
+      if (!over || over === tile || !strip.contains(over)) return;
+      const rect = over.getBoundingClientRect();
+      if (ev.clientX < rect.left + rect.width / 2) {
+        if (tile.nextElementSibling !== over) over.before(tile);
+      } else {
+        if (over.nextElementSibling !== tile) over.after(tile);
+      }
+    };
+
+    const onUp = async (ev) => {
+      if (ev.pointerId !== pointerId) return;
+      const didDrag = dragging;
+      detach();
+      if (!didDrag) { teardown(); return; }
+      teardown();
+      await Home._saveWidgetOrder(strip);
+    };
+
+    const onCancel = (ev) => {
+      if (ev.pointerId !== pointerId) return;
+      const didDrag = dragging;
+      detach();
+      teardown();
+      // Abort without persisting — re-render restores the saved order.
+      if (didDrag) Home.render();
+    };
+
+    strip.addEventListener('pointermove', onMove);
+    strip.addEventListener('pointerup', onUp);
+    strip.addEventListener('pointercancel', onCancel);
+  },
+
   // Targeted lock-state refresh for a single app card, called from the
   // WS app_update handler (app.js handleAppUpdate) and the menu's own
   // toggle. The menu is built lazily from the Home._apps cache at open
@@ -714,7 +955,65 @@ const Home = {
     if (!bridge || typeof bridge.getHomeScreenShortcutSupport !== 'function') return;
     bridge.getHomeScreenShortcutSupport().then((support) => {
       Home._shortcutSupport = (support && support.mechanism) ? support : null;
+      // iOS: shortcuts live in a shared widget grid, which SV mirrors as
+      // a manageable section above "Your apps" (see renderWidgetSection).
+      // Android launcher pins are fire-and-forget — no section there.
+      if (Home._shortcutSupport?.mechanism === 'widget') {
+        return Home._refreshWidgetItems().then(() => Home.render());
+      }
     }).catch(() => { /* stay null — item simply never renders */ });
+  },
+
+  // ── iOS widget mirror ───────────────────────────────────────────────
+  //
+  // Home._widgetItems is the device-wide pinned registry as reported by
+  // the app: null until (unless) a fetch succeeds, then an array of
+  // { id, name, url, pinnedAtMs } in widget display order. null hides
+  // the section entirely — old app builds resolve null (bridge timeout),
+  // so the management UI only appears where every management call works.
+  _widgetItems: null,
+
+  async _refreshWidgetItems() {
+    const bridge = window.usernode;
+    if (!bridge || typeof bridge.getHomeScreenShortcuts !== 'function') return;
+    try {
+      const resp = await bridge.getHomeScreenShortcuts();
+      Home._widgetItems = (resp && Array.isArray(resp.items)) ? resp.items : null;
+    } catch (_) {
+      Home._widgetItems = null;
+    }
+  },
+
+  // The widget section (and drag-into-widget affordance) is active only
+  // when the app reports the widget mechanism AND the registry fetch
+  // succeeded.
+  _widgetUiActive() {
+    return Home._shortcutSupport?.mechanism === 'widget'
+      && Array.isArray(Home._widgetItems);
+  },
+
+  // Widget entries deep-link `origin/#app/<slug>`; anything else in the
+  // grid was pinned by a different dapp. Returns the SV slug or null.
+  _widgetSlugFor(item) {
+    const url = String(item?.url || '');
+    const prefix = `${location.origin}/#app/`;
+    if (!url.startsWith(prefix)) return null;
+    try {
+      return decodeURIComponent(url.slice(prefix.length));
+    } catch (_) {
+      return null;
+    }
+  },
+
+  // Set of SV slugs currently in the widget — drives the "already
+  // added" state in menus and drag targets.
+  _widgetSlugs() {
+    const out = new Set();
+    for (const item of Home._widgetItems || []) {
+      const slug = Home._widgetSlugFor(item);
+      if (slug) out.add(slug);
+    }
+    return out;
   },
 
   // Targeted icon refresh for a single app card, called from the WS
@@ -787,11 +1086,26 @@ const Home = {
     // browsers and on old app builds, so the item never renders there).
     const shortcutSupport = Home._shortcutSupport;
     if (isRunning && shortcutSupport && shortcutSupport.mechanism !== 'unsupported') {
-      items.push({
-        key: 'add-to-homescreen',
-        label: 'Add to phone home screen',
-        run: () => Home._menuAddShortcut(app),
-      });
+      // iOS shortcuts land in the shared widget grid, so the item names
+      // that destination; Android pins straight to the launcher.
+      const isWidget = shortcutSupport.mechanism === 'widget';
+      const inWidget = isWidget
+        && Home._widgetUiActive()
+        && Home._widgetSlugs().has(app.slug);
+      if (inWidget) {
+        items.push({
+          key: 'add-to-homescreen',
+          label: '✓ In Usernode widget',
+          disabled: true,
+          title: 'Manage it in the Usernode widget section above.',
+        });
+      } else {
+        items.push({
+          key: 'add-to-homescreen',
+          label: isWidget ? 'Add to Usernode widget' : 'Add to phone home screen',
+          run: () => Home._menuAddShortcut(app),
+        });
+      }
     }
     if (isError && (user.canAdminWrite || user.id === app.created_by)) {
       items.push({ key: 'retry', label: 'Retry', run: () => Home._menuRetry(app) });
@@ -946,15 +1260,31 @@ const Home = {
   // surface as tapping the card, with the platform session intact. The
   // app shows its own native confirmation screen; a user decline
   // surfaces as a rejection, which we swallow (it's not an error).
-  async _menuAddShortcut(app) {
+  _menuAddShortcut(app) {
+    return Home._addShortcutForApp(app);
+  },
+
+  // Shared by the hamburger item and the drag-onto-strip drop. On iOS a
+  // successful add lands in the widget registry, so the strip is
+  // re-fetched and re-rendered to show the new tile.
+  async _addShortcutForApp(app) {
     try {
       await window.usernode.addHomeScreenShortcut({
         name: app.name,
         url: `${location.origin}/#app/${encodeURIComponent(app.slug)}`,
+        // Absolute URL — the app downloads it outside this page's
+        // origin. Letter-tile fallback on the app side when unset.
+        icon_url: app.icon_url ? new URL(app.icon_url, location.origin).href : null,
       });
+      if (Home._shortcutSupport?.mechanism === 'widget') {
+        await Home._refreshWidgetItems();
+        Home.render();
+      }
+      return true;
     } catch (err) {
       const msg = String((err && err.message) || err);
       if (!/denied/i.test(msg)) alert(`Add to home screen failed: ${msg}`);
+      return false;
     }
   },
 
@@ -1063,7 +1393,11 @@ const Home = {
   //     before; on touch, keeping the finger down after the menu
   //     opened and moving >10px dismisses the menu and picks the card
   //     up, so both gestures coexist on one press.
-  _onCardPointerDown(e, card, listEl, canDrag) {
+  // canDrag: "Your apps" reorder. canWidgetDrop: the widget strip is
+  // showing and this running card isn't in it yet — the card can be
+  // picked up (even outside "Your apps") and dropped onto the strip to
+  // pin it. Both may be true; the drop target decides what happens.
+  _onCardPointerDown(e, card, listEl, canDrag, canWidgetDrop = false) {
     if (e.button !== 0) return;
     // A previous drag may still be settling (the ghost glides into the
     // slot for ~190ms after pointerup, with _dragActive held true).
@@ -1103,9 +1437,34 @@ const Home = {
     // overflow-y-auto). Falling back to the document scroller keeps the
     // feature working if the markup ever changes.
     const scrollEl = listEl.closest('.overflow-y-auto') || document.scrollingElement;
+    // Widget-strip drop target (iOS in-app only, see renderWidgetSection).
+    const strip = canWidgetDrop ? document.getElementById('widget-strip') : null;
 
     const yoursCards = () =>
       [...listEl.querySelectorAll('.app-card[data-yours="true"]')];
+
+    // Advertise / spotlight the strip while a droppable card is in
+    // flight. Inline styles for the same reason as the drop slot below:
+    // no dependency on the Tailwind JIT mid-gesture.
+    const setStripHighlight = (mode) => {
+      if (!strip) return;
+      if (mode === 'none') {
+        strip.style.borderColor = '';
+        strip.style.backgroundColor = '';
+        strip.style.borderStyle = '';
+      } else {
+        strip.style.borderStyle = 'dashed';
+        strip.style.borderColor = mode === 'hover'
+          ? 'rgba(139, 92, 246, 0.9)'
+          : 'rgba(139, 92, 246, 0.55)';
+        strip.style.backgroundColor = mode === 'hover'
+          ? 'rgba(139, 92, 246, 0.14)'
+          : 'rgba(139, 92, 246, 0.05)';
+      }
+    };
+
+    const isOverStrip = (x, y) =>
+      !!strip && !!document.elementFromPoint(x, y)?.closest('#widget-strip');
 
     const beginDrag = (refX, refY) => {
       dragging = true;
@@ -1172,6 +1531,7 @@ const Home = {
       document.body.style.userSelect = 'none';
       document.body.style.webkitUserSelect = 'none';
       document.body.style.cursor = 'grabbing';
+      setStripHighlight('ready');
     };
 
     // Touch: a ~350ms long-press during which the finger stays put
@@ -1261,6 +1621,9 @@ const Home = {
     // section by construction. Shared by pointer moves and the
     // auto-scroll loop.
     const updateSlot = (x, y) => {
+      // A widget-drop-only pickup (card outside "Your apps") must not
+      // reorder the grid — its slot stays put and only the strip reacts.
+      if (!canDrag) return;
       const over = document.elementFromPoint(x, y)
         ?.closest('.app-card[data-yours="true"]');
       if (!over || over === card || !listEl.contains(over)) return;
@@ -1374,6 +1737,7 @@ const Home = {
       document.body.style.userSelect = '';
       document.body.style.webkitUserSelect = '';
       document.body.style.cursor = '';
+      setStripHighlight('none');
       Home._dragActive = false;
     };
 
@@ -1392,13 +1756,13 @@ const Home = {
           if (!menuOpened) {
             // Finger moved before the long-press fired → it's a scroll.
             if (dist > 10) detach();
-          } else if (canDrag && dist > 10) {
+          } else if ((canDrag || canWidgetDrop) && dist > 10) {
             // Held past the long-press and moved on a reorderable
             // card: the menu steps aside and the drag takes over.
             Home.closeCardMenu();
             beginDrag(ev.clientX, ev.clientY);
           }
-        } else if (canDrag && dist > 6) {
+        } else if ((canDrag || canWidgetDrop) && dist > 6) {
           // Mouse/pen: > 6px from the down point promotes to a drag;
           // below that it stays a click for the navigation handler.
           beginDrag(ev.clientX, ev.clientY);
@@ -1410,6 +1774,9 @@ const Home = {
       lastClientY = ev.clientY;
       moveGhost(ev.clientX, ev.clientY);
       updateSlot(ev.clientX, ev.clientY);
+      if (strip) {
+        setStripHighlight(isOverStrip(ev.clientX, ev.clientY) ? 'hover' : 'ready');
+      }
       // Start/stop edge auto-scroll based on where the finger now sits.
       syncAutoScroll();
     };
@@ -1432,6 +1799,28 @@ const Home = {
       // clears a stale flag when no click follows (e.g. touch drags).
       Home._suppressClick = true;
       setTimeout(() => { Home._suppressClick = false; }, 0);
+      // Dropped onto the widget strip: this drag was an "add to
+      // widget", not a reorder. Glide the ghost onto the strip, put the
+      // card back where it was (updateSlot never moved a widget-only
+      // pickup; a "Your apps" card may have shuffled in flight, but
+      // nothing was persisted, so the next render restores the saved
+      // order), and hand off to the shortcut flow — the app shows its
+      // native confirmation from here.
+      if (canWidgetDrop && isOverStrip(ev.clientX, ev.clientY)) {
+        const stripRect = strip.getBoundingClientRect();
+        ghost.style.transition = 'transform 180ms ease, opacity 180ms ease';
+        ghost.style.opacity = '0';
+        ghost.style.transform =
+          `translate(${stripRect.left + 16 - ghostLeft}px, ${stripRect.top + 8 - ghostTop}px) scale(0.4)`;
+        const slug = card.dataset.slug;
+        setTimeout(async () => {
+          restoreCard();
+          runPendingReload();
+          const app = (Home._apps || []).find((a) => a.slug === slug);
+          if (app) await Home._addShortcutForApp(app);
+        }, 190);
+        return;
+      }
       // "Put down": glide the ghost into the drop slot, then swap the
       // real card back in and persist. _dragActive stays true during
       // the settle so a WS-driven Home.load() can't delete the slot
@@ -1443,7 +1832,7 @@ const Home = {
         `translate(${target.left - ghostLeft}px, ${target.top - ghostTop}px) scale(1)`;
       setTimeout(async () => {
         restoreCard();
-        await Home._saveYoursOrder(listEl);
+        if (canDrag) await Home._saveYoursOrder(listEl);
         runPendingReload();
       }, 190);
     };

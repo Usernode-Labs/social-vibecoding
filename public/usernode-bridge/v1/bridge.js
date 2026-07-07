@@ -3693,6 +3693,86 @@
     });
   };
 
+  // Shortcut-registry management (widget grid on iOS). Same old-build
+  // hazard as the support probe: app builds that predate a method silently
+  // drop it, so each call races a timeout instead of hanging forever.
+  //
+  //   getHomeScreenShortcuts()        → { mechanism, items: [{id, name,
+  //                                       url, pinnedAtMs}] } or null when
+  //                                       the app can't answer (old build /
+  //                                       no native channel) — callers
+  //                                       should hide management UI on null.
+  //   removeHomeScreenShortcut(id)    → { removed: true }; rejects on
+  //                                       timeout/error.
+  //   reorderHomeScreenShortcuts(ids) → { order: [ids...] }; unknown ids
+  //                                       ignored, missing ids appended.
+  function callNativeShortcutMgmt(method, args, onTimeout) {
+    return new Promise(function (resolve, reject) {
+      var done = false;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        console.warn(_BRIDGE_TAG, method, "timed out (old app build?)");
+        onTimeout(resolve, reject);
+      }, _SHORTCUT_PROBE_TIMEOUT_MS);
+      callNative(method, args).then(
+        function (v) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve(v);
+        },
+        function (err) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          reject(err);
+        }
+      );
+    });
+  }
+
+  window.usernode.getHomeScreenShortcuts = function () {
+    if (!window.usernode.isNative) return Promise.resolve(null);
+    return callNativeShortcutMgmt("getHomeScreenShortcuts", {}, function (resolve) {
+      resolve(null);
+    });
+  };
+
+  window.usernode.removeHomeScreenShortcut = function (id) {
+    if (!id) {
+      return Promise.reject(new Error("removeHomeScreenShortcut requires an id"));
+    }
+    if (!window.usernode.isNative) {
+      return Promise.reject(new Error(
+        "Homescreen shortcuts are only available inside the Usernode mobile app."
+      ));
+    }
+    return callNativeShortcutMgmt(
+      "removeHomeScreenShortcut", { id: id },
+      function (_resolve, reject) {
+        reject(new Error("removeHomeScreenShortcut is not supported by this app build"));
+      }
+    );
+  };
+
+  window.usernode.reorderHomeScreenShortcuts = function (ids) {
+    if (!Array.isArray(ids)) {
+      return Promise.reject(new Error("reorderHomeScreenShortcuts requires an array of ids"));
+    }
+    if (!window.usernode.isNative) {
+      return Promise.reject(new Error(
+        "Homescreen shortcuts are only available inside the Usernode mobile app."
+      ));
+    }
+    return callNativeShortcutMgmt(
+      "reorderHomeScreenShortcuts", { ids: ids },
+      function (_resolve, reject) {
+        reject(new Error("reorderHomeScreenShortcuts is not supported by this app build"));
+      }
+    );
+  };
+
   // =====================================================================
   //  Public API: LLM access (usernode.requestLlmAccess / getLlmAccess)
   // =====================================================================

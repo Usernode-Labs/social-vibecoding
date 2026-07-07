@@ -56,7 +56,7 @@ function makeHome(user) {
     alert: () => {},
     confirm: () => true,
     setTimeout, clearTimeout, setInterval, clearInterval,
-    location: { search: '' },
+    location: { search: '', origin: 'https://sv.test' },
     addEventListener: () => {},
     removeEventListener: () => {},
   };
@@ -441,9 +441,78 @@ test('menu: shortcut item renders when the bridge reports support', () => {
     items.find((i) => i.key === 'add-to-homescreen').label,
     'Add to phone home screen'
   );
-  // iOS widget mechanism counts as supported too.
+  // iOS widget mechanism counts as supported too, and names the widget
+  // as the destination.
   Home._shortcutSupport = { mechanism: 'widget', widgetInstalled: false };
-  assert.ok(keys(Home.menuItemsFor(baseApp())).includes('add-to-homescreen'));
+  const widgetItems = Home.menuItemsFor(baseApp());
+  const shortcutItem = widgetItems.find((i) => i.key === 'add-to-homescreen');
+  assert.ok(shortcutItem, 'item present for widget mechanism');
+  assert.equal(shortcutItem.label, 'Add to Usernode widget');
+  assert.ok(!shortcutItem.disabled, 'actionable when not yet in the widget');
+});
+
+test('menu: shortcut item flips to a disabled ✓ when already in the widget', () => {
+  const Home = makeHome({ id: ME });
+  Home._shortcutSupport = { mechanism: 'widget', widgetInstalled: true };
+  Home._widgetItems = [
+    { id: 'abc', name: 'Demo App', url: 'https://sv.test/#app/demo-app' },
+  ];
+  const item = Home.menuItemsFor(baseApp())
+    .find((i) => i.key === 'add-to-homescreen');
+  assert.ok(item, 'item still renders');
+  assert.equal(item.disabled, true);
+  assert.match(item.label, /In Usernode widget/);
+  // A different app stays actionable.
+  const other = Home.menuItemsFor(baseApp({ slug: 'other-app' }))
+    .find((i) => i.key === 'add-to-homescreen');
+  assert.equal(other.disabled, undefined);
+  assert.equal(other.label, 'Add to Usernode widget');
+});
+
+// ── Usernode widget section ───────────────────────────────────────
+//
+// renderWidgetSection is the iOS-only strip above "Your apps". It must
+// render nothing unless BOTH the bridge reported mechanism 'widget' AND
+// the registry fetch succeeded (_widgetItems is an array) — old app
+// builds time out to null and plain browsers never probe, so the
+// section (and its management calls) can't appear where they'd fail.
+
+test('widget section: hidden unless widget mechanism + fetched registry', () => {
+  const Home = makeHome({ id: ME });
+  assert.equal(Home.renderWidgetSection(), '', 'no probe → nothing');
+  Home._shortcutSupport = { mechanism: 'widget' };
+  assert.equal(Home.renderWidgetSection(), '', 'no registry fetched → nothing');
+  Home._shortcutSupport = { mechanism: 'pinned-shortcut' };
+  Home._widgetItems = [];
+  assert.equal(Home.renderWidgetSection(), '', 'Android pins → no section');
+});
+
+test('widget section: tiles in registry order, each with a remove button', () => {
+  const Home = makeHome({ id: ME });
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._apps = [baseApp()];
+  Home._widgetItems = [
+    { id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app' },
+    { id: 'w2', name: 'Other Dapp', url: 'https://elsewhere.test/thing' },
+  ];
+  const html = Home.renderWidgetSection();
+  assert.match(html, /Usernode widget/, 'section header');
+  assert.match(html, /id="widget-strip"/);
+  assert.equal((html.match(/class="widget-tile /g) || []).length, 2);
+  assert.equal((html.match(/widget-remove-btn/g) || []).length, 2);
+  assert.ok(
+    html.indexOf('data-wid="w1"') < html.indexOf('data-wid="w2"'),
+    'tiles follow registry order'
+  );
+  // The SV-app tile resolves its slug; the foreign-dapp tile doesn't.
+  assert.match(html, /data-wslug="demo-app"/);
+  assert.doesNotMatch(html, /data-wslug="other/i);
+  // Empty registry still renders the strip as a drop target.
+  Home._widgetItems = [];
+  const empty = Home.renderWidgetSection();
+  assert.match(empty, /id="widget-strip"/);
+  assert.doesNotMatch(empty, /widget-tile /);
+  assert.match(empty, /Drag an app card here/);
 });
 
 test('menu: shortcut item hidden when unsupported or app not running', () => {
