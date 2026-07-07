@@ -734,15 +734,28 @@ const Home = {
   // Pure item builder, separate from the DOM so tests can pin the
   // permission gating. Mutating controls gate on canAdminWrite (full
   // admin) — view-only admins don't get them (issue #311); Retry stays
-  // creator-or-full-admin. Membership ("Your apps" via
-  // is_collaborator) isn't removable here, so member apps get no
-  // add/remove entry; everyone else always gets at least that one.
+  // creator-or-full-admin.
+  //
+  // The Your-apps entry renders for EVERY app so the affordance is
+  // always discoverable. Membership (is_collaborator — you created or
+  // help build the app) isn't removable, so member apps get a
+  // disabled, informational "In Your apps" row instead of a Remove —
+  // without it, a user who is a member of every app they open (e.g.
+  // the creator of most apps on an instance) would never see the
+  // selector anywhere and reasonably conclude it's missing.
   menuItemsFor(app) {
     const items = [];
     const user = App.user || {};
     const isRunning = app.status === 'running';
     const isError = app.status === 'error';
-    if (!app.is_collaborator) {
+    if (app.is_collaborator) {
+      items.push({
+        key: 'favorite',
+        label: '✓ In Your apps',
+        disabled: true,
+        title: 'You build this app, so it is always in Your apps.',
+      });
+    } else {
       items.push({
         key: 'favorite',
         label: app.is_favorited ? 'Remove from Your apps' : 'Add to Your apps',
@@ -794,11 +807,17 @@ const Home = {
       btn.textContent = item.label;
       btn.dataset.key = item.key;
       if (item.title) btn.title = item.title;
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (!item.keepOpen) Home.closeCardMenu();
-        item.run(btn);
-      });
+      if (item.disabled) {
+        // Informational row (e.g. "In Your apps" on member apps):
+        // rendered but inert, so the affordance stays discoverable.
+        btn.disabled = true;
+      } else {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (!item.keepOpen) Home.closeCardMenu();
+          item.run(btn);
+        });
+      }
       el.appendChild(btn);
     }
 

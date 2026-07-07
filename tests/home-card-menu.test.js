@@ -144,10 +144,41 @@ test('menu: favorited app flips the label to Remove', () => {
   assert.equal(items[0].label, 'Remove from Your apps');
 });
 
-test('menu: member apps get no favorite item (membership is not removable here)', () => {
+test('menu: member apps get a DISABLED "In Your apps" row, never a Remove', () => {
+  // The entry must render for every app so the affordance is always
+  // discoverable — a user who is a member of every app they open
+  // (e.g. the creator of most apps on an instance) would otherwise
+  // never see the selector anywhere. Membership isn't removable, so
+  // the row is informational and inert.
   const Home = makeHome({ id: ME });
-  const items = Home.menuItemsFor(baseApp({ is_collaborator: true }));
-  assert.equal(items.find((i) => i.key === 'favorite'), undefined);
+  const fav = Home.menuItemsFor(baseApp({ is_collaborator: true }))
+    .find((i) => i.key === 'favorite');
+  assert.ok(fav, 'favorite entry present on member apps');
+  assert.equal(fav.disabled, true, 'but disabled (membership is not removable)');
+  assert.match(fav.label, /In Your apps/);
+  assert.doesNotMatch(fav.label, /Remove/, 'no Remove offered on member apps');
+  assert.equal(fav.run, undefined, 'no action wired');
+  // Even a favorited member app never offers Remove (removing the
+  // favorite row would change nothing — membership keeps it in the
+  // section).
+  const favBoth = Home.menuItemsFor(baseApp({ is_collaborator: true, is_favorited: true }))
+    .find((i) => i.key === 'favorite');
+  assert.equal(favBoth.disabled, true);
+  assert.doesNotMatch(favBoth.label, /Remove/);
+});
+
+test('menu: every app carries a favorite entry — no card menu omits it', () => {
+  const Home = makeHome({ id: ME, canAdminWrite: true });
+  for (const over of [
+    {},
+    { is_collaborator: true },
+    { is_favorited: true },
+    { status: 'error', created_by: ME },
+    { self_hosted: true },
+  ]) {
+    const items = Home.menuItemsFor(baseApp(over));
+    assert.equal(items[0].key, 'favorite', `favorite entry first for ${JSON.stringify(over)}`);
+  }
 });
 
 test('menu: full admin on a running repo app gets check-updates, lock and delete', () => {
