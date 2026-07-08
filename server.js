@@ -1906,8 +1906,121 @@ function startStalePrSweeper(config) {
     notifyMs: config.prStaleNotifyMs, graceMs: config.prStaleGraceMs,
     retentionMs: config.archivedRetentionMs, intervalMs: config.staleSweepIntervalMs,
   });
+  const { checkAndMerge } = require('./src/routes/votes');
+  const issuesModule = require('./src/routes/issues');
+  const { getActiveUserStats, mergeGate } = require('./src/services/active-users');
   stalePrSweeperHandle = setInterval(async () => {
     if (lifecycle.isShuttingDown()) return;
+
+    // Pass 0: window-elapsed merges. A promoted PR can satisfy both merge
+    // gates (eased Yes threshold + minimum visibility window) purely through
+    // the passage of time, with no further vote to drive checkAndMerge. This
+    // pass re-checks each promoted PR's gate and fires the merge once its
+    // window has elapsed. Latency is bounded by staleSweepIntervalMs (default
+    // 1h) — acceptable; see SPEC "Post-window latency". checkAndMerge
+    // re-validates and claims atomically, so a racing vote can't double-merge.
+    try {
+      const { rows } = await pool.query(
+        `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.self_hosted AS app_self_hosted,
+                (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count,
+                (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'no')  AS no_count
+           FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+          WHERE cs.status = 'promoted' AND cs.is_headless = FALSE
+            AND (cs.behind_main IS NULL OR cs.behind_main = 0)
+          LIMIT 100`
+      );
+      const statsCache = new Map();
+      for (const session of rows) {
+        if (worker.isInFlight(session.id)) continue;
+        try {
+          let stats = statsCache.get(session.app_id);
+          if (!stats) {
+            stats = await getActiveUserStats(pool, session.app_id);
+            statsCache.set(session.app_id, stats);
+          }
+          const gate = mergeGate(
+            stats.active, session.yes_count, session.no_count,
+            session.promoted_at || session.created_at
+          );
+          // Merge takes precedence: a row that just became mergeable should
+          // merge, not reject. checkAndMerge re-confirms both gates atomically.
+          if (gate.mergeable) {
+            const result = await checkAndMerge(config, pool, session);
+            if (result?.merged) {
+              log.info('server', 'Window-elapsed PR merged by sweeper', {
+                sessionId: session.id, yesCount: session.yes_count,
+              });
+            }
+            continue;
+          }
+          // Auto-takedown: the rejection window has elapsed on a promoted PR
+          // the group is voting down (No > Yes, under the keep-alive support
+          // line). Reuse the real close/un-promote path (archiveSession),
+          // then nudge clients to refetch /promoted so the row drops out (the
+          // session_update 'archived' broadcast isn't wired to the vote panel).
+          if (gate.rejectable) {
+            const res = await sessionLifecycle.archiveSession({
+              pool, sessionId: session.id, reason: 'auto-rejected',
+            });
+            if (res?.archived) {
+              try {
+                ws.pushVoteUpdate({
+                  sessionId: session.id, appSlug: session.app_slug, merged: false,
+                });
+              } catch {}
+              log.info('server', 'Promoted PR auto-rejected by sweeper', {
+                sessionId: session.id,
+                yesCount: session.yes_count, noCount: session.no_count,
+              });
+            }
+          }
+        } catch (err) {
+          log.warn('server', 'Window-elapsed merge check failed', {
+            sessionId: session.id, err: err.message,
+          });
+        }
+      }
+    } catch (err) {
+      log.warn('server', 'Window-elapsed merge sweep failed', { err: err.message });
+    }
+
+    // Pass 0b: window-elapsed governance applies (rename + secret_change).
+    // Same rationale as Pass 0 — an open governance proposal can satisfy both
+    // gates with no further vote. The apply helpers re-check the gate and
+    // lock the issue row atomically, so this can't double-apply against a vote.
+    try {
+      const { rows } = await pool.query(
+        `SELECT i.*, a.slug AS app_slug,
+                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'up')   AS up_count,
+                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'down') AS down_count
+           FROM issues i JOIN apps a ON a.id = i.app_id
+          WHERE i.status = 'open' AND i.kind IN ('rename', 'secret_change')
+          LIMIT 100`
+      );
+      const statsCache = new Map();
+      for (const issue of rows) {
+        try {
+          let stats = statsCache.get(issue.app_id);
+          if (!stats) {
+            stats = await getActiveUserStats(pool, issue.app_id);
+            statsCache.set(issue.app_id, stats);
+          }
+          const gate = mergeGate(stats.active, issue.up_count, issue.down_count, issue.created_at);
+          if (!gate.mergeable) continue;
+          if (issue.kind === 'rename') {
+            await issuesModule.maybeApplyRenameProposal(pool, issue);
+          } else {
+            await issuesModule.maybeApplySecretChangeProposal(config, pool, issue);
+          }
+        } catch (err) {
+          log.warn('server', 'Window-elapsed governance apply failed', {
+            issueId: issue.id, err: err.message,
+          });
+        }
+      }
+    } catch (err) {
+      log.warn('server', 'Window-elapsed governance sweep failed', { err: err.message });
+    }
 
     if (notifyEnabled) {
       // Pass 1: warn authors of quiet promoted PRs (once).

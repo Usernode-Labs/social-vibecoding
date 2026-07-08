@@ -2,7 +2,7 @@ const log = require('./logger');
 const github = require('./github');
 const limits = require('./limits');
 const { runSyncMain, persistConflictState } = require('./sync-main');
-const { getActiveUserStats } = require('./active-users');
+const { getActiveUserStats, mergeGate } = require('./active-users');
 const { getPool } = require('../db/pool');
 
 // GitHub computes PR mergeability asynchronously: for a few seconds
@@ -192,28 +192,53 @@ async function drainApp(config, appId, excludeId) {
   while (true) {
     _appRekick.delete(appId);
 
-    const { majority } = await getActiveUserStats(pool, appId);
+    const { active } = await getActiveUserStats(pool, appId);
     // Highest-voted eligible promoted sibling, excluding the just-merged
-    // trigger ($2) and any PR already attempted this drain ($4); tie-break
+    // trigger ($2) and any PR already attempted this drain ($3); tie-break
     // longest-waiting (promoted_at ASC NULLS LAST) then created_at for
     // determinism. #391: a leading sort key floats PRs the DB already knows
     // are unblocked (behind_main = 0 AND no conflict/failed/resolving
     // snapshot) ahead of known-blocked ones, so clean PRs are attempted —
     // and merged — before any blocked sibling is even touched. NULL
     // merge_conflict_state (never checked) counts as clean.
-    const { rows } = await pool.query(
-      `SELECT cs.id,
-              (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count
+    //
+    // Eligibility is the dynamic merge gate (eased Yes threshold + elapsed
+    // visibility window — services/active-users.js mergeGate), NOT the fixed
+    // majority: an unopposed PR merges at the eased count, and a window-gated
+    // PR isn't attempted until its window elapses. requiredVotes/mergeWindowMs
+    // are JS, so candidates are fetched and the gate is applied here;
+    // checkAndMerge re-validates the same gate before actually merging.
+    const { rows: candidates } = await pool.query(
+      `SELECT cs.id, cs.promoted_at, cs.created_at,
+              ((cs.behind_main IS NULL OR cs.behind_main = 0)
+                AND COALESCE(cs.merge_conflict_state, 'clean') NOT IN ('conflict', 'failed', 'resolving')
+                AND COALESCE(cs.check_state, '') IN ('passing', 'skipped')) AS unblocked,
+              (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count,
+              (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'no')  AS no_count
        FROM chat_sessions cs
        WHERE cs.app_id = $1 AND cs.status = 'promoted' AND cs.id != $2
-         AND (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') >= $3
-         AND NOT (cs.id = ANY($4::int[]))
-       ORDER BY (cs.behind_main = 0 AND COALESCE(cs.merge_conflict_state, 'clean') NOT IN ('conflict', 'failed', 'resolving')
-                  AND COALESCE(cs.check_state, '') IN ('passing', 'skipped')) DESC,
-                yes_count DESC, cs.promoted_at ASC NULLS LAST, cs.created_at ASC
-       LIMIT 1`,
-      [appId, excludeId, majority, attempted]
+         AND NOT (cs.id = ANY($3::int[]))`,
+      [appId, excludeId, attempted]
     );
+    const toMs = (v) => {
+      if (v == null) return null;
+      if (v instanceof Date) return v.getTime();
+      if (typeof v === 'number') return v;
+      const ms = Date.parse(v);
+      return Number.isFinite(ms) ? ms : null;
+    };
+    const rows = candidates
+      .filter((r) => mergeGate(active, r.yes_count, r.no_count, r.promoted_at || r.created_at).mergeable)
+      .sort((a, b) => {
+        if (a.unblocked !== b.unblocked) return a.unblocked ? -1 : 1;
+        if (b.yes_count !== a.yes_count) return b.yes_count - a.yes_count;
+        const ap = toMs(a.promoted_at), bp = toMs(b.promoted_at);
+        if (ap == null && bp != null) return 1; // NULLS LAST
+        if (ap != null && bp == null) return -1;
+        if (ap != null && bp != null && ap !== bp) return ap - bp; // ASC
+        return (toMs(a.created_at) || 0) - (toMs(b.created_at) || 0); // ASC
+      })
+      .slice(0, 1);
 
     if (!rows.length) {
       // Nothing eligible right now. If a trigger arrived mid-pass (e.g. a

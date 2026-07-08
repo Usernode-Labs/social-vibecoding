@@ -3,7 +3,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const github = require('../services/github');
 const { sendSystemMessage, pushAppUpdate, pushIssueUpdate } = require('../services/ws');
-const { getActiveUserStats } = require('../services/active-users');
+const { getActiveUserStats, mergeGate } = require('../services/active-users');
 const { isAppLocked, hasAdminUpVote } = require('../services/admin-approval');
 const appManifest = require('../services/app-manifest');
 const appSecrets = require('../services/app-secrets');
@@ -135,6 +135,46 @@ function stagingMockIssues(repoUrl) {
   ];
 }
 
+// Staging-only mock GOVERNANCE proposals (DB-issue shaped) for the
+// Proposals-tab vote panel, so the dynamic threshold + visibility-window
+// countdown is exercisable on a prod-cloned staging DB via ?demo=1. Distinct
+// from stagingMockIssues above (which mocks external GitHub issues). Each row
+// carries precomputed gate fields because mocks bypass the live computation.
+function stagingMockGovernance() {
+  const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
+  const hoursAhead = (h) => new Date(Date.now() + h * 3600 * 1000).toISOString();
+  const mk = (id, kind, title, payload, hours, up, down, gate = {}) => ({
+    id,
+    app_id: 0,
+    kind,
+    title,
+    description: 'Staging demo governance proposal (?demo=1).',
+    status: 'open',
+    payload,
+    created_by: 0,
+    created_by_username: 'staging-tester',
+    created_at: hoursAgo(hours),
+    up_count: up,
+    down_count: down,
+    my_vote: null,
+    chat_count: 0,
+    last_message_at: null,
+    votes_required: gate.required ?? Math.max(up, 1),
+    merge_window_ends_at: gate.windowEndsAt ?? null,
+    contested: gate.contested ?? false,
+  });
+  return [
+    // Unopposed rename, threshold met, window still running → countdown.
+    mk(9100001, 'rename', '[Mock] Rename app to "Staging Demo App"',
+      { newName: 'Staging Demo App' }, 6, 2, 0,
+      { required: 2, windowEndsAt: hoursAhead(36) }),
+    // Contested secret change (down >= 1/3) → no countdown, full count gate.
+    mk(9100002, 'secret_change', '[Mock] Set FEATURE_FLAG to "on"',
+      { key: 'FEATURE_FLAG', action: 'set', hasValue: true }, 8, 4, 3,
+      { required: 6, windowEndsAt: null, contested: true }),
+  ];
+}
+
 // #396: staging-only mock comment threads for the topic view's GitHub
 // comment section, served by GET /api/apps/:slug/github-issues/:number/
 // comments when the live fetch is empty/unavailable. Keyed by the mock
@@ -208,11 +248,29 @@ function issueRoutes(config) {
       // the value should never be readable from this endpoint, even
       // by other admins. The committed value lands in app_secrets via
       // maybeApplySecretChangeProposal once the vote passes.
+      // Also attach the per-row dynamic merge gate (eased threshold +
+      // visibility window) anchored on the issue's created_at, mirroring
+      // the PR /promoted endpoint so governance pills get the same
+      // countdown/Contested treatment.
       const sanitized = rows.map((r) => {
-        if (r.kind !== 'secret_change' || !r.payload) return r;
-        const { valueEnc, ...rest } = r.payload;
-        return { ...r, payload: { ...rest, hasValue: !!valueEnc } };
+        const gate = mergeGate(activeUsers, r.up_count, r.down_count, r.created_at);
+        const withGate = {
+          ...r,
+          votes_required: gate.required,
+          merge_window_ends_at: gate.windowEndsAt,
+          contested: gate.contested,
+        };
+        if (withGate.kind !== 'secret_change' || !withGate.payload) return withGate;
+        const { valueEnc, ...rest } = withGate.payload;
+        return { ...withGate, payload: { ...rest, hasValue: !!valueEnc } };
       });
+
+      // Staging-only demo mode (?demo=1): append mock governance proposals
+      // spanning the gate regimes (countdown + contested). No-op in prod.
+      if (IS_STAGING && req.query.demo === '1') {
+        const have = new Set(sanitized.map((r) => r.id));
+        sanitized.push(...stagingMockGovernance().filter((m) => !have.has(m.id)));
+      }
 
       res.json({ issues: sanitized, activeUsers, majority });
     } catch (err) {
@@ -1056,8 +1114,25 @@ async function maybeApplyRenameProposal(pool, issue) {
     [issue.id]
   );
   const upCount = parseInt(upRows[0].cnt, 10) || 0;
-  if (upCount < majority) {
-    return { applied: false, upCount, majority, active };
+  // down votes feed both governance gates, mirroring PRs: they raise the
+  // eased threshold and push the visibility window out. The window is
+  // anchored on the issue's created_at (no separate promote step exists).
+  const { rows: downRows } = await pool.query(
+    `SELECT COUNT(*) AS cnt FROM issue_votes WHERE issue_id = $1 AND vote = 'down'`,
+    [issue.id]
+  );
+  const downCount = parseInt(downRows[0].cnt, 10) || 0;
+  const gate = mergeGate(active, upCount, downCount, issue.created_at);
+  const required = gate.required;
+  // Gate 1: eased up-vote threshold. Gate 2: visibility window must have
+  // elapsed. Either failing leaves the proposal open (the next vote, or the
+  // sweeper's window-elapsed pass, re-checks).
+  if (upCount < required || !gate.windowElapsed) {
+    return {
+      applied: false, upCount, majority, active,
+      required, windowEndsAt: gate.windowEndsAt,
+      waitingForWindow: upCount >= required && !gate.windowElapsed,
+    };
   }
 
   // Locked apps additionally require at least one admin up vote (see
@@ -1107,7 +1182,7 @@ async function maybeApplyRenameProposal(pool, issue) {
 
     await client.query('UPDATE apps SET name = $1 WHERE id = $2', [newName, app.id]);
 
-    const auditPayload = { ...locked.payload, appliedAt: new Date().toISOString(), appliedBy: 'group-vote', upCount, active };
+    const auditPayload = { ...locked.payload, appliedAt: new Date().toISOString(), appliedBy: 'group-vote', upCount, required, active };
     await client.query(
       `UPDATE issues SET status = 'closed', payload = $1 WHERE id = $2`,
       [JSON.stringify(auditPayload), locked.id]
@@ -1116,7 +1191,7 @@ async function maybeApplyRenameProposal(pool, issue) {
     await client.query('COMMIT');
 
     // Side effects (chat + GitHub + WS) are best-effort and live outside the txn.
-    const renamedMsg = `App renamed from "${oldName}" to "${newName}" by group vote (${upCount}/${active})`;
+    const renamedMsg = `App renamed from "${oldName}" to "${newName}" by group vote (${upCount}/${required})`;
     await sendSystemMessage(pool, app.id, renamedMsg, 'system')
       .catch((err) => log.warn('issues', 'Rename chat message failed', { err: err.message }));
     // Dual-post the outcome into the governance proposal's thread.
@@ -1148,7 +1223,7 @@ async function maybeApplyRenameProposal(pool, issue) {
           // Best-effort audit comment after the close succeeds.
           await ok.rest.issues.createComment({
             owner, repo, issue_number: locked.github_issue_number,
-            body: github.safeMention(`Applied by majority vote (${upCount}/${active}). App renamed to "${newName}".`),
+            body: github.safeMention(`Applied by group vote (${upCount}/${required}). App renamed to "${newName}".`),
           }).catch((err) => log.warn('issues', 'Rename comment failed', {
             issue: locked.github_issue_number, status: err.status, err: err.message,
           }));
@@ -1200,8 +1275,21 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
     [issue.id]
   );
   const upCount = parseInt(upRows[0].cnt, 10) || 0;
-  if (!force && upCount < majority) {
-    return { applied: false, upCount, majority, active };
+  // down votes feed both gates (eased threshold + visibility window),
+  // anchored on created_at. An admin force-apply skips both, like force-merge.
+  const { rows: downRows } = await pool.query(
+    `SELECT COUNT(*) AS cnt FROM issue_votes WHERE issue_id = $1 AND vote = 'down'`,
+    [issue.id]
+  );
+  const downCount = parseInt(downRows[0].cnt, 10) || 0;
+  const gate = mergeGate(active, upCount, downCount, issue.created_at);
+  const required = force ? upCount : gate.required;
+  if (!force && (upCount < gate.required || !gate.windowElapsed)) {
+    return {
+      applied: false, upCount, majority, active,
+      required: gate.required, windowEndsAt: gate.windowEndsAt,
+      waitingForWindow: upCount >= gate.required && !gate.windowElapsed,
+    };
   }
 
   // Locked apps additionally require at least one admin up vote (see
@@ -1281,7 +1369,7 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
       valueLast4: payload.valueLast4 || null,
       appliedAt: new Date().toISOString(),
       appliedBy: force ? `admin:${options.forceBy?.username || 'unknown'}` : 'group-vote',
-      upCount, active,
+      upCount, required, active,
     };
     await client.query(
       `UPDATE issues SET status = 'closed', payload = $1 WHERE id = $2`,
@@ -1294,7 +1382,7 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
     const verb = action === 'delete' ? 'removed' : 'set';
     const appliedHow = force
       ? `by admin override (${options.forceBy?.username || 'admin'})`
-      : `by group vote (${upCount}/${active})`;
+      : `by group vote (${upCount}/${required})`;
     const secretMsg = `Secret "${key}" ${verb} ${appliedHow}; redeploying…`;
     await sendSystemMessage(pool, issue.app_id, secretMsg, 'system')
       .catch((err) => log.warn('issues', 'Secret-change chat msg failed', { err: err.message }));
@@ -1362,4 +1450,12 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
   }
 }
 
-module.exports = { issueRoutes, creatorFromSourceLine, shouldCreateGithubTwin };
+module.exports = {
+  issueRoutes,
+  creatorFromSourceLine,
+  shouldCreateGithubTwin,
+  // Exported so the stale-PR sweeper can fire window-elapsed governance
+  // applies (parity with PR window-elapsed merges).
+  maybeApplyRenameProposal,
+  maybeApplySecretChangeProposal,
+};

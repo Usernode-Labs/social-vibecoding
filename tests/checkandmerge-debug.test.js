@@ -16,6 +16,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+// Grab the REAL pure gate helpers before stubbing the module — checkAndMerge
+// now gates on mergeGate (eased threshold + visibility window) in addition to
+// the checks gate this suite exercises.
+const { mergeGate } = require('../src/services/active-users');
+
 function stub(relId, exports) {
   const id = require.resolve(relId);
   require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
@@ -51,6 +56,7 @@ stub('../src/services/ws', {
 stub('../src/services/active-users', {
   getActiveUserStats: async () => ({ active: 3, majority: 2 }),
   isUserActive: async () => true,
+  mergeGate,
 });
 stub('../src/services/notifications', {
   createPrProposedNotifications: async () => [],
@@ -88,7 +94,10 @@ function makePool({ checkState = 'passing', yes = 3, behind = 0 } = {}) {
     runUpdates: [],
     async query(sql, params) {
       calls.push({ sql, params });
-      if (/SELECT COUNT\(\*\) as cnt FROM pr_votes/.test(sql)) return { rows: [{ cnt: String(yes) }] };
+      if (/SELECT COUNT\(\*\) as cnt FROM pr_votes/.test(sql)) {
+        // Yes and No tallies share this shape; the gate reads both.
+        return { rows: [{ cnt: /vote = 'no'/.test(sql) ? '0' : String(yes) }] };
+      }
       if (/INSERT INTO merge_debug_runs/.test(sql)) return { rows: [{ id: ++runIdSeq }] };
       if (/INSERT INTO merge_debug_steps/.test(sql)) {
         pool.steps.push({ runId: params[0], seq: params[1], phase: params[2], level: params[3], message: params[4] });

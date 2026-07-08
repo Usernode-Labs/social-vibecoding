@@ -13,6 +13,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+// The REAL pure merge gate, grabbed before stubbing — checkAndMerge derives
+// its vote threshold + visibility window from it.
+const { mergeGate } = require('../src/services/active-users');
+
 const Module = require('module');
 const _origLoad = Module._load;
 Module._load = function (request, ...rest) {
@@ -98,6 +102,7 @@ function loadVotes(opts = {}) {
   stub(ids.activeUsers, {
     getActiveUserStats: async () => ({ active: 1, majority: 1 }),
     isUserActive: async () => true,
+    mergeGate,
   });
   stub(ids.notifications, {});
   stub(ids.adminApproval, { isAppLocked: async () => locked, hasAdminYesVote: async () => adminYes });
