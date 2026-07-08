@@ -250,9 +250,13 @@ async function archiveSession({ pool, sessionId, userId = null, reason = 'manual
     const label = session.pr_title
       ? `PR #${session.pr_number} — ${session.pr_title}`
       : `PR #${session.pr_number}`;
-    const content = userId != null && session.owner_username
-      ? `${session.owner_username} withdrew ${label}`
-      : `${label} was withdrawn (no vote activity)`;
+    // Rejection (auto-takedown) gets its own line so the lifecycle feed reads
+    // correctly: the group voted it down rather than it just going quiet.
+    const content = reason === 'auto-rejected'
+      ? `${label} was closed by the group (more No than Yes, not enough support)`
+      : userId != null && session.owner_username
+        ? `${session.owner_username} withdrew ${label}`
+        : `${label} was withdrawn (no vote activity)`;
     try {
       const { sendSystemMessage } = require('./ws');
       await sendSystemMessage(pool, session.app_id, content, 'system');

@@ -31,6 +31,10 @@ process.env.CONFLICT_MERGEABLE_AFTER_PUSH_INITIAL_MS = '0';
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+// The REAL pure merge gate, grabbed before stubbing — the drain applies it
+// to the candidate rows the mock pool returns.
+const { mergeGate: realMergeGate } = require('../src/services/active-users');
+
 // loadConfig() (module level in server.js) hard-exits when these are missing.
 process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgres://test:test@localhost:5/test';
 process.env.SESSION_SECRET = process.env.SESSION_SECRET || 'test-session';
@@ -223,15 +227,21 @@ test('reconcile merges an eligible proposal and skips a below-threshold one (rea
         const ids = [...new Set(Object.values(sessions).filter((x) => x.status === 'promoted').map((x) => x.app_id))];
         return { rows: ids.map((id) => ({ app_id: id })), rowCount: ids.length };
       }
-      // drainApp: highest-voted eligible promoted sibling for an app.
-      if (/FROM chat_sessions cs/.test(s) && /cs\.status = 'promoted'/.test(s) && />= \$3/.test(s)) {
-        const [appId, excludeId, majority, attempted] = params;
+      // drainApp candidate query: every non-excluded promoted sibling with
+      // yes/no tallies — eligibility (the dynamic merge gate) and ranking now
+      // run in JS inside the drain.
+      if (/FROM chat_sessions cs/.test(s) && /cs\.status = 'promoted'/.test(s) && /vote = 'no'/.test(s)) {
+        const [appId, excludeId, attempted] = params;
         const cand = Object.values(sessions).filter((x) =>
           x.app_id === appId && x.status === 'promoted' && x.id !== excludeId
-          && (yesVotes[x.id] || 0) >= majority && !(attempted || []).includes(x.id));
-        if (!cand.length) return { rows: [], rowCount: 0 };
-        const top = cand.sort((a, b) => (yesVotes[b.id] || 0) - (yesVotes[a.id] || 0))[0];
-        return { rows: [{ id: top.id, yes_count: yesVotes[top.id] || 0 }], rowCount: 1 };
+          && !(attempted || []).includes(x.id));
+        return {
+          rows: cand.map((x) => ({
+            id: x.id, promoted_at: null, created_at: null, unblocked: true,
+            yes_count: yesVotes[x.id] || 0, no_count: 0,
+          })),
+          rowCount: cand.length,
+        };
       }
       // loadSession.
       if (/SELECT cs\.\*, a\.slug AS app_slug/.test(s)) {
@@ -250,7 +260,7 @@ test('reconcile merges an eligible proposal and skips a below-threshold one (rea
   for (const [id, exports] of [
     [loggerId, { info() {}, warn() {}, error() {}, debug() {} }],
     [githubId, { isEnabled: () => true, getOctokit: fakeOctokit, getInstallationOctokit: fakeOctokit }],
-    [activeUsersId, { getActiveUserStats: async () => ({ active: 3, majority: MAJORITY }) }],
+    [activeUsersId, { getActiveUserStats: async () => ({ active: 3, majority: MAJORITY }), mergeGate: realMergeGate }],
     [syncMainId, { runSyncMain: async () => ({ ok: true, syncResult: 'clean', behind: 0 }), persistConflictState: async () => {} }],
     [limitsId, { checkSystemBudget: async () => ({ ok: true, remaining: 2500 }) }],
     [wsId, { pushVoteUpdate() {}, sendSystemMessage: async () => {} }],

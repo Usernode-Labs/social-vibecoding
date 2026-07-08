@@ -14,6 +14,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+// The REAL pure merge gate, grabbed before stubbing — checkAndMerge derives
+// its vote threshold + visibility window from it.
+const { mergeGate } = require('../src/services/active-users');
+
 // routes/votes.js requires express at module level but only calls Router()
 // inside voteRoutes(), which this suite never invokes. Serve a stub through
 // Module._load so the suite is hermetic.
@@ -96,6 +100,7 @@ function loadVotesWithFailingRebuild(rebuildError) {
   stub(ids.activeUsers, {
     getActiveUserStats: async () => ({ active: 1, majority: 1 }),
     isUserActive: async () => true,
+    mergeGate,
   });
   stub(ids.notifications, {});
   stub(ids.adminApproval, { isAppLocked: async () => false, hasAdminYesVote: async () => true });

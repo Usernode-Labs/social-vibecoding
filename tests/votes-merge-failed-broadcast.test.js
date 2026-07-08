@@ -93,6 +93,10 @@ function loadVotesWithFailingMerge(mergeError) {
   stub(ids.activeUsers, {
     getActiveUserStats: async () => ({ active: 1, majority: 1 }),
     isUserActive: async () => true,
+    mergeGate: () => ({
+      required: 1, windowMs: 0, windowEndsAt: null, contested: false,
+      thresholdMet: true, windowElapsed: true, mergeable: true,
+    }),
   });
   stub(ids.notifications, {});
   stub(ids.adminApproval, { isAppLocked: async () => false, hasAdminYesVote: async () => true });

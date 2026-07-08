@@ -21,6 +21,10 @@ process.env.CONFLICT_MERGEABLE_AFTER_PUSH_INITIAL_MS = '0';
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+// The REAL pure merge gate, grabbed before any stubbing — the drain's
+// eligibility filter (eased threshold + visibility window) runs it verbatim.
+const { mergeGate: realMergeGate } = require('../src/services/active-users');
+
 // ── Mock pool ───────────────────────────────────────────────────────────
 function makePool(handlers) {
   const calls = [];
@@ -620,40 +624,34 @@ function loadResolverForSweep({ siblings, majority = 2 }) {
     runSyncMain: async () => { throw new Error('runSyncMain must not run on the no_conflict path'); },
     persistConflictState: async () => {},
   });
-  // The eligibility gate reads majority from here.
-  stub(ids.activeUsers, { getActiveUserStats: async () => ({ active: 3, majority }) });
+  // The eligibility gate reads the active count from here and applies the
+  // REAL dynamic merge gate (mergeGate: eased threshold + visibility window).
+  // With active=3 and no No votes, requiredVotes(3,0)=2 and any at-threshold
+  // row's window is 0 (yes >= M) — so `majority: 2` scenarios behave exactly
+  // as they did under the old fixed-majority SQL predicate.
+  stub(ids.activeUsers, { getActiveUserStats: async () => ({ active: 3, majority }), mergeGate: realMergeGate });
   stub(ids.votes, { checkAndMerge: async () => { throw new Error('checkAndMerge must not run on the no_conflict path'); } });
   stub(ids.ws, { pushVoteUpdate() {}, sendSystemMessage: async () => {} });
 
-  // Emulate the candidate query's SQL: keep only at-threshold rows
-  // (yes_count >= majority), then order yes_count DESC, promoted_at ASC
-  // NULLS LAST, created_at ASC, LIMIT 1.
-  const rank = (a, b) => {
-    if (b.yes_count !== a.yes_count) return b.yes_count - a.yes_count;
-    const ap = a.promoted_at, bp = b.promoted_at;
-    if (ap == null && bp != null) return 1;      // NULLS LAST
-    if (ap != null && bp == null) return -1;
-    if (ap != null && bp != null && ap !== bp) return ap - bp; // ASC
-    return a.created_at - b.created_at;           // ASC
-  };
-  // The drain loops, excluding the just-merged trigger ($2) and every PR
-  // already attempted this drain ($4), so model both exclusions or the loop
-  // never terminates. resolveWithSession bails at 'no_conflict' (mergeable
-  // null) without merging, so a resolved sibling stays 'promoted' and is
-  // re-offered unless we honor the attempted-set exclusion.
-  const eligibleFrontRunner = (params) => {
+  // The candidate query now fetches EVERY non-excluded promoted sibling
+  // (with yes/no counts and timestamps) and the drain applies the dynamic
+  // gate + ordering in JS — so the mock just honours the trigger ($2) and
+  // attempted-set ($3) exclusions and returns the raw rows. Eligibility
+  // (threshold + window) and the yes_count DESC / promoted_at ASC NULLS
+  // LAST / created_at ASC ranking are exercised for real in the resolver.
+  const candidateRows = (params) => {
     const excluded = new Set();
     if (params && params[1]) excluded.add(params[1]);
-    for (const a of (params && params[3]) || []) excluded.add(a);
-    const eligible = siblings.filter((s) => s.yes_count >= majority && !excluded.has(s.id));
-    if (!eligible.length) return [];
-    const sorted = [...eligible].sort(rank);
-    return [{ id: sorted[0].id, yes_count: sorted[0].yes_count }];
+    for (const a of (params && params[2]) || []) excluded.add(a);
+    return siblings
+      .filter((s) => !excluded.has(s.id))
+      .map((s) => ({ unblocked: true, no_count: 0, ...s }));
   };
 
   const pool = makePool([
-    // Candidate query — distinctive `yes_count` projection.
-    [/SELECT cs\.id,[\s\S]*yes_count[\s\S]*LIMIT 1/, (params) => eligibleFrontRunner(params)],
+    // Candidate query — distinctive `cs.promoted_at, cs.created_at` +
+    // yes/no tally projection.
+    [/SELECT cs\.id, cs\.promoted_at[\s\S]*yes_count[\s\S]*FROM chat_sessions/, (params) => candidateRows(params)],
     // loadSession — return a promoted session row for the requested id.
     [/SELECT cs\.\*, a\.slug/, (params) => {
       const sid = params[0];
@@ -684,23 +682,22 @@ test('checkAndResolveConflicts: resolves the eligible at-threshold sibling', asy
   const { subject, pool, loadedIds, restore } = loadResolverForSweep({
     majority: 2,
     siblings: [
-      { id: 11, yes_count: 0, promoted_at: 100, created_at: 100 }, // below threshold
-      { id: 12, yes_count: 3, promoted_at: 200, created_at: 200 }, // eligible
-      { id: 13, yes_count: 1, promoted_at: 50, created_at: 50 },   // below threshold
+      { id: 11, yes_count: 0, promoted_at: 100, created_at: 100 }, // no support: no gate path
+      { id: 12, yes_count: 3, promoted_at: 200, created_at: 200 }, // eligible (threshold)
+      // Below threshold AND no unopposed Yes lead (tie) — the lazy-consensus
+      // clock never arms, so this stays ineligible even at an ancient anchor.
+      { id: 13, yes_count: 1, no_count: 1, promoted_at: 50, created_at: 50 },
     ],
   });
   try {
     await subject.checkAndResolveConflicts({ jwtSecret: 's' }, { app_id: 5, id: 9 });
-    // The candidate query gates on the threshold and asks for a single row.
-    const candidate = pool.calls.find((c) => /SELECT cs\.id,[\s\S]*yes_count/.test(c.sql));
+    // The candidate query fetches every non-excluded promoted sibling with
+    // its yes/no tallies; eligibility (the dynamic merge gate) and the
+    // ranking now run in JS inside the drain.
+    const candidate = pool.calls.find((c) => /SELECT cs\.id, cs\.promoted_at[\s\S]*yes_count/.test(c.sql));
     assert.ok(candidate, 'the candidate query was issued');
-    assert.match(candidate.sql, />= \$3/, 'gates on the per-app majority threshold');
-    assert.match(candidate.sql, /LIMIT 1/, 'only one sibling is selected');
-    assert.match(candidate.sql, /yes_count DESC/, 'ranked by yes votes first');
-    assert.match(candidate.sql, /promoted_at ASC NULLS LAST/, 'longest-waiting tiebreak');
-    assert.match(candidate.sql, /created_at ASC/, 'deterministic final tiebreak');
-    // majority is passed as the third bind param.
-    assert.equal(candidate.params[2], 2, 'majority threshold is bound into the query');
+    assert.match(candidate.sql, /vote = 'no'/, 'fetches the No tally the gate needs');
+    assert.equal(candidate.params[1], 9, 'the just-merged trigger is excluded');
     // Exactly one resolve cycle, for the eligible sibling only.
     assert.deepEqual(loadedIds(), [12], 'only the at-threshold sibling is resolved');
   } finally {
@@ -708,17 +705,35 @@ test('checkAndResolveConflicts: resolves the eligible at-threshold sibling', asy
   }
 });
 
-test('checkAndResolveConflicts: resolves nothing when every sibling is below threshold', async () => {
+test('checkAndResolveConflicts: resolves nothing when no sibling has a merge path', async () => {
   const { subject, loadedIds, restore } = loadResolverForSweep({
     majority: 2,
     siblings: [
-      { id: 31, yes_count: 1, promoted_at: 100, created_at: 100 },
+      // Tie → lazy clock never arms; below threshold → no threshold path.
+      { id: 31, yes_count: 1, no_count: 1, promoted_at: 100, created_at: 100 },
       { id: 32, yes_count: 0, promoted_at: 200, created_at: 200 },
     ],
   });
   try {
     await subject.checkAndResolveConflicts({ jwtSecret: 's' }, { app_id: 5, id: 9 });
-    assert.deepEqual(loadedIds(), [], 'no pre-emptive resolution for below-threshold PRs');
+    assert.deepEqual(loadedIds(), [], 'no pre-emptive resolution without a merge path');
+  } finally {
+    restore();
+  }
+});
+
+test('checkAndResolveConflicts: an elapsed lazy-consensus sibling is eligible', async () => {
+  const { subject, loadedIds, restore } = loadResolverForSweep({
+    majority: 2,
+    siblings: [
+      // Below threshold (1 < 2) but unopposed with an ancient anchor — the
+      // lazy-consensus clock elapsed long ago, so the drain resolves it.
+      { id: 51, yes_count: 1, promoted_at: 100, created_at: 100 },
+    ],
+  });
+  try {
+    await subject.checkAndResolveConflicts({ jwtSecret: 's' }, { app_id: 5, id: 9 });
+    assert.deepEqual(loadedIds(), [51], 'lazy-consensus sibling enters the drain');
   } finally {
     restore();
   }
@@ -903,7 +918,7 @@ function loadResolverForPhases({ siblings, majority = 2 }) {
     },
   });
 
-  stub(ids.activeUsers, { getActiveUserStats: async () => ({ active: 3, majority }) });
+  stub(ids.activeUsers, { getActiveUserStats: async () => ({ active: 3, majority }), mergeGate: realMergeGate });
 
   // checkAndMerge: by the time the resolver calls it the branch is mergeable,
   // so record the merge and drop the PR out of 'promoted'.
@@ -920,34 +935,26 @@ function loadResolverForPhases({ siblings, majority = 2 }) {
     sendSystemMessage: async (_pool, _appId, content) => { sysMessages.push(content); },
   });
 
-  // Candidate query: live filter (promoted + at-threshold + exclusions) and
-  // the #391 sort (known-unblocked first, then yes DESC, promoted ASC NULLS
-  // LAST, created ASC), LIMIT 1.
+  // Candidate query: the drain now fetches every promoted, non-excluded
+  // sibling (with yes/no tallies, timestamps, and the DB-computed
+  // `unblocked` sort key) and applies the dynamic gate + the #391 ranking
+  // in JS — so the mock returns raw rows and only honours the exclusions.
+  // `unblocked` mirrors the query's expression, minus check_state (these
+  // scenarios predate checks and carry none — treat that as unblocked, as
+  // the pre-#47 emulation did).
   const blocked = (s) => !(s.behind_main === 0
     && !['conflict', 'failed', 'resolving'].includes(s.merge_conflict_state || 'clean'));
-  const rank = (a, b) => {
-    if (blocked(a) !== blocked(b)) return blocked(a) ? 1 : -1; // unblocked first
-    if (b.yes_count !== a.yes_count) return b.yes_count - a.yes_count;
-    const ap = a.promoted_at, bp = b.promoted_at;
-    if (ap == null && bp != null) return 1;
-    if (ap != null && bp == null) return -1;
-    if (ap != null && bp != null && ap !== bp) return ap - bp;
-    return a.created_at - b.created_at;
-  };
   const candidate = (params) => {
     const excluded = new Set();
     if (params && params[1]) excluded.add(params[1]);
-    for (const a of (params && params[3]) || []) excluded.add(a);
-    const eligible = [...byId.values()].filter(
-      (s) => s.status === 'promoted' && s.yes_count >= majority && !excluded.has(s.id)
-    );
-    if (!eligible.length) return [];
-    const top = [...eligible].sort(rank)[0];
-    return [{ id: top.id, yes_count: top.yes_count }];
+    for (const a of (params && params[2]) || []) excluded.add(a);
+    return [...byId.values()]
+      .filter((s) => s.status === 'promoted' && !excluded.has(s.id))
+      .map((s) => ({ no_count: 0, unblocked: !blocked(s), ...s }));
   };
 
   const pool = makePool([
-    [/SELECT cs\.id,[\s\S]*yes_count[\s\S]*LIMIT 1/, candidate],
+    [/SELECT cs\.id, cs\.promoted_at[\s\S]*yes_count[\s\S]*FROM chat_sessions/, candidate],
     [/SELECT cs\.\*, a\.slug/, (params) => {
       const s = byId.get(params[0]);
       if (!s) return [];
