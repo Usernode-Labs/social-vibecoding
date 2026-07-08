@@ -113,12 +113,19 @@
           return;
         }
 
-        window.location.href = '/';
+        window.location.href = '/' + window.location.hash;
       } catch {
         errorEl.textContent = 'Network error';
         errorEl.classList.remove('hidden');
       }
     });
+
+    // Mirror of login.html: keep the deep-link fragment across the
+    // register → login hop.
+    const loginLink = document.querySelector('a[href="/login.html"]');
+    if (loginLink && window.location.hash) {
+      loginLink.href = '/login.html' + window.location.hash;
+    }
   </script>
 </body>
 </html>

@@ -23,6 +23,17 @@ const App = {
   // by navigateToLeaderboard() / _exitLeaderboard() / navigateHome().
   _inLeaderboard: false,
 
+  // Chromeless full-screen mode (#app/<slug>/full): the App tab with the
+  // platform header + tab bar hidden, so the embedded app fills the
+  // viewport. This is where the edge gate sends credential-less direct
+  // visits to an app's own subdomain — the shell still injects the
+  // iframe token, refreshes it, and hosts the bridge/LLM-consent flows,
+  // so a shared link "just works". The only chrome is a floating
+  // "Open in Usernode" pill (see _mountChromelessPill) that switches to
+  // the regular #app/<slug>/app view. Driven purely by the hash via
+  // restoreFromHash/setChromeless.
+  chromeless: false,
+
   // Set to true while restoreFromHash() is applying a URL (e.g. on
   // popstate/hashchange) so that the navigation helpers it calls
   // (navigateToApp, switchTab, navigateHome) don't push a NEW history
@@ -41,7 +52,10 @@ const App = {
     try {
       const res = await fetch('/api/auth/me');
       if (!res.ok) {
-        window.location.href = '/login.html';
+        // Keep the fragment so login can bounce back to the deep link
+        // (e.g. the chromeless #app/<slug>/full view a share-link
+        // redirect landed on) instead of the home feed.
+        window.location.href = '/login.html' + window.location.hash;
         return;
       }
       const data = await res.json();
@@ -71,7 +85,7 @@ const App = {
         document.body.classList.add('is-view-as-non-admin');
       }
     } catch {
-      window.location.href = '/login.html';
+      window.location.href = '/login.html' + window.location.hash;
       return;
     }
 
@@ -1747,6 +1761,7 @@ const App = {
     try {
       const hash = location.hash.replace('#', '');
       if (!hash) {
+        App.setChromeless(false);
         if (App.currentApp) App.navigateHome();
         else if (App._inLeaderboard) App.navigateHome();
         else {
@@ -1767,6 +1782,7 @@ const App = {
 
       const parts = hash.split('/');
       if (parts[0] === 'leaderboard') {
+        App.setChromeless(false);
         // Optional sub-view segment (#leaderboard/history etc.) — pass
         // it through so deep links land on the right tab. Bare
         // #leaderboard keeps whatever tab was last active (Top PRs on
@@ -1792,6 +1808,11 @@ const App = {
         let tab = parts[2] || 'app';
         let subTab = null;
         let ref = null;
+        // Chromeless full-screen App view (#app/<slug>/full). Old cached
+        // clients that predate this route fall into the final `else`
+        // below and get the regular App tab — a graceful degrade.
+        const chromeless = tab === 'full';
+        if (chromeless) tab = 'app';
         if (tab === 'dev') {
           const sec = parts[3] || null;
           if (sec === 'sessions' && parts[4]) {
@@ -1827,6 +1848,7 @@ const App = {
           tab = 'app';
         }
         if (App._inLeaderboard) App._exitLeaderboard();
+        App.setChromeless(chromeless);
         if (App.currentApp !== slug) {
           App.navigateToApp(slug, tab, ref, subTab);
         } else if (App.currentTab !== tab
@@ -1838,6 +1860,7 @@ const App = {
           App.switchTab(tab, ref, subTab);
         }
       } else {
+        App.setChromeless(false);
         if (App._inLeaderboard) App._exitLeaderboard();
         App.setHeaderTitle('dApps');
         Home.load();
@@ -1845,6 +1868,69 @@ const App = {
     } finally {
       App._isRestoring = false;
     }
+  },
+
+  // ── Chromeless full-screen mode ──────────────────────────────────────
+  // Hide/show the two chrome elements (the shared header and the bottom
+  // App/Dev tab bar) and mount/unmount the floating "Open in Usernode"
+  // pill. Idempotent; only ever driven by restoreFromHash (the mode is
+  // hash-addressed, so history back/forward keeps working) plus a
+  // defensive clear in navigateHome.
+  setChromeless(on) {
+    const enable = !!on;
+    if (App.chromeless === enable) return;
+    App.chromeless = enable;
+    const header = document.getElementById('platform-header');
+    const tabs = document.getElementById('app-tabs');
+    if (header) header.classList.toggle('hidden', enable);
+    if (tabs) tabs.classList.toggle('hidden', enable);
+    if (enable) App._mountChromelessPill();
+    else App._unmountChromelessPill();
+  },
+
+  // Floating pill, visually matching the bridge's share-view pill
+  // (public/usernode-bridge.js __USERNODE_PLATFORM_LINK__) so users see
+  // one consistent affordance. Unlike the bridge pill it is NOT
+  // dismissible — in chromeless mode it's the only way into the full
+  // platform view. The slug is read at click time so the pill survives
+  // app-to-app hash navigation without a remount.
+  _mountChromelessPill() {
+    if (document.getElementById('chromeless-pill')) return;
+    const link = document.createElement('a');
+    link.id = 'chromeless-pill';
+    link.href = '#';
+    link.setAttribute('aria-label', 'Open this app on Usernode');
+    link.style.cssText = 'position:fixed;'
+      + 'right:calc(12px + env(safe-area-inset-right,0px));'
+      + 'bottom:calc(12px + env(safe-area-inset-bottom,0px));'
+      + 'z-index:40;display:flex;align-items:center;gap:4px;'
+      + 'background:rgba(15,20,32,0.82);color:#e7edf7;border-radius:999px;'
+      + 'padding:6px 12px;font:12px/1.2 -apple-system,system-ui,sans-serif;'
+      + 'text-decoration:none;box-shadow:0 2px 10px rgba(0,0,0,0.3);opacity:0.85';
+    link.addEventListener('mouseenter', () => { link.style.opacity = '1'; });
+    link.addEventListener('mouseleave', () => { link.style.opacity = '0.85'; });
+    const label = document.createElement('span');
+    label.textContent = 'Open in Usernode';
+    const glyph = document.createElement('span');
+    glyph.textContent = '\u2197'; // ↗ (escaped like the bridge pill's)
+    glyph.style.cssText = 'font-size:11px;opacity:0.75';
+    glyph.setAttribute('aria-hidden', 'true');
+    link.appendChild(label);
+    link.appendChild(glyph);
+    link.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      if (App.currentApp) {
+        // hashchange → restoreFromHash clears the mode; the already-
+        // loaded iframe stays mounted (same app, same tab).
+        location.hash = `#app/${App.currentApp}/app`;
+      }
+    });
+    document.body.appendChild(link);
+  },
+
+  _unmountChromelessPill() {
+    const link = document.getElementById('chromeless-pill');
+    if (link && link.parentNode) link.parentNode.removeChild(link);
   },
 
   // Show the leaderboard screen. Sibling to navigateToApp/navigateHome —
@@ -1922,7 +2008,11 @@ const App = {
           newHash = `#app/${App.currentApp}/dev`;
         }
       } else {
-        newHash = `#app/${App.currentApp}/app`;
+        // Chromeless mode round-trips through reloads/history via its
+        // own hash segment; the regular App tab keeps `/app`.
+        newHash = App.chromeless
+          ? `#app/${App.currentApp}/full`
+          : `#app/${App.currentApp}/app`;
       }
     } else {
       // Home: drop the fragment entirely — but keep the query string. In
@@ -2239,6 +2329,7 @@ const App = {
   },
 
   navigateHome() {
+    App.setChromeless(false);
     AppView.close();
     App.currentApp = null;
     document.getElementById('app-view').classList.add('hidden');

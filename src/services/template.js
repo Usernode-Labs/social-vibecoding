@@ -260,16 +260,25 @@ app.get('/api/leaderboard', async (_req, res) => {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// HTML shell: serve the app if authenticated, otherwise an "open in Usernode"
-// landing page so stray visits to the staging URL don't reveal the app.
+// HTML shell: serve the app if authenticated. Unauthenticated top-level
+// visits (share links pasted into a browser — Sec-Fetch-Dest: document)
+// are sent to the platform's chromeless view of this app, where the shell
+// embeds it with a real token so the link just works. Every other
+// tokenless case (iframe loads with an expired token, old browsers
+// without Sec-Fetch-*) gets the "open in Usernode" landing page instead
+// of a redirect, so the platform shell is never loaded INSIDE its own
+// app iframe and stray visits still don't reveal the app.
 app.get('*', (req, res) => {
   if (!req.user) {
+    if (req.get('sec-fetch-dest') === 'document') {
+      return res.redirect(302, '${PLATFORM_BASE_URL}/#app/${slug}/full');
+    }
     return res.status(401).send(\`<!doctype html><meta charset=utf-8><title>Open in Usernode</title>
 <body style="font-family:system-ui;background:#09090b;color:#e4e4e7;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0">
   <div style="max-width:24rem;padding:2rem;text-align:center">
     <h1 style="font-size:1.25rem;margin:0 0 0.5rem">Open this app inside Usernode</h1>
     <p style="color:#a1a1aa;font-size:0.9rem;margin:0 0 1.25rem">This page is served via the platform; direct visits aren't authenticated.</p>
-    <a href="${PLATFORM_BASE_URL}" style="display:inline-block;padding:0.5rem 1rem;background:#7c3aed;color:white;border-radius:0.5rem;text-decoration:none;font-size:0.9rem">Go to Usernode</a>
+    <a href="${PLATFORM_BASE_URL}/#app/${slug}/full" style="display:inline-block;padding:0.5rem 1rem;background:#7c3aed;color:white;border-radius:0.5rem;text-decoration:none;font-size:0.9rem">Open in Usernode</a>
   </div>
 </body>\`);
   }

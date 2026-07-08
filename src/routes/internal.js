@@ -227,9 +227,23 @@ function internalRoutes(_config) {
         return res.redirect(302, `${uri}${sep}${RETRY_MARKER}=1`);
       }
 
-      // 6. No valid credential. Browser GETs go authorize via the apex
-      // (where the platform session cookie lives); everything else gets
-      // the existence-hiding 404 the API surfaces use.
+      // 6. No valid credential. Top-level document navigations to a
+      // PRODUCTION app host (share links pasted into a browser) go to
+      // the platform shell's chromeless view — the shell embeds the app
+      // with a real iframe token, so the link works instead of ending
+      // at the app container's own 401 (the authorize dance below only
+      // satisfies THIS gate; the app never receives a token on a direct
+      // visit). Sec-Fetch-Dest distinguishes the address-bar navigation
+      // from iframe/asset/fetch loads, which — like staging previews
+      // and older browsers that don't send the header — keep the
+      // existing flow: browser GETs go authorize via the apex (where
+      // the platform session cookie lives); everything else gets the
+      // existence-hiding 404 the API surfaces use.
+      const isDocNav = method === 'GET'
+        && String(req.headers['sec-fetch-dest'] || '').toLowerCase() === 'document';
+      if (isDocNav && parsed.label === slug) {
+        return res.redirect(302, `https://${USERNODE_DOMAIN}/#app/${slug}/full`);
+      }
       if (method === 'GET') {
         return res.redirect(302, authorizeUrl(host, uri));
       }
