@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { createApp } = require('../services/app-creator');
+const { forkApp } = require('../services/app-forker');
 const caddy = require('../services/caddy');
 const docker = require('../services/docker');
 const github = require('../services/github');
@@ -28,6 +29,48 @@ function validateVisibilityCombo(collabVisibility, viewVisibility) {
     return 'An app that everyone can build cannot be private to view';
   }
   return null;
+}
+
+// Resolve fork lineage for a batch of serialized app objects IN PLACE.
+// The stored `apps.forked_from` column holds a REFERENCE ONLY
+// ({ appId, slug }); the display name is looked up LIVE here so a rename
+// on the source is reflected immediately and a deleted source resolves
+// to the literal "<deleted>" with an inert link. One batched query
+// covers the whole list (no per-row round trip). Replaces each app's
+// `forked_from` with { appId, slug, name, linkable } — or null for
+// non-forks / malformed refs.
+async function attachForkLineage(pool, apps) {
+  const list = Array.isArray(apps) ? apps : [apps];
+  const ids = [];
+  for (const a of list) {
+    const ref = a && a.forked_from;
+    if (ref && typeof ref === 'object' && Number.isInteger(ref.appId)) {
+      ids.push(ref.appId);
+    }
+  }
+  const nameById = new Map();
+  if (ids.length) {
+    const { rows } = await pool.query(
+      'SELECT id, name FROM apps WHERE id = ANY($1)',
+      [[...new Set(ids)]]
+    );
+    for (const r of rows) nameById.set(r.id, r.name);
+  }
+  for (const a of list) {
+    const ref = a && a.forked_from;
+    if (!ref || typeof ref !== 'object') {
+      if (a) a.forked_from = null;
+      continue;
+    }
+    const appId = Number.isInteger(ref.appId) ? ref.appId : null;
+    const linkable = appId != null && nameById.has(appId);
+    a.forked_from = {
+      appId,
+      slug: typeof ref.slug === 'string' ? ref.slug : null,
+      name: linkable ? nameById.get(appId) : '<deleted>',
+      linkable,
+    };
+  }
 }
 
 // Per-viewer access flags appended to app payloads so the client can
@@ -355,6 +398,9 @@ function appRoutes(config) {
           ...accessFlags(a, req.user, a.is_collaborator),
         };
       }));
+      // Resolve fork lineage (live source-name lookup, "<deleted>"
+      // fallback) for every serialized app in one batched query.
+      await attachForkLineage(pool, apps);
       // Staging demo tiles for the icon feature (see demoIconApps above).
       if (IS_STAGING && req.query.demo === '1') {
         apps.unshift(...demoIconApps());
@@ -562,6 +608,112 @@ function appRoutes(config) {
     }
   });
 
+  // Fork an existing app into a brand-new, independent app owned by the
+  // forker. Mirrors POST /api/apps: same quota/cap gate, same slug
+  // derivation, same insert-CTE (app row + creator membership) — plus a
+  // reference-only `forked_from` and an async forkApp() worker that
+  // clones the source's repo, public DB data, and non-private secrets.
+  router.post('/api/apps/:slug/fork', drainGuard, appCreateLimiter, async (req, res) => {
+    const { name } = req.body;
+    if (!name?.trim()) {
+      return res.status(400).json({ error: 'App name is required' });
+    }
+
+    try {
+      // Resolve the source app + enforce VIEW access (404 on deny so
+      // view-private apps aren't enumerable — same stance as elsewhere).
+      const { rows: srcRows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
+      if (!srcRows.length) return res.status(404).json({ error: 'App not found' });
+      const sourceApp = srcRows[0];
+      if (!(await appAccess.checkAppAccess(pool, sourceApp, req.user, 'view'))) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+      // The platform self-app has no per-app DB/container/repo to clone.
+      if (sourceApp.self_hosted) {
+        return res.status(400).json({ error: 'The platform app can’t be forked.' });
+      }
+      // Can't fork a half-built source (no repo / DB yet).
+      if (!sourceApp.repo_url) {
+        return res.status(409).json({ error: 'This app isn’t ready to fork yet — it has no repository.' });
+      }
+
+      // Per-user quota + global cap — identical gate to POST /api/apps.
+      if (!req.user?.canAdminWrite) {
+        const quota = req.user?.appQuota ?? 0;
+        const { rows: ownCountRows } = await pool.query(
+          `SELECT COUNT(*)::int AS n FROM apps WHERE created_by = $1 AND status <> 'error'`,
+          [req.user.id]
+        );
+        const liveCount = ownCountRows[0].n;
+        if (quota <= 0 || liveCount >= quota) {
+          return res.status(403).json({
+            error: quota <= 0
+              ? 'You don’t have permission to create apps. Ask an admin to enable app creation for your account.'
+              : `You’ve reached your app limit (${quota}). Ask an admin to raise your quota.`,
+          });
+        }
+      }
+      if (!req.user?.canAdminWrite && config.maxApps > 0) {
+        const { rows: countRows } = await pool.query(
+          `SELECT COUNT(*)::int AS n FROM apps WHERE status <> 'error'`
+        );
+        if (countRows[0].n >= config.maxApps) {
+          return res.status(429).json({
+            error: `This server is at its app limit (${config.maxApps}). Ask an admin to remove an app or raise the limit.`,
+          });
+        }
+      }
+
+      const crypto = require('crypto');
+      const base = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      if (!base) return res.status(400).json({ error: 'Invalid app name' });
+      const slug = `${base}-${crypto.randomBytes(3).toString('hex')}`;
+
+      // Reference-only lineage: appId + slug, NEVER the name (resolved
+      // live at serialize time). Inherit the source's visibility.
+      const forkedFrom = JSON.stringify({ appId: sourceApp.id, slug: sourceApp.slug });
+      const { rows } = await pool.query(
+        `WITH new_app AS (
+           INSERT INTO apps (name, slug, created_by, status,
+                             collab_visibility, view_visibility, forked_from)
+           VALUES ($1, $2, $3, 'creating', $4, $5, $6::jsonb)
+           RETURNING *
+         ), membership AS (
+           INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+           SELECT id, $3, 'member', NOW() FROM new_app
+           ON CONFLICT (app_id, user_id) DO NOTHING
+         )
+         SELECT * FROM new_app`,
+        [name.trim(), slug, req.user.id, sourceApp.collab_visibility, sourceApp.view_visibility, forkedFrom]
+      );
+      const appRow = rows[0];
+      log.info('apps', 'App fork (pending)', { appId: appRow.id, slug, sourceSlug: sourceApp.slug });
+      events.record(pool, {
+        type: events.EVENT_TYPES.APP_CREATED,
+        userId: req.user.id,
+        appId: appRow.id,
+        metadata: { forkedFromAppId: sourceApp.id, forkedFromSlug: sourceApp.slug },
+      });
+
+      forkApp(config, appRow, sourceApp).catch(async (err) => {
+        log.error('apps', 'Async fork failed', { appId: appRow.id, err: err.message });
+        await pool.query(
+          `UPDATE apps SET status = 'error' WHERE id = $1 AND status = 'creating'`,
+          [appRow.id]
+        ).catch(() => {});
+      });
+      scheduleCreationWatchdog(pool, appRow.id);
+
+      res.status(201).json({ app: appRow });
+    } catch (err) {
+      if (err.code === '23505') {
+        return res.status(409).json({ error: 'An app with that name already exists' });
+      }
+      log.error('apps', 'Failed to fork app', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.get('/api/apps/:slug', async (req, res) => {
     try {
       const { rows } = await pool.query(
@@ -621,14 +773,14 @@ function appRoutes(config) {
         }
       }
 
-      res.json({
-        app: {
-          ...appRow,
-          url,
-          missingSecrets,
-          ...accessFlags(appRow, req.user, isCollaborator),
-        },
-      });
+      const appPayload = {
+        ...appRow,
+        url,
+        missingSecrets,
+        ...accessFlags(appRow, req.user, isCollaborator),
+      };
+      await attachForkLineage(pool, appPayload);
+      res.json({ app: appPayload });
     } catch (err) {
       log.error('apps', 'Failed to get app', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

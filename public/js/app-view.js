@@ -201,6 +201,9 @@ const AppView = {
     // shared header so it's visible across tabs (App / group-chat /
     // dev-chat) for the duration this app is open; close() clears it.
     AppView.refreshVersionPill();
+    // Amber "⑂ Forked from <name>" lineage label in the shared header
+    // (cleared by close()). No-op for non-forks.
+    AppView.renderForkBadge();
     // Missing-secrets badge lives inside the dev-chat tab now and is
     // re-applied by renderDevChatTab() on every mount, so the call here
     // is just a primer for the case where the tab is already rendered.
@@ -227,6 +230,8 @@ const AppView = {
     if (window.Secrets) Secrets.hide();
     const slot = document.getElementById('app-version-pill-slot');
     if (slot) slot.innerHTML = '';
+    const forkSlot = document.getElementById('app-fork-badge-slot');
+    if (forkSlot) forkSlot.innerHTML = '';
   },
 
   async refreshToken() {
@@ -550,6 +555,11 @@ const AppView = {
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">App settings</span>
                 <span class="block text-xs text-zinc-500 dark:text-zinc-400">App secrets and display name</span>
               </button>
+              ${AppView.appData?.self_hosted ? '' : `
+              <button data-plus="fork" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
+                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Fork this app</span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Stand up your own independent copy</span>
+              </button>`}
             </div>
           </div>
         </div>
@@ -1150,6 +1160,13 @@ const AppView = {
       close();
       App.switchTab('dev', null, 'settings');
     });
+    const forkBtn = menu.querySelector('[data-plus="fork"]');
+    if (forkBtn) {
+      forkBtn.addEventListener('click', () => {
+        close();
+        AppView.promptFork();
+      });
+    }
   },
 
   // Best-effort one-line preview of the latest general-chat message for
@@ -4356,6 +4373,89 @@ const AppView = {
     if (modal) modal.classList.add('hidden');
     if (input) input.value = '';
     if (err) { err.classList.add('hidden'); err.textContent = ''; }
+  },
+
+  // Amber "⑂ Forked from <name>" lineage label in the shared header's
+  // right-hand action group. `forked_from` is resolved server-side to
+  // { appId, slug, name, linkable }; when linkable the pill links to the
+  // source app, otherwise (source deleted → name "<deleted>") it renders
+  // as inert text. No-op for non-forks.
+  renderForkBadge() {
+    const slot = document.getElementById('app-fork-badge-slot');
+    if (!slot) return;
+    const ref = AppView.appData && AppView.appData.forked_from;
+    if (!ref || typeof ref !== 'object') { slot.innerHTML = ''; return; }
+    const name = ref.name || '<deleted>';
+    const cls = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium '
+      + 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 '
+      + 'max-w-[40vw] truncate';
+    const label = `⑂ Forked from ${escapeHtml(name)}`;
+    if (ref.linkable && ref.slug) {
+      slot.innerHTML = `<a href="#app/${encodeURIComponent(ref.slug)}" `
+        + `class="${cls} hover:bg-amber-500/25 transition-colors" `
+        + `title="Forked from ${escapeAttr(name)} — open the original">${label}</a>`;
+    } else {
+      slot.innerHTML = `<span class="${cls} opacity-90" `
+        + `title="The original app no longer exists">${label}</span>`;
+    }
+  },
+
+  promptFork() {
+    if (!AppView.appData) return;
+    const modal = document.getElementById('fork-modal');
+    const input = document.getElementById('fork-input');
+    const src = document.getElementById('fork-source-name');
+    const err = document.getElementById('fork-error');
+    if (!modal || !input) return;
+    if (src) src.textContent = AppView.appData.name || '';
+    input.value = `${AppView.appData.name || 'App'} (fork)`;
+    if (err) { err.classList.add('hidden'); err.textContent = ''; }
+    AppView.revealModal(modal);
+    setTimeout(() => { input.focus(); input.select(); }, 0);
+  },
+
+  closeForkModal() {
+    const modal = document.getElementById('fork-modal');
+    const input = document.getElementById('fork-input');
+    const err = document.getElementById('fork-error');
+    if (modal) modal.classList.add('hidden');
+    if (input) input.value = '';
+    if (err) { err.classList.add('hidden'); err.textContent = ''; }
+  },
+
+  async submitFork(e) {
+    if (e) e.preventDefault();
+    if (!AppView.appData) return;
+    const input = document.getElementById('fork-input');
+    const err = document.getElementById('fork-error');
+    const submitBtn = document.getElementById('fork-submit');
+    const name = (input?.value || '').trim();
+    const showErr = (msg) => {
+      if (err) { err.textContent = msg; err.classList.remove('hidden'); }
+    };
+    if (name.length < 3) return showErr('Name must be at least 3 characters.');
+    const sourceSlug = AppView.appData.slug;
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Forking…'; }
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(sourceSlug)}/fork`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showErr(data.error || 'Fork failed.');
+        return;
+      }
+      AppView.closeForkModal();
+      // Land the user on the home feed where the new fork tile shows its
+      // "Spinning up…" state (identical to creating a new app).
+      App.navigateHome();
+    } catch (_) {
+      showErr('Network error — please try again.');
+    } finally {
+      if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Fork'; }
+    }
   },
 
   // Share modal — exposes the app's bare subdomain URL so users can pass

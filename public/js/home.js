@@ -640,6 +640,17 @@ const Home = {
       ? `<button class="retry-btn absolute top-2 right-2 text-xs text-emerald-500 hover:text-emerald-400 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors" data-slug="${app.slug}">Retry</button>`
       : '';
 
+    // Fork lineage tag: a small amber ⑂ badge on the icon's bottom-left
+    // corner (opposite the hamburger badge) marking this tile as a fork.
+    // The full "Forked from <name>" label lives in the app-view header;
+    // here it's glyph-only with the resolved live name (or "<deleted>")
+    // in the tooltip. `forked_from` is null for non-forks.
+    const forkName = app.forked_from && typeof app.forked_from === 'object'
+      ? (app.forked_from.name || '<deleted>') : null;
+    const forkTagHtml = forkName
+      ? `<span class="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm" title="Forked from ${escapeHtml(forkName)}" aria-label="Forked from ${escapeHtml(forkName)}">⑂</span>`
+      : '';
+
     const icon = Home.iconTileFor(app);
 
     // Layout: icon first at the top (hamburger badged on its corner),
@@ -664,6 +675,7 @@ const Home = {
             ${icon.html}
           </div>
           ${menuBadgeHtml}
+          ${forkTagHtml}
         </div>
         <div class="w-full min-w-0">
           <div class="flex items-center justify-center gap-1.5 min-w-0 max-w-full">
