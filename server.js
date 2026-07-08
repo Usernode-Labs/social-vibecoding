@@ -1912,13 +1912,16 @@ function startStalePrSweeper(config) {
   stalePrSweeperHandle = setInterval(async () => {
     if (lifecycle.isShuttingDown()) return;
 
-    // Pass 0: window-elapsed merges. A promoted PR can satisfy both merge
-    // gates (eased Yes threshold + minimum visibility window) purely through
-    // the passage of time, with no further vote to drive checkAndMerge. This
-    // pass re-checks each promoted PR's gate and fires the merge once its
-    // window has elapsed. Latency is bounded by staleSweepIntervalMs (default
-    // 1h) — acceptable; see SPEC "Post-window latency". checkAndMerge
-    // re-validates and claims atomically, so a racing vote can't double-merge.
+    // Pass 0: window-elapsed merges. A promoted PR can become mergeable
+    // purely through the passage of time, with no further vote to drive
+    // checkAndMerge — either the threshold path (eased Yes threshold met,
+    // minimum visibility window elapses) or the lazy-consensus path (below
+    // threshold but unopposed Yes lead, its count-based clock elapses —
+    // silence is consent). This pass re-checks each promoted PR's gate and
+    // fires the merge once its window has elapsed. Latency is bounded by
+    // staleSweepIntervalMs (default 1h) — acceptable; see SPEC "Post-window
+    // latency". checkAndMerge re-validates and claims atomically, so a
+    // racing vote can't double-merge.
     try {
       const { rows } = await pool.query(
         `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.self_hosted AS app_self_hosted,

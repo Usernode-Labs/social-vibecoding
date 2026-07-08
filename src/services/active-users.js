@@ -62,7 +62,17 @@
 // ---------------------------------------------------------------------------
 // Dynamic merge gates (see SPEC: "Visibility window + dynamic threshold").
 //
-// Two independent, pure gates that BOTH must hold before a proposal merges:
+// A proposal merges through one of two paths:
+//
+//   A. Threshold path — both gates below hold (eased Yes threshold met AND
+//      the minimum visibility window has elapsed).
+//   B. Lazy-consensus path — the threshold is NOT met, but the proposal has
+//      real unopposed support (>= 1 Yes, Yes strictly leading, not
+//      contested) and its lazy merge window has elapsed. Silence is consent:
+//      on small apps the threshold (floored at 2) is often unreachable
+//      because the other members simply never vote. See lazyWindowMs.
+//
+// Two independent, pure gates that both must hold for the threshold path:
 //
 //   1. requiredVotes(active, noCount) — the eased Yes-vote threshold. Largest
 //      discount when unopposed; rises back toward the simple majority M as No
@@ -112,6 +122,17 @@ const REJECT_WINDOW_MAX_MS = parseInt(process.env.REJECT_WINDOW_MAX_MS || String
 const REJECT_CURVE_EXP = parseFloat(process.env.REJECT_WINDOW_CURVE_EXP || '3');
 const REJECT_MIN_NO = parseInt(process.env.REJECT_MIN_NO || '2', 10);
 const REJECT_KEEPALIVE_YES_FRAC = YES_MID_FRAC;
+
+// Lazy-consensus knobs: a proposal that has SOME support (Yes strictly
+// leading, no contest) but hasn't reached the eased threshold arms a merge
+// clock anyway — silence is consent. The clock is count-based (NOT
+// fraction-based like mergeWindowMs) because on the platform's typical 2–4
+// active-user apps, fractions quantize so coarsely that a single Yes is
+// already 25–50% and the fraction curves degenerate (see #310 follow-up:
+// timers were unreachable below 5 active users). One missing vote → 3d,
+// each additional missing vote → +2d, capped at the 7d max.
+const LAZY_WINDOW_BASE_MS = parseInt(process.env.LAZY_WINDOW_BASE_MS || String(3 * DAY_MS), 10);
+const LAZY_WINDOW_STEP_MS = parseInt(process.env.LAZY_WINDOW_STEP_MS || String(2 * DAY_MS), 10);
 
 function clamp(n, lo, hi) {
   return Math.min(Math.max(n, lo), hi);
@@ -199,6 +220,33 @@ function rejectionWindowMs(active, yesCount, noCount) {
   return Math.round(clamp(windowMs, 0, REJECT_WINDOW_MAX_MS));
 }
 
+// The lazy-consensus merge window in ms, or `null` when it doesn't apply.
+// Pure. Arms when a proposal has real support but hasn't reached the eased
+// threshold: at least 1 Yes, Yes strictly leading No, and not contested.
+// While armed, the proposal auto-merges once the window elapses — silence is
+// consent; the visibility window IS the objection period. Returns:
+//   - null  if yes >= requiredVotes (the threshold path owns the clock),
+//   - null  if yes < 1, or No ties/leads Yes (a tie is a stalemate, and a
+//           No lead belongs to the rejection clock — mutual exclusivity),
+//   - null  if contested (No >= 1/3 of active: all clocks off, pure
+//           majority race),
+//   - else  LAZY_WINDOW_BASE_MS + (missing - 1) * LAZY_WINDOW_STEP_MS where
+//           missing = required - yes, capped at WINDOW_MAX_MS. Count-based
+//           on purpose — see the knobs comment above.
+function lazyWindowMs(active, yesCount, noCount) {
+  const yes = Math.max(parseInt(yesCount, 10) || 0, 0);
+  const no = Math.max(parseInt(noCount, 10) || 0, 0);
+  const required = requiredVotes(active, noCount);
+  if (yes >= required) return null;
+  if (yes < 1 || yes <= no) return null;
+  if (isContested(active, noCount)) return null;
+  const missing = required - yes;
+  return Math.round(clamp(
+    LAZY_WINDOW_BASE_MS + (missing - 1) * LAZY_WINDOW_STEP_MS,
+    0, WINDOW_MAX_MS
+  ));
+}
+
 // client need from a single (active, yes, no, openedAt) snapshot. `now` and
 // `openedAt` accept a Date, ms number, or ISO string; `openedAt` falls back to
 // `now` when missing (so a proposal with no anchor is treated as just-opened).
@@ -213,10 +261,21 @@ function mergeGate(active, yesCount, noCount, openedAt, now) {
   const nowMs = toMs(now, Date.now());
   const openedMs = toMs(openedAt, nowMs);
   const required = requiredVotes(active, noCount);
-  const windowMs = mergeWindowMs(active, yesCount, noCount);
   const contested = isContested(active, noCount);
   const yes = Math.max(parseInt(yesCount, 10) || 0, 0);
   const thresholdMet = yes >= required;
+
+  // One effective merge clock, owned by whichever path applies:
+  //   - threshold met → the fraction-based minimum visibility window
+  //     (a brake on an already-approved proposal), or
+  //   - threshold NOT met but lazy consensus armed → the count-based lazy
+  //     window (an alternative path: elapsing MERGES the proposal).
+  // Serialized as one windowEndsAt so every consumer (merge routes, sweeper,
+  // countdown pill) reads a single timestamp regardless of which path armed.
+  const lazyMs = lazyWindowMs(active, yesCount, noCount);
+  const lazyArmed = !thresholdMet && lazyMs !== null;
+  const windowMs = thresholdMet ? mergeWindowMs(active, yesCount, noCount)
+    : lazyArmed ? lazyMs : 0;
   const windowElapsed = windowMs <= 0 || nowMs - openedMs >= windowMs;
   const windowEndsAt = windowMs > 0 ? new Date(openedMs + windowMs).toISOString() : null;
 
@@ -235,7 +294,10 @@ function mergeGate(active, yesCount, noCount, openedAt, now) {
     contested,
     thresholdMet,
     windowElapsed,
-    mergeable: thresholdMet && windowElapsed,
+    // Lazy consensus (below-threshold merge clock).
+    lazyArmed,
+    lazyWindowMs: lazyArmed ? lazyMs : null,
+    mergeable: (thresholdMet || lazyArmed) && windowElapsed,
     // Rejection (auto-takedown) fields.
     rejectionWindowMs: rejWindowMs,
     rejectionArmed,
@@ -410,6 +472,7 @@ module.exports = {
   isCollabEligible,
   requiredVotes,
   mergeWindowMs,
+  lazyWindowMs,
   rejectionWindowMs,
   isContested,
   mergeGate,
@@ -428,5 +491,7 @@ module.exports = {
     REJECT_CURVE_EXP,
     REJECT_MIN_NO,
     REJECT_KEEPALIVE_YES_FRAC,
+    LAZY_WINDOW_BASE_MS,
+    LAZY_WINDOW_STEP_MS,
   },
 };
