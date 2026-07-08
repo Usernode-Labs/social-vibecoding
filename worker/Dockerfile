@@ -56,6 +56,15 @@ COPY usernode-issues /usr/local/bin/usernode-issues
 # Read it (images especially — text files are already inlined in the
 # prompt). See src/routes/internal.js attachments routes (#450).
 COPY usernode-attachments /usr/local/bin/usernode-attachments
+# usernode-report-platform-issue is the worker's escalation valve: a
+# build-turn write path (WORKER_JWT, like usernode-push) that DRAFTS a
+# platform-repo issue when the agent hits a blocker it can't fix in this
+# app's repo (shared bridge, native WebView, staging pipeline, checks
+# gate). Human-gated: the draft renders as a confirm/dismiss card in the
+# dev chat and nothing reaches GitHub until a user taps confirm.
+# Platform-side dedup + rate limit bound the spam. See
+# src/routes/internal.js + src/routes/sessions.js (confirm route).
+COPY usernode-report-platform-issue /usr/local/bin/usernode-report-platform-issue
 # `.claude` must exist (owned by node) in the image so that when we mount a
 # named volume at that path for persistent CC sessions, Docker initialises the
 # volume with node ownership instead of defaulting to root.
@@ -64,6 +73,7 @@ RUN chmod +x /usr/local/bin/worker-run.sh \
               /usr/local/bin/usernode-push \
               /usr/local/bin/usernode-issues \
               /usr/local/bin/usernode-attachments \
+              /usr/local/bin/usernode-report-platform-issue \
   && mkdir -p /home/node/workspace /home/node/.claude \
   && chown -R node:node /home/node
 

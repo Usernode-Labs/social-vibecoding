@@ -461,6 +461,43 @@ Rules, mirroring the top-level `name`:
 - Inviting individual users to a private app is a separate, in-app
   flow — it is NOT represented in `dapp.json`.
 
+### Top-level `icon` — the app's homescreen icon
+
+`dapp.json` may carry an optional top-level `icon` block — the
+**source of truth for the app's homescreen tile icon**. Two forms:
+
+```json
+{ "icon": { "emoji": "🎮" } }
+```
+
+```json
+{ "icon": { "image": "public/icon.png" } }
+```
+
+- `emoji` — a single emoji (trimmed, 1–16 UTF-16 code units, no
+  whitespace). Rendered large on the tile's violet background.
+- `image` — a **repo-relative path to an image file committed in the
+  app's repo**. The platform reads the file at deploy time, validates
+  it, and serves it so the image completely fills the rounded tile
+  (cropped to fit). Constraints: ≤ 256 KB; PNG, JPEG, WebP, or GIF
+  only (sniffed from the file's bytes — SVG is not accepted); the
+  path must be relative, inside the repo, with no `..` segments.
+
+Rules:
+
+- On every production deploy the platform reads the block and
+  reconciles the app's stored icon to it. Unlike `name`/`visibility`,
+  the block is **fully authoritative: an absent block (or an invalid
+  one) clears the icon**, restoring the default first-letter tile —
+  so removing the declaration is how an icon is removed.
+- If both `emoji` and `image` are declared, the image wins; the emoji
+  is the fallback should the image file fail validation (missing,
+  oversized, wrong format).
+- **Changing the icon is just a PR that edits this block** (and, for
+  an image, commits the file). The change takes effect when the PR is
+  voted in, merged, and redeployed — not before. Don't mutate the
+  icon through any other channel.
+
 Per-field rules:
 
 - `key` — `UPPER_SNAKE_CASE`. The literal name `process.env.<KEY>` will be.
@@ -869,6 +906,81 @@ tagged `// usernode-dev-console@1`. It captures `console.*` output
 and uncaught errors and forwards them via `postMessage` so the
 platform's developer console can surface them. Don't remove or
 modify that block when editing the HTML shell.
+
+### Helping users surface runtime errors
+
+When a user reports a runtime problem you can't reproduce from the
+source ("nothing happens when I click", "it's broken on my phone", a
+blank screen), the fastest path to a fix is their actual console output
+— but **do not tell them to open browser devtools or press F12.** Most
+users are inside the Usernode mobile app or a phone browser where
+devtools don't exist, so that advice dead-ends the conversation (a
+common failure mode: the agent asks for a console trace, the user
+answers "I can't open the terminal / I don't have F12", and the loop
+stalls).
+
+Instead, point them at the platform's built-in **Dev Console** — an
+in-app, mobile-friendly panel surfaced by the `usernode-dev-console@1`
+forwarder above. It shows up as a console icon in the header (it
+appears automatically once the app logs an error, and can be pinned on
+via Settings → "always show dev console"). Ask them to open it and
+paste the red error lines. It captures exactly the same `console.*`
+output and uncaught errors on mobile as on desktop, so it works
+regardless of device.
+
+### Fixing a reported bug
+
+When the user reports a specific broken *behaviour* (not a new
+feature):
+
+- **Reproduce it first.** On a build turn, use the in-loop browser
+  (see "In-loop browser" below) to actually exercise the flow the user
+  described — click the button, play the round, submit the form —
+  instead of only reading source. Logic bugs (a counter that resets, a
+  balance that doesn't update, "buy 16, take 1, it drops to 0") are
+  invisible to source-reading *and* to the baseline "no console errors"
+  check; you have to run the flow to see them.
+- **Lock the fix in with a test.** After fixing, add or extend a
+  `dapp.json` test that would have caught it (navigate the route +
+  assert the corrected behaviour / element), so a later change can't
+  silently regress it. The baseline check only proves the page loads
+  without console errors — it does **not** prove behaviour, so
+  behavioural regressions slip through unless you add a test for them.
+
+## Platform-level problems: escalate, don't work around
+
+You can only edit and push **this app's** repo. Some blockers don't
+live in this repo at all — they're in the platform or shared
+infrastructure:
+
+- the shared bridge (`usernode-bridge.js`), wallet / signing, or the
+  native mobile WebView (e.g. a file picker, camera, or share sheet
+  that never opens inside the Usernode app)
+- the staging / build / preview pipeline itself (the preview won't boot
+  for reasons unrelated to your code)
+- the merge/checks gate, or a documented platform convention that
+  appears wrong or impossible to satisfy
+
+When you're confident the root cause is platform-level — you've ruled
+out an app-side fix, or you notice you're looping on the same failure
+without progress — **stop patching this app** rather than faking a
+workaround that only hides the problem. On a build turn a helper is
+available to escalate it:
+
+```
+usernode-report-platform-issue "<short title>" <<'EOF'
+What's broken, how to reproduce, and which app/flow hit it.
+EOF
+```
+
+This does **not** file anything by itself. It posts a draft report
+card into the dev chat; a user must tap **"Report to platform"** on
+that card before the issue is actually filed on the platform repo
+(they can also dismiss it). Draft it **once per distinct problem** —
+it de-dupes against open reports and this session's earlier drafts, so
+don't re-suggest the same thing. Then tell the user you've suggested a
+platform report and that they can confirm it from the card in the
+chat, and continue with any app-side work that isn't blocked by it.
 
 ## Rendering invariants — opt-in self-checks
 

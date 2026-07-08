@@ -907,6 +907,152 @@ function sessionRoutes(config) {
     }
   });
 
+  // ── Platform-issue draft confirm / dismiss (human gate) ──────────────
+  //
+  // The build-turn agent can DRAFT a platform-level issue report via the
+  // worker's usernode-report-platform-issue CLI (see src/routes/internal.js
+  // POST /api/internal/sessions/:id/platform-issue). Nothing reaches
+  // GitHub until a user taps "Report to platform" on the card the draft
+  // renders in the dev chat — that tap lands here. Dismiss marks the
+  // draft dead without filing. Both are one-shot: the draft's status
+  // gates them, and confirm claims the row atomically so two concurrent
+  // taps can't double-file.
+  //
+  // Access: the sessionCollabGuard above already restricts these to
+  // collab-level members of the session's app — the same audience that
+  // can see the card at all.
+  const platformIssueDraftAction = async (req, res, action) => {
+    const sessionId = parseInt(req.params.id, 10);
+    const msgId = parseInt(req.params.msgId, 10);
+    if (!Number.isFinite(sessionId) || !Number.isFinite(msgId)) {
+      return res.status(400).json({ error: 'Bad id' });
+    }
+    try {
+      const { rows } = await pool.query(
+        `SELECT m.id, m.metadata, cs.app_id, a.slug AS app_slug, a.name AS app_name
+           FROM chat_session_messages m
+           JOIN chat_sessions cs ON cs.id = m.session_id
+           JOIN apps a ON a.id = cs.app_id
+          WHERE m.id = $1 AND m.session_id = $2`,
+        [msgId, sessionId]
+      );
+      const row = rows[0];
+      const draft = row?.metadata?.platformIssueDraft;
+      if (!draft) return res.status(404).json({ error: 'Draft not found' });
+      if (draft.status !== 'pending') {
+        return res.status(409).json({
+          error: 'Already resolved',
+          status: draft.status,
+          ...(draft.issueUrl ? { url: draft.issueUrl, number: draft.issueNumber } : {}),
+        });
+      }
+
+      if (action === 'dismiss') {
+        await pool.query(
+          `UPDATE chat_session_messages
+              SET metadata = jsonb_set(metadata, '{platformIssueDraft,status}', '"dismissed"')
+            WHERE id = $1 AND session_id = $2
+              AND metadata->'platformIssueDraft'->>'status' = 'pending'`,
+          [msgId, sessionId]
+        );
+        return res.json({ ok: true, status: 'dismissed' });
+      }
+
+      // Confirm: claim the draft atomically BEFORE filing so a concurrent
+      // confirm can't double-file; revert to pending if GitHub fails.
+      const claim = await pool.query(
+        `UPDATE chat_session_messages
+            SET metadata = jsonb_set(metadata, '{platformIssueDraft,status}', '"filed"')
+          WHERE id = $1 AND session_id = $2
+            AND metadata->'platformIssueDraft'->>'status' = 'pending'`,
+        [msgId, sessionId]
+      );
+      if (!claim.rowCount) return res.status(409).json({ error: 'Already resolved' });
+
+      const revert = () => pool.query(
+        `UPDATE chat_session_messages
+            SET metadata = jsonb_set(metadata, '{platformIssueDraft,status}', '"pending"')
+          WHERE id = $1 AND session_id = $2`,
+        [msgId, sessionId]
+      ).catch(() => {});
+
+      const pat = process.env.GITHUB_BOT_TOKEN;
+      const repoMatch = (config.platformRepoUrl || '')
+        .match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+      if (!pat || !repoMatch) {
+        await revert();
+        return res.status(503).json({ error: 'Platform issue reporting not configured' });
+      }
+      const [, owner, repo] = repoMatch;
+
+      // Bot PAT + hand-rolled fetch mirrors routes/feedback.js's platform-
+      // feedback path (the platform repo isn't behind the per-app GitHub
+      // App installation).
+      const issueBody =
+        `**Source:** usernode agent (session ${sessionId}, confirmed by @${req.user.username})\n`
+        + `**Reported while working on:** ${row.app_name} (${row.app_slug})\n\n`
+        + (draft.body || '(no detail provided)');
+      let issue;
+      try {
+        const ghRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `token ${pat}`,
+            'User-Agent': 'usernode-social-vibecoding',
+          },
+          body: JSON.stringify({
+            title: draft.title,
+            body: issueBody,
+            labels: ['usernode', 'agent-reported'],
+          }),
+        });
+        if (!ghRes.ok) {
+          const text = await ghRes.text();
+          log.error('sessions', 'Platform issue create failed', {
+            sessionId, msgId, status: ghRes.status, body: text.slice(0, 300),
+          });
+          await revert();
+          return res.status(502).json({ error: 'GitHub refused the issue' });
+        }
+        issue = await ghRes.json();
+      } catch (err) {
+        log.error('sessions', 'Platform issue create threw', { sessionId, msgId, err: err.message });
+        await revert();
+        return res.status(502).json({ error: 'GitHub unreachable' });
+      }
+
+      await pool.query(
+        `UPDATE chat_session_messages
+            SET metadata = jsonb_set(metadata, '{platformIssueDraft}',
+                  (metadata->'platformIssueDraft')
+                  || jsonb_build_object(
+                       'issueNumber', $3::int,
+                       'issueUrl', $4::text,
+                       'confirmedBy', $5::text))
+          WHERE id = $1 AND session_id = $2`,
+        [msgId, sessionId, issue.number, issue.html_url, req.user.username]
+      ).catch((err) => log.warn('sessions', 'Platform-issue metadata enrich failed', {
+        msgId, err: err.message,
+      }));
+
+      log.info('sessions', 'Platform issue filed after user confirm', {
+        sessionId, msgId, number: issue.number, user: req.user.username,
+      });
+      return res.json({ ok: true, status: 'filed', number: issue.number, url: issue.html_url });
+    } catch (err) {
+      log.error('sessions', 'Platform-issue draft action failed', {
+        sessionId, msgId, action, err: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  };
+
+  router.post('/api/sessions/:id/platform-issue/:msgId/confirm', (req, res) =>
+    platformIssueDraftAction(req, res, 'confirm'));
+  router.post('/api/sessions/:id/platform-issue/:msgId/dismiss', (req, res) =>
+    platformIssueDraftAction(req, res, 'dismiss'));
+
   // Archive a session. Reversible: tears down staging + worker and closes
   // the PR, but KEEPS the CC volume + branch so /unarchive can restore it
   // within the retention window (a background GC purges the volume only
@@ -5145,6 +5291,8 @@ that instruction here. It's for humans or Claude Code invocations
 that run against this repo outside the harness.${personalFilesNote}
 
 A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`); long bodies are clipped with a "[truncated …]" marker, and \`usernode-issues <number>\` fetches that one issue with its FULL body (\`{ issue, note? }\`). Consult it if an open issue is relevant to what you're building; do not try to reach GitHub any other way.
+
+A build-turn helper \`usernode-report-platform-issue\` is also available (run it via Bash): \`usernode-report-platform-issue "<short title>"\` with the issue detail on stdin. Use it ONLY for platform-level blockers that live OUTSIDE this app's repo (the shared bridge, wallet / native mobile WebView, the staging/preview pipeline, or the checks gate) — see "Platform-level problems: escalate, don't work around" in the conventions above. It does NOT file anything directly: it posts a draft report card into the dev chat that the user must tap to confirm (or dismiss) before an issue is filed on the platform repo. It de-dupes against open reports and earlier drafts; never use it for something you can fix in this app.
 
 INSTRUCTIONS:
 - IMPLEMENT the requested changes fully. Do not just explore — write code.

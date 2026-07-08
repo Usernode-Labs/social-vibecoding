@@ -1,4 +1,5 @@
-// Tests for PUT /api/favorites/order (src/routes/apps.js, issue #128).
+// Tests for PUT /api/favorites/order (src/routes/apps.js, issue #128;
+// homepage restructure).
 //
 // Route-handler tests following the tests/kudos.test.js pattern:
 // appRoutes(config) is mounted onto a throwaway Express app with
@@ -13,10 +14,15 @@
 //   - 400 on malformed body (missing / non-array / non-string entries
 //     / over the 200-slug cap), with no SQL issued at all
 //   - a valid PUT issues the NULL-reset plus the indexed ordinality
-//     update inside one BEGIN/COMMIT, scoped to the caller's user id
+//     UPSERT inside one BEGIN/COMMIT, scoped to the caller's user id
 //     only (another user's rows are untouched)
-//   - non-favorited / unknown slugs in the body produce no update and
-//     no error; favorites missing from the body fall back to NULL
+//   - UPSERT semantics ("Your apps" contains never-favorited member
+//     apps): a viewable slug with no favorite row gets one created at
+//     its array index; unknown slugs still produce no row and no error
+//   - visibility restriction: view-private apps the caller isn't a
+//     member of, and self-hosted apps for non-admins, are silently
+//     skipped (no row minted by slug-guessing)
+//   - favorites missing from the body fall back to NULL
 //
 // Run with: node --test tests/favorites-order.test.js
 //
@@ -51,15 +57,25 @@ function withMockPool(mockPool, fn) {
 }
 
 // In-memory mock pool. State:
-//   apps:      Map slug → app_id
+//   apps:      Map slug → { id, view_visibility, self_hosted }
+//              (a bare number value is shorthand for a public,
+//              non-self-hosted app with that id)
+//   members:   Set of "appId:userId" app_collaborators member rows
 //   favorites: array of { app_id, user_id, sort_order }
-// query() faithfully implements the two UPDATE statements the reorder
-// handler issues; connect() hands out a client whose query() funnels
-// into the same implementation, so transaction-scoped statements hit
-// the same state and the same log.
+// query() faithfully implements the two statements the reorder handler
+// issues (the NULL-reset UPDATE and the ordinality INSERT…ON CONFLICT
+// upsert, including its visibility WHERE clause); connect() hands out
+// a client whose query() funnels into the same implementation, so
+// transaction-scoped statements hit the same state and the same log.
 function makeMockPool(initial = {}) {
   const state = {
-    apps: new Map(initial.apps || []),
+    apps: new Map((initial.apps || []).map(([slug, v]) => [
+      slug,
+      typeof v === 'number'
+        ? { id: v, view_visibility: 'public', self_hosted: false }
+        : { view_visibility: 'public', self_hosted: false, ...v },
+    ])),
+    members: new Set(initial.members || []),
     favorites: (initial.favorites || []).map((f) => ({ sort_order: null, ...f })),
   };
   const queries = []; // every { sql, params } in execution order
@@ -80,16 +96,23 @@ function makeMockPool(initial = {}) {
       }
       return { rows: [] };
     }
-    // ------------ Indexed update via unnest WITH ORDINALITY ------------
-    if (/UPDATE app_favorites f[\s\S]*WITH ORDINALITY/i.test(s)) {
-      const [userId, order] = params;
+    // ------------ Indexed upsert via unnest WITH ORDINALITY ------------
+    if (/INSERT INTO app_favorites[\s\S]*WITH ORDINALITY/i.test(s)) {
+      const [userId, order, showSelfHosted, isAdmin] = params;
       order.forEach((slug, idx) => {
-        const appId = state.apps.get(slug);
-        if (appId === undefined) return; // unknown slug — JOIN apps misses
+        const app = state.apps.get(slug);
+        if (!app) return; // unknown slug — JOIN apps misses
+        if (app.self_hosted && !showSelfHosted) return; // self_hosted gate
+        if (
+          !isAdmin &&
+          app.view_visibility !== 'public' &&
+          !state.members.has(`${app.id}:${userId}`)
+        ) return; // view-private, not a member — WHERE misses
         const fav = state.favorites.find(
-          (f) => f.app_id === appId && f.user_id === userId
+          (f) => f.app_id === app.id && f.user_id === userId
         );
-        if (fav) fav.sort_order = idx; // non-favorited slug — WHERE misses
+        if (fav) fav.sort_order = idx; // ON CONFLICT DO UPDATE
+        else state.favorites.push({ app_id: app.id, user_id: userId, sort_order: idx });
       });
       return { rows: [] };
     }
@@ -180,7 +203,7 @@ test('PUT order: exactly 200 slugs is accepted (cap is inclusive)', async () => 
 
 // ─── The happy path: transaction shape + per-user scoping ─────────
 
-test('PUT order: NULL-reset + indexed updates inside one transaction, caller-scoped', async () => {
+test('PUT order: NULL-reset + indexed upserts inside one transaction, caller-scoped', async () => {
   const pool = makeMockPool({
     apps: [['app-a', 10], ['app-b', 11], ['app-c', 12]],
     favorites: [
@@ -204,14 +227,15 @@ test('PUT order: NULL-reset + indexed updates inside one transaction, caller-sco
     assert.equal(byApp(12, 1).sort_order, 2, 'app-c third');
     assert.equal(byApp(10, 2).sort_order, 7, "other user's row untouched");
 
-    // Transaction shape: BEGIN → reset → ordinality update → COMMIT.
+    // Transaction shape: BEGIN → reset → ordinality upsert → COMMIT.
     const sqls = pool.queries.map((q) => q.sql.trim());
     assert.match(sqls[0], /^BEGIN$/i);
     assert.match(sqls[1], /UPDATE app_favorites SET sort_order = NULL WHERE user_id = \$1/i);
-    assert.match(sqls[2], /WITH ORDINALITY/i);
+    assert.match(sqls[2], /INSERT INTO app_favorites[\s\S]*WITH ORDINALITY/i);
+    assert.match(sqls[2], /ON CONFLICT \(app_id, user_id\) DO UPDATE/i);
     assert.match(sqls[3], /^COMMIT$/i);
     assert.equal(sqls.length, 4);
-    // Both UPDATEs are scoped to the caller's user id only.
+    // Both statements are scoped to the caller's user id only.
     assert.equal(pool.queries[1].params[0], 1);
     assert.equal(pool.queries[2].params[0], 1);
     assert.deepEqual(pool.queries[2].params[1], ['app-b', 'app-a', 'app-c']);
@@ -221,9 +245,9 @@ test('PUT order: NULL-reset + indexed updates inside one transaction, caller-sco
   }
 });
 
-// ─── Stale-client tolerance ───────────────────────────────────────
+// ─── Upsert: never-favorited "Your apps" members get a row ────────
 
-test('PUT order: non-favorited and unknown slugs produce no update, no error', async () => {
+test('PUT order: a viewable never-favorited slug gets a row created at its index', async () => {
   const pool = makeMockPool({
     apps: [['app-a', 10], ['app-b', 11]],   // app-b exists but is NOT favorited
     favorites: [{ app_id: 10, user_id: 1, sort_order: null }],
@@ -233,12 +257,51 @@ test('PUT order: non-favorited and unknown slugs produce no update, no error', a
     const r = await putOrder(baseUrl, { order: ['no-such-app', 'app-b', 'app-a'] });
     assert.equal(r.status, 200, 'stale client list must not 400 the whole save');
 
-    // Only the actually-favorited slug got an order — at its array
-    // index (2), not a compacted one.
-    const fav = pool.state.favorites.find((f) => f.app_id === 10 && f.user_id === 1);
-    assert.equal(fav.sort_order, 2);
-    // app-b exists but was never favorited → no row sprang into being.
+    // The unknown slug produced nothing; the never-favorited (member)
+    // app got a row UPSERTED at its array index (1), and the existing
+    // favorite kept its own index (2) — no compaction.
+    const byApp = (appId) =>
+      pool.state.favorites.find((f) => f.app_id === appId && f.user_id === 1);
+    assert.equal(pool.state.favorites.length, 2, 'exactly one new row sprang into being');
+    assert.equal(byApp(11).sort_order, 1, 'upserted row carries its array index');
+    assert.equal(byApp(10).sort_order, 2, 'existing favorite updated in place');
+  } finally {
+    await close();
+  }
+});
+
+test('PUT order: view-private apps are skipped unless the caller is a member', async () => {
+  const pool = makeMockPool({
+    apps: [
+      ['hidden-app', { id: 20, view_visibility: 'private' }],
+      ['member-app', { id: 21, view_visibility: 'private' }],
+    ],
+    members: ['21:1'], // caller is a member of member-app only
+    favorites: [],
+  });
+  const { baseUrl, close } = await startTestServer(pool, { id: 1, username: 'alice' });
+  try {
+    const r = await putOrder(baseUrl, { order: ['hidden-app', 'member-app'] });
+    assert.equal(r.status, 200);
+    // Slug-guessing a view-private app mints nothing; membership does.
     assert.equal(pool.state.favorites.length, 1);
+    assert.equal(pool.state.favorites[0].app_id, 21);
+    assert.equal(pool.state.favorites[0].sort_order, 1);
+  } finally {
+    await close();
+  }
+});
+
+test('PUT order: self-hosted apps are skipped for non-admin callers', async () => {
+  const pool = makeMockPool({
+    apps: [['self-app', { id: 30, self_hosted: true }]],
+    favorites: [],
+  });
+  const { baseUrl, close } = await startTestServer(pool, { id: 1, username: 'alice' });
+  try {
+    const r = await putOrder(baseUrl, { order: ['self-app'] });
+    assert.equal(r.status, 200);
+    assert.equal(pool.state.favorites.length, 0, 'no row for the hidden self-app');
   } finally {
     await close();
   }
@@ -275,7 +338,7 @@ test('PUT order: empty array resets every favorite to NULL', async () => {
     const r = await putOrder(baseUrl, { order: [] });
     assert.equal(r.status, 200);
     assert.equal(pool.state.favorites[0].sort_order, null);
-    // No ordinality UPDATE is issued for an empty list — just the reset.
+    // No ordinality upsert is issued for an empty list — just the reset.
     const sqls = pool.queries.map((q) => q.sql.trim());
     assert.equal(sqls.filter((s) => /WITH ORDINALITY/i.test(s)).length, 0);
     assert.match(sqls[sqls.length - 1], /^COMMIT$/i);
@@ -291,7 +354,7 @@ test('PUT order: a mid-transaction error rolls back and returns 500', async () =
     apps: [['app-a', 10]],
     favorites: [{ app_id: 10, user_id: 1, sort_order: 0 }],
   });
-  // Sabotage the ordinality UPDATE only.
+  // Sabotage the ordinality upsert only.
   const realQuery = pool.query;
   pool.query = async (sql, params) => {
     if (/WITH ORDINALITY/i.test(String(sql))) {

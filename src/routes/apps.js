@@ -52,6 +52,47 @@ function accessFlags(app, user, isCollaborator) {
 // network) — so DOCKER_NETWORK is no longer a clean signal. Set
 // USERNODE_LOCAL_DEV=1 in your local .env to get the localhost fallback.
 const IS_LOCAL_DEV = process.env.NODE_ENV === 'development' || process.env.USERNODE_LOCAL_DEV === '1';
+const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+
+// Staging-gated (?demo=1) home-feed rows so a tester can see the new
+// homescreen icon tiles (emoji / custom image / letter fallback) — the
+// staging clone's real app rows predate the feature and would all
+// render letter tiles. Read-only request-time injection per the
+// "Staging mock data" convention: never persisted, strictly a no-op
+// outside staging. The image row carries a tiny inline data-URI PNG so
+// no app_icons blob needs to exist in the clone (the client renders
+// whatever icon_url it's given).
+const DEMO_ICON_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAAAg0lEQVR42r3NuRGAMAwEQNdFbXRAIVRHAyQwDmB4/MjS3QUbb5qn7VBKymxddl2YM1l4ZZLwmdHDb0YNSxktrGWUsJXBw14GDS0ZLLRmkHAkC4ejWSj0ZO7Qm7nCSDYcRrOhEJGZQ1RmCpFZN0RnzZCRVUNWVgyZ2S9kZ69Qkd2hKstOLPva44BQr+EAAAAASUVORK5CYII=';
+function demoIconApps() {
+  const base = {
+    status: 'running',
+    self_hosted: false,
+    locked: false,
+    collab_visibility: 'public',
+    view_visibility: 'public',
+    created_at: new Date().toISOString(),
+    last_deploy_at: new Date().toISOString(),
+    url: null,
+    version: null,
+    deployProgress: null,
+    missingSecrets: null,
+    active_users: 0,
+    is_favorited: false,
+    favorite_order: null,
+    is_collaborator: false,
+    open_prs: 0,
+    active_sessions: 0,
+    open_issues: 0,
+    icon_emoji: null,
+    icon_url: null,
+    can_collaborate: false,
+    can_manage: false,
+  };
+  return [
+    { ...base, id: 900001, slug: 'staging-demo-emoji-icon', name: 'Staging demo emoji icon', icon_emoji: '🎮' },
+    { ...base, id: 900002, slug: 'staging-demo-image-icon', name: 'Staging demo image icon', icon_url: DEMO_ICON_PNG },
+  ];
+}
 
 // SELF-HOSTING.md sub-step 2k: helper for the import-flow guards.
 // Compares a parsed {owner, repo} against config.platformRepoUrl,
@@ -303,6 +344,9 @@ function appRoutes(config) {
           version,
           deployProgress: appDeployStatus.read(a.slug),
           missingSecrets,
+          // Server-built icon URL so the client never assembles ids into
+          // paths (and staging demo rows can inject arbitrary sources).
+          icon_url: a.icon_image_id ? `/app-icons/${a.icon_image_id}` : null,
           is_favorited: !!a.is_favorited,
           favorite_order: a.favorite_order ?? null,
           open_prs: parseInt(a.open_prs, 10) || 0,
@@ -311,6 +355,10 @@ function appRoutes(config) {
           ...accessFlags(a, req.user, a.is_collaborator),
         };
       }));
+      // Staging demo tiles for the icon feature (see demoIconApps above).
+      if (IS_STAGING && req.query.demo === '1') {
+        apps.unshift(...demoIconApps());
+      }
       res.json({ apps });
     } catch (err) {
       log.error('apps', 'Failed to list apps', { message: err.message });
@@ -1168,22 +1216,29 @@ function appRoutes(config) {
     }
   });
 
-  // Persist the caller's personal ordering of starred apps (issue #128).
-  // Deliberately NOT under /api/apps/… so it can never collide with the
-  // :slug-parameterised routes above. Body is the user's complete starred
-  // list, first-to-last: { order: ["slug-a", "slug-b", ...] }.
+  // Persist the caller's personal ordering of their "Your apps" cards
+  // (issue #128; homepage restructure). Deliberately NOT under
+  // /api/apps/… so it can never collide with the :slug-parameterised
+  // routes above. Body is the user's complete section list,
+  // first-to-last: { order: ["slug-a", "slug-b", ...] }.
   //
   // The save is a self-healing full rewrite inside one transaction:
   // every one of the caller's favorites is reset to NULL, then each
-  // submitted slug that is actually favorited gets sort_order = its
-  // array index. Submitted slugs that aren't favorited (or don't exist)
-  // are silently ignored — favorites are non-sensitive (same trust
-  // level as the toggle's DELETE) and a stale client list shouldn't
-  // 400 the whole save. Favorites missing from the array end up NULL
-  // and fall to the back via the client's fallback ordering. No
-  // per-app access re-check needed: only rows keyed by req.user.id are
-  // touched, and a user can only have favorited apps they could view
-  // at star time.
+  // submitted slug gets an UPSERTED app_favorites row with sort_order
+  // = its array index. Upsert rather than update-only because "Your
+  // apps" contains member apps (app_collaborators) that were never
+  // explicitly favorited — dragging one into position must still
+  // persist, and app_favorites doubles as the single personal-ordering
+  // table. Inserting the row is invisible to section membership
+  // (members are included regardless).
+  //
+  // Unknown slugs fall out of the JOIN and are silently ignored — a
+  // stale client list shouldn't 400 the whole save. Because rows can
+  // now spring into being, the insert is restricted to apps the caller
+  // could view (public, or member of a private one, or admin; plus the
+  // self_hosted gate) so slug-guessing can't mint favorites for hidden
+  // apps. Favorites missing from the array end up NULL and fall to the
+  // back via the client's fallback ordering.
   router.put('/api/favorites/order', async (req, res) => {
     const { order } = req.body || {};
     if (
@@ -1201,16 +1256,23 @@ function appRoutes(config) {
         [req.user.id]
       );
       if (order.length > 0) {
+        const isAdmin = !!req.user?.isAdmin;
+        const showSelfHosted = isAdmin || !!config.selfAppPublicVoting;
         await client.query(
-          `UPDATE app_favorites f
-           SET sort_order = ord.idx
+          `INSERT INTO app_favorites (app_id, user_id, sort_order)
+           SELECT a.id, $1, ord.idx
            FROM (
              SELECT slug, (ordinality - 1)::int AS idx
              FROM unnest($2::text[]) WITH ORDINALITY AS t(slug, ordinality)
            ) ord
            JOIN apps a ON a.slug = ord.slug
-           WHERE f.user_id = $1 AND f.app_id = a.id`,
-          [req.user.id, order]
+           WHERE (NOT a.self_hosted OR $3::boolean)
+             AND ($4::boolean OR a.view_visibility = 'public' OR EXISTS (
+               SELECT 1 FROM app_collaborators c
+               WHERE c.app_id = a.id AND c.user_id = $1 AND c.status = 'member'
+             ))
+           ON CONFLICT (app_id, user_id) DO UPDATE SET sort_order = EXCLUDED.sort_order`,
+          [req.user.id, order, showSelfHosted, isAdmin]
         );
       }
       await client.query('COMMIT');

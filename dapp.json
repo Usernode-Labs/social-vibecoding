@@ -1,4 +1,5 @@
 {
+  "icon": { "emoji": "🏗️" },
   "secrets": [
     {
       "key": "GITHUB_APP_ID",
@@ -106,6 +107,21 @@
       "name": "Dev tab defaults to kanban board on wide screens",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban"
+    },
+    {
+      "name": "Home feed renders with the app search bar",
+      "path": "/",
+      "expectSelector": "#home-search-input"
+    },
+    {
+      "name": "Home 'Your apps' section renders for the seeded admin",
+      "path": "/",
+      "expectSelector": ".app-card[data-yours='true']"
+    },
+    {
+      "name": "Home demo icon tiles render",
+      "path": "/?demo=1",
+      "expectSelector": ".app-card [data-icon='emoji']"
     }
   ]
 }

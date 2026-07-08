@@ -185,6 +185,14 @@ services:
     image: postgres:17-alpine
     container_name: usernode-db
     restart: unless-stopped
+    # Postgres parallel workers + pg_restore (staging DB clones) allocate
+    # dynamic shared memory under /dev/shm. Docker's default 64m ceiling
+    # filled up with leaked segments from crashed workers (2026-07-07
+    # incident: every staging build failed with "could not resize shared
+    # memory segment ... No space left on device", wedging all open
+    # proposals' checks). 1g gives routine restore parallelism real
+    # headroom so a single busy day can't wedge staging again.
+    shm_size: 1gb
     networks:
       - usernode-net
     volumes:
