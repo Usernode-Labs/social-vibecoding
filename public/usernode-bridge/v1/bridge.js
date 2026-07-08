@@ -4021,13 +4021,14 @@
   //     staging previews (<slug>--s<id>), localhost dev, and foreign
   //     embeds. The platform host is derived from this script's own src,
   //     so self-hosted forks serving their own bridge get the right
-  //     origin for free;
-  //   * not dismissed this browser session (sessionStorage flag).
+  //     origin for free.
+  //
+  // The × only hides the pill for the current page load — no storage
+  // flag is kept, so the pill reappears on every refresh.
   (function () {
     // document.currentScript is only valid during synchronous script
     // evaluation — which is exactly when this capture runs.
     var _script = document.currentScript;
-    var _DISMISS_KEY = "__un_platform_link_dismissed";
 
     function platformLinkTarget() {
       if (_inIframe || _hasNativeChannel || window.Usernode) return null;
@@ -4051,16 +4052,9 @@
       };
     }
 
-    function isDismissed() {
-      try { return sessionStorage.getItem(_DISMISS_KEY) === "1"; } catch (_) { return false; }
-    }
-    function rememberDismissed() {
-      try { sessionStorage.setItem(_DISMISS_KEY, "1"); } catch (_) {}
-    }
-
     function injectPlatformLink() {
       var target = platformLinkTarget();
-      if (!target || isDismissed()) return;
+      if (!target) return;
       if (document.getElementById("__un-platform-link")) return;
 
       if (!document.getElementById("__usernode-platform-link-styles")) {
@@ -4104,7 +4098,6 @@
         // bubbled click would otherwise trigger.
         ev.preventDefault();
         ev.stopPropagation();
-        rememberDismissed();
         if (link.parentNode) link.parentNode.removeChild(link);
       };
 
