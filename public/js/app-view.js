@@ -1702,7 +1702,10 @@ const AppView = {
         }
         const verb = pill.classList.contains('gc-reject-countdown') ? 'Rejecting' : 'Merging';
         const label = pill.querySelector('.gc-vote-count-label');
-        if (label) label.textContent = `${verb} in ${AppView._fmtCountdown(remaining)}`;
+        // Lazy-consensus pills carry the live tally after the countdown
+        // (data-label-suffix, e.g. " · 1/2") — keep it across ticks.
+        const suffix = pill.getAttribute('data-label-suffix') || '';
+        if (label) label.textContent = `${verb} in ${AppView._fmtCountdown(remaining)}${suffix}`;
       });
       if (anyExpired) AppView._loadDevFeed();
     }, 30000);
@@ -3879,21 +3882,36 @@ const AppView = {
     const no = parseInt(pr.no_count) || 0;
     const state = yes >= maj ? 'yes' : no >= maj ? 'no' : 'pending';
 
-    // Countdown state: the eased Yes threshold is met but the minimum
-    // visibility window hasn't elapsed yet (and the proposal isn't
-    // contested). Render "Merging in ~X" instead of the bare tally so voters
-    // see it's on track and how long they have left to object. Only for live
-    // (not merged/merging) rows — a settled row never counts down. The
+    // Countdown state: a merge clock is running. Two ways one arms (both
+    // serialized by the server as merge_window_ends_at — see mergeGate in
+    // src/services/active-users.js):
+    //   - threshold met, minimum visibility window still running, or
+    //   - lazy consensus: below threshold but Yes strictly leads with no
+    //     contest — the proposal auto-merges when the clock ends unless
+    //     someone objects (silence is consent).
+    // Render "Merging in ~X" instead of the bare tally so voters see it's
+    // on track and how long they have left to object. Only for live (not
+    // merged/merging) rows — a settled row never counts down. The
     // `gc-merge-countdown` class + data-window-ends drive the client timer.
     const isOpenRow = pr.status !== 'merged' && pr.status !== 'merging';
     const windowEndsMs = pr.merge_window_ends_at ? Date.parse(pr.merge_window_ends_at) : NaN;
     const inWindow = Number.isFinite(windowEndsMs) && windowEndsMs > Date.now();
-    if (isOpenRow && state === 'yes' && !pr.contested && inWindow) {
+    const lazyLead = state === 'pending' && yes >= 1 && yes > no;
+    if (isOpenRow && !pr.contested && inWindow && (state === 'yes' || lazyLead)) {
       const label = AppView._fmtCountdown(windowEndsMs - Date.now());
-      return `<span class="gc-vote-count gc-vote-count-yes gc-merge-countdown" data-window-ends="${windowEndsMs}"`
-        + ` title="Enough yes votes (${yes} / ${maj}) — merges when the visibility window elapses unless opposed">`
+      const title = state === 'yes'
+        ? `Enough yes votes (${yes} / ${maj}) — merges when the visibility window elapses unless opposed`
+        : `Has support (${yes} / ${maj} yes) and no opposition — merges when the countdown ends unless more votes arrive`;
+      // Below threshold the tally rides along in the label so it's clear
+      // the vote is still open and can be swung either way. The suffix is
+      // mirrored into data-label-suffix so the 30s ticker preserves it when
+      // it rewrites the label (see _startMergeCountdownTimer).
+      const suffix = state === 'yes' ? '' : ` · ${yes}/${maj}`;
+      const suffixAttr = suffix ? ` data-label-suffix="${suffix}"` : '';
+      return `<span class="gc-vote-count gc-vote-count-yes gc-merge-countdown" data-window-ends="${windowEndsMs}"${suffixAttr}`
+        + ` title="${title}">`
         + `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-yes"></span>`
-        + `<span class="gc-vote-count-label">Merging in ${label}</span>`
+        + `<span class="gc-vote-count-label">Merging in ${label}${suffix}</span>`
         + `</span>`;
     }
 

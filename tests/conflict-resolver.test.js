@@ -682,9 +682,11 @@ test('checkAndResolveConflicts: resolves the eligible at-threshold sibling', asy
   const { subject, pool, loadedIds, restore } = loadResolverForSweep({
     majority: 2,
     siblings: [
-      { id: 11, yes_count: 0, promoted_at: 100, created_at: 100 }, // below threshold
-      { id: 12, yes_count: 3, promoted_at: 200, created_at: 200 }, // eligible
-      { id: 13, yes_count: 1, promoted_at: 50, created_at: 50 },   // below threshold
+      { id: 11, yes_count: 0, promoted_at: 100, created_at: 100 }, // no support: no gate path
+      { id: 12, yes_count: 3, promoted_at: 200, created_at: 200 }, // eligible (threshold)
+      // Below threshold AND no unopposed Yes lead (tie) — the lazy-consensus
+      // clock never arms, so this stays ineligible even at an ancient anchor.
+      { id: 13, yes_count: 1, no_count: 1, promoted_at: 50, created_at: 50 },
     ],
   });
   try {
@@ -703,17 +705,35 @@ test('checkAndResolveConflicts: resolves the eligible at-threshold sibling', asy
   }
 });
 
-test('checkAndResolveConflicts: resolves nothing when every sibling is below threshold', async () => {
+test('checkAndResolveConflicts: resolves nothing when no sibling has a merge path', async () => {
   const { subject, loadedIds, restore } = loadResolverForSweep({
     majority: 2,
     siblings: [
-      { id: 31, yes_count: 1, promoted_at: 100, created_at: 100 },
+      // Tie → lazy clock never arms; below threshold → no threshold path.
+      { id: 31, yes_count: 1, no_count: 1, promoted_at: 100, created_at: 100 },
       { id: 32, yes_count: 0, promoted_at: 200, created_at: 200 },
     ],
   });
   try {
     await subject.checkAndResolveConflicts({ jwtSecret: 's' }, { app_id: 5, id: 9 });
-    assert.deepEqual(loadedIds(), [], 'no pre-emptive resolution for below-threshold PRs');
+    assert.deepEqual(loadedIds(), [], 'no pre-emptive resolution without a merge path');
+  } finally {
+    restore();
+  }
+});
+
+test('checkAndResolveConflicts: an elapsed lazy-consensus sibling is eligible', async () => {
+  const { subject, loadedIds, restore } = loadResolverForSweep({
+    majority: 2,
+    siblings: [
+      // Below threshold (1 < 2) but unopposed with an ancient anchor — the
+      // lazy-consensus clock elapsed long ago, so the drain resolves it.
+      { id: 51, yes_count: 1, promoted_at: 100, created_at: 100 },
+    ],
+  });
+  try {
+    await subject.checkAndResolveConflicts({ jwtSecret: 's' }, { app_id: 5, id: 9 });
+    assert.deepEqual(loadedIds(), [51], 'lazy-consensus sibling enters the drain');
   } finally {
     restore();
   }

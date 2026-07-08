@@ -102,6 +102,12 @@ function stagingMockProposals() {
     mk(9000014, 900114,
       '[Mock] Majority test: bump the vote pill contrast for accessibility',
       6, 6, 0, 2, { required: 5, windowEndsAt: null }),
+    // Lazy consensus: BELOW the eased threshold (1 of 2 yes) but unopposed —
+    // the count-based lazy clock is running, so the pill shows the countdown
+    // with the tally riding along ("Merging in ~2d · 1/2").
+    mk(9000019, 900119,
+      '[Mock] Lazy-consensus test: one supporter, nobody objecting — merges when the clock elapses',
+      5, 1, 0, 1, { required: 2, windowEndsAt: hoursAhead(67) }),
     // One No vote: eased threshold restored, window pushed back out.
     mk(9000002, 900102,
       '[Mock] Long-title test: walk brand-new collaborators through '
@@ -1627,28 +1633,38 @@ async function checkAndMerge(config, pool, session, options = {}) {
   const dend = (status, summary) => { if (ownDebugRun) md.endRun(pool, debugRunId, { status, summary }); };
 
   if (!force) {
-    // Gate 1: eased Yes-vote threshold (dynamic; capped at simple majority).
-    if (yesCount < required) {
+    // Merge paths (services/active-users.js → mergeGate):
+    //   A. Threshold: eased Yes threshold met AND visibility window elapsed.
+    //   B. Lazy consensus: below threshold, but Yes strictly leads with no
+    //      contest and the lazy merge clock has elapsed — silence is consent.
+    if (!gate.mergeable) {
+      // A clock is running (threshold-met visibility window, or an armed
+      // lazy-consensus window) — stay 'promoted' (don't claim the merge) so
+      // the proposal keeps gathering votes; the next vote after the window,
+      // or the stale-PR sweeper pass, re-attempts the merge.
+      if ((gate.thresholdMet || gate.lazyArmed) && !gate.windowElapsed) {
+        log.info('votes', 'Merge clock running; deferring merge', {
+          sessionId: session.id, yesCount, noCount, required,
+          lazyArmed: gate.lazyArmed,
+          windowMs: gate.windowMs, windowEndsAt: gate.windowEndsAt,
+        });
+        return {
+          merged: false, yesCount, needed: required,
+          windowEndsAt: gate.windowEndsAt, waitingForWindow: true,
+        };
+      }
+      // No clock at all: not enough support (or contested / No leading).
       return { merged: false, yesCount, needed: required, windowEndsAt: gate.windowEndsAt };
     }
 
-    // Gate 2: minimum visibility window. The threshold is met but the
-    // proposal hasn't been visible long enough yet — stay 'promoted' (don't
-    // claim the merge) so it can keep gathering votes; the next vote after
-    // the window, or the stale-PR sweeper pass, will re-attempt the merge.
-    if (!gate.windowElapsed) {
-      log.info('votes', 'Threshold met but inside visibility window; deferring merge', {
-        sessionId: session.id, yesCount, noCount, required,
-        windowMs: gate.windowMs, windowEndsAt: gate.windowEndsAt,
-      });
-      return {
-        merged: false, yesCount, needed: required,
-        windowEndsAt: gate.windowEndsAt, waitingForWindow: true,
-      };
-    }
-
     await startDebugIfNeeded();
-    dstep({ phase: 'gate:majority', message: `Vote threshold reached: ${yesCount} yes votes (needed ${required}) with the visibility window elapsed.`, detail: { yesCount, required, majority, noCount, activeCount } });
+    dstep({
+      phase: 'gate:majority',
+      message: gate.thresholdMet
+        ? `Vote threshold reached: ${yesCount} yes votes (needed ${required}) with the visibility window elapsed.`
+        : `Lazy-consensus window elapsed: ${yesCount} yes vote${yesCount === 1 ? '' : 's'} (threshold ${required}) with no opposition — silence is consent.`,
+      detail: { yesCount, required, majority, noCount, activeCount, lazyArmed: gate.lazyArmed },
+    });
 
     // Locked apps additionally require at least one admin yes vote (see
     // services/admin-approval.js + the apps.locked column). The active-user

@@ -161,16 +161,53 @@ test('threshold met and window elapsed → merges', async () => {
   }
 });
 
-test('below the eased threshold → blocked on count, not window', async () => {
+test('below threshold, unopposed lead, clock running → deferred (lazy consensus)', async () => {
   const { subject, setActive, restore } = loadVotes();
   setActive(20);
   try {
+    // yes=5 (< required 6), no=0, just promoted → lazy clock armed (missing
+    // 1 vote → 3d), not elapsed → deferred exactly like a threshold-met row
+    // inside its visibility window.
     const { pool, claims } = makePool({ yes: 5, no: 0, sessionId: 7, appId: 5 });
-    const session = { ...baseSession, promoted_at: new Date(Date.now() - 30 * DAY).toISOString() };
+    const session = { ...baseSession, promoted_at: new Date().toISOString() };
     const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, session, {});
     assert.equal(r.merged, false);
     assert.equal(r.needed, 6);
+    assert.equal(r.waitingForWindow, true, 'lazy clock surfaces as waitingForWindow');
+    assert.ok(r.windowEndsAt, 'lazy window end surfaced for the countdown pill');
+    assert.equal(claims.length, 0, 'never claimed while the lazy clock runs');
+  } finally {
+    restore();
+  }
+});
+
+test('below threshold, unopposed lead, clock elapsed → merges (silence is consent)', async () => {
+  const { subject, setActive, restore } = loadVotes();
+  setActive(20);
+  try {
+    const { pool, claims, updates } = makePool({ yes: 5, no: 0, sessionId: 7, appId: 5 });
+    const session = { ...baseSession, promoted_at: new Date(Date.now() - 30 * DAY).toISOString() };
+    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, session, {});
+    assert.equal(r.merged, true, 'lazy-consensus window elapsed with no objection');
+    assert.equal(claims.length, 1);
+    assert.equal(updates[0][2], 6, 'still snapshots the eased threshold');
+  } finally {
+    restore();
+  }
+});
+
+test('below threshold with no Yes lead → blocked on count, no clock', async () => {
+  const { subject, setActive, restore } = loadVotes();
+  setActive(20);
+  try {
+    // Tie (2/2): the lazy clock never arms, so even an ancient proposal
+    // stays blocked on the count.
+    const { pool, claims } = makePool({ yes: 2, no: 2, sessionId: 7, appId: 5 });
+    const session = { ...baseSession, promoted_at: new Date(Date.now() - 30 * DAY).toISOString() };
+    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, session, {});
+    assert.equal(r.merged, false);
     assert.notEqual(r.waitingForWindow, true);
+    assert.equal(r.windowEndsAt, null, 'no clock of any kind serialized');
     assert.equal(claims.length, 0);
   } finally {
     restore();

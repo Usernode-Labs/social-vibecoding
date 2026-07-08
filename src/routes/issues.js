@@ -1124,14 +1124,16 @@ async function maybeApplyRenameProposal(pool, issue) {
   const downCount = parseInt(downRows[0].cnt, 10) || 0;
   const gate = mergeGate(active, upCount, downCount, issue.created_at);
   const required = gate.required;
-  // Gate 1: eased up-vote threshold. Gate 2: visibility window must have
-  // elapsed. Either failing leaves the proposal open (the next vote, or the
-  // sweeper's window-elapsed pass, re-checks).
-  if (upCount < required || !gate.windowElapsed) {
+  // Apply paths mirror PR merges (services/active-users.js → mergeGate):
+  // threshold met + window elapsed, OR the lazy-consensus clock elapsed
+  // (unopposed support below threshold — silence is consent). Not yet →
+  // leave the proposal open (the next vote, or the sweeper's
+  // window-elapsed pass, re-checks).
+  if (!gate.mergeable) {
     return {
       applied: false, upCount, majority, active,
       required, windowEndsAt: gate.windowEndsAt,
-      waitingForWindow: upCount >= required && !gate.windowElapsed,
+      waitingForWindow: (gate.thresholdMet || gate.lazyArmed) && !gate.windowElapsed,
     };
   }
 
@@ -1284,11 +1286,13 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
   const downCount = parseInt(downRows[0].cnt, 10) || 0;
   const gate = mergeGate(active, upCount, downCount, issue.created_at);
   const required = force ? upCount : gate.required;
-  if (!force && (upCount < gate.required || !gate.windowElapsed)) {
+  // Same two apply paths as maybeApplyRenameProposal (threshold or lazy
+  // consensus); an admin force-apply skips both, like force-merge.
+  if (!force && !gate.mergeable) {
     return {
       applied: false, upCount, majority, active,
       required: gate.required, windowEndsAt: gate.windowEndsAt,
-      waitingForWindow: upCount >= gate.required && !gate.windowElapsed,
+      waitingForWindow: (gate.thresholdMet || gate.lazyArmed) && !gate.windowElapsed,
     };
   }
 

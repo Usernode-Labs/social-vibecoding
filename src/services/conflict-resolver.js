@@ -202,10 +202,11 @@ async function drainApp(config, appId, excludeId) {
     // and merged — before any blocked sibling is even touched. NULL
     // merge_conflict_state (never checked) counts as clean.
     //
-    // Eligibility is the dynamic merge gate (eased Yes threshold + elapsed
-    // visibility window — services/active-users.js mergeGate), NOT the fixed
-    // majority: an unopposed PR merges at the eased count, and a window-gated
-    // PR isn't attempted until its window elapses. requiredVotes/mergeWindowMs
+    // Eligibility is the dynamic merge gate (services/active-users.js
+    // mergeGate), NOT the fixed majority: threshold path (eased Yes count +
+    // elapsed visibility window) or lazy-consensus path (unopposed Yes lead
+    // whose count-based clock has elapsed — silence is consent). A clock-
+    // gated PR isn't attempted until its window elapses. The gate helpers
     // are JS, so candidates are fetched and the gate is applied here;
     // checkAndMerge re-validates the same gate before actually merging.
     const { rows: candidates } = await pool.query(

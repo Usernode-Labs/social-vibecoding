@@ -14,6 +14,7 @@ const assert = require('node:assert/strict');
 const {
   requiredVotes,
   mergeWindowMs,
+  lazyWindowMs,
   rejectionWindowMs,
   isContested,
   mergeGate,
@@ -21,7 +22,10 @@ const {
 } = require('../src/services/active-users');
 
 const DAY = 24 * 60 * 60 * 1000;
-const { WINDOW_MAX_MS, WINDOW_MID_MS, REJECT_WINDOW_MAX_MS } = MERGE_GATE_CONSTANTS;
+const {
+  WINDOW_MAX_MS, WINDOW_MID_MS, REJECT_WINDOW_MAX_MS,
+  LAZY_WINDOW_BASE_MS, LAZY_WINDOW_STEP_MS,
+} = MERGE_GATE_CONSTANTS;
 
 test('requiredVotes: unopposed easing scales with app size, capped at majority', () => {
   // active=8 → M=5; unopposed discount = floor(8/4) = 2 → 3.
@@ -124,10 +128,19 @@ test('mergeGate: combines threshold + window into a single decision', () => {
   assert.equal(aged.windowElapsed, true);
   assert.equal(aged.mergeable, true);
 
-  // Below threshold → not mergeable, no merge regardless of time.
+  // Below threshold with unopposed support → lazy consensus: not mergeable
+  // through the threshold path, but the lazy clock (missing 1 vote → 3d)
+  // has long elapsed → mergeable.
   const thin = mergeGate(20, 5, 0, opened, openedMs + 30 * DAY);
   assert.equal(thin.thresholdMet, false);
-  assert.equal(thin.mergeable, false);
+  assert.equal(thin.lazyArmed, true);
+  assert.equal(thin.mergeable, true);
+
+  // Below threshold with NO support at all → nothing arms, never merges.
+  const zero = mergeGate(20, 0, 0, opened, openedMs + 30 * DAY);
+  assert.equal(zero.thresholdMet, false);
+  assert.equal(zero.lazyArmed, false);
+  assert.equal(zero.mergeable, false);
 
   // Majority reached → window 0, mergeable immediately, no windowEndsAt.
   const majority = mergeGate(20, 11, 0, opened, openedMs + 60 * 1000);
@@ -140,6 +153,83 @@ test('mergeGate: combines threshold + window into a single decision', () => {
   assert.equal(contestedMajority.contested, true);
   assert.equal(contestedMajority.windowMs, 0);
   assert.equal(contestedMajority.mergeable, true);
+});
+
+// ---------------------------------------------------------------------------
+// Lazy-consensus merge window (silence is consent).
+// ---------------------------------------------------------------------------
+
+test('lazyWindowMs: arms below threshold when Yes strictly leads unopposed', () => {
+  // active=2 (required 2): 1 yes, 0 no → missing 1 → base window (3d).
+  assert.equal(lazyWindowMs(2, 1, 0), LAZY_WINDOW_BASE_MS);
+  // active=20 (required 6, unopposed): 5 yes → missing 1 → 3d.
+  assert.equal(lazyWindowMs(20, 5, 0), LAZY_WINDOW_BASE_MS);
+  // 4 yes → missing 2 → 3d + 2d = 5d.
+  assert.equal(lazyWindowMs(20, 4, 0), LAZY_WINDOW_BASE_MS + LAZY_WINDOW_STEP_MS);
+  // 1 yes → missing 5 → capped at the 7d max.
+  assert.equal(lazyWindowMs(20, 1, 0), WINDOW_MAX_MS);
+});
+
+test('lazyWindowMs: null when the threshold path owns the clock', () => {
+  // active=20 unopposed → required 6; at/above it the lazy clock is off.
+  assert.equal(lazyWindowMs(20, 6, 0), null);
+  assert.equal(lazyWindowMs(20, 11, 0), null);
+});
+
+test('lazyWindowMs: never arms without a strict Yes lead', () => {
+  assert.equal(lazyWindowMs(20, 0, 0), null, 'no votes at all');
+  assert.equal(lazyWindowMs(20, 2, 2), null, 'tie is a stalemate');
+  assert.equal(lazyWindowMs(20, 2, 3), null, 'No lead belongs to the rejection clock');
+});
+
+test('lazyWindowMs: contested (No >= 1/3 of active) disarms it', () => {
+  // active=9, 3 no → contested; even with Yes leading, no lazy clock.
+  assert.equal(lazyWindowMs(9, 4, 3), null);
+});
+
+test('lazyWindowMs: No votes stretch the clock via the eased threshold', () => {
+  // active=20: 1 no restores required from 6 to 8, so 5 yes → missing 3
+  // → 3d + 2*2d = 7d (capped). More missing votes = longer clock.
+  const unopposed = lazyWindowMs(20, 5, 0);
+  const opposed = lazyWindowMs(20, 5, 1);
+  assert.ok(opposed > unopposed, 'a No vote pushes the lazy clock out');
+});
+
+test('mergeGate: lazy-consensus transitions (2-active app, author-only Yes)', () => {
+  const opened = '2026-06-01T00:00:00.000Z';
+  const openedMs = Date.parse(opened);
+
+  // Just opened: armed, clock running, not mergeable yet. windowEndsAt
+  // serialized so the client renders the countdown pill.
+  const fresh = mergeGate(2, 1, 0, opened, openedMs + 60 * 1000);
+  assert.equal(fresh.thresholdMet, false);
+  assert.equal(fresh.lazyArmed, true);
+  assert.equal(fresh.lazyWindowMs, LAZY_WINDOW_BASE_MS);
+  assert.equal(fresh.windowElapsed, false);
+  assert.equal(fresh.mergeable, false);
+  assert.equal(fresh.windowEndsAt,
+    new Date(openedMs + LAZY_WINDOW_BASE_MS).toISOString());
+
+  // Clock elapsed with no objection → merges.
+  const aged = mergeGate(2, 1, 0, opened, openedMs + LAZY_WINDOW_BASE_MS + 1);
+  assert.equal(aged.lazyArmed, true);
+  assert.equal(aged.mergeable, true);
+
+  // A No vote lands mid-window: tie disarms the lazy clock (and on a
+  // 2-active app 1 no is also contested) → back to a pure count gate.
+  const objected = mergeGate(2, 1, 1, opened, openedMs + 30 * DAY);
+  assert.equal(objected.lazyArmed, false);
+  assert.equal(objected.mergeable, false);
+});
+
+test('mergeGate: below threshold with no lazy arm has no merge clock', () => {
+  const opened = '2026-06-01T00:00:00.000Z';
+  const openedMs = Date.parse(opened);
+  // Tie below threshold: no clock of any kind is serialized.
+  const tied = mergeGate(20, 2, 2, opened, openedMs + 60 * 1000);
+  assert.equal(tied.lazyArmed, false);
+  assert.equal(tied.windowEndsAt, null);
+  assert.equal(tied.mergeable, false);
 });
 
 // ---------------------------------------------------------------------------

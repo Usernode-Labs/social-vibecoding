@@ -42,11 +42,15 @@ test('sweeper never rejects a kept-alive (>=1/3 Yes) or not-losing PR', () => {
   const keptAlive = mergeGate(20, 7, 12, opened, openedMs + 60 * DAY);
   assert.equal(sweepAction(keptAlive), 'none');
 
-  // Not losing: Yes still ahead.
+  // Not losing: Yes still ahead. Never rejected — and since the Yes lead is
+  // uncontested (4/20 No < 1/3), the lazy-consensus clock has long elapsed,
+  // so the sweeper MERGES it (silence is consent) rather than leaving it.
   const ahead = mergeGate(20, 5, 4, opened, openedMs + 60 * DAY);
-  assert.equal(sweepAction(ahead), 'none');
+  assert.notEqual(sweepAction(ahead), 'reject');
+  assert.equal(sweepAction(ahead), 'merge');
 
-  // Lone No: below the min-No floor → never arms.
+  // Lone No: below the min-No floor → never arms (and No leads, so the lazy
+  // merge clock never arms either) → untouched.
   const loneNo = mergeGate(20, 0, 1, opened, openedMs + 60 * DAY);
   assert.equal(sweepAction(loneNo), 'none');
 });
