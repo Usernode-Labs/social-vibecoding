@@ -3997,4 +3997,121 @@
     }
   })();
   /* __USERNODE_INVARIANTS_END__ */
+
+  /* __USERNODE_PLATFORM_LINK_START__ */
+  // ── Floating "Open in Usernode" pill (chromeless share views) ─────────
+  //
+  // Apps shared via their bare production subdomain
+  // (<slug>.<platform-host>) render with no platform chrome at all —
+  // there's no visible path from the app back to its in-platform page.
+  // The bridge is the one piece of platform code every dapp loads, so it
+  // injects a small dismissible pill in the bottom-right corner that
+  // deep-links back to https://<platform-host>/#app/<slug>/app — the
+  // canonical App-tab hash the shell's restoreFromHash understands.
+  //
+  // Shown ONLY when ALL of these hold:
+  //   * top frame         — inside the platform, apps render in iframes
+  //                         and the chrome is already present;
+  //   * no native channel — the Flutter WebView has its own navigation,
+  //                         a web link to the platform origin is wrong
+  //                         there;
+  //   * location.host is exactly <label>.<platform-host> with no "--" in
+  //     the label — i.e. a production app subdomain. That excludes the
+  //     platform shell itself (same host, loads the bridge same-origin),
+  //     staging previews (<slug>--s<id>), localhost dev, and foreign
+  //     embeds. The platform host is derived from this script's own src,
+  //     so self-hosted forks serving their own bridge get the right
+  //     origin for free.
+  //
+  // The × only hides the pill for the current page load — no storage
+  // flag is kept, so the pill reappears on every refresh.
+  (function () {
+    // document.currentScript is only valid during synchronous script
+    // evaluation — which is exactly when this capture runs.
+    var _script = document.currentScript;
+
+    function platformLinkTarget() {
+      if (_inIframe || _hasNativeChannel || window.Usernode) return null;
+      if (!_script || !_script.src) return null;
+      var platformHost;
+      try {
+        platformHost = new URL(_script.src, location.href).host;
+      } catch (_) { return null; }
+      if (!platformHost || location.host === platformHost) return null;
+      var suffix = "." + platformHost;
+      if (location.host.length <= suffix.length) return null;
+      if (location.host.slice(-suffix.length) !== suffix) return null;
+      var label = location.host.slice(0, -suffix.length);
+      // A single clean label only: staging previews (<slug>--s<id>) and
+      // deeper/odd hostnames don't get the pill.
+      if (!/^[a-z0-9-]+$/i.test(label)) return null;
+      if (label.indexOf("--") !== -1) return null;
+      return {
+        slug: label,
+        href: "https://" + platformHost + "/#app/" + label + "/app",
+      };
+    }
+
+    function injectPlatformLink() {
+      var target = platformLinkTarget();
+      if (!target) return;
+      if (document.getElementById("__un-platform-link")) return;
+
+      if (!document.getElementById("__usernode-platform-link-styles")) {
+        var style = document.createElement("style");
+        style.id = "__usernode-platform-link-styles";
+        style.textContent = [
+          // z-index one below the QR overlay (999999) so a transaction
+          // prompt still covers the pill. safe-area insets keep it clear
+          // of iPhone home indicators.
+          ".__un-platform-link{position:fixed;right:calc(12px + env(safe-area-inset-right,0px));bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:999998;display:flex;align-items:center;background:rgba(15,20,32,0.82);color:#e7edf7;border-radius:999px;padding:6px 6px 6px 12px;font:12px/1.2 -apple-system,system-ui,sans-serif;text-decoration:none;box-shadow:0 2px 10px rgba(0,0,0,0.3);opacity:0.85}",
+          ".__un-platform-link:hover{opacity:1}",
+          ".__un-platform-link-glyph{font-size:11px;opacity:0.75;margin-left:4px}",
+          ".__un-platform-link-close{background:none;border:none;color:inherit;font:14px/1 -apple-system,system-ui,sans-serif;padding:2px 6px;margin-left:2px;cursor:pointer;opacity:0.6;border-radius:999px}",
+          ".__un-platform-link-close:hover{opacity:1}",
+          "@media(prefers-color-scheme:light){.__un-platform-link{background:rgba(255,255,255,0.9);color:#0b1220;box-shadow:0 2px 10px rgba(0,0,0,0.18)}}",
+        ].join("\n");
+        document.head.appendChild(style);
+      }
+
+      var link = document.createElement("a");
+      link.id = "__un-platform-link";
+      link.className = "__un-platform-link";
+      link.href = target.href;
+      link.setAttribute("aria-label", "Open this app on Usernode");
+
+      var label = document.createElement("span");
+      label.textContent = "Open in Usernode";
+
+      var glyph = document.createElement("span");
+      glyph.className = "__un-platform-link-glyph";
+      glyph.textContent = "\u2197"; // ↗ (escaped: robust to mis-declared page charsets)
+      glyph.setAttribute("aria-hidden", "true");
+
+      var close = document.createElement("button");
+      close.className = "__un-platform-link-close";
+      close.type = "button";
+      close.textContent = "\u00d7"; // × (escaped, same reason)
+      close.setAttribute("aria-label", "Hide");
+      close.onclick = function (ev) {
+        // The button lives inside the anchor: cancel the navigation the
+        // bubbled click would otherwise trigger.
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (link.parentNode) link.parentNode.removeChild(link);
+      };
+
+      link.appendChild(label);
+      link.appendChild(glyph);
+      link.appendChild(close);
+      document.body.appendChild(link);
+    }
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", injectPlatformLink);
+    } else {
+      injectPlatformLink();
+    }
+  })();
+  /* __USERNODE_PLATFORM_LINK_END__ */
 })();

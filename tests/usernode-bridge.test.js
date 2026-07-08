@@ -68,3 +68,28 @@ test('shell side handles the same LLM message family', () => {
   assert.match(shell, /'get-access'/);
   assert.match(shell, /showLlmConsentModal/);
 });
+
+// Floating "Open in Usernode" pill on chromeless share views — additive
+// within v1. Shown only on a production app subdomain
+// (<label>.<platformHost>, no "--" in the label, platform host derived
+// from the bridge's own script src), top frame, no native channel;
+// links back to the in-chrome App tab. Dismissing via × only hides the
+// pill for the current page load — no storage flag, so it reappears on
+// every refresh.
+test('hosted bridge injects the back-to-platform pill on share views', () => {
+  const bridge = readBridge(versionedBridgePath);
+
+  assert.match(bridge, /__un-platform-link/);
+  // Canonical App-tab deep link: https://<platformHost>/#app/<slug>/app.
+  assert.match(bridge, /"\/#app\/" \+ label \+ "\/app"/);
+  // Staging previews (<slug>--s<id>) must not get the pill.
+  assert.match(bridge, /label\.indexOf\("--"\) !== -1/);
+  // Never inside the platform iframe or the Flutter WebView.
+  assert.match(bridge, /_inIframe \|\| _hasNativeChannel/);
+  // Dismiss must NOT persist anywhere — the pill comes back on refresh.
+  assert.doesNotMatch(bridge, /__un_platform_link_dismissed/);
+  assert.doesNotMatch(bridge, /sessionStorage[^\n]*platform_link/i);
+  // Platform host comes from the script's own src, not a hard-coded
+  // domain (keeps self-hosted forks correct).
+  assert.match(bridge, /document\.currentScript/);
+});
