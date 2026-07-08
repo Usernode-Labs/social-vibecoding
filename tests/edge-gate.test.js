@@ -75,7 +75,7 @@ test.after(() => new Promise((resolve) => server.close(resolve)));
 // Simulates what Caddy's forward_auth sends: GET /__caddy/access with the
 // original request's Host/Cookie/x-usernode-token headers plus the
 // X-Forwarded-* pair.
-function gate({ host, uri = '/', method = 'GET', cookie, usernodeToken } = {}) {
+function gate({ host, uri = '/', method = 'GET', cookie, usernodeToken, secFetchDest } = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request(`${baseUrl}/__caddy/access`, {
       method: 'GET',
@@ -86,6 +86,9 @@ function gate({ host, uri = '/', method = 'GET', cookie, usernodeToken } = {}) {
         'X-Forwarded-Uri': uri,
         ...(cookie ? { Cookie: cookie } : {}),
         ...(usernodeToken ? { 'x-usernode-token': usernodeToken } : {}),
+        // forward_auth copies the original request headers, so a browser
+        // navigation's Sec-Fetch-Dest reaches the gate as-is.
+        ...(secFetchDest ? { 'Sec-Fetch-Dest': secFetchDest } : {}),
       },
     }, (res) => {
       let body = '';
@@ -137,6 +140,38 @@ test('view-private + no credentials: browser GET bounces to apex authorize', asy
 test('view-private + no credentials: non-GET is an existence-hiding 404', async () => {
   const r = await gate({ host: PRIV_HOST, uri: '/api/thing', method: 'POST' });
   assert.equal(r.status, 404);
+});
+
+// ── Chromeless share-link redirect (top-level document navigations) ────
+
+test('view-private + no credentials: document navigation goes to the chromeless shell view', async () => {
+  const r = await gate({ host: PRIV_HOST, secFetchDest: 'document' });
+  assert.equal(r.status, 302);
+  assert.equal(r.headers.location, `https://${DOMAIN}/#app/privapp/full`);
+});
+
+test('document navigation to a staging preview keeps the authorize bounce', async () => {
+  const r = await gate({ host: `privapp--s42.${DOMAIN}`, secFetchDest: 'document' });
+  assert.equal(r.status, 302);
+  assert.ok(r.headers.location.startsWith(`https://${DOMAIN}/__access/authorize?`), r.headers.location);
+});
+
+test('iframe/asset/fetch destinations keep the authorize bounce', async () => {
+  for (const dest of ['iframe', 'script', 'empty']) {
+    const r = await gate({ host: PRIV_HOST, secFetchDest: dest });
+    assert.equal(r.status, 302);
+    assert.ok(r.headers.location.startsWith(`https://${DOMAIN}/__access/authorize?`), `dest=${dest}`);
+  }
+});
+
+test('non-GET stays an existence-hiding 404 even as a document navigation', async () => {
+  const r = await gate({ host: PRIV_HOST, method: 'POST', secFetchDest: 'document' });
+  assert.equal(r.status, 404);
+});
+
+test('view-public document navigation still passes straight through (Caddy owns the 401 rescue)', async () => {
+  const r = await gate({ host: PUB_HOST, secFetchDest: 'document' });
+  assert.equal(r.status, 200);
 });
 
 test('view-private + member iframe ?token=: cookie-setting redirect to self', async () => {

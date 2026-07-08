@@ -254,7 +254,7 @@
         });
         const data = await res.json();
         if (!res.ok) { showError(errorEl, data.error || 'Login failed'); return; }
-        window.location.href = '/';
+        window.location.href = '/' + window.location.hash;
       } catch { showError(errorEl, 'Network error'); }
     });
 
@@ -354,7 +354,7 @@
           return;
         }
         recoveryStatus.textContent = 'Password reset! Redirecting...';
-        window.location.href = '/';
+        window.location.href = '/' + window.location.hash;
       } catch (e) {
         recoveryStatus.classList.add('hidden');
         if (e.message && e.message.includes('denied')) {
@@ -364,6 +364,15 @@
         }
       }
     });
+
+    // Carry the deep-link fragment (e.g. #app/<slug>/full from a shared
+    // app link) across the login → register hop, so it still reaches the
+    // post-auth '/' + hash redirect after signing up. Must run BEFORE the
+    // !isNative early return below — web browsers are the main audience.
+    const registerAnchor = document.querySelector('a[href="/register.html"]');
+    if (registerAnchor && window.location.hash) {
+      registerAnchor.href = '/register.html' + window.location.hash;
+    }
 
     if (!isNative) return;
 
@@ -479,7 +488,7 @@
 
         if (verifyRes.ok) {
           walletStatus.textContent = 'Logged in! Redirecting...';
-          window.location.href = '/';
+          window.location.href = '/' + window.location.hash;
           return;
         }
         walletStatus.textContent = '';
@@ -522,7 +531,7 @@
         if (data.walletLink) {
           await sendLinkingTx(data.walletLink);
         } else {
-          window.location.href = '/';
+          window.location.href = '/' + window.location.hash;
         }
       } catch (e) { showError(errEl, 'Network error: ' + (e.message || e)); }
     });
@@ -546,7 +555,7 @@
         if (data.walletLink) {
           await sendLinkingTx(data.walletLink);
         } else {
-          window.location.href = '/';
+          window.location.href = '/' + window.location.hash;
         }
       } catch (e) { showError(errEl, 'Network error: ' + (e.message || e)); }
     });
@@ -600,11 +609,11 @@
         clearInterval(tickInterval);
         if (linked) {
           progressLabel.textContent = 'Wallet linked! Redirecting...';
-          window.location.href = '/';
+          window.location.href = '/' + window.location.hash;
         } else {
           progressLabel.textContent = 'Transaction sent. The link may take a moment to finalize. Redirecting...';
           progressLabel.className = 'text-xs text-yellow-400';
-          setTimeout(() => { window.location.href = '/'; }, 2000);
+          setTimeout(() => { window.location.href = '/' + window.location.hash; }, 2000);
         }
       } catch (e) {
         clearInterval(tickInterval);
@@ -614,7 +623,7 @@
           : 'Transaction failed: ' + (e.message || e) + '. Redirecting...';
         progressLabel.textContent = msg;
         progressLabel.className = 'text-xs text-red-400';
-        setTimeout(() => { window.location.href = '/'; }, 3000);
+        setTimeout(() => { window.location.href = '/' + window.location.hash; }, 3000);
       }
     }
   })();

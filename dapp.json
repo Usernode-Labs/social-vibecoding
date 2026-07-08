@@ -109,6 +109,11 @@
       "expectSelector": "#dev-kanban"
     },
     {
+      "name": "Chromeless share-link view renders the Open-in-Usernode pill",
+      "path": "/#app/usernode-2d5619/full",
+      "expectSelector": "#chromeless-pill"
+    },
+    {
       "name": "Home feed renders with the app search bar",
       "path": "/",
       "expectSelector": "#home-search-input"
