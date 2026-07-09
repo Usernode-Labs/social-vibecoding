@@ -53,7 +53,7 @@ function load() {
     // container / DB creation chewing through host resources. Admins bypass
     // the cap; errored rows don't count (they hold ~no resources and users
     // can delete them to free a slot). See src/routes/apps.js.
-    maxApps: parseInt(process.env.MAX_APPS || '30', 10),
+    maxApps: parseInt(process.env.MAX_APPS || '50', 10),
     // Concurrency caps on dev sessions. A "session" holds (or can lazily
     // spawn) a warm worker container + optional staging container, so
     // these bound host resource fan-out. Previously hardcoded literals in
