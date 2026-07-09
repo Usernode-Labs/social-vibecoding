@@ -4517,15 +4517,27 @@ const AppView = {
     }
   },
 
-  promptFork() {
-    if (!AppView.appData) return;
+  // Source of the fork being composed: { slug, name }. Set by promptFork
+  // so submitFork POSTs to the right app whether the dialog was opened
+  // from the app-view header "+" menu (current app) or the home-screen
+  // card dropdown (an arbitrary app, with no app open).
+  _forkSource: null,
+
+  // `source` (optional) = { slug, name }. Falls back to the currently
+  // open app so the header "+" menu keeps working with no argument.
+  promptFork(source) {
+    const src = source || (AppView.appData
+      ? { slug: AppView.appData.slug, name: AppView.appData.name }
+      : null);
+    if (!src || !src.slug) return;
+    AppView._forkSource = src;
     const modal = document.getElementById('fork-modal');
     const input = document.getElementById('fork-input');
-    const src = document.getElementById('fork-source-name');
+    const srcEl = document.getElementById('fork-source-name');
     const err = document.getElementById('fork-error');
     if (!modal || !input) return;
-    if (src) src.textContent = AppView.appData.name || '';
-    input.value = `${AppView.appData.name || 'App'} (fork)`;
+    if (srcEl) srcEl.textContent = src.name || '';
+    input.value = `${src.name || 'App'} (fork)`;
     if (err) { err.classList.add('hidden'); err.textContent = ''; }
     AppView.revealModal(modal);
     setTimeout(() => { input.focus(); input.select(); }, 0);
@@ -4542,7 +4554,9 @@ const AppView = {
 
   async submitFork(e) {
     if (e) e.preventDefault();
-    if (!AppView.appData) return;
+    const source = AppView._forkSource
+      || (AppView.appData ? { slug: AppView.appData.slug } : null);
+    if (!source || !source.slug) return;
     const input = document.getElementById('fork-input');
     const err = document.getElementById('fork-error');
     const submitBtn = document.getElementById('fork-submit');
@@ -4551,7 +4565,7 @@ const AppView = {
       if (err) { err.textContent = msg; err.classList.remove('hidden'); }
     };
     if (name.length < 3) return showErr('Name must be at least 3 characters.');
-    const sourceSlug = AppView.appData.slug;
+    const sourceSlug = source.slug;
     if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Forking…'; }
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(sourceSlug)}/fork`, {

@@ -1280,6 +1280,19 @@ const Home = {
         run: (itemEl) => Home._menuCheckUpdates(app, itemEl),
       });
     }
+    // Fork: available to anyone who can see the app (every card in this
+    // list is already visibility-filtered server-side, so presence here
+    // implies view access). Hidden for the platform self-app, which has
+    // no per-app repo/DB/container to clone. Reuses the same fork dialog
+    // + POST /api/apps/:slug/fork flow as the app-view header action.
+    if (!app.self_hosted && typeof AppView !== 'undefined' && AppView.promptFork) {
+      items.push({
+        key: 'fork',
+        label: 'Fork this app',
+        title: 'Create your own independent copy of this app',
+        run: () => AppView.promptFork({ slug: app.slug, name: app.name }),
+      });
+    }
     if (user.canAdminWrite) {
       items.push({
         key: 'lock',
