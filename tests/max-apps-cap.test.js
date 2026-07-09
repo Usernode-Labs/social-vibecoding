@@ -1,5 +1,5 @@
 // Tests for the server-wide MAX_APPS cap config (src/config.js). Locks in
-// the built-in default of 30, env-override parsing, and the "<= 0 disables
+// the built-in default of 50, env-override parsing, and the "<= 0 disables
 // the cap" contract that src/routes/apps.js relies on
 // (`config.maxApps > 0`).
 //
@@ -37,8 +37,8 @@ function loadWith(maxAppsEnv) {
   }
 }
 
-test('MAX_APPS defaults to 30 when unset', () => {
-  assert.equal(loadWith(undefined).maxApps, 30);
+test('MAX_APPS defaults to 50 when unset', () => {
+  assert.equal(loadWith(undefined).maxApps, 50);
 });
 
 test('MAX_APPS is overridable via env', () => {
