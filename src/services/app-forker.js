@@ -1,5 +1,6 @@
 'use strict';
 
+// Staging rebuild trigger — no functional effect.
 const fs = require('fs');
 const path = require('path');
 const log = require('./logger');
