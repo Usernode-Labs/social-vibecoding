@@ -1,6 +1,5 @@
 'use strict';
 
-// Fork-an-entire-dapp worker (see spec: "Fork an entire dapp").
 const fs = require('fs');
 const path = require('path');
 const log = require('./logger');
