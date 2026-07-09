@@ -1061,47 +1061,65 @@ const Home = {
     await Home._healWidgetIcons();
   },
 
-  // Registry entries whose icon PNG never landed in the app's widget
-  // store (pinned by an older page build, or the download failed) report
-  // has_icon:false. Re-add them silently with the current icon payload —
-  // re-pinning the same URL is an in-place refresh, so order is kept and
-  // no instruction walkthrough pops. One attempt per shortcut id per
-  // page load so a persistently failing icon can't loop.
+  // Widget icons drift out of sync with SV app data in two ways:
+  //   - The icon PNG never landed in the app's widget store (pinned by
+  //     an older page build, or the download failed) — the registry
+  //     reports has_icon:false.
+  //   - The stored PNG is stale: the app gained/changed/lost its
+  //     icon_url after pinning (e.g. an icon proposal passed), or the
+  //     canvas-tile rendering changed (WIDGET_ICON_GEN bump). The
+  //     registry still reports has_icon:true, so staleness is detected
+  //     by remembering which icon source was last sent per shortcut id
+  //     (localStorage) and comparing against the current desired source.
+  // Either way the fix is the same: silently re-add with the current
+  // icon payload — re-pinning the same URL is an in-place refresh, so
+  // order is kept and no instruction walkthrough pops. One attempt per
+  // shortcut id per page load so a persistently failing icon can't loop.
   //
-  // WIDGET_ICON_GEN versions the canvas-tile rendering. Saved tiles
-  // report has_icon:true and would otherwise never refresh, so when the
-  // rendering changes (bump the gen), canvas tiles are re-sent once and
-  // the reached gen is remembered in localStorage. Image-icon apps skip
-  // this — their PNGs don't come from the canvas.
+  // WIDGET_ICON_GEN versions the canvas-tile rendering; it's part of
+  // the recorded source string for tile-based icons, so bumping it
+  // makes every canvas tile read as stale and re-send once.
   //   gen 2: pixel-centered glyphs (_drawGlyphCentered) — emoji tiles
   //          used to come out anchored bottom-left on iOS WebKit.
   WIDGET_ICON_GEN: 2,
-  _iconGenKey: 'sv:widget_icon_gen',
+  _iconSrcKey: 'sv:widget_icon_src',
   _iconHealTried: null,
+  // The icon source the widget *should* have for this app right now.
+  // Image icons: the absolute URL (matches _shortcutPayloadFor). Canvas
+  // tiles: an opaque marker keyed by emoji + rendering generation.
+  _desiredIconSrcFor(app) {
+    return app.icon_url
+      ? new URL(app.icon_url, location.origin).href
+      : `tile:${Home.WIDGET_ICON_GEN}:${app.icon_emoji || ''}`;
+  },
+  _loadIconSrcMap() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(Home._iconSrcKey));
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (_) { return {}; /* private mode / corrupt */ }
+  },
   async _healWidgetIcons() {
     if (Home._shortcutSupport?.mechanism !== 'widget') return;
     const bridge = window.usernode;
     if (!bridge || typeof bridge.addHomeScreenShortcut !== 'function') return;
     const tried = (Home._iconHealTried ||= new Set());
-    let storedGen = null;
-    try { storedGen = localStorage.getItem(Home._iconGenKey); } catch (_) { /* private mode */ }
-    const genStale = storedGen !== String(Home.WIDGET_ICON_GEN);
+    const srcMap = Home._loadIconSrcMap();
+    let mapDirty = false;
     let healed = false;
-    // An SV-slugged entry we couldn't match yet (apps list still
-    // loading) keeps the gen marker un-burned so a later pass retries.
-    let unmatchedSvEntry = false;
+    const liveIds = new Set();
     for (const item of Home._widgetItems || []) {
+      liveIds.add(item.id);
       if (tried.has(item.id)) continue;
       const slug = Home._widgetSlugFor(item);
       const app = slug ? (Home._apps || []).find((a) => a.slug === slug) : null;
+      // Foreign shortcuts (no SV slug) can never be healed here; SV
+      // entries whose app hasn't loaded yet are left un-tried so a
+      // later pass retries once the apps list lands.
+      if (!app) continue;
+      const desired = Home._desiredIconSrcFor(app);
       const needsIcon = item.has_icon === false;
-      const staleTile = genStale && app && !app.icon_url;
-      if (!needsIcon && !staleTile) continue;
-      if (!app) {
-        if (slug) unmatchedSvEntry = true;
-        // Foreign shortcuts (no SV slug) can never be healed here.
-        continue;
-      }
+      const stale = srcMap[item.id] !== desired;
+      if (!needsIcon && !stale) continue;
       tried.add(item.id);
       try {
         await bridge.addHomeScreenShortcut({
@@ -1109,11 +1127,21 @@ const Home = {
           silent: true,
         });
         healed = true;
+        srcMap[item.id] = desired;
+        mapDirty = true;
       } catch (_) { /* denied / old build — leave the fallback tile */ }
     }
-    if (genStale && (Home._apps || []).length && !unmatchedSvEntry) {
+    // Drop records for shortcuts no longer in the registry so the map
+    // can't grow without bound as apps are pinned and unpinned.
+    for (const id of Object.keys(srcMap)) {
+      if (!liveIds.has(id)) {
+        delete srcMap[id];
+        mapDirty = true;
+      }
+    }
+    if (mapDirty) {
       try {
-        localStorage.setItem(Home._iconGenKey, String(Home.WIDGET_ICON_GEN));
+        localStorage.setItem(Home._iconSrcKey, JSON.stringify(srcMap));
       } catch (_) { /* private mode — retried next load, sends deduped by `tried` */ }
     }
     if (healed) {
