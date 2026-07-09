@@ -98,10 +98,15 @@
 	# `(?:--[a-z0-9]+)?` matches the legacy `--<commitHash>` suffix so older
 	# preview URLs keep routing to the (stable) container during transition;
 	# either way only the session id maps to the container name.
-	map {host} {upstream} {
-		~^([a-z0-9-]+?)--s(\d+)(?:--[a-z0-9]+)?\. usernode-staging-${1}--${2}
-		~^([a-z0-9-]+)\. usernode-app-${1}
-		default usernode
+	# {applink} is the platform shell's chromeless deep link for the app —
+	# where an unauthenticated top-level visit is sent when the app
+	# container itself answers 401 (see the handle_response block below).
+	# Only production hosts get one; staging previews and the default row
+	# map to the empty string, which the @chromeless matcher excludes.
+	map {host} {upstream} {applink} {
+		~^([a-z0-9-]+?)--s(\d+)(?:--[a-z0-9]+)?\. usernode-staging-${1}--${2} ""
+		~^([a-z0-9-]+)\. usernode-app-${1} "https://{$USERNODE_DOMAIN}/#app/${1}/full"
+		default usernode ""
 	}
 
 	# Per-app visibility gate. Every child-app / staging request is
@@ -128,7 +133,34 @@
 		uri /__caddy/access
 	}
 
-	reverse_proxy {upstream}:3000
+	# Chromeless-view rescue for direct/shared links (issue: bare
+	# "Not authenticated" on app subdomains). Child apps auth via the
+	# shell-injected iframe token, so an address-bar visit that reaches
+	# the container tokenless gets a 401 — from the scaffold's landing
+	# page or an agent-written JSON error, depending on the app's
+	# (vendored, never retro-updated) server.js. Intercept exactly that
+	# case: a 401 answered to a TOP-LEVEL document navigation
+	# (Sec-Fetch-Dest: document — iframe loads are `iframe`, assets are
+	# `script`/`style`/`image`, API fetches are `empty`, and curl/tools
+	# send nothing) on a production host ({applink} non-empty) becomes a
+	# redirect to the platform shell's chromeless view, where the app is
+	# embedded with a real token and just works. Everything else —
+	# including tokenless apps that deliberately serve a public page
+	# (they respond 200, so handle_response never fires; the #477 bridge
+	# pill keeps handling those) — passes through verbatim.
+	reverse_proxy {upstream}:3000 {
+		@unauth status 401
+		handle_response @unauth {
+			@chromeless {
+				header Sec-Fetch-Dest document
+				not vars {applink} ""
+			}
+			route {
+				redir @chromeless {applink} 302
+				copy_response
+			}
+		}
+	}
 
 	encode gzip
 
