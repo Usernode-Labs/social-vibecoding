@@ -1540,6 +1540,19 @@ const App = {
       document.getElementById('rename-form').addEventListener('submit', AppView.submitRename);
     }
 
+    // Fork modal
+    const forkModal = document.getElementById('fork-modal');
+    if (forkModal) {
+      document.getElementById('fork-cancel').addEventListener('click', AppView.closeForkModal);
+      forkModal.addEventListener('click', (e) => {
+        // Ignore the trailing ghost-click from the opening tap (see
+        // AppView.revealModal / modalDismissGuarded).
+        if (AppView.modalDismissGuarded(forkModal)) return;
+        if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) AppView.closeForkModal();
+      });
+      document.getElementById('fork-form').addEventListener('submit', AppView.submitFork);
+    }
+
     // Feedback
     const feedbackText = document.getElementById('feedback-text');
     const feedbackBtn = document.getElementById('feedback-submit');

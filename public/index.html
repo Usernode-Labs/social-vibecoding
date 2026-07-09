@@ -85,6 +85,13 @@
                text-left">dApps</h1>
 
     <div class="ml-auto shrink-0 flex items-center">
+    <!-- Fork lineage label: amber "⑂ Forked from <name>" pill, populated
+         by AppView.renderForkBadge() when a fork is open (cleared on
+         close()). Placed first in the right-hand action group so it reads
+         adjacent to the app title; header-layout.js already re-measures
+         this group on resize, so title centering recomputes automatically
+         when the badge appears/clears. -->
+    <span id="app-fork-badge-slot" class="inline-flex mr-3"></span>
     <!-- Platform-version pill: which SHA of usernode itself is currently
          live. Populated by App.renderPlatformVersionPill() (polled on
          a timer so it flips to a yellow "deploying" state when a new
@@ -522,6 +529,42 @@
         <div class="flex gap-3">
           <button type="button" id="rename-cancel" class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
           <button type="submit" id="rename-submit" class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Open PR</button>
+        </div>
+      </form>
+    </div>
+    </div>
+  </div>
+
+  <!-- Fork modal (AppView.promptFork). Stands up an independent copy of
+       the current app owned by the forker. -->
+  <div id="fork-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60">
+    <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
+    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl">
+      <h2 class="text-lg font-bold mb-1">Fork this app</h2>
+      <p class="text-xs text-zinc-500 mb-4">Forking <span id="fork-source-name" class="font-mono text-zinc-300"></span> stands up your own independent copy — its own repo, database, and web address.</p>
+      <form id="fork-form" class="space-y-4">
+        <div>
+          <label for="fork-input" class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Name for your fork</label>
+          <input
+            id="fork-input"
+            type="text"
+            required
+            minlength="3"
+            maxlength="64"
+            autocomplete="off"
+            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+            placeholder="My fork"
+          >
+        </div>
+        <div class="text-xs text-zinc-500 dark:text-zinc-400 space-y-1.5 rounded-lg bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 p-3">
+          <p><span class="text-emerald-500">✅ Carries over:</span> the app's code, its icon, and its current <strong>public</strong> data (e.g. leaderboards, public posts).</p>
+          <p><span class="text-violet-400">🔁 Resets to you:</span> you become the sole owner — collaborators, group chat, issues, proposals and votes all start empty.</p>
+          <p><span class="text-amber-500">❌ Not copied:</span> <strong>private</strong> secrets (API keys, signing keys) and <strong>private</strong> data (DMs, per-user rows). You'll be asked to re-enter required secrets before your fork goes live.</p>
+        </div>
+        <div id="fork-error" class="text-red-400 text-sm hidden"></div>
+        <div class="flex gap-3">
+          <button type="button" id="fork-cancel" class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
+          <button type="submit" id="fork-submit" class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Fork</button>
         </div>
       </form>
     </div>

@@ -74,9 +74,8 @@ async function createApp(config, appRow) {
       log.info('app-creator', 'Importing existing repo (skipping create+push)', { appId, slug, repoUrl });
     }
 
-    // 3. Build Docker image
-    const containerName = `usernode-app-${slug}`;
-    const imageName = `usernode-app-${slug}:latest`;
+    // 3. Clone (or write) the working tree that the shared deploy tail
+    // will build from. Container/image naming lives in finalizeDeploy.
     const tempDir = `/tmp/usernode-build-${slug}`;
     const fs = require('fs');
     const path = require('path');
@@ -138,7 +137,34 @@ async function createApp(config, appRow) {
       }
     }
 
-    // Read the dapp's `dapp.json` from the cloned working tree, then
+    // Steps 3b–9 are identical for a fresh create and a fork (build →
+    // run → health → reconcile → finalize), so they live in the shared
+    // finalizeDeploy() below. app-forker.js calls the exact same helper
+    // after it has staged the fork's cloned repo + db, so the two paths
+    // can't drift.
+    await finalizeDeploy(config, { appId, name, slug, tempDir, dbUrl, repoUrl, mainSha });
+  } catch (err) {
+    log.error('app-creator', 'App creation failed', { appId, slug, err: err.message });
+    await updateStatus(pool, appId, 'error');
+    pushAppStatusUpdate({ id: appId, slug, status: 'error' });
+  }
+}
+
+// Shared deploy tail used by BOTH createApp and app-forker.forkApp.
+// Preconditions: the app's working tree is on disk at `tempDir`, its
+// per-app Postgres DB exists and `dbUrl` connects to it, and (for a
+// fork) any copied non-private secrets are already in app_secrets. This
+// reads the manifest, reconciles name/visibility/screenshot/icon, gates
+// on missing required secrets, then builds + runs + health-checks the
+// production container and flips the row to `running`. Cleans up
+// `tempDir` on every exit path.
+async function finalizeDeploy(config, { appId, name, slug, tempDir, dbUrl, repoUrl, mainSha }) {
+  const pool = getPool(config);
+  const containerName = `usernode-app-${slug}`;
+  const imageName = `usernode-app-${slug}:latest`;
+
+  try {
+  // Read the dapp's `dapp.json` from the cloned working tree, then
     // snapshot it onto the app row so the Secrets API can render the
     // manifest-declared keys without re-cloning. Bail out
     // (without building/running) if any required key is unset — the
@@ -262,4 +288,4 @@ async function updateStatus(pool, appId, status) {
   await pool.query('UPDATE apps SET status = $1 WHERE id = $2', [status, appId]);
 }
 
-module.exports = { createApp };
+module.exports = { createApp, finalizeDeploy };

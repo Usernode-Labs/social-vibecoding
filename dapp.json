@@ -127,6 +127,17 @@
       "name": "Home demo icon tiles render",
       "path": "/?demo=1",
       "expectSelector": ".app-card [data-icon='emoji']"
+    },
+    {
+      "name": "Home fork-lineage tag renders on forked tiles",
+      "path": "/",
+      "expectSelector": ".fork-tag"
+    },
+    {
+      "name": "App-view header shows the Forked-from label",
+      "path": "/app/staging-demo-fork",
+      "expectText": "Forked from",
+      "allowConsoleErrors": true
     }
   ]
 }

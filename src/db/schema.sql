@@ -1071,6 +1071,18 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS screenshot_device_scale SMALLINT NOT N
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_emoji VARCHAR(32);
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_image_id VARCHAR(32);
 
+-- Fork lineage. NULL for normally-created apps; for a fork it stores a
+-- REFERENCE ONLY to the source app: {"appId": <id>, "slug": "<slug>"}.
+-- The source's display name is deliberately NOT persisted here — it is
+-- resolved LIVE at serialize time (routes/apps.js) by looking the source
+-- up by appId, so a rename on the original is reflected immediately and
+-- a deleted source resolves to the literal "<deleted>" (link inert).
+-- A plain JSONB reference (not an FK) is used on purpose: an FK with
+-- ON DELETE would blank the reference exactly when we still want to show
+-- "forked from <deleted>". NOT staging:private — lineage renders on the
+-- public home feed and must survive into staging clones.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS forked_from JSONB;
+
 -- Icon image bytes, one row per app, keyed by an unguessable random id
 -- (same access stance as session_visuals: /app-icons/:id is served
 -- unauthenticated so home tiles load it with a plain <img>, and the

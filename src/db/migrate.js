@@ -37,6 +37,7 @@ async function migrate(config) {
   await seedStagingCcProgressRun(pool, config);
   await seedStagingCcEstimateRun(pool, config);
   await seedStagingDemoAppCard(pool);
+  await seedStagingForkLineage(pool);
   await seedStagingMembersPanel(pool);
   await seedStagingYourApps(pool, config);
   await seedStagingAppQuotaUsers(pool);
@@ -1773,6 +1774,54 @@ async function seedStagingDemoAppCard(pool) {
     log.info('db', 'Staging demo app-card fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging demo app-card seeding failed', { message: err.message });
+  }
+}
+
+// Fixtures for the "Fork an entire dapp" lineage badge/tag. Three
+// obviously-fake public app rows so the new UI is exercisable in staging
+// without running real fork provisioning (which needs Docker + a GitHub
+// PAT the staging container doesn't have):
+//   1. a forkable TARGET (no lineage) — gives the Fork dialog a source;
+//   2. a live-name demo FORK whose forked_from references the target by
+//      id/slug (NO name stored) — proves the serializer resolves the
+//      source's current name and renders the amber "Forked from …" label
+//      + home-tile ⑂ tag with a working link;
+//   3. an ORPHAN fork whose forked_from points at a non-existent source —
+//      proves the "<deleted>" fallback + inert (non-link) label.
+// IDs sit in the 900xxx range, rows carry the "Staging demo" prefix, and
+// ON CONFLICT DO NOTHING keeps the every-boot re-run idempotent.
+async function seedStagingForkLineage(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password)
+       VALUES (900001, 'staging-demo-user', 'staging-demo-not-a-login')
+       ON CONFLICT DO NOTHING`
+    );
+    // 1. Forkable target.
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, view_visibility, created_by)
+       VALUES (900030, 'Staging demo forkable app', 'staging-demo-forkable', 'running', 'public', 900001)
+       ON CONFLICT DO NOTHING`
+    );
+    // 2. Live-name demo fork (reference-only forked_from → the target).
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, view_visibility, created_by, forked_from)
+       VALUES (900031, 'Staging demo fork', 'staging-demo-fork', 'running', 'public', 900001,
+               '{"appId": 900030, "slug": "staging-demo-forkable"}'::jsonb)
+       ON CONFLICT DO NOTHING`
+    );
+    // 3. Orphan fork (source id deliberately does not exist → "<deleted>").
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, view_visibility, created_by, forked_from)
+       VALUES (900032, 'Staging demo fork (orphan)', 'staging-demo-fork-orphan', 'running', 'public', 900001,
+               '{"appId": 2147483647, "slug": "staging-demo-missing"}'::jsonb)
+       ON CONFLICT DO NOTHING`
+    );
+    log.info('db', 'Staging fork-lineage fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Staging fork-lineage seeding failed', { message: err.message });
   }
 }
 
