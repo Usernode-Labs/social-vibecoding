@@ -99,9 +99,12 @@ function stagingMockProposals() {
       '[Mock] Near-majority test: tighten the proposal card spacing on tablet widths',
       20, 5, 0, 3, { required: 3, windowEndsAt: hoursAhead(5) }),
     // Majority reached: no window, would merge immediately in prod.
-    mk(9000014, 900114,
+    // my_vote is set on this one mock (#482) so the kanban "Needs my vote"
+    // filter visibly removes a card in the ?demo=1 preview instead of
+    // matching every mock proposal.
+    { ...mk(9000014, 900114,
       '[Mock] Majority test: bump the vote pill contrast for accessibility',
-      6, 6, 0, 2, { required: 5, windowEndsAt: null }),
+      6, 6, 0, 2, { required: 5, windowEndsAt: null }), my_vote: 'up' },
     // Lazy consensus: BELOW the eased threshold (1 of 2 yes) but unopposed —
     // the count-based lazy clock is running, so the pill shows the countdown
     // with the tally riding along ("Merging in ~2d · 1/2").

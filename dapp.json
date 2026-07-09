@@ -109,6 +109,11 @@
       "expectSelector": "#dev-kanban"
     },
     {
+      "name": "Kanban filter bar renders above the board",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban-search"
+    },
+    {
       "name": "Chromeless share-link view renders the Open-in-Usernode pill",
       "path": "/#app/usernode-2d5619/full",
       "expectSelector": "#chromeless-pill"
