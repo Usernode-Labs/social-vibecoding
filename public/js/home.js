@@ -169,7 +169,7 @@ const Home = {
         html = `<div class="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">No matches. Try a category like games or tools</div>`;
       } else {
         html = `<div class="home-section-header col-span-full">${matches.length} result${matches.length === 1 ? '' : 's'}</div>`;
-        html += matches.map((a) => Home.renderAppRow(a)).join('');
+        html += matches.map((a) => Home.renderAppRow(a, { detail: true })).join('');
       }
     } else {
       const { yours, rest } = Home.partitionApps(apps);
@@ -214,7 +214,11 @@ const Home = {
       html += Home.renderCategoryRail('Tools', tools);
       if (uncategorized.length) {
         html += '<div class="home-section-header col-span-full mt-2">All apps</div>';
-        html += uncategorized.map(Home.renderAppCard).join('');
+        // Grid tiles, but tagged so a tap opens the detail page (the
+        // pre-open layer) instead of blind-launching the iframe.
+        html += uncategorized.map((a) =>
+          Home.renderAppCard(a).replace('class="app-card ', 'data-detail="true" class="app-card ')
+        ).join('');
       }
     }
 
@@ -286,9 +290,19 @@ const Home = {
           e.target.closest('.retry-btn') ||
           e.target.closest('.card-menu-btn')
         ) return;
-        // Disabled while spinning up / errored — there's no iframe or
-        // chat history to render and the WS `app_status` handler will
-        // re-bind the card as soon as the container goes live.
+        // Directory surfaces (rails, search results, All apps) route
+        // through the app DETAIL page — the pre-open confidence layer.
+        // Status doesn't gate this tap: the detail page is exactly
+        // where a not-running app's state should be read.
+        if (card.dataset.detail === 'true') {
+          App.navigateToApp(card.dataset.slug, 'detail');
+          return;
+        }
+        // Favorites: one-tap direct launch (a deliberate rule for
+        // returning users). Disabled while spinning up / errored —
+        // there's no iframe or chat history to render and the WS
+        // `app_status` handler will re-bind the card as soon as the
+        // container goes live.
         if (card.dataset.status !== 'running' && card.dataset.status !== 'awaiting_secrets') return;
         App.navigateToApp(card.dataset.slug);
       });
@@ -794,8 +808,15 @@ const Home = {
     // Full-width rows span the grid; rail cards are fixed-width snap
     // targets inside their .app-rail strip (see app.css).
     const sizeClass = opts.rail ? 'app-rail-card' : 'col-span-full';
+    // opts.detail flags rows whose tap opens the app DETAIL page (rail
+    // cards, search results) instead of direct-launching — Favorites
+    // rows stay one-tap-launch and never carry it. Detail rows are
+    // always tappable regardless of status: the detail page is the
+    // right place to read a not-running app's state.
+    const detailAttr = opts.detail ? 'data-detail="true" ' : '';
+    const rowCursor = opts.detail ? 'cursor-pointer' : cursorClass;
     return `
-      <div class="app-card app-row app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex items-center gap-3 ${sizeClass} ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${!!app.locked}">
+      <div ${detailAttr}class="app-card app-row app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex items-center gap-3 ${sizeClass} ${rowCursor}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${!!app.locked}">
         ${retryHtml}
         <div class="relative w-14 h-14 shrink-0">
           <div class="w-14 h-14 rounded-xl bg-violet-600/20 overflow-hidden flex items-center justify-center text-violet-400 font-bold text-xl" data-icon="${icon.kind}">
@@ -827,7 +848,7 @@ const Home = {
     return `
       <div class="home-section-header col-span-full mt-2">${header}</div>
       <div class="app-rail col-span-full">
-        ${apps.map((a) => Home.renderAppRow(a, { rail: true })).join('')}
+        ${apps.map((a) => Home.renderAppRow(a, { rail: true, detail: true })).join('')}
       </div>`;
   },
 

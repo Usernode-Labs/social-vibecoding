@@ -1857,6 +1857,11 @@ const App = {
           tab = 'dev';
           subTab = parts[3] ? 'sessions' : 'forum';
           ref = parts[3] ? parseInt(parts[3]) : null;
+        } else if (tab === 'detail') {
+          // App detail page (#app/<slug>/detail) — the pre-open
+          // confidence layer. Old cached clients that predate this
+          // route fall into the final `else` below and get the regular
+          // App tab — same graceful degrade as `full`.
         } else {
           tab = 'app';
         }
@@ -2020,6 +2025,8 @@ const App = {
         } else {
           newHash = `#app/${App.currentApp}/dev`;
         }
+      } else if (App.currentTab === 'detail') {
+        newHash = `#app/${App.currentApp}/detail`;
       } else {
         // Chromeless mode round-trips through reloads/history via its
         // own hash segment; the regular App tab keeps `/app`.
@@ -2424,6 +2431,9 @@ const App = {
   _normalizeTab(tab, ref, subTab) {
     if (tab === 'group-chat') { tab = 'dev'; subTab = 'chat'; }
     else if (tab === 'individual-chat') { tab = 'dev'; subTab = subTab || 'sessions'; }
+    // The detail page is its own top-level surface, sibling to
+    // app/dev — no sub-tabs, no deep-link payload.
+    if (tab === 'detail') return { tab: 'detail', subTab: null, ref: null };
     if (tab !== 'dev') return { tab: 'app', subTab: null, ref: null };
 
     if (subTab === 'sessions') {
@@ -2508,6 +2518,12 @@ const App = {
 
     if (tab === 'app') {
       AppView.renderAppTab();
+    } else if (tab === 'detail') {
+      // Detail page: neither bottom-bar tab is active (the .app-tab
+      // toggle above already cleared both — there is no
+      // data-tab="detail" button, and that's deliberate: App/Dev stay
+      // one tap away as real navigation).
+      await AppDetail.render();
     } else {
       await AppView.renderDevView(App.currentSubTab, ref);
     }

@@ -143,6 +143,11 @@
       "path": "/app/staging-demo-fork",
       "expectText": "Forked from",
       "allowConsoleErrors": true
+    },
+    {
+      "name": "App detail page renders",
+      "path": "/app/usernode-2d5619/detail",
+      "expectText": "Builders"
     }
   ]
 }
