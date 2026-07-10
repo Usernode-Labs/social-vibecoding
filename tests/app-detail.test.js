@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const AppDetail = require('../public/js/app-detail');
+const detailCss = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
 
 function app(overrides = {}) {
   return {
@@ -61,6 +62,15 @@ test('detail renders identity, actions, and builder merge counts', () => {
   assert.match(html, />1 change merged</);
   assert.match(html, />4 changes merged</);
   assert.match(html, /data-detail-action="fork"[^>]*>Fork</);
+  assert.match(html, /id="app-detail-more"[^>]*aria-label="More"[^>]*title="More"/);
+});
+
+test('detail actions stay in one responsive row', () => {
+  const actions = detailCss.match(/\.app-detail-actions \{[^}]+\}/)?.[0] || '';
+  assert.match(actions, /flex-wrap:\s*nowrap/);
+  assert.match(actions, /width:\s*100%/);
+  assert.match(detailCss, /\.app-detail-action-primary,\s*\n\s*\.app-detail-action-secondary \{[^}]*flex:\s*1 1 0/);
+  assert.match(detailCss, /\.app-detail-more-wrap \{[^}]*flex:\s*0 0 2\.75rem/);
 });
 
 test('detail omits empty optional content and disables unavailable Open', () => {

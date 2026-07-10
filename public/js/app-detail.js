@@ -78,7 +78,9 @@ const AppDetail = {
     const overflowItems = AppDetail._overflowItems(app);
     const more = overflowItems.length ? `
       <div class="app-detail-more-wrap">
-        <button id="app-detail-more" type="button" class="app-detail-action app-detail-action-more" aria-haspopup="menu" aria-expanded="false">More</button>
+        <button id="app-detail-more" type="button" class="app-detail-action app-detail-action-more" aria-label="More" title="More" aria-haspopup="menu" aria-expanded="false">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h.01M12 12h.01M19 12h.01"/></svg>
+        </button>
         <div id="app-detail-more-menu" class="app-detail-more-menu hidden" role="menu">
           ${overflowItems.map((item) => `<button type="button" role="menuitem" data-detail-action="${item.key}">${detailEscape(item.label)}</button>`).join('')}
         </div>
@@ -114,7 +116,7 @@ const AppDetail = {
           </section>
 
           <section class="app-detail-actions" aria-label="App actions">
-            <button id="app-detail-open" type="button" class="app-detail-action app-detail-action-primary"${running ? '' : ' disabled'}>${openLabel}</button>
+            <button id="app-detail-open" type="button" class="app-detail-action app-detail-action-primary" title="${openLabel}"${running ? '' : ' disabled'}>${openLabel}</button>
             ${canImprove ? '<button id="app-detail-improve" type="button" class="app-detail-action app-detail-action-secondary">Improve</button>' : ''}
             <button id="app-detail-favorite" type="button" class="app-detail-heart${isFavorite ? ' is-active' : ''}" aria-label="${heartLabel}" title="${favoriteTitle}"${isBuilt ? ' disabled' : ''}>
               <svg class="w-5 h-5" viewBox="0 0 24 24" fill="${isFavorite ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 000-7.78z"/></svg>

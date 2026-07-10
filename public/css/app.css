@@ -408,8 +408,9 @@ html, body {
 
 .app-detail-actions {
   display: flex;
+  width: 100%;
   min-width: 0;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 0.5rem;
 }
@@ -423,6 +424,9 @@ html, body {
   padding: 0.5rem 0.875rem;
   font-size: 0.875rem;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .app-detail-action-primary {
@@ -444,6 +448,13 @@ html, body {
 .app-detail-action-secondary:hover,
 .app-detail-action-more:hover { background: var(--bg-secondary); }
 
+.app-detail-action-more {
+  width: 2.5rem;
+  height: 2.5rem;
+  flex: 0 0 2.5rem;
+  padding: 0;
+}
+
 .app-detail-heart {
   display: inline-flex;
   width: 2.5rem;
@@ -461,7 +472,7 @@ html, body {
 .app-detail-action:focus-visible,
 .app-detail-heart:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 2px; }
 
-.app-detail-more-wrap { position: relative; }
+.app-detail-more-wrap { position: relative; flex: none; }
 
 .app-detail-more-menu {
   position: absolute;
@@ -563,11 +574,14 @@ html, body {
 @media (max-width: 639px) {
   .app-detail-page { gap: 1.5rem; padding: 1.25rem 1rem 1.75rem; }
   .app-detail-tagline { font-size: 1rem; line-height: 1.5rem; }
+  .app-detail-actions { gap: 0.375rem; }
   .app-detail-action { min-height: 2.75rem; font-size: 1rem; }
   .app-detail-action-primary,
-  .app-detail-action-secondary { flex: 1 1 7rem; }
+  .app-detail-action-secondary { min-width: 0; flex: 1 1 0; padding-inline: 0.625rem; }
   .app-detail-heart { width: 2.75rem; height: 2.75rem; }
-  .app-detail-more-menu { right: auto; left: 0; }
+  .app-detail-more-wrap { width: 2.75rem; flex: 0 0 2.75rem; }
+  .app-detail-action-more { width: 2.75rem; height: 2.75rem; flex-basis: 2.75rem; }
+  .app-detail-more-menu { right: 0; left: auto; }
   .app-detail-builder-name { font-size: 1rem; }
   .app-detail-builder-count { font-size: 0.875rem; }
 }
