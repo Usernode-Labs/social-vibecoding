@@ -1,13 +1,15 @@
-// Homepage restructure: the "Your apps" partition and the client-side
+// Homepage restructure: the Favorites partition (formerly labeled
+// "Your apps" — the membership rule is unchanged) and the client-side
 // search matcher in public/js/home.js.
 //
-// "Your apps" = is_collaborator (app_collaborators membership — creator
+// Favorites = is_collaborator (app_collaborators membership — creator
 // or accepted invite) OR is_favorited (manual add via the "…" menu).
 // Ordering inside the section: explicit favorite_order first
 // (ascending), NULLs after, preserving the server's activity order
 // among un-ordered entries (stable sort). The search matcher is a
-// case-insensitive substring test on name and slug; an empty /
-// whitespace query matches everything.
+// case-insensitive substring test on name, slug, and tagline, plus the
+// category with a trailing-s plural tolerance; an empty / whitespace
+// query matches everything.
 //
 // home.js is a plain browser script (`const Home = {…}`); we load it
 // into a vm context with stubbed globals and call the pure helpers
@@ -132,6 +134,30 @@ test('matchesQuery: case-insensitive substring on name and slug', () => {
   assert.equal(Home.matchesQuery(a, 'ss are'), true, 'substring anywhere in the name');
   assert.equal(Home.matchesQuery(a, '3f2a'), true, 'slug matches too');
   assert.equal(Home.matchesQuery(a, 'checkers'), false);
+});
+
+test('matchesQuery: tagline is a substring target too', () => {
+  const Home = makeHome();
+  const a = app({ name: 'Chess Arena', tagline: 'Play blitz chess with your wallet friends' });
+  assert.equal(Home.matchesQuery(a, 'wallet'), true, 'tagline substring');
+  assert.equal(Home.matchesQuery(a, 'WALLET FRIENDS'), true, 'case-insensitive');
+  assert.equal(Home.matchesQuery(a, 'poker'), false);
+  // Absent tagline stays safe.
+  assert.equal(Home.matchesQuery(app({ name: 'Bare' }), 'wallet'), false);
+});
+
+test('matchesQuery: category matches with plural tolerance', () => {
+  const Home = makeHome();
+  const game = app({ name: 'Chess Arena', category: 'game' });
+  assert.equal(Home.matchesQuery(game, 'game'), true, 'singular query');
+  assert.equal(Home.matchesQuery(game, 'games'), true, 'plural query');
+  assert.equal(Home.matchesQuery(game, 'GAMES'), true, 'case-insensitive');
+  assert.equal(Home.matchesQuery(game, 'tool'), false, 'other category');
+  const tool = app({ name: 'Budget Buddy', category: 'tool' });
+  assert.equal(Home.matchesQuery(tool, 'tools'), true);
+  // The plural tolerance is scoped to the category — a NULL-category
+  // app named nothing like the query stays unmatched.
+  assert.equal(Home.matchesQuery(app({ name: 'Bare' }), 'games'), false);
 });
 
 test('matchesQuery: empty / whitespace-only query matches everything', () => {

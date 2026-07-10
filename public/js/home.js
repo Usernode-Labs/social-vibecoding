@@ -72,10 +72,11 @@ const Home = {
   _apps: [],
   _query: '',
 
-  // "Your apps" = apps the viewer is a member of (creator or accepted
-  // invite — the server's is_collaborator flag, see app_collaborators
-  // in schema.sql) OR apps they manually added (a favorite row; the
-  // old "star", now the menu's "Add to Your apps").
+  // "Favorites" (the section formerly labeled "Your apps" — membership
+  // rule unchanged) = apps the viewer is a member of (creator or
+  // accepted invite — the server's is_collaborator flag, see
+  // app_collaborators in schema.sql) OR apps they manually added (a
+  // favorite row; the old "star", now the menu's "Add to favorites").
   isYours(app) {
     return !!(app && (app.is_collaborator || app.is_favorited));
   },
@@ -97,13 +98,23 @@ const Home = {
     return { yours, rest };
   },
 
-  // Case-insensitive substring match on name and slug. An empty /
-  // whitespace-only query matches everything (the default view).
+  // Case-insensitive substring match on name, slug, and tagline, plus
+  // the category with plural tolerance — "game" and "games" must both
+  // surface every app with category 'game', so purpose-first queries
+  // stop dead-ending. The tolerance is scoped to the category test
+  // only (name/slug/tagline stay plain substring matches) to avoid
+  // surprising hits. An empty / whitespace-only query matches
+  // everything (the default view).
   matchesQuery(app, query) {
     const q = String(query || '').trim().toLowerCase();
     if (!q) return true;
-    return String(app?.name || '').toLowerCase().includes(q)
-      || String(app?.slug || '').toLowerCase().includes(q);
+    if (String(app?.name || '').toLowerCase().includes(q)
+      || String(app?.slug || '').toLowerCase().includes(q)
+      || String(app?.tagline || '').toLowerCase().includes(q)) return true;
+    // Every substring of 'game' is a substring of 'games', so testing
+    // the pluralized category alone covers both forms.
+    const cat = String(app?.category || '').toLowerCase();
+    return !!cat && `${cat}s`.includes(q);
   },
 
   filterApps(apps, query) {
@@ -149,16 +160,16 @@ const Home = {
     let canDragYours = false;
 
     if (query) {
-      // Active search: one flat grid of matches. The proposals /
-      // sessions strips, section headers, create tile and drag
+      // Active search: one flat list of rich rows. The proposals /
+      // sessions strips, section headers, create button and drag
       // affordance all step aside until the query clears — reorder
       // is only meaningful against the sectioned view.
       const matches = Home.filterApps(apps, query);
       if (!matches.length) {
-        html = `<div class="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">No apps match &ldquo;${escapeHtml(query)}&rdquo;</div>`;
+        html = `<div class="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">No matches. Try a category like games or tools</div>`;
       } else {
         html = `<div class="home-section-header col-span-full">${matches.length} result${matches.length === 1 ? '' : 's'}</div>`;
-        html += matches.map(Home.renderAppCard).join('');
+        html += matches.map((a) => Home.renderAppRow(a)).join('');
       }
     } else {
       const { yours, rest } = Home.partitionApps(apps);
@@ -171,22 +182,40 @@ const Home = {
       // manageable in place (drag in / reorder / ✕). Empty string
       // everywhere else — see _widgetUiActive.
       html += Home.renderWidgetSection();
+      // Create an app — a full-width entry point at the top of the
+      // feed (it used to be a placeholder tile at the end of the
+      // grid). Permission-gated like the tile was; wireCreateButtons
+      // finds it by the shared .home-create-btn class.
+      if (canCreate) html += Home.renderCreateSection();
       if (yours.length) {
-        html += '<div class="home-section-header col-span-full">Your apps</div>';
-        // Tag the cards at render time: data-yours drives both the
+        html += '<div class="home-section-header col-span-full">Favorites</div>';
+        html += '<div class="col-span-full -mt-1 pb-1 text-xs text-zinc-500 dark:text-zinc-400">Apps you saved or build</div>';
+        // Tag the rows at render time: data-yours drives both the
         // drag wiring's selector and the long-press menu→drag
         // promotion; cursor-grab replaces cursor-pointer as the
-        // discoverability hint when reordering is possible.
+        // discoverability hint when reordering is possible. Favorites
+        // keep one-tap direct launch — the detail page is the
+        // pre-open layer for apps you have NOT already adopted.
         html += yours.map((a) => {
-          let card = Home.renderAppCard(a);
+          let card = Home.renderAppRow(a);
           card = card.replace('class="app-card ', 'data-yours="true" class="app-card ');
           if (canDragYours) card = card.replace('cursor-pointer', 'cursor-grab');
           return card;
         }).join('');
-        html += '<div class="home-section-header col-span-full mt-2">All Apps</div>';
       }
-      html += rest.map(Home.renderAppCard).join('');
-      html += canCreate ? Home.renderCreateTile() : '';
+      // Category rails: one horizontally scrollable strip per category
+      // that has at least one visible non-favorite app, Games first.
+      // Apps with no (or an unknown) category fall through to the
+      // "All apps" grid below so nothing becomes unreachable.
+      const games = rest.filter((a) => a.category === 'game');
+      const tools = rest.filter((a) => a.category === 'tool');
+      const uncategorized = rest.filter((a) => a.category !== 'game' && a.category !== 'tool');
+      html += Home.renderCategoryRail('Games', games);
+      html += Home.renderCategoryRail('Tools', tools);
+      if (uncategorized.length) {
+        html += '<div class="home-section-header col-span-full mt-2">All apps</div>';
+        html += uncategorized.map(Home.renderAppCard).join('');
+      }
     }
 
     listEl.innerHTML = html;
@@ -689,26 +718,116 @@ const Home = {
     `;
   },
 
-  // "Your app here" placeholder rendered as the last tile in the
-  // grid. Layout mirrors a real tile (thumbnail + title row, pill
-  // stacked on the left) but with a dashed violet border + violet
-  // thumbnail to telegraph "this slot is empty, tap to fill it".
-  // The click target is just the inner pill (.home-create-btn,
-  // wired in Home.wireCreateButtons) — clicking the surrounding
-  // tile chrome is intentionally inert so the tile reads as
-  // "decorative frame around a button" rather than "button-shaped
-  // hover surface". Hover/active styles live on the pill itself.
-  renderCreateTile() {
+  // "Create an app" — a single full-width button at the top of the
+  // sectioned feed (it replaced the old "Your app here" placeholder
+  // tile at the end of the grid). Only rendered for users who pass
+  // Home.canCreate(); the .home-create-btn class is what
+  // wireCreateButtons binds the create modal to.
+  renderCreateSection() {
     return `
-      <div class="home-create-tile rounded-xl bg-violet-500/[0.02] dark:bg-violet-500/[0.04] p-3 flex flex-col items-center text-center gap-2">
-        <div class="w-14 h-14 rounded-xl bg-violet-600/20 flex items-center justify-center text-violet-400 font-bold text-xl shrink-0">
-          Y
-        </div>
-        <div class="italic text-sm text-zinc-500 dark:text-zinc-400 truncate max-w-full">Your app here</div>
-        <button type="button" class="home-create-btn inline-flex items-center gap-2 rounded-full border border-violet-500 dark:border-violet-400 px-4 py-2 text-sm font-medium text-violet-600 dark:text-violet-400 bg-white dark:bg-zinc-900 hover:bg-violet-50 dark:hover:bg-violet-950 transition-colors">
+      <div class="col-span-full">
+        <button type="button" class="home-create-btn w-full flex items-center justify-center gap-2 rounded-xl border border-violet-500 dark:border-violet-400 px-4 py-3 text-sm font-medium text-violet-600 dark:text-violet-400 bg-white dark:bg-zinc-900 hover:bg-violet-50 dark:hover:bg-violet-950 transition-colors">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
-          Create new app
+          Create an app
         </button>
+      </div>`;
+  },
+
+  // Category chip for rows / rails / the detail page. Stored values
+  // are 'game' | 'tool' (see schema.sql); anything else (incl. NULL)
+  // renders nothing so an unset listing self-trims.
+  categoryChipHtml(category) {
+    const label = category === 'game' ? 'Game' : category === 'tool' ? 'Tool' : null;
+    if (!label) return '';
+    return `<span class="category-chip inline-flex items-center px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-violet-500/10 text-violet-500 dark:text-violet-400 shrink-0">${label}</span>`;
+  },
+
+  // Rich full-width row — the Favorites / search-result / rail form
+  // factor. Same data contract as renderAppCard (data-slug /
+  // data-status / data-icon / one .card-menu-btn) so the shared card
+  // wiring, DnD promotion, and tests keep working, but laid out as a
+  // horizontal row carrying the listing metadata: category chip,
+  // "N active", and the one-line tagline. `opts.rail` sizes the row as
+  // a snap-scrolling rail card instead of a full-width block.
+  renderAppRow(app, opts = {}) {
+    const isAwaiting = app.status === 'awaiting_secrets';
+    const isInFlightDeploy = !!(app.deployProgress && app.deployProgress.deploying);
+    const statusClass = isInFlightDeploy ? 'creating'
+      : app.status === 'running' ? 'running'
+      : app.status === 'creating' ? 'creating'
+      : isAwaiting ? 'creating'
+      : 'error';
+    const statusLabel = app.status === 'running' ? ''
+      : app.status === 'creating' ? 'Spinning up...'
+      : isAwaiting ? 'Awaiting secrets'
+      : 'Error';
+    const isError = app.status === 'error';
+    const isRunning = app.status === 'running';
+    const activeUsers = parseInt(app.active_users || 0);
+    const cursorClass = (isRunning || isAwaiting) ? 'cursor-pointer' : 'cursor-not-allowed opacity-70';
+    const icon = Home.iconTileFor(app);
+
+    // "74 active" — count + the word, per the content rule that the
+    // label must not overclaim (it's a 10-day active count, not total
+    // users). The word never pluralizes.
+    const activeHtml = `<span class="users-badge inline-flex items-center px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-zinc-500/10 text-zinc-500 dark:text-zinc-400 shrink-0" title="People who used this app in the last 10 days">${activeUsers} active</span>`;
+    const chipHtml = Home.categoryChipHtml(app.category);
+    const taglineHtml = app.tagline
+      ? `<p class="text-xs text-zinc-500 dark:text-zinc-400 truncate mt-0.5">${escapeHtml(app.tagline)}</p>`
+      : '';
+    const warningHtml = statusLabel
+      ? `<p class="text-xs mt-0.5 ${isAwaiting ? 'text-amber-500' : 'text-yellow-500'}">${statusLabel}</p>`
+      : '';
+
+    const showRetry = isError && (App.user?.canAdminWrite || App.user?.id === app.created_by);
+    const menuBadgeHtml = `
+      <button class="card-menu-btn absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300 hover:text-zinc-700 dark:hover:text-zinc-100 hover:border-zinc-300 dark:hover:border-zinc-500 transition-colors" data-slug="${app.slug}" title="App actions" aria-label="App actions" aria-haspopup="menu"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>`;
+    const retryHtml = showRetry
+      ? `<button class="retry-btn absolute top-2 right-2 text-xs text-emerald-500 hover:text-emerald-400 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors" data-slug="${app.slug}">Retry</button>`
+      : '';
+    const forkName = app.forked_from && typeof app.forked_from === 'object'
+      ? (app.forked_from.name || '<deleted>') : null;
+    const forkTagHtml = forkName
+      ? `<span class="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm" title="Forked from ${escapeHtml(forkName)}" aria-label="Forked from ${escapeHtml(forkName)}">⑂</span>`
+      : '';
+
+    // Full-width rows span the grid; rail cards are fixed-width snap
+    // targets inside their .app-rail strip (see app.css).
+    const sizeClass = opts.rail ? 'app-rail-card' : 'col-span-full';
+    return `
+      <div class="app-card app-row app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex items-center gap-3 ${sizeClass} ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${!!app.locked}">
+        ${retryHtml}
+        <div class="relative w-14 h-14 shrink-0">
+          <div class="w-14 h-14 rounded-xl bg-violet-600/20 overflow-hidden flex items-center justify-center text-violet-400 font-bold text-xl" data-icon="${icon.kind}">
+            ${icon.html}
+          </div>
+          ${menuBadgeHtml}
+          ${forkTagHtml}
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-1.5 min-w-0">
+            <span class="font-semibold text-sm truncate min-w-0">${escapeHtml(app.name)}</span>
+            <span class="status-dot ${statusClass} shrink-0" title="${app.status}"></span>
+            ${chipHtml}
+            ${activeHtml}
+          </div>
+          ${taglineHtml}
+          ${warningHtml}
+        </div>
+      </div>
+    `;
+  },
+
+  // One horizontal scroll-snap rail per category. Rendered only when
+  // the category has rows; the card width (app.css .app-rail-card)
+  // leaves the next card visibly peeking in from the right edge so
+  // the strip reads as scrollable without a scrollbar.
+  renderCategoryRail(header, apps) {
+    if (!apps || !apps.length) return '';
+    return `
+      <div class="home-section-header col-span-full mt-2">${header}</div>
+      <div class="app-rail col-span-full">
+        ${apps.map((a) => Home.renderAppRow(a, { rail: true })).join('')}
       </div>`;
   },
 
@@ -1250,14 +1369,14 @@ const Home = {
     if (app.is_collaborator) {
       items.push({
         key: 'favorite',
-        label: '✓ In Your apps',
+        label: '✓ In favorites',
         disabled: true,
-        title: 'You build this app, so it is always in Your apps.',
+        title: 'You build this app, so it is always in your favorites',
       });
     } else {
       items.push({
         key: 'favorite',
-        label: app.is_favorited ? 'Remove from Your apps' : 'Add to Your apps',
+        label: app.is_favorited ? 'Remove from favorites' : 'Add to favorites',
         run: () => Home._menuToggleFavorite(app),
       });
     }

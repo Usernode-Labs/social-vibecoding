@@ -119,9 +119,14 @@
       "expectSelector": "#home-search-input"
     },
     {
-      "name": "Home 'Your apps' section renders for the seeded admin",
+      "name": "Home Favorites section renders for the seeded admin",
       "path": "/",
       "expectSelector": ".app-card[data-yours='true']"
+    },
+    {
+      "name": "Home category rails render on the demo feed",
+      "path": "/?demo=1",
+      "expectSelector": ".app-rail .app-rail-card"
     },
     {
       "name": "Home demo icon tiles render",

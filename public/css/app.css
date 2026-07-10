@@ -106,6 +106,42 @@ html, body {
   padding: 0.25rem 0;
 }
 
+/* ── Category rails (Home.renderCategoryRail) ────────────────
+   Horizontal scroll-snap strips of rich app rows. The card width
+   deliberately leaves the NEXT card peeking in from the right edge —
+   that peek is the "there's more" affordance, since the scrollbar is
+   hidden (same pattern as .dc-quick-replies). Plain CSS rather than
+   Tailwind utilities: scroll-snap + scrollbar hiding aren't cleanly
+   expressible in the CDN utility set we load. */
+
+.app-rail {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none; /* Firefox: hide the scrollbar but stay scrollable */
+  /* Breathing room so the drop shadow / hover tint of the first and
+     last cards isn't clipped by the scroll container. */
+  padding: 2px;
+}
+.app-rail::-webkit-scrollbar {
+  display: none; /* WebKit: hide the scrollbar */
+}
+.app-rail .app-rail-card {
+  flex: 0 0 85%;
+  max-width: 85%;
+  scroll-snap-align: start;
+}
+@media (min-width: 768px) {
+  /* Desktop: fixed-width cards — several fit, the cut-off one still
+     peeks. */
+  .app-rail .app-rail-card {
+    flex: 0 0 340px;
+    max-width: 340px;
+  }
+}
+
 /* ── App-card "…" actions menu ─────────────────────────────
    Popover built by Home.openCardMenu (appended to <body>, fixed-
    positioned against the trigger rect). Plain CSS rather than

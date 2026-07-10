@@ -131,9 +131,12 @@ function demoIconApps() {
     can_collaborate: false,
     can_manage: false,
   };
+  // Listing metadata rides on the demo rows so a ?demo=1 preview shows
+  // the category rails (Games / Tools) and taglines even before any
+  // real app row has a listing set.
   return [
-    { ...base, id: 900001, slug: 'staging-demo-emoji-icon', name: 'Staging demo emoji icon', icon_emoji: '🎮' },
-    { ...base, id: 900002, slug: 'staging-demo-image-icon', name: 'Staging demo image icon', icon_url: DEMO_ICON_PNG },
+    { ...base, id: 900001, slug: 'staging-demo-emoji-icon', name: 'Staging demo emoji icon', icon_emoji: '🎮', category: 'game', tagline: 'Staging demo game: race friends to the flag' },
+    { ...base, id: 900002, slug: 'staging-demo-image-icon', name: 'Staging demo image icon', icon_url: DEMO_ICON_PNG, category: 'tool', tagline: 'Staging demo tool: track shared shopping lists' },
   ];
 }
 

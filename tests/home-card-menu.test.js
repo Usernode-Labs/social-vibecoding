@@ -349,16 +349,16 @@ test('menu: plain user on a non-member app gets exactly the favorite toggle', ()
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp());
   assert.deepEqual(keys(items), ['favorite'], 'nothing admin-gated leaks');
-  assert.equal(items[0].label, 'Add to Your apps');
+  assert.equal(items[0].label, 'Add to favorites');
 });
 
 test('menu: favorited app flips the label to Remove', () => {
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp({ is_favorited: true }));
-  assert.equal(items[0].label, 'Remove from Your apps');
+  assert.equal(items[0].label, 'Remove from favorites');
 });
 
-test('menu: member apps get a DISABLED "In Your apps" row, never a Remove', () => {
+test('menu: member apps get a DISABLED "In favorites" row, never a Remove', () => {
   // The entry must render for every app so the affordance is always
   // discoverable — a user who is a member of every app they open
   // (e.g. the creator of most apps on an instance) would otherwise
@@ -369,7 +369,7 @@ test('menu: member apps get a DISABLED "In Your apps" row, never a Remove', () =
     .find((i) => i.key === 'favorite');
   assert.ok(fav, 'favorite entry present on member apps');
   assert.equal(fav.disabled, true, 'but disabled (membership is not removable)');
-  assert.match(fav.label, /In Your apps/);
+  assert.match(fav.label, /In favorites/);
   assert.doesNotMatch(fav.label, /Remove/, 'no Remove offered on member apps');
   assert.equal(fav.run, undefined, 'no action wired');
   // Even a favorited member app never offers Remove (removing the
@@ -809,4 +809,70 @@ test('menu: shortcut item hidden when unsupported or app not running', () => {
       `hidden on ${status} apps`
     );
   }
+});
+
+// ── Rich row form factor (Favorites / rails / search results) ─────
+//
+// renderAppRow is the discovery-era sibling of renderAppCard: same
+// data contract (data-slug / data-status / data-icon, exactly one
+// .card-menu-btn, no inline star/lock/delete buttons) but a
+// horizontal row that legitimately carries the listing metadata the
+// card face never shows — category chip, "N active", and the tagline.
+
+test('row: one hamburger trigger, none of the old corner buttons', () => {
+  const Home = makeHome({ id: ME, canAdminWrite: true });
+  const html = Home.renderAppRow(baseApp());
+  assert.equal((html.match(/card-menu-btn/g) || []).length, 1, 'exactly one menu trigger');
+  assert.doesNotMatch(html, /star-btn/, 'no inline star');
+  assert.doesNotMatch(html, /lock-btn/, 'no inline lock');
+  assert.doesNotMatch(html, /delete-btn/, 'no inline delete');
+  assert.doesNotMatch(html, /check-updates-btn/, 'no inline check-updates');
+});
+
+test('row: carries category chip, "N active" count, and tagline', () => {
+  const Home = makeHome({ id: ME });
+  const html = Home.renderAppRow(baseApp({
+    category: 'game',
+    tagline: 'Guess the number before your friends do',
+    active_users: '74',
+  }));
+  assert.match(html, /category-chip[^>]*>Game</, 'singular chip label');
+  assert.match(html, />74 active</, 'count + the word active');
+  assert.match(html, /Guess the number before your friends do/);
+  // Tooltip explains what the count actually measures.
+  assert.match(html, /People who used this app in the last 10 days/);
+  // Tool chip variant.
+  assert.match(Home.renderAppRow(baseApp({ category: 'tool' })), /category-chip[^>]*>Tool</);
+});
+
+test('row: NULL category renders no chip; NULL tagline renders nothing', () => {
+  const Home = makeHome({ id: ME });
+  const html = Home.renderAppRow(baseApp({ category: null, tagline: null, active_users: '0' }));
+  assert.doesNotMatch(html, /category-chip/, 'no chip when unset');
+  assert.match(html, />0 active</, 'count renders at zero too');
+  // No placeholder text where the tagline would go.
+  assert.doesNotMatch(html, /No tagline|Add a tagline/);
+});
+
+test('row: tagline and name are HTML-escaped', () => {
+  const Home = makeHome({ id: ME });
+  const html = Home.renderAppRow(baseApp({
+    name: 'Evil <img> & Co',
+    tagline: '<script>alert(1)</script> & fun',
+  }));
+  assert.doesNotMatch(html, /<script>/, 'raw tag never lands in the markup');
+  assert.ok(html.includes('Evil &lt;img&gt; &amp; Co'), 'escaped name');
+  assert.ok(html.includes('&lt;script&gt;alert(1)&lt;/script&gt; &amp; fun'), 'escaped tagline');
+});
+
+test('row: keeps the shared card data contract (slug/status/icon kind)', () => {
+  const Home = makeHome({ id: ME });
+  const html = Home.renderAppRow(baseApp({ icon_emoji: '🎮' }));
+  assert.match(html, /data-slug="demo-app"/);
+  assert.match(html, /data-status="running"/);
+  assert.match(html, /data-icon="emoji"/, 'icon precedence markup preserved');
+  assert.match(html, /app-card app-row/, 'row keeps the .app-card class the wiring targets');
+  // Rail variant sizes as a snap card instead of a full-width row.
+  assert.match(Home.renderAppRow(baseApp(), { rail: true }), /app-rail-card/);
+  assert.doesNotMatch(Home.renderAppRow(baseApp()), /app-rail-card/);
 });
