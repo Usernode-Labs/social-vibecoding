@@ -165,7 +165,7 @@ const Home = {
         html = '<div class="home-search-empty">No matches. Try a category like games or tools</div>';
       } else {
         html = `<section class="home-section"><div class="home-section-header">${matches.length} result${matches.length === 1 ? '' : 's'}</div>`;
-        html += `<div class="home-app-list" role="list">${matches.map((app) => Home.renderAppCard(app, { destination: 'app' })).join('')}</div></section>`;
+        html += `<div class="home-app-list" role="list">${matches.map((app) => Home.renderAppCard(app, { destination: 'detail' })).join('')}</div></section>`;
       }
     } else {
       const { yours, rest } = Home.partitionApps(apps);
@@ -201,13 +201,13 @@ const Home = {
         if (!categoryApps.length) continue;
         const heading = category === 'game' ? 'Games' : 'Tools';
         html += `<section class="home-section" data-section="${category}"><div class="home-section-header">${heading}</div>`;
-        html += `<div class="home-category-rail" role="list">${categoryApps.map((app) => Home.renderAppCard(app, { destination: 'app' })).join('')}</div></section>`;
+        html += `<div class="home-category-rail" role="list">${categoryApps.map((app) => Home.renderAppCard(app, { destination: 'detail' })).join('')}</div></section>`;
       }
 
       const uncategorized = rest.filter((app) => app.category !== 'game' && app.category !== 'tool');
       if (uncategorized.length) {
         html += '<section class="home-section" data-section="all"><div class="home-section-header">All apps</div>';
-        html += `<div class="home-app-list" role="list">${uncategorized.map((app) => Home.renderAppCard(app, { destination: 'app' })).join('')}</div></section>`;
+        html += `<div class="home-app-list" role="list">${uncategorized.map((app) => Home.renderAppCard(app, { destination: 'detail' })).join('')}</div></section>`;
       }
     }
 
@@ -594,23 +594,25 @@ const Home = {
   // first-letter fallback every app always had. The kind lands on the
   // tile as data-icon so tests and the rename handler (app.js) can tell
   // a custom icon from the letter placeholder.
-  iconTileFor(app) {
+  iconTileFor(app, options = {}) {
+    const imageClass = options.imageClass || 'w-14 h-14 rounded-xl object-cover';
+    const emojiClass = options.emojiClass || 'text-3xl leading-none';
     if (app.icon_url) {
       return {
         kind: 'image',
-        html: `<img src="${escapeHtml(app.icon_url)}" alt="" loading="lazy" draggable="false" class="w-14 h-14 rounded-xl object-cover">`,
+        html: `<img src="${escapeHtml(app.icon_url)}" alt="" loading="lazy" draggable="false" class="${imageClass}">`,
       };
     }
     if (app.icon_emoji) {
       return {
         kind: 'emoji',
-        html: `<span class="text-3xl leading-none" aria-hidden="true">${escapeHtml(app.icon_emoji)}</span>`,
+        html: `<span class="${emojiClass}" aria-hidden="true">${escapeHtml(app.icon_emoji)}</span>`,
       };
     }
     return { kind: 'letter', html: escapeHtml((app.name || '?').charAt(0).toUpperCase()) };
   },
 
-  renderAppCard(app, { destination = 'app' } = {}) {
+  renderAppCard(app, { destination = 'detail' } = {}) {
     const isAwaiting = app.status === 'awaiting_secrets';
     // The status dot is the home tile's single signal for "this app
     // is doing something right now" — so an in-flight redeploy on an
@@ -1012,12 +1014,16 @@ const Home = {
   // it has long settled by the time a user opens a card menu.
   _shortcutSupport: null,
   _shortcutProbeStarted: false,
+  _shortcutProbePromise: null,
   _probeShortcutSupport() {
-    if (Home._shortcutProbeStarted) return;
+    if (Home._shortcutProbeStarted) return Home._shortcutProbePromise;
     Home._shortcutProbeStarted = true;
     const bridge = window.usernode;
-    if (!bridge || typeof bridge.getHomeScreenShortcutSupport !== 'function') return;
-    bridge.getHomeScreenShortcutSupport().then((support) => {
+    if (!bridge || typeof bridge.getHomeScreenShortcutSupport !== 'function') {
+      Home._shortcutProbePromise = Promise.resolve(null);
+      return Home._shortcutProbePromise;
+    }
+    Home._shortcutProbePromise = bridge.getHomeScreenShortcutSupport().then((support) => {
       Home._shortcutSupport = (support && support.mechanism) ? support : null;
       // iOS: shortcuts live in a shared widget grid, which SV can mirror
       // as a manageable section above "Your apps" (see
@@ -1027,7 +1033,9 @@ const Home = {
       if (Home._shortcutSupport?.mechanism === 'widget') {
         return Home._refreshWidgetItems();
       }
-    }).catch(() => { /* stay null — item simply never renders */ });
+      return Home._shortcutSupport;
+    }).catch(() => null); // stay null — item simply never renders
+    return Home._shortcutProbePromise;
   },
 
   // ── iOS widget mirror ───────────────────────────────────────────────

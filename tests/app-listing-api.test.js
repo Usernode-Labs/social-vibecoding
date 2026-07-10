@@ -23,6 +23,12 @@ const pool = {
     if (/SELECT 1 FROM app_collaborators/.test(sql)) {
       return { rows: scenario.isMember ? [{ '?column?': 1 }] : [] };
     }
+    if (/SELECT 1 FROM app_favorites/.test(sql)) {
+      return { rows: scenario.isFavorite ? [{ '?column?': 1 }] : [] };
+    }
+    if (/FROM app_activity a1/.test(sql)) {
+      return { rows: [{ cnt: String(scenario.activeUsers || 0) }] };
+    }
     if (/UPDATE apps[\s\S]*RETURNING category, tagline/.test(sql)) {
       if (params[0]) scenario.app.category = params[1];
       if (params[2]) scenario.app.tagline = params[3];
@@ -80,7 +86,10 @@ after(() => server?.close());
 
 beforeEach(() => {
   calls.length = 0;
-  scenario = { app: appRow(), isMember: false, builders: [], listRows: [] };
+  scenario = {
+    app: appRow(), isMember: false, isFavorite: false,
+    activeUsers: 0, builders: [], listRows: [],
+  };
 });
 
 function request(path, options = {}) {
@@ -143,6 +152,32 @@ test('GET apps returns listing metadata behind the existing visibility filter', 
   assert.equal(body.apps[0].tagline, 'Guess together');
   const listQuery = calls.find((call) => /FROM apps a/.test(call.sql));
   assert.match(listQuery.sql, /a\.view_visibility = 'public' OR me\.user_id IS NOT NULL/);
+});
+
+test('GET app detail includes discovery identity and per-viewer state', async () => {
+  scenario.app = appRow({
+    category: 'tool',
+    tagline: 'Organize shared work',
+    icon_image_id: 'a'.repeat(32),
+  });
+  scenario.isFavorite = true;
+  scenario.activeUsers = 6;
+  const res = await request('/api/apps/demo');
+  assert.equal(res.status, 200);
+  const { app } = await res.json();
+  assert.equal(app.category, 'tool');
+  assert.equal(app.tagline, 'Organize shared work');
+  assert.equal(app.icon_url, `/app-icons/${'a'.repeat(32)}`);
+  assert.equal(app.is_favorited, true);
+  assert.equal(app.active_users, 6);
+});
+
+test('GET app detail does not disclose private listings to outsiders', async () => {
+  scenario.app = appRow({ view_visibility: 'private', category: 'game', tagline: 'Secret game' });
+  scenario.isMember = false;
+  const res = await request('/api/apps/demo');
+  assert.equal(res.status, 404);
+  assert.ok(!calls.some((call) => /FROM app_favorites|FROM app_activity a1/.test(call.sql)));
 });
 
 test('GET builders aggregates merged changes and respects view access', async () => {

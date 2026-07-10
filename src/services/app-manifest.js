@@ -56,7 +56,7 @@ const MANIFEST_FILENAME = 'dapp.json';
 // staging route and asserts load + no-console-errors (+ optional
 // selector/text). Extras over the cap are dropped and logged, never
 // silently truncated.
-const MAX_TESTS = 10;
+const MAX_TESTS = 14;
 const MAX_TEST_NAME_LEN = 120;
 const MAX_TEST_SELECTOR_LEN = 256;
 const MAX_TEST_TEXT_LEN = 256;

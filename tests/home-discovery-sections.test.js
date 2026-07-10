@@ -92,8 +92,8 @@ test('home renders create, Favorites, category rails, then uncategorized apps', 
   assert.ok(create < favorites && favorites < games && games < tools && tools < all);
   assert.match(html, /home-category-rail/);
   assert.match(html, /data-slug="saved"[^>]*data-destination="app"/);
-  assert.match(html, /data-slug="puzzle"[^>]*data-destination="app"/);
-  assert.match(html, /data-slug="notes"[^>]*data-destination="app"/);
+  assert.match(html, /data-slug="puzzle"[^>]*data-destination="detail"/);
+  assert.match(html, /data-slug="notes"[^>]*data-destination="detail"/);
 });
 
 test('active search flattens results and shows the specified empty state', () => {
@@ -103,7 +103,7 @@ test('active search flattens results and shows the specified empty state', () =>
   Home.render();
   assert.match(list.innerHTML, /1 result/);
   assert.doesNotMatch(list.innerHTML, /Favorites|Games/);
-  assert.match(list.innerHTML, /data-destination="app"/);
+  assert.match(list.innerHTML, /data-destination="detail"/);
 
   Home._query = 'wallet';
   Home.render();

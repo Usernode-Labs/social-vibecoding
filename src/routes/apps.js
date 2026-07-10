@@ -776,10 +776,35 @@ function appRoutes(config) {
         }
       }
 
+      const [favoriteResult, activeResult] = await Promise.all([
+        req.user?.id
+          ? pool.query(
+              'SELECT 1 FROM app_favorites WHERE app_id = $1 AND user_id = $2',
+              [appRow.id, req.user.id]
+            )
+          : Promise.resolve({ rows: [] }),
+        pool.query(
+          `SELECT COUNT(DISTINCT a1.user_id) AS cnt
+             FROM app_activity a1
+            WHERE a1.app_id = $1
+              AND a1.date >= CURRENT_DATE - 10
+              AND EXISTS (
+                SELECT 1 FROM app_activity a2
+                 WHERE a2.app_id = a1.app_id
+                   AND a2.user_id = a1.user_id
+                   AND a2.seconds_spent >= 60
+              )`,
+          [appRow.id]
+        ),
+      ]);
+
       const appPayload = {
         ...appRow,
         url,
         missingSecrets,
+        icon_url: appRow.icon_image_id ? `/app-icons/${appRow.icon_image_id}` : null,
+        is_favorited: favoriteResult.rows.length > 0,
+        active_users: parseInt(activeResult.rows[0]?.cnt, 10) || 0,
         ...accessFlags(appRow, req.user, isCollaborator),
       };
       await attachForkLineage(pool, appPayload);

@@ -6,7 +6,7 @@
 const App = {
   user: null,
   currentApp: null,
-  // Top-level mode: 'app' (the running iframe) or 'dev' (#194). The
+  // Top-level mode: 'detail' (listing), 'app' (running iframe), or 'dev'. The
   // legacy tab names 'group-chat' / 'individual-chat' are normalized to
   // dev sub-tabs by _normalizeTab so old links, notification hrefs, and
   // call sites keep working.
@@ -878,7 +878,11 @@ const App = {
     }
 
     // Update app view if we're looking at this app
-    if (App.currentApp === data.slug && App.currentTab === 'app') {
+    if (App.currentApp === data.slug && App.currentTab === 'detail' && AppView.appData) {
+      AppView.appData.status = data.status;
+      if (data.url) AppView.appData.url = data.url;
+      if (typeof AppDetail !== 'undefined') AppDetail.render(AppView.appData);
+    } else if (App.currentApp === data.slug && App.currentTab === 'app') {
       if (data.status === 'running' && AppView.appData) {
         AppView.appData.status = 'running';
         AppView.appData.url = data.url;
@@ -1826,7 +1830,9 @@ const App = {
         // below and get the regular App tab — a graceful degrade.
         const chromeless = tab === 'full';
         if (chromeless) tab = 'app';
-        if (tab === 'dev') {
+        if (tab === 'detail') {
+          // Public listing/read layer before launching an unfamiliar app.
+        } else if (tab === 'dev') {
           const sec = parts[3] || null;
           if (sec === 'sessions' && parts[4]) {
             subTab = 'sessions';
@@ -2004,7 +2010,9 @@ const App = {
 
     let newHash;
     if (App.currentApp) {
-      if (App.currentTab === 'dev') {
+      if (App.currentTab === 'detail') {
+        newHash = `#app/${App.currentApp}/detail`;
+      } else if (App.currentTab === 'dev') {
         if (App.currentSubTab === 'sessions' && DevChat.currentSession) {
           newHash = `#app/${App.currentApp}/dev/sessions/${DevChat.currentSession.id}`;
         } else if (App.currentSubTab === 'chat') {
@@ -2343,6 +2351,7 @@ const App = {
 
   navigateHome() {
     App.setChromeless(false);
+    if (typeof AppDetail !== 'undefined') AppDetail.close();
     AppView.close();
     App.currentApp = null;
     document.getElementById('app-view').classList.add('hidden');
@@ -2416,7 +2425,7 @@ const App = {
   },
 
   // Normalize every tab vocabulary onto the forum-era model (#194
-  // revision). Returns { tab, subTab, ref } where tab ∈ 'app'|'dev' and
+  // revision). Returns { tab, subTab, ref } where tab is detail/app/dev and
   // subTab ∈ 'forum'|'sessions'. Legacy names (group-chat,
   // individual-chat, and the old dev sub-tabs chat/issues/proposals)
   // keep working at every entry point — old sub-tab refs are converted
@@ -2424,6 +2433,7 @@ const App = {
   _normalizeTab(tab, ref, subTab) {
     if (tab === 'group-chat') { tab = 'dev'; subTab = 'chat'; }
     else if (tab === 'individual-chat') { tab = 'dev'; subTab = subTab || 'sessions'; }
+    if (tab === 'detail') return { tab: 'detail', subTab: null, ref: null };
     if (tab !== 'dev') return { tab: 'app', subTab: null, ref: null };
 
     if (subTab === 'sessions') {
@@ -2482,8 +2492,13 @@ const App = {
       subTab = null;
       ref = null;
     }
+    if (App.currentTab === 'detail' && tab !== 'detail' && typeof AppDetail !== 'undefined') {
+      AppDetail.close();
+    }
     App.currentTab = tab;
     App.currentSubTab = tab === 'dev' ? (subTab || 'forum') : null;
+    const tabBar = document.getElementById('app-tabs');
+    if (tabBar) tabBar.classList.toggle('hidden', tab === 'detail');
     document.querySelectorAll('.app-tab').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.tab === tab);
     });
@@ -2506,7 +2521,9 @@ const App = {
       }
     }
 
-    if (tab === 'app') {
+    if (tab === 'detail') {
+      if (typeof AppDetail !== 'undefined') await AppDetail.render(AppView.appData);
+    } else if (tab === 'app') {
       AppView.renderAppTab();
     } else {
       await AppView.renderDevView(App.currentSubTab, ref);

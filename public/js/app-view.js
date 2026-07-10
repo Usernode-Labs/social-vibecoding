@@ -168,7 +168,10 @@ const AppView = {
 
   async open(slug) {
     const res = await fetch(`/api/apps/${slug}`);
-    if (!res.ok) return;
+    if (!res.ok) {
+      AppView.appData = null;
+      return false;
+    }
     const { app: appData } = await res.json();
     AppView.appData = appData;
 
@@ -210,9 +213,11 @@ const AppView = {
     if (window.Secrets) {
       Secrets.applyMissingBadge(appData.missingSecrets || null);
     }
+    return true;
   },
 
   close() {
+    if (typeof AppDetail !== 'undefined') AppDetail.close();
     AppView.stopActivityTracking();
     AppView.stopTokenRefresh();
     GroupChat.disconnect();
