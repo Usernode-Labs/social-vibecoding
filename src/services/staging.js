@@ -381,6 +381,12 @@ async function rebuildProductionInner(config, app) {
     // the letter tile. Best-effort; needs cloneDir for the image bytes.
     await appManifest.reconcileAppIcon(prodPool, app, manifest, cloneDir)
       .catch((err) => log.warn('staging', 'Icon reconcile failed', { app: app.slug, err: err.message }));
+    // And the manifest's `listing` block (category + tagline for the
+    // home rails / app detail page). Seed-only — a field applies only
+    // while the DB column is still NULL, so a collaborator's in-app
+    // listing edit is never clobbered by a redeploy.
+    await appManifest.reconcileAppListing(prodPool, app, manifest)
+      .catch((err) => log.warn('staging', 'Listing reconcile failed', { app: app.slug, err: err.message }));
     const stored = await appSecrets.getRawValues(prodPool, app.id, config.jwtSecret);
     const merge = appSecrets.mergeForDeploy(
       manifest, stored, appSecrets.platformDefaultsFromEnv()

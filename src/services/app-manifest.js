@@ -288,6 +288,51 @@ function normalizeIconImagePath(raw) {
   return p;
 }
 
+// Discovery listing metadata (the home rails / app detail page). The
+// category vocabulary is deliberately tiny at launch; the route layer
+// (PATCH /api/apps/:slug/listing) enforces the same set, so the two
+// must move together.
+const LISTING_CATEGORIES = new Set(['game', 'tool']);
+const MAX_TAGLINE_LENGTH = 80;
+
+// Normalize the optional top-level `listing` block:
+//   "listing": { "category": "game", "tagline": "Guess the number" }
+// Returns `{ category, tagline }` (each string-or-null) or null when
+// the block is absent / carries nothing usable. Lenient like the rest
+// of the reader: invalid values are warn-logged and dropped, never a
+// deploy failure. Unlike `icon`, the block is seed-only — the
+// reconcile below writes a field only while the DB column is NULL, so
+// UI edits always win over redeploys.
+function readListing(parsed) {
+  const raw = parsed?.listing;
+  if (raw == null) return null;
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    log.warn('app-manifest', 'Ignoring non-object listing block');
+    return null;
+  }
+  let category = null;
+  if (raw.category != null) {
+    const c = typeof raw.category === 'string' ? raw.category.trim().toLowerCase() : '';
+    if (LISTING_CATEGORIES.has(c)) {
+      category = c;
+    } else {
+      log.warn('app-manifest', 'Ignoring invalid listing.category', { value: raw.category });
+    }
+  }
+  let tagline = null;
+  if (raw.tagline != null) {
+    const t = typeof raw.tagline === 'string' ? raw.tagline.trim() : '';
+    // eslint-disable-next-line no-control-regex
+    if (t.length >= 1 && t.length <= MAX_TAGLINE_LENGTH && !/[\u0000-\u001f\u007f]/.test(t)) {
+      tagline = t;
+    } else {
+      log.warn('app-manifest', 'Ignoring invalid listing.tagline', { value: raw.tagline });
+    }
+  }
+  if (category == null && tagline == null) return null;
+  return { category, tagline };
+}
+
 // Normalize the optional top-level `icon` block:
 //   "icon": { "emoji": "🎮" }  or  "icon": { "image": "public/icon.png" }
 // Returns `{ emoji, image }` (each string-or-null) or null when the
@@ -329,9 +374,9 @@ function read(cloneDir) {
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
-    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null };
+    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, listing: null };
     log.warn('app-manifest', 'Read failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null };
+    return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, listing: null };
   }
 
   let parsed;
@@ -339,7 +384,7 @@ function read(cloneDir) {
     parsed = JSON.parse(raw);
   } catch (err) {
     log.warn('app-manifest', 'Parse failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null };
+    return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, listing: null };
   }
 
   const secretsIn = Array.isArray(parsed?.secrets) ? parsed.secrets : [];
@@ -383,6 +428,7 @@ function read(cloneDir) {
     screenshot: readScreenshot(parsed),
     tests: readTests(parsed),
     icon: readIcon(parsed),
+    listing: readListing(parsed),
   };
 }
 
@@ -728,6 +774,47 @@ async function reconcileAppIcon(pool, app, manifest, cloneDir) {
   return true;
 }
 
+/**
+ * Deploy-time listing seed — sibling of reconcileAppName /
+ * reconcileAppVisibility / reconcileAppIcon, with one deliberate
+ * difference: the manifest's `listing` block is SEED-ONLY. Each field
+ * (category / tagline) is written only while the DB column is
+ * currently NULL, so a collaborator's in-app edit (PATCH
+ * /api/apps/:slug/listing) always wins over every later redeploy.
+ * There is no clearing path from the manifest either — an absent
+ * block is a plain no-op, never a reset.
+ *
+ * Best-effort like its siblings: callers fire-and-log; a failure here
+ * must never fail the deploy.
+ */
+async function reconcileAppListing(pool, app, manifest) {
+  const listing = manifest?.listing || null;
+  if (!listing || (listing.category == null && listing.tagline == null)) return false;
+
+  const { rows } = await pool.query(
+    'SELECT category, tagline FROM apps WHERE id = $1',
+    [app.id]
+  );
+  if (!rows.length) return false;
+  const cur = rows[0];
+
+  const nextCategory = cur.category == null && listing.category != null ? listing.category : null;
+  const nextTagline = cur.tagline == null && listing.tagline != null ? listing.tagline : null;
+  if (nextCategory == null && nextTagline == null) return false;
+
+  await pool.query(
+    `UPDATE apps
+       SET category = COALESCE(category, $1),
+           tagline  = COALESCE(tagline,  $2)
+     WHERE id = $3`,
+    [nextCategory, nextTagline, app.id]
+  );
+  log.info('app-manifest', 'Seeded app listing from dapp.json', {
+    appId: app.id, slug: app.slug, category: nextCategory, tagline: nextTagline,
+  });
+  return true;
+}
+
 module.exports = {
   read,
   readName,
@@ -736,6 +823,7 @@ module.exports = {
   readScreenshot,
   readTests,
   readIcon,
+  readListing,
   MAX_TESTS,
   MAX_ICON_EMOJI_LENGTH,
   MAX_ICON_IMAGE_BYTES,
@@ -744,6 +832,7 @@ module.exports = {
   reconcileAppVisibility,
   reconcileAppScreenshot,
   reconcileAppIcon,
+  reconcileAppListing,
   applyVisibilityChange,
   RESERVED_KEYS,
   RESERVED_KEY_PREFIXES,
@@ -751,4 +840,6 @@ module.exports = {
   MANIFEST_FILENAME,
   MAX_APP_NAME_LENGTH,
   MIN_APP_NAME_LENGTH,
+  LISTING_CATEGORIES,
+  MAX_TAGLINE_LENGTH,
 };

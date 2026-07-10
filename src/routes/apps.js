@@ -716,8 +716,26 @@ function appRoutes(config) {
 
   router.get('/api/apps/:slug', async (req, res) => {
     try {
+      // The active_users join mirrors the GET /api/apps list query (and
+      // src/services/active-users.js's sticky 10-day rule) so the app
+      // detail page can show its "N active" count from this one fetch
+      // instead of re-fetching the whole list for a single number.
       const { rows } = await pool.query(
-        'SELECT * FROM apps WHERE slug = $1',
+        `SELECT a.*, COALESCE(au.cnt, 0) AS active_users
+         FROM apps a
+         LEFT JOIN (
+           SELECT a1.app_id, COUNT(DISTINCT a1.user_id) AS cnt
+           FROM app_activity a1
+           WHERE a1.date >= CURRENT_DATE - 10
+             AND EXISTS (
+               SELECT 1 FROM app_activity a2
+               WHERE a2.app_id = a1.app_id
+                 AND a2.user_id = a1.user_id
+                 AND a2.seconds_spent >= 60
+             )
+           GROUP BY a1.app_id
+         ) au ON au.app_id = a.id
+         WHERE a.slug = $1`,
         [req.params.slug]
       );
 
@@ -773,11 +791,30 @@ function appRoutes(config) {
         }
       }
 
+      // Self-hosted override for `active_users`, same rationale as the
+      // GET /api/apps list: no activity rows ever land under the
+      // self-app's id (no App tab → no activity tracking), so recompute
+      // as the union across every app.
+      if (appRow.self_hosted) {
+        const { rows: unionRows } = await pool.query(
+          `SELECT COUNT(DISTINCT a.user_id) AS cnt
+             FROM app_activity a
+             WHERE a.date >= CURRENT_DATE - 10
+               AND EXISTS (
+                 SELECT 1 FROM app_activity b
+                 WHERE b.user_id = a.user_id
+                   AND b.seconds_spent >= 60
+               )`
+        );
+        appRow.active_users = parseInt(unionRows[0]?.cnt, 10) || 0;
+      }
+
       const appPayload = {
         ...appRow,
         url,
         missingSecrets,
         ...accessFlags(appRow, req.user, isCollaborator),
+        active_users: parseInt(appRow.active_users, 10) || 0,
       };
       await attachForkLineage(pool, appPayload);
       res.json({ app: appPayload });
@@ -808,6 +845,133 @@ function appRoutes(config) {
       res.json({ ...info, deployProgress: appDeployStatus.read(req.params.slug) });
     } catch (err) {
       log.error('apps', 'Failed to get app version', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Discovery listing metadata (category + tagline) — the fields the
+  // home rails and the app detail page render. Collaborator-gated like
+  // the other mutating routes here; validation mirrors the manifest
+  // reader (services/app-manifest.js readListing) so a value valid in
+  // dapp.json is valid here and vice versa. Values are stored as plain
+  // text — every renderer escapes on output (escapeHtml), same as app
+  // names. This route is authoritative over the manifest: the manifest
+  // block only seeds NULL columns (reconcileAppListing), so an edit
+  // made here survives every redeploy.
+  router.patch('/api/apps/:slug/listing', drainGuard, async (req, res) => {
+    const body = req.body || {};
+    // Both fields are optional; an omitted field is left untouched so a
+    // category-only or tagline-only save doesn't clobber the other.
+    const hasCategory = Object.prototype.hasOwnProperty.call(body, 'category');
+    const hasTagline = Object.prototype.hasOwnProperty.call(body, 'tagline');
+    if (!hasCategory && !hasTagline) {
+      return res.status(400).json({ error: 'Nothing to update — send category and/or tagline' });
+    }
+
+    let category;
+    if (hasCategory) {
+      category = body.category;
+      if (category != null) {
+        category = typeof category === 'string' ? category.trim().toLowerCase() : '';
+        if (!appManifest.LISTING_CATEGORIES.has(category)) {
+          return res.status(400).json({
+            error: `category must be one of: ${[...appManifest.LISTING_CATEGORIES].join(', ')} (or null)`,
+          });
+        }
+      }
+    }
+
+    let tagline;
+    if (hasTagline) {
+      tagline = body.tagline;
+      if (tagline != null) {
+        tagline = typeof tagline === 'string' ? tagline.trim() : '';
+        if (!tagline) tagline = null;
+      }
+      if (tagline != null) {
+        if (tagline.length > appManifest.MAX_TAGLINE_LENGTH) {
+          return res.status(400).json({
+            error: `tagline must be ${appManifest.MAX_TAGLINE_LENGTH} characters or fewer`,
+          });
+        }
+        // eslint-disable-next-line no-control-regex
+        if (/[\u0000-\u001f\u007f]/.test(tagline)) {
+          return res.status(400).json({ error: 'tagline must not contain control characters' });
+        }
+      }
+    }
+
+    try {
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
+      if (!app) return res.status(404).json({ error: 'App not found' });
+
+      const { rows } = await pool.query(
+        `UPDATE apps
+           SET category = CASE WHEN $1::boolean THEN $2 ELSE category END,
+               tagline  = CASE WHEN $3::boolean THEN $4 ELSE tagline  END
+         WHERE id = $5
+         RETURNING category, tagline`,
+        [hasCategory, hasCategory ? category : null, hasTagline, hasTagline ? tagline : null, app.id]
+      );
+
+      // Nudge connected clients so open home screens pick up the new
+      // tagline/category without a reload — same broadcast channel the
+      // rename/lock flows use. Best-effort; the next Home.load() would
+      // catch up anyway.
+      try {
+        const { pushAppUpdate } = require('../services/ws');
+        pushAppUpdate({
+          action: 'listing_changed',
+          appId: app.id,
+          slug: app.slug,
+          category: rows[0].category,
+          tagline: rows[0].tagline,
+        });
+      } catch (err) {
+        log.warn('apps', 'Listing broadcast failed', { slug: app.slug, err: err.message });
+      }
+
+      res.json({ category: rows[0].category, tagline: rows[0].tagline });
+    } catch (err) {
+      log.error('apps', 'Failed to update app listing', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Builders — everyone with at least one merged PR on this app, with
+  // their merged counts. Feeds the "Builders" section of the app detail
+  // page, so the gate is VIEW level (like /version above), deliberately
+  // looser than the collab-gated /merged list in routes/votes.js: the
+  // aggregate "who built this" is part of the public-facing listing,
+  // the full PR history is a builder surface. Same status = 'merged'
+  // predicate as that route. chat_sessions.user_id is ON DELETE SET
+  // NULL, so merges by since-deleted users drop out of the join —
+  // acceptable for an attribution list.
+  router.get('/api/apps/:slug/builders', async (req, res) => {
+    try {
+      const gated = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!gated) return res.status(404).json({ error: 'App not found' });
+      // Same self-hosted non-disclosure stance as GET /api/apps/:slug:
+      // 404 the self-app for non-admins (unless the public-voting flag
+      // relaxes it) so this new path doesn't disclose its existence.
+      if (gated.self_hosted && !req.user?.isAdmin && !config.selfAppPublicVoting) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+
+      const { rows } = await pool.query(
+        `SELECT cs.user_id, u.username, COUNT(*)::int AS merged_count
+           FROM chat_sessions cs
+           JOIN users u ON u.id = cs.user_id
+          WHERE cs.app_id = $1 AND cs.status = 'merged'
+          GROUP BY cs.user_id, u.username
+          ORDER BY merged_count DESC, u.username ASC`,
+        [gated.id]
+      );
+      res.json({ builders: rows });
+    } catch (err) {
+      log.error('apps', 'Failed to list app builders', { slug: req.params.slug, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

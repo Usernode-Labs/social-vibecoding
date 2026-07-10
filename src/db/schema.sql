@@ -1412,3 +1412,16 @@ CREATE INDEX IF NOT EXISTS idx_chat_session_attachments_orphan
 -- with their own dev session only. Schema-only in staging clones;
 -- migrate.js seeds a demo fixture so the UI is exercisable there.
 COMMENT ON TABLE chat_session_attachments IS 'staging:private';
+
+-- Discovery listing metadata: an optional category + one-line tagline
+-- shown on home rows, category rails, and the app detail page. Both
+-- nullable — apps without a listing keep working everywhere; a NULL
+-- category simply means the app appears in no category rail (it stays
+-- reachable via search and the "All apps" section). The allowed
+-- category set ('game' | 'tool') is enforced in the route, not a CHECK
+-- constraint, so adding a category later is code-only, not a migration.
+-- Written by PATCH /api/apps/:slug/listing (collaborator edits — always
+-- win) and seeded from dapp.json's `listing` block only while NULL
+-- (see services/app-manifest.js reconcileAppListing).
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS category VARCHAR(16);
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS tagline  VARCHAR(80);

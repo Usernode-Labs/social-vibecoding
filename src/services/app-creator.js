@@ -205,6 +205,12 @@ async function finalizeDeploy(config, { appId, name, slug, tempDir, dbUrl, repoU
     await appManifest.reconcileAppIcon(pool, { id: appId, slug }, manifest, tempDir)
       .catch((err) => log.warn('app-creator', 'Icon reconcile failed', { appId, err: err.message }));
 
+    // And the manifest's `listing` block (category + tagline for the
+    // home rails / app detail page). Seed-only: writes each field only
+    // while the DB column is NULL, so later in-app edits always win.
+    await appManifest.reconcileAppListing(pool, { id: appId, slug }, manifest)
+      .catch((err) => log.warn('app-creator', 'Listing reconcile failed', { appId, err: err.message }));
+
     const storedValues = await appSecrets.getRawValues(pool, appId, config.jwtSecret);
     const merge = appSecrets.mergeForDeploy(
       manifest, storedValues, appSecrets.platformDefaultsFromEnv()
