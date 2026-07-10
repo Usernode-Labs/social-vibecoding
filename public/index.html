@@ -249,10 +249,8 @@
             onclick="App.PlatformUpdating.dismissResolveFailure()">Dismiss</button>
   </div>
 
-  <!-- Home screen: app list. Rendered as a responsive grid of compact
-       tiles — see Home.renderAppCard. The "Create new app" container
-       that Home.render() appends after the tiles uses `col-span-full`
-       so it spans the full grid row at every breakpoint. -->
+  <!-- Home screen: search stays mounted while Home.render() rebuilds the
+       Favorites rows and horizontal discovery rails below it. -->
   <main id="home-screen" class="flex-1 overflow-y-auto" style="position:relative">
     <!-- Sticky search bar. Deliberately OUTSIDE #app-list: Home.render()
          wholesale-replaces the grid's innerHTML on every WS app event
@@ -264,10 +262,10 @@
         <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
         <input id="home-search-input" type="text" autocomplete="off" placeholder="Search apps…" aria-label="Search apps"
                class="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600" />
-        <button id="home-search-clear" class="hidden absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-500/10 text-base leading-none" title="Clear search" aria-label="Clear search">&times;</button>
+        <button id="home-search-clear" type="button" class="hidden absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-500/10 text-base leading-none" title="Clear search" aria-label="Clear search">&times;</button>
       </div>
     </div>
-    <div id="app-list" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 p-3 pt-2"></div>
+    <div id="app-list" class="p-3 pt-2"></div>
     <div id="empty-state" class="hidden flex flex-col items-center justify-center h-full text-zinc-500 dark:text-zinc-400 p-8">
       <p class="text-lg mb-4">No apps yet</p>
       <button class="home-create-btn inline-flex items-center gap-2 rounded-full border border-violet-500 dark:border-violet-400 px-5 py-2.5 text-sm font-medium text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950 transition-colors">

@@ -52,10 +52,222 @@ html, body {
 .app-tab { color: var(--text-muted); }
 .app-tab.active { color: var(--accent); border-top: 2px solid currentColor; }
 
-/* ── App cards ─────────────────────────────────────────── */
+/* ── Discovery home ────────────────────────────────────── */
 
-.app-card { transition: background-color 150ms; }
-.app-card:hover { background-color: var(--bg-card); }
+#app-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: 72rem;
+  margin: 0 auto;
+}
+
+.home-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  min-width: 0;
+}
+
+.home-section-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.home-section-subtitle {
+  margin-top: 0.125rem;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+}
+
+.home-app-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.home-category-rail {
+  display: flex;
+  gap: 0.75rem;
+  min-width: 0;
+  margin-right: -0.75rem;
+  padding-right: 0.75rem;
+  padding-bottom: 0.25rem;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+}
+
+.home-category-rail::-webkit-scrollbar { display: none; }
+
+.home-category-rail .app-card {
+  flex: 0 0 min(85%, 21.25rem);
+  scroll-snap-align: start;
+}
+
+.home-create-btn {
+  display: inline-flex;
+  width: 100%;
+  min-height: 2.5rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 0.5rem;
+  background: var(--accent);
+  color: white;
+  padding: 0.625rem 0.875rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.home-create-btn:hover { background: var(--accent-light); }
+.home-create-btn:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 2px; }
+
+.home-search-empty {
+  padding: 2.5rem 1rem;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+.app-discovery-card {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+  min-height: 5rem;
+  padding: 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 0.5rem;
+  background: var(--bg-primary);
+}
+
+.app-discovery-card:hover { background: var(--bg-card); }
+.app-discovery-card:focus-within { border-color: var(--accent-light); }
+.app-discovery-card.app-card-unavailable { opacity: 0.78; }
+
+.app-card-icon {
+  display: flex;
+  width: 3.5rem;
+  height: 3.5rem;
+  flex: 0 0 3.5rem;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.app-card-copy { min-width: 0; flex: 1; }
+
+.app-card-title-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.app-card-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-category-chip {
+  flex: none;
+  border-radius: 9999px;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
+
+.app-category-chip.is-game { background: rgba(16, 185, 129, 0.12); color: #059669; }
+.app-category-chip.is-tool { background: rgba(14, 165, 233, 0.12); color: #0284c7; }
+.dark .app-category-chip.is-game { color: #6ee7b7; }
+.dark .app-category-chip.is-tool { color: #7dd3fc; }
+
+.app-fork-tag {
+  display: inline-flex;
+  width: 1.125rem;
+  height: 1.125rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: rgba(245, 158, 11, 0.16);
+  color: #d97706;
+  font-size: 0.6875rem;
+  font-weight: 700;
+}
+
+.dark .app-fork-tag { color: #fbbf24; }
+
+.app-card-tagline {
+  margin-top: 0.125rem;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  line-height: 1.125rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.app-card-status { color: #ca8a04; }
+.app-card-status.is-awaiting { color: #d97706; }
+
+.app-card-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.card-menu-btn {
+  display: inline-flex;
+  width: 2.5rem;
+  height: 2.5rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  color: var(--text-muted);
+}
+
+.card-menu-btn:hover { background: var(--bg-secondary); color: var(--text-primary); }
+.card-menu-btn:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 1px; }
+
+.retry-btn {
+  min-height: 2rem;
+  border-radius: 0.375rem;
+  padding: 0.375rem 0.5rem;
+  color: #059669;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.retry-btn:hover { background: rgba(16, 185, 129, 0.1); }
 
 /* "Your app here" placeholder tile. Native `border-style: dashed`
    has no way to set dash length — at 1px border-width browsers
@@ -99,11 +311,22 @@ html, body {
 /* ── Home section headers ──────────────────────────────── */
 
 .home-section-header {
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  padding: 0.25rem 0;
+  color: var(--text-primary);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.25rem;
+}
+
+@media (min-width: 768px) {
+  .home-category-rail .app-card { flex-basis: 21.25rem; }
+}
+
+@media (max-width: 639px) {
+  #app-list { gap: 1.5rem; }
+  .home-section-header { font-size: 1rem; }
+  .home-section-subtitle,
+  .app-card-tagline { font-size: 0.875rem; }
+  .app-discovery-card { min-height: 5.25rem; }
 }
 
 /* ── App-card "…" actions menu ─────────────────────────────

@@ -1,12 +1,12 @@
-// Homepage restructure: the "Your apps" partition and the client-side
+// Homepage restructure: the Favorites partition and the client-side
 // search matcher in public/js/home.js.
 //
-// "Your apps" = is_collaborator (app_collaborators membership — creator
+// Favorites = is_collaborator (app_collaborators membership — creator
 // or accepted invite) OR is_favorited (manual add via the "…" menu).
 // Ordering inside the section: explicit favorite_order first
 // (ascending), NULLs after, preserving the server's activity order
 // among un-ordered entries (stable sort). The search matcher is a
-// case-insensitive substring test on name and slug; an empty /
+// case-insensitive substring test on identity and listing metadata; an empty /
 // whitespace query matches everything.
 //
 // home.js is a plain browser script (`const Home = {…}`); we load it
@@ -73,7 +73,7 @@ const app = (over) => ({
 
 // ── isYours ───────────────────────────────────────────────────────
 
-test('isYours: membership OR favorite puts an app in "Your apps"', () => {
+test('isYours: membership OR favorite puts an app in Favorites', () => {
   const Home = makeHome();
   assert.equal(Home.isYours(app({ is_collaborator: true })), true, 'member-only');
   assert.equal(Home.isYours(app({ is_favorited: true })), true, 'favorited-only');
@@ -132,6 +132,20 @@ test('matchesQuery: case-insensitive substring on name and slug', () => {
   assert.equal(Home.matchesQuery(a, 'ss are'), true, 'substring anywhere in the name');
   assert.equal(Home.matchesQuery(a, '3f2a'), true, 'slug matches too');
   assert.equal(Home.matchesQuery(a, 'checkers'), false);
+});
+
+test('matchesQuery: tagline and singular/plural category terms are searchable', () => {
+  const Home = makeHome();
+  const a = app({
+    name: 'Orbit',
+    slug: 'orbit-123',
+    category: 'game',
+    tagline: 'Race your friends through space',
+  });
+  assert.equal(Home.matchesQuery(a, 'friends'), true, 'tagline');
+  assert.equal(Home.matchesQuery(a, 'game'), true, 'stored category');
+  assert.equal(Home.matchesQuery(a, 'games'), true, 'display category plural');
+  assert.equal(Home.matchesQuery(a, 'tools'), false);
 });
 
 test('matchesQuery: empty / whitespace-only query matches everything', () => {

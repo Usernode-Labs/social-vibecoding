@@ -156,36 +156,34 @@ test('menu header: always carries the app’s FULL pill set, inert', () => {
   assert.doesNotMatch(Home.renderMenuHeaderHtml(baseApp()), /card-menu-pills/);
 });
 
-test('card layout: icon first with the hamburger badged on its corner, title below', () => {
+test('card layout: rich row shows icon, identity, and one trailing menu', () => {
   const Home = makeHome({ id: ME });
   const html = Home.renderAppCard(baseApp({ active_users: '3' }));
-  assert.match(html, /w-14 h-14/, 'large icon');
+  assert.match(html, /app-discovery-card/, 'rich row');
   // The hamburger badge lives inside the icon wrapper, overlapping its
   // top-right corner — so in markup order: icon initial → menu button
   // → title name.
-  const iconIdx = html.indexOf('bg-violet-600/20');
+  const iconIdx = html.indexOf('app-card-icon');
   const menuIdx = html.indexOf('card-menu-btn');
-  const nameIdx = html.indexOf('Demo App');
-  assert.ok(iconIdx !== -1 && iconIdx < menuIdx && menuIdx < nameIdx,
-    'icon → hamburger badge → title order');
-  assert.match(html, /card-menu-btn[^"]*absolute -top-1\.5 -right-1\.5/,
-    'badge overlaps the icon corner');
-  assert.match(html, /card-menu-btn[^"]*rounded-full/, 'badge is round');
+  const nameIdx = html.indexOf('app-card-name');
+  assert.ok(iconIdx !== -1 && iconIdx < nameIdx && nameIdx < menuIdx,
+    'icon → title → hamburger order');
+  assert.match(html, /card-menu-btn/, 'trailing menu trigger');
   // The old measured-slot machinery is gone from the markup.
-  assert.doesNotMatch(html, /card-actions/, 'no floating actions block');
+  assert.match(html, /app-card-actions/, 'actions stay in a stable trailing region');
   assert.doesNotMatch(html, /card-footer/, 'no footer row');
-  assert.doesNotMatch(html, /card-title-row/, 'no fit-pass title hooks');
+  assert.match(html, /app-card-title-row/, 'identity row present');
 });
 
-test('card layout: centered launcher tile, no visible border, capped title width', () => {
+test('card layout: rich row has shrinking copy and a stable identity line', () => {
   const Home = makeHome({ id: ME });
   const html = Home.renderAppCard(baseApp());
   // Icon + title block center horizontally in the tile.
-  assert.match(html, /app-card[^"]*flex flex-col items-center text-center/, 'centered column');
-  assert.match(html, /flex items-center justify-center[^"]*max-w-full/, 'centered, width-capped title row');
+  assert.match(html, /app-card-copy/, 'shrinking copy region');
+  assert.match(html, /app-card-title-row/, 'identity row');
   // Long names truncate with an ellipsis instead of stretching:
   // min-w-0 lets the flex item shrink, truncate clips it.
-  assert.match(html, /font-medium text-sm truncate min-w-0/, 'name truncates');
+  assert.match(html, /app-card-name/, 'name truncation hook');
   // The card element itself draws no border — hover tint (app.css) is
   // the affordance. (The hamburger badge keeps its own tiny border.)
   const cardCls = html.match(/class="(app-card [^"]*)"/)[1];
@@ -193,23 +191,33 @@ test('card layout: centered launcher tile, no visible border, capped title width
     `no border classes on the card element (got: ${cardCls})`);
 });
 
-test('card: Retry pins to the card corner on errored cards, outside the hamburger badge', () => {
+test('card: category and escaped tagline are visible comparison cues', () => {
+  const Home = makeHome({ id: ME });
+  const html = Home.renderAppCard(baseApp({
+    category: 'tool',
+    tagline: 'Plan <shared> work & ship',
+  }));
+  assert.match(html, /app-category-chip is-tool[^>]*>Tool</);
+  assert.match(html, /app-card-tagline[^>]*>Plan &lt;shared&gt; work &amp; ship</);
+  assert.doesNotMatch(html, /<shared>/, 'tagline is never interpreted as markup');
+});
+
+test('card: Retry remains a separate recovery action on errored rows', () => {
   const Home = makeHome({ id: ME });
   const html = Home.renderAppCard(baseApp({ status: 'error', created_by: ME }));
-  assert.match(html, /retry-btn[^"]*absolute top-2 right-2/, 'Retry corner-pinned');
+  assert.match(html, /app-card-actions[\s\S]*retry-btn[\s\S]*card-menu-btn/, 'Retry before menu');
   assert.match(html, /card-menu-btn/, 'hamburger badge still present');
   // No Retry on a running card.
   assert.doesNotMatch(Home.renderAppCard(baseApp({ created_by: ME })), /retry-btn/);
 });
 
-test('card: active users render as a compact badge beside the title', () => {
+test('card: active users use the explicit discovery metric label', () => {
   const Home = makeHome({ id: ME });
   const html = Home.renderAppCard(baseApp({ active_users: '12' }));
-  assert.match(html, /users-badge[^>]*title="12 active users"[\s\S]*?>12</, 'count + tooltip');
-  assert.doesNotMatch(html, /active user(s)?</, 'no spelled-out footer line');
+  assert.match(html, /users-badge[^>]*title="People who used this app in the last 10 days"[^>]*>12 active</);
   // Uniform signal: the badge renders at zero too.
   const zero = Home.renderAppCard(baseApp({ active_users: '0' }));
-  assert.match(zero, /users-badge[^>]*title="0 active users"/);
+  assert.match(zero, /users-badge[^>]*>0 active</);
   assert.doesNotMatch(zero, /No active users yet/, 'old empty-state line gone');
 });
 
@@ -349,16 +357,16 @@ test('menu: plain user on a non-member app gets exactly the favorite toggle', ()
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp());
   assert.deepEqual(keys(items), ['favorite'], 'nothing admin-gated leaks');
-  assert.equal(items[0].label, 'Add to Your apps');
+  assert.equal(items[0].label, 'Add to favorites');
 });
 
 test('menu: favorited app flips the label to Remove', () => {
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp({ is_favorited: true }));
-  assert.equal(items[0].label, 'Remove from Your apps');
+  assert.equal(items[0].label, 'Remove from favorites');
 });
 
-test('menu: member apps get a DISABLED "In Your apps" row, never a Remove', () => {
+test('menu: member apps get a DISABLED "In favorites" row, never a Remove', () => {
   // The entry must render for every app so the affordance is always
   // discoverable — a user who is a member of every app they open
   // (e.g. the creator of most apps on an instance) would otherwise
@@ -369,7 +377,7 @@ test('menu: member apps get a DISABLED "In Your apps" row, never a Remove', () =
     .find((i) => i.key === 'favorite');
   assert.ok(fav, 'favorite entry present on member apps');
   assert.equal(fav.disabled, true, 'but disabled (membership is not removable)');
-  assert.match(fav.label, /In Your apps/);
+  assert.match(fav.label, /In favorites/);
   assert.doesNotMatch(fav.label, /Remove/, 'no Remove offered on member apps');
   assert.equal(fav.run, undefined, 'no action wired');
   // Even a favorited member app never offers Remove (removing the

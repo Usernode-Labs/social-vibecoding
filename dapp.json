@@ -119,7 +119,7 @@
       "expectSelector": "#home-search-input"
     },
     {
-      "name": "Home 'Your apps' section renders for the seeded admin",
+      "name": "Home Favorites section renders for the seeded admin",
       "path": "/",
       "expectSelector": ".app-card[data-yours='true']"
     },

@@ -72,16 +72,16 @@ const Home = {
   _apps: [],
   _query: '',
 
-  // "Your apps" = apps the viewer is a member of (creator or accepted
+  // Favorites = apps the viewer is a member of (creator or accepted
   // invite — the server's is_collaborator flag, see app_collaborators
   // in schema.sql) OR apps they manually added (a favorite row; the
-  // old "star", now the menu's "Add to Your apps").
+  // old "star", now the menu's "Add to favorites").
   isYours(app) {
     return !!(app && (app.is_collaborator || app.is_favorited));
   },
 
   // Split the full list into { yours, rest }. Personal ordering
-  // (issue #128) inside "Your apps": explicit favorite_order first
+  // (issue #128) inside Favorites: explicit favorite_order first
   // (ascending), NULLs after. Array.prototype.sort is stable, so
   // returning 0 for two NULLs preserves the server's activity order
   // among un-ordered entries (member apps that were never dragged).
@@ -97,13 +97,20 @@ const Home = {
     return { yours, rest };
   },
 
-  // Case-insensitive substring match on name and slug. An empty /
-  // whitespace-only query matches everything (the default view).
+  // Case-insensitive substring match across identity and listing metadata.
+  // Category display names are included so both "game" and "games" find a
+  // stored `game` listing (same for tool/tools). Empty queries match all.
   matchesQuery(app, query) {
     const q = String(query || '').trim().toLowerCase();
     if (!q) return true;
+    const category = String(app?.category || '').toLowerCase();
+    const categoryTerms = category === 'game' ? 'game games'
+      : category === 'tool' ? 'tool tools'
+      : category;
     return String(app?.name || '').toLowerCase().includes(q)
-      || String(app?.slug || '').toLowerCase().includes(q);
+      || String(app?.slug || '').toLowerCase().includes(q)
+      || String(app?.tagline || '').toLowerCase().includes(q)
+      || categoryTerms.includes(q);
   },
 
   filterApps(apps, query) {
@@ -149,16 +156,16 @@ const Home = {
     let canDragYours = false;
 
     if (query) {
-      // Active search: one flat grid of matches. The proposals /
+      // Active search: one flat result list. The proposals /
       // sessions strips, section headers, create tile and drag
       // affordance all step aside until the query clears — reorder
       // is only meaningful against the sectioned view.
       const matches = Home.filterApps(apps, query);
       if (!matches.length) {
-        html = `<div class="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">No apps match &ldquo;${escapeHtml(query)}&rdquo;</div>`;
+        html = '<div class="home-search-empty">No matches. Try a category like games or tools</div>';
       } else {
-        html = `<div class="home-section-header col-span-full">${matches.length} result${matches.length === 1 ? '' : 's'}</div>`;
-        html += matches.map(Home.renderAppCard).join('');
+        html = `<section class="home-section"><div class="home-section-header">${matches.length} result${matches.length === 1 ? '' : 's'}</div>`;
+        html += `<div class="home-app-list" role="list">${matches.map((app) => Home.renderAppCard(app, { destination: 'app' })).join('')}</div></section>`;
       }
     } else {
       const { yours, rest } = Home.partitionApps(apps);
@@ -171,22 +178,37 @@ const Home = {
       // manageable in place (drag in / reorder / ✕). Empty string
       // everywhere else — see _widgetUiActive.
       html += Home.renderWidgetSection();
+      if (canCreate) html += Home.renderCreateSection();
       if (yours.length) {
-        html += '<div class="home-section-header col-span-full">Your apps</div>';
+        html += '<section class="home-section" data-section="favorites">';
+        html += '<div class="home-section-heading"><div><div class="home-section-header">Favorites</div><p class="home-section-subtitle">Apps you saved or build</p></div></div>';
+        html += '<div class="home-app-list home-favorites-list" role="list">';
         // Tag the cards at render time: data-yours drives both the
         // drag wiring's selector and the long-press menu→drag
         // promotion; cursor-grab replaces cursor-pointer as the
         // discoverability hint when reordering is possible.
         html += yours.map((a) => {
-          let card = Home.renderAppCard(a);
+          let card = Home.renderAppCard(a, { destination: 'app' });
           card = card.replace('class="app-card ', 'data-yours="true" class="app-card ');
           if (canDragYours) card = card.replace('cursor-pointer', 'cursor-grab');
           return card;
         }).join('');
-        html += '<div class="home-section-header col-span-full mt-2">All Apps</div>';
+        html += '</div></section>';
       }
-      html += rest.map(Home.renderAppCard).join('');
-      html += canCreate ? Home.renderCreateTile() : '';
+
+      for (const category of ['game', 'tool']) {
+        const categoryApps = rest.filter((app) => app.category === category);
+        if (!categoryApps.length) continue;
+        const heading = category === 'game' ? 'Games' : 'Tools';
+        html += `<section class="home-section" data-section="${category}"><div class="home-section-header">${heading}</div>`;
+        html += `<div class="home-category-rail" role="list">${categoryApps.map((app) => Home.renderAppCard(app, { destination: 'app' })).join('')}</div></section>`;
+      }
+
+      const uncategorized = rest.filter((app) => app.category !== 'game' && app.category !== 'tool');
+      if (uncategorized.length) {
+        html += '<section class="home-section" data-section="all"><div class="home-section-header">All apps</div>';
+        html += `<div class="home-app-list" role="list">${uncategorized.map((app) => Home.renderAppCard(app, { destination: 'app' })).join('')}</div></section>`;
+      }
     }
 
     listEl.innerHTML = html;
@@ -257,11 +279,24 @@ const Home = {
           e.target.closest('.retry-btn') ||
           e.target.closest('.card-menu-btn')
         ) return;
-        // Disabled while spinning up / errored — there's no iframe or
-        // chat history to render and the WS `app_status` handler will
-        // re-bind the card as soon as the container goes live.
-        if (card.dataset.status !== 'running' && card.dataset.status !== 'awaiting_secrets') return;
-        App.navigateToApp(card.dataset.slug);
+        // Discovery surfaces always open detail, including while the app is
+        // unavailable, so its status and listing remain understandable.
+        if (card.dataset.destination === 'detail') {
+          App.navigateToApp(card.dataset.slug, 'detail');
+          return;
+        }
+        // Favorites remain the returning-user fast path. If the app cannot
+        // launch, fall back to detail instead of turning the whole row inert.
+        if (card.dataset.status === 'running' || card.dataset.status === 'awaiting_secrets') {
+          App.navigateToApp(card.dataset.slug);
+        } else {
+          App.navigateToApp(card.dataset.slug, 'detail');
+        }
+      });
+      card.addEventListener('keydown', (e) => {
+        if (e.target !== card || (e.key !== 'Enter' && e.key !== ' ')) return;
+        e.preventDefault();
+        card.click();
       });
       // One pointerdown handler per card: touch long-press opens the
       // actions menu everywhere, and "Your apps" cards additionally
@@ -575,7 +610,7 @@ const Home = {
     return { kind: 'letter', html: escapeHtml((app.name || '?').charAt(0).toUpperCase()) };
   },
 
-  renderAppCard(app) {
+  renderAppCard(app, { destination = 'app' } = {}) {
     const isAwaiting = app.status === 'awaiting_secrets';
     // The status dot is the home tile's single signal for "this app
     // is doing something right now" — so an in-flight redeploy on an
@@ -596,120 +631,72 @@ const Home = {
       : 'Error';
     const isError = app.status === 'error';
     const isRunning = app.status === 'running';
-    // The active-users count (the same sticky 10-day rule as the
-    // group-chat dashboard tile — see src/services/active-users.js —
-    // so the home card and the dashboard agree) renders as a compact
-    // badge beside the title; the tooltip spells it out.
     const activeUsers = parseInt(app.active_users || 0);
-    // Awaiting-secrets cards stay clickable so the user can open the
-    // app view + Secrets modal to fill values; other non-running
-    // statuses show no app surface.
-    const cursorClass = (isRunning || isAwaiting) ? 'cursor-pointer' : 'cursor-not-allowed opacity-70';
-
-    // Per-tile sections, computed up front so the template stays
-    // readable. Anything that may be empty is collapsed to '' so the
-    // tile self-trims without leaving stray padding.
-    //
-    // The warning line is status-only: the missing-secret detail (and
-    // every other pill — to vote / in dev / issues / privacy) lives
-    // ONLY in the hamburger menu's build-info header now
-    // (renderMenuHeaderHtml → renderAppPillsHtml); the card face
-    // carries no chips at all.
-    const warningHtml = statusLabel
-      ? `<p class="text-xs mt-0.5 ${isAwaiting ? 'text-amber-500' : 'text-yellow-500'}">${statusLabel}</p>`
+    const cursorClass = 'cursor-pointer';
+    const categoryLabel = app.category === 'game' ? 'Game'
+      : app.category === 'tool' ? 'Tool'
+      : '';
+    const categoryHtml = categoryLabel
+      ? `<span class="app-category-chip is-${app.category}">${categoryLabel}</span>`
+      : '';
+    const taglineHtml = app.tagline
+      ? `<p class="app-card-tagline">${escapeHtml(app.tagline)}</p>`
+      : '';
+    const statusHtml = statusLabel
+      ? `<span class="app-card-status ${isAwaiting ? 'is-awaiting' : ''}">${statusLabel}</span>`
       : '';
 
-    // Active-users badge beside the title: a tiny person glyph + the
-    // bare count, neutral grey, display-only. Always rendered (0
-    // included) so the signal is uniform across cards.
-    const usersBadgeHtml = `
-      <span class="users-badge inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-zinc-500/10 text-zinc-500 dark:text-zinc-400 shrink-0" title="${activeUsers} active user${activeUsers === 1 ? '' : 's'}"><svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>${activeUsers}</span>`;
-
-    // Hamburger actions-menu trigger, rendered as a round badge
-    // overlapping the icon's top-right corner — always in that spot
-    // (secondary actions live in the popover it opens; see
-    // openCardMenu). Retry on errored cards is the one inline
-    // exception: the card's primary recovery action pins to the
-    // card's top-right corner (creator-or-full-admin, same gate as
-    // before — view-only admins excluded, issue #311).
+    // Secondary actions remain behind one predictable menu trigger. Retry
+    // stays inline on errored apps because it is the primary recovery action.
     const showRetry = isError && (App.user?.canAdminWrite || App.user?.id === app.created_by);
     const isLocked = !!app.locked;
     const menuBadgeHtml = `
-      <button class="card-menu-btn absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300 hover:text-zinc-700 dark:hover:text-zinc-100 hover:border-zinc-300 dark:hover:border-zinc-500 transition-colors" data-slug="${app.slug}" title="App actions" aria-label="App actions" aria-haspopup="menu"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>`;
+      <button type="button" class="card-menu-btn" data-slug="${app.slug}" title="App actions" aria-label="App actions" aria-haspopup="menu"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>`;
     const retryHtml = showRetry
-      ? `<button class="retry-btn absolute top-2 right-2 text-xs text-emerald-500 hover:text-emerald-400 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors" data-slug="${app.slug}">Retry</button>`
+      ? `<button type="button" class="retry-btn" data-slug="${app.slug}">Retry</button>`
       : '';
 
-    // Fork lineage tag: a small amber ⑂ badge on the icon's bottom-left
-    // corner (opposite the hamburger badge) marking this tile as a fork.
-    // The full "Forked from <name>" label lives in the app-view header;
-    // here it's glyph-only with the resolved live name (or "<deleted>")
-    // in the tooltip. `forked_from` is null for non-forks.
+    // Fork lineage stays a compact comparison cue in the richer row. The
+    // full source name remains available through the tooltip and app view.
     const forkName = app.forked_from && typeof app.forked_from === 'object'
       ? (app.forked_from.name || '<deleted>') : null;
     const forkTagHtml = forkName
-      ? `<span class="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm" title="Forked from ${escapeHtml(forkName)}" aria-label="Forked from ${escapeHtml(forkName)}">⑂</span>`
+      ? `<span class="app-fork-tag" title="Forked from ${escapeHtml(forkName)}" aria-label="Forked from ${escapeHtml(forkName)}">⑂</span>`
       : '';
 
     const icon = Home.iconTileFor(app);
 
-    // Layout: icon first at the top (hamburger badged on its corner),
-    // title row centered below it (name + status dot + active-users
-    // badge), then the status warning when present. Everything is
-    // horizontally centered in the tile — homescreen-launcher style —
-    // and the card draws NO border: the violet hover/drop-slot tint
-    // (.app-card:hover in app.css) is the affordance. The title row
-    // is width-capped (max-w-full + min-w-0) so long names truncate
-    // with an ellipsis instead of stretching the layout.
-    //
-    // Every card carries app-card-draggable + touch-pan-y (not just
-    // the reorderable ones): the long-press actions menu applies to
-    // every card, so text selection / the mobile callout must be
-    // suppressed card-wide, while touch-pan-y keeps vertical
-    // scrolling alive until a long-press actually fires (see app.css).
+    // The same rich row is used in Favorites, search, category rails, and
+    // All apps so users can compare purpose, category, and activity without
+    // learning a different card grammar in each section.
     return `
-      <div class="app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-2 ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}">
-        ${retryHtml}
-        <div class="relative w-14 h-14 shrink-0">
-          <div class="w-14 h-14 rounded-xl bg-violet-600/20 overflow-hidden flex items-center justify-center text-violet-400 font-bold text-xl" data-icon="${icon.kind}">
-            ${icon.html}
-          </div>
-          ${menuBadgeHtml}
-          ${forkTagHtml}
+      <div class="app-card app-discovery-card app-card-draggable touch-pan-y ${cursorClass}${isRunning || isAwaiting ? '' : ' app-card-unavailable'}" role="link" tabindex="0" aria-label="Open ${escapeAttribute(app.name || app.slug)}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}" data-destination="${destination}">
+        <div class="app-card-icon" data-icon="${icon.kind}">
+          ${icon.html}
         </div>
-        <div class="w-full min-w-0">
-          <div class="flex items-center justify-center gap-1.5 min-w-0 max-w-full">
-            <span class="font-medium text-sm truncate min-w-0">${escapeHtml(app.name)}</span>
+        <div class="app-card-copy">
+          <div class="app-card-title-row">
+            <span class="app-card-name">${escapeHtml(app.name)}</span>
             <span class="status-dot ${statusClass} shrink-0" title="${app.status}"></span>
-            ${usersBadgeHtml}
+            ${forkTagHtml}
+            ${categoryHtml}
           </div>
-          ${warningHtml}
+          ${taglineHtml}
+          <div class="app-card-meta"><span class="users-badge" title="People who used this app in the last 10 days">${activeUsers} active</span>${statusHtml}</div>
         </div>
+        <div class="app-card-actions">${retryHtml}${menuBadgeHtml}</div>
       </div>
     `;
   },
 
-  // "Your app here" placeholder rendered as the last tile in the
-  // grid. Layout mirrors a real tile (thumbnail + title row, pill
-  // stacked on the left) but with a dashed violet border + violet
-  // thumbnail to telegraph "this slot is empty, tap to fill it".
-  // The click target is just the inner pill (.home-create-btn,
-  // wired in Home.wireCreateButtons) — clicking the surrounding
-  // tile chrome is intentionally inert so the tile reads as
-  // "decorative frame around a button" rather than "button-shaped
-  // hover surface". Hover/active styles live on the pill itself.
-  renderCreateTile() {
+  renderCreateSection() {
     return `
-      <div class="home-create-tile rounded-xl bg-violet-500/[0.02] dark:bg-violet-500/[0.04] p-3 flex flex-col items-center text-center gap-2">
-        <div class="w-14 h-14 rounded-xl bg-violet-600/20 flex items-center justify-center text-violet-400 font-bold text-xl shrink-0">
-          Y
-        </div>
-        <div class="italic text-sm text-zinc-500 dark:text-zinc-400 truncate max-w-full">Your app here</div>
-        <button type="button" class="home-create-btn inline-flex items-center gap-2 rounded-full border border-violet-500 dark:border-violet-400 px-4 py-2 text-sm font-medium text-violet-600 dark:text-violet-400 bg-white dark:bg-zinc-900 hover:bg-violet-50 dark:hover:bg-violet-950 transition-colors">
+      <section class="home-section home-create-section">
+        <button type="button" class="home-create-btn">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
-          Create new app
+          Create an app
         </button>
-      </div>`;
+      </section>`;
   },
 
   // ── Usernode widget section (iOS in-app only) ──────────────────────
@@ -1235,10 +1222,10 @@ const Home = {
   // admin) — view-only admins don't get them (issue #311); Retry stays
   // creator-or-full-admin.
   //
-  // The Your-apps entry renders for EVERY app so the affordance is
+  // The Favorites entry renders for EVERY app so the affordance is
   // always discoverable. Membership (is_collaborator — you created or
   // help build the app) isn't removable, so member apps get a
-  // disabled, informational "In Your apps" row instead of a Remove —
+  // disabled, informational "In favorites" row instead of a Remove —
   // without it, a user who is a member of every app they open (e.g.
   // the creator of most apps on an instance) would never see the
   // selector anywhere and reasonably conclude it's missing.
@@ -1250,14 +1237,14 @@ const Home = {
     if (app.is_collaborator) {
       items.push({
         key: 'favorite',
-        label: '✓ In Your apps',
+        label: '✓ In favorites',
         disabled: true,
-        title: 'You build this app, so it is always in Your apps.',
+        title: 'You build this app, so it is always in your favorites',
       });
     } else {
       items.push({
         key: 'favorite',
-        label: app.is_favorited ? 'Remove from Your apps' : 'Add to Your apps',
+        label: app.is_favorited ? 'Remove from favorites' : 'Add to favorites',
         run: () => Home._menuToggleFavorite(app),
       });
     }
@@ -2329,6 +2316,12 @@ function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
+}
+
+function escapeAttribute(str) {
+  return String(str ?? '').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[char]));
 }
 
 // Compact "Nx ago" formatter shared by the home-card meta line. Kept
