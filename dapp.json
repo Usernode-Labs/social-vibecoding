@@ -109,6 +109,11 @@
       "expectSelector": "#dev-kanban"
     },
     {
+      "name": "Proposal view shows the How-voting-works help button",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000001",
+      "expectSelector": ".voting-help-btn"
+    },
+    {
       "name": "Chromeless share-link view renders the Open-in-Usernode pill",
       "path": "/#app/usernode-2d5619/full",
       "expectSelector": "#chromeless-pill"
