@@ -71,6 +71,7 @@ const AppView = {
   // version of the home tiles' avatar square. [tint classes, SVG path].
   DEV_CARD_ICONS: {
     chat: ['bg-violet-600/15 text-violet-500', 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z'],
+    listing: ['bg-rose-500/15 text-rose-500', 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'],
     // Pencil (Heroicons outline) — sessions are edits-in-progress, not
     // terminals (#219). Distinct from the issue icon's pencil-in-bubble.
     session: ['bg-emerald-500/15 text-emerald-500', 'M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z'],
@@ -107,6 +108,20 @@ const AppView = {
     const title = opts && opts.title ? ` title="${escapeAttr(opts.title)}"` : '';
     return `<span class="${small ? 'w-7 h-7' : 'w-9 h-9'} rounded-lg ${tint} flex items-center justify-center shrink-0${pulse}"${title}>`
       + `<svg class="${small ? 'w-4 h-4' : 'w-5 h-5'}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="${d}"/></svg></span>`;
+  },
+
+  _listingCardHtml(appData) {
+    if (!appData || appData.can_collaborate === false) return '';
+    return `
+      <button id="dev-listing-card" class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}"
+        title="Edit the app listing">
+        ${AppView._devCardIcon('listing')}
+        <span class="flex-1 min-w-0">
+          <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">App listing</span>
+          <span class="block text-xs text-zinc-500 dark:text-zinc-400">Edit the category and tagline people see when they find this app</span>
+        </span>
+        ${AppView.DEV_CARD_CHEVRON}
+      </button>`;
   },
 
   // ── Dev view state (#194, card-list revision) ─────────────────────
@@ -528,6 +543,13 @@ const AppView = {
       return;
     }
 
+    // Public discovery metadata editor. The same capability flag gates
+    // the Dev tab and the PATCH endpoint's collab-level access.
+    if (subTab === 'listing') {
+      AppView._renderListingView(content);
+      return;
+    }
+
     // Full-screen topic (issue / proposal / governance) discussion.
     if (subTab === 'topic' && ref && ref.kind && ref.id) {
       await AppView._renderTopicSubView(content, ref);
@@ -573,7 +595,7 @@ const AppView = {
              rows, the intermixed feed, and the Completed section. -->
         <div id="dev-forum-scroll" class="flex-1 min-h-0 overflow-y-auto overscroll-contain">
           <div id="dev-locked-notice" class="px-3 pt-2 hidden"></div>
-          <div class="px-3 pt-2">
+          <div class="px-3 pt-2 space-y-2">
             <button id="dev-chat-card" class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}"
               title="Open the general chat">
               ${AppView._devCardIcon('chat')}
@@ -583,6 +605,7 @@ const AppView = {
               </span>
               <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
             </button>
+            ${AppView._listingCardHtml(AppView.appData)}
           </div>
           <div id="dev-sessions-strip" class="px-3 pt-2"></div>
           <!-- Body region: list mode mounts #dev-feed + #gc-merged here;
@@ -602,6 +625,10 @@ const AppView = {
     document.getElementById('dev-chat-card').addEventListener('click', () => {
       App.switchTab('dev', null, 'chat');
     });
+    const listingCard = document.getElementById('dev-listing-card');
+    if (listingCard) {
+      listingCard.addEventListener('click', () => App.switchTab('dev', null, 'listing'));
+    }
     AppView._loadChatCardPreview();
 
     // Delegated card-open handler: tapping a topic card anywhere except
@@ -1084,6 +1111,133 @@ const AppView = {
       AppView.promptRename();
     });
     AppView.refreshDevChatSecretsState();
+  },
+
+  // ── App listing sub-page ────────────────────────────────────────────
+  _listingCategoryClass(active) {
+    const stateCls = active
+      ? 'border-violet-600 bg-violet-600 text-white'
+      : 'border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-200 hover:border-violet-400';
+    return `listing-category-chip min-h-10 rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${stateCls}`;
+  },
+
+  _listingCategoryButton(value, label, selected) {
+    const active = value === selected;
+    return `<button type="button" data-listing-category="${value}" aria-pressed="${active}"
+      class="${AppView._listingCategoryClass(active)}">${label}</button>`;
+  },
+
+  _listingEditorHtml(appData) {
+    const category = appData?.category === 'game' || appData?.category === 'tool'
+      ? appData.category : null;
+    const tagline = String(appData?.tagline || '').slice(0, 80);
+    return `
+      <div class="flex flex-col h-full min-h-0">
+        <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+          <button id="dev-listing-back" class="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm" title="Back to the dev page">&larr;</button>
+          <span class="text-xs font-semibold text-zinc-500 dark:text-zinc-400">App listing</span>
+        </div>
+        <div class="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+          <form id="app-listing-form" class="mx-auto w-full max-w-xl px-4 py-5 sm:px-6">
+            <fieldset>
+              <legend class="text-sm font-semibold text-zinc-800 dark:text-zinc-100">Category</legend>
+              <div class="mt-2 flex gap-2">
+                ${AppView._listingCategoryButton('game', 'Game', category)}
+                ${AppView._listingCategoryButton('tool', 'Tool', category)}
+              </div>
+            </fieldset>
+
+            <div class="mt-6">
+              <div class="flex items-baseline justify-between gap-3">
+                <label for="app-listing-tagline" class="text-sm font-semibold text-zinc-800 dark:text-zinc-100">Tagline</label>
+                <output id="app-listing-count" for="app-listing-tagline" class="text-xs tabular-nums text-zinc-500 dark:text-zinc-400">${tagline.length}/80</output>
+              </div>
+              <p id="app-listing-tagline-help" class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">One line saying what people do with this app. Up to 80 characters</p>
+              <input id="app-listing-tagline" name="tagline" type="text" maxlength="80" value="${escapeAttr(tagline)}"
+                aria-describedby="app-listing-tagline-help app-listing-count"
+                class="mt-2 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 outline-none transition-colors focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20">
+            </div>
+
+            <div class="mt-6 flex items-center gap-3">
+              <button id="app-listing-save" type="submit"
+                class="min-h-10 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50 px-5 py-2 text-sm font-medium text-white transition-colors">Save</button>
+              <p id="app-listing-status" class="min-h-5 text-sm" role="status" aria-live="polite"></p>
+            </div>
+          </form>
+        </div>
+      </div>`;
+  },
+
+  _renderListingView(content) {
+    const appData = AppView.appData;
+    if (!appData || appData.can_collaborate === false) {
+      App.switchTab('app');
+      return;
+    }
+
+    content.innerHTML = AppView._listingEditorHtml(appData);
+    let selectedCategory = appData.category === 'game' || appData.category === 'tool'
+      ? appData.category : null;
+    const chips = Array.from(content.querySelectorAll('[data-listing-category]'));
+    const input = document.getElementById('app-listing-tagline');
+    const counter = document.getElementById('app-listing-count');
+    const status = document.getElementById('app-listing-status');
+    const save = document.getElementById('app-listing-save');
+
+    const syncChips = () => {
+      chips.forEach((chip) => {
+        const active = chip.dataset.listingCategory === selectedCategory;
+        chip.setAttribute('aria-pressed', active ? 'true' : 'false');
+        chip.className = AppView._listingCategoryClass(active);
+      });
+    };
+
+    chips.forEach((chip) => {
+      chip.addEventListener('click', () => {
+        selectedCategory = selectedCategory === chip.dataset.listingCategory
+          ? null : chip.dataset.listingCategory;
+        syncChips();
+      });
+    });
+    input.addEventListener('input', () => { counter.textContent = `${input.value.length}/80`; });
+    document.getElementById('dev-listing-back').addEventListener('click', () => App.switchTab('dev'));
+
+    document.getElementById('app-listing-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      save.disabled = true;
+      save.textContent = 'Saving…';
+      status.textContent = '';
+      status.className = 'min-h-5 text-sm';
+      try {
+        await AppView._saveListingData(appData, selectedCategory, input.value);
+        status.textContent = 'Listing updated';
+        status.className = 'min-h-5 text-sm text-emerald-600 dark:text-emerald-400';
+        setTimeout(() => {
+          if (App.currentApp === appData.slug && App.currentSubTab === 'listing') App.switchTab('dev');
+        }, 700);
+      } catch {
+        status.textContent = 'Could not save the listing. Check your connection and try again';
+        status.className = 'min-h-5 text-sm text-red-600 dark:text-red-400';
+        save.disabled = false;
+        save.textContent = 'Save';
+      }
+    });
+  },
+
+  async _saveListingData(appData, category, tagline) {
+    const res = await fetch(`/api/apps/${appData.slug}/listing`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category, tagline }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const updated = await res.json();
+    Object.assign(appData, updated);
+    if (typeof Home !== 'undefined') {
+      const cached = (Home._apps || []).find((app) => app.slug === appData.slug);
+      if (cached) Object.assign(cached, updated);
+    }
+    return updated;
   },
 
   // ── View-mode toggle (list ↔ kanban) ─────────────────────────────────

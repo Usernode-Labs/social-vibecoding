@@ -1818,7 +1818,8 @@ const App = {
         // app/{slug}/dev (the card list), app/{slug}/dev/chat (general
         // chat), app/{slug}/dev/issues/{n} / dev/proposals/{id} /
         // dev/governance/{id} (full-screen topic views),
-        // app/{slug}/dev/sessions/{id} (session view), dev/settings.
+        // app/{slug}/dev/sessions/{id} (session view), dev/settings, and
+        // dev/listing.
         // Legacy hashes — group-chat, individual-chat[/{sessionId}], and
         // the old dev/chat|issues|proposals sub-tab forms — all map onto
         // the forum so old links and notification hrefs keep working.
@@ -1843,6 +1844,8 @@ const App = {
             subTab = 'chat';
           } else if (sec === 'settings') {
             subTab = 'settings';
+          } else if (sec === 'listing') {
+            subTab = 'listing';
           } else if (sec === 'issues' && parts[4]) {
             subTab = 'topic';
             ref = { kind: 'issue', id: parseInt(parts[4]) || null };
@@ -2019,6 +2022,8 @@ const App = {
           newHash = `#app/${App.currentApp}/dev/chat`;
         } else if (App.currentSubTab === 'settings') {
           newHash = `#app/${App.currentApp}/dev/settings`;
+        } else if (App.currentSubTab === 'listing') {
+          newHash = `#app/${App.currentApp}/dev/listing`;
         } else if (App.currentSubTab === 'topic'
             && typeof AppView !== 'undefined' && AppView._devTopic) {
           const t = AppView._devTopic;
@@ -2052,7 +2057,7 @@ const App = {
     // entry, so device/browser back mirrors the in-page back buttons —
     // but which session/topic isn't part of the id (moving between two
     // topics of the same kind replaces in place).
-    const SUB_SCREENS = new Set(['sessions', 'chat', 'settings', 'issues', 'proposals', 'governance']);
+    const SUB_SCREENS = new Set(['sessions', 'chat', 'settings', 'listing', 'issues', 'proposals', 'governance']);
     const screenIdOf = (h) => {
       const segs = String(h || '').replace(/^#/, '').split('/');
       if (segs[0] === 'app' && segs[2] === 'dev') {
@@ -2447,6 +2452,7 @@ const App = {
     // Full-screen sub-views with no deep-link payload.
     if (subTab === 'chat') return { tab: 'dev', subTab: 'chat', ref: null };
     if (subTab === 'settings') return { tab: 'dev', subTab: 'settings', ref: null };
+    if (subTab === 'listing') return { tab: 'dev', subTab: 'listing', ref: null };
 
     // A typed topic ref — from the 'topic' sub-view itself or the
     // legacy issues/proposals sub-tab vocabulary — opens that topic
