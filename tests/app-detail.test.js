@@ -31,8 +31,9 @@ function installGlobals({ support = null, canCreateApps = false } = {}) {
     _shortcutSupport: support,
     isYours: (candidate) => !!(candidate.is_collaborator || candidate.is_favorited),
     iconTileFor: (candidate) => ({
-      kind: candidate.icon_url ? 'image' : candidate.icon_emoji ? 'emoji' : 'letter',
-      html: candidate.icon_url ? '<img alt="">' : candidate.icon_emoji || candidate.name[0],
+      kind: 'letter',
+      html: candidate.name[0],
+      style: '--app-icon-bg:hsl(20 45% 22%);--app-icon-fg:hsl(20 70% 70%)',
     }),
   };
 }
@@ -54,6 +55,7 @@ test('detail renders identity, actions, and builder merge counts', () => {
   assert.match(html, /Demo app/);
   assert.match(html, /app-category-chip is-game[^>]*>Game</);
   assert.match(html, /Play with your friends/);
+  assert.match(html, /app-detail-icon[^>]*data-icon="letter"[^>]*--app-icon-bg:hsl/);
   assert.match(html, />7 active</);
   assert.match(html, /People who used this app in the last 10 days/);
   assert.match(html, /id="app-detail-open"[^>]*>Open</);

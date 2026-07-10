@@ -1205,16 +1205,8 @@ const App = {
   handleAppUpdate(data) {
     if (data.action === 'renamed') {
       // Update home card (if visible) and header (if we're on this app).
-      const card = document.querySelector(`.app-card[data-slug="${data.slug}"]`);
-      if (card) {
-        const nameEl = card.querySelector('.font-medium');
-        if (nameEl) nameEl.textContent = data.newName;
-        // Only letter-fallback tiles track the name; a custom icon
-        // (emoji/image from dapp.json) must not be clobbered by a rename.
-        const avatar = card.querySelector('[data-icon]') || card.querySelector('div.rounded-xl');
-        if (avatar && (avatar.dataset?.icon || 'letter') === 'letter') {
-          avatar.textContent = (data.newName || '?').charAt(0).toUpperCase();
-        }
+      if (typeof Home !== 'undefined' && Home.updateAppCardName) {
+        Home.updateAppCardName(data.slug, data.newName);
       }
       if (App.currentApp === data.slug) {
         App.setHeaderTitle(data.newName);
@@ -1223,11 +1215,10 @@ const App = {
         }
       }
     } else if (data.action === 'icon_changed') {
-      // A deploy reconciled this app's dapp.json icon block (emoji /
-      // image / cleared back to the letter). Patch the mounted home
-      // tile in place — no full Home.load().
+      // Normalize any already-mounted legacy tile back to the generated
+      // letter system when older dapp.json icon metadata changes.
       if (typeof Home !== 'undefined' && Home.updateAppCardIcon) {
-        Home.updateAppCardIcon(data.slug, data.iconEmoji, data.iconUrl);
+        Home.updateAppCardIcon(data.slug);
       }
     } else if (data.action === 'lock_changed') {
       // The admin-gated change lock flipped on this app (see

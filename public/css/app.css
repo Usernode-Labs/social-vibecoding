@@ -160,10 +160,15 @@ html, body {
   justify-content: center;
   overflow: hidden;
   border-radius: 0.5rem;
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: var(--accent);
+  background: var(--app-icon-bg, color-mix(in srgb, var(--accent) 16%, transparent));
+  color: var(--app-icon-fg, var(--accent));
   font-size: 1.25rem;
   font-weight: 600;
+}
+
+.widget-app-icon {
+  background: var(--app-icon-bg);
+  color: var(--app-icon-fg);
 }
 
 .app-card-copy { min-width: 0; flex: 1; }
@@ -244,19 +249,6 @@ html, body {
   align-items: center;
   gap: 0.25rem;
 }
-
-.card-menu-btn {
-  display: inline-flex;
-  width: 2.5rem;
-  height: 2.5rem;
-  align-items: center;
-  justify-content: center;
-  border-radius: 9999px;
-  color: var(--text-muted);
-}
-
-.card-menu-btn:hover { background: var(--bg-secondary); color: var(--text-primary); }
-.card-menu-btn:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 1px; }
 
 .retry-btn {
   min-height: 2rem;
@@ -363,8 +355,8 @@ html, body {
   justify-content: center;
   overflow: hidden;
   border-radius: 0.5rem;
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: var(--accent);
+  background: var(--app-icon-bg, color-mix(in srgb, var(--accent) 16%, transparent));
+  color: var(--app-icon-fg, var(--accent));
   font-size: 1.75rem;
   font-weight: 600;
 }

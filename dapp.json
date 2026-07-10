@@ -1,5 +1,4 @@
 {
-  "icon": { "emoji": "🏗️" },
   "secrets": [
     {
       "key": "GITHUB_APP_ID",
@@ -126,7 +125,7 @@
     {
       "name": "Home demo icon tiles render",
       "path": "/?demo=1",
-      "expectSelector": ".app-card [data-icon='emoji']"
+      "expectSelector": ".app-card [data-icon='letter']"
     },
     {
       "name": "Home fork-lineage tag renders on forked tiles",

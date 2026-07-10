@@ -57,11 +57,9 @@ const AppDetail = {
       ? `<p class="app-detail-tagline">${detailEscape(app.tagline)}</p>`
       : '';
     const icon = typeof Home !== 'undefined' && Home.iconTileFor
-      ? Home.iconTileFor(app, {
-          imageClass: 'w-full h-full rounded-lg object-cover',
-          emojiClass: 'text-4xl leading-none',
-        })
+      ? Home.iconTileFor(app)
       : { kind: 'letter', html: detailEscape((app.name || '?').charAt(0).toUpperCase()) };
+    const iconStyle = icon.style ? ` style="${icon.style}"` : '';
     const running = app.status === 'running' && !!app.url;
     const openLabel = running ? 'Open'
       : app.status === 'creating' ? 'Spinning up...'
@@ -106,7 +104,7 @@ const AppDetail = {
       <div class="app-detail-scroll">
         <main class="app-detail-page">
           <section class="app-detail-identity">
-            <div class="app-detail-icon" data-icon="${icon.kind}">${icon.html}</div>
+            <div class="app-detail-icon" data-icon="${icon.kind}"${iconStyle}>${icon.html}</div>
             <div class="app-detail-heading-row">
               <h1>${detailEscape(app.name || app.slug)}</h1>
               ${category}

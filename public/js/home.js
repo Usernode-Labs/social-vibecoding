@@ -276,8 +276,7 @@ const Home = {
           return;
         }
         if (
-          e.target.closest('.retry-btn') ||
-          e.target.closest('.card-menu-btn')
+          e.target.closest('.retry-btn')
         ) return;
         // Discovery surfaces always open detail, including while the app is
         // unavailable, so its status and listing remain understandable.
@@ -323,12 +322,6 @@ const Home = {
       });
     });
 
-    listEl.querySelectorAll('.card-menu-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        Home.openCardMenu(btn.dataset.slug, btn.getBoundingClientRect());
-      });
-    });
   },
 
   // Map structured drift-check result → a short, user-readable
@@ -587,29 +580,37 @@ const Home = {
     return `${chipsHtml}${visChipHtml}`;
   },
 
-  // Icon-tile inner markup + kind, shared by renderAppCard and the
-  // targeted icon_changed refresh (updateAppCardIcon below). Priority:
-  // custom image (dapp.json icon.image, served via /app-icons/:id or a
-  // staging demo data-URI) > emoji (dapp.json icon.emoji) > the
-  // first-letter fallback every app always had. The kind lands on the
-  // tile as data-icon so tests and the rename handler (app.js) can tell
-  // a custom icon from the letter placeholder.
-  iconTileFor(app, options = {}) {
-    const imageClass = options.imageClass || 'w-14 h-14 rounded-xl object-cover';
-    const emojiClass = options.emojiClass || 'text-3xl leading-none';
-    if (app.icon_url) {
-      return {
-        kind: 'image',
-        html: `<img src="${escapeHtml(app.icon_url)}" alt="" loading="lazy" draggable="false" class="${imageClass}">`,
-      };
+  // Stable color pair for generated icon tiles. Hashing the app name keeps
+  // identity consistent across discovery, detail, and native shortcuts,
+  // while fixed saturation/lightness keeps every hue in the same visual mood.
+  nameToHue(name) {
+    const value = String(name || '?');
+    let hash = 0;
+    for (let i = 0; i < value.length; i++) {
+      hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
     }
-    if (app.icon_emoji) {
-      return {
-        kind: 'emoji',
-        html: `<span class="${emojiClass}" aria-hidden="true">${escapeHtml(app.icon_emoji)}</span>`,
-      };
-    }
-    return { kind: 'letter', html: escapeHtml((app.name || '?').charAt(0).toUpperCase()) };
+    return hash % 360;
+  },
+
+  nameToColor(name) {
+    const hue = Home.nameToHue(name);
+    return {
+      bg: `hsl(${hue} 45% 22%)`,
+      fg: `hsl(${hue} 70% 70%)`,
+    };
+  },
+
+  // One generated identity grammar for every app: first letter plus a stable
+  // name-derived color. Listing icon metadata may still arrive from older
+  // app manifests, but the product surface never depends on it.
+  iconTileFor(app) {
+    const colors = Home.nameToColor(app.name || app.slug || '?');
+    const style = `--app-icon-bg:${colors.bg};--app-icon-fg:${colors.fg}`;
+    return {
+      kind: 'letter',
+      html: escapeHtml((app.name || '?').charAt(0).toUpperCase()),
+      style,
+    };
   },
 
   renderAppCard(app, { destination = 'detail' } = {}) {
@@ -648,14 +649,15 @@ const Home = {
       ? `<span class="app-card-status ${isAwaiting ? 'is-awaiting' : ''}">${statusLabel}</span>`
       : '';
 
-    // Secondary actions remain behind one predictable menu trigger. Retry
-    // stays inline on errored apps because it is the primary recovery action.
+    // Retry stays inline on errored apps because it is the primary recovery
+    // action. Discovery cards otherwise navigate to app detail for actions.
     const showRetry = isError && (App.user?.canAdminWrite || App.user?.id === app.created_by);
     const isLocked = !!app.locked;
-    const menuBadgeHtml = `
-      <button type="button" class="card-menu-btn" data-slug="${app.slug}" title="App actions" aria-label="App actions" aria-haspopup="menu"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>`;
     const retryHtml = showRetry
       ? `<button type="button" class="retry-btn" data-slug="${app.slug}">Retry</button>`
+      : '';
+    const actionsHtml = retryHtml
+      ? `<div class="app-card-actions">${retryHtml}</div>`
       : '';
 
     // Fork lineage stays a compact comparison cue in the richer row. The
@@ -667,13 +669,14 @@ const Home = {
       : '';
 
     const icon = Home.iconTileFor(app);
+    const iconStyle = icon.style ? ` style="${icon.style}"` : '';
 
     // The same rich row is used in Favorites, search, category rails, and
     // All apps so users can compare purpose, category, and activity without
     // learning a different card grammar in each section.
     return `
       <div class="app-card app-discovery-card app-card-draggable touch-pan-y ${cursorClass}${isRunning || isAwaiting ? '' : ' app-card-unavailable'}" role="link" tabindex="0" aria-label="Open ${escapeAttribute(app.name || app.slug)}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}" data-destination="${destination}">
-        <div class="app-card-icon" data-icon="${icon.kind}">
+        <div class="app-card-icon" data-icon="${icon.kind}"${iconStyle}>
           ${icon.html}
         </div>
         <div class="app-card-copy">
@@ -686,7 +689,7 @@ const Home = {
           ${taglineHtml}
           <div class="app-card-meta"><span class="users-badge" title="People who used this app in the last 10 days">${activeUsers} active</span>${statusHtml}</div>
         </div>
-        <div class="app-card-actions">${retryHtml}${menuBadgeHtml}</div>
+        ${actionsHtml}
       </div>
     `;
   },
@@ -751,20 +754,13 @@ const Home = {
     const slug = Home._widgetSlugFor(item);
     const app = slug ? (Home._apps || []).find((a) => a.slug === slug) : null;
     const name = (app && app.name) || item.name || '?';
-    let iconHtml;
-    if (app && app.icon_url) {
-      iconHtml = `<img src="${escapeHtml(app.icon_url)}" alt="" loading="lazy" draggable="false" class="w-10 h-10 rounded-lg object-cover">`;
-    } else if (app && app.icon_emoji) {
-      iconHtml = `<span class="text-xl leading-none" aria-hidden="true">${escapeHtml(app.icon_emoji)}</span>`;
-    } else {
-      iconHtml = escapeHtml(String(name).charAt(0).toUpperCase());
-    }
+    const icon = Home.iconTileFor({ name, slug });
     // touch-pan-y + select-none for the same reason as app cards: keep
     // vertical scroll native until the tile drag actually claims the
     // gesture (see _onWidgetTilePointerDown).
     return `
       <div class="widget-tile app-card-draggable touch-pan-y relative flex flex-col items-center gap-1 w-16 cursor-grab" data-wid="${escapeHtml(item.id)}"${slug ? ` data-wslug="${escapeHtml(slug)}"` : ''}>
-        <div class="w-10 h-10 rounded-lg bg-violet-600/20 overflow-hidden flex items-center justify-center text-violet-400 font-bold text-base">${iconHtml}</div>
+        <div class="widget-app-icon w-10 h-10 rounded-lg overflow-hidden flex items-center justify-center font-bold text-base" data-icon="${icon.kind}" style="${icon.style}">${icon.html}</div>
         <span class="text-[0.65rem] leading-tight truncate w-full text-center">${escapeHtml(name)}</span>
         <button class="widget-remove-btn absolute -top-1.5 right-0 w-5 h-5 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-[0.6rem] text-zinc-500 dark:text-zinc-300 hover:text-red-500" data-wid="${escapeHtml(item.id)}" title="Remove from widget" aria-label="Remove ${escapeHtml(name)} from widget">✕</button>
       </div>`;
@@ -1072,8 +1068,7 @@ const Home = {
   //   - The icon PNG never landed in the app's widget store (pinned by
   //     an older page build, or the download failed) — the registry
   //     reports has_icon:false.
-  //   - The stored PNG is stale: the app gained/changed/lost its
-  //     icon_url after pinning (e.g. an icon proposal passed), or the
+  //   - The stored PNG is stale because the app was renamed or the
   //     canvas-tile rendering changed (WIDGET_ICON_GEN bump). The
   //     registry still reports has_icon:true, so staleness is detected
   //     by remembering which icon source was last sent per shortcut id
@@ -1086,18 +1081,14 @@ const Home = {
   // WIDGET_ICON_GEN versions the canvas-tile rendering; it's part of
   // the recorded source string for tile-based icons, so bumping it
   // makes every canvas tile read as stale and re-send once.
-  //   gen 2: pixel-centered glyphs (_drawGlyphCentered) — emoji tiles
-  //          used to come out anchored bottom-left on iOS WebKit.
-  WIDGET_ICON_GEN: 2,
+  //   gen 3: deterministic first-letter + name-color tiles only.
+  WIDGET_ICON_GEN: 3,
   _iconSrcKey: 'sv:widget_icon_src',
   _iconHealTried: null,
-  // The icon source the widget *should* have for this app right now.
-  // Image icons: the absolute URL (matches _shortcutPayloadFor). Canvas
-  // tiles: an opaque marker keyed by emoji + rendering generation.
+  // The generated icon source the widget should have for this app right now.
+  // Include the name because both the letter and color derive from it.
   _desiredIconSrcFor(app) {
-    return app.icon_url
-      ? new URL(app.icon_url, location.origin).href
-      : `tile:${Home.WIDGET_ICON_GEN}:${app.icon_emoji || ''}`;
+    return `tile:${Home.WIDGET_ICON_GEN}:${encodeURIComponent(app.name || app.slug || '?')}`;
   },
   _loadIconSrcMap() {
     try {
@@ -1198,30 +1189,44 @@ const Home = {
   // updateAppCardLock: patch the Home._apps cache + the mounted tile in
   // place, no full Home.load() that would blow away hover/scroll state.
   // Safe no-op if the card isn't mounted.
-  updateAppCardIcon(slug, iconEmoji, iconUrl) {
+  updateAppCardName(slug, name) {
+    if (!slug) return;
+    const nextName = String(name || '?');
+    const app = (Home._apps || []).find((candidate) => candidate.slug === slug);
+    if (app) app.name = nextName;
+    const card = document.querySelector(`.app-card[data-slug="${slug}"]`);
+    if (!card) return;
+    const nameEl = card.querySelector('.app-card-name');
+    if (nameEl) nameEl.textContent = nextName;
+    const tile = card.querySelector('[data-icon]');
+    if (!tile) return;
+    const colors = Home.nameToColor(nextName);
+    if (tile.style) {
+      tile.style.cssText = `--app-icon-bg:${colors.bg};--app-icon-fg:${colors.fg}`;
+    }
+    if (tile.dataset.icon === 'letter') {
+      tile.textContent = nextName.charAt(0).toUpperCase();
+    }
+  },
+
+  updateAppCardIcon(slug) {
     if (!slug) return;
     const app = (Home._apps || []).find((a) => a.slug === slug);
-    if (app) {
-      app.icon_emoji = iconEmoji || null;
-      app.icon_url = iconUrl || null;
-    }
     const card = document.querySelector(`.app-card[data-slug="${slug}"]`);
     const tile = card?.querySelector('[data-icon]');
     if (!tile) return;
-    const name = app?.name || card.querySelector('.font-medium')?.textContent || '?';
-    const icon = Home.iconTileFor({ icon_emoji: iconEmoji || null, icon_url: iconUrl || null, name });
+    const name = app?.name || card.querySelector('.app-card-name')?.textContent || '?';
+    const icon = Home.iconTileFor({ name });
     tile.dataset.icon = icon.kind;
     tile.innerHTML = icon.html;
+    if (tile.style) tile.style.cssText = icon.style || '';
   },
 
-  // ===== "…" card actions menu =====
+  // ===== Long-press card actions menu =====
   //
-  // One popover implementation shared by the desktop "⋯" button and
-  // the mobile long-press (see _onCardPointerDown). Built lazily on
-  // open from the app object in the Home._apps cache — no hidden
-  // per-card menus in the DOM. Anchored to the trigger rect, appended
-  // to document.body, closed on outside pointerdown / Escape / scroll
-  // / resize / (by default) running an action.
+  // The compact fallback for existing touch gestures (see
+  // _onCardPointerDown). Built lazily from the app object in the
+  // Home._apps cache, with no hidden per-card menus in the DOM.
   _menuEl: null,
   _menuCleanup: null,
 
@@ -1330,7 +1335,7 @@ const Home = {
     return items;
   },
 
-  // Build-info header at the top of the "…" menu: the app's FULL,
+  // Build-info header at the top of the long-press menu: the app's FULL,
   // untruncated name (the card face truncates it), the slug, and the
   // currently deployed commit — the version pill that used to sit on
   // the card face. Reuses AppView.renderAppVersionPillHTML (non-quiet,
@@ -1549,12 +1554,8 @@ const Home = {
     }
   },
 
-  // Renders the SV emoji/letter tile to a PNG data URI so the native
-  // homescreen widget shows the exact tile the app shows — same violet
-  // tint (violet-600/20 background, violet-400 letter) over a
-  // transparent background that adapts to the widget's light/dark
-  // surface. Apps with a real icon image skip this (the image URL is
-  // passed through instead).
+  // Renders the generated letter tile to a PNG data URI so the native
+  // homescreen widget uses the same deterministic identity as the app.
   _widgetIconDataUrl(app) {
     try {
       const size = 128;
@@ -1563,25 +1564,20 @@ const Home = {
       canvas.height = size;
       const ctx = canvas.getContext('2d');
       if (!ctx) return null;
-      ctx.fillStyle = 'rgba(124, 58, 237, 0.20)'; // violet-600/20
+      const colors = Home.nameToColor(app.name || app.slug || '?');
+      ctx.fillStyle = colors.bg;
       ctx.fillRect(0, 0, size, size);
-      const text = app.icon_emoji
-        || String(app.name || '?').charAt(0).toUpperCase();
-      const font = app.icon_emoji
-        ? '72px system-ui, sans-serif'
-        : 'bold 64px system-ui, sans-serif';
-      const color = app.icon_emoji ? null : '#a78bfa'; // violet-400
-      // Pixel-centering first: textAlign/textBaseline metrics misplace
-      // emoji glyphs in iOS WebKit (tiles came out anchored bottom-left),
-      // and measured glyph bounds are just as unreliable across engines.
-      // Ink bounds never lie. Fall back to the anchor heuristic where
-      // getImageData isn't available.
+      const text = String(app.name || '?').charAt(0).toUpperCase();
+      const font = 'bold 64px system-ui, sans-serif';
+      const color = colors.fg;
+      // Pixel-center from the rendered ink bounds, then fall back to a
+      // text-baseline heuristic where getImageData is unavailable.
       if (!Home._drawGlyphCentered(ctx, size, text, font, color)) {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.font = font;
         if (color) ctx.fillStyle = color;
-        ctx.fillText(text, size / 2, size / 2 + (app.icon_emoji ? 4 : 2));
+        ctx.fillText(text, size / 2, size / 2 + 2);
       }
       return canvas.toDataURL('image/png');
     } catch (_) {
@@ -1595,12 +1591,7 @@ const Home = {
     return {
       name: app.name,
       url: `${location.origin}/#app/${encodeURIComponent(app.slug)}`,
-      // Real icon image: absolute URL the app downloads. Emoji/letter
-      // tiles: canvas-rendered PNG data URI so the widget matches the
-      // in-app tile exactly.
-      icon_url: app.icon_url
-        ? new URL(app.icon_url, location.origin).href
-        : Home._widgetIconDataUrl(app),
+      icon_url: Home._widgetIconDataUrl(app),
     };
   },
 
@@ -1742,7 +1733,6 @@ const Home = {
     // starts on a button is a button press, never a drag or a
     // long-press.
     if (
-      e.target.closest('.card-menu-btn') ||
       e.target.closest('.retry-btn')
     ) return;
 
