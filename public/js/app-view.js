@@ -71,6 +71,9 @@ const AppView = {
   // version of the home tiles' avatar square. [tint classes, SVG path].
   DEV_CARD_ICONS: {
     chat: ['bg-violet-600/15 text-violet-500', 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z'],
+    // Tag (Heroicons outline) — the discovery listing (category +
+    // tagline) is shopfront metadata, hence the price-tag glyph.
+    listing: ['bg-zinc-500/15 text-zinc-500 dark:text-zinc-400', 'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z'],
     // Pencil (Heroicons outline) — sessions are edits-in-progress, not
     // terminals (#219). Distinct from the issue icon's pencil-in-bubble.
     session: ['bg-emerald-500/15 text-emerald-500', 'M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z'],
@@ -523,6 +526,17 @@ const AppView = {
       return;
     }
 
+    // App listing editor (category + tagline). Collaborator-only —
+    // a direct hash hit from anyone else falls through to the card
+    // list, mirroring how the card itself is hidden below.
+    if (subTab === 'listing') {
+      if (AppView.appData?.is_collaborator) {
+        AppView._renderListingView(content);
+        return;
+      }
+      subTab = 'forum';
+    }
+
     // Full-screen topic (issue / proposal / governance) discussion.
     if (subTab === 'topic' && ref && ref.kind && ref.id) {
       await AppView._renderTopicSubView(content, ref);
@@ -579,6 +593,20 @@ const AppView = {
               <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
             </button>
           </div>
+          ${AppView.appData?.is_collaborator ? `
+          <!-- Discovery listing editor entry point — collaborators only
+               (the route guard in renderDevView mirrors this). -->
+          <div class="px-3 pt-2">
+            <button id="dev-listing-card" class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}"
+              title="Edit the app listing">
+              ${AppView._devCardIcon('listing')}
+              <span class="flex-1 min-w-0">
+                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">App listing</span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">Edit the category and tagline people see when they find this app</span>
+              </span>
+              <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+            </button>
+          </div>` : ''}
           <div id="dev-sessions-strip" class="px-3 pt-2"></div>
           <!-- Body region: list mode mounts #dev-feed + #gc-merged here;
                kanban mode mounts #dev-kanban. _repaintDevBody() owns the
@@ -597,6 +625,12 @@ const AppView = {
     document.getElementById('dev-chat-card').addEventListener('click', () => {
       App.switchTab('dev', null, 'chat');
     });
+    const listingCard = document.getElementById('dev-listing-card');
+    if (listingCard) {
+      listingCard.addEventListener('click', () => {
+        App.switchTab('dev', null, 'listing');
+      });
+    }
     AppView._loadChatCardPreview();
 
     // Delegated card-open handler: tapping a topic card anywhere except
@@ -1079,6 +1113,132 @@ const AppView = {
       AppView.promptRename();
     });
     AppView.refreshDevChatSecretsState();
+  },
+
+  // ── App listing editor (#app/<slug>/dev/listing) ─────────────────
+  //
+  // Minimal edit screen for the discovery listing: two single-select
+  // category chips (tap the selected one again to clear — NULL is a
+  // valid state, the app just appears in no home rail) and an 80-char
+  // tagline with a live counter. Saves through PATCH
+  // /api/apps/:slug/listing (collaborator-gated server-side too) and
+  // returns to the Dev card list on success.
+
+  // Chip classes swap wholesale on selection state — computed in one
+  // place so the tap handler and the initial paint can't drift.
+  _listingChipCls(active) {
+    return 'listing-chip rounded-full border px-4 py-1.5 text-sm font-medium transition-colors '
+      + (active
+        ? 'border-violet-500 dark:border-violet-400 bg-violet-600/10 text-violet-600 dark:text-violet-400'
+        : 'border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:border-zinc-300 dark:hover:border-zinc-500');
+  },
+
+  // Minimal toast, same shape as kudos.js's _toast — there is no
+  // global toast system, so each surface keeps its own tiny one.
+  _listingToast(msg) {
+    let el = document.getElementById('listing-toast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'listing-toast';
+      el.className = 'fixed bottom-20 left-1/2 -translate-x-1/2 z-50 rounded-lg bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 text-sm px-4 py-2 shadow-lg';
+      document.body.appendChild(el);
+    }
+    el.textContent = msg;
+    el.classList.remove('hidden');
+    clearTimeout(AppView._listingToastTimer);
+    AppView._listingToastTimer = setTimeout(() => el.classList.add('hidden'), 2500);
+  },
+
+  _renderListingView(content) {
+    const app = AppView.appData || {};
+    // Local edit state, seeded from the app payload. `selected` is the
+    // chip state ('game' | 'tool' | null).
+    let selected = app.category === 'game' || app.category === 'tool' ? app.category : null;
+    const tagline = app.tagline || '';
+
+    content.innerHTML = `
+      <div class="flex flex-col h-full min-h-0">
+        <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+          <button id="dev-listing-back" class="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm" title="Back to the dev page">&larr;</button>
+          <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider">App listing</span>
+        </div>
+        <div class="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+          <div class="px-3 py-4 space-y-5 max-w-md">
+            <div>
+              <label class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Category</label>
+              <div class="flex gap-2 mt-2">
+                <button type="button" data-listing-cat="game" class="${AppView._listingChipCls(selected === 'game')}" aria-pressed="${selected === 'game'}">Game</button>
+                <button type="button" data-listing-cat="tool" class="${AppView._listingChipCls(selected === 'tool')}" aria-pressed="${selected === 'tool'}">Tool</button>
+              </div>
+            </div>
+            <div>
+              <label for="listing-tagline" class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Tagline</label>
+              <p class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">One line saying what people do with this app. Up to 80 characters</p>
+              <input id="listing-tagline" type="text" maxlength="80" autocomplete="off" value="${escapeAttr(tagline)}"
+                class="mt-2 w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-800 dark:text-zinc-200 focus:outline-none focus:border-violet-500 dark:focus:border-violet-400">
+              <p id="listing-tagline-count" class="text-xs text-zinc-400 dark:text-zinc-500 mt-1 text-right">${tagline.length}/80</p>
+            </div>
+            <p id="listing-error" class="hidden text-sm text-red-500"></p>
+            <button id="listing-save" class="w-full rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium px-4 py-2.5 transition-colors">Save</button>
+          </div>
+        </div>
+      </div>`;
+
+    document.getElementById('dev-listing-back').addEventListener('click', () => {
+      App.switchTab('dev');
+    });
+
+    const paintChips = () => {
+      content.querySelectorAll('[data-listing-cat]').forEach((btn) => {
+        const active = btn.dataset.listingCat === selected;
+        btn.className = AppView._listingChipCls(active);
+        btn.setAttribute('aria-pressed', String(active));
+      });
+    };
+    content.querySelectorAll('[data-listing-cat]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        // Single-select with tap-again-to-clear: category is nullable.
+        selected = selected === btn.dataset.listingCat ? null : btn.dataset.listingCat;
+        paintChips();
+      });
+    });
+
+    const input = document.getElementById('listing-tagline');
+    const counter = document.getElementById('listing-tagline-count');
+    input.addEventListener('input', () => {
+      counter.textContent = `${input.value.length}/80`;
+    });
+
+    const errEl = document.getElementById('listing-error');
+    const saveBtn = document.getElementById('listing-save');
+    saveBtn.addEventListener('click', async () => {
+      errEl.classList.add('hidden');
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Saving…';
+      try {
+        const res = await fetch(`/api/apps/${encodeURIComponent(app.slug)}/listing`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            category: selected,
+            tagline: input.value.trim() || null,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'save failed');
+        // Keep the cached payload fresh so re-entering the editor (or
+        // the detail page) shows the saved values without a refetch.
+        AppView.appData.category = data.category;
+        AppView.appData.tagline = data.tagline;
+        AppView._listingToast('Listing updated');
+        App.switchTab('dev');
+      } catch (_) {
+        errEl.textContent = 'Could not save the listing. Check your connection and try again';
+        errEl.classList.remove('hidden');
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save';
+      }
+    });
   },
 
   // ── View-mode toggle (list ↔ kanban) ─────────────────────────────────
