@@ -1083,6 +1083,12 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_image_id VARCHAR(32);
 -- public home feed and must survive into staging clones.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS forked_from JSONB;
 
+-- Discovery listing metadata. Both fields are nullable so apps without a
+-- listing keep working; an unset category leaves the app out of category
+-- rails while it remains available through search and Favorites.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS category VARCHAR(16);
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS tagline  VARCHAR(80);
+
 -- Icon image bytes, one row per app, keyed by an unguessable random id
 -- (same access stance as session_visuals: /app-icons/:id is served
 -- unauthenticated so home tiles load it with a plain <img>, and the

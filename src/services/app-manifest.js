@@ -129,6 +129,44 @@ const KEY_RE = /^[A-Z][A-Z0-9_]{0,127}$/;
 const MAX_APP_NAME_LENGTH = 64;
 const MIN_APP_NAME_LENGTH = 1;
 
+const LISTING_CATEGORIES = new Set(['game', 'tool']);
+const MAX_TAGLINE_LENGTH = 80;
+const CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/;
+
+// Listing metadata is deliberately lenient at deploy time. A malformed
+// field is ignored independently so one bad value never blocks a deploy or
+// prevents the other valid field from seeding an empty database column.
+function readListing(parsed) {
+  const raw = parsed?.listing;
+  if (raw == null) return null;
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    log.warn('app-manifest', 'Ignoring non-object listing block');
+    return null;
+  }
+
+  let category = null;
+  if (raw.category != null) {
+    if (typeof raw.category === 'string' && LISTING_CATEGORIES.has(raw.category)) {
+      category = raw.category;
+    } else {
+      log.warn('app-manifest', 'Ignoring invalid listing.category', { value: raw.category });
+    }
+  }
+
+  let tagline = null;
+  if (raw.tagline != null) {
+    const value = typeof raw.tagline === 'string' ? raw.tagline.trim() : '';
+    if (value && value.length <= MAX_TAGLINE_LENGTH && !CONTROL_CHAR_RE.test(value)) {
+      tagline = value;
+    } else {
+      log.warn('app-manifest', 'Ignoring invalid listing.tagline');
+    }
+  }
+
+  if (category == null && tagline == null) return null;
+  return { category, tagline };
+}
+
 // Normalize a raw top-level `name` into a trimmed string or null. Anything
 // that isn't a string, is empty after trimming, or busts the length bound
 // resolves to null — i.e. "no manifest name", so the platform name (the
@@ -329,9 +367,9 @@ function read(cloneDir) {
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
-    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null };
+    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, listing: null };
     log.warn('app-manifest', 'Read failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null };
+    return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, listing: null };
   }
 
   let parsed;
@@ -339,7 +377,7 @@ function read(cloneDir) {
     parsed = JSON.parse(raw);
   } catch (err) {
     log.warn('app-manifest', 'Parse failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null };
+    return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, listing: null };
   }
 
   const secretsIn = Array.isArray(parsed?.secrets) ? parsed.secrets : [];
@@ -383,6 +421,7 @@ function read(cloneDir) {
     screenshot: readScreenshot(parsed),
     tests: readTests(parsed),
     icon: readIcon(parsed),
+    listing: readListing(parsed),
   };
 }
 
@@ -728,6 +767,34 @@ async function reconcileAppIcon(pool, app, manifest, cloneDir) {
   return true;
 }
 
+// dapp.json listing values are seeds, not ongoing authority. Once a user has
+// edited either value in the platform, later deploys must leave it alone.
+async function reconcileAppListing(pool, app, manifest) {
+  const listing = manifest?.listing;
+  if (!listing || (listing.category == null && listing.tagline == null)) return false;
+
+  const { rows } = await pool.query(
+    'SELECT category, tagline FROM apps WHERE id = $1', [app.id]
+  );
+  if (!rows.length) return false;
+  const current = rows[0];
+  const category = current.category == null ? listing.category : current.category;
+  const tagline = current.tagline == null ? listing.tagline : current.tagline;
+  if (category === current.category && tagline === current.tagline) return false;
+
+  await pool.query(
+    'UPDATE apps SET category = $1, tagline = $2 WHERE id = $3',
+    [category, tagline, app.id]
+  );
+  log.info('app-manifest', 'Seeded app listing from dapp.json', {
+    appId: app.id,
+    slug: app.slug,
+    categorySeeded: current.category == null && category != null,
+    taglineSeeded: current.tagline == null && tagline != null,
+  });
+  return true;
+}
+
 module.exports = {
   read,
   readName,
@@ -736,14 +803,17 @@ module.exports = {
   readScreenshot,
   readTests,
   readIcon,
+  readListing,
   MAX_TESTS,
   MAX_ICON_EMOJI_LENGTH,
   MAX_ICON_IMAGE_BYTES,
+  MAX_TAGLINE_LENGTH,
   describeVisibility,
   reconcileAppName,
   reconcileAppVisibility,
   reconcileAppScreenshot,
   reconcileAppIcon,
+  reconcileAppListing,
   applyVisibilityChange,
   RESERVED_KEYS,
   RESERVED_KEY_PREFIXES,
