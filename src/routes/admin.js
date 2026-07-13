@@ -679,6 +679,79 @@ function adminRoutes(config) {
     }
   });
 
+  // ── Submitted features across all apps (#562) ─────────────────
+  //
+  // A platform-wide, admin-only view of member-submitted feature
+  // requests, ranked by up-votes. "Submitted features" are the
+  // user-submittable, GitHub-mirrored `issues` rows with kind='general'
+  // (see src/routes/issues.js VALID_KINDS); the structured governance
+  // kinds ('secret_change', 'close_issue') are deliberately excluded.
+  // This is the first CROSS-APP issues query — every other issue read is
+  // scoped to a single app_id or a single user. Gated only by the
+  // router-level adminMiddleware (any admin, full OR view-only): it is a
+  // pure read, so it must NOT chain requireAdminWrite, matching the other
+  // /api/admin GET reads (/overview, /users, /codes, /limits).
+  //
+  // Ordering is by up-vote count DESC (matching the per-app list at
+  // GET /api/apps/:slug/issues), with created_at then id as deterministic
+  // tie-breaks so offset paging is stable. Offset paging (rather than the
+  // keyset cursors used on high-churn feeds like votes.js) is used on
+  // purpose: the sort key is a computed aggregate with heavy ties, which a
+  // (created_at, id) cursor cannot page correctly, and this admin analytics
+  // list is low-churn so any offset drift is acceptable.
+  router.get('/api/admin/submitted-features', async (req, res) => {
+    // status: 'open' (default) | 'closed' | 'all'. Anything else falls
+    // back to the default rather than 400-ing an admin analytics read.
+    const statusParam = String(req.query.status || 'open').toLowerCase();
+    const status = ['open', 'closed', 'all'].includes(statusParam) ? statusParam : 'open';
+
+    // limit: default 50, clamped to [1, 200]; offset: non-negative int.
+    const rawLimit = parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 200) : 50;
+    const rawOffset = parseInt(req.query.offset, 10);
+    const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? rawOffset : 0;
+
+    // Shared WHERE: only member-submitted features, optionally status-scoped.
+    // $1 carries the status filter ('all' → no status predicate).
+    const statusClause = status === 'all' ? '' : ' AND i.status = $1';
+    const filterParams = status === 'all' ? [] : [status];
+
+    try {
+      const { rows: countRows } = await pool.query(
+        `SELECT COUNT(*)::int AS total
+           FROM issues i
+          WHERE i.kind = 'general'${statusClause}`,
+        filterParams
+      );
+      const total = countRows[0] ? countRows[0].total : 0;
+
+      const { rows } = await pool.query(
+        `SELECT i.id, i.app_id, i.github_issue_number, i.title, i.description,
+                i.kind, i.status, i.created_at, i.created_by,
+                u.username AS created_by_username,
+                a.slug AS app_slug, a.name AS app_name,
+                (SELECT COUNT(*)::int FROM issue_votes
+                   WHERE issue_id = i.id AND vote = 'up')   AS up_count,
+                (SELECT COUNT(*)::int FROM issue_votes
+                   WHERE issue_id = i.id AND vote = 'down') AS down_count
+           FROM issues i
+           JOIN apps a ON a.id = i.app_id
+           LEFT JOIN users u ON u.id = i.created_by
+          WHERE i.kind = 'general'${statusClause}
+          ORDER BY (SELECT COUNT(*) FROM issue_votes
+                      WHERE issue_id = i.id AND vote = 'up') DESC,
+                   i.created_at DESC, i.id DESC
+          LIMIT ${limit} OFFSET ${offset}`,
+        filterParams
+      );
+
+      res.json({ features: rows, total, limit, offset });
+    } catch (err) {
+      log.error('admin', 'Submitted-features list failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   return router;
 }
 
