@@ -1,16 +1,32 @@
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const log = require('../services/logger');
 
+// Retry-delay phrase for throttle messages: minutes rounded up, with
+// anything ≤ 60s collapsing to "in under a minute".
+function retryPhrase(seconds) {
+  if (seconds <= 60) return 'in under a minute';
+  return `in about ${Math.ceil(seconds / 60)} minutes`;
+}
+
 // A tiny wrapper that standardizes JSON responses + logs throttled hits.
 // Keys auth routes by IP (user is anonymous) and write routes by userId
 // when available so a single abusive account can't exhaust the limit for
 // everyone behind the same NAT.
-function makeLimiter({ windowMs, max, name, keyByUser = false, message }) {
-  return rateLimit({
+//
+// `message` is either a plain string or a builder (retryAfterSeconds) =>
+// string, so throttle responses can say when a retry will succeed.
+// `skipFailedRequests` refunds requests that finish ≥ 400 (validation
+// errors and dedupe rejections shouldn't burn the budget). `exemptAdmins`
+// skips the limiter entirely for FULL admins — gated on canAdminWrite,
+// not isAdmin, so view-only admins stay limited like regular users (same
+// gate as the app-quota bypass, issue #311).
+function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFailedRequests = false, exemptAdmins = false }) {
+  const options = {
     windowMs,
     max,
     standardHeaders: 'draft-7',
     legacyHeaders: false,
+    skipFailedRequests,
     // `ipKeyGenerator` collapses IPv6 to a subnet prefix so a single client
     // can't bypass the limit by rotating addresses within its /56.
     keyGenerator: (req) => {
@@ -18,17 +34,28 @@ function makeLimiter({ windowMs, max, name, keyByUser = false, message }) {
       return ipKeyGenerator(req.ip);
     },
     handler: (req, res) => {
+      const resetTime = req.rateLimit?.resetTime;
+      const retryAfterSeconds = resetTime
+        ? Math.max(0, Math.ceil((new Date(resetTime).getTime() - Date.now()) / 1000))
+        : Math.ceil(windowMs / 1000);
       log.warn('rate-limit', 'Throttled', {
         name,
         ip: req.ip,
         userId: req.user?.id,
         path: req.path,
       });
+      // No `code` field here — clients discriminate billing 429s by
+      // their code tag (#463), so throttles must stay code-free.
       res.status(429).json({
-        error: message || 'Too many requests, please slow down',
+        error: typeof message === 'function'
+          ? message(retryAfterSeconds)
+          : (message || 'Too many requests, please slow down'),
+        retryAfterSeconds,
       });
     },
-  });
+  };
+  if (exemptAdmins) options.skip = (req) => !!req.user?.canAdminWrite;
+  return rateLimit(options);
 }
 
 // Auth: 10 attempts / 15 min / IP. Tight because it's the primary brute-
@@ -65,14 +92,56 @@ const appCreateLimiter = makeLimiter({
   message: 'You\'ve created a lot of apps recently — try again in a bit',
 });
 
-// Issue / rename proposals: 20 / hour / user. Loose enough for normal
-// use but stops spam creation of proposals.
+// Issue / rename / visibility proposals: 20 / hour / user. Loose enough
+// for normal use but stops spam creation of proposals. Only successful
+// creations count, and full admins are exempt.
 const issueCreateLimiter = makeLimiter({
   windowMs: 60 * 60 * 1000,
   max: 20,
   name: 'issue-create',
   keyByUser: true,
-  message: 'Too many issues/proposals — take a breather',
+  skipFailedRequests: true,
+  exemptAdmins: true,
+  message: (s) => `Rate limit reached: up to 20 issues and proposals per hour. You can try again ${retryPhrase(s)}.`,
+});
+
+// Close-issue proposals (#522): own 20 / hour / user bucket, so proposing
+// to close stale issues can't be starved by issue creation (or vice
+// versa) — the shared bucket was why "Propose to close" 429'd for users
+// who had merely been filing issues or saving agent files. The route's
+// per-issue dedupe already caps open close proposals at one per target.
+const closeProposalLimiter = makeLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 20,
+  name: 'close-proposal',
+  keyByUser: true,
+  skipFailedRequests: true,
+  exemptAdmins: true,
+  message: (s) => `Rate limit reached: up to 20 close proposals per hour. You can try again ${retryPhrase(s)}.`,
+});
+
+// POST /api/apps/:slug/issues serves several proposal kinds — route
+// close_issue bodies to their own bucket, everything else (general,
+// secret_change) to issue-create. req.body is already parsed here: the
+// global express.json() mounts before any router (see server.js). A
+// missing/non-JSON body falls through to the default bucket.
+function issueKindLimiter(req, res, next) {
+  const limiter = req.body?.kind === 'close_issue' ? closeProposalLimiter : issueCreateLimiter;
+  return limiter(req, res, next);
+}
+
+// Agent instruction/skill file saves (#460): 30 / minute / user, split
+// off the issues bucket so an editing session (many saves in a row) can
+// never lock the user out of governance actions. Same shape and
+// reasoning as attachmentUploadLimiter below: honest editing never
+// bites, scripted loops bounce quickly.
+const agentFileWriteLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 30,
+  name: 'agent-file-write',
+  keyByUser: true,
+  exemptAdmins: true,
+  message: (s) => `Rate limit reached: up to 30 file saves per minute. You can try again ${retryPhrase(s)}.`,
 });
 
 // Chat: 30 / minute / user. Loose enough that no honest user notices
@@ -124,4 +193,4 @@ const attributeVoteLimiter = makeLimiter({
   message: 'Too many updates — slow down for a minute.',
 });
 
-module.exports = { authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, chatLimiter, proposalDiscussLimiter, attributeVoteLimiter, attachmentUploadLimiter };
+module.exports = { authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, proposalDiscussLimiter, attributeVoteLimiter, attachmentUploadLimiter };
