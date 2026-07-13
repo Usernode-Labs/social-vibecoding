@@ -164,7 +164,27 @@
 
 	encode gzip
 
+	# Friendly recovery page for dead app containers (#426). A stopped /
+	# crashed / mid-redeploy container makes the reverse_proxy above fail
+	# with 502 (or 503/504); instead of the raw status text, rewrite those
+	# to the platform's /__app_unavailable route (src/routes/app-error.js),
+	# which serves a neutral auto-retrying "this app is restarting" page
+	# AND kicks the production watchdog's on-demand heal for the slug
+	# (src/services/app-heal.js). reverse_proxy preserves the original
+	# Host, so the platform knows which app subdomain the user was on.
+	# Every other error code keeps the terse respond below. If the
+	# platform itself is down this proxy fails too and Caddy emits its
+	# default error — same as before, no regression. (The apex site above
+	# keeps its plain handle_errors: when the platform is the dead
+	# upstream, nothing behind Caddy can render a nicer page.)
 	handle_errors {
-		respond "{err.status_code} {err.status_text}"
+		@upstream_down expression `{err.status_code} in [502, 503, 504]`
+		handle @upstream_down {
+			rewrite * /__app_unavailable
+			reverse_proxy usernode:3000
+		}
+		handle {
+			respond "{err.status_code} {err.status_text}"
+		}
 	}
 }
