@@ -379,6 +379,15 @@ app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
+// Cross-app "submitted features" admin view (#562). Like /admin, the static
+// shell is served to anyone; admin-features.js checks /api/auth/me and gates
+// non-admins, while the GET /api/admin/submitted-features data endpoint it
+// calls is independently enforced by adminMiddleware. Must be registered
+// before the app.get('*') SPA fallback below.
+app.get('/admin-features', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin-features.html'));
+});
+
 // Admin analytics dashboard. Like /admin, the static shell is served to
 // anyone; the page bootstraps by checking /api/auth/me and redirects
 // non-admins, while the /api/admin/analytics/* data endpoints it calls
