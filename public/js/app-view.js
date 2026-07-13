@@ -3053,9 +3053,16 @@ const AppView = {
       AppView._closeAttrPopover();
       AppView._closeVotingHelpPopover();
     });
-    document.addEventListener('scroll', () => {
+    document.addEventListener('scroll', (e) => {
       AppView._closeAttrPopover();
-      AppView._closeVotingHelpPopover();
+      // Ignore the popover's OWN internal overflow scrolling (it has a
+      // capped max-height and scrolls its rules list) — only an
+      // outside-page scroll should dismiss it. The scroll event's target
+      // is the scrolled element (or `document` for the page itself).
+      const t = e.target;
+      const insidePopover = t && t.nodeType === 1 && typeof t.closest === 'function'
+        && t.closest('#voting-help-popover');
+      if (!insidePopover) AppView._closeVotingHelpPopover();
     }, true);
     // Escape dismisses either popover (a11y — the help popover is a dialog).
     document.addEventListener('keydown', (e) => {
