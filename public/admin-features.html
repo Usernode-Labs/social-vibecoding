@@ -43,7 +43,8 @@
       <p class="text-sm text-zinc-500">
         Every member-submitted feature request across all apps, ranked by
         up-votes. Governance proposals (secret / config / close-issue) are
-        excluded. Use the status filter to switch between open, closed and all.
+        excluded. The list opens on <strong>All</strong>; use the status
+        filter to narrow to open, closed or completed (shipped) features.
       </p>
 
       <!-- Filter + export bar -->
@@ -51,9 +52,10 @@
                       flex flex-wrap items-end gap-3">
         <label class="flex flex-col text-xs text-zinc-400">Status
           <select id="f-status" class="mt-1 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded px-2 py-1 text-sm text-zinc-900 dark:text-zinc-100">
+            <option value="all" selected>All</option>
             <option value="open">Open</option>
             <option value="closed">Closed</option>
-            <option value="all">All</option>
+            <option value="completed">Completed</option>
           </select>
         </label>
         <button id="refresh" class="px-3 py-1.5 rounded bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-sm">Refresh</button>

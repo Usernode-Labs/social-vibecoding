@@ -52,13 +52,20 @@ function fmtTime(iso) {
 }
 
 function currentStatus() {
-  return document.getElementById('f-status').value || 'open';
+  // Default matches the page's default-selected <option> ('all') so an
+  // admin lands on the full cross-app list rather than a possibly-empty
+  // "open" view — shipped features carry status='completed', which is
+  // invisible under both open and closed (see #565).
+  return document.getElementById('f-status').value || 'all';
 }
 
 // ── Row rendering ─────────────────────────────────────────────────────
 const STATUS_BADGE = {
-  open:   { label: 'Open',   cls: 'bg-green-500/20 text-green-300' },
-  closed: { label: 'Closed', cls: 'bg-zinc-500/20 text-zinc-300' },
+  open:      { label: 'Open',    cls: 'bg-green-500/20 text-green-300' },
+  closed:    { label: 'Closed',  cls: 'bg-zinc-500/20 text-zinc-300' },
+  // Shipped features flip to status='completed' when their PR merges; give
+  // them their own violet "Shipped" badge distinct from open/closed (#565).
+  completed: { label: 'Shipped', cls: 'bg-violet-500/20 text-violet-300' },
 };
 function statusBadge(status) {
   const b = STATUS_BADGE[status] || { label: status || '—', cls: 'bg-zinc-500/20 text-zinc-300' };
@@ -112,7 +119,10 @@ async function load() {
       + qs({ status, limit: PAGE, offset: 0 }));
   } catch (err) {
     if (err.status === 403) { showGate('Admin access required.'); return; }
-    summary.textContent = 'Failed to load submitted features.';
+    // Load failure is distinct from an empty list: keep the empty hint
+    // hidden and surface a retry-able error in the summary line.
+    empty.classList.add('hidden');
+    summary.textContent = 'Couldn’t load submitted features — try Refresh.';
     return;
   }
 
@@ -121,6 +131,12 @@ async function load() {
 
   if (!features.length) {
     summary.textContent = '';
+    // Genuinely-empty result. Nudge toward the widest filter unless the
+    // admin is already on it, so "nothing here" reads as a filter choice
+    // rather than a broken page.
+    empty.textContent = status === 'all'
+      ? 'No submitted features yet.'
+      : 'No submitted features match this filter — try the “All” status.';
     empty.classList.remove('hidden');
     return;
   }

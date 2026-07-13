@@ -1785,8 +1785,9 @@ async function seedStagingDemoAppCard(pool) {
 // impossible to review. This seeds several kind='general' issues spread
 // across THREE demo apps with DISTINCT up-vote tallies (7/5/3/1) so the
 // `up_count DESC` ordering and the cross-app interleaving are both
-// visible, plus a nonzero down-count on one row and one CLOSED feature so
-// the `?status=all` / `?status=closed` paths render non-empty. It also
+// visible, plus a nonzero down-count on one row, one CLOSED feature and
+// one COMPLETED (shipped) feature so the `?status=all` / `?status=closed`
+// / `?status=completed` paths (#565) all render non-empty. It also
 // inserts two governance rows (secret_change / close_issue) that MUST NOT
 // appear in the endpoint, so the kind filter is exercised. All ids sit in
 // the 9056xxx range to clear cloned prod rows and the other 900xxx demo
@@ -1838,6 +1839,13 @@ async function seedStagingSubmittedFeatures(pool, config) {
         title: '[Mock] Remember scroll position on the feed', up: 1, down: 0 },
       { id: 9056105, app: 9056002, kind: 'general', status: 'closed',
         title: '[Mock] (shipped) Show avatars on kanban cards', up: 4, down: 0 },
+      // A COMPLETED (shipped) feature so the Completed filter + "Shipped"
+      // badge are reviewable in staging (#565). status='completed' is a
+      // distinct state from open/closed and only surfaces under the
+      // Completed or All filters. Up-count (6) is distinct from the others
+      // so ordering stays legible.
+      { id: 9056108, app: 9056001, kind: 'general', status: 'completed',
+        title: '[Mock] (shipped) Inline image paste in chat', up: 6, down: 0 },
       // Governance rows — MUST be excluded by the kind filter.
       { id: 9056106, app: 9056001, kind: 'secret_change', status: 'open',
         title: '[Mock] Set FEATURE_FLAG to "on"', up: 6, down: 0 },
