@@ -125,6 +125,12 @@
       "expectText": "Close issue #900001"
     },
     {
+      "name": "Manually-completed task shows a Completed manually Done card (#529)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban",
+      "expectText": "Completed manually"
+    },
+    {
       "name": "Chromeless share-link view renders the Open-in-Usernode pill",
       "path": "/#app/usernode-2d5619/full",
       "expectSelector": "#chromeless-pill"

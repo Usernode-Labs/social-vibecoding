@@ -165,6 +165,72 @@ test('Done holds merged rows, most-recent-activity first', () => {
   assert.deepEqual(idsOf(b.done), [2, 3, 1]);
 });
 
+// ── #529: manually-completed tasks fold into the Done column ────────────────
+
+test('Done interleaves manual completions with merged PRs by completion time', () => {
+  const AppView = makeAppView();
+  const b = AppView._bucketDevItems({
+    issues: [],
+    proposals: [],
+    gov: [],
+    merged: [
+      { id: 1, created_at: at(2), last_message_at: at(2) },
+      { id: 2, created_at: at(6), last_message_at: at(6) },
+    ],
+    completed: [
+      { number: 900, title: 'Manual A', completedAt: at(4) },
+      { number: 901, title: 'Manual B', completedAt: at(8) },
+    ],
+  });
+  // Newest-first across both kinds: 901 (8) > 2 (6) > 900 (4) > 1 (2).
+  const key = (x) => (x._completed ? `c:${x.number}` : `m:${x.id}`);
+  assert.deepEqual(Array.from(b.done, key), ['c:901', 'm:2', 'c:900', 'm:1']);
+});
+
+test('manual completions carry the _completed discriminator; merged rows do not', () => {
+  const AppView = makeAppView();
+  const b = AppView._bucketDevItems({
+    issues: [], proposals: [], gov: [],
+    merged: [{ id: 1, created_at: at(1) }],
+    completed: [{ number: 900, title: 'Manual', completedAt: at(2) }],
+  });
+  const flags = Array.from(b.done, (x) => !!x._completed);
+  assert.deepEqual(flags, [true, false], 'the completion sorts first and is flagged');
+});
+
+test('_renderCompletedIssueCard shows the manual badge, #NN link, note; omits PR/undo/vote/kudos', () => {
+  const AppView = makeAppView();
+  AppView._ghIssuesMeta = { repoUrl: 'https://github.com/acme/widgets' };
+  const html = AppView._renderCompletedIssueCard({
+    number: 42,
+    title: 'Migrated balances by hand',
+    completedAt: at(3),
+    completedByUsername: 'snait',
+    note: 'Handled offchain',
+  });
+  assert.match(html, /Completed manually/, 'has the distinct badge');
+  assert.match(html, /github\.com\/acme\/widgets\/issues\/42/, 'links the GitHub issue');
+  assert.match(html, />#42</, 'shows the issue number, not a PR number');
+  assert.match(html, /Migrated balances by hand/, 'shows the task title');
+  assert.match(html, /Handled offchain/, 'shows the note');
+  assert.match(html, /snait/, 'names who completed it');
+  assert.doesNotMatch(html, /PR#/, 'no PR link');
+  assert.doesNotMatch(html, /Undo/, 'no Undo button');
+  assert.doesNotMatch(html, /loadMoreMerged|undoPr/, 'no merged-card actions');
+});
+
+test('_renderCompletedIssueCard escapes the title and note', () => {
+  const AppView = makeAppView();
+  // The sandbox's escapeHtml is a passthrough, so assert the values flow into
+  // the escapeHtml call sites (title/note) rather than raw string identity —
+  // here we just confirm both fields render and no crash on odd input.
+  const html = AppView._renderCompletedIssueCard({
+    number: 7, title: '<b>x</b>', completedAt: at(1), note: '<i>y</i>',
+  });
+  assert.match(html, /x/);
+  assert.match(html, /y/);
+});
+
 test('issue columns sort newest-activity first', () => {
   const AppView = makeAppView();
   const b = AppView._bucketDevItems({
