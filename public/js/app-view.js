@@ -1531,11 +1531,6 @@ const AppView = {
           : '',
       };
       AppView._merged = merged;
-      // #529: manually-completed tasks for the Done column. Always fully
-      // loaded (admin-driven, low-volume) — they don't participate in the
-      // merged "Load more" keyset pager.
-      AppView._completedIssues = Array.isArray(mergedData.completedIssues)
-        ? mergedData.completedIssues : [];
       AppView._mergedCtx = { majority, activeUsers };
       // #429: reset the pager state on a fresh load. _mergedHasMore drives
       // the "Load more" footer; the cursor is the (created_at, id) of the
@@ -1550,7 +1545,7 @@ const AppView = {
       // the loaded length on an older server that doesn't return `total`.
       AppView._mergedTotal = (typeof mergedData.total === 'number')
         ? mergedData.total
-        : (merged.length + AppView._completedIssues.length);
+        : merged.length;
       return true;
     } catch {
       return false;
@@ -1817,17 +1812,13 @@ const AppView = {
   //                (work started, not yet up for a vote), same dedup
   //   inReview   — [{kind:'proposal'|'gov', item}] sorted by pin-rank then
   //                recency, exactly as the list feed's proposal group
-  //   done       — merged proposals + manually-completed tasks (#529),
-  //                most-recent completion first. Manual completions carry a
-  //                `_completed: true` discriminator so the Done render
-  //                callback picks _renderCompletedIssueCard for them.
+  //   done       — merged proposals, most-recent-activity first
   _bucketDevItems(data) {
     const d = data || {};
     const issues = Array.isArray(d.issues) ? d.issues : [];
     const proposals = Array.isArray(d.proposals) ? d.proposals : [];
     const gov = Array.isArray(d.gov) ? d.gov : [];
     const merged = Array.isArray(d.merged) ? d.merged : [];
-    const completed = Array.isArray(d.completed) ? d.completed : [];
 
     const ts = (v) => {
       const t = Date.parse(v || '');
@@ -1874,18 +1865,7 @@ const AppView = {
     for (const g of gov) review.push({ kind: 'gov', item: g, _r: 3, _t: govT(g) });
     review.sort((a, b) => (a._r - b._r) || (b._t - a._t));
 
-    // #529: interleave manually-completed tasks with merged PRs by
-    // completion time. Manual completions are tagged with `_completed` so the
-    // Done render callback dispatches to _renderCompletedIssueCard, and their
-    // sort key is the audit payload's completedAt (falling back to 0).
-    const completedT = (c) => ts(c && c.completedAt);
-    const doneItems = merged.map((m) => ({ ...m, _completed: false }))
-      .concat(completed.map((c) => ({ ...c, _completed: true })));
-    const done = doneItems.sort((a, b) => {
-      const ta = a._completed ? completedT(a) : mergedT(a);
-      const tb = b._completed ? completedT(b) : mergedT(b);
-      return tb - ta;
-    });
+    const done = merged.slice().sort((a, b) => mergedT(b) - mergedT(a));
 
     return {
       issues: col1,
@@ -1919,12 +1899,6 @@ const AppView = {
           ? it.payload.newName : (it.title || '');
         author = it.created_by_username || '';
         num = it.github_issue_number;
-      } else if (kind === 'completed') {
-        // #529: manual-completion Done card — matches on task title, the
-        // completing admin, and the GitHub issue number.
-        title = it.title || '';
-        author = it.completedByUsername || '';
-        num = it.number;
       } else {
         // proposal | merged — mirror the card renderers' title fallback.
         title = it.pr_title || `Change by ${it.username || ''}`;
@@ -2093,7 +2067,6 @@ const AppView = {
       proposals: AppView._proposals || [],
       gov: AppView._govProposals || [],
       merged: AppView._merged || [],
-      completed: AppView._completedIssues || [],
     });
     const meta = AppView._ghIssuesMeta || {};
 
@@ -2114,7 +2087,7 @@ const AppView = {
       ? buckets.inReview.filter((x) => AppView._devCardMatches(x.kind, x.item, f))
       : buckets.inReview;
     const kDone = filtering
-      ? buckets.done.filter((m) => AppView._devCardMatches(m && m._completed ? 'completed' : 'merged', m, f))
+      ? buckets.done.filter((m) => AppView._devCardMatches('merged', m, f))
       : buckets.done;
 
     // "More open issues on GitHub" link — the Issues column inherits the
@@ -2165,7 +2138,7 @@ const AppView = {
       { title: 'Issues', items: kIssues, render: (i) => AppView._renderIssueRow(i), footer: issuesFooter },
       { title: 'In progress', items: kInProgress, render: (i) => AppView._renderIssueRow(i) },
       { title: 'In review', items: kInReview, render: (x) => (x.kind === 'proposal' ? AppView._renderProposalCard(x.item) : AppView._renderGovCard(x.item)) },
-      { title: 'Done', items: kDone, render: (m) => (m && m._completed ? AppView._renderCompletedIssueCard(m) : AppView._renderMergedCard(m)), count: filtering ? kDone.length : doneTotal, footer: doneFooter },
+      { title: 'Done', items: kDone, render: (m) => AppView._renderMergedCard(m), count: filtering ? kDone.length : doneTotal, footer: doneFooter },
     ];
 
     let html = '<div id="dev-kanban" class="flex gap-3 overflow-x-auto pb-2">';
@@ -3131,84 +3104,6 @@ const AppView = {
     }
   },
 
-  // ── #529 "Mark done" (complete without implementation) ────────────────
-  // Admin-only. Opens a small modal with an optional note, then POSTs to
-  // /api/apps/:slug/issues/:number/complete. Mirrors the close-issue modal
-  // wiring above; modal markup lives in index.html next to it.
-  _markDoneTarget: null,
-
-  promptMarkDone(issueNumber) {
-    if (!AppView.appData) return;
-    if (!(App.user && App.user.canAdminWrite)) return;
-    const modal = document.getElementById('mark-done-modal');
-    const numEl = document.getElementById('mark-done-number');
-    const note = document.getElementById('mark-done-note');
-    const err = document.getElementById('mark-done-error');
-    if (!modal || !numEl || !note) return;
-    AppView._markDoneTarget = issueNumber;
-    numEl.textContent = `#${issueNumber}`;
-    note.value = '';
-    if (err) { err.classList.add('hidden'); err.textContent = ''; }
-    modal.classList.remove('hidden');
-    setTimeout(() => note.focus(), 0);
-  },
-
-  closeMarkDoneModal() {
-    const modal = document.getElementById('mark-done-modal');
-    const note = document.getElementById('mark-done-note');
-    const err = document.getElementById('mark-done-error');
-    if (modal) modal.classList.add('hidden');
-    if (note) note.value = '';
-    if (err) { err.classList.add('hidden'); err.textContent = ''; }
-    AppView._markDoneTarget = null;
-  },
-
-  async submitMarkDone(e) {
-    if (e) e.preventDefault();
-    const issueNumber = AppView._markDoneTarget;
-    if (!issueNumber || !AppView.appData) return;
-    const err = document.getElementById('mark-done-error');
-    const submitBtn = document.getElementById('mark-done-submit');
-    const note = (document.getElementById('mark-done-note')?.value || '').trim();
-    // The task title, when we have it cached, lets the server label the Done
-    // card even for GitHub-native issues with no internal row.
-    const cached = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
-    const title = cached ? cached.title : undefined;
-    const showErr = (msg) => {
-      if (!err) { alert(msg); return; }
-      err.textContent = msg;
-      err.classList.remove('hidden');
-    };
-    if (submitBtn) submitBtn.disabled = true;
-    try {
-      const resp = await fetch(`/api/apps/${AppView.appData.slug}/issues/${issueNumber}/complete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...(note ? { note } : {}), ...(title ? { title } : {}) }),
-      });
-      if (!resp.ok) {
-        const data = await resp.json().catch(() => ({}));
-        showErr(data.error || `Mark done failed (HTTP ${resp.status}).`);
-        return;
-      }
-    } catch (fetchErr) {
-      showErr(`Mark done failed: ${fetchErr.message}`);
-      return;
-    } finally {
-      if (submitBtn) submitBtn.disabled = false;
-    }
-    // Optimistically drop the card from the open-issues cache so it leaves
-    // the Issues / In-progress columns immediately; the reload below (and
-    // the WS issue_update for other viewers) reconciles the Done column.
-    AppView._ghIssues = (AppView._ghIssues || []).filter((i) => i.number !== issueNumber);
-    AppView.closeMarkDoneModal();
-    await AppView._loadDevFeed();
-    if (typeof App !== 'undefined' && App.currentSubTab === 'topic'
-        && document.getElementById('gc-thread-head')) {
-      AppView._renderTopicHead();
-    }
-  },
-
   async createProposal() {
     if (!AppView.appData || typeof DevChat === 'undefined') return;
     const session = await DevChat.createSession(AppView.appData.slug);
@@ -3885,12 +3780,6 @@ const AppView = {
     const closeBtn = hasCloseProposal
       ? `<button class="gc-vote-btn" disabled title="A close proposal for this issue is up for vote">Close proposed</button>`
       : `<button class="gc-vote-btn" title="Propose closing this issue — the group votes; if it passes, the issue is closed here and on GitHub" onclick="AppView.promptCloseIssue(${n})">Propose to close</button>`;
-    // #529: admin-only direct "Mark done" — closes the task here and on
-    // GitHub without any implementation, landing it in the Done column as a
-    // manual completion. Visible only to full admins (canAdminWrite).
-    const markDoneBtn = (App.user && App.user.canAdminWrite)
-      ? `<button class="gc-vote-btn" title="Mark this task complete without implementation — closes it here and on GitHub, no code change" onclick="AppView.promptMarkDone(${n})">Mark done</button>`
-      : '';
     // #133: the creating user renders in the meta line below the title.
     // created_by_username comes from the /github-issues route (local
     // issues table → body Source line → GitHub login); omitted when the
@@ -3913,7 +3802,7 @@ const AppView = {
             ${AppView._attrChipsHtml('issue', n, issue)}
             ${AppView._devChatBadge(issue.chatCount)}
           </div>
-          ${AppView._cardActionsHtml([kudosBtn, createBtn, autoBtn, closeBtn, markDoneBtn])}
+          ${AppView._cardActionsHtml([kudosBtn, createBtn, autoBtn, closeBtn])}
         </div>
         ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
       </div>`;
@@ -3938,11 +3827,6 @@ const AppView = {
       : Math.min(AppView._mergedShownDefault, merged.length);
 
     let html = `<div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-1">Completed</div><div class="space-y-2">`;
-    // #529: manually-completed tasks render at the top of the Completed
-    // section (they're always fully loaded, outside the merged pager).
-    for (const c of (AppView._completedIssues || [])) {
-      html += AppView._renderCompletedIssueCard(c);
-    }
     for (let i = 0; i < shown; i++) {
       html += AppView._renderMergedCard(merged[i], majority);
     }
@@ -4113,47 +3997,6 @@ const AppView = {
             ${AppView._cardActionsHtml([AppView.voteButtonsHtml(pr, { collapseVoted: true }), undoUI, kudosBtn, askAiBtn])}
           </div>
           ${AppView.DEV_CARD_CHEVRON}
-        </div>`;
-  },
-
-  // #529: render a Done card for a task marked complete WITHOUT
-  // implementation. Deliberately distinct from _renderMergedCard: a muted
-  // "Completed manually" badge instead of the emerald PR pill, a link to the
-  // GitHub issue (#NN) rather than a PR, and NO vote pill / Undo / kudos —
-  // there was never a code change, so there's nothing to revert or thank.
-  // `item` shape: { number, title, completedAt, completedByUsername, note }.
-  _renderCompletedIssueCard(item) {
-    const it = item || {};
-    const n = it.number;
-    const meta = AppView._ghIssuesMeta || {};
-    const repoUrl = meta.repoUrl || (AppView.appData && AppView.appData.repo_url) || '';
-    const href = (repoUrl && n != null)
-      ? `${repoUrl.replace(/\.git$/, '').replace(/\/$/, '')}/issues/${n}`
-      : '#';
-    const date = it.completedAt ? new Date(it.completedAt).toLocaleDateString() : '';
-    const by = it.completedByUsername
-      ? ` <span class="text-zinc-500">· ${escapeHtml(it.completedByUsername)}</span>`
-      : '';
-    const numLink = n != null
-      ? `<a href="${href}" target="_blank" rel="noopener" class="font-mono text-zinc-400 hover:underline">#${n}</a> · `
-      : '';
-    const badge = `<span class="inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-zinc-500/10 text-zinc-500" title="Marked complete without implementation">Completed manually</span>`;
-    const note = it.note
-      ? `<div class="text-xs text-zinc-500 dark:text-zinc-400 mt-1 break-words">${escapeHtml(it.note)}</div>`
-      : '';
-    return `
-        <div class="gc-vote-item ${AppView.DEV_CARD_CLS}">
-          ${AppView._devCardIcon('done')}
-          <div class="flex-1 min-w-0">
-            <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <div class="dev-card-headline">
-                <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words" title="${escapeHtml(it.title || '')}">${escapeHtml(it.title || `Issue #${n}`)}${by}</div>
-                <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta">${numLink}${date}</div>
-              </div>
-              ${badge}
-            </div>
-            ${note}
-          </div>
         </div>`;
   },
 
