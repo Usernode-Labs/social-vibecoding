@@ -6,7 +6,7 @@
 const App = {
   user: null,
   currentApp: null,
-  // Top-level mode: 'app' (the running iframe) or 'dev' (#194). The
+  // Top-level mode: 'detail' (listing), 'app' (running iframe), or 'dev'. The
   // legacy tab names 'group-chat' / 'individual-chat' are normalized to
   // dev sub-tabs by _normalizeTab so old links, notification hrefs, and
   // call sites keep working.
@@ -878,7 +878,11 @@ const App = {
     }
 
     // Update app view if we're looking at this app
-    if (App.currentApp === data.slug && App.currentTab === 'app') {
+    if (App.currentApp === data.slug && App.currentTab === 'detail' && AppView.appData) {
+      AppView.appData.status = data.status;
+      if (data.url) AppView.appData.url = data.url;
+      if (typeof AppDetail !== 'undefined') AppDetail.render(AppView.appData);
+    } else if (App.currentApp === data.slug && App.currentTab === 'app') {
       if (data.status === 'running' && AppView.appData) {
         AppView.appData.status = 'running';
         AppView.appData.url = data.url;
@@ -1201,16 +1205,8 @@ const App = {
   handleAppUpdate(data) {
     if (data.action === 'renamed') {
       // Update home card (if visible) and header (if we're on this app).
-      const card = document.querySelector(`.app-card[data-slug="${data.slug}"]`);
-      if (card) {
-        const nameEl = card.querySelector('.font-medium');
-        if (nameEl) nameEl.textContent = data.newName;
-        // Only letter-fallback tiles track the name; a custom icon
-        // (emoji/image from dapp.json) must not be clobbered by a rename.
-        const avatar = card.querySelector('[data-icon]') || card.querySelector('div.rounded-xl');
-        if (avatar && (avatar.dataset?.icon || 'letter') === 'letter') {
-          avatar.textContent = (data.newName || '?').charAt(0).toUpperCase();
-        }
+      if (typeof Home !== 'undefined' && Home.updateAppCardName) {
+        Home.updateAppCardName(data.slug, data.newName);
       }
       if (App.currentApp === data.slug) {
         App.setHeaderTitle(data.newName);
@@ -1219,11 +1215,10 @@ const App = {
         }
       }
     } else if (data.action === 'icon_changed') {
-      // A deploy reconciled this app's dapp.json icon block (emoji /
-      // image / cleared back to the letter). Patch the mounted home
-      // tile in place — no full Home.load().
+      // Normalize any already-mounted legacy tile back to the generated
+      // letter system when older dapp.json icon metadata changes.
       if (typeof Home !== 'undefined' && Home.updateAppCardIcon) {
-        Home.updateAppCardIcon(data.slug, data.iconEmoji, data.iconUrl);
+        Home.updateAppCardIcon(data.slug);
       }
     } else if (data.action === 'lock_changed') {
       // The admin-gated change lock flipped on this app (see
@@ -1837,7 +1832,8 @@ const App = {
         // app/{slug}/dev (the card list), app/{slug}/dev/chat (general
         // chat), app/{slug}/dev/issues/{n} / dev/proposals/{id} /
         // dev/governance/{id} (full-screen topic views),
-        // app/{slug}/dev/sessions/{id} (session view), dev/settings.
+        // app/{slug}/dev/sessions/{id} (session view), dev/settings, and
+        // dev/listing.
         // Legacy hashes — group-chat, individual-chat[/{sessionId}], and
         // the old dev/chat|issues|proposals sub-tab forms — all map onto
         // the forum so old links and notification hrefs keep working.
@@ -1849,7 +1845,9 @@ const App = {
         // below and get the regular App tab — a graceful degrade.
         const chromeless = tab === 'full';
         if (chromeless) tab = 'app';
-        if (tab === 'dev') {
+        if (tab === 'detail') {
+          // Public listing/read layer before launching an unfamiliar app.
+        } else if (tab === 'dev') {
           const sec = parts[3] || null;
           if (sec === 'sessions' && parts[4]) {
             subTab = 'sessions';
@@ -1860,6 +1858,8 @@ const App = {
             subTab = 'chat';
           } else if (sec === 'settings') {
             subTab = 'settings';
+          } else if (sec === 'listing') {
+            subTab = 'listing';
           } else if (sec === 'issues' && parts[4]) {
             subTab = 'topic';
             ref = { kind: 'issue', id: parseInt(parts[4]) || null };
@@ -2027,13 +2027,17 @@ const App = {
 
     let newHash;
     if (App.currentApp) {
-      if (App.currentTab === 'dev') {
+      if (App.currentTab === 'detail') {
+        newHash = `#app/${App.currentApp}/detail`;
+      } else if (App.currentTab === 'dev') {
         if (App.currentSubTab === 'sessions' && DevChat.currentSession) {
           newHash = `#app/${App.currentApp}/dev/sessions/${DevChat.currentSession.id}`;
         } else if (App.currentSubTab === 'chat') {
           newHash = `#app/${App.currentApp}/dev/chat`;
         } else if (App.currentSubTab === 'settings') {
           newHash = `#app/${App.currentApp}/dev/settings`;
+        } else if (App.currentSubTab === 'listing') {
+          newHash = `#app/${App.currentApp}/dev/listing`;
         } else if (App.currentSubTab === 'topic'
             && typeof AppView !== 'undefined' && AppView._devTopic) {
           const t = AppView._devTopic;
@@ -2067,7 +2071,7 @@ const App = {
     // entry, so device/browser back mirrors the in-page back buttons —
     // but which session/topic isn't part of the id (moving between two
     // topics of the same kind replaces in place).
-    const SUB_SCREENS = new Set(['sessions', 'chat', 'settings', 'issues', 'proposals', 'governance']);
+    const SUB_SCREENS = new Set(['sessions', 'chat', 'settings', 'listing', 'issues', 'proposals', 'governance']);
     const screenIdOf = (h) => {
       const segs = String(h || '').replace(/^#/, '').split('/');
       if (segs[0] === 'app' && segs[2] === 'dev') {
@@ -2366,6 +2370,7 @@ const App = {
 
   navigateHome() {
     App.setChromeless(false);
+    if (typeof AppDetail !== 'undefined') AppDetail.close();
     AppView.close();
     App.currentApp = null;
     document.getElementById('app-view').classList.add('hidden');
@@ -2439,7 +2444,7 @@ const App = {
   },
 
   // Normalize every tab vocabulary onto the forum-era model (#194
-  // revision). Returns { tab, subTab, ref } where tab ∈ 'app'|'dev' and
+  // revision). Returns { tab, subTab, ref } where tab is detail/app/dev and
   // subTab ∈ 'forum'|'sessions'. Legacy names (group-chat,
   // individual-chat, and the old dev sub-tabs chat/issues/proposals)
   // keep working at every entry point — old sub-tab refs are converted
@@ -2447,6 +2452,7 @@ const App = {
   _normalizeTab(tab, ref, subTab) {
     if (tab === 'group-chat') { tab = 'dev'; subTab = 'chat'; }
     else if (tab === 'individual-chat') { tab = 'dev'; subTab = subTab || 'sessions'; }
+    if (tab === 'detail') return { tab: 'detail', subTab: null, ref: null };
     if (tab !== 'dev') return { tab: 'app', subTab: null, ref: null };
 
     if (subTab === 'sessions') {
@@ -2460,6 +2466,7 @@ const App = {
     // Full-screen sub-views with no deep-link payload.
     if (subTab === 'chat') return { tab: 'dev', subTab: 'chat', ref: null };
     if (subTab === 'settings') return { tab: 'dev', subTab: 'settings', ref: null };
+    if (subTab === 'listing') return { tab: 'dev', subTab: 'listing', ref: null };
 
     // A typed topic ref — from the 'topic' sub-view itself or the
     // legacy issues/proposals sub-tab vocabulary — opens that topic
@@ -2505,8 +2512,13 @@ const App = {
       subTab = null;
       ref = null;
     }
+    if (App.currentTab === 'detail' && tab !== 'detail' && typeof AppDetail !== 'undefined') {
+      AppDetail.close();
+    }
     App.currentTab = tab;
     App.currentSubTab = tab === 'dev' ? (subTab || 'forum') : null;
+    const tabBar = document.getElementById('app-tabs');
+    if (tabBar) tabBar.classList.toggle('hidden', tab === 'detail');
     document.querySelectorAll('.app-tab').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.tab === tab);
     });
@@ -2529,7 +2541,9 @@ const App = {
       }
     }
 
-    if (tab === 'app') {
+    if (tab === 'detail') {
+      if (typeof AppDetail !== 'undefined') await AppDetail.render(AppView.appData);
+    } else if (tab === 'app') {
       AppView.renderAppTab();
     } else {
       await AppView.renderDevView(App.currentSubTab, ref);

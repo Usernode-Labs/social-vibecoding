@@ -1,9 +1,9 @@
-// Homepage restructure: compact app cards + the "…" actions menu in
+// Homepage restructure: compact app cards + the long-press actions menu in
 // public/js/home.js.
 //
 // Contract pinned here:
-//   - renderAppCard emits exactly one `.card-menu-btn` trigger and none
-//     of the old corner buttons (star / lock / delete / check-updates);
+//   - renderAppCard has no visible menu trigger or old corner buttons
+//     (star / lock / delete / check-updates); tapping opens app detail;
 //   - the inline Retry button appears ONLY on errored cards, for the
 //     creator or a full admin (canAdminWrite — view-only admins are
 //     excluded, issue #311);
@@ -107,13 +107,11 @@ const baseApp = (over) => ({
 
 // ── Compact card markup ───────────────────────────────────────────
 
-test('card: one hamburger trigger, none of the old corner buttons', () => {
+test('card: no hamburger or old corner buttons', () => {
   const Home = makeHome({ id: ME, canAdminWrite: true });
   const html = Home.renderAppCard(baseApp());
-  assert.equal((html.match(/card-menu-btn/g) || []).length, 1, 'exactly one menu trigger');
-  // The trigger is a hamburger SVG (three horizontal lines), not the
-  // old "⋯" glyph.
-  assert.match(html, /card-menu-btn[\s\S]*?M4 6h16M4 12h16M4 18h16/, 'hamburger icon path');
+  assert.doesNotMatch(html, /card-menu-btn/, 'no visible menu trigger');
+  assert.doesNotMatch(html, /M4 6h16M4 12h16M4 18h16/, 'no hamburger icon path');
   assert.doesNotMatch(html, /⋯/, 'no ⋯ glyph anywhere on the card');
   assert.doesNotMatch(html, /star-btn/, 'no inline star');
   assert.doesNotMatch(html, /lock-btn/, 'no inline lock');
@@ -156,60 +154,61 @@ test('menu header: always carries the app’s FULL pill set, inert', () => {
   assert.doesNotMatch(Home.renderMenuHeaderHtml(baseApp()), /card-menu-pills/);
 });
 
-test('card layout: icon first with the hamburger badged on its corner, title below', () => {
+test('card layout: rich row shows icon and identity without a trailing control', () => {
   const Home = makeHome({ id: ME });
   const html = Home.renderAppCard(baseApp({ active_users: '3' }));
-  assert.match(html, /w-14 h-14/, 'large icon');
-  // The hamburger badge lives inside the icon wrapper, overlapping its
-  // top-right corner — so in markup order: icon initial → menu button
-  // → title name.
-  const iconIdx = html.indexOf('bg-violet-600/20');
-  const menuIdx = html.indexOf('card-menu-btn');
-  const nameIdx = html.indexOf('Demo App');
-  assert.ok(iconIdx !== -1 && iconIdx < menuIdx && menuIdx < nameIdx,
-    'icon → hamburger badge → title order');
-  assert.match(html, /card-menu-btn[^"]*absolute -top-1\.5 -right-1\.5/,
-    'badge overlaps the icon corner');
-  assert.match(html, /card-menu-btn[^"]*rounded-full/, 'badge is round');
-  // The old measured-slot machinery is gone from the markup.
-  assert.doesNotMatch(html, /card-actions/, 'no floating actions block');
+  assert.match(html, /app-discovery-card/, 'rich row');
+  const iconIdx = html.indexOf('app-card-icon');
+  const nameIdx = html.indexOf('app-card-name');
+  assert.ok(iconIdx !== -1 && iconIdx < nameIdx, 'icon precedes title');
+  assert.doesNotMatch(html, /card-menu-btn/, 'no trailing menu trigger');
+  assert.doesNotMatch(html, /app-card-actions/, 'running rows need no trailing action region');
   assert.doesNotMatch(html, /card-footer/, 'no footer row');
-  assert.doesNotMatch(html, /card-title-row/, 'no fit-pass title hooks');
+  assert.match(html, /app-card-title-row/, 'identity row present');
 });
 
-test('card layout: centered launcher tile, no visible border, capped title width', () => {
+test('card layout: rich row has shrinking copy and a stable identity line', () => {
   const Home = makeHome({ id: ME });
   const html = Home.renderAppCard(baseApp());
   // Icon + title block center horizontally in the tile.
-  assert.match(html, /app-card[^"]*flex flex-col items-center text-center/, 'centered column');
-  assert.match(html, /flex items-center justify-center[^"]*max-w-full/, 'centered, width-capped title row');
+  assert.match(html, /app-card-copy/, 'shrinking copy region');
+  assert.match(html, /app-card-title-row/, 'identity row');
   // Long names truncate with an ellipsis instead of stretching:
   // min-w-0 lets the flex item shrink, truncate clips it.
-  assert.match(html, /font-medium text-sm truncate min-w-0/, 'name truncates');
-  // The card element itself draws no border — hover tint (app.css) is
-  // the affordance. (The hamburger badge keeps its own tiny border.)
+  assert.match(html, /app-card-name/, 'name truncation hook');
+  // The card element itself draws no border; hover tint is the affordance.
   const cardCls = html.match(/class="(app-card [^"]*)"/)[1];
   assert.ok(!/\bborder\b|border-zinc|hover:border/.test(cardCls),
     `no border classes on the card element (got: ${cardCls})`);
 });
 
-test('card: Retry pins to the card corner on errored cards, outside the hamburger badge', () => {
+test('card: category and escaped tagline are visible comparison cues', () => {
+  const Home = makeHome({ id: ME });
+  const html = Home.renderAppCard(baseApp({
+    category: 'tool',
+    tagline: 'Plan <shared> work & ship',
+  }));
+  assert.match(html, /app-category-chip is-tool[^>]*>Tool</);
+  assert.match(html, /app-card-tagline[^>]*>Plan &lt;shared&gt; work &amp; ship</);
+  assert.doesNotMatch(html, /<shared>/, 'tagline is never interpreted as markup');
+});
+
+test('card: Retry remains a separate recovery action on errored rows', () => {
   const Home = makeHome({ id: ME });
   const html = Home.renderAppCard(baseApp({ status: 'error', created_by: ME }));
-  assert.match(html, /retry-btn[^"]*absolute top-2 right-2/, 'Retry corner-pinned');
-  assert.match(html, /card-menu-btn/, 'hamburger badge still present');
+  assert.match(html, /app-card-actions[\s\S]*retry-btn/, 'Retry keeps a trailing action region');
+  assert.doesNotMatch(html, /card-menu-btn/, 'no hamburger beside Retry');
   // No Retry on a running card.
   assert.doesNotMatch(Home.renderAppCard(baseApp({ created_by: ME })), /retry-btn/);
 });
 
-test('card: active users render as a compact badge beside the title', () => {
+test('card: active users use the explicit discovery metric label', () => {
   const Home = makeHome({ id: ME });
   const html = Home.renderAppCard(baseApp({ active_users: '12' }));
-  assert.match(html, /users-badge[^>]*title="12 active users"[\s\S]*?>12</, 'count + tooltip');
-  assert.doesNotMatch(html, /active user(s)?</, 'no spelled-out footer line');
+  assert.match(html, /users-badge[^>]*title="People who used this app in the last 10 days"[^>]*>12 active</);
   // Uniform signal: the badge renders at zero too.
   const zero = Home.renderAppCard(baseApp({ active_users: '0' }));
-  assert.match(zero, /users-badge[^>]*title="0 active users"/);
+  assert.match(zero, /users-badge[^>]*>0 active</);
   assert.doesNotMatch(zero, /No active users yet/, 'old empty-state line gone');
 });
 
@@ -349,16 +348,16 @@ test('menu: plain user on a non-member app gets exactly the favorite toggle', ()
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp());
   assert.deepEqual(keys(items), ['favorite'], 'nothing admin-gated leaks');
-  assert.equal(items[0].label, 'Add to Your apps');
+  assert.equal(items[0].label, 'Add to favorites');
 });
 
 test('menu: favorited app flips the label to Remove', () => {
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp({ is_favorited: true }));
-  assert.equal(items[0].label, 'Remove from Your apps');
+  assert.equal(items[0].label, 'Remove from favorites');
 });
 
-test('menu: member apps get a DISABLED "In Your apps" row, never a Remove', () => {
+test('menu: member apps get a DISABLED "In favorites" row, never a Remove', () => {
   // The entry must render for every app so the affordance is always
   // discoverable — a user who is a member of every app they open
   // (e.g. the creator of most apps on an instance) would otherwise
@@ -369,7 +368,7 @@ test('menu: member apps get a DISABLED "In Your apps" row, never a Remove', () =
     .find((i) => i.key === 'favorite');
   assert.ok(fav, 'favorite entry present on member apps');
   assert.equal(fav.disabled, true, 'but disabled (membership is not removable)');
-  assert.match(fav.label, /In Your apps/);
+  assert.match(fav.label, /In favorites/);
   assert.doesNotMatch(fav.label, /Remove/, 'no Remove offered on member apps');
   assert.equal(fav.run, undefined, 'no action wired');
   // Even a favorited member app never offers Remove (removing the
@@ -574,7 +573,7 @@ test('widget section: tiles in registry order, each with a remove button', () =>
   const Home = makeHome({ id: ME });
   Home._shortcutSupport = { mechanism: 'widget' };
   Home._widgetSectionVisible = true;
-  Home._apps = [baseApp()];
+  Home._apps = [baseApp({ icon_emoji: '\u{1F3AF}', icon_url: '/icons/ignored.png' })];
   Home._widgetItems = [
     { id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app' },
     { id: 'w2', name: 'Other Dapp', url: 'https://elsewhere.test/thing' },
@@ -585,6 +584,9 @@ test('widget section: tiles in registry order, each with a remove button', () =>
   assert.match(html, /id="widget-strip"/);
   assert.equal((html.match(/class="widget-tile /g) || []).length, 2);
   assert.equal((html.match(/widget-remove-btn/g) || []).length, 2);
+  assert.equal((html.match(/data-icon="letter"/g) || []).length, 2);
+  assert.ok(!html.includes('\u{1F3AF}') && !html.includes('ignored.png'),
+    'widget management tiles use generated letters too');
   assert.ok(
     html.indexOf('data-wid="w1"') < html.indexOf('data-wid="w2"'),
     'tiles follow registry order'
@@ -614,7 +616,7 @@ test('widget section: help icon toggles the add-widget instructions', () => {
   assert.match(html, /Add Widget/, 'panel explains the iOS add-widget flow');
 });
 
-test('shortcut icons: emoji/letter apps get a canvas data URI, image apps a URL', async () => {
+test('shortcut icons always use the generated letter tile', async () => {
   const { Home, sandbox } = makeHomeEnv({ id: ME });
   // Fake 2D canvas — the vm sandbox has no real DOM.
   sandbox.document.createElement = () => ({
@@ -629,9 +631,9 @@ test('shortcut icons: emoji/letter apps get a canvas data URI, image apps a URL'
   };
   Home._shortcutSupport = { mechanism: 'widget' };
   await Home._addShortcutForApp(baseApp({ icon_emoji: '\u{1F3AF}' }));
-  assert.equal(added[0].icon_url, 'data:image/png;base64,FAKE', 'emoji tile rendered to data URI');
+  assert.equal(added[0].icon_url, 'data:image/png;base64,FAKE');
   await Home._addShortcutForApp(baseApp({ icon_url: '/icons/x.png' }));
-  assert.equal(added[1].icon_url, 'https://sv.test/icons/x.png', 'real icons pass through as absolute URLs');
+  assert.equal(added[1].icon_url, 'data:image/png;base64,FAKE');
 });
 
 test('icon heal: has_icon:false entries are silently re-added once', async () => {
@@ -653,15 +655,15 @@ test('icon heal: has_icon:false entries are silently re-added once', async () =>
     }),
   };
   Home._shortcutSupport = { mechanism: 'widget' };
-  // 'Iconed' has a real image icon whose recorded source is current, so
-  // with has_icon:true nothing re-sends it.
+  // Iconed already has the current generated tile, so has_icon:true is enough
+  // to leave it alone.
   Home._apps = [
     baseApp(),
     baseApp({ slug: 'iconed', name: 'Iconed', icon_url: '/icons/x.png' }),
   ];
   sandbox.localStorage.setItem(
     'sv:widget_icon_src',
-    JSON.stringify({ w2: 'https://sv.test/icons/x.png' })
+    JSON.stringify({ w2: `tile:${Home.WIDGET_ICON_GEN}:Iconed` })
   );
   await Home._refreshWidgetItems();
   // Only the SV app missing its icon is re-added; the healthy entry and
@@ -728,15 +730,15 @@ test('icon heal: unknown last-sent source re-sends once, then settles', async ()
   await Home._refreshWidgetItems();
   assert.equal(added.length, 2, 'both entries refreshed when sources are unknown');
   const srcMap = JSON.parse(sandbox.localStorage.getItem('sv:widget_icon_src'));
-  assert.equal(srcMap.w1, `tile:${Home.WIDGET_ICON_GEN}:`, 'canvas tile source recorded');
-  assert.equal(srcMap.w2, 'https://sv.test/icons/x.png', 'image icon source recorded');
+  assert.equal(srcMap.w1, `tile:${Home.WIDGET_ICON_GEN}:Demo%20App`);
+  assert.equal(srcMap.w2, `tile:${Home.WIDGET_ICON_GEN}:Iconed`);
   // Sources now recorded → later refreshes send nothing.
   Home._iconHealTried = null; // even across a fresh page load
   await Home._refreshWidgetItems();
   assert.equal(added.length, 2, 'no repeat once sources are recorded');
 });
 
-test('icon heal: app gaining an icon after pinning re-sends the new icon', async () => {
+test('icon heal: app rename re-sends its generated identity', async () => {
   const { Home, sandbox } = makeHomeEnv({ id: ME });
   sandbox.document.createElement = () => ({
     getContext: () => ({ fillRect() {}, fillText() {} }),
@@ -758,20 +760,19 @@ test('icon heal: app gaining an icon after pinning re-sends the new icon', async
   Home._apps = [baseApp()];
   sandbox.localStorage.setItem(
     'sv:widget_icon_src',
-    JSON.stringify({ w1: `tile:${Home.WIDGET_ICON_GEN}:` })
+    JSON.stringify({ w1: `tile:${Home.WIDGET_ICON_GEN}:Demo%20App` })
   );
   await Home._refreshWidgetItems();
   assert.equal(added.length, 0, 'up-to-date tile is left alone');
-  // An icon proposal passes: the app now has an icon_url. The widget
-  // PNG (still the letter tile) is stale even though has_icon:true.
-  Home._apps = [baseApp({ icon_url: '/icons/new.png' })];
+  // A rename changes both the displayed letter/color identity marker.
+  Home._apps = [baseApp({ name: 'Puzzle Orbit' })];
   Home._iconHealTried = null; // fresh page load
   await Home._refreshWidgetItems();
-  assert.equal(added.length, 1, 'stale tile re-sent after the app gained an icon');
-  assert.equal(added[0].icon_url, 'https://sv.test/icons/new.png');
+  assert.equal(added.length, 1, 'stale generated tile re-sent after rename');
+  assert.equal(added[0].icon_url, 'data:image/png;base64,FAKE');
   assert.equal(added[0].silent, true);
   const srcMap = JSON.parse(sandbox.localStorage.getItem('sv:widget_icon_src'));
-  assert.equal(srcMap.w1, 'https://sv.test/icons/new.png', 'new source recorded');
+  assert.equal(srcMap.w1, `tile:${Home.WIDGET_ICON_GEN}:Puzzle%20Orbit`);
 });
 
 test('icon heal: unpinned shortcut records are pruned from the source map', async () => {

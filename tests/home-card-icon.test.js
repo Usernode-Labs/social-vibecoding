@@ -1,9 +1,5 @@
-// Home-card icon tile states (dapp.json `icon` block): renderAppCard
-// must render exactly one of three tile kinds — a custom image
-// (icon_url), an emoji (icon_emoji), or the first-letter fallback —
-// tagged with data-icon so the WS rename handler (app.js) can tell a
-// custom icon from the letter placeholder, and updateAppCardIcon must
-// patch a mounted tile in place across all three states.
+// Home-card icons use one generated identity grammar: first letter plus
+// deterministic name color. Legacy dapp.json icon metadata must not change it.
 //
 // home.js is a plain browser script (`const Home = {…}`); we load it
 // into a vm context, stub the globals it reaches, and assert on the
@@ -79,36 +75,48 @@ function baseApp(overrides = {}) {
 test('letter fallback renders when no icon is declared', () => {
   const html = makeHome().renderAppCard(baseApp());
   assert.match(html, /data-icon="letter"/);
+  assert.match(html, /style="--app-icon-bg:hsl\(\d+ 45% 22%\);--app-icon-fg:hsl\(\d+ 70% 70%\)"/);
   assert.match(html, />\s*D\s*</);
   assert.doesNotMatch(html, /<img/);
 });
 
-test('emoji icon renders on the tile', () => {
+test('generated icon colors are deterministic and vary by name', () => {
+  const Home = makeHome();
+  assert.deepEqual(
+    { ...Home.nameToColor('Demo App') },
+    { ...Home.nameToColor('Demo App') }
+  );
+  assert.notEqual(Home.nameToHue('Demo App'), Home.nameToHue('Puzzle Orbit'));
+});
+
+test('declared emoji is ignored in favor of the generated letter tile', () => {
   const html = makeHome().renderAppCard(baseApp({ icon_emoji: '🎮' }));
-  assert.match(html, /data-icon="emoji"/);
-  assert.ok(html.includes('🎮'));
+  assert.match(html, /data-icon="letter"/);
+  assert.match(html, />\s*D\s*</);
+  assert.doesNotMatch(html, /🎮/);
   assert.doesNotMatch(html, /<img/);
 });
 
-test('image icon renders an <img> and wins over emoji', () => {
+test('declared image is ignored in favor of the generated letter tile', () => {
   const html = makeHome().renderAppCard(
     baseApp({ icon_emoji: '🎮', icon_url: '/app-icons/' + 'a'.repeat(32) })
   );
-  assert.match(html, /data-icon="image"/);
-  assert.match(html, /<img src="\/app-icons\/a{32}"/);
-  assert.match(html, /object-cover/);
+  assert.match(html, /data-icon="letter"/);
+  assert.match(html, />\s*D\s*</);
+  assert.doesNotMatch(html, /<img/);
 });
 
-test('icon_url is HTML-escaped', () => {
+test('legacy icon metadata is never interpolated into card markup', () => {
   const html = makeHome().renderAppCard(
     baseApp({ icon_url: '/x"><script>alert(1)</script>' })
   );
+  assert.doesNotMatch(html, /icon_url|\/x/);
   assert.doesNotMatch(html, /<script>/);
 });
 
-test('updateAppCardIcon patches a mounted tile across states', () => {
+test('legacy icon updates keep a mounted tile on the generated identity', () => {
   const Home = makeHome();
-  const tile = { dataset: { icon: 'letter' }, innerHTML: 'D' };
+  const tile = { dataset: { icon: 'letter' }, innerHTML: 'D', style: { cssText: '' } };
   const card = {
     querySelector: (sel) => (sel === '[data-icon]' ? tile : { textContent: 'Demo App' }),
   };
@@ -117,19 +125,37 @@ test('updateAppCardIcon patches a mounted tile across states', () => {
   Home._apps = [baseApp()];
 
   Home.updateAppCardIcon('demo', '🚀', null);
-  assert.equal(tile.dataset.icon, 'emoji');
-  assert.ok(tile.innerHTML.includes('🚀'));
-  assert.equal(Home._apps[0].icon_emoji, '🚀');
+  assert.equal(tile.dataset.icon, 'letter');
+  assert.equal(tile.innerHTML, 'D');
+  assert.doesNotMatch(tile.innerHTML, /🚀/);
 
   Home.updateAppCardIcon('demo', null, '/app-icons/' + 'b'.repeat(32));
-  assert.equal(tile.dataset.icon, 'image');
-  assert.match(tile.innerHTML, /<img/);
+  assert.equal(tile.dataset.icon, 'letter');
+  assert.equal(tile.innerHTML, 'D');
 
   // Cleared back to the letter fallback (derived from the cached name).
   Home.updateAppCardIcon('demo', null, null);
   assert.equal(tile.dataset.icon, 'letter');
   assert.equal(tile.innerHTML, 'D');
-  assert.equal(Home._apps[0].icon_url, null);
+  assert.match(tile.style.cssText, /--app-icon-bg:hsl\(/);
+});
+
+test('rename refreshes the generated letter and deterministic color', () => {
+  const Home = makeHome();
+  const nameEl = { textContent: 'Demo App' };
+  const tile = { dataset: { icon: 'letter' }, textContent: 'D', style: { cssText: '' } };
+  const card = {
+    querySelector: (sel) => sel === '.app-card-name' ? nameEl : tile,
+  };
+  Home.__sandbox.document.querySelector = () => card;
+  Home._apps = [baseApp()];
+
+  Home.updateAppCardName('demo', 'Puzzle Orbit');
+
+  assert.equal(nameEl.textContent, 'Puzzle Orbit');
+  assert.equal(tile.textContent, 'P');
+  assert.match(tile.style.cssText, /--app-icon-bg:hsl\(/);
+  assert.equal(Home._apps[0].name, 'Puzzle Orbit');
 });
 
 test('updateAppCardIcon is a safe no-op when the card is not mounted', () => {

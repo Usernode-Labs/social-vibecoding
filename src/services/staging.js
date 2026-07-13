@@ -381,6 +381,10 @@ async function rebuildProductionInner(config, app) {
     // the letter tile. Best-effort; needs cloneDir for the image bytes.
     await appManifest.reconcileAppIcon(prodPool, app, manifest, cloneDir)
       .catch((err) => log.warn('staging', 'Icon reconcile failed', { app: app.slug, err: err.message }));
+    // Listing values seed empty columns only. Platform edits remain the
+    // source of truth on every rebuild after that first seed.
+    await appManifest.reconcileAppListing(prodPool, app, manifest)
+      .catch((err) => log.warn('staging', 'Listing seed failed', { app: app.slug, err: err.message }));
     const stored = await appSecrets.getRawValues(prodPool, app.id, config.jwtSecret);
     const merge = appSecrets.mergeForDeploy(
       manifest, stored, appSecrets.platformDefaultsFromEnv()

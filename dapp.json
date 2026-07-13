@@ -1,5 +1,4 @@
 {
-  "icon": { "emoji": "🏗️" },
   "secrets": [
     {
       "key": "GITHUB_APP_ID",
@@ -130,25 +129,30 @@
       "expectSelector": "#home-search-input"
     },
     {
-      "name": "Home 'Your apps' section renders for the seeded admin",
+      "name": "Home Favorites section renders for the seeded admin",
       "path": "/",
       "expectSelector": ".app-card[data-yours='true']"
     },
     {
       "name": "Home demo icon tiles render",
       "path": "/?demo=1",
-      "expectSelector": ".app-card [data-icon='emoji']"
+      "expectSelector": ".app-card [data-icon='letter']"
     },
     {
       "name": "Home fork-lineage tag renders on forked tiles",
       "path": "/",
-      "expectSelector": ".fork-tag"
+      "expectSelector": ".app-fork-tag"
     },
     {
       "name": "App-view header shows the Forked-from label",
       "path": "/app/staging-demo-fork",
       "expectText": "Forked from",
       "allowConsoleErrors": true
+    },
+    {
+      "name": "App detail page renders",
+      "path": "/?demo=1#app/usernode-2d5619/detail",
+      "expectSelector": ".app-detail-page"
     }
   ]
 }

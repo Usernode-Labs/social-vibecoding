@@ -17,6 +17,9 @@ const events = require('../services/events');
 const appAccess = require('../services/app-access');
 
 const VISIBILITY_VALUES = new Set(['public', 'private']);
+const LISTING_CATEGORIES = new Set(['game', 'tool']);
+const MAX_TAGLINE_LENGTH = 80;
+const CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/;
 
 // Validate a (collabVisibility, viewVisibility) pair against the
 // invariants (see schema.sql): both must be public|private, and
@@ -773,16 +776,121 @@ function appRoutes(config) {
         }
       }
 
+      const [favoriteResult, activeResult] = await Promise.all([
+        req.user?.id
+          ? pool.query(
+              'SELECT 1 FROM app_favorites WHERE app_id = $1 AND user_id = $2',
+              [appRow.id, req.user.id]
+            )
+          : Promise.resolve({ rows: [] }),
+        pool.query(
+          `SELECT COUNT(DISTINCT a1.user_id) AS cnt
+             FROM app_activity a1
+            WHERE a1.app_id = $1
+              AND a1.date >= CURRENT_DATE - 10
+              AND EXISTS (
+                SELECT 1 FROM app_activity a2
+                 WHERE a2.app_id = a1.app_id
+                   AND a2.user_id = a1.user_id
+                   AND a2.seconds_spent >= 60
+              )`,
+          [appRow.id]
+        ),
+      ]);
+
       const appPayload = {
         ...appRow,
         url,
         missingSecrets,
+        icon_url: appRow.icon_image_id ? `/app-icons/${appRow.icon_image_id}` : null,
+        is_favorited: favoriteResult.rows.length > 0,
+        active_users: parseInt(activeResult.rows[0]?.cnt, 10) || 0,
         ...accessFlags(appRow, req.user, isCollaborator),
       };
       await attachForkLineage(pool, appPayload);
       res.json({ app: appPayload });
     } catch (err) {
       log.error('apps', 'Failed to get app', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Direct listing edits are intentionally small and collaborator-gated.
+  // Private apps still return 404 through getAppForUser, preserving the
+  // platform's non-disclosure rule for slug probes.
+  router.patch('/api/apps/:slug/listing', async (req, res) => {
+    const hasCategory = Object.prototype.hasOwnProperty.call(req.body || {}, 'category');
+    const hasTagline = Object.prototype.hasOwnProperty.call(req.body || {}, 'tagline');
+    if (!hasCategory && !hasTagline) {
+      return res.status(400).json({ error: 'Category or tagline is required' });
+    }
+
+    let category;
+    if (hasCategory) {
+      category = req.body.category;
+      if (category !== null && !LISTING_CATEGORIES.has(category)) {
+        return res.status(400).json({ error: 'Category must be game, tool, or null' });
+      }
+    }
+
+    let tagline;
+    if (hasTagline) {
+      if (req.body.tagline === null) {
+        tagline = null;
+      } else if (typeof req.body.tagline !== 'string') {
+        return res.status(400).json({ error: 'Tagline must be text or null' });
+      } else {
+        tagline = req.body.tagline.trim();
+        if (tagline.length > MAX_TAGLINE_LENGTH) {
+          return res.status(400).json({ error: 'Tagline must be 80 characters or fewer' });
+        }
+        if (CONTROL_CHAR_RE.test(tagline)) {
+          return res.status(400).json({ error: 'Tagline cannot contain control characters' });
+        }
+        if (!tagline) tagline = null;
+      }
+    }
+
+    try {
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
+      if (!app || (app.self_hosted && !req.user?.isAdmin && !config.selfAppPublicVoting)) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+      const { rows } = await pool.query(
+        `UPDATE apps
+            SET category = CASE WHEN $1::boolean THEN $2 ELSE category END,
+                tagline = CASE WHEN $3::boolean THEN $4 ELSE tagline END
+          WHERE id = $5
+          RETURNING category, tagline`,
+        [hasCategory, category ?? null, hasTagline, tagline ?? null, app.id]
+      );
+      res.json(rows[0]);
+    } catch (err) {
+      log.error('apps', 'Failed to update app listing', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.get('/api/apps/:slug/builders', async (req, res) => {
+    try {
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!app || (app.self_hosted && !req.user?.isAdmin && !config.selfAppPublicVoting)) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+      const { rows } = await pool.query(
+        `SELECT cs.user_id, u.username, COUNT(*)::int AS merged_count
+           FROM chat_sessions cs
+           JOIN users u ON u.id = cs.user_id
+          WHERE cs.app_id = $1 AND cs.status = 'merged'
+          GROUP BY cs.user_id, u.username
+          ORDER BY merged_count DESC, u.username ASC`,
+        [app.id]
+      );
+      res.json({ builders: rows });
+    } catch (err) {
+      log.error('apps', 'Failed to list app builders', { slug: req.params.slug, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
