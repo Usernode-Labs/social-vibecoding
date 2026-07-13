@@ -130,6 +130,11 @@
       "expectSelector": "#home-search-input"
     },
     {
+      "name": "Notifications drawer renders its Mark-all-read control",
+      "path": "/",
+      "expectSelector": "#notifications-mark-all"
+    },
+    {
       "name": "Home 'Your apps' section renders for the seeded admin",
       "path": "/",
       "expectSelector": ".app-card[data-yours='true']"

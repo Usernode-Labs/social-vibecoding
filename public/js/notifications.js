@@ -247,6 +247,11 @@ const Notifications = {
       Notifications._reconcileCompletionTitle();
       Notifications._renderBadge();
       Notifications._renderList();
+      // #449: an open group chat may be showing unread dots for the
+      // mentions/replies/reactions that were just cleared — reconcile
+      // them from the now-read items list right away, instead of relying
+      // solely on the server's notifications_changed round-trip.
+      window.GroupChat?.reconcileDotsFromNotifications?.();
     } catch (err) {
       console.warn('[notifications] markAllRead failed', err);
     }

@@ -590,19 +590,23 @@ async function markReadForApp(pool, userId, appId) {
   return rowCount || 0;
 }
 
+// Single-id and mark-all clears. Returns rows actually cleared (like the
+// scoped helpers above) so the route can decide whether to fan out a
+// cross-tab `notifications_changed` refresh.
 async function markRead(pool, userId, { id, all = false } = {}) {
   if (all) {
-    await pool.query(
+    const { rowCount } = await pool.query(
       `UPDATE notifications SET read_at = NOW() WHERE user_id = $1 AND read_at IS NULL`,
       [userId]
     );
-    return;
+    return rowCount || 0;
   }
-  if (!id) return;
-  await pool.query(
+  if (!id) return 0;
+  const { rowCount } = await pool.query(
     `UPDATE notifications SET read_at = NOW() WHERE id = $1 AND user_id = $2 AND read_at IS NULL`,
     [id, userId]
   );
+  return rowCount || 0;
 }
 
 // Decorate a raw notification row with the fields the client dropdown wants.
