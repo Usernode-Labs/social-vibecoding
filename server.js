@@ -1049,6 +1049,10 @@ async function resumeIssueCloseWatches(config) {
       linkedIssues: row.linked_issues,
       appSlug: row.app_slug,
       appId: row.app_id,
+      // The merge-time superseded-proposal resolve ran in the dead
+      // pre-restart process — the resumed watch re-runs it for observed
+      // closes so no close-issue proposal is left dangling.
+      pool,
     }).catch((err) => {
       log.warn('server', 'Resumed issue-close watch failed', {
         sessionId: row.id, err: err.message,
@@ -1987,22 +1991,31 @@ function startStalePrSweeper(config) {
       log.warn('server', 'Window-elapsed merge sweep failed', { err: err.message });
     }
 
-    // Pass 0b: window-elapsed governance applies (rename + secret_change).
-    // Same rationale as Pass 0 — an open governance proposal can satisfy both
-    // gates with no further vote. The apply helpers re-check the gate and
-    // lock the issue row atomically, so this can't double-apply against a vote.
+    // Pass 0b: window-elapsed governance applies (rename + secret_change +
+    // close_issue). Same rationale as Pass 0 — an open governance proposal
+    // can satisfy both gates with no further vote. The apply helpers re-check
+    // the gate and lock the issue row atomically, so this can't double-apply
+    // against a vote. close_issue rows are dispatched UNCONDITIONALLY (not
+    // just when mergeable): maybeApplyCloseIssueProposal runs its superseded
+    // guard on every invocation, so the hourly sweep doubles as the catch-all
+    // that retires proposals whose target was closed by hand on GitHub. The
+    // guard reads the cached fetchPublicIssues — one cheap fetch per app.
     try {
       const { rows } = await pool.query(
-        `SELECT i.*, a.slug AS app_slug,
+        `SELECT i.*, a.slug AS app_slug, a.repo_url,
                 (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'up')   AS up_count,
                 (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'down') AS down_count
            FROM issues i JOIN apps a ON a.id = i.app_id
-          WHERE i.status = 'open' AND i.kind IN ('rename', 'secret_change')
+          WHERE i.status = 'open' AND i.kind IN ('rename', 'secret_change', 'close_issue')
           LIMIT 100`
       );
       const statsCache = new Map();
       for (const issue of rows) {
         try {
+          if (issue.kind === 'close_issue') {
+            await issuesModule.maybeApplyCloseIssueProposal(pool, issue);
+            continue;
+          }
           let stats = statsCache.get(issue.app_id);
           if (!stats) {
             stats = await getActiveUserStats(pool, issue.app_id);

@@ -1540,6 +1540,16 @@ const App = {
       document.getElementById('rename-form').addEventListener('submit', AppView.submitRename);
     }
 
+    // Propose-to-close-issue modal
+    const closeIssueModal = document.getElementById('close-issue-modal');
+    if (closeIssueModal) {
+      document.getElementById('close-issue-cancel').addEventListener('click', AppView.closeCloseIssueModal);
+      closeIssueModal.addEventListener('click', (e) => {
+        if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) AppView.closeCloseIssueModal();
+      });
+      document.getElementById('close-issue-form').addEventListener('submit', AppView.submitCloseIssue);
+    }
+
     // Fork modal
     const forkModal = document.getElementById('fork-modal');
     if (forkModal) {

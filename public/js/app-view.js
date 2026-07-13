@@ -1439,7 +1439,11 @@ const AppView = {
     try {
       const [ghRes, issuesRes, promotedRes, mergedRes] = await Promise.all([
         fetch(`/api/apps/${slug}/github-issues${AppView._demoQS()}`),
-        fetch(`/api/apps/${slug}/issues`),
+        // Forward ?demo=1 here too so the staging mock GOVERNANCE rows
+        // (stagingMockGovernance — rename / secret / close-issue cards)
+        // actually reach the board. Server-side the append is gated on
+        // IS_STAGING, so this is a no-op in production.
+        fetch(`/api/apps/${slug}/issues${AppView._demoQS()}`),
         fetch(`/api/apps/${slug}/promoted${AppView._demoQS()}`),
         // Forward ?demo=1 to /merged too so the kanban "Done" column (and
         // the list's Completed block) populate in a staging ?demo=1 preview.
@@ -1491,7 +1495,7 @@ const AppView = {
 
       AppView._proposals = promoted;
       AppView._govProposals = (issuesData.issues || [])
-        .filter((i) => i.kind === 'secret_change' || i.kind === 'rename');
+        .filter((i) => i.kind === 'secret_change' || i.kind === 'rename' || i.kind === 'close_issue');
       AppView._proposalsCtx = {
         majority,
         activeUsers,
@@ -2815,9 +2819,12 @@ const AppView = {
     const upCount = parseInt(issue.up_count) || 0;
     const downCount = parseInt(issue.down_count) || 0;
     const isRename = issue.kind === 'rename';
+    const isCloseIssue = issue.kind === 'close_issue';
     const titleText = isRename
       ? `Rename to "${(issue.payload && issue.payload.newName) || issue.title}"`
-      : issue.title;
+      : isCloseIssue
+        ? `Close issue #${(issue.payload && issue.payload.issueNumber) || '?'}: "${(issue.payload && issue.payload.issueTitle) || issue.title}"`
+        : issue.title;
     const metaParts = ['Governance proposal'];
     if (issue.created_by_username) metaParts.push(escapeHtml(issue.created_by_username));
     if (issue.created_at) metaParts.push(escapeHtml(relTime(issue.created_at)));
@@ -2834,7 +2841,7 @@ const AppView = {
     }, majority);
     const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${myVote === 'up' ? ' gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'up')">Yes (${upCount})</button>`;
     const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${myVote === 'down' ? ' gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'down')">No (${downCount})</button>`;
-    const adminBtn = (!isRename && App.user?.canAdminWrite)
+    const adminBtn = ((issue.kind === 'secret_change' || isCloseIssue) && App.user?.canAdminWrite)
       ? `<button class="gc-vote-btn gc-vote-btn-admin" title="Admin: apply this change right now, bypassing the vote majority" onclick="AppView.castIssueAdminApply(${issue.id})">Admin merge</button>`
       : '';
     // mine: the viewer created this governance proposal, so they may
@@ -2844,9 +2851,13 @@ const AppView = {
       ? `<button class="gc-vote-btn" title="Withdraw this proposal (removes it from the vote panel)" onclick="AppView.withdrawGovProposal(${issue.id})">Withdraw</button>`
       : '';
     const govChatN = parseInt(issue.chat_count) || 0;
+    // Chat-reference highlighting hook: twins carry github_issue_number;
+    // close-issue proposals have no twin, so their TARGET number stands in.
+    const refIssueN = issue.github_issue_number
+      || (isCloseIssue && issue.payload ? issue.payload.issueNumber : null);
 
     return `
-      <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" data-gov-row="${issue.id}"${issue.github_issue_number ? ` data-ref-issue="${issue.github_issue_number}"` : ''}${noNav ? '' : ' title="Open this proposal\'s discussion"'}>
+      <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" data-gov-row="${issue.id}"${refIssueN ? ` data-ref-issue="${refIssueN}"` : ''}${noNav ? '' : ' title="Open this proposal\'s discussion"'}>
         ${AppView._devCardIcon('gov')}
         <div class="flex-1 min-w-0">
           <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -2965,6 +2976,83 @@ const AppView = {
     await AppView._loadDevFeed();
     // Same as withdrawProposal: refresh the opened-topic card too, since
     // _loadDevFeed's feed repaint no-ops when #dev-feed isn't mounted.
+    if (typeof App !== 'undefined' && App.currentSubTab === 'topic'
+        && document.getElementById('gc-thread-head')) {
+      AppView._renderTopicHead();
+    }
+  },
+
+  // ── "Propose to close" an issue ──────────────────────────────────────
+  // Opens #close-issue-modal (index.html) with an optional reason textarea
+  // and files a vote-only close_issue governance proposal via the existing
+  // POST /api/apps/:slug/issues route. The plain ConfirmModal isn't used
+  // because it has no input support. Modal wiring (cancel / backdrop /
+  // submit) lives in app.js next to the rename modal's.
+  _closeIssueTarget: null,
+
+  promptCloseIssue(issueNumber) {
+    if (!AppView.appData) return;
+    const modal = document.getElementById('close-issue-modal');
+    const numEl = document.getElementById('close-issue-number');
+    const reason = document.getElementById('close-issue-reason');
+    const err = document.getElementById('close-issue-error');
+    if (!modal || !numEl || !reason) return;
+
+    AppView._closeIssueTarget = issueNumber;
+    numEl.textContent = `#${issueNumber}`;
+    reason.value = '';
+    if (err) { err.classList.add('hidden'); err.textContent = ''; }
+    modal.classList.remove('hidden');
+    setTimeout(() => reason.focus(), 0);
+  },
+
+  closeCloseIssueModal() {
+    const modal = document.getElementById('close-issue-modal');
+    const reason = document.getElementById('close-issue-reason');
+    const err = document.getElementById('close-issue-error');
+    if (modal) modal.classList.add('hidden');
+    if (reason) reason.value = '';
+    if (err) { err.classList.add('hidden'); err.textContent = ''; }
+    AppView._closeIssueTarget = null;
+  },
+
+  async submitCloseIssue(e) {
+    if (e) e.preventDefault();
+    const issueNumber = AppView._closeIssueTarget;
+    if (!issueNumber || !AppView.appData) return;
+    const err = document.getElementById('close-issue-error');
+    const submitBtn = document.getElementById('close-issue-submit');
+    const reason = (document.getElementById('close-issue-reason')?.value || '').trim();
+    const showErr = (msg) => {
+      if (!err) { alert(msg); return; }
+      err.textContent = msg;
+      err.classList.remove('hidden');
+    };
+    if (submitBtn) submitBtn.disabled = true;
+    try {
+      const resp = await fetch(`/api/apps/${AppView.appData.slug}/issues`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'close_issue',
+          payload: { issueNumber, ...(reason ? { reason } : {}) },
+        }),
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        showErr(data.error || `Proposal failed (HTTP ${resp.status}).`);
+        return;
+      }
+    } catch (fetchErr) {
+      showErr(`Proposal failed: ${fetchErr.message}`);
+      return;
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
+    }
+    AppView.closeCloseIssueModal();
+    await AppView._loadDevFeed();
+    // Refresh the opened-topic card too (the issue row's button flips to
+    // "Close proposed") — _loadDevFeed's repaint no-ops without #dev-feed.
     if (typeof App !== 'undefined' && App.currentSubTab === 'topic'
         && document.getElementById('gc-thread-head')) {
       AppView._renderTopicHead();
@@ -3381,12 +3469,20 @@ const AppView = {
     if (!App.user?.isAdmin) return;
     const key = `issue-admin-apply:${issueId}`;
     if (AppView._voteInFlight.has(key)) return;
+    // Kind-aware confirm copy: the same route force-applies both env-var
+    // (secret_change) and close-issue proposals.
+    const gov = (AppView._govProposals || []).find((g) => g.id === issueId);
+    const isCloseIssue = gov?.kind === 'close_issue';
+    const targetN = gov?.payload?.issueNumber;
     const ok = await ConfirmModal.show({
-      title: 'Apply this env-var change now?',
-      message:
-        'This bypasses the active-user vote majority and applies the proposed secret change right now (the app redeploys with the new value).\n\n'
+      title: isCloseIssue
+        ? `Close issue ${targetN ? `#${targetN} ` : ''}now?`
+        : 'Apply this env-var change now?',
+      message: (isCloseIssue
+        ? 'This bypasses the active-user vote majority and closes the issue right now, here and on GitHub.\n\n'
+        : 'This bypasses the active-user vote majority and applies the proposed secret change right now (the app redeploys with the new value).\n\n')
         + 'Use only when you\'re confident the change should ship — the override is announced in group chat with your username.',
-      confirmLabel: 'Apply now',
+      confirmLabel: isCloseIssue ? 'Close now' : 'Apply now',
       cancelLabel: 'Cancel',
       danger: true,
     });
@@ -3574,6 +3670,17 @@ const AppView = {
             ? AppView._devCardIcon('issueProposalMine', { title: 'You have a session for this issue — go to it.' })
             : AppView._devCardIcon('issueProposal', { title: 'Proposal ready — review it to start a session' }))
         : AppView._devCardIcon('issue');
+    // "Propose to close" — opens the reason modal and files a close_issue
+    // governance proposal. While one is already open for this issue (an
+    // open close_issue row in _govProposals targeting this number), the
+    // button renders disabled as "Close proposed" so duplicates can't be
+    // raced from the UI (the server also 409s).
+    const hasCloseProposal = (AppView._govProposals || []).some((g) =>
+      g.kind === 'close_issue' && g.status === 'open'
+      && Number(g.payload && g.payload.issueNumber) === n);
+    const closeBtn = hasCloseProposal
+      ? `<button class="gc-vote-btn" disabled title="A close proposal for this issue is up for vote">Close proposed</button>`
+      : `<button class="gc-vote-btn" title="Propose closing this issue — the group votes; if it passes, the issue is closed here and on GitHub" onclick="AppView.promptCloseIssue(${n})">Propose to close</button>`;
     // #133: the creating user renders in the meta line below the title.
     // created_by_username comes from the /github-issues route (local
     // issues table → body Source line → GitHub login); omitted when the
@@ -3595,7 +3702,7 @@ const AppView = {
             ${AppView._attrChipsHtml('issue', n, issue)}
             ${AppView._devChatBadge(issue.chatCount)}
           </div>
-          ${AppView._cardActionsHtml([kudosBtn, createBtn, autoBtn])}
+          ${AppView._cardActionsHtml([kudosBtn, createBtn, autoBtn, closeBtn])}
         </div>
         ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
       </div>`;
