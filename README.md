@@ -264,3 +264,5 @@ notifications, etc.) none of that matters; the stack comes up fine.
 Active development. See `TODO` for the current short-list.
 
 <!-- touch: no-op commit to nudge branch state -->
+
+<!-- Rebuild trigger: retriggering staging build after transient git clone failure (2026-07-13). No functional changes. -->
