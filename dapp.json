@@ -114,6 +114,11 @@
       "expectSelector": "#dev-kanban-search"
     },
     {
+      "name": "Kanban cards show the assignee initial-avatar",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": ".attr-avatar"
+    },
+    {
       "name": "Close-issue governance card renders in the dev board",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#close-issue-form",

@@ -857,7 +857,14 @@ function issueRoutes(config) {
             priority: { top: 'low', count: 1, myValue: null },
             assignee: { top: 'staging-demo-user', count: 1, myValue: null },
           }],
-          // 900002 deliberately left untouched → muted "Set priority" / "Assign".
+          // #489: a third assignee whose first letter (M) differs from the
+          // others (S), so the deterministic initial-avatar colouring is
+          // reviewable across several visibly-distinct avatars on the board.
+          [900006, {
+            priority: { top: 'medium', count: 2, myValue: null },
+            assignee: { top: 'maya-builder', count: 3, myValue: null },
+          }],
+          // 900002 deliberately left untouched → muted "Set priority" / "Unassigned".
         ]);
         for (const issue of issues) {
           const m = mockAttrs.get(issue.number);
