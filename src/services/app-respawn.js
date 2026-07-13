@@ -4,13 +4,14 @@
 // the first time): the running container still has the old
 // shared-superuser DATABASE_URL and needs to be restarted with the
 // new per-role URL so the principle-of-least-privilege isolation
-// actually takes effect.
+// actually takes effect. Also reused by the production watchdog
+// (services/app-heal.js) to re-run an already-built image for apps
+// without a repo_url when their container has gone missing.
 //
 // Distinct from staging.js's `rebuildProduction`, which does a full
-// git clone + docker build + run. This helper assumes the app's
-// image is already built (the case at boot-migration time — every
-// running app has a `usernode-app-<slug>:latest` image already on
-// the host) and just stop+rm+run with fresh env.
+// git clone + docker build + run. These helpers assume the app's
+// image is already built (`usernode-app-<slug>:latest` exists on the
+// host) and just stop+rm+run with fresh env.
 
 const log = require('./logger');
 const docker = require('./docker');
@@ -19,26 +20,24 @@ const appSecrets = require('./app-secrets');
 const appLlmEnv = require('./app-llm-env');
 const { getPool } = require('../db/pool');
 
-async function respawnAppContainer(config, app) {
-  if (app.self_hosted) {
-    // The platform's own row is pinned to container_id='usernode'
-    // (the docker-compose service), which we deliberately do not
-    // restart from inside ourselves. Phase 2g.
-    return;
-  }
+// Core shared by respawnAppContainer (boot migration) and app-heal.js:
+// assemble the production env contract (per-role DATABASE_URL, LLM-proxy
+// pair, merged secrets) for the app's ALREADY-BUILT image, stop+rm any
+// existing container, and `docker run` a fresh one. Returns the new
+// containerId, or null when required secrets are missing (the image
+// cannot run — callers decide whether that's a warn or a failure).
+// Does NOT health-check and does NOT persist apps.container_id; callers
+// own both so each can pick its own strictness.
+async function runExistingImage(config, app) {
   if (!app.db_password) {
     throw new Error(
-      `respawnAppContainer: app ${app.slug} has no db_password — ` +
+      `runExistingImage: app ${app.slug} has no db_password — ` +
       `migrateAppDbsToPerRole should have populated it first.`
     );
   }
 
   const containerName = `usernode-app-${app.slug}`;
   const imageName = `usernode-app-${app.slug}:latest`;
-
-  log.info('app-respawn', 'Respawning app container with new per-role URL', {
-    slug: app.slug, container: containerName,
-  });
 
   const pool = getPool(config);
   const manifest = app.manifest_snapshot || { secrets: [] };
@@ -47,12 +46,11 @@ async function respawnAppContainer(config, app) {
     manifest, stored, appSecrets.platformDefaultsFromEnv()
   );
 
-  // Boot-migration time: missing required secrets means the prod
-  // container would have been failing health checks already, so don't
-  // bother respawning. Leave the (now broken) old container in place;
-  // operator will have to re-run /redeploy after fixing secrets.
+  // Missing required secrets means the image can't be run correctly.
+  // Leave any existing (broken) container in place; the operator has to
+  // fix the secrets and /redeploy.
   if (merge.missingRequired.length) {
-    log.warn('app-respawn', 'Refusing to respawn app with missing required secrets', {
+    log.warn('app-respawn', 'Refusing to run image with missing required secrets', {
       slug: app.slug, missing: merge.missingRequired,
     });
     return null;
@@ -80,16 +78,37 @@ async function respawnAppContainer(config, app) {
     port: 3000,
   });
 
+  return containerId;
+}
+
+async function respawnAppContainer(config, app) {
+  if (app.self_hosted) {
+    // The platform's own row is pinned to container_id='usernode'
+    // (the docker-compose service), which we deliberately do not
+    // restart from inside ourselves. Phase 2g.
+    return;
+  }
+
+  const containerName = `usernode-app-${app.slug}`;
+
+  log.info('app-respawn', 'Respawning app container with new per-role URL', {
+    slug: app.slug, container: containerName,
+  });
+
+  const containerId = await runExistingImage(config, app);
+  if (!containerId) return null;
+
   // Health check is best-effort here — we don't want a slow-starting
   // app to block platform boot. If it fails to come up the operator
   // gets a warning in the logs and the existing /redeploy + drift
-  // poller paths will repair it.
+  // poller + app-heal watchdog paths will repair it.
   await docker.waitForHealthy(containerName, 3000, '/health').catch((err) => {
     log.warn('app-respawn', 'Container did not become healthy after respawn', {
       slug: app.slug, err: err.message,
     });
   });
 
+  const pool = getPool(config);
   await pool.query(
     'UPDATE apps SET container_id = $1 WHERE id = $2',
     [containerId, app.id]
@@ -99,4 +118,4 @@ async function respawnAppContainer(config, app) {
   return containerId;
 }
 
-module.exports = { respawnAppContainer };
+module.exports = { respawnAppContainer, runExistingImage };

@@ -121,6 +121,25 @@ async function getHostPort(nameOrId, containerPort) {
   }
 }
 
+// Start an existing (stopped/exited) container in place. Fast-path
+// recovery used by the production watchdog (services/app-heal.js): the
+// image, env, and container config all survive a stop, so `docker
+// start` brings an app back in seconds without a rebuild. Throws on
+// failure so callers can escalate to a full rebuild/respawn.
+async function startContainer(nameOrId) {
+  await execFileAsync('docker', ['start', nameOrId], { timeout: 30000 });
+  log.info('docker', 'Container started in place', { nameOrId });
+}
+
+// `docker restart` — used by the on-demand heal path (app-heal.js
+// requestHeal) for a container whose state is 'running' but whose HTTP
+// health endpoint stopped answering (hung process). Same 10s stop grace
+// as stopAndRemove. Throws on failure.
+async function restartContainer(nameOrId) {
+  await execFileAsync('docker', ['restart', '-t', '10', nameOrId], { timeout: 60000 });
+  log.info('docker', 'Container restarted', { nameOrId });
+}
+
 async function stopAndRemove(nameOrId) {
   try {
     await execFileAsync('docker', ['stop', '-t', '10', nameOrId], { timeout: 30000 }).catch(() => {});
@@ -254,6 +273,8 @@ module.exports = {
   buildImage,
   runContainer,
   runOneShot,
+  startContainer,
+  restartContainer,
   stopAndRemove,
   getContainerStatus,
   getContainerLabels,
