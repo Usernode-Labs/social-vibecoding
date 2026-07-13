@@ -9,7 +9,7 @@ const appManifest = require('../services/app-manifest');
 const appSecrets = require('../services/app-secrets');
 const staging = require('../services/staging');
 const { encrypt, decrypt } = require('../services/secrets');
-const { issueCreateLimiter } = require('../middleware/rate-limits');
+const { issueKindLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 const { weekStartUtc, countWeeklyAllowanceUsed, WEEKLY_KUDOS_LIMIT } = require('./kudos');
 const appAccess = require('../services/app-access');
@@ -296,8 +296,10 @@ function issueRoutes(config) {
     }
   });
 
-  // Create an issue — supports kind='general' (default) and kind='rename'.
-  router.post('/api/apps/:slug/issues', issueCreateLimiter, async (req, res) => {
+  // Create an issue / proposal — kinds per VALID_KINDS above (general is
+  // the default). Rate-limited per kind: close_issue proposals draw from
+  // their own bucket, everything else from issue-create.
+  router.post('/api/apps/:slug/issues', issueKindLimiter, async (req, res) => {
     let { title, description, kind = 'general', payload = {} } = req.body || {};
 
     if (!VALID_KINDS.includes(kind)) {

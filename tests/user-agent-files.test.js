@@ -236,7 +236,9 @@ test('routes: demo mode is staging-gated and the POST uses a scoped body parser'
   const src = read('src/routes/user-agent-files.js');
   assert.match(src, /req\.query\.demo === '1' && process\.env\.USERNODE_ENV === 'staging'/);
   assert.match(src, /express\.json\(\{ limit: '256kb' \}\)/);
-  assert.match(src, /issueCreateLimiter/);
+  // Own bucket since the #522 follow-up — file saves must not draw from
+  // the issues/proposals allowance.
+  assert.match(src, /agentFileWriteLimiter/);
 });
 
 test('Settings UI: section markup + renderer are wired', () => {

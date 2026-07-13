@@ -22,6 +22,7 @@ const { notificationsRoutes } = require('./src/routes/notifications');
 const { collaboratorRoutes } = require('./src/routes/collaborators');
 const { statusRoutes } = require('./src/routes/status');
 const { internalRoutes } = require('./src/routes/internal');
+const { appErrorRoutes } = require('./src/routes/app-error');
 const { visualsRoutes } = require('./src/routes/visuals');
 const { appIconRoutes } = require('./src/routes/app-icons');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
@@ -299,6 +300,14 @@ app.use(visualsRoutes(config));
 // unguessable 32-hex icon id.
 app.use(appIconRoutes(config));
 
+// Friendly "app is restarting" page for dead app containers (#426).
+// Caddy's wildcard-site handle_errors rewrites upstream 502/503/504s to
+// /__app_unavailable and proxies them here with the original app-
+// subdomain Host. Mounted before authMiddleware: the request carries no
+// platform session (and needs none — for view-private apps the edge
+// gate already passed before the proxy attempt failed).
+app.use(appErrorRoutes(config));
+
 app.use(authMiddleware(config));
 app.use(authRoutes(config));
 app.use(appRoutes(config));
@@ -455,6 +464,12 @@ async function start() {
   // `main` we didn't make ourselves and redeploy via the same path
   // that the dev-chat merge flow uses. See main-drift-poller.js.
   require('./src/services/main-drift-poller').start(config);
+  // Production app-container watchdog (#426): restart/rebuild
+  // status='running' apps whose `usernode-app-<slug>` container is
+  // stopped or missing — the drift poller above only acts on new
+  // commits, so without this a dead container 502s forever. Not gated
+  // on GitHub config: the fast `docker start` path needs none.
+  require('./src/services/app-heal').start(config);
 
   // Adopt any worker containers left over from a previous server run —
   // either still executing or already exited but un-finalized. These
