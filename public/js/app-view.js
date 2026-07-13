@@ -3146,6 +3146,47 @@ const AppView = {
     }
   },
 
+  // #489: a small fixed palette of tint pairs (bg /20 + text 600/dark 300)
+  // for the assignee initial-avatar, drawn from the same colour family the
+  // card badges use so the circles sit consistently in light + dark themes.
+  ASSIGNEE_AVATAR_TINTS: [
+    'bg-violet-500/20 text-violet-600 dark:text-violet-300',
+    'bg-emerald-500/20 text-emerald-600 dark:text-emerald-300',
+    'bg-sky-500/20 text-sky-600 dark:text-sky-300',
+    'bg-amber-500/20 text-amber-600 dark:text-amber-300',
+    'bg-rose-500/20 text-rose-600 dark:text-rose-300',
+  ],
+
+  // Deterministic tint for a username — a small stable string hash into the
+  // palette above, so a given assignee is ALWAYS the same colour across the
+  // board and list (and two different names generally differ).
+  _assigneeTint(username) {
+    const s = String(username || '');
+    let h = 0;
+    for (let i = 0; i < s.length; i += 1) {
+      h = ((h * 31) + s.charCodeAt(i)) | 0;
+    }
+    const tints = AppView.ASSIGNEE_AVATAR_TINTS;
+    return tints[Math.abs(h) % tints.length];
+  },
+
+  // The assignee's initial-avatar: a tiny tinted circle carrying the
+  // uppercased first letter of the username. Mirrors the leaderboard's
+  // initial-in-a-circle at chip scale (no photo avatars anywhere in the app).
+  // Falls back to '?' for an empty/space-leading value.
+  _assigneeAvatarHtml(username) {
+    const s = String(username || '');
+    const initial = (s.trim().charAt(0) || '?').toUpperCase();
+    const tint = AppView._assigneeTint(s);
+    return `<span class="attr-avatar ${tint}">${escapeHtml(initial)}</span>`;
+  },
+
+  // The muted placeholder avatar for an unassigned task — a dashed grey
+  // outline circle with no letter.
+  _assigneeAvatarPlaceholderHtml() {
+    return '<span class="attr-avatar attr-avatar-empty"></span>';
+  },
+
   // One chip. `summary` is { top, count, myValue } as the feed routes
   // attach it. Both the interactive <button> and the read-only (merged)
   // <span> reuse the SAME pill recipe the sibling card badges use
@@ -3164,15 +3205,25 @@ const AppView = {
       if (meta) { label = `&#9873; ${meta.label}`; cls = meta.cls; hover = meta.hover; }
       else { label = '&#9873; Set priority'; cls = 'bg-zinc-500/10 text-zinc-500'; hover = 'hover:bg-zinc-500/20'; }
     } else {
-      if (s.top) { label = `&#128100; @${escapeHtml(s.top)}`; cls = 'bg-violet-500/10 text-violet-400'; hover = 'hover:bg-violet-500/20'; }
-      else { label = '&#128100; Assign'; cls = 'bg-zinc-500/10 text-zinc-500'; hover = 'hover:bg-zinc-500/20'; }
+      // #489: the assignee now leads with a coloured initial-avatar (an at-a-
+      // glance "who owns this") instead of the generic person emoji, and the
+      // empty state reads as an explicit "Unassigned" rather than only a CTA.
+      if (s.top) {
+        label = `${AppView._assigneeAvatarHtml(s.top)}<span class="ml-1">@${escapeHtml(s.top)}</span>`;
+        cls = 'bg-violet-500/10 text-violet-400';
+        hover = 'hover:bg-violet-500/20';
+      } else {
+        label = `${AppView._assigneeAvatarPlaceholderHtml()}<span class="ml-1">Unassigned</span>`;
+        cls = 'bg-zinc-500/10 text-zinc-500';
+        hover = 'hover:bg-zinc-500/20';
+      }
     }
     // Faint trailing count, matching how the ★ bounty pill shows its number.
     const countHtml = count > 1 ? ` <span class="opacity-60">&middot;${count}</span>` : '';
     const base = 'attr-chip inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded';
     const title = field === 'priority'
       ? 'Vote on this card\'s priority'
-      : 'Suggest or vote on who should take this';
+      : (s.top ? 'Suggest or vote on who should take this' : 'Assign someone to this task');
     if (readonly) {
       return `<span class="${base} ${cls}">${label}${countHtml}</span>`;
     }
