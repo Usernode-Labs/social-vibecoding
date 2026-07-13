@@ -149,6 +149,17 @@
       "path": "/app/staging-demo-fork",
       "expectText": "Forked from",
       "allowConsoleErrors": true
+    },
+    {
+      "name": "Home feed renders the seeded errored app tile",
+      "path": "/",
+      "expectText": "Staging demo failed app"
+    },
+    {
+      "name": "Errored app view shows the failure reason and build-log button",
+      "path": "/app/staging-demo-failed-app",
+      "expectText": "View build log",
+      "allowConsoleErrors": true
     }
   ]
 }

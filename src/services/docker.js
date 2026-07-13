@@ -13,11 +13,24 @@ async function buildImage(contextPath, tag, buildArgs = {}) {
     ([k, v]) => ['--build-arg', `${k}=${v}`]
   );
   log.info('docker', 'Building image', { context: contextPath, tag, buildArgs });
-  await execFileAsync(
-    'docker',
-    ['build', ...buildArgFlags, '-t', tag, contextPath],
-    { timeout: 5 * 60 * 1000 }
-  );
+  try {
+    await execFileAsync(
+      'docker',
+      ['build', ...buildArgFlags, '-t', tag, contextPath],
+      // Generous maxBuffer so a chatty build still yields a usable log
+      // tail instead of a bare "maxBuffer exceeded" error (#416).
+      { timeout: 5 * 60 * 1000, maxBuffer: 8 * 1024 * 1024 }
+    );
+  } catch (err) {
+    // Attach the build output tail so deploy callers can persist a
+    // diagnosable apps.last_failure record (see services/deploy-failure).
+    const deployFailure = require('./deploy-failure');
+    err.buildFailed = true;
+    err.buildLog = deployFailure.truncateLog(
+      `${err.stderr || ''}\n${err.stdout || ''}`
+    );
+    throw err;
+  }
   log.info('docker', 'Image built', { tag });
 }
 
@@ -234,8 +247,8 @@ async function waitForHealthy(name, port, healthPath, maxRetries = 30) {
   // onto the session instead of leaving check_state NULL with the cause
   // buried in platform logs. `healthcheckFailed` lets callers distinguish a
   // boot/healthcheck failure (the app can't even start) from other build
-  // errors. See services/visuals.summarizeBootFailure for the reason
-  // extraction and staging-recovery.recheckSessionChecks for the persist.
+  // errors. See services/deploy-failure for the reason extraction and
+  // staging-recovery.recheckSessionChecks for the persist.
   const err = new Error(`Healthcheck failed after ${maxRetries} attempts: ${name}`);
   err.healthcheckFailed = true;
   err.containerStatus = containerStatus || null;

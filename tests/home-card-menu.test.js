@@ -425,10 +425,52 @@ test('menu: view-only admins (no canAdminWrite) get no mutating items (#311)', (
   assert.deepEqual(keys(items), ['favorite'], 'no retry/check/lock/delete');
 });
 
-test('menu: errored app adds Retry for the creator', () => {
+test('menu: errored app adds Retry + View build log for the creator (#416)', () => {
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp({ status: 'error', created_by: ME }));
-  assert.deepEqual(keys(items), ['favorite', 'retry']);
+  assert.deepEqual(keys(items), ['favorite', 'retry', 'build-log']);
+});
+
+// ── "View build log" gating (#416) ────────────────────────────────
+//
+// Errored apps: item for involved users (creator / collaborator /
+// full admin). Running apps: only when the last recorded failure
+// post-dates the last successful deploy (a failed rebuild) — and the
+// last_failure_* fields only reach the client when the server-side
+// involved-user gate passed, so outsiders never have the timestamps.
+
+test('menu: build-log hidden from outsiders and view-only admins on errored apps (#416)', () => {
+  const outsider = makeHome({ id: ME });
+  assert.ok(!keys(outsider.menuItemsFor(baseApp({ status: 'error' }))).includes('build-log'));
+  const viewOnlyAdmin = makeHome({ id: ME, isAdmin: true, canAdminWrite: false });
+  assert.ok(!keys(viewOnlyAdmin.menuItemsFor(baseApp({ status: 'error' }))).includes('build-log'));
+});
+
+test('menu: build-log shows for collaborators on errored apps (#416)', () => {
+  const Home = makeHome({ id: ME });
+  const items = Home.menuItemsFor(baseApp({ status: 'error', is_collaborator: true }));
+  assert.ok(keys(items).includes('build-log'));
+});
+
+test('menu: build-log on a RUNNING app only when the failure post-dates the deploy (#416)', () => {
+  const Home = makeHome({ id: ME });
+  const failedRebuild = baseApp({
+    created_by: ME,
+    last_deploy_at: '2026-07-01T00:00:00Z',
+    last_failure_at: '2026-07-02T00:00:00Z',
+    last_failure_reason: 'Build failed: failed to read dockerfile',
+  });
+  assert.ok(keys(Home.menuItemsFor(failedRebuild)).includes('build-log'));
+
+  const staleFailure = baseApp({
+    created_by: ME,
+    last_deploy_at: '2026-07-03T00:00:00Z',
+    last_failure_at: '2026-07-02T00:00:00Z',
+  });
+  assert.ok(!keys(Home.menuItemsFor(staleFailure)).includes('build-log'));
+
+  const noFailure = baseApp({ created_by: ME });
+  assert.ok(!keys(Home.menuItemsFor(noFailure)).includes('build-log'));
 });
 
 // ── Native homescreen-shortcut item ───────────────────────────────

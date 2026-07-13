@@ -872,7 +872,10 @@ const App = {
       if (dot) {
         dot.className = `status-dot ${data.status}`;
       }
-      if (data.status === 'running') {
+      // #416: 'error' also triggers a re-pull — the fresh list carries
+      // the (server-gated) last_failure_reason for the card tooltip and
+      // the "View build log" menu item.
+      if (data.status === 'running' || data.status === 'error') {
         Home.load();
       }
     }
@@ -894,6 +897,13 @@ const App = {
           AppView.renderAppTab();
           if (window.DevConsole) DevConsole.setButtonVisible(true);
         });
+      } else if (data.status === 'error' && AppView.appData) {
+        // #416: a watched spin-up just failed — flip the App tab to the
+        // error state immediately, carrying the broadcast one-line
+        // reason so the user isn't left with a bare "Error".
+        AppView.appData.status = 'error';
+        if (data.errorReason) AppView.appData.errorReason = data.errorReason;
+        AppView.renderAppTab();
       }
     }
   },

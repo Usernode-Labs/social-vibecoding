@@ -293,7 +293,28 @@ const AppView = {
           </button>
         `;
       } else if (appData?.status === 'error') {
-        inner = '<div class="status-dot error"></div><p class="text-sm">App failed to start</p>';
+        // #416: show the one-line failure reason (server-gated
+        // `lastFailure` from the detail fetch, or the live WS
+        // errorReason) plus a "View build log" button for involved
+        // users. Outsiders keep the bare failed-to-start state.
+        const failReason = (appData.lastFailure && appData.lastFailure.reason)
+          || appData.errorReason || null;
+        const reasonHtml = failReason
+          ? `<p class="text-xs font-mono text-red-500 max-w-md break-words">${escapeHtml(String(failReason).slice(0, 280))}</p>`
+          : '';
+        const involved = !!(appData.lastFailure || appData.is_collaborator || appData.can_manage);
+        const logBtnHtml = involved
+          ? `<button id="app-error-build-log"
+              class="mt-3 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white">
+              View build log
+            </button>`
+          : '';
+        inner = `
+          <div class="status-dot error"></div>
+          <p class="text-sm">App failed to start</p>
+          ${reasonHtml}
+          ${logBtnHtml}
+        `;
       } else {
         inner = '<p class="text-sm">App not available</p>';
       }
@@ -307,6 +328,11 @@ const AppView = {
       const openBtn = document.getElementById('awaiting-open-secrets');
       if (openBtn && window.Secrets && appData?.slug) {
         openBtn.addEventListener('click', () => Secrets.open(appData.slug));
+      }
+      // Same wiring rationale for the build-log button (#416).
+      const buildLogBtn = document.getElementById('app-error-build-log');
+      if (buildLogBtn && window.BuildLog && appData?.slug) {
+        buildLogBtn.addEventListener('click', () => BuildLog.open(appData.slug));
       }
       // Status updates pushed via WebSocket — no polling needed
       return;

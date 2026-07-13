@@ -130,6 +130,18 @@ UPDATE apps SET last_deploy_at = created_at WHERE last_deploy_at IS NULL;
 -- truth for "what does this dapp create".
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS manifest_snapshot JSONB;
 
+-- #416: detail of the last build/deploy failure so the UI can show a
+-- build log instead of a bare "Error" status. Shape:
+--   { stage, reason, log, at, sha }
+--   stage  : 'clone'|'build'|'start'|'healthcheck'|'timeout'|'other'
+--   reason : concise human line (<= 280 chars)
+--   log    : ANSI-stripped tail of the docker build / boot output (<= 16 kB)
+-- Written by the deploy catch paths (services/app-creator.js,
+-- services/staging.js rebuildProduction, routes/apps.js watchdog);
+-- cleared (NULL) on every successful deploy. Exposed API-side only to
+-- the app's creator / collaborators / admins — see routes/apps.js.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS last_failure JSONB;
+
 -- Admin-gated change lock. When TRUE, applying any group-voted change to
 -- this app (PR merge in routes/votes.js, rename proposal + secret-change
 -- proposal in routes/issues.js) additionally requires at least one admin
