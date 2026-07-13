@@ -3080,17 +3080,28 @@ button.attr-chip { cursor: pointer; }
 
 .voting-help-popover {
   z-index: 2000;
+  box-sizing: border-box;
   width: 320px;
   max-width: calc(100vw - 16px);
+  /* max-height is set inline by _openVotingHelpPopover to exactly the room
+     available above/below the anchor, so the body scrolls internally rather
+     than spilling off the viewport. This 70vh is only a fallback. */
   max-height: 70vh;
   overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--bg-primary);
   border: 1px solid var(--border);
   border-radius: 12px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
   padding: 8px 10px 10px;
 }
-.voting-help-popover .attr-pop-head { padding: 2px 2px 4px; }
+/* Keep the title anchored while the rules list scrolls under it. */
+.voting-help-popover .attr-pop-head {
+  position: sticky;
+  top: 0;
+  background: var(--bg-primary);
+  padding: 2px 2px 4px;
+}
 .vh-live {
   border: 1px solid var(--border-light);
   border-radius: 8px;

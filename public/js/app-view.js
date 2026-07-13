@@ -2525,17 +2525,47 @@ const AppView = {
     document.body.appendChild(pop);
     AppView._votingHelpOpen = { prId: pr && pr.id };
 
-    // Position under the anchor, clamped to the viewport (mirrors
-    // _openAttrPopover). Falls back to top-left when the anchor has no
-    // rect (e.g. under the unit-test sandbox).
+    // Position under the anchor, fully clamped to the viewport so it never
+    // runs off the bottom or sides on small / mobile screens. Falls back to
+    // the top-left corner when the anchor has no rect (e.g. under the
+    // unit-test sandbox). The popover has overflow-y:auto, so capping
+    // max-height to the room actually available makes its body scroll
+    // internally instead of spilling past the viewport edge.
+    const MARGIN = 8;
+    const GAP = 6;
     const rect = anchorEl && anchorEl.getBoundingClientRect
-      ? anchorEl.getBoundingClientRect() : { bottom: 8, left: 8 };
-    const W = 320;
-    const vw = (typeof window !== 'undefined' && window.innerWidth) || (W + 16);
+      ? anchorEl.getBoundingClientRect()
+      : { top: MARGIN, bottom: MARGIN, left: MARGIN, right: MARGIN };
+    const vw = (typeof window !== 'undefined' && window.innerWidth) || 360;
+    const vh = (typeof window !== 'undefined' && window.innerHeight) || 640;
+
+    // Width: preferred 320, but never wider than the viewport minus margins.
+    const W = Math.min(320, vw - MARGIN * 2);
     pop.style.position = 'fixed';
-    pop.style.top = `${Math.round((rect.bottom || 8) + 6)}px`;
-    const left = Math.min(Math.round(rect.left || 8), vw - W - 8);
-    pop.style.left = `${Math.max(8, left)}px`;
+    pop.style.width = `${W}px`;
+
+    // Horizontal: align to the anchor's left edge, then clamp so the whole
+    // popover stays on-screen (both edges within the margins).
+    const left = Math.max(MARGIN, Math.min(Math.round(rect.left || MARGIN), vw - W - MARGIN));
+    pop.style.left = `${left}px`;
+
+    // Vertical: prefer opening below the anchor; flip above when there's
+    // more room there. Either way, cap the height to the chosen side's
+    // available space so it fits within the viewport.
+    const spaceBelow = vh - (rect.bottom || 0) - GAP - MARGIN;
+    const spaceAbove = (rect.top || 0) - GAP - MARGIN;
+    const placeBelow = spaceBelow >= spaceAbove;
+    const avail = Math.max(120, Math.floor(placeBelow ? spaceBelow : spaceAbove));
+    pop.style.maxHeight = `${avail}px`;
+    if (placeBelow) {
+      pop.style.top = `${Math.round((rect.bottom || 0) + GAP)}px`;
+      pop.style.bottom = 'auto';
+    } else {
+      // Anchor to the bottom so the popover grows upward from just above
+      // the trigger, keeping its top edge inside the viewport.
+      pop.style.bottom = `${Math.round(vh - (rect.top || 0) + GAP)}px`;
+      pop.style.top = 'auto';
+    }
   },
 
   // #47: expanded per-test detail for the proposal detail screen — the
