@@ -1548,6 +1548,19 @@ const App = {
         if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) AppView.closeCloseIssueModal();
       });
       document.getElementById('close-issue-form').addEventListener('submit', AppView.submitCloseIssue);
+      // cmd+enter / ctrl+enter inside the reason textarea submits, same as
+      // the feedback modal. Textareas swallow plain Enter (newline), so we
+      // only intercept when the modifier is held; skip while a submit is
+      // already in flight (button disabled).
+      document.getElementById('close-issue-reason').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          const form = document.getElementById('close-issue-form');
+          const submitBtn = document.getElementById('close-issue-submit');
+          if (submitBtn?.disabled || !form.checkValidity()) return;
+          AppView.submitCloseIssue();
+        }
+      });
     }
 
     // Fork modal
