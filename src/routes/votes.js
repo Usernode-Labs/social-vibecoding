@@ -35,6 +35,7 @@ function stagingMockProposals() {
     pr_number: prNumber,
     pr_url: null,
     pr_title: title,
+    pr_title_fallback: false,
     pr_summary_md: 'This is a sample plain-language summary so testers can see '
       + 'the new explanation that now appears at the top of a proposal — written '
       + 'in everyday words, with no technical jargon.',
@@ -99,15 +100,26 @@ function stagingMockProposals() {
       '[Mock] Near-majority test: tighten the proposal card spacing on tablet widths',
       20, 5, 0, 3, { required: 3, windowEndsAt: hoursAhead(5) }),
     // Majority reached: no window, would merge immediately in prod.
-    mk(9000014, 900114,
+    // my_vote is set on this one mock (#482) so the kanban "Needs my vote"
+    // filter visibly removes a card in the ?demo=1 preview instead of
+    // matching every mock proposal.
+    { ...mk(9000014, 900114,
       '[Mock] Majority test: bump the vote pill contrast for accessibility',
-      6, 6, 0, 2, { required: 5, windowEndsAt: null }),
+      6, 6, 0, 2, { required: 5, windowEndsAt: null }), my_vote: 'up' },
     // Lazy consensus: BELOW the eased threshold (1 of 2 yes) but unopposed —
     // the count-based lazy clock is running, so the pill shows the countdown
     // with the tally riding along ("Merging in ~2d · 1/2").
     mk(9000019, 900119,
       '[Mock] Lazy-consensus test: one supporter, nobody objecting — merges when the clock elapses',
       5, 1, 0, 1, { required: 2, windowEndsAt: hoursAhead(67) }),
+    // Placeholder title: the LLM was unavailable when this PR was titled,
+    // so it carries the fallback template and the "Auto-title pending"
+    // chip (pr_title_fallback → _autoTitleChip) is reviewable via ?demo=1.
+    {
+      ...mk(9000020, 900120, "[Mock] staging-tester's changes",
+        4, 1, 0, 0, { required: 2, windowEndsAt: hoursAhead(60) }),
+      pr_title_fallback: true,
+    },
     // One No vote: eased threshold restored, window pushed back out.
     mk(9000002, 900102,
       '[Mock] Long-title test: walk brand-new collaborators through '
@@ -379,6 +391,21 @@ function stagingMockMerged() {
     // Sprinkle a few discussion counts so the 💬 badge is visible.
     i % 3 === 0 ? 5 : 0
   )));
+}
+
+// #529: staging demo row for a task marked complete WITHOUT implementation
+// (the manual-completion Done card). Shape matches the `completedIssues`
+// entries the /merged route returns, so a ?demo=1 preview can review the
+// distinct "Completed manually" card (no PR link, no Undo, no vote pill)
+// sitting next to the merged-PR mocks. No-op outside staging.
+function stagingMockCompletedIssues() {
+  return [{
+    number: 900008,
+    title: '[Mock] Completed offchain: migrated legacy balances by hand',
+    completedAt: new Date(Date.now() - 0.5 * 86400 * 1000).toISOString(),
+    completedByUsername: 'staging-tester',
+    note: 'Handled manually in the admin console — no code change.',
+  }];
 }
 
 // Shared SELECT column list + FROM/JOIN block for a "merged-shaped"
@@ -923,7 +950,7 @@ function voteRoutes(config) {
   router.get('/api/me/proposals', async (req, res) => {
     try {
       const { rows: sessions } = await pool.query(
-        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status,
+        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status,
                 cs.created_at, cs.promoted_at,
                 cs.merge_conflict_state, cs.behind_main,
                 cs.check_state, cs.check_error_detail,
@@ -1055,7 +1082,7 @@ function voteRoutes(config) {
       // majority threshold is crossed and only reappears in the "merged"
       // list at the very end, making it look like the vote was lost.
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
+        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
            -- #361: persisted merge-conflict snapshot for the card badge +
            -- detail block (state, conflicting file paths, last-checked).
            cs.merge_conflict_state, cs.behind_main, cs.conflict_files, cs.conflict_checked_at,
@@ -1282,6 +1309,29 @@ function voteRoutes(config) {
       );
       let total = totalRows[0]?.total || 0;
 
+      // #529: manually-completed tasks (issues marked done without a PR).
+      // Admin-driven and low-volume, so fetch them all — no keyset paging —
+      // as a separate array the FE folds into the Done column alongside the
+      // paginated merged PRs. Each is shaped from the audit payload written
+      // by POST /api/apps/:slug/issues/:number/complete.
+      const { rows: completedRows } = await pool.query(
+        `SELECT github_issue_number, title, payload, created_at
+           FROM issues
+          WHERE app_id = $1 AND status = 'completed'
+          ORDER BY (payload->>'completedAt') DESC NULLS LAST, id DESC`,
+        [appRows[0].id]
+      );
+      const completedIssues = completedRows.map((r) => ({
+        number: r.github_issue_number,
+        title: r.payload?.issueTitle || r.title,
+        completedAt: r.payload?.completedAt || (r.created_at ? new Date(r.created_at).toISOString() : null),
+        completedByUsername: r.payload?.completedByUsername || null,
+        note: r.payload?.note || null,
+      }));
+      // The merged COUNT above can't see these rows — bump the Done total so
+      // the column header stays reconciled with the cards the board renders.
+      total += completedIssues.length;
+
       // Same priority + assigned-person summary on completed proposals, so
       // the read-only chips stay visible after a PR merges.
       const mergedAttrs = await topicAttrs.summarizeForTargets(
@@ -1314,7 +1364,17 @@ function voteRoutes(config) {
         total += injected.length;
       }
 
-      res.json({ merged: rows, hasMore, total });
+      // #529: staging demo injection for the manual-completion Done card.
+      // Gated on ?demo=1 like the merged mocks above, and only where no real
+      // completed row already claimed the number. No-op in production.
+      if (IS_STAGING && req.query.demo === '1') {
+        const have = new Set(completedIssues.map((c) => c.number));
+        const injected = stagingMockCompletedIssues().filter((c) => !have.has(c.number));
+        completedIssues.unshift(...injected);
+        total += injected.length;
+      }
+
+      res.json({ merged: rows, hasMore, total, completedIssues });
     } catch (err) {
       log.error('votes', 'Failed to list merged', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -2055,6 +2115,29 @@ async function checkAndMerge(config, pool, session, options = {}) {
         const { sanitizeIssueNumbers } = require('../services/pr-metadata');
         const closedNumbers = sanitizeIssueNumbers(session.linked_issues);
         if (closedNumbers.length) github.noteIssuesClosed(ghOwner, ghRepo, closedNumbers);
+        // Auto-resolve any open close-issue proposals targeting the issues
+        // this merge closes — their vote is moot now. Same optimism as the
+        // suppression above (GitHub closes `Closes #N` reliably, just
+        // late); the watcher hook below catches hand-edited `Closes #N`
+        // beyond linked_issues. Lazy require to avoid an import cycle;
+        // fired-and-forgotten so a failure never fails the merge.
+        if (closedNumbers.length) {
+          try {
+            const { resolveSupersededCloseProposals } = require('./issues');
+            resolveSupersededCloseProposals(pool, {
+              appId: session.app_id,
+              appSlug: session.app_slug,
+              numbers: closedNumbers,
+              cause: { kind: 'pr-merge', prNumber: session.pr_number || session.id },
+            }).catch((err) => log.warn('votes', 'Superseded close-proposal resolve failed', {
+              sessionId: session.id, err: err.message,
+            }));
+          } catch (err) {
+            log.warn('votes', 'Superseded close-proposal resolve setup failed', {
+              sessionId: session.id, err: err.message,
+            });
+          }
+        }
         github.invalidateIssuesCache(ghOwner, ghRepo);
         const { pushIssueUpdate } = require('../services/ws');
         pushIssueUpdate({
@@ -2090,6 +2173,9 @@ async function checkAndMerge(config, pool, session, options = {}) {
             linkedIssues: session.linked_issues,
             appSlug: session.app_slug,
             appId: session.app_id,
+            // Lets the watcher auto-resolve close-issue proposals for the
+            // numbers it observes closed (incl. hand-edited `Closes #N`).
+            pool,
           }).catch((err) => {
             log.warn('votes', 'Post-merge issue-close watch failed', {
               sessionId: session.id, err: err.message,

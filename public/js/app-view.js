@@ -150,6 +150,11 @@ const AppView = {
     const next = mode === 'kanban' ? 'kanban' : 'list';
     try { window.localStorage.setItem(AppView.VIEW_MODE_KEY, next); } catch {}
   },
+  // #482: kanban filter-bar state. In-memory only — deliberately NOT
+  // persisted to localStorage (unlike the view mode above): a filter saved
+  // across visits could land a user on a mysteriously empty board days
+  // later. Reset per app when the card list mounts (renderDevView).
+  _kanbanFilters: { q: '', priority: null, assignee: null, needsVote: false },
   // Refresh timer for the Your-sessions strip's busy indicators;
   // self-clears when the strip leaves the DOM.
   _stripTimer: null,
@@ -288,7 +293,28 @@ const AppView = {
           </button>
         `;
       } else if (appData?.status === 'error') {
-        inner = '<div class="status-dot error"></div><p class="text-sm">App failed to start</p>';
+        // #416: show the one-line failure reason (server-gated
+        // `lastFailure` from the detail fetch, or the live WS
+        // errorReason) plus a "View build log" button for involved
+        // users. Outsiders keep the bare failed-to-start state.
+        const failReason = (appData.lastFailure && appData.lastFailure.reason)
+          || appData.errorReason || null;
+        const reasonHtml = failReason
+          ? `<p class="text-xs font-mono text-red-500 max-w-md break-words">${escapeHtml(String(failReason).slice(0, 280))}</p>`
+          : '';
+        const involved = !!(appData.lastFailure || appData.is_collaborator || appData.can_manage);
+        const logBtnHtml = involved
+          ? `<button id="app-error-build-log"
+              class="mt-3 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white">
+              View build log
+            </button>`
+          : '';
+        inner = `
+          <div class="status-dot error"></div>
+          <p class="text-sm">App failed to start</p>
+          ${reasonHtml}
+          ${logBtnHtml}
+        `;
       } else {
         inner = '<p class="text-sm">App not available</p>';
       }
@@ -302,6 +328,11 @@ const AppView = {
       const openBtn = document.getElementById('awaiting-open-secrets');
       if (openBtn && window.Secrets && appData?.slug) {
         openBtn.addEventListener('click', () => Secrets.open(appData.slug));
+      }
+      // Same wiring rationale for the build-log button (#416).
+      const buildLogBtn = document.getElementById('app-error-build-log');
+      if (buildLogBtn && window.BuildLog && appData?.slug) {
+        buildLogBtn.addEventListener('click', () => BuildLog.open(appData.slug));
       }
       // Status updates pushed via WebSocket — no polling needed
       return;
@@ -531,6 +562,9 @@ const AppView = {
 
     // The card list.
     AppView._feedShown = 20;
+    // #482: kanban filters are transient per app — reset alongside the
+    // feed pager whenever the card list is (re)built.
+    AppView._kanbanFilters = { q: '', priority: null, assignee: null, needsVote: false };
 
     content.innerHTML = `
       <div class="flex flex-col h-full min-h-0">
@@ -1431,7 +1465,11 @@ const AppView = {
     try {
       const [ghRes, issuesRes, promotedRes, mergedRes] = await Promise.all([
         fetch(`/api/apps/${slug}/github-issues${AppView._demoQS()}`),
-        fetch(`/api/apps/${slug}/issues`),
+        // Forward ?demo=1 here too so the staging mock GOVERNANCE rows
+        // (stagingMockGovernance — rename / secret / close-issue cards)
+        // actually reach the board. Server-side the append is gated on
+        // IS_STAGING, so this is a no-op in production.
+        fetch(`/api/apps/${slug}/issues${AppView._demoQS()}`),
         fetch(`/api/apps/${slug}/promoted${AppView._demoQS()}`),
         // Forward ?demo=1 to /merged too so the kanban "Done" column (and
         // the list's Completed block) populate in a staging ?demo=1 preview.
@@ -1483,7 +1521,7 @@ const AppView = {
 
       AppView._proposals = promoted;
       AppView._govProposals = (issuesData.issues || [])
-        .filter((i) => i.kind === 'secret_change' || i.kind === 'rename');
+        .filter((i) => i.kind === 'secret_change' || i.kind === 'rename' || i.kind === 'close_issue');
       AppView._proposalsCtx = {
         majority,
         activeUsers,
@@ -1493,6 +1531,11 @@ const AppView = {
           : '',
       };
       AppView._merged = merged;
+      // #529: manually-completed tasks for the Done column. Always fully
+      // loaded (admin-driven, low-volume) — they don't participate in the
+      // merged "Load more" keyset pager.
+      AppView._completedIssues = Array.isArray(mergedData.completedIssues)
+        ? mergedData.completedIssues : [];
       AppView._mergedCtx = { majority, activeUsers };
       // #429: reset the pager state on a fresh load. _mergedHasMore drives
       // the "Load more" footer; the cursor is the (created_at, id) of the
@@ -1507,7 +1550,7 @@ const AppView = {
       // the loaded length on an older server that doesn't return `total`.
       AppView._mergedTotal = (typeof mergedData.total === 'number')
         ? mergedData.total
-        : merged.length;
+        : (merged.length + AppView._completedIssues.length);
       return true;
     } catch {
       return false;
@@ -1535,12 +1578,17 @@ const AppView = {
     const body = document.getElementById('dev-body');
     if (!body) return;
     if (AppView._getViewMode() === 'kanban') {
-      body.innerHTML = AppView._renderKanbanInner();
-      // The headless-state poller is keyed off whatever issue rows are on
-      // screen (generating spinners), same as the list feed.
-      AppView._syncHeadlessPolling();
-      if (window.Kudos) Kudos.attach(body);
-      AppView._applyAskAiCardAvailability(body);
+      // #482: two-node shell — the filter bar is built + wired once per
+      // mount and kept stable across repaints (so search-input focus and
+      // typed text survive WS-driven refreshes); only the board region
+      // re-renders. Switching list → kanban rebuilds the bar from the
+      // surviving _kanbanFilters, so filter state outlives the toggle.
+      if (!document.getElementById('dev-kanban-filterbar')
+          || !document.getElementById('dev-kanban-board')) {
+        body.innerHTML = '<div id="dev-kanban-filterbar" class="mb-2"></div><div id="dev-kanban-board"></div>';
+        AppView._renderKanbanFilterBar();
+      }
+      AppView._repaintKanbanBoard();
       return;
     }
     // List mode: rebuild the two-container shell, then fill it exactly as
@@ -1769,13 +1817,17 @@ const AppView = {
   //                (work started, not yet up for a vote), same dedup
   //   inReview   — [{kind:'proposal'|'gov', item}] sorted by pin-rank then
   //                recency, exactly as the list feed's proposal group
-  //   done       — merged proposals, most-recent-activity first
+  //   done       — merged proposals + manually-completed tasks (#529),
+  //                most-recent completion first. Manual completions carry a
+  //                `_completed: true` discriminator so the Done render
+  //                callback picks _renderCompletedIssueCard for them.
   _bucketDevItems(data) {
     const d = data || {};
     const issues = Array.isArray(d.issues) ? d.issues : [];
     const proposals = Array.isArray(d.proposals) ? d.proposals : [];
     const gov = Array.isArray(d.gov) ? d.gov : [];
     const merged = Array.isArray(d.merged) ? d.merged : [];
+    const completed = Array.isArray(d.completed) ? d.completed : [];
 
     const ts = (v) => {
       const t = Date.parse(v || '');
@@ -1822,7 +1874,18 @@ const AppView = {
     for (const g of gov) review.push({ kind: 'gov', item: g, _r: 3, _t: govT(g) });
     review.sort((a, b) => (a._r - b._r) || (b._t - a._t));
 
-    const done = merged.slice().sort((a, b) => mergedT(b) - mergedT(a));
+    // #529: interleave manually-completed tasks with merged PRs by
+    // completion time. Manual completions are tagged with `_completed` so the
+    // Done render callback dispatches to _renderCompletedIssueCard, and their
+    // sort key is the audit payload's completedAt (falling back to 0).
+    const completedT = (c) => ts(c && c.completedAt);
+    const doneItems = merged.map((m) => ({ ...m, _completed: false }))
+      .concat(completed.map((c) => ({ ...c, _completed: true })));
+    const done = doneItems.sort((a, b) => {
+      const ta = a._completed ? completedT(a) : mergedT(a);
+      const tb = b._completed ? completedT(b) : mergedT(b);
+      return tb - ta;
+    });
 
     return {
       issues: col1,
@@ -1832,17 +1895,227 @@ const AppView = {
     };
   },
 
-  // Render the kanban board (inner HTML for #dev-body) from cached data.
-  // Reuses the exact per-card renderers the list mode uses, so every card
-  // keeps its buttons, badges, and data-*-row open hooks.
+  // ── Kanban filters (#482) ───────────────────────────────────────────
+  //
+  // Pure card-level filter predicate for the kanban filter bar. kind ∈
+  // 'issue' | 'proposal' | 'gov' | 'merged'. No DOM, no AppView state
+  // reads — the filters come in explicitly — so it is unit-testable in
+  // isolation (see tests/dev-kanban-filters.test.js). Empty/default
+  // filters match everything, keeping the unfiltered board identical to
+  // the pre-filter output.
+  _devCardMatches(kind, item, filters) {
+    const f = filters || {};
+    const it = item || {};
+    const q = (f.q || '').trim().toLowerCase();
+    if (q) {
+      let title; let author; let num;
+      if (kind === 'issue') {
+        title = it.title || '';
+        author = it.created_by_username || it.user || '';
+        num = it.number;
+      } else if (kind === 'gov') {
+        // Mirror _renderGovCard's title choice for renames.
+        title = (it.kind === 'rename' && it.payload && it.payload.newName)
+          ? it.payload.newName : (it.title || '');
+        author = it.created_by_username || '';
+        num = it.github_issue_number;
+      } else if (kind === 'completed') {
+        // #529: manual-completion Done card — matches on task title, the
+        // completing admin, and the GitHub issue number.
+        title = it.title || '';
+        author = it.completedByUsername || '';
+        num = it.number;
+      } else {
+        // proposal | merged — mirror the card renderers' title fallback.
+        title = it.pr_title || `Change by ${it.username || ''}`;
+        author = it.username || '';
+        num = it.pr_number != null ? it.pr_number : it.id;
+      }
+      // A leading '#' targets the issue/PR number ("#482" and "482" both
+      // match); the number check is substring-based like the text checks.
+      const qNum = q.replace(/^#/, '');
+      const hit = String(title).toLowerCase().includes(q)
+        || String(author).toLowerCase().includes(q)
+        || (qNum !== '' && num != null && String(num).includes(qNum));
+      if (!hit) return false;
+    }
+    // priority / assignee filter on the community-voted top value. Cards
+    // without the attribute set — and gov cards, which never carry them —
+    // fail the match by design.
+    if (f.priority && !(it.priority && it.priority.top === f.priority)) return false;
+    if (f.assignee && !(it.assignee && it.assignee.top === f.assignee)) return false;
+    if (f.needsVote) {
+      if (kind === 'proposal') {
+        // Same condition as the card's pulsing "Vote" badge (isUnvoted).
+        if (!(it.status === 'promoted' && !it.my_vote)) return false;
+      } else if (kind === 'gov') {
+        if (it.my_vote) return false;
+      } else {
+        return false;
+      }
+    }
+    return true;
+  },
+
+  _kanbanFiltersActive() {
+    const f = AppView._kanbanFilters || {};
+    return !!((f.q && f.q.trim()) || f.priority || f.assignee || f.needsVote);
+  },
+
+  // Assignee dropdown options: the union of top-voted assignees across all
+  // cached board data, sorted alphabetically. The current selection is
+  // always kept in the list even if it disappears from the data on a
+  // refresh, so an active filter never silently self-clears.
+  _kanbanAssigneeOptions() {
+    const set = new Set();
+    const add = (it) => { if (it && it.assignee && it.assignee.top) set.add(it.assignee.top); };
+    AppView._visibleGhIssues().forEach(add);
+    (AppView._proposals || []).forEach(add);
+    (AppView._merged || []).forEach(add);
+    const cur = AppView._kanbanFilters && AppView._kanbanFilters.assignee;
+    if (cur) set.add(cur);
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  },
+
+  _kanbanNeedsVoteChipCls(active) {
+    return 'text-xs px-2.5 py-1.5 rounded-lg border transition-colors shrink-0 '
+      + (active
+        ? 'bg-violet-600 border-violet-600 text-white'
+        : 'border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800');
+  },
+
+  _kanbanAssigneeOptionsHtml() {
+    const f = AppView._kanbanFilters || {};
+    return '<option value="">Anyone</option>'
+      + AppView._kanbanAssigneeOptions().map((name) =>
+        `<option value="${escapeAttr(name)}"${f.assignee === name ? ' selected' : ''}>${escapeHtml(name)}</option>`).join('');
+  },
+
+  // Build the filter bar into #dev-kanban-filterbar and wire its controls.
+  // Called once per kanban mount (and by Clear, to reset control values);
+  // ordinary board repaints leave this node untouched so the search input
+  // keeps its focus and text.
+  _renderKanbanFilterBar() {
+    const el = document.getElementById('dev-kanban-filterbar');
+    if (!el) return;
+    const f = AppView._kanbanFilters || {};
+    const ctlCls = 'rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-2 py-1.5 text-xs text-zinc-900 dark:text-zinc-100';
+    const priOpt = (v, label) =>
+      `<option value="${v}"${f.priority === v ? ' selected' : ''}>${label}</option>`;
+    el.innerHTML = `
+      <div class="flex flex-wrap items-center gap-2">
+        <input id="dev-kanban-search" type="search" placeholder="Filter by title, author or #number"
+          value="${escapeAttr(f.q || '')}" aria-label="Filter cards"
+          class="${ctlCls} flex-1 min-w-[10rem]" />
+        <select id="dev-kanban-priority" class="${ctlCls}" aria-label="Filter by priority">
+          <option value="">Any priority</option>
+          ${priOpt('high', 'High')}${priOpt('medium', 'Medium')}${priOpt('low', 'Low')}
+        </select>
+        <select id="dev-kanban-assignee" class="${ctlCls}" aria-label="Filter by assignee">
+          ${AppView._kanbanAssigneeOptionsHtml()}
+        </select>
+        <button id="dev-kanban-needsvote" type="button" aria-pressed="${f.needsVote ? 'true' : 'false'}"
+          class="${AppView._kanbanNeedsVoteChipCls(!!f.needsVote)}"
+          title="Show only proposals you haven't voted on">Needs my vote</button>
+        <button id="dev-kanban-clear" type="button"
+          class="text-xs text-violet-500 hover:underline shrink-0${AppView._kanbanFiltersActive() ? '' : ' hidden'}">Clear</button>
+      </div>`;
+
+    const input = el.querySelector('#dev-kanban-search');
+    let debounce = null;
+    input.addEventListener('input', () => {
+      clearTimeout(debounce);
+      debounce = setTimeout(() => {
+        AppView._kanbanFilters.q = input.value;
+        AppView._repaintKanbanBoard();
+      }, 150);
+    });
+    el.querySelector('#dev-kanban-priority').addEventListener('change', (ev) => {
+      AppView._kanbanFilters.priority = ev.target.value || null;
+      AppView._repaintKanbanBoard();
+    });
+    el.querySelector('#dev-kanban-assignee').addEventListener('change', (ev) => {
+      AppView._kanbanFilters.assignee = ev.target.value || null;
+      AppView._repaintKanbanBoard();
+    });
+    const chip = el.querySelector('#dev-kanban-needsvote');
+    chip.addEventListener('click', () => {
+      AppView._kanbanFilters.needsVote = !AppView._kanbanFilters.needsVote;
+      chip.className = AppView._kanbanNeedsVoteChipCls(AppView._kanbanFilters.needsVote);
+      chip.setAttribute('aria-pressed', AppView._kanbanFilters.needsVote ? 'true' : 'false');
+      AppView._repaintKanbanBoard();
+    });
+    el.querySelector('#dev-kanban-clear').addEventListener('click', () => {
+      AppView._kanbanFilters = { q: '', priority: null, assignee: null, needsVote: false };
+      // Rebuild the bar so every control snaps back to its default value.
+      AppView._renderKanbanFilterBar();
+      AppView._repaintKanbanBoard();
+    });
+  },
+
+  // Keep the stable filter bar in sync after each board repaint: Clear-link
+  // visibility, and the assignee option list (which follows the data).
+  _updateKanbanFilterBarUI() {
+    const bar = document.getElementById('dev-kanban-filterbar');
+    if (!bar) return;
+    const clear = bar.querySelector('#dev-kanban-clear');
+    if (clear) clear.classList.toggle('hidden', !AppView._kanbanFiltersActive());
+    const sel = bar.querySelector('#dev-kanban-assignee');
+    // Rebuilding options closes an open dropdown — skip while the select is
+    // being interacted with; the next repaint catches it up.
+    if (sel && document.activeElement !== sel) {
+      sel.innerHTML = AppView._kanbanAssigneeOptionsHtml();
+    }
+  },
+
+  // Repaint only the board region (#dev-kanban-board) from cached data,
+  // leaving the filter bar node untouched. Every filter-control event and
+  // WS-driven kanban refresh routes through here.
+  _repaintKanbanBoard() {
+    const board = document.getElementById('dev-kanban-board');
+    if (!board) return;
+    board.innerHTML = AppView._renderKanbanInner();
+    // The headless-state poller is keyed off the cached issue data, same
+    // as the list feed — filtering a generating row off-screen doesn't
+    // stop it.
+    AppView._syncHeadlessPolling();
+    if (window.Kudos) Kudos.attach(board);
+    AppView._applyAskAiCardAvailability(board);
+    AppView._updateKanbanFilterBarUI();
+  },
+
+  // Render the kanban board (inner HTML for #dev-kanban-board) from cached
+  // data. Reuses the exact per-card renderers the list mode uses, so every
+  // card keeps its buttons, badges, and data-*-row open hooks.
   _renderKanbanInner() {
     const buckets = AppView._bucketDevItems({
       issues: AppView._visibleGhIssues(),
       proposals: AppView._proposals || [],
       gov: AppView._govProposals || [],
       merged: AppView._merged || [],
+      completed: AppView._completedIssues || [],
     });
     const meta = AppView._ghIssuesMeta || {};
+
+    // #482: apply the filter bar AFTER bucketing, per column. Filtering
+    // the inputs instead would resurrect issues whose open proposal was
+    // filtered out (the bucketer dedups linked_issues out of the issue
+    // columns), so post-bucket filtering keeps every card's lifecycle
+    // placement identical to the unfiltered board.
+    const f = AppView._kanbanFilters || {};
+    const filtering = AppView._kanbanFiltersActive();
+    const kIssues = filtering
+      ? buckets.issues.filter((i) => AppView._devCardMatches('issue', i, f))
+      : buckets.issues;
+    const kInProgress = filtering
+      ? buckets.inProgress.filter((i) => AppView._devCardMatches('issue', i, f))
+      : buckets.inProgress;
+    const kInReview = filtering
+      ? buckets.inReview.filter((x) => AppView._devCardMatches(x.kind, x.item, f))
+      : buckets.inReview;
+    const kDone = filtering
+      ? buckets.done.filter((m) => AppView._devCardMatches(m && m._completed ? 'completed' : 'merged', m, f))
+      : buckets.done;
 
     // "More open issues on GitHub" link — the Issues column inherits the
     // list footer's GitHub link when the repo has more open issues than
@@ -1869,7 +2142,16 @@ const AppView = {
     // yet the server reports no more pages (shouldn't normally happen,
     // since total + hasMore derive from the same merged set).
     let doneFooter = '';
-    if (doneTotal > buckets.done.length) {
+    if (filtering) {
+      // #482: while filtered, the server total and the "+N more" hint would
+      // both misstate what's visible — the header shows the matching loaded
+      // count instead, and "Load more" stays reachable (uncounted) so older
+      // matches can still be pulled in; the repaint re-applies the filter.
+      if (AppView._mergedHasMore) {
+        const loading = AppView._mergedLoadingMore;
+        doneFooter = `<button class="gc-vote-btn" ${loading ? 'disabled' : ''} onclick="AppView.loadMoreMerged()">${loading ? 'Loading…' : 'Load more'}</button>`;
+      }
+    } else if (doneTotal > buckets.done.length) {
       const moreCount = doneTotal - buckets.done.length;
       if (AppView._mergedHasMore) {
         const loading = AppView._mergedLoadingMore;
@@ -1880,10 +2162,10 @@ const AppView = {
     }
 
     const cols = [
-      { title: 'Issues', items: buckets.issues, render: (i) => AppView._renderIssueRow(i), footer: issuesFooter },
-      { title: 'In progress', items: buckets.inProgress, render: (i) => AppView._renderIssueRow(i) },
-      { title: 'In review', items: buckets.inReview, render: (x) => (x.kind === 'proposal' ? AppView._renderProposalCard(x.item) : AppView._renderGovCard(x.item)) },
-      { title: 'Done', items: buckets.done, render: (m) => AppView._renderMergedCard(m), count: doneTotal, footer: doneFooter },
+      { title: 'Issues', items: kIssues, render: (i) => AppView._renderIssueRow(i), footer: issuesFooter },
+      { title: 'In progress', items: kInProgress, render: (i) => AppView._renderIssueRow(i) },
+      { title: 'In review', items: kInReview, render: (x) => (x.kind === 'proposal' ? AppView._renderProposalCard(x.item) : AppView._renderGovCard(x.item)) },
+      { title: 'Done', items: kDone, render: (m) => (m && m._completed ? AppView._renderCompletedIssueCard(m) : AppView._renderMergedCard(m)), count: filtering ? kDone.length : doneTotal, footer: doneFooter },
     ];
 
     let html = '<div id="dev-kanban" class="flex gap-3 overflow-x-auto pb-2">';
@@ -1894,7 +2176,7 @@ const AppView = {
       const count = (typeof col.count === 'number') ? col.count : col.items.length;
       const cards = col.items.length
         ? `<div class="space-y-2">${col.items.map(col.render).join('')}</div>`
-        : '<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">Nothing here yet</div>';
+        : `<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">${filtering ? 'No matching cards' : 'Nothing here yet'}</div>`;
       const footer = col.footer ? `<div class="mt-2">${col.footer}</div>` : '';
       html += `
         <div class="dev-kanban-col flex-1 basis-0 min-w-[16rem]">
@@ -2229,6 +2511,19 @@ const AppView = {
     return `<div class="dev-issue-body text-xs text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 mt-2">${renderMd(md)}</div>`;
   },
 
+  // Placeholder-title chip. AI naming was unavailable when this proposal /
+  // issue was titled (Anthropic credits ran out or the API errored), so it
+  // carries a template ("<user>'s changes" / "Feedback from Usernode")
+  // instead of a description of the change. The title-heal sweeper
+  // regenerates titles automatically once the API is back
+  // (src/services/title-heal.js); the chip tells voters not to judge the
+  // change by its placeholder in the meantime, and disappears on the next
+  // panel refresh after the heal lands.
+  _autoTitleChip(kind) {
+    const what = kind === 'issue' ? 'issue' : 'proposal';
+    return `<span class="inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-500 shrink-0" title="AI naming was unavailable when this ${what} was created, so it shows a placeholder title. A descriptive title will be generated automatically — the change itself is unaffected.">Auto-title pending</span>`;
+  },
+
   // One PR-proposal card: line 1 is identity + info (icon chip, title,
   // PR meta, tally pill, badges), line 2 is the action pills (vote /
   // preview / kudos / Discussion / Open session). With { noNav: true }
@@ -2259,6 +2554,11 @@ const AppView = {
     ];
     if (pr.created_at) metaParts.push(escapeHtml(relTime(pr.created_at)));
     const closesPills = AppView.closesPillHtml(pr);
+    // Placeholder-title marker (see _autoTitleChip). Skipped on revert
+    // cards, whose displayed title is the deterministic "Revert of …"
+    // label rather than the fallback template.
+    const fallbackChip = (pr.pr_title_fallback && !pr.revert_of_session_id)
+      ? AppView._autoTitleChip('proposal') : '';
 
     const kudosBtn = window.Kudos ? Kudos.renderButton(pr, { compact: true }) : '';
     const isUnvoted = pr.status === 'promoted' && !pr.my_vote;
@@ -2330,6 +2630,7 @@ const AppView = {
               <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words">${titleHtml}</div>
               <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta">${metaParts.join(' · ')}${closesPills ? ` ${closesPills}` : ''}</div>
             </div>
+            ${fallbackChip}
             ${unvotedBadge}
             ${AppView.voteCountPill(pr, majority)}
             ${stateBadge}
@@ -2780,9 +3081,12 @@ const AppView = {
     const upCount = parseInt(issue.up_count) || 0;
     const downCount = parseInt(issue.down_count) || 0;
     const isRename = issue.kind === 'rename';
+    const isCloseIssue = issue.kind === 'close_issue';
     const titleText = isRename
       ? `Rename to "${(issue.payload && issue.payload.newName) || issue.title}"`
-      : issue.title;
+      : isCloseIssue
+        ? `Close issue #${(issue.payload && issue.payload.issueNumber) || '?'}: "${(issue.payload && issue.payload.issueTitle) || issue.title}"`
+        : issue.title;
     const metaParts = ['Governance proposal'];
     if (issue.created_by_username) metaParts.push(escapeHtml(issue.created_by_username));
     if (issue.created_at) metaParts.push(escapeHtml(relTime(issue.created_at)));
@@ -2799,7 +3103,7 @@ const AppView = {
     }, majority);
     const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${myVote === 'up' ? ' gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'up')">Yes (${upCount})</button>`;
     const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${myVote === 'down' ? ' gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'down')">No (${downCount})</button>`;
-    const adminBtn = (!isRename && App.user?.canAdminWrite)
+    const adminBtn = ((issue.kind === 'secret_change' || isCloseIssue) && App.user?.canAdminWrite)
       ? `<button class="gc-vote-btn gc-vote-btn-admin" title="Admin: apply this change right now, bypassing the vote majority" onclick="AppView.castIssueAdminApply(${issue.id})">Admin merge</button>`
       : '';
     // mine: the viewer created this governance proposal, so they may
@@ -2809,9 +3113,13 @@ const AppView = {
       ? `<button class="gc-vote-btn" title="Withdraw this proposal (removes it from the vote panel)" onclick="AppView.withdrawGovProposal(${issue.id})">Withdraw</button>`
       : '';
     const govChatN = parseInt(issue.chat_count) || 0;
+    // Chat-reference highlighting hook: twins carry github_issue_number;
+    // close-issue proposals have no twin, so their TARGET number stands in.
+    const refIssueN = issue.github_issue_number
+      || (isCloseIssue && issue.payload ? issue.payload.issueNumber : null);
 
     return `
-      <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" data-gov-row="${issue.id}"${issue.github_issue_number ? ` data-ref-issue="${issue.github_issue_number}"` : ''}${noNav ? '' : ' title="Open this proposal\'s discussion"'}>
+      <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" data-gov-row="${issue.id}"${refIssueN ? ` data-ref-issue="${refIssueN}"` : ''}${noNav ? '' : ' title="Open this proposal\'s discussion"'}>
         ${AppView._devCardIcon('gov')}
         <div class="flex-1 min-w-0">
           <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -2936,6 +3244,161 @@ const AppView = {
     }
   },
 
+  // ── "Propose to close" an issue ──────────────────────────────────────
+  // Opens #close-issue-modal (index.html) with an optional reason textarea
+  // and files a vote-only close_issue governance proposal via the existing
+  // POST /api/apps/:slug/issues route. The plain ConfirmModal isn't used
+  // because it has no input support. Modal wiring (cancel / backdrop /
+  // submit) lives in app.js next to the rename modal's.
+  _closeIssueTarget: null,
+
+  promptCloseIssue(issueNumber) {
+    if (!AppView.appData) return;
+    const modal = document.getElementById('close-issue-modal');
+    const numEl = document.getElementById('close-issue-number');
+    const reason = document.getElementById('close-issue-reason');
+    const err = document.getElementById('close-issue-error');
+    if (!modal || !numEl || !reason) return;
+
+    AppView._closeIssueTarget = issueNumber;
+    numEl.textContent = `#${issueNumber}`;
+    reason.value = '';
+    if (err) { err.classList.add('hidden'); err.textContent = ''; }
+    modal.classList.remove('hidden');
+    setTimeout(() => reason.focus(), 0);
+  },
+
+  closeCloseIssueModal() {
+    const modal = document.getElementById('close-issue-modal');
+    const reason = document.getElementById('close-issue-reason');
+    const err = document.getElementById('close-issue-error');
+    if (modal) modal.classList.add('hidden');
+    if (reason) reason.value = '';
+    if (err) { err.classList.add('hidden'); err.textContent = ''; }
+    AppView._closeIssueTarget = null;
+  },
+
+  async submitCloseIssue(e) {
+    if (e) e.preventDefault();
+    const issueNumber = AppView._closeIssueTarget;
+    if (!issueNumber || !AppView.appData) return;
+    const err = document.getElementById('close-issue-error');
+    const submitBtn = document.getElementById('close-issue-submit');
+    const reason = (document.getElementById('close-issue-reason')?.value || '').trim();
+    const showErr = (msg) => {
+      if (!err) { alert(msg); return; }
+      err.textContent = msg;
+      err.classList.remove('hidden');
+    };
+    if (submitBtn) submitBtn.disabled = true;
+    try {
+      const resp = await fetch(`/api/apps/${AppView.appData.slug}/issues`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'close_issue',
+          payload: { issueNumber, ...(reason ? { reason } : {}) },
+        }),
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        showErr(data.error || `Proposal failed (HTTP ${resp.status}).`);
+        return;
+      }
+    } catch (fetchErr) {
+      showErr(`Proposal failed: ${fetchErr.message}`);
+      return;
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
+    }
+    AppView.closeCloseIssueModal();
+    await AppView._loadDevFeed();
+    // Refresh the opened-topic card too (the issue row's button flips to
+    // "Close proposed") — _loadDevFeed's repaint no-ops without #dev-feed.
+    if (typeof App !== 'undefined' && App.currentSubTab === 'topic'
+        && document.getElementById('gc-thread-head')) {
+      AppView._renderTopicHead();
+    }
+  },
+
+  // ── #529 "Mark done" (complete without implementation) ────────────────
+  // Admin-only. Opens a small modal with an optional note, then POSTs to
+  // /api/apps/:slug/issues/:number/complete. Mirrors the close-issue modal
+  // wiring above; modal markup lives in index.html next to it.
+  _markDoneTarget: null,
+
+  promptMarkDone(issueNumber) {
+    if (!AppView.appData) return;
+    if (!(App.user && App.user.canAdminWrite)) return;
+    const modal = document.getElementById('mark-done-modal');
+    const numEl = document.getElementById('mark-done-number');
+    const note = document.getElementById('mark-done-note');
+    const err = document.getElementById('mark-done-error');
+    if (!modal || !numEl || !note) return;
+    AppView._markDoneTarget = issueNumber;
+    numEl.textContent = `#${issueNumber}`;
+    note.value = '';
+    if (err) { err.classList.add('hidden'); err.textContent = ''; }
+    modal.classList.remove('hidden');
+    setTimeout(() => note.focus(), 0);
+  },
+
+  closeMarkDoneModal() {
+    const modal = document.getElementById('mark-done-modal');
+    const note = document.getElementById('mark-done-note');
+    const err = document.getElementById('mark-done-error');
+    if (modal) modal.classList.add('hidden');
+    if (note) note.value = '';
+    if (err) { err.classList.add('hidden'); err.textContent = ''; }
+    AppView._markDoneTarget = null;
+  },
+
+  async submitMarkDone(e) {
+    if (e) e.preventDefault();
+    const issueNumber = AppView._markDoneTarget;
+    if (!issueNumber || !AppView.appData) return;
+    const err = document.getElementById('mark-done-error');
+    const submitBtn = document.getElementById('mark-done-submit');
+    const note = (document.getElementById('mark-done-note')?.value || '').trim();
+    // The task title, when we have it cached, lets the server label the Done
+    // card even for GitHub-native issues with no internal row.
+    const cached = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
+    const title = cached ? cached.title : undefined;
+    const showErr = (msg) => {
+      if (!err) { alert(msg); return; }
+      err.textContent = msg;
+      err.classList.remove('hidden');
+    };
+    if (submitBtn) submitBtn.disabled = true;
+    try {
+      const resp = await fetch(`/api/apps/${AppView.appData.slug}/issues/${issueNumber}/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...(note ? { note } : {}), ...(title ? { title } : {}) }),
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        showErr(data.error || `Mark done failed (HTTP ${resp.status}).`);
+        return;
+      }
+    } catch (fetchErr) {
+      showErr(`Mark done failed: ${fetchErr.message}`);
+      return;
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
+    }
+    // Optimistically drop the card from the open-issues cache so it leaves
+    // the Issues / In-progress columns immediately; the reload below (and
+    // the WS issue_update for other viewers) reconciles the Done column.
+    AppView._ghIssues = (AppView._ghIssues || []).filter((i) => i.number !== issueNumber);
+    AppView.closeMarkDoneModal();
+    await AppView._loadDevFeed();
+    if (typeof App !== 'undefined' && App.currentSubTab === 'topic'
+        && document.getElementById('gc-thread-head')) {
+      AppView._renderTopicHead();
+    }
+  },
+
   async createProposal() {
     if (!AppView.appData || typeof DevChat === 'undefined') return;
     const session = await DevChat.createSession(AppView.appData.slug);
@@ -2978,6 +3441,47 @@ const AppView = {
     }
   },
 
+  // #489: a small fixed palette of tint pairs (bg /20 + text 600/dark 300)
+  // for the assignee initial-avatar, drawn from the same colour family the
+  // card badges use so the circles sit consistently in light + dark themes.
+  ASSIGNEE_AVATAR_TINTS: [
+    'bg-violet-500/20 text-violet-600 dark:text-violet-300',
+    'bg-emerald-500/20 text-emerald-600 dark:text-emerald-300',
+    'bg-sky-500/20 text-sky-600 dark:text-sky-300',
+    'bg-amber-500/20 text-amber-600 dark:text-amber-300',
+    'bg-rose-500/20 text-rose-600 dark:text-rose-300',
+  ],
+
+  // Deterministic tint for a username — a small stable string hash into the
+  // palette above, so a given assignee is ALWAYS the same colour across the
+  // board and list (and two different names generally differ).
+  _assigneeTint(username) {
+    const s = String(username || '');
+    let h = 0;
+    for (let i = 0; i < s.length; i += 1) {
+      h = ((h * 31) + s.charCodeAt(i)) | 0;
+    }
+    const tints = AppView.ASSIGNEE_AVATAR_TINTS;
+    return tints[Math.abs(h) % tints.length];
+  },
+
+  // The assignee's initial-avatar: a tiny tinted circle carrying the
+  // uppercased first letter of the username. Mirrors the leaderboard's
+  // initial-in-a-circle at chip scale (no photo avatars anywhere in the app).
+  // Falls back to '?' for an empty/space-leading value.
+  _assigneeAvatarHtml(username) {
+    const s = String(username || '');
+    const initial = (s.trim().charAt(0) || '?').toUpperCase();
+    const tint = AppView._assigneeTint(s);
+    return `<span class="attr-avatar ${tint}">${escapeHtml(initial)}</span>`;
+  },
+
+  // The muted placeholder avatar for an unassigned task — a dashed grey
+  // outline circle with no letter.
+  _assigneeAvatarPlaceholderHtml() {
+    return '<span class="attr-avatar attr-avatar-empty"></span>';
+  },
+
   // One chip. `summary` is { top, count, myValue } as the feed routes
   // attach it. Both the interactive <button> and the read-only (merged)
   // <span> reuse the SAME pill recipe the sibling card badges use
@@ -2996,15 +3500,25 @@ const AppView = {
       if (meta) { label = `&#9873; ${meta.label}`; cls = meta.cls; hover = meta.hover; }
       else { label = '&#9873; Set priority'; cls = 'bg-zinc-500/10 text-zinc-500'; hover = 'hover:bg-zinc-500/20'; }
     } else {
-      if (s.top) { label = `&#128100; @${escapeHtml(s.top)}`; cls = 'bg-violet-500/10 text-violet-400'; hover = 'hover:bg-violet-500/20'; }
-      else { label = '&#128100; Assign'; cls = 'bg-zinc-500/10 text-zinc-500'; hover = 'hover:bg-zinc-500/20'; }
+      // #489: the assignee now leads with a coloured initial-avatar (an at-a-
+      // glance "who owns this") instead of the generic person emoji, and the
+      // empty state reads as an explicit "Unassigned" rather than only a CTA.
+      if (s.top) {
+        label = `${AppView._assigneeAvatarHtml(s.top)}<span class="ml-1">@${escapeHtml(s.top)}</span>`;
+        cls = 'bg-violet-500/10 text-violet-400';
+        hover = 'hover:bg-violet-500/20';
+      } else {
+        label = `${AppView._assigneeAvatarPlaceholderHtml()}<span class="ml-1">Unassigned</span>`;
+        cls = 'bg-zinc-500/10 text-zinc-500';
+        hover = 'hover:bg-zinc-500/20';
+      }
     }
     // Faint trailing count, matching how the ★ bounty pill shows its number.
     const countHtml = count > 1 ? ` <span class="opacity-60">&middot;${count}</span>` : '';
     const base = 'attr-chip inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded';
     const title = field === 'priority'
       ? 'Vote on this card\'s priority'
-      : 'Suggest or vote on who should take this';
+      : (s.top ? 'Suggest or vote on who should take this' : 'Assign someone to this task');
     if (readonly) {
       return `<span class="${base} ${cls}">${label}${countHtml}</span>`;
     }
@@ -3377,12 +3891,20 @@ const AppView = {
     if (!App.user?.isAdmin) return;
     const key = `issue-admin-apply:${issueId}`;
     if (AppView._voteInFlight.has(key)) return;
+    // Kind-aware confirm copy: the same route force-applies both env-var
+    // (secret_change) and close-issue proposals.
+    const gov = (AppView._govProposals || []).find((g) => g.id === issueId);
+    const isCloseIssue = gov?.kind === 'close_issue';
+    const targetN = gov?.payload?.issueNumber;
     const ok = await ConfirmModal.show({
-      title: 'Apply this env-var change now?',
-      message:
-        'This bypasses the active-user vote majority and applies the proposed secret change right now (the app redeploys with the new value).\n\n'
+      title: isCloseIssue
+        ? `Close issue ${targetN ? `#${targetN} ` : ''}now?`
+        : 'Apply this env-var change now?',
+      message: (isCloseIssue
+        ? 'This bypasses the active-user vote majority and closes the issue right now, here and on GitHub.\n\n'
+        : 'This bypasses the active-user vote majority and applies the proposed secret change right now (the app redeploys with the new value).\n\n')
         + 'Use only when you\'re confident the change should ship — the override is announced in group chat with your username.',
-      confirmLabel: 'Apply now',
+      confirmLabel: isCloseIssue ? 'Close now' : 'Apply now',
       cancelLabel: 'Cancel',
       danger: true,
     });
@@ -3483,6 +4005,9 @@ const AppView = {
     const bountyPill = issue.bounty_count
       ? `<span class="inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500" title="Kudos bounties pledged on this issue">&#9733; ${issue.bounty_count}</span>`
       : '';
+    // Placeholder-title marker (see _autoTitleChip): this feedback issue
+    // was filed while AI naming was unavailable.
+    const fallbackChip = issue.title_fallback ? AppView._autoTitleChip('issue') : '';
     // "Give kudos" disables once the viewer has an open bounty here or has
     // spent their shared weekly allowance.
     const kudosDisabled = issue.my_bounty || budgetSpent;
@@ -3570,6 +4095,23 @@ const AppView = {
             ? AppView._devCardIcon('issueProposalMine', { title: 'You have a session for this issue — go to it.' })
             : AppView._devCardIcon('issueProposal', { title: 'Proposal ready — review it to start a session' }))
         : AppView._devCardIcon('issue');
+    // "Propose to close" — opens the reason modal and files a close_issue
+    // governance proposal. While one is already open for this issue (an
+    // open close_issue row in _govProposals targeting this number), the
+    // button renders disabled as "Close proposed" so duplicates can't be
+    // raced from the UI (the server also 409s).
+    const hasCloseProposal = (AppView._govProposals || []).some((g) =>
+      g.kind === 'close_issue' && g.status === 'open'
+      && Number(g.payload && g.payload.issueNumber) === n);
+    const closeBtn = hasCloseProposal
+      ? `<button class="gc-vote-btn" disabled title="A close proposal for this issue is up for vote">Close proposed</button>`
+      : `<button class="gc-vote-btn" title="Propose closing this issue — the group votes; if it passes, the issue is closed here and on GitHub" onclick="AppView.promptCloseIssue(${n})">Propose to close</button>`;
+    // #529: admin-only direct "Mark done" — closes the task here and on
+    // GitHub without any implementation, landing it in the Done column as a
+    // manual completion. Visible only to full admins (canAdminWrite).
+    const markDoneBtn = (App.user && App.user.canAdminWrite)
+      ? `<button class="gc-vote-btn" title="Mark this task complete without implementation — closes it here and on GitHub, no code change" onclick="AppView.promptMarkDone(${n})">Mark done</button>`
+      : '';
     // #133: the creating user renders in the meta line below the title.
     // created_by_username comes from the /github-issues route (local
     // issues table → body Source line → GitHub login); omitted when the
@@ -3587,11 +4129,12 @@ const AppView = {
               <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words" title="${escapeHtml(rowTitle)}">${escapeHtml(issue.title)}</div>
               <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta"><a href="${href}" target="_blank" rel="noopener" class="font-mono text-violet-400 hover:underline">#${n}</a>${issue.created_by_username ? ` · ${escapeHtml(issue.created_by_username)}` : ''}</div>
             </div>
+            ${fallbackChip}
             ${bountyPill}
             ${AppView._attrChipsHtml('issue', n, issue)}
             ${AppView._devChatBadge(issue.chatCount)}
           </div>
-          ${AppView._cardActionsHtml([kudosBtn, createBtn, autoBtn])}
+          ${AppView._cardActionsHtml([kudosBtn, createBtn, autoBtn, closeBtn, markDoneBtn])}
         </div>
         ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
       </div>`;
@@ -3616,6 +4159,11 @@ const AppView = {
       : Math.min(AppView._mergedShownDefault, merged.length);
 
     let html = `<div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-1">Completed</div><div class="space-y-2">`;
+    // #529: manually-completed tasks render at the top of the Completed
+    // section (they're always fully loaded, outside the merged pager).
+    for (const c of (AppView._completedIssues || [])) {
+      html += AppView._renderCompletedIssueCard(c);
+    }
     for (let i = 0; i < shown; i++) {
       html += AppView._renderMergedCard(merged[i], majority);
     }
@@ -3786,6 +4334,47 @@ const AppView = {
             ${AppView._cardActionsHtml([AppView.voteButtonsHtml(pr, { collapseVoted: true }), undoUI, kudosBtn, askAiBtn])}
           </div>
           ${AppView.DEV_CARD_CHEVRON}
+        </div>`;
+  },
+
+  // #529: render a Done card for a task marked complete WITHOUT
+  // implementation. Deliberately distinct from _renderMergedCard: a muted
+  // "Completed manually" badge instead of the emerald PR pill, a link to the
+  // GitHub issue (#NN) rather than a PR, and NO vote pill / Undo / kudos —
+  // there was never a code change, so there's nothing to revert or thank.
+  // `item` shape: { number, title, completedAt, completedByUsername, note }.
+  _renderCompletedIssueCard(item) {
+    const it = item || {};
+    const n = it.number;
+    const meta = AppView._ghIssuesMeta || {};
+    const repoUrl = meta.repoUrl || (AppView.appData && AppView.appData.repo_url) || '';
+    const href = (repoUrl && n != null)
+      ? `${repoUrl.replace(/\.git$/, '').replace(/\/$/, '')}/issues/${n}`
+      : '#';
+    const date = it.completedAt ? new Date(it.completedAt).toLocaleDateString() : '';
+    const by = it.completedByUsername
+      ? ` <span class="text-zinc-500">· ${escapeHtml(it.completedByUsername)}</span>`
+      : '';
+    const numLink = n != null
+      ? `<a href="${href}" target="_blank" rel="noopener" class="font-mono text-zinc-400 hover:underline">#${n}</a> · `
+      : '';
+    const badge = `<span class="inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-zinc-500/10 text-zinc-500" title="Marked complete without implementation">Completed manually</span>`;
+    const note = it.note
+      ? `<div class="text-xs text-zinc-500 dark:text-zinc-400 mt-1 break-words">${escapeHtml(it.note)}</div>`
+      : '';
+    return `
+        <div class="gc-vote-item ${AppView.DEV_CARD_CLS}">
+          ${AppView._devCardIcon('done')}
+          <div class="flex-1 min-w-0">
+            <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <div class="dev-card-headline">
+                <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words" title="${escapeHtml(it.title || '')}">${escapeHtml(it.title || `Issue #${n}`)}${by}</div>
+                <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta">${numLink}${date}</div>
+              </div>
+              ${badge}
+            </div>
+            ${note}
+          </div>
         </div>`;
   },
 

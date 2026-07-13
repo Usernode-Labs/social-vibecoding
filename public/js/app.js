@@ -872,7 +872,10 @@ const App = {
       if (dot) {
         dot.className = `status-dot ${data.status}`;
       }
-      if (data.status === 'running') {
+      // #416: 'error' also triggers a re-pull — the fresh list carries
+      // the (server-gated) last_failure_reason for the card tooltip and
+      // the "View build log" menu item.
+      if (data.status === 'running' || data.status === 'error') {
         Home.load();
       }
     }
@@ -894,6 +897,13 @@ const App = {
           AppView.renderAppTab();
           if (window.DevConsole) DevConsole.setButtonVisible(true);
         });
+      } else if (data.status === 'error' && AppView.appData) {
+        // #416: a watched spin-up just failed — flip the App tab to the
+        // error state immediately, carrying the broadcast one-line
+        // reason so the user isn't left with a bare "Error".
+        AppView.appData.status = 'error';
+        if (data.errorReason) AppView.appData.errorReason = data.errorReason;
+        AppView.renderAppTab();
       }
     }
   },
@@ -1538,6 +1548,49 @@ const App = {
         if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) AppView.closeRenameModal();
       });
       document.getElementById('rename-form').addEventListener('submit', AppView.submitRename);
+    }
+
+    // Propose-to-close-issue modal
+    const closeIssueModal = document.getElementById('close-issue-modal');
+    if (closeIssueModal) {
+      document.getElementById('close-issue-cancel').addEventListener('click', AppView.closeCloseIssueModal);
+      closeIssueModal.addEventListener('click', (e) => {
+        if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) AppView.closeCloseIssueModal();
+      });
+      document.getElementById('close-issue-form').addEventListener('submit', AppView.submitCloseIssue);
+      // cmd+enter / ctrl+enter inside the reason textarea submits, same as
+      // the feedback modal. Textareas swallow plain Enter (newline), so we
+      // only intercept when the modifier is held; skip while a submit is
+      // already in flight (button disabled).
+      document.getElementById('close-issue-reason').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          const form = document.getElementById('close-issue-form');
+          const submitBtn = document.getElementById('close-issue-submit');
+          if (submitBtn?.disabled || !form.checkValidity()) return;
+          AppView.submitCloseIssue();
+        }
+      });
+    }
+
+    // #529 Mark-done modal (mark task complete without implementation)
+    const markDoneModal = document.getElementById('mark-done-modal');
+    if (markDoneModal) {
+      document.getElementById('mark-done-cancel').addEventListener('click', AppView.closeMarkDoneModal);
+      markDoneModal.addEventListener('click', (e) => {
+        if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) AppView.closeMarkDoneModal();
+      });
+      document.getElementById('mark-done-form').addEventListener('submit', AppView.submitMarkDone);
+      // cmd/ctrl+enter submits from the note textarea, same as the close modal.
+      document.getElementById('mark-done-note').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          const form = document.getElementById('mark-done-form');
+          const submitBtn = document.getElementById('mark-done-submit');
+          if (submitBtn?.disabled || !form.checkValidity()) return;
+          AppView.submitMarkDone();
+        }
+      });
     }
 
     // Fork modal

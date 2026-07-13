@@ -37,6 +37,7 @@ async function migrate(config) {
   await seedStagingCcProgressRun(pool, config);
   await seedStagingCcEstimateRun(pool, config);
   await seedStagingDemoAppCard(pool);
+  await seedStagingFailedApp(pool);
   await seedStagingForkLineage(pool);
   await seedStagingMembersPanel(pool);
   await seedStagingYourApps(pool, config);
@@ -64,6 +65,7 @@ async function migrate(config) {
   await seedStagingDashboardAdminSplit(pool);
   await seedStagingAnalyticsCharts(pool);
   await seedStagingTopicAttributes(pool, config);
+  await seedStagingSubmittedFeatures(pool, config);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
   // Must run BEFORE backfillOrphanedSpecDrafts: unwrapping spec_md after that
@@ -1774,6 +1776,175 @@ async function seedStagingDemoAppCard(pool) {
     log.info('db', 'Staging demo app-card fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging demo app-card seeding failed', { message: err.message });
+  }
+}
+
+// #562: fixtures for the cross-app "submitted features" admin API
+// (GET /api/admin/submitted-features). A fresh staging DB has no
+// general issues, so the ranked-by-votes list would render empty and be
+// impossible to review. This seeds several kind='general' issues spread
+// across THREE demo apps with DISTINCT up-vote tallies (7/5/3/1) so the
+// `up_count DESC` ordering and the cross-app interleaving are both
+// visible, plus a nonzero down-count on one row and one CLOSED feature so
+// the `?status=all` / `?status=closed` paths render non-empty. It also
+// inserts two governance rows (secret_change / close_issue) that MUST NOT
+// appear in the endpoint, so the kind filter is exercised. All ids sit in
+// the 9056xxx range to clear cloned prod rows and the other 900xxx demo
+// fixtures; every title carries the "[Mock]" / "Staging demo" prefix; and
+// ON CONFLICT DO NOTHING keeps the every-boot re-run idempotent. Strictly
+// a no-op outside staging.
+async function seedStagingSubmittedFeatures(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    // A small pool of demo voters (non-loginable — bcrypt.compare against a
+    // non-hash always fails). Ids in the 9056xxx range.
+    const voterIds = [9056001, 9056002, 9056003, 9056004, 9056005, 9056006, 9056007];
+    for (const id of voterIds) {
+      await pool.query(
+        `INSERT INTO users (id, username, password)
+         VALUES ($1, $2, 'staging-demo-not-a-login')
+         ON CONFLICT DO NOTHING`,
+        [id, `staging-demo-voter-${id}`]
+      );
+    }
+    const authorId = voterIds[0];
+
+    // Three demo apps so the cross-app list has something to interleave.
+    const apps = [
+      { id: 9056001, name: 'Staging demo — Alpha', slug: 'staging-demo-alpha' },
+      { id: 9056002, name: 'Staging demo — Beta', slug: 'staging-demo-beta' },
+      { id: 9056003, name: 'Staging demo — Gamma', slug: 'staging-demo-gamma' },
+    ];
+    for (const a of apps) {
+      await pool.query(
+        `INSERT INTO apps (id, name, slug, status, view_visibility, created_by)
+         VALUES ($1, $2, $3, 'running', 'public', $4)
+         ON CONFLICT DO NOTHING`,
+        [a.id, a.name, a.slug, authorId]
+      );
+    }
+
+    // Features: distinct up-counts across apps so ordering is obvious.
+    // `up`/`down` say how many of the demo voters up/down-vote each row.
+    const features = [
+      { id: 9056101, app: 9056001, kind: 'general', status: 'open',
+        title: '[Mock] Add a dark-mode toggle to the header', up: 7, down: 1 },
+      { id: 9056102, app: 9056002, kind: 'general', status: 'open',
+        title: '[Mock] Keyboard shortcuts for voting (Y/N)', up: 5, down: 0 },
+      { id: 9056103, app: 9056003, kind: 'general', status: 'open',
+        title: '[Mock] Export the leaderboard as CSV', up: 3, down: 2 },
+      { id: 9056104, app: 9056001, kind: 'general', status: 'open',
+        title: '[Mock] Remember scroll position on the feed', up: 1, down: 0 },
+      { id: 9056105, app: 9056002, kind: 'general', status: 'closed',
+        title: '[Mock] (shipped) Show avatars on kanban cards', up: 4, down: 0 },
+      // Governance rows — MUST be excluded by the kind filter.
+      { id: 9056106, app: 9056001, kind: 'secret_change', status: 'open',
+        title: '[Mock] Set FEATURE_FLAG to "on"', up: 6, down: 0 },
+      { id: 9056107, app: 9056003, kind: 'close_issue', status: 'open',
+        title: '[Mock] Close issue #900001', up: 6, down: 0 },
+    ];
+
+    for (const f of features) {
+      await pool.query(
+        `INSERT INTO issues (id, app_id, title, description, kind, created_by, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT DO NOTHING`,
+        [f.id, f.app, f.title,
+          'Staging demo submitted feature for the cross-app admin API (#562).',
+          f.kind, authorId, f.status]
+      );
+      // Up-votes from the first `up` voters, down-votes from the next `down`.
+      for (let i = 0; i < f.up && i < voterIds.length; i++) {
+        await pool.query(
+          `INSERT INTO issue_votes (issue_id, user_id, vote)
+           VALUES ($1, $2, 'up')
+           ON CONFLICT (issue_id, user_id) DO NOTHING`,
+          [f.id, voterIds[i]]
+        );
+      }
+      for (let i = f.up; i < f.up + f.down && i < voterIds.length; i++) {
+        await pool.query(
+          `INSERT INTO issue_votes (issue_id, user_id, vote)
+           VALUES ($1, $2, 'down')
+           ON CONFLICT (issue_id, user_id) DO NOTHING`,
+          [f.id, voterIds[i]]
+        );
+      }
+    }
+    log.info('db', 'Staging submitted-features fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Staging submitted-features seeding failed', { message: err.message });
+  }
+}
+
+// Fixture for the build-failure log panel (#416): one obviously-fake
+// errored app whose last_failure carries a realistic healthcheck
+// failure record, so the "View build log" menu item / panel and the
+// app-tab error screen are exercisable in staging without provisioning
+// a real failing import. Owned by the demo user (900001); admins (the
+// capture user included) pass the involved-user gate and see the log.
+// ID sits in the 900xxx range, the row carries the "Staging demo"
+// prefix, and ON CONFLICT DO NOTHING keeps the every-boot re-run
+// idempotent.
+async function seedStagingFailedApp(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password)
+       VALUES (900001, 'staging-demo-user', 'staging-demo-not-a-login')
+       ON CONFLICT DO NOTHING`
+    );
+    const logLines = [
+      '# Staging demo build log — synthetic fixture for the build-log panel',
+      '> staging-demo-failed-app@1.0.0 start',
+      '> node server.js',
+      '',
+      'node:internal/modules/cjs/loader:1145',
+      '  throw err;',
+      '  ^',
+      '',
+      "Error: Cannot find module './lib/dapp-server'",
+      'Require stack:',
+      '- /app/server.js',
+      '    at Module._resolveFilename (node:internal/modules/cjs/loader:1142:15)',
+      '    at Module._load (node:internal/modules/cjs/loader:983:27)',
+      '    at Module.require (node:internal/modules/cjs/loader:1230:19)',
+      '    at require (node:internal/modules/helpers:179:18)',
+      '    at Object.<anonymous> (/app/server.js:6:22)',
+      '    at Module._compile (node:internal/modules/cjs/loader:1368:14)',
+      '    at Module._extensions..js (node:internal/modules/cjs/loader:1426:10)',
+      '    at Module.load (node:internal/modules/cjs/loader:1205:32)',
+      '    at Module._load (node:internal/modules/cjs/loader:1021:12)',
+      '    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:142:12) {',
+      "  code: 'MODULE_NOT_FOUND',",
+      "  requireStack: [ '/app/server.js' ]",
+      '}',
+      '',
+      'Node.js v20.11.1',
+      '',
+      '(container restarted by --restart unless-stopped, same crash repeats)',
+      "Error: Cannot find module './lib/dapp-server'",
+      "  code: 'MODULE_NOT_FOUND'",
+    ].join('\n');
+    const lastFailure = {
+      stage: 'healthcheck',
+      reason: "[exited (exit=1)] Error: Cannot find module './lib/dapp-server'",
+      log: logLines,
+      at: new Date().toISOString(),
+      sha: null,
+    };
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, view_visibility, created_by, retry_count, last_failure)
+       VALUES (900040, 'Staging demo failed app', 'staging-demo-failed-app', 'error', 'public',
+               900001, 0, $1::jsonb)
+       ON CONFLICT DO NOTHING`,
+      [JSON.stringify(lastFailure)]
+    );
+    log.info('db', 'Staging failed-app fixture seeded');
+  } catch (err) {
+    log.warn('db', 'Staging failed-app seeding failed', { message: err.message });
   }
 }
 

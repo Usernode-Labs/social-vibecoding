@@ -13,11 +13,24 @@ async function buildImage(contextPath, tag, buildArgs = {}) {
     ([k, v]) => ['--build-arg', `${k}=${v}`]
   );
   log.info('docker', 'Building image', { context: contextPath, tag, buildArgs });
-  await execFileAsync(
-    'docker',
-    ['build', ...buildArgFlags, '-t', tag, contextPath],
-    { timeout: 5 * 60 * 1000 }
-  );
+  try {
+    await execFileAsync(
+      'docker',
+      ['build', ...buildArgFlags, '-t', tag, contextPath],
+      // Generous maxBuffer so a chatty build still yields a usable log
+      // tail instead of a bare "maxBuffer exceeded" error (#416).
+      { timeout: 5 * 60 * 1000, maxBuffer: 8 * 1024 * 1024 }
+    );
+  } catch (err) {
+    // Attach the build output tail so deploy callers can persist a
+    // diagnosable apps.last_failure record (see services/deploy-failure).
+    const deployFailure = require('./deploy-failure');
+    err.buildFailed = true;
+    err.buildLog = deployFailure.truncateLog(
+      `${err.stderr || ''}\n${err.stdout || ''}`
+    );
+    throw err;
+  }
   log.info('docker', 'Image built', { tag });
 }
 
@@ -121,6 +134,25 @@ async function getHostPort(nameOrId, containerPort) {
   }
 }
 
+// Start an existing (stopped/exited) container in place. Fast-path
+// recovery used by the production watchdog (services/app-heal.js): the
+// image, env, and container config all survive a stop, so `docker
+// start` brings an app back in seconds without a rebuild. Throws on
+// failure so callers can escalate to a full rebuild/respawn.
+async function startContainer(nameOrId) {
+  await execFileAsync('docker', ['start', nameOrId], { timeout: 30000 });
+  log.info('docker', 'Container started in place', { nameOrId });
+}
+
+// `docker restart` — used by the on-demand heal path (app-heal.js
+// requestHeal) for a container whose state is 'running' but whose HTTP
+// health endpoint stopped answering (hung process). Same 10s stop grace
+// as stopAndRemove. Throws on failure.
+async function restartContainer(nameOrId) {
+  await execFileAsync('docker', ['restart', '-t', '10', nameOrId], { timeout: 60000 });
+  log.info('docker', 'Container restarted', { nameOrId });
+}
+
 async function stopAndRemove(nameOrId) {
   try {
     await execFileAsync('docker', ['stop', '-t', '10', nameOrId], { timeout: 30000 }).catch(() => {});
@@ -215,8 +247,8 @@ async function waitForHealthy(name, port, healthPath, maxRetries = 30) {
   // onto the session instead of leaving check_state NULL with the cause
   // buried in platform logs. `healthcheckFailed` lets callers distinguish a
   // boot/healthcheck failure (the app can't even start) from other build
-  // errors. See services/visuals.summarizeBootFailure for the reason
-  // extraction and staging-recovery.recheckSessionChecks for the persist.
+  // errors. See services/deploy-failure for the reason extraction and
+  // staging-recovery.recheckSessionChecks for the persist.
   const err = new Error(`Healthcheck failed after ${maxRetries} attempts: ${name}`);
   err.healthcheckFailed = true;
   err.containerStatus = containerStatus || null;
@@ -254,6 +286,8 @@ module.exports = {
   buildImage,
   runContainer,
   runOneShot,
+  startContainer,
+  restartContainer,
   stopAndRemove,
   getContainerStatus,
   getContainerLabels,

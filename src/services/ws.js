@@ -795,7 +795,9 @@ function broadcastGlobalScoped(payload, { appId = null, appSlug = null } = {}) {
 }
 
 // Push an app status update to all connected clients (filtered for
-// view-private apps).
+// view-private apps). `errorReason` (#416) is the concise one-line
+// failure reason only — the full build log stays behind the gated
+// GET /api/apps/:slug payload.
 function pushAppStatusUpdate(app) {
   broadcastGlobalScoped({
     type: 'app_status',
@@ -803,6 +805,7 @@ function pushAppStatusUpdate(app) {
     slug: app.slug,
     status: app.status,
     url: app.url || null,
+    errorReason: app.errorReason || null,
   }, { appId: app.id, appSlug: app.slug });
 }
 

@@ -386,11 +386,17 @@ const Home = {
     let rows = '';
     for (const p of prs) {
       const title = p.pr_title || `PR #${p.pr_number || p.id}`;
+      // Placeholder-title marker: AI naming was down when this PR was
+      // titled; the title-heal sweeper regenerates it automatically.
+      const fallbackChip = p.pr_title_fallback
+        ? '<span class="inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-500 shrink-0" title="AI naming was unavailable when this proposal was created, so it shows a placeholder title. A descriptive title will be generated automatically.">Auto-title pending</span>'
+        : '';
       rows += `
         <a href="#app/${esc(p.app_slug)}/dev/proposals/${p.id}"
            class="col-span-full flex items-center gap-2 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-violet-500/50 transition-colors">
           <span class="text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0 max-w-[30%] truncate">${esc(p.app_name)}</span>
           <span class="text-sm text-zinc-800 dark:text-zinc-200 flex-1 min-w-0 truncate">${esc(title)}</span>
+          ${fallbackChip}
           ${lifeChip(p)}
           ${pill(parseInt(p.yes_count) || 0, p.majority || 1, p.status)}
         </a>`;
@@ -615,8 +621,17 @@ const Home = {
     // ONLY in the hamburger menu's build-info header now
     // (renderMenuHeaderHtml → renderAppPillsHtml); the card face
     // carries no chips at all.
+    // #416: hovering an errored card reveals the one-line failure
+    // reason. `last_failure_reason` only rides the list payload for the
+    // app's creator / collaborators / admins (server-gated), so the
+    // tooltip simply doesn't render for outsiders. escapeHtml here
+    // doesn't cover quotes (textContent→innerHTML), so add the
+    // attribute-safe pass explicitly.
+    const failureTip = isError && app.last_failure_reason
+      ? ` title="${escapeHtml(String(app.last_failure_reason)).replace(/"/g, '&quot;')}"`
+      : '';
     const warningHtml = statusLabel
-      ? `<p class="text-xs mt-0.5 ${isAwaiting ? 'text-amber-500' : 'text-yellow-500'}">${statusLabel}</p>`
+      ? `<p class="text-xs mt-0.5 ${isAwaiting ? 'text-amber-500' : 'text-yellow-500'}"${failureTip}>${statusLabel}</p>`
       : '';
 
     // Active-users badge beside the title: a tiny person glyph + the
@@ -1296,6 +1311,23 @@ const Home = {
     }
     if (isError && (user.canAdminWrite || user.id === app.created_by)) {
       items.push({ key: 'retry', label: 'Retry', run: () => Home._menuRetry(app) });
+    }
+    // #416: "View build log" for involved users — on errored apps, and
+    // on running apps whose last recorded failure post-dates the last
+    // successful deploy (a failed rebuild: the old container keeps
+    // serving, but the rebuild died). `last_failure_reason/_at` only
+    // ride the list payload when the server-side involved-user gate
+    // passed, so the timestamp check below can't fire for outsiders.
+    const canSeeBuildLog = app.is_collaborator || user.canAdminWrite || user.id === app.created_by;
+    const rebuildFailed = isRunning && app.last_failure_at
+      && (!app.last_deploy_at || new Date(app.last_failure_at) > new Date(app.last_deploy_at));
+    if (canSeeBuildLog && (isError || rebuildFailed)) {
+      items.push({
+        key: 'build-log',
+        label: 'View build log',
+        title: app.last_failure_reason || 'See why the last build/deploy failed',
+        run: () => window.BuildLog && BuildLog.open(app.slug),
+      });
     }
     if (user.canAdminWrite && app.repo_url && isRunning && !app.self_hosted) {
       // keepOpen: the drift check can take 30-90s when a rebuild kicks

@@ -2954,6 +2954,27 @@ html.in-native-webview #header-title {
 }
 button.attr-chip { cursor: pointer; }
 
+/* #489: the assignee initial-avatar inside a chip — a tiny circle carrying
+   the assignee's first letter. The tint (bg + text colour) comes from a
+   utility class chosen per-username in JS; sizing/centring live here. */
+.attr-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 9999px;
+  font-size: 0.6rem;
+  font-weight: 600;
+  line-height: 1;
+  flex-shrink: 0;
+}
+/* Unassigned placeholder — a dashed grey outline circle, no letter. */
+.attr-avatar-empty {
+  border: 1px dashed currentColor;
+  opacity: 0.6;
+}
+
 /* Floating dropdown anchored under a chip. Body-mounted + position:fixed
    so it escapes the card's overflow clipping and survives feed re-renders. */
 .attr-popover {

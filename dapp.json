@@ -104,6 +104,11 @@
       "expectText": "Merge debug"
     },
     {
+      "name": "Submitted features page renders",
+      "path": "/admin-features?demo=1",
+      "expectText": "Submitted features"
+    },
+    {
       "name": "Dev tab defaults to kanban board on wide screens",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban"
@@ -114,6 +119,28 @@
       "expectSelector": ".voting-help-btn"
     },
     {
+      "name": "Kanban filter bar renders above the board",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban-search"
+    },
+    {
+      "name": "Kanban cards show the assignee initial-avatar",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": ".attr-avatar"
+    },
+    {
+      "name": "Close-issue governance card renders in the dev board",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#close-issue-form",
+      "expectText": "Close issue #900001"
+    },
+    {
+      "name": "Manually-completed task shows a Completed manually Done card (#529)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban",
+      "expectText": "Completed manually"
+    },
+    {
       "name": "Chromeless share-link view renders the Open-in-Usernode pill",
       "path": "/#app/usernode-2d5619/full",
       "expectSelector": "#chromeless-pill"
@@ -122,6 +149,11 @@
       "name": "Home feed renders with the app search bar",
       "path": "/",
       "expectSelector": "#home-search-input"
+    },
+    {
+      "name": "Notifications drawer renders its Mark-all-read control",
+      "path": "/",
+      "expectSelector": "#notifications-mark-all"
     },
     {
       "name": "Home 'Your apps' section renders for the seeded admin",
@@ -142,6 +174,17 @@
       "name": "App-view header shows the Forked-from label",
       "path": "/app/staging-demo-fork",
       "expectText": "Forked from",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Home feed renders the seeded errored app tile",
+      "path": "/",
+      "expectText": "Staging demo failed app"
+    },
+    {
+      "name": "Errored app view shows the failure reason and build-log button",
+      "path": "/app/staging-demo-failed-app",
+      "expectText": "View build log",
       "allowConsoleErrors": true
     }
   ]

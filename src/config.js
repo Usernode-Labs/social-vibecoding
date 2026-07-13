@@ -99,6 +99,15 @@ function load() {
     stagingIdleTeardownMs: parseInt(process.env.STAGING_IDLE_TEARDOWN_MS || String(6 * 60 * 60 * 1000), 10),
     // How often the session sweeper scans for idle sessions.
     sessionSweepIntervalMs: parseInt(process.env.SESSION_SWEEP_INTERVAL_MS || '60000', 10),
+    // Production app-container watchdog (services/app-heal.js, #426):
+    // sweeps every appHealIntervalMs for status='running' apps whose
+    // `usernode-app-<slug>` container is stopped or missing and restarts
+    // (or rebuilds) them automatically. 0 disables the sweep entirely.
+    // appHealCooldownMs bounds retry churn per app — a persistently
+    // failing heal (crash-loop on bad code, missing required secret)
+    // isn't retried more often than this.
+    appHealIntervalMs: parseInt(process.env.APP_HEAL_INTERVAL_MS || '60000', 10),
+    appHealCooldownMs: parseInt(process.env.APP_HEAL_COOLDOWN_MS || String(10 * 60 * 1000), 10),
     // When a user at their session cap reopens/resumes a paused session,
     // auto-pause their least-recently-active session to make room instead
     // of refusing with a 429. Set SESSION_LRU_ON_RESUME=false to keep the
@@ -180,6 +189,7 @@ function load() {
   console.log(`  SESSION_AUTOPAUSE_IDLE_MS=${config.sessionAutopauseIdleMs}${config.sessionAutopauseIdleMs === 0 ? ' (disabled)' : ''}`);
   console.log(`  STAGING_IDLE_TEARDOWN_MS=${config.stagingIdleTeardownMs}${config.stagingIdleTeardownMs === 0 ? ' (disabled)' : ''}`);
   console.log(`  SESSION_SWEEP_INTERVAL_MS=${config.sessionSweepIntervalMs}`);
+  console.log(`  APP_HEAL_INTERVAL_MS=${config.appHealIntervalMs}${config.appHealIntervalMs === 0 ? ' (disabled)' : ''} APP_HEAL_COOLDOWN_MS=${config.appHealCooldownMs}`);
   console.log(`  SESSION_LRU_ON_RESUME=${config.sessionLruOnResume}`);
   console.log(`  SESSION_PRESSURE_GRACE_MS=${config.sessionPressureGraceMs}${config.sessionPressureGraceMs === 0 ? ' (disabled)' : ''}`);
   console.log(`  PR_STALE_NOTIFY_MS=${config.prStaleNotifyMs}${config.prStaleNotifyMs === 0 ? ' (disabled)' : ''} PR_STALE_GRACE_MS=${config.prStaleGraceMs}`);

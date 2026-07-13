@@ -9,11 +9,12 @@ const appManifest = require('../services/app-manifest');
 const appSecrets = require('../services/app-secrets');
 const staging = require('../services/staging');
 const { encrypt, decrypt } = require('../services/secrets');
-const { issueCreateLimiter } = require('../middleware/rate-limits');
+const { issueKindLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 const { weekStartUtc, countWeeklyAllowanceUsed, WEEKLY_KUDOS_LIMIT } = require('./kudos');
 const appAccess = require('../services/app-access');
 const topicAttrs = require('../services/topic-attributes');
+const { FEEDBACK_FALLBACK_TITLE } = require('../services/llm');
 
 // Pull owner/repo out of a stored repo_url. Same shape used across the
 // codebase (e.g. the rename-apply path below, routes/votes.js).
@@ -43,19 +44,23 @@ function creatorFromSourceLine(body) {
 // via POST /api/apps/:slug/rename (see src/routes/apps.js). The vote-apply
 // path below (maybeApplyRenameProposal) is retained only so any rename
 // issues already open at rollout can still resolve.
-const VALID_KINDS = ['general', 'secret_change'];
+const VALID_KINDS = ['general', 'secret_change', 'close_issue'];
 const MAX_SECRET_VALUE_LENGTH = 4096;
+const MAX_CLOSE_REASON_LENGTH = 2000;
 
 // #132: should this issue kind get a GitHub twin on the app's repo?
 // Env-var change proposals (kind='secret_change') are in-app governance —
 // they're proposed, voted, applied, and audited entirely on the platform,
 // so opening a "Set secret …" issue on GitHub just pollutes the repo's
-// issue list (GitHub issues are reserved for real issues). Everything
+// issue list (GitHub issues are reserved for real issues). Close-issue
+// proposals (kind='close_issue') target an EXISTING GitHub issue — a twin
+// would be pure noise, and the target's number deliberately lives in the
+// payload, not github_issue_number (see the create route). Everything
 // downstream already tolerates a null github_issue_number: the apply path
 // guards its close/comment on it, and the UI omits the kudos button when
 // no twin exists.
 function shouldCreateGithubTwin(kind) {
-  return kind !== 'secret_change';
+  return kind !== 'secret_change' && kind !== 'close_issue';
 }
 
 // Staging-only mock issues for GET /api/apps/:slug/github-issues. A
@@ -172,6 +177,18 @@ function stagingMockGovernance() {
     mk(9100002, 'secret_change', '[Mock] Set FEATURE_FLAG to "on"',
       { key: 'FEATURE_FLAG', action: 'set', hasValue: true }, 8, 4, 3,
       { required: 6, windowEndsAt: null, contested: true }),
+    // Close-issue proposal targeting mock issue 900001 (served by
+    // stagingMockIssues above), so the ?demo=1 preview shows the new
+    // governance card AND the target issue row's disabled "Close
+    // proposed" button state.
+    mk(9100003, 'close_issue',
+      '[Mock] Close issue #900001: "Dark mode toggle resets after refresh"',
+      {
+        issueNumber: 900001,
+        issueTitle: 'Dark mode toggle resets after refresh',
+        reason: 'Obsolete since the theme rework.',
+      }, 4, 1, 0,
+      { required: 2, windowEndsAt: hoursAhead(40) }),
   ];
 }
 
@@ -279,8 +296,10 @@ function issueRoutes(config) {
     }
   });
 
-  // Create an issue — supports kind='general' (default) and kind='rename'.
-  router.post('/api/apps/:slug/issues', issueCreateLimiter, async (req, res) => {
+  // Create an issue / proposal — kinds per VALID_KINDS above (general is
+  // the default). Rate-limited per kind: close_issue proposals draw from
+  // their own bucket, everything else from issue-create.
+  router.post('/api/apps/:slug/issues', issueKindLimiter, async (req, res) => {
     let { title, description, kind = 'general', payload = {} } = req.body || {};
 
     if (!VALID_KINDS.includes(kind)) {
@@ -337,6 +356,62 @@ function issueRoutes(config) {
           `${req.user.username} (via Usernode) proposed ${
             action === 'delete' ? 'removing' : 'setting'
           } the env var "${key}". Auto-applies + redeploys when a majority of active users vote up.`;
+      } else if (kind === 'close_issue') {
+        const issueNumber = Number(payload?.issueNumber);
+        if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+          return res.status(400).json({ error: 'payload.issueNumber must be a positive integer' });
+        }
+        const reason = typeof payload?.reason === 'string' ? payload.reason.trim() : '';
+        if (reason.length > MAX_CLOSE_REASON_LENGTH) {
+          return res.status(400).json({
+            error: `payload.reason must be ≤ ${MAX_CLOSE_REASON_LENGTH} chars`,
+          });
+        }
+
+        // Verify the target is a CURRENTLY OPEN GitHub issue on this repo
+        // before creating the proposal — same policy as the bounty route:
+        // fetchPublicIssues never throws; a degraded fetch (note) means no
+        // positive confirmation, so refuse and change nothing.
+        const parsed = parseOwnerRepo(app.repo_url);
+        if (!github.isEnabled() || !parsed) {
+          return res.status(422).json({
+            error: 'Cannot verify the issue right now — GitHub is unavailable for this app.',
+          });
+        }
+        const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
+        if (ghResult.note) {
+          return res.status(422).json({
+            error: "Couldn't confirm this issue is open right now. Try again in a moment.",
+          });
+        }
+        const target = (ghResult.issues || []).find((i) => i.number === issueNumber);
+        if (!target) {
+          return res.status(404).json({
+            error: `Issue #${issueNumber} isn't an open issue on this repo.`,
+          });
+        }
+
+        // Dedupe: one open close proposal per issue per app. The UI also
+        // disables the button, but two clients can race — refuse here.
+        const { rows: dupRows } = await pool.query(
+          `SELECT id FROM issues
+            WHERE app_id = $1 AND kind = 'close_issue' AND status = 'open'
+              AND (payload->>'issueNumber')::int = $2`,
+          [app.id, issueNumber]
+        );
+        if (dupRows.length) {
+          return res.status(409).json({
+            error: `A close proposal for issue #${issueNumber} is already open`,
+          });
+        }
+
+        // The target's number lives ONLY in the payload — never in
+        // github_issue_number, which means "this proposal's GitHub twin"
+        // and would make the withdraw route close the target issue.
+        const issueTitle = String(target.title || '').slice(0, 300);
+        payload = { issueNumber, issueTitle, reason: reason || null };
+        title = `Close issue #${issueNumber}: "${issueTitle}"`.slice(0, 512);
+        description = reason || null;
       } else {
         if (!title?.trim()) return res.status(400).json({ error: 'Title required' });
         title = title.trim();
@@ -380,6 +455,8 @@ function issueRoutes(config) {
         chatPrefix = payload.action === 'delete'
           ? `${req.user.username} proposed removing secret ${payload.key}`
           : `${req.user.username} proposed setting secret ${payload.key}`;
+      } else if (kind === 'close_issue') {
+        chatPrefix = `${req.user.username} proposed closing issue #${payload.issueNumber}: "${payload.issueTitle}"`;
       } else {
         chatPrefix = `${req.user.username} created issue: "${title}"`;
       }
@@ -387,11 +464,17 @@ function issueRoutes(config) {
       await sendSystemMessage(pool, app.id, createdMsg, 'system');
       // Dual-post the creation into the topic's own thread so the
       // discussion opens with its origin in context: governance proposals
-      // (secret_change / rename) thread on the local issue id; general
-      // issues thread on the GitHub twin number (no twin → no thread yet).
-      if (kind === 'secret_change' || kind === 'rename') {
+      // (secret_change / rename / close_issue) thread on the local issue
+      // id; general issues thread on the GitHub twin number (no twin → no
+      // thread yet). A close_issue proposal ALSO posts into its target
+      // issue's thread so followers of the issue see the vote start.
+      if (kind === 'secret_change' || kind === 'rename' || kind === 'close_issue') {
         await sendSystemMessage(pool, app.id, createdMsg, 'system',
           null, { type: 'governance', ref: rows[0].id }).catch(() => {});
+        if (kind === 'close_issue' && payload.issueNumber) {
+          await sendSystemMessage(pool, app.id, createdMsg, 'system',
+            null, { type: 'issue', ref: payload.issueNumber }).catch(() => {});
+        }
       } else if (githubIssueNumber) {
         await sendSystemMessage(pool, app.id, createdMsg, 'system',
           null, { type: 'issue', ref: githubIssueNumber }).catch(() => {});
@@ -458,6 +541,8 @@ function issueRoutes(config) {
       } else if (issue.kind === 'secret_change') {
         const action = issue.payload?.action === 'delete' ? 'removal' : 'change';
         voteSubject = `secret ${action} "${issue.payload?.key || issue.title}"`;
+      } else if (issue.kind === 'close_issue') {
+        voteSubject = `close proposal for issue #${issue.payload?.issueNumber || '?'}`;
       } else {
         voteSubject = `issue: "${issue.title}"`;
       }
@@ -472,15 +557,18 @@ function issueRoutes(config) {
 
       let renamed = null;
       let secretChanged = null;
+      let issueClosed = null;
       if (vote === 'up' && issue.kind === 'rename') {
         renamed = await maybeApplyRenameProposal(pool, issue);
       } else if (vote === 'up' && issue.kind === 'secret_change') {
         secretChanged = await maybeApplySecretChangeProposal(config, pool, issue);
+      } else if (vote === 'up' && issue.kind === 'close_issue') {
+        issueClosed = await maybeApplyCloseIssueProposal(pool, issue);
       }
 
       pushIssueUpdate({ action: 'voted', appSlug: issue.app_slug, appId: issue.app_id, issueId: issue.id, vote });
 
-      res.json({ ok: true, renamed, secretChanged });
+      res.json({ ok: true, renamed, secretChanged, issueClosed });
     } catch (err) {
       log.error('issues', 'Vote failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -698,6 +786,12 @@ function issueRoutes(config) {
           myPrSessionId: myPrSessionByNumber.get(issue.number) || null,
           chatCount: chatByNumber.get(issue.number)?.cnt || 0,
           lastMessageAt: chatByNumber.get(issue.number)?.last_at || null,
+          // The Haiku title call failed when this feedback issue was
+          // filed, so it carries the placeholder template. Drives the
+          // "Auto-title pending" chip on the issue row; the title-heal
+          // sweeper regenerates it (services/title-heal.js), after which
+          // the refreshed title no longer matches and the chip drops.
+          title_fallback: issue.title === FEEDBACK_FALLBACK_TITLE,
         };
       });
 
@@ -772,7 +866,14 @@ function issueRoutes(config) {
             priority: { top: 'low', count: 1, myValue: null },
             assignee: { top: 'staging-demo-user', count: 1, myValue: null },
           }],
-          // 900002 deliberately left untouched → muted "Set priority" / "Assign".
+          // #489: a third assignee whose first letter (M) differs from the
+          // others (S), so the deterministic initial-avatar colouring is
+          // reviewable across several visibly-distinct avatars on the board.
+          [900006, {
+            priority: { top: 'medium', count: 2, myValue: null },
+            assignee: { top: 'maya-builder', count: 3, myValue: null },
+          }],
+          // 900002 deliberately left untouched → muted "Set priority" / "Unassigned".
         ]);
         for (const issue of issues) {
           const m = mockAttrs.get(issue.number);
@@ -980,6 +1081,200 @@ function issueRoutes(config) {
     }
   });
 
+  // #529: Mark a task (GitHub issue) COMPLETE without implementation.
+  // Admin-only, direct action (no vote / no proposal) for tasks handled
+  // offchain or outside the vibecoding code flow. Unlike the close_issue
+  // path (which sets status='closed' and makes the card vanish), this
+  // records a terminal status='completed' with an audit payload so the
+  // task surfaces in the board's Done column as a manual completion,
+  // visibly distinct from a merged-PR completion. Side-effect block
+  // mirrors maybeApplyCloseIssueProposal (GitHub close + comment, bounty
+  // voiding, chat/thread posts, superseded-proposal cleanup, cache bust).
+  router.post('/api/apps/:slug/issues/:number/complete', async (req, res) => {
+    if (!req.user?.canAdminWrite) {
+      return res.status(403).json({ error: 'Full admin access required' });
+    }
+    const issueNumber = parseInt(req.params.number, 10);
+    if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+      return res.status(400).json({ error: 'Invalid issue number' });
+    }
+    const rawNote = typeof req.body?.note === 'string' ? req.body.note.trim() : '';
+    if (rawNote.length > MAX_CLOSE_REASON_LENGTH) {
+      return res.status(400).json({ error: `note must be ≤ ${MAX_CLOSE_REASON_LENGTH} chars` });
+    }
+    const note = rawNote || null;
+    const bodyTitle = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+
+    try {
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab', `${appAccess.ACCESS_COLUMNS}, repo_url`
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+
+      const parsed = parseOwnerRepo(app.repo_url);
+
+      // Resolve a title for the completion record: prefer the client-passed
+      // title, then any existing internal row, then a live GitHub fetch, and
+      // finally a bare "#N" fallback so the Done card always has a label.
+      let title = bodyTitle;
+      if (!title) {
+        const { rows: existingRows } = await pool.query(
+          `SELECT title FROM issues
+            WHERE app_id = $1 AND github_issue_number = $2
+            ORDER BY id DESC LIMIT 1`,
+          [app.id, issueNumber]
+        );
+        title = (existingRows[0]?.title || '').trim();
+      }
+      if (!title && github.isEnabled() && parsed) {
+        try {
+          const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
+          const hit = (ghResult.issues || []).find((i) => i.number === issueNumber);
+          if (hit?.title) title = String(hit.title).trim();
+        } catch { /* best-effort */ }
+      }
+      if (!title) title = `Issue #${issueNumber}`;
+
+      const completedAt = new Date().toISOString();
+      const auditPayload = {
+        resolution: 'completed',
+        completedBy: req.user.id,
+        completedByUsername: req.user.username,
+        completedAt,
+        note,
+        issueTitle: title,
+      };
+
+      // Upsert the completion record inside a short txn so two near-
+      // simultaneous completes can't double-apply. Lock any existing row
+      // for this (app_id, number) first, then either flip it to completed
+      // or insert a fresh 'general' row when the issue was GitHub-native.
+      let issueId;
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const { rows: lockRows } = await client.query(
+          `SELECT id FROM issues
+            WHERE app_id = $1 AND github_issue_number = $2
+            ORDER BY id ASC
+            FOR UPDATE`,
+          [app.id, issueNumber]
+        );
+        if (lockRows.length) {
+          issueId = lockRows[0].id;
+          // Mark the primary row completed with the audit payload, and flip
+          // any other open twin rows for the same number to 'completed' too
+          // so attribution rows don't linger open (mirrors the close path).
+          await client.query(
+            `UPDATE issues
+                SET status = 'completed',
+                    payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+              WHERE id = $1`,
+            [issueId, JSON.stringify(auditPayload)]
+          );
+          await client.query(
+            `UPDATE issues SET status = 'completed'
+              WHERE app_id = $1 AND github_issue_number = $2
+                AND status = 'open' AND id <> $3`,
+            [app.id, issueNumber, issueId]
+          );
+        } else {
+          const { rows: insRows } = await client.query(
+            `INSERT INTO issues (app_id, github_issue_number, title, kind, created_by, status, payload)
+             VALUES ($1, $2, $3, 'general', $4, 'completed', $5::jsonb)
+             RETURNING id`,
+            [app.id, issueNumber, title, req.user.id, JSON.stringify(auditPayload)]
+          );
+          issueId = insRows[0].id;
+        }
+        await client.query('COMMIT');
+      } catch (err) {
+        try { await client.query('ROLLBACK'); } catch {}
+        log.error('issues', 'Mark-complete apply failed', { issueNumber, err: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
+      } finally {
+        client.release();
+      }
+
+      log.info('issues', 'Task marked complete without implementation', {
+        issueId, appId: app.id, issueNumber, by: req.user.username,
+      });
+
+      // ---- Side effects: best-effort, outside the txn. ----
+
+      // Void open bounties on the target: no merged PR means no one earns the
+      // kudos, and a lingering 'open' row would keep inflating the count.
+      try {
+        await pool.query(
+          `UPDATE issue_bounties SET status = 'voided', awarded_at = NOW()
+            WHERE app_id = $1 AND github_issue_number = $2 AND status = 'open'`,
+          [app.id, issueNumber]
+        );
+      } catch (err) {
+        log.warn('issues', 'Bounty voiding on mark-complete failed', {
+          issueNumber, err: err.message,
+        });
+      }
+
+      const completedMsg = note
+        ? `Task #${issueNumber} marked complete without implementation by ${req.user.username} — ${note}`
+        : `Task #${issueNumber} marked complete without implementation by ${req.user.username}`;
+      await sendSystemMessage(pool, app.id, completedMsg, 'system')
+        .catch((err) => log.warn('issues', 'Mark-complete chat msg failed', { err: err.message }));
+      await sendSystemMessage(pool, app.id, completedMsg, 'system',
+        null, { type: 'governance', ref: issueId }).catch(() => {});
+      await sendSystemMessage(pool, app.id, completedMsg, 'system',
+        null, { type: 'issue', ref: issueNumber }).catch(() => {});
+
+      // Retire any open close_issue proposal for this number — it's now
+      // handled — so a pending close vote doesn't dangle.
+      await resolveSupersededCloseProposals(pool, {
+        appId: app.id,
+        appSlug: app.slug,
+        numbers: [issueNumber],
+        cause: { kind: 'github-close' },
+      }).catch(() => {});
+
+      // GitHub: close FIRST, then comment (same ordering as the close path).
+      if (github.isEnabled() && parsed) {
+        try {
+          await github.closeIssue(parsed.owner, parsed.repo, issueNumber);
+          let commentBody = `Marked complete without code changes by @${req.user.username} on Usernode.`;
+          if (note) commentBody += `\n\nNote: ${note}`;
+          await github.createIssueComment(parsed.owner, parsed.repo, issueNumber, commentBody)
+            .catch((err) => log.warn('issues', 'Mark-complete comment failed', {
+              issue: issueNumber, status: err.status, err: err.message,
+            }));
+        } catch (err) {
+          log.warn('issues', 'GitHub issue close (mark-complete) failed', {
+            issue: issueNumber, status: err.status, err: err.message || '(empty)',
+          });
+        }
+
+        // Cache/UI sync: suppress the number so the eventually-consistent
+        // GitHub list can't resurrect it in the Issues column, bust the
+        // cache, and tell every open panel to refetch.
+        try {
+          github.noteIssuesClosed(parsed.owner, parsed.repo, [issueNumber]);
+          github.invalidateIssuesCache(parsed.owner, parsed.repo);
+        } catch (err) {
+          log.warn('issues', 'Cache bust after mark-complete failed', {
+            issueNumber, err: err.message,
+          });
+        }
+      }
+
+      pushIssueUpdate({
+        action: 'completed', appSlug: app.slug, appId: app.id, issueId, number: issueNumber,
+      });
+
+      res.json({ ok: true, completed: true, issueNumber, completedAt });
+    } catch (err) {
+      log.error('issues', 'Mark-complete failed', { issueNumber, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Admin force-apply for secret_change proposals — the issue-side
   // counterpart of POST /api/sessions/:id/admin-merge. Lets an admin
   // apply an environment-variable proposal right now, bypassing the
@@ -1004,21 +1299,26 @@ function issueRoutes(config) {
       if (issue.status !== 'open') {
         return res.status(409).json({ error: 'Issue is not open' });
       }
-      if (issue.kind !== 'secret_change') {
-        return res.status(400).json({ error: 'Only secret-change proposals can be admin-applied' });
+      if (issue.kind !== 'secret_change' && issue.kind !== 'close_issue') {
+        return res.status(400).json({ error: 'Only secret-change and close-issue proposals can be admin-applied' });
       }
 
       log.info('issues', 'Admin force-apply requested', {
-        issueId: issue.id, by: req.user.username,
+        issueId: issue.id, kind: issue.kind, by: req.user.username,
       });
 
-      const secretChanged = await maybeApplySecretChangeProposal(config, pool, issue, {
-        force: true, forceBy: req.user,
-      });
+      const applied = issue.kind === 'close_issue'
+        ? await maybeApplyCloseIssueProposal(pool, issue, { force: true, forceBy: req.user })
+        : await maybeApplySecretChangeProposal(config, pool, issue, { force: true, forceBy: req.user });
 
       pushIssueUpdate({ action: 'voted', appSlug: issue.app_slug, appId: issue.app_id, issueId: issue.id });
 
-      res.json({ ok: true, secretChanged });
+      res.json({
+        ok: true,
+        applied,
+        // BC alias for clients written when only secret_change existed.
+        secretChanged: issue.kind === 'secret_change' ? applied : null,
+      });
     } catch (err) {
       log.error('issues', 'Admin force-apply failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -1454,6 +1754,301 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
   }
 }
 
+/**
+ * Auto-resolve open close-issue proposals whose target was closed by other
+ * means (a merged PR carrying `Closes #N`, or a manual close on GitHub).
+ * Called from the merge path (routes/votes.js checkAndMerge), the post-merge
+ * issue-close watcher, and maybeApplyCloseIssueProposal's superseded guard.
+ *
+ * `cause` is { kind: 'pr-merge', prNumber } or { kind: 'github-close' } and
+ * drives both the audit payload's supersededBy value and the chat wording.
+ *
+ * Race-safe: each row flips via a single `WHERE status = 'open'` UPDATE (the
+ * same guard the withdraw route uses), so a concurrent vote-apply or
+ * withdraw that wins produces zero rows here and no duplicate messages.
+ * Best-effort throughout — never throws; callers must never be failed by it.
+ * No GitHub writes (the issue is already closed; the proposer's reason is
+ * NOT posted — the group never approved it) and no bounty changes.
+ */
+async function resolveSupersededCloseProposals(pool, { appId, appSlug, numbers, cause } = {}) {
+  const nums = (Array.isArray(numbers) ? numbers : [])
+    .map((n) => Number(n))
+    .filter((n) => Number.isInteger(n) && n > 0);
+  const resolved = [];
+  if (!appId || !nums.length) return { resolved };
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, app_id, payload FROM issues
+        WHERE app_id = $1 AND kind = 'close_issue' AND status = 'open'
+          AND (payload->>'issueNumber')::int = ANY($2::int[])`,
+      [appId, nums]
+    );
+
+    const supersededBy = cause?.kind === 'pr-merge'
+      ? `pr-merge:#${cause.prNumber}`
+      : 'github-close';
+
+    for (const row of rows) {
+      const n = Number(row.payload?.issueNumber);
+      const auditPayload = {
+        ...(row.payload || {}),
+        supersededAt: new Date().toISOString(),
+        supersededBy,
+      };
+      const { rows: updated } = await pool.query(
+        `UPDATE issues SET status = 'closed', payload = $2
+          WHERE id = $1 AND status = 'open'
+          RETURNING id`,
+        [row.id, JSON.stringify(auditPayload)]
+      );
+      if (!updated.length) continue; // lost the race to a vote-apply/withdraw
+
+      resolved.push(row.id);
+      const msg = cause?.kind === 'pr-merge'
+        ? `Close proposal for issue #${n} resolved automatically — PR #${cause.prNumber} closed the issue`
+        : `Close proposal for issue #${n} resolved automatically — the issue was closed on GitHub`;
+      await sendSystemMessage(pool, row.app_id, msg, 'system')
+        .catch((err) => log.warn('issues', 'Superseded chat message failed', { err: err.message }));
+      await sendSystemMessage(pool, row.app_id, msg, 'system',
+        null, { type: 'governance', ref: row.id }).catch(() => {});
+      // Same event the withdraw path emits — open clients drop the card and
+      // the target issue's row reverts to "Propose to close".
+      pushIssueUpdate({ action: 'closed', appSlug: appSlug || null, appId: row.app_id, issueId: row.id });
+      log.info('issues', 'Close proposal superseded', {
+        issueId: row.id, appId: row.app_id, target: n, supersededBy,
+      });
+    }
+  } catch (err) {
+    log.warn('issues', 'Superseded close-proposal resolve failed', {
+      appId, numbers: nums, err: err.message,
+    });
+  }
+  return { resolved };
+}
+
+/**
+ * Vote-apply path for `kind='close_issue'` issues. Same shape as
+ * maybeApplyRenameProposal: gate check, lock the issue row, mark the
+ * proposal closed atomically, then best-effort side effects (chat, GitHub
+ * close + explanation comment, bounty voiding, cache/UI sync).
+ *
+ * Runs a SUPERSEDED GUARD first, on every invocation (including
+ * non-mergeable sweeper calls): when a healthy cached open-issues fetch
+ * shows the target is no longer open, the proposal is resolved as
+ * superseded instead of applied — this doubles as the hourly catch-all for
+ * issues closed by hand on GitHub.
+ *
+ * `options.force` (admin force-apply) skips the majority + locked-app gates,
+ * like the secret-change path; the row lock still prevents a double-apply.
+ */
+async function maybeApplyCloseIssueProposal(pool, issue, options = {}) {
+  const force = !!options.force;
+  const issueNumber = Number(issue.payload?.issueNumber);
+  if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+    log.warn('issues', 'Close proposal missing issueNumber', { issueId: issue.id });
+    return { applied: false, error: 'missing issueNumber' };
+  }
+
+  // Repo coordinates for the superseded guard and the GitHub close below.
+  // (The vote route's issue row carries app_slug but not repo_url.)
+  const { rows: appRows } = await pool.query(
+    'SELECT slug, repo_url FROM apps WHERE id = $1',
+    [issue.app_id]
+  );
+  const appSlug = issue.app_slug || appRows[0]?.slug || null;
+  const parsed = parseOwnerRepo(appRows[0]?.repo_url);
+
+  // Superseded guard: a healthy fetch (no degradation note) that doesn't
+  // list the target means it was already closed by other means — retire the
+  // proposal instead of applying. A degraded fetch skips the guard and
+  // proceeds optimistically.
+  if (github.isEnabled() && parsed) {
+    const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
+    if (!ghResult.note) {
+      const stillOpen = (ghResult.issues || []).some((i) => i.number === issueNumber);
+      if (!stillOpen) {
+        await resolveSupersededCloseProposals(pool, {
+          appId: issue.app_id,
+          appSlug,
+          numbers: [issueNumber],
+          cause: { kind: 'github-close' },
+        });
+        return { applied: false, superseded: true };
+      }
+    }
+  }
+
+  const { active, majority } = await getActiveUserStats(pool, issue.app_id);
+
+  const { rows: upRows } = await pool.query(
+    `SELECT COUNT(*) AS cnt FROM issue_votes WHERE issue_id = $1 AND vote = 'up'`,
+    [issue.id]
+  );
+  const upCount = parseInt(upRows[0].cnt, 10) || 0;
+  // down votes feed both gates (eased threshold + visibility window),
+  // anchored on created_at. An admin force-apply skips both, like force-merge.
+  const { rows: downRows } = await pool.query(
+    `SELECT COUNT(*) AS cnt FROM issue_votes WHERE issue_id = $1 AND vote = 'down'`,
+    [issue.id]
+  );
+  const downCount = parseInt(downRows[0].cnt, 10) || 0;
+  const gate = mergeGate(active, upCount, downCount, issue.created_at);
+  const required = force ? upCount : gate.required;
+  if (!force && !gate.mergeable) {
+    return {
+      applied: false, upCount, majority, active,
+      required: gate.required, windowEndsAt: gate.windowEndsAt,
+      waitingForWindow: (gate.thresholdMet || gate.lazyArmed) && !gate.windowElapsed,
+    };
+  }
+
+  // Locked apps additionally require at least one admin up vote — same rule
+  // as the rename/secret paths. An admin force-apply trivially satisfies it.
+  if (!force && await isAppLocked(pool, issue.app_id)) {
+    const adminUp = await hasAdminUpVote(pool, issue.id);
+    if (!adminUp) {
+      log.info('issues', 'Close-issue majority reached but app is locked; awaiting admin up', {
+        issueId: issue.id, upCount, majority,
+      });
+      return { applied: false, upCount, majority, active, awaitingAdmin: true };
+    }
+  }
+
+  const client = await pool.connect();
+  let locked;
+  try {
+    await client.query('BEGIN');
+
+    const { rows: lockRows } = await client.query(
+      'SELECT * FROM issues WHERE id = $1 FOR UPDATE',
+      [issue.id]
+    );
+    if (!lockRows.length || lockRows[0].status !== 'open') {
+      await client.query('ROLLBACK');
+      return { applied: false, upCount, majority, active };
+    }
+    locked = lockRows[0];
+
+    const auditPayload = {
+      ...(locked.payload || {}),
+      appliedAt: new Date().toISOString(),
+      appliedBy: force ? `admin:${options.forceBy?.username || 'unknown'}` : 'group-vote',
+      upCount, required, active,
+    };
+    await client.query(
+      `UPDATE issues SET status = 'closed', payload = $1 WHERE id = $2`,
+      [JSON.stringify(auditPayload), locked.id]
+    );
+
+    // Also close any internal open twin rows for the target (a platform-
+    // filed 'general' issue whose GitHub twin is the number being closed),
+    // so creator-attribution rows don't linger open.
+    await client.query(
+      `UPDATE issues SET status = 'closed'
+        WHERE app_id = $1 AND github_issue_number = $2 AND status = 'open' AND id <> $3`,
+      [issue.app_id, issueNumber, locked.id]
+    );
+
+    await client.query('COMMIT');
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch {}
+    log.error('issues', 'Close-issue apply failed', { issueId: issue.id, err: err.message });
+    return { applied: false, error: err.message };
+  } finally {
+    client.release();
+  }
+
+  // ---- Side effects: best-effort, outside the txn. ----
+
+  // Void open bounties on the target: the issue is closing without a merged
+  // PR, so no one earns the kudos — and an 'open' row would linger forever
+  // and keep inflating the issue's bounty count (same rationale as the
+  // self-bounty voiding in routes/votes.js resolveIssueBounty). Allowance
+  // slots stay forfeited, consistent with existing policy.
+  try {
+    await pool.query(
+      `UPDATE issue_bounties SET status = 'voided', awarded_at = NOW()
+        WHERE app_id = $1 AND github_issue_number = $2 AND status = 'open'`,
+      [issue.app_id, issueNumber]
+    );
+  } catch (err) {
+    log.warn('issues', 'Bounty voiding on close-issue apply failed', {
+      issueId: issue.id, issueNumber, err: err.message,
+    });
+  }
+
+  const appliedHow = force
+    ? `by admin override (${options.forceBy?.username || 'admin'})`
+    : `by group vote (${upCount}/${required})`;
+  const closedMsg = `Issue #${issueNumber} closed ${appliedHow}`;
+  await sendSystemMessage(pool, issue.app_id, closedMsg, 'system')
+    .catch((err) => log.warn('issues', 'Close-issue chat msg failed', { err: err.message }));
+  // Dual-post the outcome into the proposal's governance thread AND the
+  // target issue's thread (mirrors the create path's dual-post).
+  await sendSystemMessage(pool, issue.app_id, closedMsg, 'system',
+    null, { type: 'governance', ref: locked.id }).catch(() => {});
+  await sendSystemMessage(pool, issue.app_id, closedMsg, 'system',
+    null, { type: 'issue', ref: issueNumber }).catch(() => {});
+
+  // GitHub: close FIRST, then comment (same ordering rationale as the
+  // rename path — a stale "closed by vote" comment must not land on an
+  // issue we failed to close). Both helpers route through getOctokit
+  // (PAT-preferred) and safeMention.
+  if (github.isEnabled() && parsed) {
+    try {
+      await github.closeIssue(parsed.owner, parsed.repo, issueNumber);
+
+      let commentBody = force
+        ? `Closed by admin override (${options.forceBy?.username || 'admin'}) on Usernode.`
+        : `Closed by group vote (${upCount}/${required}) on Usernode.`;
+      const reason = typeof locked.payload?.reason === 'string'
+        ? locked.payload.reason.trim() : '';
+      if (reason) {
+        let proposerName = null;
+        try {
+          const { rows: userRows } = await pool.query(
+            'SELECT username FROM users WHERE id = $1', [locked.created_by]
+          );
+          proposerName = userRows[0]?.username || null;
+        } catch {}
+        commentBody += `\n\n${proposerName || 'The proposer'}'s reason: ${reason}`;
+      }
+      await github.createIssueComment(parsed.owner, parsed.repo, issueNumber, commentBody)
+        .catch((err) => log.warn('issues', 'Close-issue comment failed', {
+          issue: issueNumber, status: err.status, err: err.message,
+        }));
+    } catch (err) {
+      log.warn('issues', 'GitHub issue close (close-issue vote) failed', {
+        issue: issueNumber, status: err.status, err: err.message || '(empty)',
+      });
+    }
+
+    // Cache/UI sync (mirrors the issue-close watcher's bustAndBroadcast):
+    // suppress the number so the eventually-consistent GitHub list can't
+    // resurrect it, bust the cache, and tell every open panel to refetch.
+    try {
+      github.noteIssuesClosed(parsed.owner, parsed.repo, [issueNumber]);
+      github.invalidateIssuesCache(parsed.owner, parsed.repo);
+      pushIssueUpdate({
+        action: 'github_synced',
+        appSlug,
+        appId: issue.app_id,
+        source: 'close_issue_vote',
+      });
+    } catch (err) {
+      log.warn('issues', 'Cache bust after close-issue apply failed', {
+        issueNumber, err: err.message,
+      });
+    }
+  }
+
+  log.info('issues', 'Close-issue proposal applied', {
+    issueId: issue.id, appId: issue.app_id, issueNumber, upCount, active, force,
+  });
+  return { applied: true, issueNumber, upCount, majority, active, force };
+}
+
 module.exports = {
   issueRoutes,
   creatorFromSourceLine,
@@ -1462,4 +2057,8 @@ module.exports = {
   // applies (parity with PR window-elapsed merges).
   maybeApplyRenameProposal,
   maybeApplySecretChangeProposal,
+  maybeApplyCloseIssueProposal,
+  // Exported for the merge path and the issue-close watcher (auto-resolve
+  // of close proposals whose target was closed by other means).
+  resolveSupersededCloseProposals,
 };

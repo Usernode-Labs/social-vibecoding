@@ -130,6 +130,18 @@ UPDATE apps SET last_deploy_at = created_at WHERE last_deploy_at IS NULL;
 -- truth for "what does this dapp create".
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS manifest_snapshot JSONB;
 
+-- #416: detail of the last build/deploy failure so the UI can show a
+-- build log instead of a bare "Error" status. Shape:
+--   { stage, reason, log, at, sha }
+--   stage  : 'clone'|'build'|'start'|'healthcheck'|'timeout'|'other'
+--   reason : concise human line (<= 280 chars)
+--   log    : ANSI-stripped tail of the docker build / boot output (<= 16 kB)
+-- Written by the deploy catch paths (services/app-creator.js,
+-- services/staging.js rebuildProduction, routes/apps.js watchdog);
+-- cleared (NULL) on every successful deploy. Exposed API-side only to
+-- the app's creator / collaborators / admins — see routes/apps.js.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS last_failure JSONB;
+
 -- Admin-gated change lock. When TRUE, applying any group-voted change to
 -- this app (PR merge in routes/votes.js, rename proposal + secret-change
 -- proposal in routes/issues.js) additionally requires at least one admin
@@ -1412,3 +1424,32 @@ CREATE INDEX IF NOT EXISTS idx_chat_session_attachments_orphan
 -- with their own dev session only. Schema-only in staging clones;
 -- migrate.js seeds a demo fixture so the UI is exercisable there.
 COMMENT ON TABLE chat_session_attachments IS 'staging:private';
+
+-- Fallback-title marker for the title auto-heal sweeper (services/
+-- title-heal.js). TRUE when the PR's title came from the LLM-unavailable
+-- fallback template ("<user>'s changes") — e.g. Anthropic credits ran out
+-- or the API errored — instead of the generated one. The sweeper retries
+-- generation while this is set and clears it on success; the vote panel
+-- renders an "Auto-title pending" chip off the same flag so voters know
+-- the placeholder isn't the real description of the change.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_title_fallback BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Feedback issues filed with the fallback title ("Feedback from Usernode")
+-- because the Haiku title call failed (routes/feedback.js). The issue is
+-- filed immediately regardless — never block feedback on LLM availability —
+-- and a row lands here so the title-heal sweeper can regenerate the title
+-- from the stored description and PATCH the GitHub issue later. Rows are
+-- deleted on success or abandoned after MAX_ATTEMPTS (title-heal.js);
+-- next_attempt_at implements per-row exponential backoff.
+CREATE TABLE IF NOT EXISTS title_heal_queue (
+  id              SERIAL PRIMARY KEY,
+  owner           TEXT NOT NULL,
+  repo            TEXT NOT NULL,
+  issue_number    INTEGER NOT NULL,
+  description     TEXT NOT NULL,
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (owner, repo, issue_number)
+);
+CREATE INDEX IF NOT EXISTS idx_title_heal_queue_due ON title_heal_queue(next_attempt_at);

@@ -22,6 +22,7 @@ const { notificationsRoutes } = require('./src/routes/notifications');
 const { collaboratorRoutes } = require('./src/routes/collaborators');
 const { statusRoutes } = require('./src/routes/status');
 const { internalRoutes } = require('./src/routes/internal');
+const { appErrorRoutes } = require('./src/routes/app-error');
 const { visualsRoutes } = require('./src/routes/visuals');
 const { appIconRoutes } = require('./src/routes/app-icons');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
@@ -299,6 +300,14 @@ app.use(visualsRoutes(config));
 // unguessable 32-hex icon id.
 app.use(appIconRoutes(config));
 
+// Friendly "app is restarting" page for dead app containers (#426).
+// Caddy's wildcard-site handle_errors rewrites upstream 502/503/504s to
+// /__app_unavailable and proxies them here with the original app-
+// subdomain Host. Mounted before authMiddleware: the request carries no
+// platform session (and needs none — for view-private apps the edge
+// gate already passed before the proxy attempt failed).
+app.use(appErrorRoutes(config));
+
 app.use(authMiddleware(config));
 app.use(authRoutes(config));
 app.use(appRoutes(config));
@@ -368,6 +377,15 @@ app.use(express.static(path.join(__dirname, 'public'), {
 
 app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
+// Cross-app "submitted features" admin view (#562). Like /admin, the static
+// shell is served to anyone; admin-features.js checks /api/auth/me and gates
+// non-admins, while the GET /api/admin/submitted-features data endpoint it
+// calls is independently enforced by adminMiddleware. Must be registered
+// before the app.get('*') SPA fallback below.
+app.get('/admin-features', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin-features.html'));
 });
 
 // Admin analytics dashboard. Like /admin, the static shell is served to
@@ -455,6 +473,12 @@ async function start() {
   // `main` we didn't make ourselves and redeploy via the same path
   // that the dev-chat merge flow uses. See main-drift-poller.js.
   require('./src/services/main-drift-poller').start(config);
+  // Production app-container watchdog (#426): restart/rebuild
+  // status='running' apps whose `usernode-app-<slug>` container is
+  // stopped or missing — the drift poller above only acts on new
+  // commits, so without this a dead container 502s forever. Not gated
+  // on GitHub config: the fast `docker start` path needs none.
+  require('./src/services/app-heal').start(config);
 
   // Adopt any worker containers left over from a previous server run —
   // either still executing or already exited but un-finalized. These
@@ -572,6 +596,12 @@ async function start() {
   // Off the critical path, single-flight per app inside the drain, and a
   // no-op when GitHub isn't wired up. Tunable via ELIGIBLE_MERGE_SWEEP_MS.
   startEligibleMergeSweeper(config);
+
+  // Title auto-heal: retry LLM title generation for PRs/feedback issues
+  // that were filed with the fallback template while the Anthropic API was
+  // unavailable (services/title-heal.js). Bounded, non-overlapping, no-op
+  // while the LLM stays disabled.
+  startTitleHealSweeper(config);
 
   return server;
 }
@@ -1016,6 +1046,38 @@ function startEligibleMergeSweeper(config) {
   }, ELIGIBLE_MERGE_SWEEP_MS).unref?.();
 }
 
+// How often the title auto-heal sweep runs (services/title-heal.js). Ten
+// minutes keeps the placeholder window short once credits/API come back
+// without hammering a still-dead API (each pass is a handful of Haiku
+// calls at most, and issue rows carry their own per-row backoff on top).
+// Tunable via TITLE_HEAL_SWEEP_MS; floored so a mis-set value can't spin.
+const TITLE_HEAL_SWEEP_MS = Math.max(
+  parseInt(process.env.TITLE_HEAL_SWEEP_MS || String(10 * 60 * 1000), 10) || (10 * 60 * 1000),
+  60 * 1000
+);
+
+// Periodic re-drive of title generation for fallback-titled PRs and
+// feedback issues. Same guard shape as startEligibleMergeSweeper: never
+// overlap a still-running pass, swallow all errors, unref'd timer. An
+// early first pass (~90s after boot) covers the common "credits restored,
+// platform redeployed" sequence so placeholders heal right away instead
+// of waiting out the first full interval.
+function startTitleHealSweeper(config) {
+  const titleHeal = require('./src/services/title-heal');
+  let running = false;
+  const tick = () => {
+    if (running) return;
+    running = true;
+    titleHeal.sweep(config)
+      .catch((err) => {
+        log.warn('server', 'Title-heal sweep tick failed', { err: err.message });
+      })
+      .finally(() => { running = false; });
+  };
+  setTimeout(tick, 90 * 1000).unref?.();
+  setInterval(tick, TITLE_HEAL_SWEEP_MS).unref?.();
+}
+
 // Resume post-merge issue-close watches for sessions merged shortly
 // before this process started. See the call site for rationale. The
 // 15-minute window comfortably covers the merge → GHA build → rolling
@@ -1049,6 +1111,10 @@ async function resumeIssueCloseWatches(config) {
       linkedIssues: row.linked_issues,
       appSlug: row.app_slug,
       appId: row.app_id,
+      // The merge-time superseded-proposal resolve ran in the dead
+      // pre-restart process — the resumed watch re-runs it for observed
+      // closes so no close-issue proposal is left dangling.
+      pool,
     }).catch((err) => {
       log.warn('server', 'Resumed issue-close watch failed', {
         sessionId: row.id, err: err.message,
@@ -1987,22 +2053,31 @@ function startStalePrSweeper(config) {
       log.warn('server', 'Window-elapsed merge sweep failed', { err: err.message });
     }
 
-    // Pass 0b: window-elapsed governance applies (rename + secret_change).
-    // Same rationale as Pass 0 — an open governance proposal can satisfy both
-    // gates with no further vote. The apply helpers re-check the gate and
-    // lock the issue row atomically, so this can't double-apply against a vote.
+    // Pass 0b: window-elapsed governance applies (rename + secret_change +
+    // close_issue). Same rationale as Pass 0 — an open governance proposal
+    // can satisfy both gates with no further vote. The apply helpers re-check
+    // the gate and lock the issue row atomically, so this can't double-apply
+    // against a vote. close_issue rows are dispatched UNCONDITIONALLY (not
+    // just when mergeable): maybeApplyCloseIssueProposal runs its superseded
+    // guard on every invocation, so the hourly sweep doubles as the catch-all
+    // that retires proposals whose target was closed by hand on GitHub. The
+    // guard reads the cached fetchPublicIssues — one cheap fetch per app.
     try {
       const { rows } = await pool.query(
-        `SELECT i.*, a.slug AS app_slug,
+        `SELECT i.*, a.slug AS app_slug, a.repo_url,
                 (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'up')   AS up_count,
                 (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'down') AS down_count
            FROM issues i JOIN apps a ON a.id = i.app_id
-          WHERE i.status = 'open' AND i.kind IN ('rename', 'secret_change')
+          WHERE i.status = 'open' AND i.kind IN ('rename', 'secret_change', 'close_issue')
           LIMIT 100`
       );
       const statsCache = new Map();
       for (const issue of rows) {
         try {
+          if (issue.kind === 'close_issue') {
+            await issuesModule.maybeApplyCloseIssueProposal(pool, issue);
+            continue;
+          }
           let stats = statsCache.get(issue.app_id);
           if (!stats) {
             stats = await getActiveUserStats(pool, issue.app_id);

@@ -14,7 +14,7 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const uaf = require('../services/user-agent-files');
-const { issueCreateLimiter } = require('../middleware/rate-limits');
+const { agentFileWriteLimiter } = require('../middleware/rate-limits');
 
 function userAgentFilesRoutes(config) {
   const router = Router();
@@ -69,7 +69,7 @@ function userAgentFilesRoutes(config) {
   // Upload / replace. Scoped body parser: the global express.json is the
   // 100 kb default (see server.js), too small for a 48 KB file once
   // JSON-escaped — same scoped-parser precedent as routes/anthropic-proxy.
-  router.post('/api/me/agent-files', issueCreateLimiter, express.json({ limit: '256kb' }), async (req, res) => {
+  router.post('/api/me/agent-files', agentFileWriteLimiter, express.json({ limit: '256kb' }), async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
     const kind = typeof req.body?.kind === 'string' ? req.body.kind : '';
@@ -111,7 +111,7 @@ function userAgentFilesRoutes(config) {
   // Delete. Takes kind+name in the body (mirrors the POST shape; names
   // are slugs so a path param would also work, but the body keeps the
   // pair atomic and symmetric with upload).
-  router.delete('/api/me/agent-files', issueCreateLimiter, async (req, res) => {
+  router.delete('/api/me/agent-files', agentFileWriteLimiter, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     const kind = typeof req.body?.kind === 'string' ? req.body.kind : '';
     const name = typeof req.body?.name === 'string' ? req.body.name : '';

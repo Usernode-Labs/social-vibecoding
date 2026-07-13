@@ -115,9 +115,23 @@ function notificationsRoutes(config) {
         return res.json({ unread, cleared });
       }
 
-      await notifications.markRead(pool, req.user.id, { id, all: !!all });
+      // Single-id / mark-all path. Mark-all (#449) previously skipped the
+      // `notifications_changed` fan-out every other clearing branch does,
+      // so the clicking tab's in-chat unread dots and the user's other
+      // open tabs/devices kept showing unread state until a full reload —
+      // making "Mark all read" look like it did nothing. Fan out exactly
+      // like the branches above whenever something actually changed.
+      const cleared = await notifications.markRead(pool, req.user.id, { id, all: !!all });
       const unread = await notifications.countUnread(pool, req.user.id);
-      res.json({ unread });
+      if (cleared > 0) {
+        try {
+          const { pushNotificationToUser } = require('../services/ws');
+          pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
+        } catch (err) {
+          log.warn('notifications', 'cross-tab push failed', { message: err.message });
+        }
+      }
+      res.json({ unread, cleared });
     } catch (err) {
       log.error('notifications', 'markRead failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
