@@ -703,7 +703,7 @@ function adminRoutes(config) {
     // status: 'open' (default) | 'closed' | 'all'. Anything else falls
     // back to the default rather than 400-ing an admin analytics read.
     const statusParam = String(req.query.status || 'open').toLowerCase();
-    const status = ['open', 'closed', 'all'].includes(statusParam) ? statusParam : 'open';
+    const status = ['open', 'closed', 'completed', 'all'].includes(statusParam) ? statusParam : 'open';
 
     // limit: default 50, clamped to [1, 200]; offset: non-negative int.
     const rawLimit = parseInt(req.query.limit, 10);

@@ -30,6 +30,10 @@ const ISSUES = [
     status: 'open', up: 5, down: 0, created_at: '2026-07-05T00:00:00.000Z' },
   { id: 2, app_id: 2, app_slug: 'beta', app_name: 'Beta', kind: 'general',
     status: 'closed', up: 4, down: 0, created_at: '2026-06-01T00:00:00.000Z' },
+  // A shipped feature: status='completed' is distinct from open/closed and
+  // surfaces only under ?status=completed or ?status=all (#565).
+  { id: 8, app_id: 3, app_slug: 'gamma', app_name: 'Gamma', kind: 'general',
+    status: 'completed', up: 6, down: 0, created_at: '2026-06-15T00:00:00.000Z' },
   // Governance rows — excluded by the kind filter regardless of votes.
   { id: 1, app_id: 1, app_slug: 'alpha', app_name: 'Alpha', kind: 'secret_change',
     status: 'open', up: 9, down: 0, created_at: '2026-07-04T00:00:00.000Z' },
@@ -206,6 +210,22 @@ test('?status=closed returns only closed', async () => {
   const { body } = await getFeatures('?status=closed');
   assert.ok(body.features.length > 0);
   assert.ok(body.features.every((f) => f.status === 'closed'));
+});
+
+test('?status=completed returns only completed (shipped) features', async () => {
+  currentUser = FULL_ADMIN;
+  const { status, body } = await getFeatures('?status=completed');
+  assert.equal(status, 200);
+  assert.ok(body.features.length > 0);
+  assert.ok(body.features.every((f) => f.status === 'completed'));
+  // The closed row must NOT leak into the completed view.
+  assert.ok(!body.features.some((f) => f.id === 2));
+});
+
+test('?status=all includes the completed feature', async () => {
+  currentUser = FULL_ADMIN;
+  const { body } = await getFeatures('?status=all');
+  assert.ok(body.features.some((f) => f.id === 8 && f.status === 'completed'));
 });
 
 test('an unrecognized status falls back to open (no 400)', async () => {
