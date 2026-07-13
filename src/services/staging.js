@@ -307,6 +307,9 @@ async function rebuildProductionInner(config, app) {
   let succeeded = false;
   let resultSha = null;
   let missingSecretsFromErr = null;
+  // Hoisted out of the try so the catch can stamp the failed commit
+  // onto the apps.last_failure record (#416).
+  let mainSha = null;
 
   try {
     const [, owner, repo] = app.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
@@ -320,16 +323,21 @@ async function rebuildProductionInner(config, app) {
     // upstream sources via submodules (e.g. falling-sands → sandspiel)
     // get a complete tree at build time. No-op for dapps without
     // submodules. Timeout bumped to absorb worst-case submodule fetch.
-    await docker.execFileAsync('git', [
-      'clone', '--depth', '1',
-      '--recurse-submodules', '--shallow-submodules',
-      cloneUrl, cloneDir,
-    ], { timeout: 120000 });
+    try {
+      await docker.execFileAsync('git', [
+        'clone', '--depth', '1',
+        '--recurse-submodules', '--shallow-submodules',
+        cloneUrl, cloneDir,
+      ], { timeout: 120000 });
+    } catch (err) {
+      // Stage marker for the last_failure classifier (#416).
+      err.cloneFailed = true;
+      throw err;
+    }
 
     // Capture the exact SHA this build is pinned to so the UI can show
     // what commit is running in production (#21). The shallow clone's
     // HEAD is the tip of the default branch at clone time.
-    let mainSha = null;
     try {
       const { stdout } = await docker.execFileAsync('git', [
         '-C', cloneDir, 'rev-parse', 'HEAD',
@@ -438,6 +446,13 @@ async function rebuildProductionInner(config, app) {
     // came up healthy but its per-host route block was missing or got
     // clobbered by a concurrent conf rewrite.
 
+    // Clear any stale last_failure (#416): every successful deploy
+    // funnels through here, so this is the single reset chokepoint for
+    // the rebuild paths (dev-chat merge, drift poller, /redeploy).
+    await prodPool.query(
+      'UPDATE apps SET last_failure = NULL WHERE id = $1', [app.id]
+    ).catch((e) => log.warn('staging', 'Failed to clear last_failure', { app: app.slug, err: e.message }));
+
     log.info('staging', 'Production rebuilt', { app: app.slug, sha: mainSha });
     succeeded = true;
     resultSha = mainSha;
@@ -450,6 +465,19 @@ async function rebuildProductionInner(config, app) {
       });
     } else {
       log.error('staging', 'Production rebuild failed', { app: app.slug, err: err.message });
+      // Persist the failure detail (#416) so the "View build log" panel
+      // covers failed rebuilds too. Status deliberately stays 'running'
+      // (the old container keeps serving) — see app-deploy-status.js for
+      // why rebuild progress never touches apps.status. Best-effort.
+      const deployFailure = require('./deploy-failure');
+      try {
+        await getPool(config).query(
+          'UPDATE apps SET last_failure = $1 WHERE id = $2',
+          [JSON.stringify(deployFailure.record(err, { sha: mainSha || null })), app.id]
+        );
+      } catch (e) {
+        log.warn('staging', 'Failed to persist last_failure', { app: app.slug, err: e.message });
+      }
     }
     throw err;
   } finally {

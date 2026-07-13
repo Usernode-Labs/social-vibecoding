@@ -12,6 +12,7 @@ const appManifest = require('../services/app-manifest');
 const renamePr = require('../services/rename-pr');
 const staging = require('../services/staging');
 const { drainGuard } = require('../services/lifecycle');
+const deployFailure = require('../services/deploy-failure');
 const { appCreateLimiter, issueCreateLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 const appAccess = require('../services/app-access');
@@ -177,10 +178,18 @@ const MAX_RETRY_COUNT = 3;
 function scheduleCreationWatchdog(pool, appId) {
   setTimeout(async () => {
     try {
+      // COALESCE guard (#416): only write the synthetic timeout record
+      // when no real captured failure landed first — the watchdog can
+      // fire after createApp's own catch already persisted the cause.
+      const timeoutRecord = deployFailure.syntheticRecord(
+        'timeout',
+        `App creation timed out after ${Math.round(CREATION_TIMEOUT_MS / 60000)} minutes`
+      );
       const { rowCount } = await pool.query(
-        `UPDATE apps SET status = 'error'
+        `UPDATE apps SET status = 'error',
+                         last_failure = COALESCE(last_failure, $2::jsonb)
          WHERE id = $1 AND status = 'creating'`,
-        [appId]
+        [appId, JSON.stringify(timeoutRecord)]
       );
       if (rowCount > 0) {
         log.warn('apps', 'App creation timed out, marked as error', { appId });
@@ -195,9 +204,15 @@ function scheduleCreationWatchdog(pool, appId) {
 // process died is stranded in `creating`. Flip anything older than 10min.
 async function sweepStuckCreatingApps(pool) {
   try {
+    const sweepRecord = deployFailure.syntheticRecord(
+      'timeout',
+      'App creation was interrupted by a platform restart'
+    );
     const { rowCount } = await pool.query(
-      `UPDATE apps SET status = 'error'
-       WHERE status = 'creating' AND created_at < NOW() - INTERVAL '10 minutes'`
+      `UPDATE apps SET status = 'error',
+                       last_failure = COALESCE(last_failure, $1::jsonb)
+       WHERE status = 'creating' AND created_at < NOW() - INTERVAL '10 minutes'`,
+      [JSON.stringify(sweepRecord)]
     );
     if (rowCount > 0) {
       log.info('apps', 'Swept stuck creating apps on boot', { count: rowCount });
@@ -381,8 +396,22 @@ function appRoutes(config) {
                 : null,
             }
           : null;
+        // #416: the raw last_failure JSONB (which carries the full boot
+        // log) never rides the list payload. Involved users (creator /
+        // collaborator / admin — same audience as the detail endpoint's
+        // lastFailure) get the concise reason + timestamp so the card
+        // tooltip and the "View build log" menu item work at render
+        // time; everyone else sees the plain 'error' status only.
+        const canSeeFailure = !!req.user?.isAdmin
+          || !!a.is_collaborator
+          || (req.user?.id != null && a.created_by === req.user.id);
+        const lf = (canSeeFailure && a.last_failure && typeof a.last_failure === 'object')
+          ? a.last_failure : null;
         return {
           ...a,
+          last_failure: undefined,
+          last_failure_reason: lf ? (lf.reason || null) : null,
+          last_failure_at: lf ? (lf.at || null) : null,
           url,
           version,
           deployProgress: appDeployStatus.read(a.slug),
@@ -589,8 +618,10 @@ function appRoutes(config) {
       createApp(config, appRow).catch(async (err) => {
         log.error('apps', 'Async app creation failed', { appId: appRow.id, err: err.message });
         await pool.query(
-          `UPDATE apps SET status = 'error' WHERE id = $1 AND status = 'creating'`,
-          [appRow.id]
+          `UPDATE apps SET status = 'error',
+                           last_failure = COALESCE(last_failure, $2::jsonb)
+           WHERE id = $1 AND status = 'creating'`,
+          [appRow.id, JSON.stringify(deployFailure.record(err))]
         ).catch(() => {});
       });
 
@@ -698,8 +729,10 @@ function appRoutes(config) {
       forkApp(config, appRow, sourceApp).catch(async (err) => {
         log.error('apps', 'Async fork failed', { appId: appRow.id, err: err.message });
         await pool.query(
-          `UPDATE apps SET status = 'error' WHERE id = $1 AND status = 'creating'`,
-          [appRow.id]
+          `UPDATE apps SET status = 'error',
+                           last_failure = COALESCE(last_failure, $2::jsonb)
+           WHERE id = $1 AND status = 'creating'`,
+          [appRow.id, JSON.stringify(deployFailure.record(err))]
         ).catch(() => {});
       });
       scheduleCreationWatchdog(pool, appRow.id);
@@ -773,8 +806,18 @@ function appRoutes(config) {
         }
       }
 
+      // #416: full failure detail (reason + build/boot log tail) only
+      // for involved users — boot logs can echo whatever the app
+      // prints, so outsiders keep today's bare 'error' status. The raw
+      // column is always stripped from the payload.
+      const canSeeFailure = !!req.user?.isAdmin
+        || !!isCollaborator
+        || (req.user?.id != null && appRow.created_by === req.user.id);
       const appPayload = {
         ...appRow,
+        last_failure: undefined,
+        lastFailure: (canSeeFailure && appRow.last_failure && typeof appRow.last_failure === 'object')
+          ? appRow.last_failure : null,
         url,
         missingSecrets,
         ...accessFlags(appRow, req.user, isCollaborator),
@@ -1319,8 +1362,10 @@ function appRoutes(config) {
       createApp(config, appRow).catch(async (err) => {
         log.error('apps', 'Retry app creation failed', { appId: appRow.id, err: err.message });
         await pool.query(
-          `UPDATE apps SET status = 'error' WHERE id = $1 AND status = 'creating'`,
-          [appRow.id]
+          `UPDATE apps SET status = 'error',
+                           last_failure = COALESCE(last_failure, $2::jsonb)
+           WHERE id = $1 AND status = 'creating'`,
+          [appRow.id, JSON.stringify(deployFailure.record(err))]
         ).catch(() => {});
       });
       scheduleCreationWatchdog(pool, appRow.id);

@@ -489,19 +489,12 @@ async function setChecksPending(pool, sessionId, commitSha) {
 // a Postgres "no unique or exclusion constraint matching the ON CONFLICT
 // specification" — and falls back to the container status / raw error
 // message. Length-bounded so it fits a chat line and a tooltip.
+// Implementation moved to services/deploy-failure.js (issue #416) so the
+// production deploy paths (app-creator / staging.rebuildProduction) share
+// the same error-line extraction; this thin delegate keeps the legacy
+// string shape for check_error_detail consumers.
 function summarizeBootFailure(err) {
-  const MAX = 280;
-  const logs = (err && err.containerLogs) ? String(err.containerLogs) : '';
-  const lines = logs.split('\n').map((l) => l.trim()).filter(Boolean);
-  const errRe = /(^error\b|Error:|errno|ECONNREFUSED|EADDRINUSE|panic|Unhandled|SQLSTATE|syntax error|does not exist|no unique or exclusion constraint|relation .* does not exist|cannot |failed)/i;
-  let reason = '';
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (errRe.test(lines[i])) { reason = lines[i]; break; }
-  }
-  if (!reason && lines.length) reason = lines[lines.length - 1];
-  if (!reason) reason = (err && err.message) ? String(err.message) : 'staging preview failed to start';
-  if (err && err.containerStatus) reason = `[${err.containerStatus}] ${reason}`;
-  return reason.length > MAX ? `${reason.slice(0, MAX - 1)}…` : reason;
+  return require('./deploy-failure').summarizeBootFailure(err);
 }
 
 // Map the structured test result onto the legacy advisory console snapshot

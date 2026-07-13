@@ -6,6 +6,7 @@ const dbManager = require('./db-manager');
 const appManifest = require('./app-manifest');
 const appSecrets = require('./app-secrets');
 const appLlmEnv = require('./app-llm-env');
+const deployFailure = require('./deploy-failure');
 const { getTemplateFiles } = require('./template');
 const { getPool } = require('../db/pool');
 const { pushAppStatusUpdate } = require('./ws');
@@ -103,13 +104,20 @@ async function createApp(config, appRow) {
       // upstream sources via submodules (e.g. falling-sands → sandspiel)
       // get a complete tree at build time. No-op for dapps without
       // submodules. Timeout bumped to absorb worst-case submodule fetch.
-      await docker.execFileAsync('git', [
-        'clone', '--depth', '1',
-        '--recurse-submodules', '--shallow-submodules',
-        cloneUrl, tempDir,
-      ], {
-        timeout: 120000,
-      });
+      try {
+        await docker.execFileAsync('git', [
+          'clone', '--depth', '1',
+          '--recurse-submodules', '--shallow-submodules',
+          cloneUrl, tempDir,
+        ], {
+          timeout: 120000,
+        });
+      } catch (err) {
+        // Stage marker so the outer catch records this as a clone
+        // failure in apps.last_failure (#416).
+        err.cloneFailed = true;
+        throw err;
+      }
     } else {
       fs.mkdirSync(tempDir, { recursive: true });
       fs.mkdirSync(path.join(tempDir, 'public'), { recursive: true });
@@ -145,8 +153,10 @@ async function createApp(config, appRow) {
     await finalizeDeploy(config, { appId, name, slug, tempDir, dbUrl, repoUrl, mainSha });
   } catch (err) {
     log.error('app-creator', 'App creation failed', { appId, slug, err: err.message });
+    const failure = deployFailure.record(err);
+    await recordFailure(pool, appId, failure);
     await updateStatus(pool, appId, 'error');
-    pushAppStatusUpdate({ id: appId, slug, status: 'error' });
+    pushAppStatusUpdate({ id: appId, slug, status: 'error', errorReason: failure.reason });
   }
 }
 
@@ -269,8 +279,11 @@ async function finalizeDeploy(config, { appId, name, slug, tempDir, dbUrl, repoU
     // 9. Update app status. last_deploy_at is bumped here so the home-
     // card "updated Xt ago" reflects the moment the prod container
     // first went live, not the (slightly earlier) row creation time.
+    // last_failure clears on every successful deploy (#416) so a stale
+    // failure record can't outlive the retry that fixed it.
     await pool.query(
-      `UPDATE apps SET status = $1, container_id = $2, main_sha = $3, last_deploy_at = NOW()
+      `UPDATE apps SET status = $1, container_id = $2, main_sha = $3, last_deploy_at = NOW(),
+                       last_failure = NULL
        WHERE id = $4`,
       ['running', containerId, mainSha || null, appId]
     );
@@ -279,13 +292,28 @@ async function finalizeDeploy(config, { appId, name, slug, tempDir, dbUrl, repoU
     log.info('app-creator', 'App created successfully', { appId, slug, hostname, appUrl, repoUrl });
   } catch (err) {
     log.error('app-creator', 'App creation failed', { appId, slug, err: err.message });
+    const failure = deployFailure.record(err, { sha: mainSha || null });
+    await recordFailure(pool, appId, failure);
     await updateStatus(pool, appId, 'error');
-    pushAppStatusUpdate({ id: appId, slug, status: 'error' });
+    pushAppStatusUpdate({ id: appId, slug, status: 'error', errorReason: failure.reason });
   }
 }
 
 async function updateStatus(pool, appId, status) {
   await pool.query('UPDATE apps SET status = $1 WHERE id = $2', [status, appId]);
+}
+
+// Persist an apps.last_failure record (#416). Best-effort — a failed
+// write must never mask the deploy error being reported.
+async function recordFailure(pool, appId, failure) {
+  try {
+    await pool.query(
+      'UPDATE apps SET last_failure = $1 WHERE id = $2',
+      [JSON.stringify(failure), appId]
+    );
+  } catch (err) {
+    log.warn('app-creator', 'Failed to persist last_failure', { appId, err: err.message });
+  }
 }
 
 module.exports = { createApp, finalizeDeploy };
