@@ -564,6 +564,36 @@
     </div>
   </div>
 
+  <!-- #529 Mark-done modal (AppView.promptMarkDone). Admin-only: marks a
+       task complete WITHOUT implementation — closes it here + on GitHub,
+       lands it in the Done column as a manual completion. Optional note. -->
+  <div id="mark-done-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60">
+    <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
+    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl">
+      <h2 class="text-lg font-bold mb-1">Mark <span id="mark-done-number" class="font-mono">#</span> complete without implementation?</h2>
+      <p class="text-xs text-zinc-500 mb-4"><span class="font-medium text-zinc-600 dark:text-zinc-300">This develops no feature or code in this framework.</span> It simply closes the task here and on GitHub — nothing is built, no proposal is opened, and no PR is merged. Use it to track non-code work handled offchain or outside the vibecoding code flow. The action is announced in group chat under your username.</p>
+      <form id="mark-done-form" class="space-y-4">
+        <div>
+          <label for="mark-done-note" class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">What was done? <span class="font-normal">(optional)</span></label>
+          <textarea
+            id="mark-done-note"
+            rows="3"
+            maxlength="2000"
+            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+            placeholder="e.g. handled manually in the admin console, resolved offchain…"
+          ></textarea>
+          <p class="text-xs text-zinc-500 mt-1">Posted on the GitHub issue and shown on the Done card.</p>
+        </div>
+        <div id="mark-done-error" class="text-red-400 text-sm hidden"></div>
+        <div class="flex gap-3">
+          <button type="button" id="mark-done-cancel" class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
+          <button type="submit" id="mark-done-submit" class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Mark done</button>
+        </div>
+      </form>
+    </div>
+    </div>
+  </div>
+
   <!-- Fork modal (AppView.promptFork). Stands up an independent copy of
        the current app owned by the forker. -->
   <div id="fork-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60">

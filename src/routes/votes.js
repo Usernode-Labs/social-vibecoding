@@ -393,6 +393,21 @@ function stagingMockMerged() {
   )));
 }
 
+// #529: staging demo row for a task marked complete WITHOUT implementation
+// (the manual-completion Done card). Shape matches the `completedIssues`
+// entries the /merged route returns, so a ?demo=1 preview can review the
+// distinct "Completed manually" card (no PR link, no Undo, no vote pill)
+// sitting next to the merged-PR mocks. No-op outside staging.
+function stagingMockCompletedIssues() {
+  return [{
+    number: 900008,
+    title: '[Mock] Completed offchain: migrated legacy balances by hand',
+    completedAt: new Date(Date.now() - 0.5 * 86400 * 1000).toISOString(),
+    completedByUsername: 'staging-tester',
+    note: 'Handled manually in the admin console — no code change.',
+  }];
+}
+
 // Shared SELECT column list + FROM/JOIN block for a "merged-shaped"
 // proposal row. Used by BOTH `GET /api/apps/:slug/merged` (the paginated
 // Completed list) and `GET /api/apps/:slug/proposals/:id` (single-row
@@ -1294,6 +1309,29 @@ function voteRoutes(config) {
       );
       let total = totalRows[0]?.total || 0;
 
+      // #529: manually-completed tasks (issues marked done without a PR).
+      // Admin-driven and low-volume, so fetch them all — no keyset paging —
+      // as a separate array the FE folds into the Done column alongside the
+      // paginated merged PRs. Each is shaped from the audit payload written
+      // by POST /api/apps/:slug/issues/:number/complete.
+      const { rows: completedRows } = await pool.query(
+        `SELECT github_issue_number, title, payload, created_at
+           FROM issues
+          WHERE app_id = $1 AND status = 'completed'
+          ORDER BY (payload->>'completedAt') DESC NULLS LAST, id DESC`,
+        [appRows[0].id]
+      );
+      const completedIssues = completedRows.map((r) => ({
+        number: r.github_issue_number,
+        title: r.payload?.issueTitle || r.title,
+        completedAt: r.payload?.completedAt || (r.created_at ? new Date(r.created_at).toISOString() : null),
+        completedByUsername: r.payload?.completedByUsername || null,
+        note: r.payload?.note || null,
+      }));
+      // The merged COUNT above can't see these rows — bump the Done total so
+      // the column header stays reconciled with the cards the board renders.
+      total += completedIssues.length;
+
       // Same priority + assigned-person summary on completed proposals, so
       // the read-only chips stay visible after a PR merges.
       const mergedAttrs = await topicAttrs.summarizeForTargets(
@@ -1326,7 +1364,17 @@ function voteRoutes(config) {
         total += injected.length;
       }
 
-      res.json({ merged: rows, hasMore, total });
+      // #529: staging demo injection for the manual-completion Done card.
+      // Gated on ?demo=1 like the merged mocks above, and only where no real
+      // completed row already claimed the number. No-op in production.
+      if (IS_STAGING && req.query.demo === '1') {
+        const have = new Set(completedIssues.map((c) => c.number));
+        const injected = stagingMockCompletedIssues().filter((c) => !have.has(c.number));
+        completedIssues.unshift(...injected);
+        total += injected.length;
+      }
+
+      res.json({ merged: rows, hasMore, total, completedIssues });
     } catch (err) {
       log.error('votes', 'Failed to list merged', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

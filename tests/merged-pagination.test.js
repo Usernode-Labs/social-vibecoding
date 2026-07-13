@@ -47,7 +47,7 @@ function makeRows(n) {
   return out;
 }
 
-function loadVotes({ mergedRows, total }) {
+function loadVotes({ mergedRows, total, completedRows }) {
   const routes = [];
   const ids = {
     express: 'express',
@@ -90,6 +90,10 @@ function loadVotes({ mergedRows, total }) {
         // the per-row merged SELECT so the two don't collide.
         if (/COUNT\(\*\)::int AS total/.test(sql)) {
           return { rows: [{ total: typeof total === 'number' ? total : mergedRows.length }] };
+        }
+        // #529: manually-completed tasks folded into the Done column.
+        if (/status = 'completed'/.test(sql)) {
+          return { rows: (completedRows || []).slice() };
         }
         // Only the merged SELECT returns rows; the topic-attrs query (and
         // anything else) returns empty.
@@ -223,6 +227,38 @@ test('#433: returns a numeric `total` independent of limit and cursor', async ()
   ({ routes, captured } = loadVotes({ mergedRows: makeRows(5), total: 47 }));
   ({ payload } = await callMerged(routes, captured, { before: '2026-01-30T00:00:00.000Z', before_id: '900', limit: '5' }));
   assert.equal(payload.total, 47, 'total is stable across pages');
+});
+
+test('#529: returns completedIssues and folds their count into total', async () => {
+  const completedRows = [
+    {
+      github_issue_number: 900008,
+      title: 'Migrated balances by hand',
+      payload: {
+        issueTitle: 'Migrated balances by hand',
+        completedAt: '2026-02-01T00:00:00.000Z',
+        completedByUsername: 'snait',
+        note: 'Handled offchain',
+      },
+      created_at: '2026-02-01T00:00:00.000Z',
+    },
+  ];
+  const { routes, captured } = loadVotes({ mergedRows: makeRows(3), total: 3, completedRows });
+  const { payload } = await callMerged(routes, captured, {});
+  assert.ok(Array.isArray(payload.completedIssues), 'completedIssues present');
+  assert.equal(payload.completedIssues.length, 1);
+  const c = payload.completedIssues[0];
+  assert.equal(c.number, 900008);
+  assert.equal(c.title, 'Migrated balances by hand');
+  assert.equal(c.completedByUsername, 'snait');
+  assert.equal(c.note, 'Handled offchain');
+  assert.equal(c.completedAt, '2026-02-01T00:00:00.000Z');
+  // Merged total (3) + 1 completed = 4, so the Done header stays reconciled.
+  assert.equal(payload.total, 4, 'completed count folded into total');
+  // The completed query carries no keyset predicate (fully loaded).
+  const compCall = captured.calls.find((cc) => /status = 'completed'/.test(cc.sql));
+  assert.ok(compCall, 'completed query issued');
+  assert.ok(!/cs\.created_at, cs\.id\) </.test(compCall.sql), 'no cursor predicate');
 });
 
 test('per-row fields survive paging', async () => {
