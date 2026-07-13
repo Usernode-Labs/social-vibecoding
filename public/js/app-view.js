@@ -2458,6 +2458,19 @@ const AppView = {
     return `<div class="dev-issue-body text-xs text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 mt-2">${renderMd(md)}</div>`;
   },
 
+  // Placeholder-title chip. AI naming was unavailable when this proposal /
+  // issue was titled (Anthropic credits ran out or the API errored), so it
+  // carries a template ("<user>'s changes" / "Feedback from Usernode")
+  // instead of a description of the change. The title-heal sweeper
+  // regenerates titles automatically once the API is back
+  // (src/services/title-heal.js); the chip tells voters not to judge the
+  // change by its placeholder in the meantime, and disappears on the next
+  // panel refresh after the heal lands.
+  _autoTitleChip(kind) {
+    const what = kind === 'issue' ? 'issue' : 'proposal';
+    return `<span class="inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-500 shrink-0" title="AI naming was unavailable when this ${what} was created, so it shows a placeholder title. A descriptive title will be generated automatically — the change itself is unaffected.">Auto-title pending</span>`;
+  },
+
   // One PR-proposal card: line 1 is identity + info (icon chip, title,
   // PR meta, tally pill, badges), line 2 is the action pills (vote /
   // preview / kudos / Discussion / Open session). With { noNav: true }
@@ -2488,6 +2501,11 @@ const AppView = {
     ];
     if (pr.created_at) metaParts.push(escapeHtml(relTime(pr.created_at)));
     const closesPills = AppView.closesPillHtml(pr);
+    // Placeholder-title marker (see _autoTitleChip). Skipped on revert
+    // cards, whose displayed title is the deterministic "Revert of …"
+    // label rather than the fallback template.
+    const fallbackChip = (pr.pr_title_fallback && !pr.revert_of_session_id)
+      ? AppView._autoTitleChip('proposal') : '';
 
     const kudosBtn = window.Kudos ? Kudos.renderButton(pr, { compact: true }) : '';
     const isUnvoted = pr.status === 'promoted' && !pr.my_vote;
@@ -2559,6 +2577,7 @@ const AppView = {
               <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words">${titleHtml}</div>
               <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta">${metaParts.join(' · ')}${closesPills ? ` ${closesPills}` : ''}</div>
             </div>
+            ${fallbackChip}
             ${unvotedBadge}
             ${AppView.voteCountPill(pr, majority)}
             ${stateBadge}
@@ -3583,6 +3602,9 @@ const AppView = {
     const bountyPill = issue.bounty_count
       ? `<span class="inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500" title="Kudos bounties pledged on this issue">&#9733; ${issue.bounty_count}</span>`
       : '';
+    // Placeholder-title marker (see _autoTitleChip): this feedback issue
+    // was filed while AI naming was unavailable.
+    const fallbackChip = issue.title_fallback ? AppView._autoTitleChip('issue') : '';
     // "Give kudos" disables once the viewer has an open bounty here or has
     // spent their shared weekly allowance.
     const kudosDisabled = issue.my_bounty || budgetSpent;
@@ -3698,6 +3720,7 @@ const AppView = {
               <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words" title="${escapeHtml(rowTitle)}">${escapeHtml(issue.title)}</div>
               <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta"><a href="${href}" target="_blank" rel="noopener" class="font-mono text-violet-400 hover:underline">#${n}</a>${issue.created_by_username ? ` · ${escapeHtml(issue.created_by_username)}` : ''}</div>
             </div>
+            ${fallbackChip}
             ${bountyPill}
             ${AppView._attrChipsHtml('issue', n, issue)}
             ${AppView._devChatBadge(issue.chatCount)}

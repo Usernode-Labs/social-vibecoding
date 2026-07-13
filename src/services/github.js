@@ -564,6 +564,19 @@ async function getProposalDiff(owner, repo, basehead, charBudget = PROPOSAL_DIFF
 // rename-issue → rename-PR migration to retire the legacy issue once its
 // PR is open (mirrors how maybeApplyRenameProposal closes the issue when
 // a rename vote lands).
+// Retitle an existing issue. Used by the title-heal sweeper
+// (services/title-heal.js) when a feedback issue was filed with the
+// LLM-unavailable fallback title and a real title has now been generated.
+// safeMention keeps model-written text from pinging arbitrary accounts.
+async function updateIssueTitle(owner, repo, issueNumber, title) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.issues.update({
+    owner, repo, issue_number: issueNumber, title: safeMention(title),
+  });
+  log.info('github', 'Issue retitled', { repo: `${owner}/${repo}`, issue: issueNumber });
+  return data;
+}
+
 async function closeIssue(owner, repo, issueNumber) {
   const octokit = await getOctokit(owner);
   const { data } = await octokit.rest.issues.update({
@@ -1263,6 +1276,7 @@ module.exports = {
   getIssue,
   createIssue,
   createIssueComment,
+  updateIssueTitle,
   closeIssue,
   getCloneUrl,
   safeMention,

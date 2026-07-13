@@ -14,6 +14,7 @@ const events = require('../services/events');
 const { weekStartUtc, countWeeklyAllowanceUsed, WEEKLY_KUDOS_LIMIT } = require('./kudos');
 const appAccess = require('../services/app-access');
 const topicAttrs = require('../services/topic-attributes');
+const { FEEDBACK_FALLBACK_TITLE } = require('../services/llm');
 
 // Pull owner/repo out of a stored repo_url. Same shape used across the
 // codebase (e.g. the rename-apply path below, routes/votes.js).
@@ -783,6 +784,12 @@ function issueRoutes(config) {
           myPrSessionId: myPrSessionByNumber.get(issue.number) || null,
           chatCount: chatByNumber.get(issue.number)?.cnt || 0,
           lastMessageAt: chatByNumber.get(issue.number)?.last_at || null,
+          // The Haiku title call failed when this feedback issue was
+          // filed, so it carries the placeholder template. Drives the
+          // "Auto-title pending" chip on the issue row; the title-heal
+          // sweeper regenerates it (services/title-heal.js), after which
+          // the refreshed title no longer matches and the chip drops.
+          title_fallback: issue.title === FEEDBACK_FALLBACK_TITLE,
         };
       });
 

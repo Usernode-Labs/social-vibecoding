@@ -386,11 +386,17 @@ const Home = {
     let rows = '';
     for (const p of prs) {
       const title = p.pr_title || `PR #${p.pr_number || p.id}`;
+      // Placeholder-title marker: AI naming was down when this PR was
+      // titled; the title-heal sweeper regenerates it automatically.
+      const fallbackChip = p.pr_title_fallback
+        ? '<span class="inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-500 shrink-0" title="AI naming was unavailable when this proposal was created, so it shows a placeholder title. A descriptive title will be generated automatically.">Auto-title pending</span>'
+        : '';
       rows += `
         <a href="#app/${esc(p.app_slug)}/dev/proposals/${p.id}"
            class="col-span-full flex items-center gap-2 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-violet-500/50 transition-colors">
           <span class="text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0 max-w-[30%] truncate">${esc(p.app_name)}</span>
           <span class="text-sm text-zinc-800 dark:text-zinc-200 flex-1 min-w-0 truncate">${esc(title)}</span>
+          ${fallbackChip}
           ${lifeChip(p)}
           ${pill(parseInt(p.yes_count) || 0, p.majority || 1, p.status)}
         </a>`;

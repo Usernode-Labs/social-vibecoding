@@ -573,6 +573,12 @@ async function start() {
   // no-op when GitHub isn't wired up. Tunable via ELIGIBLE_MERGE_SWEEP_MS.
   startEligibleMergeSweeper(config);
 
+  // Title auto-heal: retry LLM title generation for PRs/feedback issues
+  // that were filed with the fallback template while the Anthropic API was
+  // unavailable (services/title-heal.js). Bounded, non-overlapping, no-op
+  // while the LLM stays disabled.
+  startTitleHealSweeper(config);
+
   return server;
 }
 
@@ -1014,6 +1020,38 @@ function startEligibleMergeSweeper(config) {
       })
       .finally(() => { running = false; });
   }, ELIGIBLE_MERGE_SWEEP_MS).unref?.();
+}
+
+// How often the title auto-heal sweep runs (services/title-heal.js). Ten
+// minutes keeps the placeholder window short once credits/API come back
+// without hammering a still-dead API (each pass is a handful of Haiku
+// calls at most, and issue rows carry their own per-row backoff on top).
+// Tunable via TITLE_HEAL_SWEEP_MS; floored so a mis-set value can't spin.
+const TITLE_HEAL_SWEEP_MS = Math.max(
+  parseInt(process.env.TITLE_HEAL_SWEEP_MS || String(10 * 60 * 1000), 10) || (10 * 60 * 1000),
+  60 * 1000
+);
+
+// Periodic re-drive of title generation for fallback-titled PRs and
+// feedback issues. Same guard shape as startEligibleMergeSweeper: never
+// overlap a still-running pass, swallow all errors, unref'd timer. An
+// early first pass (~90s after boot) covers the common "credits restored,
+// platform redeployed" sequence so placeholders heal right away instead
+// of waiting out the first full interval.
+function startTitleHealSweeper(config) {
+  const titleHeal = require('./src/services/title-heal');
+  let running = false;
+  const tick = () => {
+    if (running) return;
+    running = true;
+    titleHeal.sweep(config)
+      .catch((err) => {
+        log.warn('server', 'Title-heal sweep tick failed', { err: err.message });
+      })
+      .finally(() => { running = false; });
+  };
+  setTimeout(tick, 90 * 1000).unref?.();
+  setInterval(tick, TITLE_HEAL_SWEEP_MS).unref?.();
 }
 
 // Resume post-merge issue-close watches for sessions merged shortly

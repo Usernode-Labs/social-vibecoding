@@ -122,43 +122,46 @@ function feedbackRoutes(config) {
       : `usernode user (${req.user?.username || 'unknown'})`;
 
     try {
-      let title = 'Feedback from Usernode';
-
-      if (config.anthropicApiKey) {
-        try {
-          const titleRes = await fetch('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-api-key': config.anthropicApiKey,
-              'anthropic-version': '2023-06-01',
-            },
-            body: JSON.stringify({
-              model: 'claude-haiku-4-5',
-              max_tokens: 60,
-              messages: [{
-                role: 'user',
-                content: `Write a short GitHub issue title (5-10 words, no quotes) for this feedback:\n\n${description.trim()}`,
-              }],
-            }),
-          });
-          if (titleRes.ok) {
-            const data = await titleRes.json();
-            const text = data.content?.[0]?.text?.trim();
-            if (text) title = text;
-            // Track this Haiku call against the user's daily ledger
-            // even though we don't budget-gate it (it's a few dozen
-            // tokens per feedback). Without this, the user could spam
-            // /api/feedback for a small but unbounded platform spend
-            // off-budget. No-op when usage is missing or user_id is
-            // unset (e.g. anonymous feedback in the future).
-            if (data.usage && req.user?.id) {
-              const costCents = llm.estimateCostCents(data.usage, 'claude-haiku-4-5');
-              await limits.recordSpend(pool, req.user.id, costCents, { byok: false });
-            }
-          }
-        } catch {}
+      // Title via the shared Haiku helper (services/llm.js). On any failure
+      // (LLM disabled, credits exhausted, API error) the issue is still
+      // filed with the fallback template — feedback must never block on
+      // LLM availability — and `titleFallback` drives a title_heal_queue
+      // row below so the sweeper regenerates the title later.
+      let title = llm.FEEDBACK_FALLBACK_TITLE;
+      let titleFallback = true;
+      try {
+        const gen = await llm.generateIssueTitle({ description });
+        title = gen.title;
+        titleFallback = false;
+        // Track this Haiku call against the user's daily ledger even though
+        // we don't budget-gate it (it's a few dozen tokens per feedback).
+        // Without this, the user could spam /api/feedback for a small but
+        // unbounded platform spend off-budget. No-op when usage is missing
+        // or user_id is unset (e.g. anonymous feedback in the future).
+        if (gen.usage && req.user?.id) {
+          const costCents = llm.estimateCostCents(gen.usage, gen.model);
+          await limits.recordSpend(pool, req.user.id, costCents, { byok: false });
+        }
+      } catch (err) {
+        log.warn('feedback', 'Title generation failed; filing with fallback title', { message: err.message });
       }
+
+      // Queue the filed issue for title regeneration (services/title-heal.js).
+      // Best-effort: a queue failure must never fail the request — the
+      // issue is already on GitHub by the time this runs.
+      const queueTitleHeal = async (owner, repo, issueNumber) => {
+        if (!titleFallback) return;
+        try {
+          await pool.query(
+            `INSERT INTO title_heal_queue (owner, repo, issue_number, description)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (owner, repo, issue_number) DO NOTHING`,
+            [owner, repo, issueNumber, description.trim()]
+          );
+        } catch (err) {
+          log.warn('feedback', 'Failed to queue title heal', { repo: `${owner}/${repo}`, issueNumber, message: err.message });
+        }
+      };
 
       // App-targeted feedback files into the app's own repo, which the
       // bot reaches through the GitHub App installation (same path as
@@ -180,8 +183,9 @@ function feedbackRoutes(config) {
             error: "Failed to create GitHub issue: couldn't file to this app's repo — the bot may not be installed on it",
           });
         }
+        await queueTitleHeal(issueOwner, issueRepo, issue.number);
         await announceIssueCreated(pool, issueOwner, issueRepo, issue, appContext);
-        return res.json({ url: issue.html_url, title });
+        return res.json({ url: issue.html_url, title, titleFallback });
       }
 
       const ghRes = await fetch(`https://api.github.com/repos/${issueOwner}/${issueRepo}/issues`, {
@@ -217,12 +221,13 @@ function feedbackRoutes(config) {
       }
 
       const issue = await ghRes.json();
+      await queueTitleHeal(issueOwner, issueRepo, issue.number);
       // Platform feedback: the platform repo is itself an app on
       // self-hosted instances, so its Open Issues panel should refresh
       // too. announceIssueCreated resolves the app row by repo (no-op
       // when none matches).
       await announceIssueCreated(pool, issueOwner, issueRepo, issue, null);
-      res.json({ url: issue.html_url, title });
+      res.json({ url: issue.html_url, title, titleFallback });
     } catch (err) {
       log.error('feedback', 'Error filing issue', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

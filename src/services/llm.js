@@ -306,6 +306,35 @@ function parsePrMetadataText(text) {
   return { title, body, summary };
 }
 
+// Strip lone UTF-16 surrogates from a string. Chat history occasionally
+// carries them (an emoji truncated mid-pair by a byte-oriented slice, or
+// pasted from a broken clipboard); JSON.stringify preserves them, and the
+// Anthropic API then rejects the whole request body as invalid JSON
+// ("no low surrogate in string"). One bad character in one old message
+// would otherwise permanently poison a session's title generation — seen
+// in prod on session 934 (2026-07-13). Valid surrogate pairs pass through
+// untouched. Pure + exported for tests.
+function stripLoneSurrogates(s) {
+  let out = '';
+  const str = String(s == null ? '' : s);
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    if (c >= 0xd800 && c <= 0xdbff) {
+      // High surrogate: keep only when a low surrogate follows.
+      const next = i + 1 < str.length ? str.charCodeAt(i + 1) : 0;
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        out += str[i] + str[i + 1];
+        i++;
+      }
+    } else if (c >= 0xdc00 && c <= 0xdfff) {
+      // Lone low surrogate (a preceding high would have consumed it): drop.
+    } else {
+      out += str[i];
+    }
+  }
+  return out;
+}
+
 async function generatePrMetadata({ userRequest, ccSummary, requests, summaries, specs, username, apiKey }) {
   const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
   if (!activeClient) throw new Error('LLM not initialized');
@@ -313,19 +342,22 @@ async function generatePrMetadata({ userRequest, ccSummary, requests, summaries,
   // Normalize to chronological lists, falling back to the legacy
   // single-value fields. Cap count + per-item length so a long-lived PR
   // with many turns can't blow the prompt budget; the most recent turns
-  // matter most so we keep the tail.
+  // matter most so we keep the tail. Every string is surrogate-sanitized
+  // (see stripLoneSurrogates) so one malformed character in one old
+  // message can't make the API reject the request body.
   const MAX_TURNS = 20;
   const toList = (arr, single) => {
-    const list = (Array.isArray(arr) ? arr : []).map((s) => String(s || '').trim()).filter(Boolean);
+    const list = (Array.isArray(arr) ? arr : []).map((s) => stripLoneSurrogates(s).trim()).filter(Boolean);
     if (list.length) return list.slice(-MAX_TURNS);
-    return single && String(single).trim() ? [String(single).trim()] : [];
+    const one = stripLoneSurrogates(single).trim();
+    return one ? [one] : [];
   };
   const reqList = toList(requests, userRequest);
   const sumList = toList(summaries, ccSummary);
   // Specs are large; keep only the 2 most recent distinct docs (older
   // drafts are usually subsets of the latest) and truncate each.
   const specList = (Array.isArray(specs) ? specs : [])
-    .map((s) => String(s || '').trim())
+    .map((s) => stripLoneSurrogates(s).trim())
     .filter(Boolean)
     .slice(-2);
   const multi = reqList.length > 1 || sumList.length > 1;
@@ -357,7 +389,7 @@ ${reqBlock}
 CODING AGENT SUMMAR${sumList.length > 1 ? 'IES (one per update, chronological)' : 'Y'}:
 ${sumBlock}
 ${specBlock ? `\nSPEC${specList.length > 1 ? 'S' : ''} (intended scope / theme):\n${specBlock}\n` : ''}
-Author: ${username || 'unknown'}`;
+Author: ${stripLoneSurrogates(username) || 'unknown'}`;
 
   const model = 'claude-haiku-4-5';
   const resp = await activeClient.messages.create({
@@ -572,6 +604,34 @@ Respond with ONLY a JSON object: {“title”: “...”}. No prose before or af
   return { title, usage: resp.usage, model };
 }
 
+// The template title routes/feedback.js files with when the Haiku title
+// call fails. Exported so feedback.js, the title-heal sweeper, and the UI
+// serializers all agree on the exact string they mark/detect.
+const FEEDBACK_FALLBACK_TITLE = 'Feedback from Usernode';
+
+// One-shot Haiku call that titles a GitHub issue from its feedback
+// description. Shared by routes/feedback.js (at filing time) and
+// services/title-heal.js (when retrying a fallback-titled issue). Throws
+// on any failure — LLM disabled, API error, empty response — and callers
+// decide whether that means "file with the fallback title" or "back off
+// and retry later".
+async function generateIssueTitle({ description, apiKey }) {
+  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+  if (!activeClient) throw new Error('LLM not initialized');
+  const model = 'claude-haiku-4-5';
+  const resp = await activeClient.messages.create({
+    model,
+    max_tokens: 60,
+    messages: [{
+      role: 'user',
+      content: `Write a short GitHub issue title (5-10 words, no quotes) for this feedback:\n\n${stripLoneSurrogates(description).trim()}`,
+    }],
+  });
+  const title = ((resp.content || []).find((b) => b.type === 'text')?.text || '').trim();
+  if (!title) throw new Error('Empty issue title response');
+  return { title, usage: resp.usage, model };
+}
+
 // Test hook: swap the shared client for a stub so streamChat's fallback
 // plumbing is unit-testable without the SDK or network. Returns the
 // previous client so tests can restore it.
@@ -586,6 +646,7 @@ module.exports = {
   generatePrMetadata, parsePrMetadataText, generateSessionTitle,
   parseSessionTitleText, estimateRunProgress, sanitizeEstimate,
   sanitizeRemainingSeconds, DEFAULT_MODEL,
+  stripLoneSurrogates, generateIssueTitle, FEEDBACK_FALLBACK_TITLE,
   // Fable 5 classifier-fallback surface (+ tests)
   detectFallback, sanitizeFallbackContent, fallbackBoundary,
   FABLE_MODEL, FALLBACK_TARGET_MODEL, FALLBACK_BETA,

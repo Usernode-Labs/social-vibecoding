@@ -35,6 +35,7 @@ function stagingMockProposals() {
     pr_number: prNumber,
     pr_url: null,
     pr_title: title,
+    pr_title_fallback: false,
     pr_summary_md: 'This is a sample plain-language summary so testers can see '
       + 'the new explanation that now appears at the top of a proposal — written '
       + 'in everyday words, with no technical jargon.',
@@ -111,6 +112,14 @@ function stagingMockProposals() {
     mk(9000019, 900119,
       '[Mock] Lazy-consensus test: one supporter, nobody objecting — merges when the clock elapses',
       5, 1, 0, 1, { required: 2, windowEndsAt: hoursAhead(67) }),
+    // Placeholder title: the LLM was unavailable when this PR was titled,
+    // so it carries the fallback template and the "Auto-title pending"
+    // chip (pr_title_fallback → _autoTitleChip) is reviewable via ?demo=1.
+    {
+      ...mk(9000020, 900120, "[Mock] staging-tester's changes",
+        4, 1, 0, 0, { required: 2, windowEndsAt: hoursAhead(60) }),
+      pr_title_fallback: true,
+    },
     // One No vote: eased threshold restored, window pushed back out.
     mk(9000002, 900102,
       '[Mock] Long-title test: walk brand-new collaborators through '
@@ -926,7 +935,7 @@ function voteRoutes(config) {
   router.get('/api/me/proposals', async (req, res) => {
     try {
       const { rows: sessions } = await pool.query(
-        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.status,
+        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status,
                 cs.created_at, cs.promoted_at,
                 cs.merge_conflict_state, cs.behind_main,
                 cs.check_state, cs.check_error_detail,
@@ -1058,7 +1067,7 @@ function voteRoutes(config) {
       // majority threshold is crossed and only reappears in the "merged"
       // list at the very end, making it look like the vote was lost.
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
+        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
            -- #361: persisted merge-conflict snapshot for the card badge +
            -- detail block (state, conflicting file paths, last-checked).
            cs.merge_conflict_state, cs.behind_main, cs.conflict_files, cs.conflict_checked_at,

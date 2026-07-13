@@ -177,10 +177,14 @@ function sameIssueSet(a, b) {
 //  - the orphan-recovery path in server.js (runs after a mid-flight
 //    nodemon/server restart adopts an in-progress worker)
 //
-// Returns `{ title, body, usage?, model? }`. Never throws — falls back
-// to the legacy template so PR creation is never blocked on LLM
-// availability. `usage` is undefined when the fallback fires (no API
-// call was made) so callers can skip debiting in that case.
+// Returns `{ title, body, fallback, usage?, model? }`. Never throws —
+// falls back to the legacy template so PR creation is never blocked on
+// LLM availability. `fallback` is true when the template fired (LLM
+// disabled or the API call failed): applyPrMetadata persists it to
+// chat_sessions.pr_title_fallback so the title-heal sweeper
+// (services/title-heal.js) can regenerate later and the UI can mark the
+// placeholder. `usage` is undefined on the fallback path (no API call
+// was made) so callers can skip debiting in that case.
 async function generatePrMetadata({ userMessage, ccSummary, requests, summaries, specs, username, apiKey, closingBlock, testingBlock, visualsBlock }) {
   // `closingBlock` (#75) is the deterministic `Closes #N` text,
   // `testingBlock` (#127) the deterministic "How to test" section, and
@@ -198,7 +202,7 @@ async function generatePrMetadata({ userMessage, ccSummary, requests, summaries,
   // Anthropic API even if the server has no admin key configured, so
   // check isEnabled only as a fallback guard.
   if (!apiKey && !llm.isEnabled()) {
-    return { title: fallbackTitle, body: fallbackBody };
+    return { title: fallbackTitle, body: fallbackBody, summary: '', fallback: true };
   }
 
   try {
@@ -224,12 +228,13 @@ async function generatePrMetadata({ userMessage, ccSummary, requests, summaries,
       title: meta.title,
       summary,
       body: `${bodyWithSummary}${suffix}\n\n---\n_Dev session by ${username} via Usernode_`,
+      fallback: false,
       usage: meta.usage,
       model: meta.model,
     };
   } catch (err) {
     log.warn('pr-metadata', 'Generation failed; using fallback', { err: err.message });
-    return { title: fallbackTitle, body: fallbackBody, summary: '' };
+    return { title: fallbackTitle, body: fallbackBody, summary: '', fallback: true };
   }
 }
 
@@ -416,6 +421,10 @@ async function applyPrMetadata({
     userMessage, ccSummary, requests, summaries, specs, username, apiKey, closingBlock, testingBlock, visualsBlock,
   });
   const { title: prTitle, body: prBody } = meta;
+  // True when the title/body came from the fallback template (LLM
+  // unavailable). Persisted to chat_sessions.pr_title_fallback so the
+  // title-heal sweeper retries later and the UI marks the placeholder.
+  const isFallback = !!meta.fallback;
   // Plain-language user-facing summary (optional, empty string when absent).
   // Stored to chat_sessions.pr_summary_md and rendered at the top of the
   // in-app proposal view; the same string already leads the PR body above.
@@ -464,9 +473,10 @@ async function applyPrMetadata({
       // name — mirror it so every list shows one name everywhere.
       session.session_title = prTitle;
       session.pr_summary_md = prSummary || null;
+      session.pr_title_fallback = isFallback;
       await pool.query(
-        `UPDATE chat_sessions SET pr_number = $1, pr_url = $2, pr_title = $3, session_title = $3, pr_linked_issues_applied = $4, pr_testing_applied = $5, pr_visuals_applied = $6, pr_summary_md = $7 WHERE id = $8`,
-        [pr.number, pr.html_url, prTitle, linkedIssues, testingBlock || null, visualsBlock || null, prSummary || null, session.id]
+        `UPDATE chat_sessions SET pr_number = $1, pr_url = $2, pr_title = $3, session_title = $3, pr_linked_issues_applied = $4, pr_testing_applied = $5, pr_visuals_applied = $6, pr_summary_md = $7, pr_title_fallback = $8 WHERE id = $9`,
+        [pr.number, pr.html_url, prTitle, linkedIssues, testingBlock || null, visualsBlock || null, prSummary || null, isFallback, session.id]
       );
       if (broadcast) broadcast('pr_created', { prNumber: pr.number, prUrl: pr.html_url, prTitle });
       return { prNumber: pr.number, prUrl: pr.html_url, prTitle };
@@ -483,12 +493,34 @@ async function applyPrMetadata({
     }
   }
 
+  // Fallback fired on an EXISTING PR: never downgrade. If the stored title
+  // is already the fallback template (this turn's prTitle matches it), just
+  // make sure the row is marked so the heal sweeper retries; if the PR
+  // already carries a real generated title, keep it untouched — the
+  // deterministic suffix drift (issues/testing/visuals) will catch up on
+  // the next successful turn or heal pass rather than shipping a body
+  // whose lead text is the fallback template.
+  if (isFallback) {
+    if (prTitle === session.pr_title && !session.pr_title_fallback) {
+      session.pr_title_fallback = true;
+      await pool.query(`UPDATE chat_sessions SET pr_title_fallback = TRUE WHERE id = $1`, [session.id]);
+    }
+    return { prNumber: session.pr_number, prUrl: session.pr_url, prTitle: session.pr_title };
+  }
+
   // Existing PR: hit GitHub if the title changed OR the linked-issue set
   // changed (#75) OR the testing guidance changed (#127) OR the visuals
   // set changed (#195) — these would otherwise be skipped on a
   // title-unchanged turn, leaving the new `Closes #N` line / "How to
   // test" / "Before / after" section off the PR body.
   if (prTitle === session.pr_title && !issuesChanged && !testingChanged && !visualsChanged && !summaryChanged) {
+    // Generation succeeded and landed on the same title — clear a stale
+    // fallback marker if one is set (defensive; in practice a generated
+    // title never equals the fallback template).
+    if (session.pr_title_fallback) {
+      session.pr_title_fallback = false;
+      await pool.query(`UPDATE chat_sessions SET pr_title_fallback = FALSE WHERE id = $1`, [session.id]);
+    }
     return { prNumber: session.pr_number, prUrl: session.pr_url, prTitle: session.pr_title };
   }
 
@@ -501,8 +533,9 @@ async function applyPrMetadata({
     // #249: keep the session display name tracking the PR title.
     session.session_title = prTitle;
     session.pr_summary_md = prSummary || null;
+    session.pr_title_fallback = false;
     await pool.query(
-      `UPDATE chat_sessions SET pr_title = $1, session_title = $1, pr_linked_issues_applied = $2, pr_testing_applied = $3, pr_visuals_applied = $4, pr_summary_md = $5 WHERE id = $6`,
+      `UPDATE chat_sessions SET pr_title = $1, session_title = $1, pr_linked_issues_applied = $2, pr_testing_applied = $3, pr_visuals_applied = $4, pr_summary_md = $5, pr_title_fallback = FALSE WHERE id = $6`,
       [prTitle, linkedIssues, testingBlock || null, visualsBlock || null, prSummary || null, session.id]
     );
     if (broadcast) broadcast('pr_updated', { prNumber: session.pr_number, prUrl: session.pr_url, prTitle });
