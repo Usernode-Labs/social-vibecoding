@@ -3000,9 +3000,24 @@ const DevChat = {
     });
   },
 
+  // True when the device's PRIMARY pointer is coarse (finger) — i.e. a
+  // phone/tablet, where focusing a text input pops the on-screen keyboard.
+  // A desktop with a touchscreen still reports a fine primary pointer, so
+  // it keeps desktop behavior. maxTouchPoints is the fallback for engines
+  // without matchMedia.
+  _isCoarsePointer() {
+    try {
+      if (window.matchMedia) return window.matchMedia('(pointer: coarse)').matches;
+    } catch {}
+    return (navigator.maxTouchPoints || 0) > 0;
+  },
+
   // Tap = PREFILL the composer (never send). Overwrites the box since pills
-  // are complete messages, focuses, parks the cursor at the end, re-runs the
-  // auto-resize, and persists the draft so a tab switch keeps it.
+  // are complete messages, re-runs the auto-resize, and persists the draft
+  // so a tab switch keeps it. On desktop it also focuses with the cursor
+  // parked at the end; on touch devices it deliberately does NOT focus —
+  // focusing would pop the on-screen keyboard over the chat (#568), and the
+  // pill already filled the box.
   _onQuickReplyClick(pill) {
     const idx = parseInt(pill.dataset.quickReplyIdx, 10);
     const replies = DevChat._currentQuickReplies();
@@ -3011,8 +3026,10 @@ const DevChat = {
     const input = document.getElementById('dc-input');
     if (!input) return;
     input.value = text;
-    input.focus();
-    try { input.setSelectionRange(text.length, text.length); } catch {}
+    if (!DevChat._isCoarsePointer()) {
+      input.focus();
+      try { input.setSelectionRange(text.length, text.length); } catch {}
+    }
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 120) + 'px';
     if (DevChat.currentSession) DevChat._setDraft(DevChat.currentSession.id, text);
