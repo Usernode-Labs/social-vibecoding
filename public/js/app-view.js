@@ -150,6 +150,11 @@ const AppView = {
     const next = mode === 'kanban' ? 'kanban' : 'list';
     try { window.localStorage.setItem(AppView.VIEW_MODE_KEY, next); } catch {}
   },
+  // #482: kanban filter-bar state. In-memory only — deliberately NOT
+  // persisted to localStorage (unlike the view mode above): a filter saved
+  // across visits could land a user on a mysteriously empty board days
+  // later. Reset per app when the card list mounts (renderDevView).
+  _kanbanFilters: { q: '', priority: null, assignee: null, needsVote: false },
   // Refresh timer for the Your-sessions strip's busy indicators;
   // self-clears when the strip leaves the DOM.
   _stripTimer: null,
@@ -531,6 +536,9 @@ const AppView = {
 
     // The card list.
     AppView._feedShown = 20;
+    // #482: kanban filters are transient per app — reset alongside the
+    // feed pager whenever the card list is (re)built.
+    AppView._kanbanFilters = { q: '', priority: null, assignee: null, needsVote: false };
 
     content.innerHTML = `
       <div class="flex flex-col h-full min-h-0">
@@ -1535,12 +1543,17 @@ const AppView = {
     const body = document.getElementById('dev-body');
     if (!body) return;
     if (AppView._getViewMode() === 'kanban') {
-      body.innerHTML = AppView._renderKanbanInner();
-      // The headless-state poller is keyed off whatever issue rows are on
-      // screen (generating spinners), same as the list feed.
-      AppView._syncHeadlessPolling();
-      if (window.Kudos) Kudos.attach(body);
-      AppView._applyAskAiCardAvailability(body);
+      // #482: two-node shell — the filter bar is built + wired once per
+      // mount and kept stable across repaints (so search-input focus and
+      // typed text survive WS-driven refreshes); only the board region
+      // re-renders. Switching list → kanban rebuilds the bar from the
+      // surviving _kanbanFilters, so filter state outlives the toggle.
+      if (!document.getElementById('dev-kanban-filterbar')
+          || !document.getElementById('dev-kanban-board')) {
+        body.innerHTML = '<div id="dev-kanban-filterbar" class="mb-2"></div><div id="dev-kanban-board"></div>';
+        AppView._renderKanbanFilterBar();
+      }
+      AppView._repaintKanbanBoard();
       return;
     }
     // List mode: rebuild the two-container shell, then fill it exactly as
@@ -1832,9 +1845,192 @@ const AppView = {
     };
   },
 
-  // Render the kanban board (inner HTML for #dev-body) from cached data.
-  // Reuses the exact per-card renderers the list mode uses, so every card
-  // keeps its buttons, badges, and data-*-row open hooks.
+  // ── Kanban filters (#482) ───────────────────────────────────────────
+  //
+  // Pure card-level filter predicate for the kanban filter bar. kind ∈
+  // 'issue' | 'proposal' | 'gov' | 'merged'. No DOM, no AppView state
+  // reads — the filters come in explicitly — so it is unit-testable in
+  // isolation (see tests/dev-kanban-filters.test.js). Empty/default
+  // filters match everything, keeping the unfiltered board identical to
+  // the pre-filter output.
+  _devCardMatches(kind, item, filters) {
+    const f = filters || {};
+    const it = item || {};
+    const q = (f.q || '').trim().toLowerCase();
+    if (q) {
+      let title; let author; let num;
+      if (kind === 'issue') {
+        title = it.title || '';
+        author = it.created_by_username || it.user || '';
+        num = it.number;
+      } else if (kind === 'gov') {
+        // Mirror _renderGovCard's title choice for renames.
+        title = (it.kind === 'rename' && it.payload && it.payload.newName)
+          ? it.payload.newName : (it.title || '');
+        author = it.created_by_username || '';
+        num = it.github_issue_number;
+      } else {
+        // proposal | merged — mirror the card renderers' title fallback.
+        title = it.pr_title || `Change by ${it.username || ''}`;
+        author = it.username || '';
+        num = it.pr_number != null ? it.pr_number : it.id;
+      }
+      // A leading '#' targets the issue/PR number ("#482" and "482" both
+      // match); the number check is substring-based like the text checks.
+      const qNum = q.replace(/^#/, '');
+      const hit = String(title).toLowerCase().includes(q)
+        || String(author).toLowerCase().includes(q)
+        || (qNum !== '' && num != null && String(num).includes(qNum));
+      if (!hit) return false;
+    }
+    // priority / assignee filter on the community-voted top value. Cards
+    // without the attribute set — and gov cards, which never carry them —
+    // fail the match by design.
+    if (f.priority && !(it.priority && it.priority.top === f.priority)) return false;
+    if (f.assignee && !(it.assignee && it.assignee.top === f.assignee)) return false;
+    if (f.needsVote) {
+      if (kind === 'proposal') {
+        // Same condition as the card's pulsing "Vote" badge (isUnvoted).
+        if (!(it.status === 'promoted' && !it.my_vote)) return false;
+      } else if (kind === 'gov') {
+        if (it.my_vote) return false;
+      } else {
+        return false;
+      }
+    }
+    return true;
+  },
+
+  _kanbanFiltersActive() {
+    const f = AppView._kanbanFilters || {};
+    return !!((f.q && f.q.trim()) || f.priority || f.assignee || f.needsVote);
+  },
+
+  // Assignee dropdown options: the union of top-voted assignees across all
+  // cached board data, sorted alphabetically. The current selection is
+  // always kept in the list even if it disappears from the data on a
+  // refresh, so an active filter never silently self-clears.
+  _kanbanAssigneeOptions() {
+    const set = new Set();
+    const add = (it) => { if (it && it.assignee && it.assignee.top) set.add(it.assignee.top); };
+    AppView._visibleGhIssues().forEach(add);
+    (AppView._proposals || []).forEach(add);
+    (AppView._merged || []).forEach(add);
+    const cur = AppView._kanbanFilters && AppView._kanbanFilters.assignee;
+    if (cur) set.add(cur);
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  },
+
+  _kanbanNeedsVoteChipCls(active) {
+    return 'text-xs px-2.5 py-1.5 rounded-lg border transition-colors shrink-0 '
+      + (active
+        ? 'bg-violet-600 border-violet-600 text-white'
+        : 'border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800');
+  },
+
+  _kanbanAssigneeOptionsHtml() {
+    const f = AppView._kanbanFilters || {};
+    return '<option value="">Anyone</option>'
+      + AppView._kanbanAssigneeOptions().map((name) =>
+        `<option value="${escapeAttr(name)}"${f.assignee === name ? ' selected' : ''}>${escapeHtml(name)}</option>`).join('');
+  },
+
+  // Build the filter bar into #dev-kanban-filterbar and wire its controls.
+  // Called once per kanban mount (and by Clear, to reset control values);
+  // ordinary board repaints leave this node untouched so the search input
+  // keeps its focus and text.
+  _renderKanbanFilterBar() {
+    const el = document.getElementById('dev-kanban-filterbar');
+    if (!el) return;
+    const f = AppView._kanbanFilters || {};
+    const ctlCls = 'rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-2 py-1.5 text-xs text-zinc-900 dark:text-zinc-100';
+    const priOpt = (v, label) =>
+      `<option value="${v}"${f.priority === v ? ' selected' : ''}>${label}</option>`;
+    el.innerHTML = `
+      <div class="flex flex-wrap items-center gap-2">
+        <input id="dev-kanban-search" type="search" placeholder="Filter by title, author or #number"
+          value="${escapeAttr(f.q || '')}" aria-label="Filter cards"
+          class="${ctlCls} flex-1 min-w-[10rem]" />
+        <select id="dev-kanban-priority" class="${ctlCls}" aria-label="Filter by priority">
+          <option value="">Any priority</option>
+          ${priOpt('high', 'High')}${priOpt('medium', 'Medium')}${priOpt('low', 'Low')}
+        </select>
+        <select id="dev-kanban-assignee" class="${ctlCls}" aria-label="Filter by assignee">
+          ${AppView._kanbanAssigneeOptionsHtml()}
+        </select>
+        <button id="dev-kanban-needsvote" type="button" aria-pressed="${f.needsVote ? 'true' : 'false'}"
+          class="${AppView._kanbanNeedsVoteChipCls(!!f.needsVote)}"
+          title="Show only proposals you haven't voted on">Needs my vote</button>
+        <button id="dev-kanban-clear" type="button"
+          class="text-xs text-violet-500 hover:underline shrink-0${AppView._kanbanFiltersActive() ? '' : ' hidden'}">Clear</button>
+      </div>`;
+
+    const input = el.querySelector('#dev-kanban-search');
+    let debounce = null;
+    input.addEventListener('input', () => {
+      clearTimeout(debounce);
+      debounce = setTimeout(() => {
+        AppView._kanbanFilters.q = input.value;
+        AppView._repaintKanbanBoard();
+      }, 150);
+    });
+    el.querySelector('#dev-kanban-priority').addEventListener('change', (ev) => {
+      AppView._kanbanFilters.priority = ev.target.value || null;
+      AppView._repaintKanbanBoard();
+    });
+    el.querySelector('#dev-kanban-assignee').addEventListener('change', (ev) => {
+      AppView._kanbanFilters.assignee = ev.target.value || null;
+      AppView._repaintKanbanBoard();
+    });
+    const chip = el.querySelector('#dev-kanban-needsvote');
+    chip.addEventListener('click', () => {
+      AppView._kanbanFilters.needsVote = !AppView._kanbanFilters.needsVote;
+      chip.className = AppView._kanbanNeedsVoteChipCls(AppView._kanbanFilters.needsVote);
+      chip.setAttribute('aria-pressed', AppView._kanbanFilters.needsVote ? 'true' : 'false');
+      AppView._repaintKanbanBoard();
+    });
+    el.querySelector('#dev-kanban-clear').addEventListener('click', () => {
+      AppView._kanbanFilters = { q: '', priority: null, assignee: null, needsVote: false };
+      // Rebuild the bar so every control snaps back to its default value.
+      AppView._renderKanbanFilterBar();
+      AppView._repaintKanbanBoard();
+    });
+  },
+
+  // Keep the stable filter bar in sync after each board repaint: Clear-link
+  // visibility, and the assignee option list (which follows the data).
+  _updateKanbanFilterBarUI() {
+    const bar = document.getElementById('dev-kanban-filterbar');
+    if (!bar) return;
+    const clear = bar.querySelector('#dev-kanban-clear');
+    if (clear) clear.classList.toggle('hidden', !AppView._kanbanFiltersActive());
+    const sel = bar.querySelector('#dev-kanban-assignee');
+    // Rebuilding options closes an open dropdown — skip while the select is
+    // being interacted with; the next repaint catches it up.
+    if (sel && document.activeElement !== sel) {
+      sel.innerHTML = AppView._kanbanAssigneeOptionsHtml();
+    }
+  },
+
+  // Repaint only the board region (#dev-kanban-board) from cached data,
+  // leaving the filter bar node untouched. Every filter-control event and
+  // WS-driven kanban refresh routes through here.
+  _repaintKanbanBoard() {
+    const board = document.getElementById('dev-kanban-board');
+    if (!board) return;
+    board.innerHTML = AppView._renderKanbanInner();
+    // The headless-state poller is keyed off the cached issue data, same
+    // as the list feed — filtering a generating row off-screen doesn't
+    // stop it.
+    AppView._syncHeadlessPolling();
+    if (window.Kudos) Kudos.attach(board);
+    AppView._applyAskAiCardAvailability(board);
+    AppView._updateKanbanFilterBarUI();
+  },
+
+  // Render the kanban board (inner HTML for #dev-kanban-board) from cached
+  // data. Reuses the exact per-card renderers the list mode uses, so every
+  // card keeps its buttons, badges, and data-*-row open hooks.
   _renderKanbanInner() {
     const buckets = AppView._bucketDevItems({
       issues: AppView._visibleGhIssues(),
@@ -1843,6 +2039,26 @@ const AppView = {
       merged: AppView._merged || [],
     });
     const meta = AppView._ghIssuesMeta || {};
+
+    // #482: apply the filter bar AFTER bucketing, per column. Filtering
+    // the inputs instead would resurrect issues whose open proposal was
+    // filtered out (the bucketer dedups linked_issues out of the issue
+    // columns), so post-bucket filtering keeps every card's lifecycle
+    // placement identical to the unfiltered board.
+    const f = AppView._kanbanFilters || {};
+    const filtering = AppView._kanbanFiltersActive();
+    const kIssues = filtering
+      ? buckets.issues.filter((i) => AppView._devCardMatches('issue', i, f))
+      : buckets.issues;
+    const kInProgress = filtering
+      ? buckets.inProgress.filter((i) => AppView._devCardMatches('issue', i, f))
+      : buckets.inProgress;
+    const kInReview = filtering
+      ? buckets.inReview.filter((x) => AppView._devCardMatches(x.kind, x.item, f))
+      : buckets.inReview;
+    const kDone = filtering
+      ? buckets.done.filter((m) => AppView._devCardMatches('merged', m, f))
+      : buckets.done;
 
     // "More open issues on GitHub" link — the Issues column inherits the
     // list footer's GitHub link when the repo has more open issues than
@@ -1869,7 +2085,16 @@ const AppView = {
     // yet the server reports no more pages (shouldn't normally happen,
     // since total + hasMore derive from the same merged set).
     let doneFooter = '';
-    if (doneTotal > buckets.done.length) {
+    if (filtering) {
+      // #482: while filtered, the server total and the "+N more" hint would
+      // both misstate what's visible — the header shows the matching loaded
+      // count instead, and "Load more" stays reachable (uncounted) so older
+      // matches can still be pulled in; the repaint re-applies the filter.
+      if (AppView._mergedHasMore) {
+        const loading = AppView._mergedLoadingMore;
+        doneFooter = `<button class="gc-vote-btn" ${loading ? 'disabled' : ''} onclick="AppView.loadMoreMerged()">${loading ? 'Loading…' : 'Load more'}</button>`;
+      }
+    } else if (doneTotal > buckets.done.length) {
       const moreCount = doneTotal - buckets.done.length;
       if (AppView._mergedHasMore) {
         const loading = AppView._mergedLoadingMore;
@@ -1880,10 +2105,10 @@ const AppView = {
     }
 
     const cols = [
-      { title: 'Issues', items: buckets.issues, render: (i) => AppView._renderIssueRow(i), footer: issuesFooter },
-      { title: 'In progress', items: buckets.inProgress, render: (i) => AppView._renderIssueRow(i) },
-      { title: 'In review', items: buckets.inReview, render: (x) => (x.kind === 'proposal' ? AppView._renderProposalCard(x.item) : AppView._renderGovCard(x.item)) },
-      { title: 'Done', items: buckets.done, render: (m) => AppView._renderMergedCard(m), count: doneTotal, footer: doneFooter },
+      { title: 'Issues', items: kIssues, render: (i) => AppView._renderIssueRow(i), footer: issuesFooter },
+      { title: 'In progress', items: kInProgress, render: (i) => AppView._renderIssueRow(i) },
+      { title: 'In review', items: kInReview, render: (x) => (x.kind === 'proposal' ? AppView._renderProposalCard(x.item) : AppView._renderGovCard(x.item)) },
+      { title: 'Done', items: kDone, render: (m) => AppView._renderMergedCard(m), count: filtering ? kDone.length : doneTotal, footer: doneFooter },
     ];
 
     let html = '<div id="dev-kanban" class="flex gap-3 overflow-x-auto pb-2">';
@@ -1894,7 +2119,7 @@ const AppView = {
       const count = (typeof col.count === 'number') ? col.count : col.items.length;
       const cards = col.items.length
         ? `<div class="space-y-2">${col.items.map(col.render).join('')}</div>`
-        : '<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">Nothing here yet</div>';
+        : `<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">${filtering ? 'No matching cards' : 'Nothing here yet'}</div>`;
       const footer = col.footer ? `<div class="mt-2">${col.footer}</div>` : '';
       html += `
         <div class="dev-kanban-col flex-1 basis-0 min-w-[16rem]">
