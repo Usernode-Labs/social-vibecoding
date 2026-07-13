@@ -114,12 +114,41 @@ function bustAndBroadcast({ owner, repo, appSlug, appId, closed }) {
   }
 }
 
+// Auto-resolve open close-issue governance proposals whose target was just
+// observed closed (or gone). Lazy require of routes/issues (same pattern as
+// the ./ws require in bustAndBroadcast — the routes module requires this
+// service's siblings, never this file, so there's no cycle). `pool` is
+// optional: without one (older call sites, unit tests) this is a silent
+// no-op and the watcher behaves exactly as before. Fired-and-forgotten —
+// a failure must never affect the poll loop.
+function resolveSupersededProposals({ pool, appId, appSlug, prNumber, numbers }) {
+  if (!pool || !appId || !Array.isArray(numbers) || !numbers.length) return;
+  try {
+    const { resolveSupersededCloseProposals } = require('../routes/issues');
+    resolveSupersededCloseProposals(pool, {
+      appId,
+      appSlug,
+      numbers,
+      cause: { kind: 'pr-merge', prNumber },
+    }).catch((err) => {
+      log.warn('issue-close-watcher', 'Superseded close-proposal resolve failed', {
+        pr: prNumber, err: err.message,
+      });
+    });
+  } catch (err) {
+    log.warn('issue-close-watcher', 'Superseded close-proposal resolve setup failed', {
+      pr: prNumber, err: err.message,
+    });
+  }
+}
+
 // Entry point, fired-and-forgotten from the merge path. Polls until every
 // referenced issue reads as closed (or attempts are exhausted), busting
 // the cache + broadcasting whenever new closes are observed. Returns the
 // per-bucket outcome (useful for tests); unexpected throws are absorbed by
-// the caller's .catch().
-async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues, appSlug, appId }) {
+// the caller's .catch(). `pool` (optional) enables auto-resolving open
+// close-issue proposals for observed closes — see resolveSupersededProposals.
+async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues, appSlug, appId, pool }) {
   const empty = { closed: [], skipped: [], stillOpen: [] };
   if (!github.isEnabled() || !owner || !repo || !prNumber) return empty;
 
@@ -151,15 +180,27 @@ async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues
   for (let attempt = 1; attempt <= MAX_ATTEMPTS && pending.length; attempt++) {
     const stillPending = [];
     const newlyClosed = [];
+    const newlySkipped = [];
     for (const n of pending) {
       const state = await checkIssueState(owner, repo, n);
       if (state === 'closed') newlyClosed.push(n);
-      else if (state === 'skipped') skipped.push(n);
+      else if (state === 'skipped') newlySkipped.push(n);
       else stillPending.push(n); // 'open' or transient 'error'
     }
     if (newlyClosed.length) {
       closed.push(...newlyClosed);
       bustAndBroadcast({ owner, repo, appSlug, appId, closed: newlyClosed });
+    }
+    if (newlySkipped.length) skipped.push(...newlySkipped);
+    // Retire close-issue proposals for closed AND skipped numbers: a
+    // skipped 404/410 issue is gone and no later close will ever arrive,
+    // and a skipped-because-PR number can never match a close proposal
+    // (proposals only target numbers verified open at creation).
+    if (newlyClosed.length || newlySkipped.length) {
+      resolveSupersededProposals({
+        pool, appId, appSlug, prNumber,
+        numbers: [...newlyClosed, ...newlySkipped],
+      });
     }
     pending = stillPending;
     if (pending.length && attempt < MAX_ATTEMPTS) {

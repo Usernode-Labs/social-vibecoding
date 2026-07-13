@@ -2058,6 +2058,29 @@ async function checkAndMerge(config, pool, session, options = {}) {
         const { sanitizeIssueNumbers } = require('../services/pr-metadata');
         const closedNumbers = sanitizeIssueNumbers(session.linked_issues);
         if (closedNumbers.length) github.noteIssuesClosed(ghOwner, ghRepo, closedNumbers);
+        // Auto-resolve any open close-issue proposals targeting the issues
+        // this merge closes — their vote is moot now. Same optimism as the
+        // suppression above (GitHub closes `Closes #N` reliably, just
+        // late); the watcher hook below catches hand-edited `Closes #N`
+        // beyond linked_issues. Lazy require to avoid an import cycle;
+        // fired-and-forgotten so a failure never fails the merge.
+        if (closedNumbers.length) {
+          try {
+            const { resolveSupersededCloseProposals } = require('./issues');
+            resolveSupersededCloseProposals(pool, {
+              appId: session.app_id,
+              appSlug: session.app_slug,
+              numbers: closedNumbers,
+              cause: { kind: 'pr-merge', prNumber: session.pr_number || session.id },
+            }).catch((err) => log.warn('votes', 'Superseded close-proposal resolve failed', {
+              sessionId: session.id, err: err.message,
+            }));
+          } catch (err) {
+            log.warn('votes', 'Superseded close-proposal resolve setup failed', {
+              sessionId: session.id, err: err.message,
+            });
+          }
+        }
         github.invalidateIssuesCache(ghOwner, ghRepo);
         const { pushIssueUpdate } = require('../services/ws');
         pushIssueUpdate({
@@ -2093,6 +2116,9 @@ async function checkAndMerge(config, pool, session, options = {}) {
             linkedIssues: session.linked_issues,
             appSlug: session.app_slug,
             appId: session.app_id,
+            // Lets the watcher auto-resolve close-issue proposals for the
+            // numbers it observes closed (incl. hand-edited `Closes #N`).
+            pool,
           }).catch((err) => {
             log.warn('votes', 'Post-merge issue-close watch failed', {
               sessionId: session.id, err: err.message,
