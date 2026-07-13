@@ -1573,26 +1573,6 @@ const App = {
       });
     }
 
-    // #529 Mark-done modal (mark task complete without implementation)
-    const markDoneModal = document.getElementById('mark-done-modal');
-    if (markDoneModal) {
-      document.getElementById('mark-done-cancel').addEventListener('click', AppView.closeMarkDoneModal);
-      markDoneModal.addEventListener('click', (e) => {
-        if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) AppView.closeMarkDoneModal();
-      });
-      document.getElementById('mark-done-form').addEventListener('submit', AppView.submitMarkDone);
-      // cmd/ctrl+enter submits from the note textarea, same as the close modal.
-      document.getElementById('mark-done-note').addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-          e.preventDefault();
-          const form = document.getElementById('mark-done-form');
-          const submitBtn = document.getElementById('mark-done-submit');
-          if (submitBtn?.disabled || !form.checkValidity()) return;
-          AppView.submitMarkDone();
-        }
-      });
-    }
-
     // Fork modal
     const forkModal = document.getElementById('fork-modal');
     if (forkModal) {
