@@ -104,6 +104,11 @@
       "expectText": "Merge debug"
     },
     {
+      "name": "Submitted features page renders",
+      "path": "/admin-features?demo=1",
+      "expectText": "Submitted features"
+    },
+    {
       "name": "Dev tab defaults to kanban board on wide screens",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban"
