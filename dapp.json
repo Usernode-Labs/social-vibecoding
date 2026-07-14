@@ -119,9 +119,29 @@
       "expectSelector": "#dev-kanban-search"
     },
     {
+      "name": "PM view toggle button renders in the dev view switcher",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-view-pm"
+    },
+    {
       "name": "Kanban cards show the assignee initial-avatar",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": ".attr-avatar"
+    },
+    {
+      "name": "Shared demo session renders in the In progress area",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "Staging demo shared session"
+    },
+    {
+      "name": "Own sessions pin with the visibility caption",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "Only you can see your active sessions"
+    },
+    {
+      "name": "Shared session cards show the owner subtitle",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "is working on this"
     },
     {
       "name": "Close-issue governance card renders in the dev board",

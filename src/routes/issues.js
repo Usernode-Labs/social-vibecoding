@@ -879,11 +879,18 @@ function issueRoutes(config) {
       // a preview — a clear leader, a tie, and an untouched (placeholder)
       // row. Only where the real query found nothing. No-op in production.
       if (IS_STAGING) {
+        // #600: so both assignee-dropdown states are reviewable, 900001's
+        // assignee is seeded to the VIEWING user (myValue = their own
+        // username) — opening its dropdown shows the viewer's name already
+        // checked and the name box empty (no pre-fill, since they've voted).
+        // 900002 stays untouched (Unassigned) so opening ITS dropdown shows
+        // the name box PRE-FILLED with the viewer's username.
+        const viewer = (req.user && req.user.username) || 'staging-tester';
         const mockAttrs = new Map([
-          // Clear leader on both fields.
+          // Clear leader on both fields; the viewer is their own assignee.
           [900001, {
             priority: { top: 'high', count: 3, myValue: null },
-            assignee: { top: 'staging-tester', count: 2, myValue: null },
+            assignee: { top: viewer, count: 2, myValue: viewer },
           }],
           // A tie (count 1 vs 1) — the earlier-suggested value wins the chip.
           [900003, {
@@ -897,7 +904,9 @@ function issueRoutes(config) {
             priority: { top: 'medium', count: 2, myValue: null },
             assignee: { top: 'maya-builder', count: 3, myValue: null },
           }],
-          // 900002 deliberately left untouched → muted "Set priority" / "Unassigned".
+          // 900002 deliberately left untouched → muted "Set priority" /
+          // "Unassigned"; opening its assignee dropdown pre-fills the
+          // viewer's own username.
         ]);
         for (const issue of issues) {
           const m = mockAttrs.get(issue.number);
