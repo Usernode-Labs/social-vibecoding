@@ -440,10 +440,32 @@ async function createPR(owner, repo, { branch, title, body }) {
       e.code = 'no_commits';
       throw e;
     }
+    // GitHub answers 422 "A pull request already exists for <owner>:<branch>"
+    // when the PR was created but the caller never learned about it — the
+    // restart race: the old process created the PR and died before writing
+    // pr_number to the DB (session 2262, 2026-07-14). Type it so callers can
+    // look the existing PR up and adopt it instead of failing forever.
+    if (err && err.status === 422 && /pull request already exists/i.test(detail)) {
+      const e = new Error(`A pull request already exists for ${owner}:${branch}.`);
+      e.code = 'pr_exists';
+      throw e;
+    }
     throw err;
   }
   log.info('github', 'PR created', { repo: `${owner}/${repo}`, pr: data.number });
   return data;
+}
+
+// Look up the open PR whose head is `branch` (same-repo branches — the
+// only shape this platform creates). Returns the PR data or null. Used by
+// applyPrMetadata to adopt a PR that exists on GitHub but was never
+// persisted to the session row (createPR 422 'pr_exists').
+async function findOpenPrByBranch(owner, repo, branch) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.pulls.list({
+    owner, repo, head: `${owner}:${branch}`, state: 'open', per_page: 1,
+  });
+  return (data && data[0]) || null;
 }
 
 async function updatePR(owner, repo, prNumber, { title, body } = {}) {
@@ -1292,6 +1314,7 @@ module.exports = {
   getFileContent,
   createBranch,
   createPR,
+  findOpenPrByBranch,
   updatePR,
   closePR,
   reopenPR,
