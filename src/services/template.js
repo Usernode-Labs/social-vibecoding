@@ -230,6 +230,13 @@ app.use((req, res, next) => {
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
+// The template ships no favicon file; index.html carries an inline SVG
+// icon instead. Answer 204 here so anything that still probes
+// /favicon.ico (older browsers, direct visits) doesn't fall through to
+// the auth-gated catch-all and surface a 401 in the console on every
+// fresh load.
+app.get('/favicon.ico', (_req, res) => res.status(204).end());
+
 // Button press
 app.post('/api/press', async (req, res) => {
   try {
@@ -309,6 +316,7 @@ start().catch(err => { console.error(err); process.exit(1); });
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   ${DEV_CONSOLE_FORWARDER}
   <title>${escapeHtml(appName)}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>tailwind.config = { darkMode: 'class' }</script>
 </head>
