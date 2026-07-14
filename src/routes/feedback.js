@@ -5,6 +5,7 @@ const limits = require('../services/limits');
 const github = require('../services/github');
 const { pushIssueUpdate } = require('../services/ws');
 const { getPool } = require('../db/pool');
+const { feedbackTitleLimiter } = require('../middleware/rate-limits');
 
 // Derive `owner/repo` from a github.com URL. We do this at module
 // load (well, at route-factory load) so a malformed
@@ -63,6 +64,43 @@ function feedbackRoutes(config) {
   const router = Router();
   const pool = getPool(config);
   const { owner: feedbackOwner, repo: feedbackRepo } = parseGitHubRepo(config.platformRepoUrl);
+
+  // #556: live title preview for the feedback modal. The FE debounces
+  // calls while the user types the description and fills the editable
+  // Title field with the result; whatever ends up in that field is what
+  // POST /api/feedback below receives. Soft-degrades on every failure
+  // mode — LLM unavailable or a failed generation is a 200 with
+  // `title: null`, because an empty Title field is a fully working
+  // state (the server names the issue at submit time as before).
+  router.post('/api/feedback/title', feedbackTitleLimiter, async (req, res) => {
+    const { description } = req.body || {};
+    if (!description || typeof description !== 'string' || description.trim().length === 0) {
+      return res.status(400).json({ error: 'Description is required' });
+    }
+    if (description.length > 2000) {
+      return res.status(400).json({ error: 'Description too long (max 2000 chars)' });
+    }
+    if (!llm.isEnabled()) {
+      return res.json({ title: null, note: 'unavailable' });
+    }
+    try {
+      const gen = await llm.generateIssueTitle({ description });
+      // Same ledger posture as the filing path below: record the Haiku
+      // spend against the user's daily ledger, but don't budget-gate —
+      // it's a few dozen tokens, and the per-user limiter plus the FE's
+      // debounce/dirty/cap logic bound repetition.
+      if (gen.usage && req.user?.id) {
+        const costCents = llm.estimateCostCents(gen.usage, gen.model);
+        await limits.recordSpend(pool, req.user.id, costCents, { byok: false });
+      }
+      // Defensive clip to the Title field's maxlength; Haiku's 5-10-word
+      // titles never approach it.
+      res.json({ title: gen.title.slice(0, 200) });
+    } catch (err) {
+      log.warn('feedback', 'Title preview generation failed', { message: err.message });
+      res.json({ title: null, note: 'failed' });
+    }
+  });
 
   router.post('/api/feedback', async (req, res) => {
     const { description, appSlug } = req.body;

@@ -1638,6 +1638,90 @@ const App = {
     });
     feedbackTargetPlatform.addEventListener('click', () => setFeedbackTarget('platform'));
 
+    // #556: live title generation. As the user types the description,
+    // a debounced POST /api/feedback/title fills the editable Title
+    // field; whatever is in the field at submit time is the title used.
+    // Guards: once the user types in the Title field themselves
+    // (titleDirty) auto-fill stops — clearing the field re-arms it;
+    // responses landing after a newer request or a takeover are
+    // discarded via the sequence counter; a per-open cap plus a minimum
+    // description length bound the Haiku spend. All failure modes are
+    // silent (null title / network error / 429): an empty field is a
+    // fully working state — the server names the issue at submit.
+    const TITLE_GEN_DEBOUNCE_MS = 900;
+    const TITLE_GEN_MIN_DESC = 12;
+    const TITLE_GEN_MAX_PER_OPEN = 8;
+    const titleIdlePlaceholder = feedbackTitle.placeholder;
+    let titleDirty = false;
+    let lastGeneratedFor = '';
+    let titleGenSeq = 0;
+    let titleGenCount = 0;
+    let titleGenTimer = null;
+
+    // Reset on modal open / cancel / successful submit. Bumping the
+    // sequence invalidates any in-flight response so it can never fill
+    // the field of a later modal session.
+    const resetTitleGenState = () => {
+      titleDirty = false;
+      lastGeneratedFor = '';
+      titleGenSeq++;
+      titleGenCount = 0;
+      if (titleGenTimer) { clearTimeout(titleGenTimer); titleGenTimer = null; }
+      feedbackTitle.placeholder = titleIdlePlaceholder;
+    };
+
+    const generateTitlePreview = async () => {
+      const desc = feedbackText.value.trim();
+      if (desc.length < TITLE_GEN_MIN_DESC) return;
+      if (titleDirty) return;
+      if (desc === lastGeneratedFor) return;
+      if (titleGenCount >= TITLE_GEN_MAX_PER_OPEN) return;
+      titleGenCount++;
+      const seq = ++titleGenSeq;
+      feedbackTitle.placeholder = 'Generating title…';
+      try {
+        const res = await fetch('/api/feedback/title', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ description: desc }),
+        });
+        const data = res.ok ? await res.json() : {};
+        // Stale (a newer request or a reset happened) or the user took
+        // the field over mid-flight — drop the result.
+        if (seq !== titleGenSeq || titleDirty) return;
+        if (data.title) {
+          // Programmatic fill — must NOT set titleDirty (dirty is set
+          // only from the Title input's own 'input' event below).
+          feedbackTitle.value = data.title;
+          // Success only: a transient failure retries on the next pause.
+          lastGeneratedFor = desc;
+        }
+      } catch { /* silent — field stays as-is, retried on the next pause */ }
+      finally {
+        if (seq === titleGenSeq) feedbackTitle.placeholder = titleIdlePlaceholder;
+      }
+    };
+
+    const scheduleTitlePreview = () => {
+      if (titleGenTimer) clearTimeout(titleGenTimer);
+      titleGenTimer = setTimeout(() => {
+        titleGenTimer = null;
+        generateTitlePreview();
+      }, TITLE_GEN_DEBOUNCE_MS);
+    };
+    feedbackText.addEventListener('input', scheduleTitlePreview);
+    // Leaving the description flushes the pending debounce immediately —
+    // the "type body → title appears → submit" happy path.
+    feedbackText.addEventListener('blur', () => {
+      if (titleGenTimer) { clearTimeout(titleGenTimer); titleGenTimer = null; }
+      generateTitlePreview();
+    });
+    feedbackTitle.addEventListener('input', () => {
+      // Typing marks the field user-owned; clearing it completely
+      // re-arms auto-fill for the next description change.
+      titleDirty = feedbackTitle.value.trim().length > 0;
+    });
+
     const submitFeedback = async () => {
       const text = feedbackText.value.trim();
       if (!text) return;
@@ -1671,6 +1755,9 @@ const App = {
           feedbackStatus.classList.remove('hidden');
           feedbackText.value = '';
           feedbackTitle.value = '';
+          // Discard any in-flight title preview so it can't repopulate
+          // the cleared field during the "Thanks!" grace window.
+          resetTitleGenState();
           // Lock the textarea and keep the submit button disabled for
           // the 1500ms "Thanks!" grace window so a user can't keep
           // typing (or re-fire cmd+enter) after their feedback has
@@ -1716,6 +1803,7 @@ const App = {
       feedbackTitle.disabled = false;
       feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
       feedbackStatus.classList.add('hidden');
+      resetTitleGenState();
 
       // "This app" is only selectable when an app with a real repo is
       // open. Otherwise the button stays visible but grayed-out/disabled
@@ -1767,6 +1855,7 @@ const App = {
       feedbackTitle.disabled = false;
       feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
       feedbackStatus.classList.add('hidden');
+      resetTitleGenState();
     });
     document.getElementById('feedback-modal').addEventListener('click', (e) => {
       if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) document.getElementById('feedback-cancel').click();
