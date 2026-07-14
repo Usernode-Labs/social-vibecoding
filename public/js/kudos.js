@@ -71,14 +71,19 @@ const Kudos = {
     // button ENABLED as a retract toggle — clicking again undoes it.
     // We don't gate on quota here; the budget badge surfaces it and a
     // 429 from POST shows a toast.
+    // #621: read-only viewers keep the count visible but can't give -
+    // treated as a locked disable (nothing can lift it this mount).
+    const readOnly = !!(window.AppView && AppView.readOnly);
     const direct = !!entry.my_kudos_direct;
-    const disabledReason = opts.disabled
-      ? opts.disabledReason || ''
-      : isSelf
-        ? 'You can\u2019t give kudos to your own PR'
-        : mine && !direct
-          ? 'Credited via an issue bounty award \u2014 can\u2019t be retracted'
-          : '';
+    const disabledReason = readOnly
+      ? 'Only collaborators can give kudos'
+      : opts.disabled
+        ? opts.disabledReason || ''
+        : isSelf
+          ? 'You can\u2019t give kudos to your own PR'
+          : mine && !direct
+            ? 'Credited via an issue bounty award \u2014 can\u2019t be retracted'
+            : '';
     const disabled = !!disabledReason;
     const tip = disabledReason || (mine && direct
       ? 'You gave kudos to this PR \u2014 click again to retract'
@@ -87,7 +92,7 @@ const Kudos = {
     // Locked = disabled for a reason no later state change can lift
     // (explicit opts.disabled / self-PR). _refreshButton skips the
     // enable/disable churn on locked buttons and only updates counts.
-    const locked = !!(opts.disabled || isSelf);
+    const locked = !!(opts.disabled || isSelf || readOnly);
 
     const sizeCls = opts.compact
       ? 'gc-vote-btn'

@@ -48,11 +48,23 @@ async function getAppForUser(pool, slug, user, level = 'view', columns = '*') {
   return app;
 }
 
+// Method-aware level for the id-scoped router guards below (#621):
+// reads (GET/HEAD) only need 'view' access — non-collaborators get a
+// read-only look at the dev surface — while every mutation keeps the
+// 'collab' bar. Safe because the sensitive GETs behind these guards
+// carry their own row-level scoping (owner-only session/spec/events/
+// attachment queries); the guard's job is just the app-level privacy
+// wall.
+function guardLevelFor(req) {
+  return req.method === 'GET' || req.method === 'HEAD' ? 'view' : 'collab';
+}
+
 // Express middleware factory for routers that address an app through a
 // chat-session id (/api/sessions/:id/...). Resolves session → app and
-// enforces collab access; 404 on deny so private sessions aren't
-// enumerable. A missing session falls through to the route's own lookup
-// (which already 404s with its route-specific wording).
+// enforces view access on reads / collab access on writes; 404 on deny
+// so private sessions aren't enumerable. A missing session falls
+// through to the route's own lookup (which already 404s with its
+// route-specific wording).
 function sessionCollabGuard(pool) {
   return async (req, res, next) => {
     const id = parseInt(req.params.id, 10);
@@ -65,7 +77,7 @@ function sessionCollabGuard(pool) {
         [id]
       );
       if (!rows.length) return next();
-      if (!(await checkAppAccess(pool, rows[0], req.user, 'collab'))) {
+      if (!(await checkAppAccess(pool, rows[0], req.user, guardLevelFor(req)))) {
         return res.status(404).json({ error: 'Session not found' });
       }
       return next();
@@ -90,7 +102,7 @@ function issueCollabGuard(pool) {
         [id]
       );
       if (!rows.length) return next();
-      if (!(await checkAppAccess(pool, rows[0], req.user, 'collab'))) {
+      if (!(await checkAppAccess(pool, rows[0], req.user, guardLevelFor(req)))) {
         return res.status(404).json({ error: 'Issue not found' });
       }
       return next();
@@ -240,6 +252,7 @@ module.exports = {
   isCollaborator,
   checkAppAccess,
   getAppForUser,
+  guardLevelFor,
   sessionCollabGuard,
   issueCollabGuard,
   getWsVisibility,

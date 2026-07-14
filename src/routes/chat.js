@@ -35,10 +35,12 @@ function chatRoutes(config) {
     }
 
     try {
-      // Group chat is a collaboration surface — collab-level access (404
-      // on deny so private apps aren't enumerable).
+      // Reading chat history only needs view access (#621): anyone who
+      // can see the app gets a read-only look at the dev surface.
+      // Posting stays collab-gated at the WS layer (404 on deny so
+      // private apps aren't enumerable).
       const app = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
       );
       if (!app) {
         return res.status(404).json({ error: 'App not found' });

@@ -487,7 +487,15 @@ const GroupChat = {
   // was the visible half of #7 ("messages fail to send without
   // page refresh"). The caller can clear the input as soon as we
   // return without losing user-typed content.
+  // #621: true when the open app is in read-only dev mode for this
+  // viewer (non-collaborator on an invite-only-build app). Writes are
+  // suppressed client-side here; the WS server drops them regardless.
+  _readOnly() {
+    return typeof AppView !== 'undefined' && !!AppView.readOnly;
+  },
+
   send(content, thread) {
+    if (GroupChat._readOnly()) return;
     // #194: thread sends carry their scope.
     const payload = { type: 'chat', content };
     if (thread && thread.type && thread.ref) {
@@ -525,6 +533,7 @@ const GroupChat = {
   },
 
   sendTyping(thread) {
+    if (GroupChat._readOnly()) return;
     if (!GroupChat.ws || GroupChat.ws.readyState !== 1) return;
     if (GroupChat.typingTimeout) return;
     const payload = { type: 'typing' };
@@ -1074,6 +1083,7 @@ const GroupChat = {
   // out of the tab order; touch devices use long-press instead (CSS hides
   // it where there's no hover).
   _renderReactAddBtn(_msg) {
+    if (GroupChat._readOnly()) return ''; // #621: no reactions read-only
     return `<button class="gc-react-add" title="React" aria-label="Add reaction" tabindex="-1">\u{1F642}</button>`;
   },
 
@@ -1097,6 +1107,7 @@ const GroupChat = {
   // add-vs-remove). Fire-and-forget over the chat socket; the authoritative
   // aggregate comes back via the 'reaction' broadcast.
   sendReact(messageId, emoji) {
+    if (GroupChat._readOnly()) return;
     if (!messageId || !emoji) return;
     if (GroupChat.ws && GroupChat.ws.readyState === 1) {
       GroupChat.ws.send(JSON.stringify({ type: 'react', messageId, emoji }));
@@ -1137,6 +1148,7 @@ const GroupChat = {
   // Hover affordance (desktop) to edit own message. Hidden on touch via CSS
   // (long-press bar carries the Edit action there), mirroring gc-react-add.
   _renderEditBtn(_msg) {
+    if (GroupChat._readOnly()) return ''; // #621: no edits read-only
     return `<button class="gc-msg-edit" title="Edit" aria-label="Edit message" tabindex="-1">✏️</button>`;
   },
 
@@ -1324,6 +1336,7 @@ const GroupChat = {
   },
 
   _openReactionBar(row) {
+    if (GroupChat._readOnly()) return; // #621: long-press bar is write-only
     const id = row && parseInt(row.dataset.msgId || '', 10);
     if (!id) return;
     const bar = GroupChat._ensureReactionBar();

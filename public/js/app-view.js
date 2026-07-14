@@ -1,6 +1,15 @@
 const AppView = {
   appData: null,
   iframeToken: null,
+
+  // #621: true when the viewer may see the app (view access) but is not
+  // a collaborator on an invite-only-build app. The Dev tab renders,
+  // but every write control (composer, votes, kudos, "+" actions,
+  // attribute chips, kanban drag) is hidden — the server enforces the
+  // same read-only boundary on every API and the group-chat WS.
+  get readOnly() {
+    return !!AppView.appData && AppView.appData.can_collaborate === false;
+  },
   activityInterval: null,
   tokenRefreshInterval: null,
   activeSeconds: 0,
@@ -244,14 +253,14 @@ const AppView = {
       appTabBtn.classList.toggle('hidden', !!appData.self_hosted);
     }
 
-    // The Dev mode (Chat / Issues / Proposals / Sessions) is hidden for
-    // non-collaborators of an invite-only app — they can use the app
-    // (when view-public) but not build it. App.switchTab coerces any
-    // direct request for the gated mode back to the App tab, and every
-    // API behind it enforces the same gate server-side.
-    const canCollab = appData.can_collaborate !== false;
+    // #621: the Dev mode (Chat / Issues / Proposals / Sessions) is now
+    // visible to EVERYONE who can see the app. Non-collaborators of an
+    // invite-only app get it read-only (AppView.readOnly below): all
+    // write controls are hidden client-side and every API behind them
+    // enforces the same gate server-side. Un-hide explicitly — a
+    // previous mount could have left the button hidden.
     const devTabBtn = document.querySelector('.app-tab[data-tab="dev"]');
-    if (devTabBtn) devTabBtn.classList.toggle('hidden', !canCollab);
+    if (devTabBtn) devTabBtn.classList.remove('hidden');
 
     await AppView.refreshToken();
     AppView.startActivityTracking(slug);
@@ -603,10 +612,17 @@ const AppView = {
       return;
     }
 
-    // App settings sub-page (reached from the "+" menu).
+    // App settings sub-page (reached from the "+" menu). Read-only
+    // viewers have nothing actionable there (rename / secrets /
+    // visibility / invites are all collab- or creator-gated
+    // server-side) — coerce back to the feed (#621).
     if (subTab === 'settings') {
-      AppView._renderSettingsView(content);
-      return;
+      if (AppView.readOnly) {
+        subTab = null;
+      } else {
+        AppView._renderSettingsView(content);
+        return;
+      }
     }
 
     // Full-screen topic (issue / proposal / governance) discussion.
@@ -628,11 +644,12 @@ const AppView = {
         <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
           <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider flex-1">Dev</span>
           ${AppView._renderViewToggle()}
-          <div class="relative">
+          <div class="relative ${AppView.readOnly && AppView.appData?.self_hosted ? 'hidden' : ''}">
             <button id="dev-plus-btn" aria-haspopup="true" aria-expanded="false"
               class="rounded-lg bg-violet-600 hover:bg-violet-500 w-7 h-7 flex items-center justify-center text-base font-bold leading-none text-white transition-colors"
-              title="Propose a change, file an issue, or open app settings">+</button>
+              title="${AppView.readOnly ? 'Fork this app' : 'Propose a change, file an issue, or open app settings'}">+</button>
             <div id="dev-plus-menu" class="hidden absolute right-0 top-9 z-30 w-64 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden">
+              ${AppView.readOnly ? '' : `
               <button data-plus="proposal" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Propose a change</span>
                 <span class="block text-xs text-zinc-500 dark:text-zinc-400">Start an AI dev session — promoting its PR creates the proposal</span>
@@ -644,9 +661,9 @@ const AppView = {
               <button data-plus="settings" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">App settings</span>
                 <span class="block text-xs text-zinc-500 dark:text-zinc-400">App secrets and display name</span>
-              </button>
+              </button>`}
               ${AppView.appData?.self_hosted ? '' : `
-              <button data-plus="fork" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
+              <button data-plus="fork" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors ${AppView.readOnly ? '' : 'border-t border-zinc-200 dark:border-zinc-800'}">
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Fork this app</span>
                 <span class="block text-xs text-zinc-500 dark:text-zinc-400">Stand up your own independent copy</span>
               </button>`}
@@ -985,7 +1002,7 @@ const AppView = {
     //   regardless of who created the proposal.
     const mine = !!(App.user && item.user_id === App.user.id);
     const cardHasAskAiPill = (t.kind === 'proposal' && !mine);
-    const askAiHtml = (t.kind === 'gov') ? AppView._askAiButtonHtml() : '';
+    const askAiHtml = (t.kind === 'gov' && !AppView.readOnly) ? AppView._askAiButtonHtml() : '';
 
     head.innerHTML = cardHtml + bodyHtml + askAiHtml;
     if (window.Kudos) Kudos.attach(head);
@@ -1065,6 +1082,9 @@ const AppView = {
   // in-discussion advisor, so a card button would be redundant clutter.
   // Click is dispatched by the delegated feed/merged handlers.
   _askAiCardBtnHtml(pr) {
+    // #621: the advisor spends the viewer's LLM budget and its API is
+    // collab-gated — no Ask AI for read-only viewers.
+    if (AppView.readOnly) return '';
     return `<button type="button" class="gc-vote-btn gc-ask-ai-btn" data-proposal-id="${pr.id}"
       title="Ask AI about this proposal (private to you)"><span aria-hidden="true">✨</span> Ask AI</button>`;
   },
@@ -1152,6 +1172,11 @@ const AppView = {
       // #363: request the in-scroll header slot so _renderTopicHead can paint
       // the topic card/body above the messages in the same scroll region.
       withHeader: true,
+      // #621: non-collaborators read the thread but can't post to it.
+      readOnly: AppView.readOnly,
+      ...(AppView.readOnly
+        ? { notice: "You're viewing this app's dev space read-only — only collaborators can post." }
+        : {}),
     });
   },
 
@@ -1482,8 +1507,11 @@ const AppView = {
             <!-- Typing indicator -->
             <div id="gc-typing" class="px-3 text-xs text-zinc-500 h-5 shrink-0"></div>
 
-            <!-- Input -->
+            <!-- Input (#621: read-only viewers get a notice instead) -->
             <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2">
+              ${AppView.readOnly ? `
+              <div class="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400 text-center">You're viewing this app's dev space read-only — only collaborators can post.</div>
+              ` : `
               <!-- #15: "Replying to …" preview chip; populated by
                    GroupChat._renderQuotePreview when a quote is staged. -->
               <div id="gc-reply-preview" class="hidden"></div>
@@ -1497,7 +1525,7 @@ const AppView = {
                   class="gc-composer-input flex-1 min-w-0 resize-none overflow-y-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
                 ></textarea>
                 <button type="submit" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors shrink-0">Send</button>
-              </form>
+              </form>`}
             </div>
           </div>
 
@@ -1520,6 +1548,12 @@ const AppView = {
       </div>`;
 
     const gcInput = document.getElementById('gc-input');
+    // #621: read-only viewers have no composer — mount the live stream
+    // (WS connects at view level; the server drops any write) and stop.
+    if (!gcInput) {
+      if (AppView.appData) GroupChat.mount(AppView.appData.slug);
+      return;
+    }
     // Restore any in-progress draft. The input element is a new DOM node
     // on every tab switch, so we rehydrate from the persisted draft
     // (localStorage-backed, keyed by app slug) — this also survives full
@@ -2441,6 +2475,7 @@ const AppView = {
 
   _initKanbanDrag(board) {
     if (!board || board._dragBound) return;
+    if (AppView.readOnly) return; // #621: no reordering for read-only viewers
     board._dragBound = true;
     board.addEventListener('pointerdown', AppView._onDragPointerDown);
   },
@@ -2698,7 +2733,9 @@ const AppView = {
   // for the reorderable columns) renders un-draggable so it can't be moved
   // into an unsaveable state.
   _wrapDraggable(key, cardHtml) {
-    if (!key) return `<div class="dev-drag-item">${cardHtml}</div>`;
+    // #621: read-only viewers can't reorder the board — no grip handle
+    // (and _initKanbanDrag never binds for them).
+    if (!key || AppView.readOnly) return `<div class="dev-drag-item">${cardHtml}</div>`;
     const grip = '<svg viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4" aria-hidden="true">'
       + '<circle cx="7" cy="5" r="1.4"/><circle cx="13" cy="5" r="1.4"/>'
       + '<circle cx="7" cy="10" r="1.4"/><circle cx="13" cy="10" r="1.4"/>'
@@ -3777,6 +3814,7 @@ const AppView = {
   // badge updates in place off the existing checks broadcasts.
   _recheckBtnHtml(pr) {
     if (!pr) return '';
+    if (AppView.readOnly) return '';
     if (pr.check_state === 'passing') return '';
     const owner = !!(App.user && pr.user_id === App.user.id);
     // `recheckable` is a staging ?demo=1 hint (set only on mock rows) so the
@@ -3932,14 +3970,17 @@ const AppView = {
       contested: issue.contested,
       status: 'open',
     }, majority);
-    const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${myVote === 'up' ? ' gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'up')">Yes (${upCount})</button>`;
-    const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${myVote === 'down' ? ' gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'down')">No (${downCount})</button>`;
-    const adminBtn = ((issue.kind === 'secret_change' || isCloseIssue) && App.user?.canAdminWrite)
+    // #621: read-only viewers see the tally pill only — no vote /
+    // admin / withdraw controls.
+    const ro = AppView.readOnly;
+    const yesBtn = ro ? '' : `<button class="gc-vote-btn gc-vote-btn-yes${myVote === 'up' ? ' gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'up')">Yes (${upCount})</button>`;
+    const noBtn = ro ? '' : `<button class="gc-vote-btn gc-vote-btn-no${myVote === 'down' ? ' gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'down')">No (${downCount})</button>`;
+    const adminBtn = (!ro && (issue.kind === 'secret_change' || isCloseIssue) && App.user?.canAdminWrite)
       ? `<button class="gc-vote-btn gc-vote-btn-admin" title="Admin: apply this change right now, bypassing the vote majority" onclick="AppView.castIssueAdminApply(${issue.id})">Admin merge</button>`
       : '';
     // mine: the viewer created this governance proposal, so they may
     // withdraw it (creator-scoped POST /api/issues/:id/close).
-    const mine = !!(App.user && issue.created_by === App.user.id);
+    const mine = !ro && !!(App.user && issue.created_by === App.user.id);
     const withdrawBtn = mine
       ? `<button class="gc-vote-btn" title="Withdraw this proposal (removes it from the vote panel)" onclick="AppView.withdrawGovProposal(${issue.id})">Withdraw</button>`
       : '';
@@ -4279,9 +4320,10 @@ const AppView = {
   },
 
   // Both chips for a card, in the badge row. opts.readonly drops the
-  // dropdown (used on merged/completed proposals).
+  // dropdown (used on merged/completed proposals, and forced for
+  // read-only viewers — #621).
   _attrChipsHtml(targetType, targetRef, item, opts) {
-    const readonly = !!(opts && opts.readonly);
+    const readonly = !!(opts && opts.readonly) || AppView.readOnly;
     return AppView._attrChipHtml('priority', targetType, targetRef, item && item.priority, readonly)
       + AppView._attrChipHtml('assignee', targetType, targetRef, item && item.assignee, readonly);
   },
@@ -4908,7 +4950,7 @@ const AppView = {
     // fight the delegated open handler. The check is cosmetic (decides
     // whether the pencil renders); the PATCH route's author check is the
     // authoritative gate, and it re-derives the same created_by_username.
-    const canEditTitle = !!(noNav && issue.created_by_username
+    const canEditTitle = !!(noNav && !AppView.readOnly && issue.created_by_username
       && typeof App !== 'undefined' && App.user
       && issue.created_by_username === App.user.username);
     const editTitleBtn = canEditTitle
@@ -4929,7 +4971,7 @@ const AppView = {
             ${AppView._attrChipsHtml('issue', n, issue)}
             ${AppView._devChatBadge(issue.chatCount)}
           </div>
-          ${AppView._cardActionsHtml([kudosBtn, createBtn, autoBtn, closeBtn])}
+          ${AppView._cardActionsHtml(AppView.readOnly ? [] : [kudosBtn, createBtn, autoBtn, closeBtn])}
         </div>
         ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
       </div>`;
@@ -5166,7 +5208,9 @@ const AppView = {
       const linkHref = pr.revert_pr_url || '#';
       undoUI = `<a href="${linkHref}" target="_blank" class="text-xs text-amber-500 hover:text-amber-400 font-medium">${label}</a>`;
     } else {
-      undoUI = `<button class="gc-vote-btn gc-vote-btn-undo" title="Open a revert PR for this merge. It still needs a merge vote to land." onclick="AppView.undoPr(${pr.id})">Undo</button>`;
+      // #621: read-only viewers can't open revert PRs.
+      undoUI = AppView.readOnly ? ''
+        : `<button class="gc-vote-btn gc-vote-btn-undo" title="Open a revert PR for this merge. It still needs a merge vote to land." onclick="AppView.undoPr(${pr.id})">Undo</button>`;
     }
 
     return `
@@ -6035,6 +6079,9 @@ const AppView = {
     const preview = pr.staging_url
       ? `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStagingForSession(${pr.id}, '${pr.staging_url}')">Preview</button>`
       : '';
+    // #621: read-only viewers keep the Preview affordance but get no
+    // vote controls — the tally pill on the card already shows counts.
+    if (AppView.readOnly) return preview;
     const adminMerge = App.user?.canAdminWrite
       ? `<button class="gc-vote-btn gc-vote-btn-admin" title="Admin: merge this PR right now, bypassing the vote majority" onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
       : '';
@@ -6598,6 +6645,14 @@ const AppView = {
     const overlay = document.getElementById('staging-overlay');
     if (!overlay) return;
     const jump = !!(opts && opts.jump);
+
+    // #621: read-only viewers can't trigger a rebuild (the ensure POST is
+    // collab-gated) — open the last-known staging URL directly. If it was
+    // GC'd they see the dead-preview page rather than a rebuild spinner.
+    if (AppView.readOnly) {
+      if (fallbackUrl) AppView.swapToStaging(fallbackUrl, testing, { jump });
+      return;
+    }
 
     // Open the overlay + "spinning back up" loader right away, and take a
     // fresh load id so backing out (closeStagingOverlay) cancels this wait.

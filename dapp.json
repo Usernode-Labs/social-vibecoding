@@ -236,6 +236,11 @@
       "expectText": "Staging demo failed app"
     },
     {
+      "name": "Read-only demo app's Dev tab renders its seeded proposal (#621)",
+      "path": "/app/staging-demo-readonly/dev",
+      "expectText": "Staging demo read-only proposal"
+    },
+    {
       "name": "Errored app view shows the failure reason and build-log button",
       "path": "/app/staging-demo-failed-app",
       "expectText": "View build log",

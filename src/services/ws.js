@@ -95,10 +95,12 @@ function attach(server, config) {
       ws.close(4004, 'App not found');
       return;
     }
-    // Group chat is a collaboration surface: collab-private apps only
-    // admit admins + members. Same 4004 as "not found" so the room's
-    // existence isn't disclosed (matches the routes' 404-on-deny rule).
-    const allowed = await appAccess.checkAppAccess(pool, app, user, 'collab')
+    // Connect gate is view-level (#621): anyone who may see the app can
+    // receive live chat/room broadcasts read-only. Same 4004 as "not
+    // found" so the room's existence isn't disclosed (matches the
+    // routes' 404-on-deny rule). Mutating message types re-check collab
+    // access per message inside handleMessage.
+    const allowed = await appAccess.checkAppAccess(pool, app, user, 'view')
       .catch(() => false);
     if (!allowed) {
       ws.close(4004, 'App not found');
@@ -290,7 +292,33 @@ async function validateThread(pool, appId, thread) {
   return { type, ref };
 }
 
+// #621: mutating message types require collab access. Re-checked per
+// message (not cached at connect) so a membership revocation takes
+// effect immediately — chat rates are low and the lookup is a single
+// indexed query. Dropped silently server-side (same pattern as the
+// invalid-thread drop): read-only clients don't render these controls,
+// so anything arriving here is a stale or hostile client.
+const WRITE_MSG_TYPES = new Set(['chat', 'edit', 'react', 'typing']);
+
+async function canWriteChat(pool, client) {
+  const { rows } = await pool.query(
+    'SELECT id, collab_visibility, view_visibility FROM apps WHERE id = $1',
+    [client.appId]
+  );
+  if (!rows.length) return false;
+  return appAccess.checkAppAccess(pool, rows[0], client.user, 'collab');
+}
+
 async function handleMessage(pool, client, msg) {
+  if (WRITE_MSG_TYPES.has(msg.type)) {
+    const allowed = await canWriteChat(pool, client).catch(() => false);
+    if (!allowed) {
+      log.warn('ws', 'write message dropped: not a collaborator', {
+        appId: client.appId, userId: client.user.id, type: msg.type,
+      });
+      return;
+    }
+  }
   switch (msg.type) {
     case 'chat': {
       if (!msg.content?.trim()) return;
