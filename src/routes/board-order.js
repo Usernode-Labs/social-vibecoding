@@ -77,8 +77,11 @@ async function readOrder(pool, appId) {
 // Staging demo order (?demo=1): reference the same mock issue numbers /
 // proposal ids the feed mocks emit (stagingMockIssues in issues.js,
 // stagingMockProposals in votes.js) so a tester sees a visibly NON-default
-// order and can drag to change it. Issues column: 900002 pinned above
-// 900001; In review: proposal 9000002 pulled to the top. A no-op outside
+// order and can drag to change it. Issues column: 900002 ranked above
+// 900001; In review: proposal 9000002 ranked first. Unranked cards render
+// ABOVE the ranked block (#617) — mock issue 900009 ("Newly filed issue —
+// should render on top") is deliberately left out of this order so the
+// new-issues-surface-at-the-top behaviour is reviewable. A no-op outside
 // staging.
 function stagingMockOrder() {
   return {

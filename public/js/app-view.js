@@ -2189,12 +2189,15 @@ const AppView = {
   // order. `cards` is the column array in its derived (default) order;
   // `orderRefs` is the saved [{type, ref}, …] list; `keyFn(card)` returns
   // the card's identity string (or null if it has none). Cards whose
-  // identity appears in `orderRefs` come FIRST, in stored order; every
-  // remaining card follows in its original derived order (stable). Stale
-  // stored refs whose card is no longer in the column are simply skipped.
-  // No DOM, no AppView state — unit-testable in isolation (see
-  // tests/dev-board-order.test.js). Empty/absent order → array returned
-  // untouched, so the unordered board stays byte-identical to today.
+  // identity is NOT in `orderRefs` come FIRST, in their derived order
+  // (newest-first for Issues) — a drag snapshots the whole column, so an
+  // unranked card is one that arrived AFTER the last drag and must surface
+  // at the top, not sink below every ranked card (#617). Ranked cards
+  // follow, in stored order. Stale stored refs whose card is no longer in
+  // the column are simply skipped. No DOM, no AppView state —
+  // unit-testable in isolation (see tests/dev-board-order.test.js).
+  // Empty/absent order → array returned untouched, so the unordered board
+  // stays byte-identical to today.
   _applyManualOrder(cards, orderRefs, keyFn) {
     const arr = Array.isArray(cards) ? cards : [];
     const order = Array.isArray(orderRefs) ? orderRefs : [];
@@ -2214,7 +2217,7 @@ const AppView = {
       else placed.push({ card, r });
     }
     placed.sort((a, b) => a.r - b.r);
-    return [...placed.map((p) => p.card), ...rest];
+    return [...rest, ...placed.map((p) => p.card)];
   },
 
   // Identity string for a bucketed card, matching the (card_type, card_ref)
