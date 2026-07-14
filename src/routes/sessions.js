@@ -1540,7 +1540,8 @@ function sessionRoutes(config) {
   router.post(
     '/api/sessions/:id/attachments',
     attachmentUploadLimiter,
-    express.raw({ type: 'application/octet-stream', limit: '5mb' }),
+    // Limit must exceed the largest single-file cap (20 MB zips).
+    express.raw({ type: 'application/octet-stream', limit: '21mb' }),
     async (req, res) => {
       try {
         const { rows: sessionRows } = await pool.query(
@@ -1574,13 +1575,15 @@ function sessionRoutes(config) {
         const id = crypto.randomBytes(16).toString('hex');
         await pool.query(
           `INSERT INTO chat_session_attachments
-             (id, session_id, user_id, kind, filename, content_type, size_bytes, data)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [id, sessionId, req.user.id, verdict.kind, filename, verdict.contentType, data.length, data]
+             (id, session_id, user_id, kind, filename, content_type, size_bytes, meta, data)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [id, sessionId, req.user.id, verdict.kind, filename, verdict.contentType, data.length,
+           verdict.meta ? JSON.stringify(verdict.meta) : null, data]
         );
         return res.json({
           id, kind: verdict.kind, filename,
           contentType: verdict.contentType, sizeBytes: data.length,
+          meta: verdict.meta || null,
         });
       } catch (err) {
         // express.raw over-limit bodies raise PayloadTooLargeError before
@@ -1676,7 +1679,7 @@ function sessionRoutes(config) {
       let turnAttachments = [];
       if (attIds.length) {
         const { rows: attRows } = await pool.query(
-          `SELECT id, kind, filename, content_type, size_bytes
+          `SELECT id, kind, filename, content_type, size_bytes, meta
              FROM chat_session_attachments
             WHERE id = ANY($1) AND session_id = $2 AND user_id = $3
               AND message_id IS NULL
@@ -1693,6 +1696,7 @@ function sessionRoutes(config) {
             attachments: turnAttachments.map((a) => ({
               id: a.id, kind: a.kind, filename: a.filename,
               contentType: a.content_type, sizeBytes: a.size_bytes,
+              ...(a.meta ? { meta: a.meta } : {}),
             })),
           }
         : {};
@@ -6421,7 +6425,7 @@ A dispatch_claude_code tool_result may report that the commit/push/PR succeeded 
 For other staging failures (Docker build, network, image cache), explain briefly and offer to retry. Do NOT pretend a failed staging build succeeded — the user can see the build status in the chat.
 
 USER FILE ATTACHMENTS:
-The user can attach images and text files to their messages. Images appear to you directly as vision input on recent turns (older ones are replaced by an "[image attachment: …]" placeholder to keep costs bounded); text files are inlined in the message inside "==== ATTACHED FILE: <name> ====" blocks (long files truncated with a marker). When you dispatch the scout or the coding agent, the CURRENT turn's attachments are forwarded to it automatically — reference the relevant filenames in your dispatch prompt (e.g. "match the attached mockup dashboard.png") so the agent knows to consult them.
+The user can attach files of any type to their messages. Images appear to you directly as vision input on recent turns (older ones are replaced by an "[image attachment: …]" placeholder to keep costs bounded); text files are inlined in the message inside "==== ATTACHED FILE: <name> ====" blocks (long files truncated with a marker). Zip archives and other binary files appear to you only as an "[attached file: …]" summary line (for zips it includes the file count and top-level contents) — you never see their bytes, but the coding agent does: on dispatch, zips are extracted into its container as browsable reference material and binaries are downloadable as workspace files. When you dispatch the scout or the coding agent, the CURRENT turn's attachments are forwarded to it automatically — reference the relevant filenames in your dispatch prompt (e.g. "match the attached mockup dashboard.png", "port the chart page from the attached reference.zip") so the agent knows to consult them.
 
 HISTORY CONTEXT:
 Some assistant turns in this conversation contain "${CODING_AGENT_COMPLETED_MARKER}:" — that is a summary from a PAST coding-agent run, written by the system, not by you. You may reference it when the user asks an INFORMATIONAL question about a past turn (e.g. "what did you do?", "why did you change X?", "what files were touched?") — quote or paraphrase to answer.
