@@ -144,6 +144,26 @@
       "expectText": "is working on this"
     },
     {
+      "name": "Busy own session card renders (working state, two-row layout)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "[Mock] Busy own session"
+    },
+    {
+      "name": "Visible own session renders under the Visible-to-everyone caption",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "Visible to everyone."
+    },
+    {
+      "name": "Visible own session offers the Open chat action",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "Open chat"
+    },
+    {
+      "name": "Demo archived row surfaces the Show archived toggle",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "Show archived"
+    },
+    {
       "name": "Close-issue governance card renders in the dev board",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#close-issue-form",
