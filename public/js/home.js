@@ -75,9 +75,14 @@ const Home = {
   // "Your apps" = apps the viewer is a member of (creator or accepted
   // invite — the server's is_collaborator flag, see app_collaborators
   // in schema.sql) OR apps they manually added (a favorite row; the
-  // old "star", now the menu's "Add to Your apps").
+  // old "star", now the menu's "Add to Your apps"). #618: the member
+  // pin is a per-user preference now — your_apps_hidden (a hidden
+  // app_favorites row) suppresses it, so members can take their own
+  // apps out of the section without giving up membership. An explicit
+  // favorite still wins (is_favorited is served as false for hidden
+  // rows, so both flags can't disagree).
   isYours(app) {
-    return !!(app && (app.is_collaborator || app.is_favorited));
+    return !!(app && ((app.is_collaborator && !app.your_apps_hidden) || app.is_favorited));
   },
 
   // Split the full list into { yours, rest }. Personal ordering
@@ -1251,12 +1256,14 @@ const Home = {
   // creator-or-full-admin.
   //
   // The Your-apps entry renders for EVERY app so the affordance is
-  // always discoverable. Membership (is_collaborator — you created or
-  // help build the app) isn't removable, so member apps get a
-  // disabled, informational "In Your apps" row instead of a Remove —
-  // without it, a user who is a member of every app they open (e.g.
-  // the creator of most apps on an instance) would never see the
-  // selector anywhere and reasonably conclude it's missing.
+  // always discoverable. #618: membership (is_collaborator — you
+  // created or help build the app) no longer hard-pins the app there;
+  // members get a working Remove/Add pair driven by your_apps_hidden
+  // (a per-user, display-only opt-out — access and permissions are
+  // untouched). The explicit desired value is passed through because
+  // a pinned member app usually has is_favorited=false, so the
+  // non-member "!is_favorited" derivation would send the wrong
+  // direction.
   menuItemsFor(app) {
     const items = [];
     const user = App.user || {};
@@ -1265,15 +1272,17 @@ const Home = {
     if (app.is_collaborator) {
       items.push({
         key: 'favorite',
-        label: '✓ In Your apps',
-        disabled: true,
-        title: 'You build this app, so it is always in Your apps.',
+        label: app.your_apps_hidden ? 'Add to Your apps' : 'Remove from Your apps',
+        title: app.your_apps_hidden
+          ? 'Show this app in Your apps again. You keep your builder access either way.'
+          : 'Hide this app from Your apps — it stays live and you keep your builder access.',
+        run: () => Home._menuToggleFavorite(app, !!app.your_apps_hidden),
       });
     } else {
       items.push({
         key: 'favorite',
         label: app.is_favorited ? 'Remove from Your apps' : 'Add to Your apps',
-        run: () => Home._menuToggleFavorite(app),
+        run: () => Home._menuToggleFavorite(app, !app.is_favorited),
       });
     }
     // Native homescreen shortcut — only when the page runs inside a
@@ -1425,8 +1434,10 @@ const Home = {
       btn.dataset.key = item.key;
       if (item.title) btn.title = item.title;
       if (item.disabled) {
-        // Informational row (e.g. "In Your apps" on member apps):
-        // rendered but inert, so the affordance stays discoverable.
+        // Informational row: rendered but inert, so the affordance
+        // stays discoverable. (No builder emits one today — #618 made
+        // the member "In Your apps" row a working toggle — but the
+        // mechanism is kept for future informational items.)
         btn.disabled = true;
       } else {
         btn.addEventListener('click', (e) => {
@@ -1659,8 +1670,13 @@ const Home = {
     }
   },
 
-  async _menuToggleFavorite(app) {
-    const next = !app.is_favorited;
+  // `desired` is the explicit favorited value to send. menuItemsFor
+  // always passes it; the !is_favorited fallback keeps any legacy
+  // caller working for non-member apps. For member apps the server
+  // maps favorited=false to a hidden opt-out row rather than a delete
+  // (#618), so the same endpoint drives both card menu states.
+  async _menuToggleFavorite(app, desired) {
+    const next = typeof desired === 'boolean' ? desired : !app.is_favorited;
     try {
       const res = await fetch(`/api/apps/${app.slug}/favorite`, {
         method: 'POST',
@@ -1672,6 +1688,7 @@ const Home = {
         throw new Error(data.error || `HTTP ${res.status}`);
       }
       app.is_favorited = next;
+      if (app.is_collaborator) app.your_apps_hidden = !next;
       await Home.load();
     } catch (err) {
       alert(`Update failed: ${err.message}`);

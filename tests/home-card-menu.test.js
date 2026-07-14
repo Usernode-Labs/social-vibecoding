@@ -8,10 +8,11 @@
 //     creator or a full admin (canAdminWrite — view-only admins are
 //     excluded, issue #311);
 //   - menuItemsFor gates each item exactly like the old corner buttons
-//     did: favorite-toggle for non-members (everyone gets ≥1 item),
+//     did: favorite-toggle on every app (everyone gets ≥1 item),
 //     check-updates/lock/delete behind canAdminWrite, retry behind
-//     errored + creator-or-admin. Member apps get no favorite item
-//     (membership isn't removable from the menu).
+//     errored + creator-or-admin. #618: member apps get a working
+//     Remove/Add pair driven by the per-user your_apps_hidden flag
+//     (display-only opt-out; membership/access untouched).
 //
 // home.js is a plain browser script (`const Home = {…}`); we load it
 // into a vm context, stub the globals it reaches, and assert on the
@@ -358,27 +359,48 @@ test('menu: favorited app flips the label to Remove', () => {
   assert.equal(items[0].label, 'Remove from Your apps');
 });
 
-test('menu: member apps get a DISABLED "In Your apps" row, never a Remove', () => {
-  // The entry must render for every app so the affordance is always
-  // discoverable — a user who is a member of every app they open
-  // (e.g. the creator of most apps on an instance) would otherwise
-  // never see the selector anywhere. Membership isn't removable, so
-  // the row is informational and inert.
+test('menu: member apps get a WORKING Remove from Your apps item (#618)', () => {
+  // The entry renders for every app so the affordance is always
+  // discoverable. #618: membership no longer hard-pins the app —
+  // members (creators included) get an active Remove that persists a
+  // per-user hidden opt-out row, display-only, access untouched.
   const Home = makeHome({ id: ME });
   const fav = Home.menuItemsFor(baseApp({ is_collaborator: true }))
     .find((i) => i.key === 'favorite');
   assert.ok(fav, 'favorite entry present on member apps');
-  assert.equal(fav.disabled, true, 'but disabled (membership is not removable)');
-  assert.match(fav.label, /In Your apps/);
-  assert.doesNotMatch(fav.label, /Remove/, 'no Remove offered on member apps');
-  assert.equal(fav.run, undefined, 'no action wired');
-  // Even a favorited member app never offers Remove (removing the
-  // favorite row would change nothing — membership keeps it in the
-  // section).
-  const favBoth = Home.menuItemsFor(baseApp({ is_collaborator: true, is_favorited: true }))
+  assert.equal(fav.disabled, undefined, 'active, not the old inert row');
+  assert.equal(fav.label, 'Remove from Your apps');
+  assert.equal(typeof fav.run, 'function', 'action wired');
+});
+
+test('menu: hidden member apps flip to Add to Your apps (#618)', () => {
+  const Home = makeHome({ id: ME });
+  const fav = Home.menuItemsFor(baseApp({ is_collaborator: true, your_apps_hidden: true }))
     .find((i) => i.key === 'favorite');
-  assert.equal(favBoth.disabled, true);
-  assert.doesNotMatch(favBoth.label, /Remove/);
+  assert.equal(fav.label, 'Add to Your apps');
+  assert.equal(typeof fav.run, 'function');
+});
+
+test('menu: member toggle sends the explicit desired value, not !is_favorited (#618)', () => {
+  // A pinned member app usually has is_favorited=false, so deriving
+  // the target from !is_favorited would send favorited=true (a no-op
+  // add) instead of the hide. Pin the wiring by capturing the fetch.
+  const Home = makeHome({ id: ME });
+  const calls = [];
+  Home._menuToggleFavorite = (app, desired) => { calls.push(desired); };
+  Home.menuItemsFor(baseApp({ is_collaborator: true }))
+    .find((i) => i.key === 'favorite').run();
+  Home.menuItemsFor(baseApp({ is_collaborator: true, your_apps_hidden: true }))
+    .find((i) => i.key === 'favorite').run();
+  Home.menuItemsFor(baseApp({ is_favorited: true }))
+    .find((i) => i.key === 'favorite').run();
+  Home.menuItemsFor(baseApp())
+    .find((i) => i.key === 'favorite').run();
+  assert.deepEqual(
+    calls,
+    [false, true, false, true],
+    'visible member → hide, hidden member → re-add, favorite → remove, plain → add'
+  );
 });
 
 test('menu: every app carries a favorite entry — no card menu omits it', () => {
@@ -522,6 +544,14 @@ test('menu: shortcut item only offered on "Your apps"', () => {
   );
   assert.ok(
     keys(Home.menuItemsFor(baseApp({ is_collaborator: true }))).includes('add-to-homescreen')
+  );
+  // #618: a member app hidden from "Your apps" is no longer "yours",
+  // so the widget item disappears until it's added back.
+  assert.equal(
+    keys(Home.menuItemsFor(baseApp({ is_collaborator: true, your_apps_hidden: true })))
+      .includes('add-to-homescreen'),
+    false,
+    'hidden member apps lose the widget item'
   );
 });
 

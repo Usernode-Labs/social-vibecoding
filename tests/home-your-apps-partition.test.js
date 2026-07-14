@@ -82,6 +82,41 @@ test('isYours: membership OR favorite puts an app in "Your apps"', () => {
   assert.equal(Home.isYours(null), false, 'null-safe');
 });
 
+test('isYours: your_apps_hidden suppresses the member pin (#618)', () => {
+  const Home = makeHome();
+  assert.equal(
+    Home.isYours(app({ is_collaborator: true, your_apps_hidden: true })),
+    false,
+    'hidden member app is not yours'
+  );
+  assert.equal(
+    Home.isYours(app({ is_collaborator: true, your_apps_hidden: false })),
+    true,
+    'un-hidden member app stays yours'
+  );
+  // Defensive: the server never serves this combination (a hidden row
+  // reads as is_favorited=false), but an explicit favorite must win.
+  assert.equal(
+    Home.isYours(app({ is_collaborator: true, your_apps_hidden: true, is_favorited: true })),
+    true,
+    'explicit favorite wins over hidden'
+  );
+  assert.equal(
+    Home.isYours(app({ your_apps_hidden: true })),
+    false,
+    'hidden non-member is unaffected'
+  );
+});
+
+test('partitionApps: hidden member apps fall into rest (#618)', () => {
+  const Home = makeHome();
+  const pinned = app({ slug: 'pinned', is_collaborator: true });
+  const hidden = app({ slug: 'hidden', is_collaborator: true, your_apps_hidden: true });
+  const { yours, rest } = Home.partitionApps([pinned, hidden]);
+  assert.deepEqual(yours.map((a) => a.slug), ['pinned']);
+  assert.deepEqual(rest.map((a) => a.slug), ['hidden']);
+});
+
 // ── partitionApps ─────────────────────────────────────────────────
 
 test('partitionApps: members and favorites land in yours, everything else in rest', () => {

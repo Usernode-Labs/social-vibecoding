@@ -122,6 +122,7 @@ function demoIconApps() {
     missingSecrets: null,
     active_users: 0,
     is_favorited: false,
+    your_apps_hidden: false,
     favorite_order: null,
     is_collaborator: false,
     open_prs: 0,
@@ -264,7 +265,8 @@ function appRoutes(config) {
           COALESCE(msg_counts.cnt, 0) AS message_count,
           COALESCE(activity.total_seconds, 0) AS total_seconds,
           COALESCE(au.cnt, 0) AS active_users,
-          (favs.app_id IS NOT NULL) AS is_favorited,
+          (favs.app_id IS NOT NULL AND NOT COALESCE(favs.hidden, FALSE)) AS is_favorited,
+          COALESCE(favs.hidden, FALSE) AS your_apps_hidden,
           favs.sort_order AS favorite_order,
           (me.user_id IS NOT NULL) AS is_collaborator,
           COALESCE(dev.open_prs, 0) AS open_prs,
@@ -296,7 +298,7 @@ function appRoutes(config) {
           GROUP BY a1.app_id
         ) au ON au.app_id = a.id
         LEFT JOIN (
-          SELECT app_id, sort_order FROM app_favorites WHERE user_id = $2
+          SELECT app_id, sort_order, hidden FROM app_favorites WHERE user_id = $2
         ) favs ON favs.app_id = a.id
         LEFT JOIN app_collaborators me
           ON me.app_id = a.id AND me.user_id = $2 AND me.status = 'member'
@@ -420,6 +422,7 @@ function appRoutes(config) {
           // paths (and staging demo rows can inject arbitrary sources).
           icon_url: a.icon_image_id ? `/app-icons/${a.icon_image_id}` : null,
           is_favorited: !!a.is_favorited,
+          your_apps_hidden: !!a.your_apps_hidden,
           favorite_order: a.favorite_order ?? null,
           open_prs: parseInt(a.open_prs, 10) || 0,
           active_sessions: parseInt(a.active_sessions, 10) || 0,
@@ -1396,8 +1399,23 @@ function appRoutes(config) {
       }
       const appId = appRows[0].id;
       if (favorited) {
+        // DO UPDATE (not DO NOTHING) so the same statement also clears a
+        // member's hidden=TRUE opt-out row — "Add to Your apps" un-hides.
         await pool.query(
-          'INSERT INTO app_favorites (app_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+          `INSERT INTO app_favorites (app_id, user_id) VALUES ($1, $2)
+           ON CONFLICT (app_id, user_id) DO UPDATE SET hidden = FALSE`,
+          [appId, req.user.id]
+        );
+      } else if (await appAccess.isCollaborator(pool, appId, req.user.id)) {
+        // #618: membership (creator or accepted invite) pins the app into
+        // "Your apps", so a member's "remove" must persist as an explicit
+        // opt-out row rather than a delete — a missing row means "pinned by
+        // membership", not "removed". sort_order is cleared so a later
+        // un-hide re-enters the section at the ordering fallback position.
+        await pool.query(
+          `INSERT INTO app_favorites (app_id, user_id, hidden, sort_order)
+           VALUES ($1, $2, TRUE, NULL)
+           ON CONFLICT (app_id, user_id) DO UPDATE SET hidden = TRUE, sort_order = NULL`,
           [appId, req.user.id]
         );
       } else {
