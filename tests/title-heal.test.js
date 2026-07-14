@@ -234,7 +234,8 @@ function loadTitleHealWithStubs({ llm: llmStub, github: ghStub, prMetadata: pmSt
 const noopWs = { pushVoteUpdate: () => {}, pushIssueUpdate: () => {} };
 
 test('healIssueTitles: success retitles the issue, deletes the queue row, announces', async () => {
-  delete process.env.GITHUB_BOT_TOKEN; // force the installation-octokit path
+  // The PAT-vs-installation fallback now lives in github.patchIssueTitle
+  // (#556) — the sweeper just calls it.
   const ghCalls = [];
   const wsCalls = [];
   const { subject, restore } = loadTitleHealWithStubs({
@@ -247,7 +248,7 @@ test('healIssueTitles: success retitles the issue, deletes the queue row, announ
     },
     github: {
       safeMention: (s) => s,
-      updateIssueTitle: async (owner, repo, n, title) => { ghCalls.push({ owner, repo, n, title }); },
+      patchIssueTitle: async (owner, repo, n, title) => { ghCalls.push({ owner, repo, n, title }); },
       invalidateIssuesCache: () => {},
     },
     prMetadata: {},
@@ -286,7 +287,7 @@ test('healIssueTitles: failure backs off; final attempt abandons the row', async
       isEnabled: () => true,
       generateIssueTitle: async () => { throw new Error('still no credits'); },
     },
-    github: { safeMention: (s) => s, updateIssueTitle: async () => {}, invalidateIssuesCache: () => {} },
+    github: { safeMention: (s) => s, patchIssueTitle: async () => {}, invalidateIssuesCache: () => {} },
     prMetadata: {},
     ws: noopWs,
   });
@@ -334,7 +335,7 @@ test('healPrTitles: re-drives applyPrMetadata and broadcasts when the flag clear
   const wsCalls = [];
   const { subject, restore } = loadTitleHealWithStubs({
     llm: { isEnabled: () => true },
-    github: { safeMention: (s) => s, updateIssueTitle: async () => {}, invalidateIssuesCache: () => {} },
+    github: { safeMention: (s) => s, patchIssueTitle: async () => {}, invalidateIssuesCache: () => {} },
     prMetadata: {
       applyPrMetadata: async ({ session, repoOwner, repoName, username, userId }) => {
         applied.push({ sessionId: session.id, repoOwner, repoName, username, userId });
@@ -378,7 +379,7 @@ test('healPrTitles: no broadcast when the heal attempt falls back again', async 
   const wsCalls = [];
   const { subject, restore } = loadTitleHealWithStubs({
     llm: { isEnabled: () => true },
-    github: { safeMention: (s) => s, updateIssueTitle: async () => {}, invalidateIssuesCache: () => {} },
+    github: { safeMention: (s) => s, patchIssueTitle: async () => {}, invalidateIssuesCache: () => {} },
     prMetadata: {
       applyPrMetadata: async ({ session }) => {
         // LLM still down: the flag stays TRUE (fallback fired again).

@@ -47,6 +47,9 @@ function creatorFromSourceLine(body) {
 const VALID_KINDS = ['general', 'secret_change', 'close_issue'];
 const MAX_SECRET_VALUE_LENGTH = 4096;
 const MAX_CLOSE_REASON_LENGTH = 2000;
+// #556: cap for author-edited issue titles (rename route below). Matches
+// the feedback form's optional title input; far below GitHub's own limit.
+const MAX_ISSUE_TITLE_LENGTH = 200;
 
 // #132: should this issue kind get a GitHub twin on the app's repo?
 // Env-var change proposals (kind='secret_change') are in-app governance —
@@ -137,6 +140,16 @@ function stagingMockIssues(repoUrl) {
       + "row so the start-work button reads \"Create new proposal\" "
       + 'instead of "Create proposal" — exactly what a viewer who already '
       + 'started a dev chat on this issue would see.', 7),
+    // #556: dedicated row for reviewing the author-only "edit title"
+    // pencil in the topic head. The staging enrichment block in
+    // GET /github-issues marks it as authored by whoever is viewing, so
+    // the affordance renders for every staging tester.
+    mk(900008, '[Mock] issue you authored — title is editable',
+      'Staging-only mock issue for previewing the author-only title edit '
+      + 'affordance (#556). Open this topic and a pencil appears next to '
+      + 'the title because the row is marked as authored by you. Saving '
+      + 'a new title will fail — there is no real GitHub issue behind '
+      + 'this mock row — so this is purely for visual review.', 3),
   ];
 }
 
@@ -836,6 +849,17 @@ function issueRoutes(config) {
             issue.myPrSessionId = issue.number;
           }
         }
+        // #556: the [Mock] rows resolve no platform creator, so the
+        // author-only "edit title" pencil in the topic head would never
+        // render in a preview. Mark the dedicated row (900008) as authored
+        // by the viewer — only where no real creator resolved — so the
+        // affordance is reviewable. Saving still fails (no real GitHub
+        // issue behind the mock); purely visual. No-op in production.
+        for (const issue of issues) {
+          if (issue.number === 900008 && !issue.created_by_username) {
+            issue.created_by_username = req.user.username;
+          }
+        }
       }
 
       // Community-voted priority + assigned-person summary per issue (the
@@ -963,6 +987,125 @@ function issueRoutes(config) {
       });
     } catch (err) {
       log.error('issues', 'Failed to fetch GitHub issue comments', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ----------------------------------------------------------------
+  // PATCH /api/apps/:slug/github-issues/:number/title
+  //
+  // #556: author-only rename of an open GitHub issue from inside the app.
+  // The GitHub issue is retitled FIRST (nothing local changes if that
+  // fails), then best-effort follow-ups: the local `issues` mirror row
+  // (platform-filed issues only), removal of any pending title_heal_queue
+  // row (so the sweeper can't clobber the author's choice), a system
+  // message in the issue's own discussion thread recording old → new, and
+  // the cache-bust + issue_update broadcast that live-refreshes open
+  // panels (same pair title-heal uses).
+  //
+  // Authorship: platform-filed issues record created_by in the local
+  // issues table; feedback-filed ones carry the creator in the body's
+  // "**Source:**" line. GitHub-native issues match neither and stay
+  // read-only — author-only by design, no admin override.
+  // ----------------------------------------------------------------
+  router.patch('/api/apps/:slug/github-issues/:number/title', async (req, res) => {
+    const issueNumber = parseInt(req.params.number, 10);
+    if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+      return res.status(400).json({ error: 'Invalid issue number' });
+    }
+    const rawTitle = req.body?.title;
+    const newTitle = typeof rawTitle === 'string' ? rawTitle.trim() : '';
+    if (!newTitle) return res.status(400).json({ error: 'Title required' });
+    if (newTitle.length > MAX_ISSUE_TITLE_LENGTH) {
+      return res.status(400).json({
+        error: `Title too long (max ${MAX_ISSUE_TITLE_LENGTH} chars)`,
+      });
+    }
+
+    try {
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab', `${appAccess.ACCESS_COLUMNS}, repo_url`
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+
+      // Verify :number is a CURRENTLY OPEN GitHub issue on this repo —
+      // same policy as the bounty route: fetchPublicIssues never throws;
+      // a degraded fetch (note) means no positive confirmation, so refuse
+      // and change nothing. The snapshot also yields the old title + body.
+      const parsed = parseOwnerRepo(app.repo_url);
+      if (!github.isEnabled() || !parsed) {
+        return res.status(422).json({
+          error: 'Cannot verify the issue right now — GitHub is unavailable for this app.',
+        });
+      }
+      const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
+      if (ghResult.note) {
+        return res.status(422).json({
+          error: "Couldn't confirm this issue is open right now. Try again in a moment.",
+        });
+      }
+      const target = (ghResult.issues || []).find((i) => i.number === issueNumber);
+      if (!target) {
+        return res.status(404).json({
+          error: `Issue #${issueNumber} isn't an open issue on this repo.`,
+        });
+      }
+
+      const { rows: authorRows } = await pool.query(
+        `SELECT 1 FROM issues
+          WHERE app_id = $1 AND github_issue_number = $2 AND created_by = $3`,
+        [app.id, issueNumber, req.user.id]
+      );
+      const isAuthor = authorRows.length > 0
+        || creatorFromSourceLine(target.body) === req.user.username;
+      if (!isAuthor) {
+        return res.status(403).json({ error: "Only the issue's author can edit its title" });
+      }
+
+      const oldTitle = String(target.title || '');
+      if (newTitle === oldTitle) {
+        return res.json({ ok: true, unchanged: true, title: oldTitle });
+      }
+
+      // GitHub first — a failed PATCH must leave everything untouched.
+      try {
+        await github.patchIssueTitle(parsed.owner, parsed.repo, issueNumber, newTitle);
+      } catch (err) {
+        log.warn('issues', 'GitHub issue title PATCH failed', { issueNumber, message: err.message });
+        return res.status(502).json({
+          error: "Couldn't update the title on GitHub. Try again in a moment.",
+        });
+      }
+
+      // Local mirror row (platform-filed issues only; no-op otherwise).
+      await pool.query(
+        `UPDATE issues SET title = $3 WHERE app_id = $1 AND github_issue_number = $2`,
+        [app.id, issueNumber, newTitle]
+      ).catch((err) => log.warn('issues', 'Local issue title update failed', { issueNumber, err: err.message }));
+
+      // A pending auto-title heal must not overwrite the author's choice.
+      await pool.query(
+        `DELETE FROM title_heal_queue WHERE owner = $1 AND repo = $2 AND issue_number = $3`,
+        [parsed.owner, parsed.repo, issueNumber]
+      ).catch((err) => log.warn('issues', 'title_heal_queue cleanup failed', { issueNumber, err: err.message }));
+
+      // On-the-record rename note in the issue's own thread. Thread-only —
+      // renames are issue-local housekeeping, unlike creation's dual-post.
+      await sendSystemMessage(pool, app.id,
+        `${req.user.username} changed the title from "${oldTitle}" to "${newTitle}"`,
+        'system', null, { type: 'issue', ref: issueNumber }
+      ).catch((err) => log.warn('issues', 'Rename chat message failed', { err: err.message }));
+
+      github.invalidateIssuesCache(parsed.owner, parsed.repo);
+      pushIssueUpdate({
+        action: 'updated', source: 'github',
+        appSlug: app.slug, appId: app.id, issueNumber,
+      });
+
+      log.info('issues', 'Issue title edited', { appId: app.id, issueNumber, by: req.user.username });
+      res.json({ ok: true, title: newTitle });
+    } catch (err) {
+      log.error('issues', 'Issue title edit failed', { issueNumber, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

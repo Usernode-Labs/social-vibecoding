@@ -577,6 +577,32 @@ async function updateIssueTitle(owner, repo, issueNumber, title) {
   return data;
 }
 
+// PATCH a title onto a GitHub issue, PAT-first. Platform-repo issues were
+// filed with the PAT (routes/feedback.js), app-repo issues via the GitHub
+// App installation — try the PAT first (covers both on the canonical
+// deploy, where the bot user owns app repos too), then fall back to the
+// installation octokit. Shared by the title-heal sweeper and the
+// author-rename route (routes/issues.js, #556).
+async function patchIssueTitle(owner, repo, issueNumber, title) {
+  const pat = process.env.GITHUB_BOT_TOKEN;
+  if (pat) {
+    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `token ${pat}`,
+        'User-Agent': 'usernode-social-vibecoding',
+      },
+      body: JSON.stringify({ title: safeMention(title) }),
+    });
+    if (res.ok) return;
+    log.warn('github', 'PAT issue PATCH failed; trying installation token', {
+      repo: `${owner}/${repo}`, issueNumber, status: res.status,
+    });
+  }
+  await updateIssueTitle(owner, repo, issueNumber, title);
+}
+
 async function closeIssue(owner, repo, issueNumber) {
   const octokit = await getOctokit(owner);
   const { data } = await octokit.rest.issues.update({
@@ -1277,6 +1303,7 @@ module.exports = {
   createIssue,
   createIssueComment,
   updateIssueTitle,
+  patchIssueTitle,
   closeIssue,
   getCloneUrl,
   safeMention,

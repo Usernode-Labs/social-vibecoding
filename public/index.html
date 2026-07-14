@@ -673,6 +673,11 @@
           <div id="feedback-caret-platform" class="hidden mt-1 w-0 h-0 border-l-4 border-r-4 border-b-4 border-l-transparent border-r-transparent border-b-violet-600"></div>
         </div>
       </div>
+      <!-- #556: editable title, auto-filled live from the description
+           (app.js debounces POST /api/feedback/title as the user types).
+           Left blank at submit, the server names the issue as before. -->
+      <input id="feedback-title" type="text" maxlength="200" placeholder="Title — generated as you type; edit as you like"
+        class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 mb-2">
       <textarea id="feedback-text" rows="4" maxlength="2000" placeholder="Describe the issue or suggestion..."
         class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 resize-none"></textarea>
       <div id="feedback-status" class="text-sm mt-2 hidden"></div>
