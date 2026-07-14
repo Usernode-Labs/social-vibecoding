@@ -1,9 +1,12 @@
-// #386: the red "resolve conflict" affordance must surface ONLY after an
-// auto-resolve attempt actually ran and failed (merge_conflict_state ===
-// 'failed'). A fresh 'conflict' snapshot — written the instant a merge
-// 405s, before the auto-fix has reported back — is NOT a warning: that
-// path always bumps behind_main >= 1, so the card/strip fall through to
-// the neutral amber "Behind main" badge while the resolver runs.
+// #386 gave the red affordance to 'failed' (an auto-resolve ran and gave
+// up). The silent-merge-failure fix extends it to 'conflict': that state is
+// written ONLY when a real merge attempt 405s at GitHub, and the
+// auto-resolver drain only picks up vote-eligible proposals — so below the
+// gate (or on an admin force-merge) nothing would ever retry and the old
+// neutral "Behind main" badge was a false promise. 'conflict' now renders
+// red ("Merge failed — conflict") with creator-must-finish guidance; while
+// the resolver IS actively working, the 'resolving' state outranks it so
+// the card shows progress instead of a stale failure.
 //
 // app-view.js and home.js are plain browser scripts (`const X = {…}`).
 // We load each source into a vm context, stub the globals they reach,
@@ -77,16 +80,28 @@ const baseProposal = (over) => ({
 
 // ── Proposal card badge ────────────────────────────────────────────────
 
-test("card: a fresh 'conflict' snapshot shows the amber Behind badge, not the red affordance", () => {
+test("card: a 'conflict' snapshot (merge attempt failed) shows the red 'Merge failed' badge", () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal({
     merge_conflict_state: 'conflict',
     conflict_files: ['src/app.js', 'public/index.html'],
     behind_main: 2,
   }));
-  assert.match(html, /Behind main · 2/, "renders the neutral amber 'Behind main' badge");
-  assert.doesNotMatch(html, /⚠ Conflicts/, "no pre-emptive red 'Conflicts' badge");
-  assert.doesNotMatch(html, /Conflict resolution failed/, "no failed-state affordance pre-attempt");
+  assert.match(html, /⚠ Merge failed — conflict/, 'red merge-failed badge present after a real attempt');
+  assert.match(html, /creator needs to finish the merge/, 'tooltip names the way out');
+  assert.doesNotMatch(html, /Behind main/, 'merge-failed outranks the neutral behind badge');
+  assert.doesNotMatch(html, /Conflict resolution failed/, "the 'failed' affordance stays distinct");
+});
+
+test("card: a 'conflict' snapshot with the resolver in flight shows 'Resolving conflicts…' instead", () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._renderProposalCard(baseProposal({
+    merge_conflict_state: 'conflict',
+    behind_main: 2,
+    resolving: true,
+  }));
+  assert.match(html, /Resolving conflicts…/, 'in-flight resolve outranks the failure badge');
+  assert.doesNotMatch(html, /Merge failed — conflict/, 'no stale failure while progress is being made');
 });
 
 test("card: a 'failed' snapshot shows the red 'Conflict resolution failed' affordance", () => {
@@ -112,14 +127,27 @@ test("card: a plain 'behind' snapshot still shows the amber Behind badge", () =>
 
 // ── Proposal detail block ──────────────────────────────────────────────
 
-test("detail: a 'conflict' snapshot renders no merge-conflict detail box", () => {
+test("detail: a 'conflict' snapshot renders the merge-failed detail box naming the creator", () => {
   const AppView = makeAppView(ME);
   const html = AppView._mergeConflictDetailHtml(baseProposal({
     merge_conflict_state: 'conflict',
     conflict_files: ['src/app.js'],
     conflict_checked_at: '2026-06-01T00:00:00Z',
   }));
-  assert.equal(html, '', "pre-attempt 'conflict' shows nothing on the detail screen");
+  assert.match(html, /A merge was attempted, but this proposal conflicts with main\./, 'merge-failed heading present');
+  assert.match(html, /src\/app\.js/, 'lists the conflicting files');
+  assert.match(html, /me<\/span> needs to finish the merge/, 'names the creator as the one who must act');
+  assert.match(html, /Sync with main/, 'points at the dev-chat sync action');
+});
+
+test("detail: a 'conflict' snapshot with the resolver in flight renders nothing (progress badge covers it)", () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._mergeConflictDetailHtml(baseProposal({
+    merge_conflict_state: 'conflict',
+    conflict_files: ['src/app.js'],
+    resolving: true,
+  }));
+  assert.equal(html, '', 'no stale failure box while a resolve is actively running');
 });
 
 test("detail: a 'failed' snapshot renders the red 'resolution failed' detail box", () => {
@@ -157,14 +185,13 @@ const homeProposal = (over) => ({
   ...over,
 });
 
-test("home strip: a 'conflict' proposal shows the amber Behind chip, not a red Conflicts chip", () => {
+test("home strip: a 'conflict' proposal shows the red 'Merge failed' chip", () => {
   const Home = makeHome();
   Home._myProposals = { proposals: [homeProposal({ merge_conflict_state: 'conflict', behind_main: 2 })], governance: [] };
   const html = Home.renderMyProposalsSection();
-  // #405: the home strip now uses the canonical "Behind main · N" label.
-  assert.match(html, /Behind main · 2/, "renders the neutral 'Behind main' chip");
-  assert.doesNotMatch(html, /⚠ Conflicts/, "no pre-emptive red 'Conflicts' chip");
-  assert.doesNotMatch(html, /Conflict resolution failed/, 'no failed affordance pre-attempt');
+  assert.match(html, /Merge failed — conflict/, 'red merge-failed chip after a real attempt');
+  assert.doesNotMatch(html, /Behind main/, 'merge-failed outranks the neutral behind chip');
+  assert.doesNotMatch(html, /Conflict resolution failed/, "the 'failed' affordance stays distinct");
 });
 
 test("home strip: a 'failed' proposal shows the red Failed chip", () => {

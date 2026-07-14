@@ -349,6 +349,56 @@ test('resolveAndMaybeRetry: a later, non-overlapping resolve runs a fresh worker
   }
 });
 
+// ── Force-carry-through: admin force survives the conflict recovery ─────
+// An admin force-merge that 405s dispatches resolveAndMaybeRetry with
+// { force, forceBy } (routes/votes.js). The resolver's post-sync retry
+// re-enters checkAndMerge — and without the flag threaded through, that
+// retry re-applies the vote gate the admin explicitly bypassed, landing a
+// below-threshold PR right back in "not merged" after a successful sync.
+
+test('resolveAndMaybeRetry: force/forceBy are threaded into the retried checkAndMerge', async () => {
+  const mergeCalls = [];
+  const forceBy = { id: 1, username: 'admin' };
+  const { subject, restore } = loadResolverForCoalesce({
+    runSyncMainImpl: async () => ({ ok: true, syncResult: 'resolved', behind: 0 }),
+    checkAndMergeImpl: async (_config, _pool, _fresh, opts) => {
+      mergeCalls.push(opts);
+      return { merged: true };
+    },
+  });
+  try {
+    const r = await subject.resolveAndMaybeRetry({ jwtSecret: 's' }, { sessionId: 7 }, {
+      mergeOnly: false, force: true, forceBy, trigger: 'force',
+    });
+    assert.equal(r.reason, 'synced_and_merged');
+    assert.equal(mergeCalls.length, 1, 'the synced branch was retried exactly once');
+    assert.equal(mergeCalls[0].force, true, 'the retry merge stays forced');
+    assert.deepEqual(mergeCalls[0].forceBy, forceBy, 'the forcing admin rides along');
+    assert.equal(mergeCalls[0].autoResolve, false, 'the retry never re-triggers the resolver');
+  } finally {
+    restore();
+  }
+});
+
+test('resolveAndMaybeRetry: default (drain-driven) resolves retry the merge unforced', async () => {
+  const mergeCalls = [];
+  const { subject, restore } = loadResolverForCoalesce({
+    runSyncMainImpl: async () => ({ ok: true, syncResult: 'resolved', behind: 0 }),
+    checkAndMergeImpl: async (_config, _pool, _fresh, opts) => {
+      mergeCalls.push(opts);
+      return { merged: true };
+    },
+  });
+  try {
+    await subject.resolveAndMaybeRetry({ jwtSecret: 's' }, { sessionId: 7 });
+    assert.equal(mergeCalls.length, 1);
+    assert.equal(mergeCalls[0].force, false, 'no force unless the trigger carried one');
+    assert.equal(mergeCalls[0].forceBy, null);
+  } finally {
+    restore();
+  }
+});
+
 // ── System-token budget gate (#361) ─────────────────────────────────────
 // The sync draws from the dedicated system-token budget — never a user's
 // allowance or BYOK key. While the budget has headroom the resolve

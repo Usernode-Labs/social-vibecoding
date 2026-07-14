@@ -93,7 +93,7 @@ function stagingMockProposals(viewer) {
     priority: { top: 'high', count: 2, myValue: null },
     assignee: { top: 'staging-tester', count: 3, myValue: null },
   });
-  return [
+  const rows = [
     // Unopposed, thin support: threshold met but a multi-day visibility
     // window still running → "Merging in ~2d" countdown pill.
     mk(9000001, 900101,
@@ -311,7 +311,23 @@ function stagingMockProposals(viewer) {
     mk(9000010, 900110,
       '[Mock] Ready-to-merge test: votes passed and checks are green — queued to merge',
       4, 9, 0, 3),
-  ].map((p) => {
+  ];
+  // Spread the community-voted priority/assignee across a few rows (the mk
+  // factory otherwise stamps every proposal high / staging-tester) so the
+  // kanban board's Priority and Assignee filters have >1 distinct value to
+  // choose from and filtering visibly narrows the board. The assignees mirror
+  // the mock issues' (staging-demo-user, maya-builder), so filtering by one of
+  // them catches cards across both the issue and proposal columns.
+  const attrOverrides = new Map([
+    [9000001, { priority: { top: 'medium', count: 2, myValue: null }, assignee: { top: 'staging-demo-user', count: 2, myValue: null } }],
+    [9000002, { priority: { top: 'low', count: 1, myValue: null }, assignee: { top: 'maya-builder', count: 1, myValue: null } }],
+    [9000013, { priority: { top: 'low', count: 3, myValue: null }, assignee: { top: 'staging-demo-user', count: 1, myValue: null } }],
+  ]);
+  for (const row of rows) {
+    const o = attrOverrides.get(row.id);
+    if (o) { row.priority = o.priority; row.assignee = o.assignee; }
+  }
+  return rows.map((p) => {
     // #600: seed the FIRST mock proposal's assignee as the viewer's own so
     // opening its dropdown shows the "already voted" state (name box empty,
     // viewer's pick checked). Everyone else stays assigned to staging-tester
@@ -2379,21 +2395,47 @@ async function checkAndMerge(config, pool, session, options = {}) {
       const label = session.pr_title
         ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
+      // Honest wording: the auto-resolver drain only picks up proposals
+      // that are vote-eligible to merge, so "syncing automatically" was a
+      // false promise for anything below the gate. On the FORCED path the
+      // resolve really is about to run (dispatched directly below), so the
+      // message can promise it; otherwise lead with the creator's "Sync
+      // with main", which is the path that always works.
       await sendSystemMessage(pool, session.app_id,
-        `${label} hit a conflict with main — syncing automatically and will retry the merge. ${owner}: you can also resolve it from the session's dev-chat.`,
+        (force && autoResolve)
+          ? `${label} hit a conflict with main during an admin merge — resolving the conflict automatically and retrying the merge.`
+          : `${label} hit a conflict with main during a merge attempt. ${owner}: finish the merge by running "Sync with main" from the session's dev-chat. (Auto-resolution retries only when the proposal is eligible to merge on votes.)`,
         'system'
       );
       // Auto-heal the conflict the same way the behind_main gate does.
       // autoResolve guards against the resolver's own retry re-entering
       // this path (it calls checkAndMerge with autoResolve:false).
       if (autoResolve) {
-        // Same app-level drain as the behind_main path — serialized,
-        // one-proposal-at-a-time-per-app resolution.
-        checkAndResolveConflicts(config, { app_id: session.app_id }).catch((e) => {
-          log.error('votes', 'Auto-resolve (merge conflict) failed', {
-            sessionId: session.id, err: e.message,
+        if (force) {
+          // Force-carry-through: an admin explicitly asked for this merge,
+          // so the recovery must not be handed to the gate-filtered app
+          // drain (which re-applies the vote check the admin just bypassed
+          // and skips anything below threshold — the "starts auto merging,
+          // then nothing" dead end). Resolve THIS session directly — same
+          // worker sync the owner's "Sync with main" runs — and retry the
+          // merge with the force intent preserved.
+          const { resolveAndMaybeRetry } = require('../services/conflict-resolver');
+          resolveAndMaybeRetry(config, { sessionId: session.id }, {
+            mergeOnly: false, force: true, forceBy, trigger: 'force',
+          }).catch((e) => {
+            log.error('votes', 'Auto-resolve (forced merge conflict) failed', {
+              sessionId: session.id, err: e.message,
+            });
           });
-        });
+        } else {
+          // Same app-level drain as the behind_main path — serialized,
+          // one-proposal-at-a-time-per-app resolution.
+          checkAndResolveConflicts(config, { app_id: session.app_id }).catch((e) => {
+            log.error('votes', 'Auto-resolve (merge conflict) failed', {
+              sessionId: session.id, err: e.message,
+            });
+          });
+        }
       }
     } else {
       await sendSystemMessage(pool, session.app_id,
@@ -2402,7 +2444,14 @@ async function checkAndMerge(config, pool, session, options = {}) {
       );
     }
     if (isConflict) {
-      dstep({ phase: 'conflict_detected', level: 'warn', message: 'GitHub rejected the merge as a conflict — auto-resolver ' + (autoResolve ? 'queued.' : 'not run (resolver re-entry).'), detail: { autoResolve } });
+      dstep({
+        phase: 'conflict_detected', level: 'warn',
+        message: 'GitHub rejected the merge as a conflict — '
+          + (!autoResolve ? 'auto-resolver not run (resolver re-entry).'
+            : force ? 'per-session resolver dispatched directly with the force intent preserved.'
+              : 'auto-resolver queued.'),
+        detail: { autoResolve, forced: !!force },
+      });
       dend(autoResolve ? 'conflict_resolving' : 'conflict_failed', 'Merge conflict at GitHub.');
     } else {
       dend('error', `Merge failed: ${err.message}`);

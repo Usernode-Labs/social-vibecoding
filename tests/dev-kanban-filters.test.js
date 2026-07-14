@@ -19,6 +19,17 @@ const APP_VIEW_SRC = fs.readFileSync(
   'utf8'
 );
 
+// Minimal in-memory Web Storage stand-in (getItem/setItem/removeItem) so the
+// persistence helpers can round-trip without a browser.
+function makeMemoryStore() {
+  const m = new Map();
+  return {
+    getItem: (k) => (m.has(k) ? m.get(k) : null),
+    setItem: (k, v) => { m.set(k, String(v)); },
+    removeItem: (k) => { m.delete(k); },
+  };
+}
+
 function makeCtx(over) {
   const o = over || {};
   const sandbox = {
@@ -42,6 +53,7 @@ function makeCtx(over) {
     setTimeout, clearTimeout, setInterval, clearInterval,
     addEventListener: () => {},
     localStorage: o.localStorage || { getItem: () => null, setItem: () => {} },
+    sessionStorage: o.sessionStorage || makeMemoryStore(),
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
@@ -218,6 +230,83 @@ test('_kanbanAssigneeOptions unions board data and keeps the current selection',
   // active filter never silently self-clears.
   AppView._kanbanFilters.assignee = 'evan';
   assert.deepEqual(names(), ['evan', 'kim', 'sam', 'zoe']);
+});
+
+// ── Persistence helpers (sessionStorage-backed, per app slug) ──────────
+
+// Objects come back from the vm realm with a foreign Object.prototype, which
+// trips deepStrictEqual — copy into the host realm before comparing (same
+// realm-crossing trick the assignee-options test uses for arrays).
+const plain = (o) => ({ ...o });
+
+test('_loadKanbanFilters returns defaults for unknown slug / empty store', () => {
+  const AppView = makeAppView();
+  assert.deepEqual(plain(AppView._loadKanbanFilters('nope')), none);
+  // A falsy slug never touches storage.
+  assert.deepEqual(plain(AppView._loadKanbanFilters('')), none);
+  assert.deepEqual(plain(AppView._loadKanbanFilters(null)), none);
+});
+
+test('_saveKanbanFilters round-trips through _loadKanbanFilters under the slug', () => {
+  const AppView = makeAppView();
+  AppView._kanbanFilters = { q: 'dark', priority: 'high', assignee: 'sam', needsVote: true };
+  AppView._saveKanbanFilters('my-app');
+  assert.deepEqual(plain(AppView._loadKanbanFilters('my-app')),
+    { q: 'dark', priority: 'high', assignee: 'sam', needsVote: true });
+});
+
+test('_saveKanbanFilters clears the key when filters are at defaults', () => {
+  const store = makeMemoryStore();
+  const AppView = makeCtx({ sessionStorage: store }).__AppView;
+  const key = `${AppView.KANBAN_FILTERS_KEY}:my-app`;
+  // First persist an active filter, then clear it — the key must be removed
+  // rather than left holding an empty object (no residue for a cleared board).
+  AppView._kanbanFilters = { q: 'dark', priority: null, assignee: null, needsVote: false };
+  AppView._saveKanbanFilters('my-app');
+  assert.notEqual(store.getItem(key), null);
+  AppView._kanbanFilters = AppView._defaultKanbanFilters();
+  AppView._saveKanbanFilters('my-app');
+  assert.equal(store.getItem(key), null);
+});
+
+test('persisted filters are isolated per app slug', () => {
+  const AppView = makeAppView();
+  AppView._kanbanFilters = { q: 'alpha', priority: null, assignee: null, needsVote: false };
+  AppView._saveKanbanFilters('app-a');
+  AppView._kanbanFilters = { q: 'beta', priority: null, assignee: null, needsVote: false };
+  AppView._saveKanbanFilters('app-b');
+  assert.equal(AppView._loadKanbanFilters('app-a').q, 'alpha');
+  assert.equal(AppView._loadKanbanFilters('app-b').q, 'beta');
+});
+
+test('_loadKanbanFilters merges over defaults for a partial stored object', () => {
+  const store = makeMemoryStore();
+  const AppView = makeCtx({ sessionStorage: store }).__AppView;
+  store.setItem(`${AppView.KANBAN_FILTERS_KEY}:my-app`, JSON.stringify({ q: 'hi' }));
+  // Missing fields fall back to their defaults rather than becoming undefined.
+  assert.deepEqual(plain(AppView._loadKanbanFilters('my-app')),
+    { q: 'hi', priority: null, assignee: null, needsVote: false });
+});
+
+test('_loadKanbanFilters yields defaults on corrupt stored JSON', () => {
+  const store = makeMemoryStore();
+  const AppView = makeCtx({ sessionStorage: store }).__AppView;
+  store.setItem(`${AppView.KANBAN_FILTERS_KEY}:my-app`, '{not valid json');
+  assert.deepEqual(plain(AppView._loadKanbanFilters('my-app')), none);
+});
+
+test('persistence helpers survive a storage-less environment', () => {
+  // Simulate sessionStorage throwing (private-window / disabled storage):
+  // load falls back to defaults and save is a silent no-op, never throwing.
+  const throwing = {
+    getItem: () => { throw new Error('denied'); },
+    setItem: () => { throw new Error('denied'); },
+    removeItem: () => { throw new Error('denied'); },
+  };
+  const AppView = makeCtx({ sessionStorage: throwing }).__AppView;
+  assert.deepEqual(plain(AppView._loadKanbanFilters('my-app')), none);
+  AppView._kanbanFilters = { q: 'dark', priority: null, assignee: null, needsVote: false };
+  assert.doesNotThrow(() => AppView._saveKanbanFilters('my-app'));
 });
 
 // ── Session cards are exempt from the filter bar ────────────────────────────
