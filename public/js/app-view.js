@@ -136,7 +136,7 @@ const AppView = {
   _getViewMode() {
     try {
       const stored = window.localStorage.getItem(AppView.VIEW_MODE_KEY);
-      if (stored === 'kanban' || stored === 'list') return stored;
+      if (stored === 'kanban' || stored === 'list' || stored === 'pm') return stored;
       if (AppView._viewModeAutoDefault === null) {
         AppView._viewModeAutoDefault =
           (typeof window.matchMedia === 'function'
@@ -147,7 +147,7 @@ const AppView = {
     } catch { return 'list'; }
   },
   _setViewMode(mode) {
-    const next = mode === 'kanban' ? 'kanban' : 'list';
+    const next = (mode === 'kanban' || mode === 'pm') ? mode : 'list';
     try { window.localStorage.setItem(AppView.VIEW_MODE_KEY, next); } catch {}
   },
   // #482: kanban filter-bar state. In-memory only — deliberately NOT
@@ -1210,16 +1210,20 @@ const AppView = {
     // List-lines icon (three rows) and a board/columns icon.
     const listSvg = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>';
     const boardSvg = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z"/></svg>';
+    // People icon (two-person silhouette) for the PM assignment overview.
+    const peopleSvg = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-1a4 4 0 00-3-3.87M9 20H4v-1a4 4 0 013-3.87m6 4.87v-1a4 4 0 00-3-3.87M12 7a3 3 0 11-6 0 3 3 0 016 0zm7 3a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"/></svg>';
     return `
       <div class="inline-flex items-center rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden mr-1" role="group" aria-label="Dev view mode">
         <button id="dev-view-list" data-view="list" class="${AppView._viewToggleBtnCls(mode === 'list')}" aria-pressed="${mode === 'list'}" title="List view" aria-label="List view">${listSvg}</button>
         <button id="dev-view-kanban" data-view="kanban" class="${AppView._viewToggleBtnCls(mode === 'kanban')}" aria-pressed="${mode === 'kanban'}" title="Kanban view" aria-label="Kanban view">${boardSvg}</button>
+        <button id="dev-view-pm" data-view="pm" class="${AppView._viewToggleBtnCls(mode === 'pm')}" aria-pressed="${mode === 'pm'}" title="PM view — tasks by assignee" aria-label="PM view">${peopleSvg}</button>
       </div>`;
   },
   _wireViewToggle(content) {
     content.querySelectorAll('.dev-view-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
-        const mode = btn.dataset.view === 'kanban' ? 'kanban' : 'list';
+        const v = btn.dataset.view;
+        const mode = (v === 'kanban' || v === 'pm') ? v : 'list';
         if (mode === AppView._getViewMode()) return;
         AppView._setViewMode(mode);
         AppView._updateViewToggleUI();
@@ -1729,6 +1733,17 @@ const AppView = {
         AppView._renderKanbanFilterBar();
       }
       AppView._repaintKanbanBoard();
+      return;
+    }
+    if (AppView._getViewMode() === 'pm') {
+      // PM view: a single scrolling container of per-assignee sections plus
+      // an Unassigned section. No filter bar, no #gc-merged block (merged +
+      // gov are excluded from this overview). The container node is rebuilt
+      // on switch-in; ordinary repaints replace only its innerHTML.
+      if (!document.getElementById('dev-pm')) {
+        body.innerHTML = '<div id="dev-pm"></div>';
+      }
+      AppView._repaintPmView();
       return;
     }
     // List mode: rebuild the two-container shell, then fill it exactly as
@@ -2356,6 +2371,140 @@ const AppView = {
     }
     html += '</div>';
     return html;
+  },
+
+  // ── PM view (tasks by assignee) ──────────────────────────────────────
+  //
+  // Pure grouping of the cached dev data into a project-manager's
+  // assignment overview. No DOM, no AppView state reads — everything comes
+  // in via `data` — so it is unit-testable in isolation (see
+  // tests/dev-pm-groups.test.js), mirroring _bucketDevItems.
+  //
+  //   data = { issues, proposals }
+  //     issues    — visible GitHub issues (env-twin-filtered; both the
+  //                 Issues and In-progress kanban buckets — i.e. every
+  //                 open issue), each carrying an { assignee: { top } }
+  //     proposals — open promoted/merging PR proposals
+  //   (merged + governance are deliberately NOT passed: completed work
+  //    isn't an open assignment, and gov cards never carry an assignee.)
+  //
+  // Returns { groups, unassigned, unassignedTotal }:
+  //   groups          — [{ name, count, items: [{kind, item}] }] for every
+  //                     person with ≥1 assigned task, ordered by count desc
+  //                     then name asc; items within a group newest-first
+  //   unassigned      — [{kind, item}] with no assignee, newest-first,
+  //                     capped to PM_UNASSIGNED_MAX
+  //   unassignedTotal — the pre-cap count, for the "+N more" note
+  PM_UNASSIGNED_MAX: 10,
+  _groupByAssignee(data) {
+    const d = data || {};
+    const issues = Array.isArray(d.issues) ? d.issues : [];
+    const proposals = Array.isArray(d.proposals) ? d.proposals : [];
+
+    const ts = (v) => {
+      const t = Date.parse(v || '');
+      return Number.isFinite(t) ? t : 0;
+    };
+    // Recency key per kind — mirrors _bucketDevItems' issueT / prT so the
+    // ordering matches the rest of the dev view.
+    const recency = (kind, it) => (kind === 'issue'
+      ? Math.max(ts(it.updatedAt), ts(it.lastMessageAt))
+      : Math.max(ts(it.promoted_at || it.created_at), ts(it.last_message_at)));
+
+    const assigneeTop = (it) => (it && it.assignee && it.assignee.top) || null;
+
+    // Flatten both kinds into one list carrying kind, item and its sort key.
+    const cards = [];
+    for (const i of issues) cards.push({ kind: 'issue', item: i, _t: recency('issue', i) });
+    for (const p of proposals) cards.push({ kind: 'proposal', item: p, _t: recency('proposal', p) });
+
+    // Bucket by case-folded assignee; first-seen casing is the display name.
+    const byKey = new Map(); // lower(top) -> { name, entries: [{kind,item,_t}] }
+    const unassigned = [];
+    for (const c of cards) {
+      const top = assigneeTop(c.item);
+      if (top == null || String(top).trim() === '') { unassigned.push(c); continue; }
+      const key = String(top).toLowerCase();
+      if (!byKey.has(key)) byKey.set(key, { name: String(top), entries: [] });
+      byKey.get(key).entries.push(c);
+    }
+
+    const groups = Array.from(byKey.values()).map((g) => {
+      const entries = g.entries.slice().sort((a, b) => b._t - a._t);
+      return { name: g.name, count: entries.length, items: entries.map((e) => ({ kind: e.kind, item: e.item })) };
+    });
+    groups.sort((a, b) => (b.count - a.count) || a.name.localeCompare(b.name));
+
+    const unassignedSorted = unassigned.slice().sort((a, b) => b._t - a._t);
+    const cap = AppView.PM_UNASSIGNED_MAX;
+    return {
+      groups,
+      unassigned: unassignedSorted.slice(0, cap).map((e) => ({ kind: e.kind, item: e.item })),
+      unassignedTotal: unassignedSorted.length,
+    };
+  },
+
+  // Render the PM view (inner HTML for #dev-pm) from cached data. Reuses the
+  // exact per-kind card renderers the list/kanban modes use, so every card
+  // keeps its buttons, badges, and data-*-row open hooks.
+  _renderPmInner() {
+    const { groups, unassigned, unassignedTotal } = AppView._groupByAssignee({
+      issues: AppView._visibleGhIssues(),
+      proposals: AppView._proposals || [],
+    });
+
+    const renderCard = (c) => (c.kind === 'proposal'
+      ? AppView._renderProposalCard(c.item)
+      : AppView._renderIssueRow(c.item));
+    const sectionHead = (inner) => `<div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-2 px-0.5 flex items-center gap-1.5">${inner}</div>`;
+
+    let html = '<div class="space-y-5">';
+
+    // Tasks-by-assignee area.
+    if (groups.length) {
+      for (const g of groups) {
+        const head = sectionHead(
+          `${AppView._assigneeAvatarHtml(g.name)}<span class="normal-case text-zinc-700 dark:text-zinc-200">@${escapeHtml(g.name)}</span>`
+          + `<span class="text-zinc-400 dark:text-zinc-500 font-mono">· ${g.count}</span>`
+        );
+        html += `<div>${head}<div class="space-y-2">${g.items.map(renderCard).join('')}</div></div>`;
+      }
+    } else {
+      html += '<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">No tasks are assigned to anyone yet.</div>';
+    }
+
+    // Unassigned section — always shown; lists the most recent open work
+    // with no assignee, capped, with a "+N more" note when truncated.
+    const unHead = sectionHead(
+      `${AppView._assigneeAvatarPlaceholderHtml()}<span class="normal-case">Unassigned</span>`
+      + `<span class="text-zinc-400 dark:text-zinc-500 font-mono">· ${unassignedTotal}</span>`
+    );
+    let unBody;
+    if (unassigned.length) {
+      unBody = `<div class="space-y-2">${unassigned.map(renderCard).join('')}</div>`;
+      if (unassignedTotal > unassigned.length) {
+        const moreCount = unassignedTotal - unassigned.length;
+        unBody += `<div class="mt-2"><span class="text-xs text-zinc-400 dark:text-zinc-500 italic">+${moreCount} more unassigned</span></div>`;
+      }
+    } else {
+      unBody = '<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">Nothing unassigned.</div>';
+    }
+    html += `<div>${unHead}${unBody}</div>`;
+
+    html += '</div>';
+    return html;
+  },
+
+  // Repaint the PM container (#dev-pm) from cached data. Mirrors
+  // _repaintKanbanBoard: fill innerHTML, then re-attach kudos / ask-AI
+  // availability and keep the headless-state poller in sync.
+  _repaintPmView() {
+    const el = document.getElementById('dev-pm');
+    if (!el) return;
+    el.innerHTML = AppView._renderPmInner();
+    AppView._syncHeadlessPolling();
+    if (window.Kudos) Kudos.attach(el);
+    AppView._applyAskAiCardAvailability(el);
   },
 
   // ── Session cards in the In progress area ──────────────────────────
@@ -3663,6 +3812,17 @@ const AppView = {
           } catch { /* ignore */ }
         }, 200);
       });
+      // #600: default the name box to the signed-in user's own username so
+      // "assign it to me" is one click of Add — but only when the viewer has
+      // no current pick (!data.myValue), so we never quietly overwrite a vote
+      // they already made. Setting .value programmatically does NOT fire the
+      // `input` listener above, so the typeahead stays closed; select() keeps
+      // "assign someone else" a first-keystroke away.
+      const me = (typeof App !== 'undefined' && App.user && App.user.username) || '';
+      if (me && !data.myValue) {
+        input.value = me;
+        input.select();
+      }
       input.focus();
     }
   },
