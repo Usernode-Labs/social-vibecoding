@@ -420,6 +420,19 @@ app.get('*', (req, res) => {
 
 async function start() {
   await migrate(config);
+
+  // #616: ensure the read-only prod-debug Postgres role (fresh in-memory
+  // password every boot) and refresh its deny-listed grants so tables
+  // added by this deploy's migrations are covered. Non-blocking: on
+  // failure the prod-debug endpoints return 503 and dev sessions run
+  // without the capability — boot proceeds normally.
+  const debugAccess = require('./src/services/debug-access');
+  debugAccess.ensureRole(config).catch((err) => {
+    log.warn('server', 'prod-debug role bootstrap failed (capability disabled)', {
+      err: err.message,
+    });
+  });
+
   await github.init(config);
   await llm.init(config);
 

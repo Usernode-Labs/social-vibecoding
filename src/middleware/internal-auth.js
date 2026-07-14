@@ -71,7 +71,14 @@ function internalAuth(req, res, next) {
     return res.status(403).json({ ok: false, code: 'bad_scope' });
   }
 
-  req.workerSession = { sessionId: claims.session_id };
+  req.workerSession = {
+    sessionId: claims.session_id,
+    // #616: set only on the PROD_DEBUG_JWT minted by
+    // worker.mintProdDebugJwt for eligible turns (admin-owned session on
+    // the self-edit app). The prod-debug routes additionally re-check
+    // eligibility in the DB on every request.
+    prodDebug: claims.prod_debug === true,
+  };
   next();
 }
 

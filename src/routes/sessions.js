@@ -32,6 +32,7 @@ const { chatLimiter, attachmentUploadLimiter } = require('../middleware/rate-lim
 const attachmentsSvc = require('../services/attachments');
 const appAccess = require('../services/app-access');
 const userAgentFiles = require('../services/user-agent-files');
+const debugAccess = require('../services/debug-access');
 const notifications = require('../services/notifications');
 // runSyncMain + persistBehindMain now live in services/sync-main.js so
 // the conflict-resolver can drive a sync turn without a route-requires-
@@ -5022,7 +5023,20 @@ async function runScoutTool({
   // statuses, so the dev-chat "(took Xm Ys)" suffix survives reloads.
   const turnStartedMs = Date.now();
   const modelLabel = prettyModelLabel(selectedModel);
-  await sendStatus(`Scouting the repo for context (${modelLabel})...`);
+
+  // #616: read-only prod-debug access for admin-owned sessions on the
+  // self-edit app. Checked fresh per turn (admin revocation takes effect
+  // on the next dispatch; the internal routes re-check per request too).
+  // Failure means no access — never a failed turn.
+  let prodDebug = false;
+  try {
+    prodDebug = await debugAccess.isEligible(pool, session.id);
+  } catch (err) {
+    log.warn('sessions', 'Prod-debug eligibility check failed (continuing without)', {
+      sessionId: session.id, err: err.message,
+    });
+  }
+  await sendStatus(`Scouting the repo for context (${modelLabel}${prodDebug ? ' · prod debug' : ''})...`);
 
   await worker.ensureWorkerImage();
 
@@ -5075,7 +5089,9 @@ USER REQUEST: "${userMessage}"${attachmentsBlock}
 You are running in PLAN MODE: you can read files (Read, Glob, Grep) but you cannot edit, commit, or push anything. Do not attempt to.${personalFilesNote}${revisionBlock}
 
 A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`); long bodies are clipped with a "[truncated …]" marker, and \`usernode-issues <number>\` fetches that one issue with its FULL body (\`{ issue, note? }\`). Use it if the open issues are relevant context for this spec; do not try to reach GitHub any other way.
-
+${prodDebug ? `
+${debugAccess.promptBlock()}
+` : ''}
 Your job is to investigate this repo and produce a MARKDOWN SPEC for the change. The spec should be:
 - A complete, self-contained markdown document the user can review on its own.
 - Grounded in real file evidence — reference actual file paths and current behaviour, not guesses.
@@ -5162,6 +5178,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         resumeSessionId: session.cc_session_id || null,
         branchName: session.branch_name,
         anthropicApiKey: userApiKey || null,
+        prodDebug,
         onProgress: (text) => {
           send('cc_progress', { text });
           workerProgress.set(session.id, text, { model: selectedModel });
@@ -5415,7 +5432,20 @@ async function runClaudeCodeTool({
   // Without this, the only place the model is surfaced is the cost
   // line, which lands much later (fixes #33).
   const modelLabel = prettyModelLabel(selectedModel);
-  await sendStatus(`Spinning up coding agent (${modelLabel})...`);
+
+  // #616: read-only prod-debug access for admin-owned sessions on the
+  // self-edit app. Checked fresh per turn; the internal prod-debug
+  // routes re-check per request, so this flag only controls env + prompt
+  // injection. Failure means no access — never a failed turn.
+  let prodDebug = false;
+  try {
+    prodDebug = await debugAccess.isEligible(pool, session.id);
+  } catch (err) {
+    log.warn('sessions', 'Prod-debug eligibility check failed (continuing without)', {
+      sessionId: session.id, err: err.message,
+    });
+  }
+  await sendStatus(`Spinning up coding agent (${modelLabel}${prodDebug ? ' · prod debug' : ''})...`);
 
   await worker.ensureWorkerImage();
 
@@ -5503,7 +5533,9 @@ that run against this repo outside the harness.${personalFilesNote}
 A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`); long bodies are clipped with a "[truncated …]" marker, and \`usernode-issues <number>\` fetches that one issue with its FULL body (\`{ issue, note? }\`). Consult it if an open issue is relevant to what you're building; do not try to reach GitHub any other way.
 
 A build-turn helper \`usernode-report-platform-issue\` is also available (run it via Bash): \`usernode-report-platform-issue "<short title>"\` with the issue detail on stdin. Use it ONLY for platform-level blockers that live OUTSIDE this app's repo (the shared bridge, wallet / native mobile WebView, the staging/preview pipeline, or the checks gate) — see "Platform-level problems: escalate, don't work around" in the conventions above. It does NOT file anything directly: it posts a draft report card into the dev chat that the user must tap to confirm (or dismiss) before an issue is filed on the platform repo. It de-dupes against open reports and earlier drafts; never use it for something you can fix in this app.
-
+${prodDebug ? `
+${debugAccess.promptBlock()}
+` : ''}
 INSTRUCTIONS:
 - IMPLEMENT the requested changes fully. Do not just explore — write code.
 - Spend minimal time reading files. Focus on writing and editing.
@@ -5783,6 +5815,7 @@ path: /another/changed/view
         resumeSessionId: session.cc_session_id || null,
         branchName: session.branch_name,
         anthropicApiKey: userApiKey || null,
+        prodDebug,
         onProgress: (text) => {
           send('cc_progress', { text });
           workerProgress.set(session.id, text, { model: selectedModel });
