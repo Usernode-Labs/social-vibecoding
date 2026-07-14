@@ -170,6 +170,11 @@
       "expectText": "Close issue #900001"
     },
     {
+      "name": "Issues + In review cards carry a drag-to-reorder handle",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": ".dev-drag-handle"
+    },
+    {
       "name": "Issue topic head shows the author-only edit-title pencil",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
       "expectSelector": "[data-issue-title='900008']"

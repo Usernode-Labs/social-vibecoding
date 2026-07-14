@@ -776,6 +776,14 @@ const App = {
           case 'issue_update':
             App.handleIssueUpdate(data);
             break;
+          case 'board_order_update':
+            // #613: someone reordered a Dev-board column. refreshDevData
+            // re-pulls the board (including the manual order fetched by
+            // _loadDevData) and repaints, so every open board converges.
+            if (typeof AppView !== 'undefined' && AppView.refreshDevData) {
+              AppView.refreshDevData('board-order');
+            }
+            break;
           case 'notification_new':
             if (window.Notifications) Notifications.handleIncoming(data.notification);
             // A mention/reply/reaction may have arrived for a message in

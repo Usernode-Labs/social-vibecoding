@@ -843,6 +843,16 @@ function pushIssueUpdate(data) {
     { appId: data.appId, appSlug: data.appSlug });
 }
 
+// #613: the manual card order in a Dev-board column changed — fan out so
+// every client with that app's board open re-pulls the order and repaints
+// in real time (same broadcast model as vote_update). `column` names which
+// column moved so the client could scope its repaint if it wanted; today it
+// just triggers a full dev-data reload.
+function pushBoardOrderUpdate(data) {
+  broadcastGlobalScoped({ type: 'board_order_update', ...data },
+    { appId: data.appId, appSlug: data.appSlug });
+}
+
 // Send a payload to every /ws/events socket belonging to `userId`. Used for
 // @mention delivery — a single user may have multiple tabs open.
 function pushNotificationToUser(userId, payload) {
@@ -857,4 +867,4 @@ function pushNotificationToUser(userId, payload) {
   return sent;
 }
 
-module.exports = { attach, broadcast, broadcastGlobal, broadcastGlobalScoped, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushSessionUpdate, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushNotificationToUser, getReactionsForMessages, validateThread, handleMessage, MAX_CHAT_LEN };
+module.exports = { attach, broadcast, broadcastGlobal, broadcastGlobalScoped, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushSessionUpdate, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushNotificationToUser, getReactionsForMessages, validateThread, handleMessage, MAX_CHAT_LEN };
