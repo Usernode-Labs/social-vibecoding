@@ -263,6 +263,47 @@ test('card renderer emits the two chips', () => {
   assert.match(fe, /data-attr-chip/, 'chip carries the delegated-click hook');
 });
 
+// #600: the assignee dropdown pre-fills the name box with the viewer's own
+// username, but only when they have no current pick, and without a
+// standalone "Assign to me" button (that approach was replaced).
+test('assignee dropdown defaults the name box to the viewer, gated on no prior vote', () => {
+  const fe = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf-8');
+  // The pre-fill lives in the assignee branch of _renderAttrPopoverBody:
+  // reads App.user.username, gated on !data.myValue, sets + selects the box.
+  assert.match(fe, /const me = \(typeof App !== 'undefined' && App\.user && App\.user\.username\)/,
+    'reads the signed-in username');
+  assert.match(fe, /if \(me && !data\.myValue\) \{/, 'only pre-fills when the viewer has no current pick');
+  assert.match(fe, /input\.value = me;/, 'sets the name box to the viewer');
+  assert.match(fe, /input\.select\(\);/, 'selects the pre-filled text so typing replaces it');
+
+  // The standalone button + its plumbing are gone.
+  assert.doesNotMatch(fe, /_assignToMeBtnHtml/, 'no assign-to-me button helper');
+  assert.doesNotMatch(fe, /data-assign-me/, 'no assign-to-me button hook');
+  assert.doesNotMatch(fe, /_toggleAssignToMe/, 'no assign-to-me click handler');
+  assert.doesNotMatch(fe, /_assignInFlight/, 'no assign-to-me in-flight guard');
+
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf-8');
+  assert.doesNotMatch(css, /\.attr-assign-me/, 'no leftover assign-to-me button CSS');
+
+  const routeSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'topic-attributes.js'), 'utf-8');
+  assert.doesNotMatch(routeSrc, /router\.delete\(/, 'the unassign DELETE endpoint is removed');
+  const svc = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'topic-attributes.js'), 'utf-8');
+  assert.doesNotMatch(svc, /clearVote/, 'clearVote service method is removed');
+});
+
+// #600: staging seeds make BOTH assignee-dropdown states reviewable via
+// ?demo=1 — one card the viewer already voted on (dropdown opens empty,
+// their pick checked) and unassigned rows (dropdown pre-fills their name).
+test('staging seeds cover both assignee-dropdown states', () => {
+  const issuesSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'issues.js'), 'utf-8');
+  assert.match(issuesSrc, /myValue: viewer/, 'an issue mock is assigned to the viewer');
+  assert.match(issuesSrc, /req\.user && req\.user\.username/, 'the viewer name is sourced from req.user');
+
+  const votesSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'votes.js'), 'utf-8');
+  assert.match(votesSrc, /function stagingMockProposals\(viewer\)/, 'proposal mock accepts the viewer');
+  assert.match(votesSrc, /stagingMockProposals\(req\.user\?\.username\)/, 'feed passes the viewer through');
+});
+
 // Style guard: the chips must reuse the shared card-badge pill recipe and
 // must NOT drift into a bespoke look (e.g. the old brightness-filter hover).
 test('chips reuse the sibling-badge pill recipe + tint-deepening hover', () => {

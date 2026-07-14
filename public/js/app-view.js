@@ -3394,6 +3394,17 @@ const AppView = {
           } catch { /* ignore */ }
         }, 200);
       });
+      // #600: default the name box to the signed-in user's own username so
+      // "assign it to me" is one click of Add — but only when the viewer has
+      // no current pick (!data.myValue), so we never quietly overwrite a vote
+      // they already made. Setting .value programmatically does NOT fire the
+      // `input` listener above, so the typeahead stays closed; select() keeps
+      // "assign someone else" a first-keystroke away.
+      const me = (typeof App !== 'undefined' && App.user && App.user.username) || '';
+      if (me && !data.myValue) {
+        input.value = me;
+        input.select();
+      }
       input.focus();
     }
   },
