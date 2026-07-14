@@ -219,3 +219,39 @@ test('_kanbanAssigneeOptions unions board data and keeps the current selection',
   AppView._kanbanFilters.assignee = 'evan';
   assert.deepEqual(names(), ['evan', 'kim', 'sam', 'zoe']);
 });
+
+// ── Session cards are exempt from the filter bar ────────────────────────────
+// The In progress column now holds the viewer's pinned sessions (top) and
+// other users' shared sessions (bottom). The filter bar's vocabulary
+// (text/priority/assignee/needs-vote) doesn't apply to sessions, so an
+// active filter must keep every session card while filtering issue cards.
+
+test('active filters keep session cards and drop non-matching issue cards', () => {
+  const AppView = makeAppView();
+  AppView._ghIssues = [
+    issue({ number: 5, title: 'beta bug', headless: { status: 'generating' } }),
+  ];
+  AppView._envIssueNumbers = new Set();
+  AppView._proposals = [];
+  AppView._govProposals = [];
+  AppView._merged = [];
+  AppView._mergedCtx = { majority: 1, activeUsers: 1 };
+  AppView._mergedTotal = 0;
+  AppView._mergedHasMore = false;
+  AppView._mySessions = [
+    { id: 51, session_title: 'My pinned session', status: 'active',
+      created_at: '2026-06-01T01:00:00Z', last_activity_at: '2026-06-01T01:00:00Z' },
+  ];
+  AppView._sharedSessions = [
+    { id: 71, session_title: 'Shared by them', status: 'paused', username: 'them',
+      user_id: 9, shared_at: '2026-06-01T01:00:00Z', created_at: '2026-06-01T01:00:00Z',
+      chat_count: 2 },
+  ];
+  AppView._archivedSessions = [];
+  AppView._kanbanFilters = { q: 'zzz-no-match', priority: null, assignee: null, needsVote: false };
+  const html = AppView._renderKanbanInner();
+  assert.match(html, /My pinned session/, 'pinned own session survives the filter');
+  assert.match(html, /Shared by them/, 'shared session survives the filter');
+  assert.match(html, /Only you can see your active sessions/, 'visibility caption renders');
+  assert.doesNotMatch(html, /beta bug/, 'non-matching issue card is filtered out');
+});

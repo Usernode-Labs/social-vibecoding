@@ -245,6 +245,16 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS pr_title VARCHAR(256
 -- turn (no separate migration backfill — pre-#8 sessions just show no
 -- banner until they next run).
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS behind_main INTEGER NOT NULL DEFAULT 0;
+-- Opt-in session visibility: NULL = private to the owner (every
+-- pre-existing row), non-NULL = "visible to everyone" — the session
+-- renders at the bottom of other users' In progress area on the Dev
+-- board, with its discussion thread (chat_messages thread_type
+-- 'session') open to comments. Doubles as the sort key there
+-- (oldest-shared first so newly shared rows append at the bottom).
+-- Set/cleared by POST /api/sessions/:id/share|unshare (owner-scoped);
+-- naming mirrors chat_session_specs.shared_to_group_at ("private until
+-- explicitly shared").
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS shared_at TIMESTAMPTZ;
 -- #361: persisted merge-conflict snapshot so proposal cards can render a
 -- rich merge-status badge (clean | behind | conflict | resolving |
 -- failed) without a live GitHub call per render. Derived/written by

@@ -308,7 +308,7 @@ function sessionRoutes(config) {
       // not by creation order.
       const { rows } = await pool.query(
         `SELECT cs.id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
-                cs.session_title, cs.status, cs.linked_issues, cs.created_at,
+                cs.session_title, cs.status, cs.linked_issues, cs.shared_at, cs.created_at,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
                 a.slug AS app_slug, a.name AS app_name
          FROM chat_sessions cs
@@ -338,6 +338,23 @@ function sessionRoutes(config) {
         { active: 0, promoted: 0, paused: 0, busy: 0 }
       );
       totals.total = sessions.length;
+      // Staging-only demo row (?demo=1): a mock own session so the Dev
+      // board's pinned block (caption + "Make visible" button) renders
+      // for ANY viewer in a demo preview — the real seeded sessions
+      // belong to the first admin only. Appended AFTER totals so the
+      // "(x/y)" headers stay honest; fake 99xxxx id, read-only (its
+      // buttons 404 server-side).
+      if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
+        sessions.push({
+          id: 990101, branch_name: 'mock/my-session', pr_number: null,
+          pr_url: null, pr_title: null,
+          session_title: '[Mock] Your in-progress session',
+          status: 'active', linked_issues: [], shared_at: null,
+          created_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+          last_activity_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+          app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+        });
+      }
       res.json({ sessions, totals });
     } catch (err) {
       log.error('sessions', 'Failed to list active sessions', { message: err.message });
@@ -355,7 +372,7 @@ function sessionRoutes(config) {
       const appRows = [app];
 
       const { rows } = await pool.query(
-        `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, staging_url, status, linked_issues, behind_main, created_at
+        `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, staging_url, status, linked_issues, behind_main, shared_at, created_at
          FROM chat_sessions
          WHERE app_id = $1 AND user_id = $2 AND is_headless = FALSE
          ORDER BY created_at DESC`,
@@ -371,6 +388,86 @@ function sessionRoutes(config) {
       res.json({ sessions: rows });
     } catch (err) {
       log.error('sessions', 'Failed to list sessions', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // GET /api/apps/:slug/shared-sessions
+  //   Every user's explicitly-shared (shared_at IS NOT NULL) in-flight
+  //   sessions on this app — the rows the Dev board renders at the
+  //   bottom of everyone's "In progress" area. Deliberately metadata
+  //   only: no pr_url / cc_session_id / anything enabling dev-chat
+  //   access — the dev-chat endpoints stay owner-scoped, so "no way to
+  //   open the owner's dev chat" is enforced by authorization, not just
+  //   missing UI. staging_url IS included (same exposure /promoted
+  //   already grants proposals) so viewers get a Preview affordance.
+  //   chat_count / last_message_at mirror the /promoted subqueries: the
+  //   discussion thread is the same chat_messages ('session', id) key
+  //   the proposal card will inherit on promotion.
+  router.get('/api/apps/:slug/shared-sessions', async (req, res) => {
+    try {
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+
+      const { rows } = await pool.query(
+        `SELECT cs.id, cs.session_title, cs.pr_title, cs.branch_name, cs.status,
+                cs.staging_url, cs.user_id, u.username, cs.shared_at, cs.created_at,
+                GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
+                (SELECT COUNT(*)::int FROM chat_messages cm
+                  WHERE cm.app_id = cs.app_id AND cm.thread_type = 'session' AND cm.thread_ref = cs.id
+                    AND cm.msg_type = 'message') AS chat_count,
+                (SELECT MAX(cm.created_at) FROM chat_messages cm
+                  WHERE cm.app_id = cs.app_id AND cm.thread_type = 'session' AND cm.thread_ref = cs.id) AS last_message_at
+         FROM chat_sessions cs
+         JOIN users u ON u.id = cs.user_id
+         LEFT JOIN LATERAL (
+           SELECT MAX(created_at) AS last_message_at
+           FROM chat_session_messages
+           WHERE session_id = cs.id
+         ) m ON TRUE
+         WHERE cs.app_id = $1 AND cs.shared_at IS NOT NULL
+           AND cs.status IN ('active', 'paused') AND cs.is_headless = FALSE
+         ORDER BY cs.shared_at ASC`,
+        [app.id]
+      );
+      const sessions = rows.map((s) => ({
+        ...s,
+        busy: activeWorkers.has(s.id) || worker.isInFlight(s.id),
+      }));
+
+      // Staging-only demo rows (?demo=1): read-only visual states a boot
+      // seed can't hold live (busy spinner, Preview pill). Fake ids in the
+      // 99xxxx range and user_id 0 so they can never collide with the
+      // viewer or a real session; opening their discussion just shows an
+      // empty thread (validateThread rejects posts on nonexistent rows).
+      if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
+        sessions.push(
+          {
+            id: 990001, session_title: '[Mock] Busy shared session — spinner state',
+            pr_title: null, branch_name: 'mock/shared-busy', status: 'active',
+            staging_url: null, user_id: 0, username: 'staging-demo-user',
+            shared_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+            created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+            last_activity_at: new Date().toISOString(),
+            chat_count: 0, last_message_at: null, busy: true,
+          },
+          {
+            id: 990002, session_title: '[Mock] Paused shared session with a preview',
+            pr_title: null, branch_name: 'mock/shared-preview', status: 'paused',
+            staging_url: 'https://example.invalid', user_id: 0, username: 'staging-demo-user',
+            shared_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+            created_at: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
+            last_activity_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+            chat_count: 3, last_message_at: new Date().toISOString(), busy: false,
+          }
+        );
+      }
+
+      res.json({ sessions });
+    } catch (err) {
+      log.error('sessions', 'Failed to list shared sessions', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -1095,6 +1192,58 @@ function sessionRoutes(config) {
       res.json({ ok: true, ccPurged: !!ccPurged, prReopened: !!prReopened });
     } catch (err) {
       log.error('sessions', 'Unarchive failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // POST /api/sessions/:id/share | /unshare
+  //   Toggle a session's "visible to everyone" flag (chat_sessions.
+  //   shared_at — see schema.sql). Owner-scoped like archive/unarchive;
+  //   headless rows excluded. Allowed on active/paused/promoted rows
+  //   (promoted is a display no-op — the proposal card already shows —
+  //   but keeps the flag for a later un-promote). Share is idempotent
+  //   and keeps the ORIGINAL shared_at (COALESCE) so re-sharing doesn't
+  //   jump the card to the bottom of other users' In progress area.
+  //   Both broadcast a session_update so open Dev boards refresh live.
+  router.post('/api/sessions/:id/share', async (req, res) => {
+    try {
+      const sessionId = parseInt(req.params.id, 10);
+      const { rows } = await pool.query(
+        `UPDATE chat_sessions cs SET shared_at = COALESCE(cs.shared_at, NOW())
+           FROM apps a
+          WHERE cs.id = $1 AND cs.user_id = $2 AND cs.is_headless = FALSE
+            AND cs.status IN ('active', 'paused', 'promoted')
+            AND a.id = cs.app_id
+          RETURNING cs.id, cs.shared_at, a.id AS app_id, a.slug AS app_slug`,
+        [sessionId, req.user.id]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Session not found' });
+      const { pushSessionUpdate } = require('../services/ws');
+      pushSessionUpdate({ action: 'shared', sessionId, appId: rows[0].app_id, appSlug: rows[0].app_slug });
+      res.json({ ok: true, shared_at: rows[0].shared_at });
+    } catch (err) {
+      log.error('sessions', 'Share failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/sessions/:id/unshare', async (req, res) => {
+    try {
+      const sessionId = parseInt(req.params.id, 10);
+      const { rows } = await pool.query(
+        `UPDATE chat_sessions cs SET shared_at = NULL
+           FROM apps a
+          WHERE cs.id = $1 AND cs.user_id = $2 AND cs.is_headless = FALSE
+            AND a.id = cs.app_id
+          RETURNING cs.id, a.id AS app_id, a.slug AS app_slug`,
+        [sessionId, req.user.id]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Session not found' });
+      const { pushSessionUpdate } = require('../services/ws');
+      pushSessionUpdate({ action: 'unshared', sessionId, appId: rows[0].app_id, appSlug: rows[0].app_slug });
+      res.json({ ok: true });
+    } catch (err) {
+      log.error('sessions', 'Unshare failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -2983,10 +3132,13 @@ function sessionRoutes(config) {
       // Authorize: the session owner always; for promoted/merging sessions
       // (whose preview backs a group vote) any app member who passed the
       // collab guard may trigger a rebuild, matching the vote panel showing
-      // them the Preview button.
+      // them the Preview button. Explicitly-shared sessions (shared_at set
+      // — their card shows everyone a Preview button too) get the same
+      // member-wide access.
       const isOwner = session.user_id === req.user.id;
       const voteBacked = session.status === 'promoted' || session.status === 'merging';
-      if (!isOwner && !voteBacked) {
+      const shared = !!session.shared_at;
+      if (!isOwner && !voteBacked && !shared) {
         return res.status(403).json({ error: 'Not allowed' });
       }
 

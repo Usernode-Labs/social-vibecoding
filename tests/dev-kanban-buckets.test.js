@@ -85,6 +85,20 @@ const prop = (over) => ({
 const numbersOf = (items) => Array.from(items, (i) => i.number);
 const idsOf = (items) => Array.from(items, (i) => i.id);
 const reviewOf = (items) => Array.from(items, (x) => `${x.kind}:${x.item.id}`);
+// In progress entries are TYPED ({kind, item}) since sessions moved into
+// the column: my-session / issue / shared-session.
+const inProgOf = (items) => Array.from(items, (x) => `${x.kind}:${x.item.number != null ? x.item.number : x.item.id}`);
+
+const mySess = (over) => ({
+  id: over.id, session_title: `Session ${over.id}`, status: 'active',
+  created_at: at(1), last_activity_at: at(1),
+  ...over,
+});
+const sharedSess = (over) => ({
+  id: over.id, session_title: `Shared ${over.id}`, status: 'active',
+  username: 'them', user_id: 99, created_at: at(1), shared_at: at(1),
+  ...over,
+});
 
 test('headless none/failed/absent → Issues; generating/ready → In progress', () => {
   const AppView = makeAppView();
@@ -100,7 +114,7 @@ test('headless none/failed/absent → Issues; generating/ready → In progress',
     merged: [],
   });
   assert.deepEqual(numbersOf(b.issues).sort(), [1, 2]);
-  assert.deepEqual(numbersOf(b.inProgress).sort(), [3, 4]);
+  assert.deepEqual(inProgOf(b.inProgress).sort(), ['issue:3', 'issue:4']);
 });
 
 test('issues linked to an open promoted proposal are excluded from both issue columns', () => {
@@ -118,8 +132,49 @@ test('issues linked to an open promoted proposal are excluded from both issue co
     merged: [],
   });
   assert.deepEqual(numbersOf(b.issues), [12], 'only the unlinked plain issue remains');
-  assert.deepEqual(numbersOf(b.inProgress), [], 'linked ready issue is removed');
+  assert.deepEqual(inProgOf(b.inProgress), [], 'linked ready issue is removed');
   assert.deepEqual(reviewOf(b.inReview), ['proposal:100']);
+});
+
+test('In progress: own sessions pinned first, issues middle, shared sessions last', () => {
+  const AppView = makeAppView();
+  const b = AppView._bucketDevItems({
+    issues: [issue({ number: 3, headless: { status: 'generating' } })],
+    proposals: [],
+    gov: [],
+    merged: [],
+    mySessions: [
+      mySess({ id: 51, last_activity_at: at(2) }),
+      mySess({ id: 52, last_activity_at: at(6) }),
+    ],
+    sharedSessions: [
+      sharedSess({ id: 71, shared_at: at(5) }),
+      sharedSess({ id: 72, shared_at: at(3) }),
+    ],
+  });
+  // Own sessions most-recent-activity first; shared sessions oldest
+  // shared_at first (newly shared rows append at the bottom).
+  assert.deepEqual(inProgOf(b.inProgress), [
+    'my-session:52', 'my-session:51',
+    'issue:3',
+    'shared-session:72', 'shared-session:71',
+  ]);
+});
+
+test('sessions never leak into the other columns', () => {
+  const AppView = makeAppView();
+  const b = AppView._bucketDevItems({
+    issues: [issue({ number: 1, headless: null })],
+    proposals: [prop({ id: 100 })],
+    gov: [],
+    merged: [{ id: 200, created_at: at(2), last_message_at: at(2) }],
+    mySessions: [mySess({ id: 51 })],
+    sharedSessions: [sharedSess({ id: 71 })],
+  });
+  assert.deepEqual(numbersOf(b.issues), [1]);
+  assert.deepEqual(reviewOf(b.inReview), ['proposal:100']);
+  assert.deepEqual(idsOf(b.done), [200]);
+  assert.deepEqual(inProgOf(b.inProgress), ['my-session:51', 'shared-session:71']);
 });
 
 test('In review holds promoted proposals + governance proposals', () => {
