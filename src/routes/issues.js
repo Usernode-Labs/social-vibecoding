@@ -150,6 +150,15 @@ function stagingMockIssues(repoUrl) {
       + 'the title because the row is marked as authored by you. Saving '
       + 'a new title will fail — there is no real GitHub issue behind '
       + 'this mock row — so this is purely for visual review.', 3),
+    // #617: the NEWEST mock row, deliberately absent from the demo drag
+    // order (stagingMockOrder in board-order.js ranks only 900002/900001).
+    // With the fix, an issue filed after the last drag surfaces at the TOP
+    // of the kanban Issues column, so this card must render first there.
+    mk(900009, '[Mock] Newly filed issue — should render on top',
+      'Staging-only mock issue for previewing the #617 fix: this row is '
+      + 'the most recent and is NOT part of the saved drag order, so it '
+      + 'must appear at the top of the Issues column, above the manually '
+      + 'ordered cards.', 1),
   ];
 }
 

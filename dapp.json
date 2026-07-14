@@ -180,6 +180,11 @@
       "expectSelector": ".dev-drag-handle"
     },
     {
+      "name": "Issue filed after the last drag surfaces on the board (#617)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "[Mock] Newly filed issue — should render on top"
+    },
+    {
       "name": "Issue topic head shows the author-only edit-title pencil",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
       "expectSelector": "[data-issue-title='900008']"

@@ -1,7 +1,8 @@
-// #613: AppView._applyManualOrder() is the pure overlay that re-sorts one
-// already-bucketed kanban column against a saved manual order. Cards whose
-// identity appears in the stored order come first (in that order); the rest
-// keep their derived order (stable); stale stored refs are skipped; an empty
+// #613/#617: AppView._applyManualOrder() is the pure overlay that re-sorts
+// one already-bucketed kanban column against a saved manual order. Cards
+// ABSENT from the stored order come first, in their derived order (they
+// arrived after the last drag, so they surface at the top — #617); ranked
+// cards follow in stored order; stale stored refs are skipped; an empty
 // order is a no-op. Also covers _cardOrderKey (card → identity string) which
 // the drag handler and the server share, and _orderKeyToRef (the inverse the
 // commit path uses).
@@ -67,13 +68,14 @@ test('empty order returns the cards unchanged (today\'s board)', () => {
   assert.deepEqual(numbersOf(out), [1, 2, 3]);
 });
 
-test('stored order reorders matched cards, unmatched follow in derived order', () => {
+test('stored order reorders matched cards, unmatched lead in derived order', () => {
   const AppView = makeAppView();
-  // Derived order 1,2,3,4; saved order pins 3 then 1 to the top.
+  // Derived order 1,2,3,4; saved order ranks 3 then 1. Unranked 2 and 4
+  // arrived after the last drag, so they surface first (#617).
   const cards = [issue(1), issue(2), issue(3), issue(4)];
   const order = [{ type: 'issue', ref: 3 }, { type: 'issue', ref: 1 }];
   const out = AppView._applyManualOrder(cards, order, (c) => AppView._cardOrderKey('issues', c));
-  assert.deepEqual(numbersOf(out), [3, 1, 2, 4]);
+  assert.deepEqual(numbersOf(out), [2, 4, 3, 1]);
 });
 
 test('stale stored refs (card no longer in column) are skipped', () => {
@@ -82,7 +84,7 @@ test('stale stored refs (card no longer in column) are skipped', () => {
   // 99 has left the column (e.g. it gained a proposal); order still lists it.
   const order = [{ type: 'issue', ref: 99 }, { type: 'issue', ref: 2 }];
   const out = AppView._applyManualOrder(cards, order, (c) => AppView._cardOrderKey('issues', c));
-  assert.deepEqual(numbersOf(out), [2, 1]);
+  assert.deepEqual(numbersOf(out), [1, 2]);
 });
 
 test('review column keys distinguish proposal vs gov by kind', () => {
@@ -90,7 +92,21 @@ test('review column keys distinguish proposal vs gov by kind', () => {
   const cards = [review('proposal', 10), review('gov', 20), review('proposal', 30)];
   const order = [{ type: 'gov', ref: 20 }, { type: 'proposal', ref: 30 }];
   const out = AppView._applyManualOrder(cards, order, (c) => AppView._cardOrderKey('review', c));
-  assert.deepEqual(reviewKeysOf(out), ['gov:20', 'proposal:30', 'proposal:10']);
+  assert.deepEqual(reviewKeysOf(out), ['proposal:10', 'gov:20', 'proposal:30']);
+});
+
+test('#617: a new card absent from a non-empty saved order renders at the top', () => {
+  const AppView = makeAppView();
+  // The column was fully snapshotted as 1,3,2 by a drag; issues 5 and 4
+  // were filed afterwards (derived order puts 5 before 4, newest first).
+  const cards = [issue(5), issue(4), issue(3), issue(2), issue(1)];
+  const order = [
+    { type: 'issue', ref: 1 }, { type: 'issue', ref: 3 }, { type: 'issue', ref: 2 },
+  ];
+  const out = AppView._applyManualOrder(cards, order, (c) => AppView._cardOrderKey('issues', c));
+  // New arrivals lead, keeping their derived relative order; the manual
+  // arrangement follows intact.
+  assert.deepEqual(numbersOf(out), [5, 4, 1, 3, 2]);
 });
 
 test('_cardOrderKey shapes match the stored (type, ref) pairs', () => {
