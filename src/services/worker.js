@@ -51,6 +51,41 @@ function mintWorkerJwt(sessionId) {
   );
 }
 
+// #616: same shape as mintWorkerJwt plus the `prod_debug` claim that the
+// internal prod-debug routes require. Minted ONLY for turns whose
+// session passed debug-access.isEligible (admin-owned session on the
+// self-edit app) — the ordinary per-turn WORKER_JWT/ISSUES_JWT never
+// carry the claim, so a stolen ordinary token can't reach those routes.
+function mintProdDebugJwt(sessionId) {
+  return jwt.sign(
+    { session_id: sessionId, scope: 'worker:session', prod_debug: true },
+    _jwtSecret(),
+    { expiresIn: WORKER_JWT_TTL }
+  );
+}
+
+// Pure builder for a turn's secret env (exported for unit tests).
+// Scout mode omits WORKER_JWT so usernode-push can't authenticate (see
+// the long comment in execInWorker); PROD_DEBUG_JWT rides along on
+// build + scout turns only — never sync (bookkeeping, no free-form CC).
+function buildTurnSecretEnv({ mode, workerJwt, anthropicApiKey, prodDebugJwt }) {
+  const useProxy = !anthropicApiKey;
+  const env = mode === 'scout'
+    ? {
+        ANTHROPIC_API_KEY: useProxy ? workerJwt : anthropicApiKey,
+        ISSUES_JWT: workerJwt,
+      }
+    : {
+        ANTHROPIC_API_KEY: useProxy ? workerJwt : anthropicApiKey,
+        WORKER_JWT: workerJwt,
+        ISSUES_JWT: workerJwt,
+      };
+  if (prodDebugJwt && mode !== 'sync') {
+    env.PROD_DEBUG_JWT = prodDebugJwt;
+  }
+  return env;
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // Stream-json / marker parsing
 // ──────────────────────────────────────────────────────────────────────
@@ -772,6 +807,11 @@ async function execInWorker(sessionId, {
   branchName,
   anthropicApiKey,
   onProgress,
+  // #616: when true (admin-owned session on the self-edit app — the
+  // caller checks via debug-access.isEligible), the turn env gains
+  // PROD_DEBUG_JWT so the usernode-debug CLI can call the platform's
+  // read-only prod-debug internal API. Build/scout only, never sync.
+  prodDebug = false,
   // Legacy callback: the attached transport used to hand the host-side
   // `docker exec` child to the route handler for SIGTERM-based stops.
   // The detached transport has no such child — stops go through
@@ -823,16 +863,17 @@ async function execInWorker(sessionId, {
   // WORKER_JWT but handed over under a distinct env var so scout — which
   // never gets WORKER_JWT, and so cannot push — can still read public
   // issues. Both modes get it; usernode-push remains gated on WORKER_JWT.
-  const secretEnv = mode === 'scout'
-    ? {
-        ANTHROPIC_API_KEY: useProxy ? workerJwt : anthropicApiKey,
-        ISSUES_JWT: workerJwt,
-      }
-    : {
-        ANTHROPIC_API_KEY: useProxy ? workerJwt : anthropicApiKey,
-        WORKER_JWT: workerJwt,
-        ISSUES_JWT: workerJwt,
-      };
+  // PROD_DEBUG_JWT (#616): a second, claim-carrying JWT for the
+  // usernode-debug CLI, present only when the dispatch site verified
+  // eligibility (admin-owned session on the self-edit app). The routes
+  // re-check eligibility in the DB on every call, so the env var alone
+  // grants nothing once admin is revoked.
+  const secretEnv = buildTurnSecretEnv({
+    mode,
+    workerJwt,
+    anthropicApiKey,
+    prodDebugJwt: prodDebug && mode !== 'sync' ? mintProdDebugJwt(sessionId) : null,
+  });
   const safeEnv = {
     PROMPT: prompt,
     MODE: mode,
@@ -1577,4 +1618,7 @@ module.exports = {
   // platform-side git push proxy (called from src/routes/internal.js)
   execPushFromWorker,
   mintWorkerJwt,
+  // #616: prod-debug JWT + pure turn-env builder (exported for tests)
+  mintProdDebugJwt,
+  buildTurnSecretEnv,
 };
