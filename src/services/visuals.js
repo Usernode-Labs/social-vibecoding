@@ -726,6 +726,9 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     await setChecksPending(pool, session.id, commitHash).catch((err) => {
       log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message });
     });
+    // #607: flip open clients' badges to "Checks running…" right away —
+    // the terminal notifyChecks below can be minutes out.
+    notifyChecksPending(session.id, commitHash);
 
     // Heuristic gate. If the compare call fails, default to capturing —
     // staging exists, and a wasted screenshot is cheaper than a missed one.
@@ -1122,6 +1125,31 @@ function notifyVisualsReady(sessionId, visuals, send) {
 // console check became one test in the suite — clients now listen for
 // `checks_ready`.)
 
+// #607: tell open clients a checks run just STARTED so badges flip to the
+// spinning "Checks running…" state immediately (proposal creation, manual
+// re-run, sweeper retry) instead of waiting minutes for the terminal
+// verdict. Always broadcastGlobal (never the turn's `send`) — the pending
+// transition matters to every open vote panel / home strip, not just the
+// focused dev chat, and app.js's existing `checks_ready` handler already
+// refreshes both on any state.
+function notifyChecksPending(sessionId, commitSha) {
+  try {
+    const event = {
+      type: 'checks_ready',
+      _seq: `chk${Date.now().toString(36)}-${++_notifySeq}`,
+      sessionId,
+      checkState: 'pending',
+      failingCount: 0,
+      commitSha: commitSha || null,
+    };
+    sessionBus.publish(sessionId, event);
+    const { broadcastGlobal } = require('./ws');
+    broadcastGlobal({ type: 'session_event', sessionId, event: 'checks_ready', ...event });
+  } catch (err) {
+    log.warn('visuals', 'checks_pending notify failed', { sessionId, err: err.message });
+  }
+}
+
 // #47: tell open clients the checks landed so the checks badge upgrades in
 // place without a full panel reload. Same emit strategy as
 // notifyVisualsReady — prefer the turn's `send`, else bus + global WS.
@@ -1159,6 +1187,7 @@ module.exports = {
   storeChecks,
   storeChecksSkipped,
   setChecksPending,
+  notifyChecksPending,
   summarizeBootFailure,
   maybeAutoMergeAfterChecks,
   consoleSnapshotFromTests,

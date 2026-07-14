@@ -175,6 +175,11 @@
       "expectSelector": "[data-issue-title='900008']"
     },
     {
+      "name": "Checks-starting mock proposal shows the in-progress badge",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "Checks starting"
+    },
+    {
       "name": "Chromeless share-link view renders the Open-in-Usernode pill",
       "path": "/#app/usernode-2d5619/full",
       "expectSelector": "#chromeless-pill"

@@ -3280,7 +3280,19 @@ function sessionRoutes(config) {
         return res.json({ status: 'running' });
       }
       recheckInFlight.add(sessionId);
-      res.json({ status: 'running' });
+
+      // #607: stamp 'pending' + broadcast BEFORE responding so the client's
+      // immediate refresh deterministically sees the in-progress state (the
+      // fire-and-forget below re-stamps idempotently — same commit sha, so
+      // the failure-streak bookkeeping is preserved).
+      const visualsService = require('../services/visuals');
+      await visualsService.setChecksPending(pool, sessionId, session.checks_commit_sha || null)
+        .catch((err) => log.warn('sessions', 'recheck setChecksPending failed (non-fatal)', {
+          sessionId, err: err.message,
+        }));
+      visualsService.notifyChecksPending(sessionId, session.checks_commit_sha || null);
+
+      res.json({ status: 'running', checkState: 'pending' });
 
       // Fire-and-forget. recheckSessionChecks rebuilds staging when the
       // preview is missing (the rebuild re-runs the checks) or re-runs the

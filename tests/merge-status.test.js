@@ -125,8 +125,10 @@ test('state 7 — behind main, with the commit count in the label', () => {
   assert.equal(life.key, 'behind');
   assert.equal(life.label, 'Behind main · 4');
   assert.equal(life.tone, 'amber');
-  // A bare 'behind'/'conflict' snapshot with no count still resolves.
-  assert.equal(key({ status: 'promoted', merge_conflict_state: 'conflict' }), 'behind');
+  // A 'behind'/'conflict' snapshot with no count still resolves. (A
+  // verdict is set — with none recorded the #607 checks-starting rung
+  // would outrank behind, same as 'pending' does.)
+  assert.equal(key({ status: 'promoted', merge_conflict_state: 'conflict', check_state: 'passing' }), 'behind');
 });
 
 test('state 8 — awaiting admin: locked + majority reached', () => {
@@ -152,8 +154,29 @@ test('state 9 — ready: passed the vote with green checks and not behind', () =
   assert.equal(life.label, 'Passed — merging shortly');
   assert.equal(life.tone, 'green');
   // Past threshold but checks NOT passing → not ready (the gate blocks it).
+  // #607: with no verdict recorded at all the row reads as checks-starting
+  // (in progress), never falsely "ready".
   assert.equal(
     key({ status: 'promoted', check_state: null, yes_count: 9 }, { majority: 3 }),
+    'checks_running'
+  );
+});
+
+// #607: a promoted row with NO verdict recorded yet (fresh proposal whose
+// first run hasn't stamped 'pending' — e.g. the promote-time staging build
+// is still going) reads as checks-in-progress, not as a plain vote state.
+// Rows carrying a console snapshot are genuine pre-#47 legacy and keep
+// falling through.
+test('state 6a (#607) — promoted with no verdict and no console snapshot reads as checks starting', () => {
+  const life = MergeStatus.lifecycle({ status: 'promoted' });
+  assert.equal(life.key, 'checks_running');
+  assert.equal(life.label, 'Checks starting…');
+  assert.equal(life.tone, 'neutral');
+  assert.equal(life.spinner, true);
+  // Legacy pre-#47 row (console snapshot recorded, no check_state) falls
+  // through to the vote states as before.
+  assert.equal(
+    key({ status: 'promoted', console_check_state: 'clean', yes_count: 1 }, { majority: 3 }),
     'in_vote'
   );
 });
