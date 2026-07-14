@@ -345,15 +345,41 @@ function sessionRoutes(config) {
       // "(x/y)" headers stay honest; fake 99xxxx id, read-only (its
       // buttons 404 server-side).
       if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
-        sessions.push({
-          id: 990101, branch_name: 'mock/my-session', pr_number: null,
-          pr_url: null, pr_title: null,
-          session_title: '[Mock] Your in-progress session',
-          status: 'active', linked_issues: [], shared_at: null,
-          created_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
-          last_activity_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
-          app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
-        });
+        sessions.push(
+          {
+            id: 990101, branch_name: 'mock/my-session', pr_number: null,
+            pr_url: null, pr_title: null,
+            session_title: '[Mock] Your in-progress session',
+            status: 'active', linked_issues: [], shared_at: null,
+            created_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+            last_activity_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+          },
+          // Busy own session — exercises the "working…" two-row card
+          // layout (spinner + tag in the actions row, title uncrushed).
+          {
+            id: 990102, branch_name: 'mock/my-session-busy', pr_number: null,
+            pr_url: null, pr_title: null,
+            session_title: '[Mock] Busy own session with a fairly long title to verify the working-state layout',
+            status: 'active', linked_issues: [], shared_at: null,
+            created_at: new Date(Date.now() - 40 * 60 * 1000).toISOString(),
+            last_activity_at: new Date().toISOString(),
+            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: true,
+          },
+          // Visible (shared) own session — renders below the archived
+          // toggle under the "Visible to everyone." caption, with the
+          // Open chat + Hide buttons.
+          {
+            id: 990103, branch_name: 'mock/my-session-visible', pr_number: null,
+            pr_url: null, pr_title: null,
+            session_title: '[Mock] Your visible session',
+            status: 'active', linked_issues: [],
+            shared_at: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
+            created_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+            last_activity_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+          }
+        );
       }
       res.json({ sessions, totals });
     } catch (err) {
@@ -384,6 +410,22 @@ function sessionRoutes(config) {
       // worker to free (and the create-session cap counts the same thing).
       const warmIds = new Set(worker.warmRegistrySnapshot().map((w) => w.sessionId));
       for (const s of rows) s.warm = warmIds.has(s.id);
+
+      // Staging-only demo row (?demo=1): a mock archived session so the
+      // "Show archived" toggle — the anchor the visible-sessions group
+      // renders beneath — is present for any demo viewer. Same read-only
+      // 99xxxx convention as the other mocks (Unarchive 404s server-side).
+      if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
+        rows.push({
+          id: 990104, branch_name: 'mock/archived-session', pr_number: null,
+          pr_url: null, pr_title: null,
+          session_title: '[Mock] Archived session',
+          staging_url: null, status: 'archived', linked_issues: [],
+          behind_main: false, shared_at: null,
+          created_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+          warm: false,
+        });
+      }
 
       res.json({ sessions: rows });
     } catch (err) {

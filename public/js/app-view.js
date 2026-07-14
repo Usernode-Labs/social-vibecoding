@@ -66,6 +66,15 @@ const AppView = {
   // General chat card).
   DEV_CARD_CHEVRON: '<svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>',
   DEV_CARD_HOVER_CLS: 'hover:border-violet-300 dark:hover:border-violet-700 cursor-pointer',
+  // Session-card variant of DEV_CARD_CLS: same visual tokens, but a block
+  // container instead of a single flex row. Session cards stack two inner
+  // rows (title row + actions row) so their many controls can never crush
+  // the flex-1 title to zero width (the "one letter per line, crazy tall
+  // card" bug in the busy state on narrow kanban columns).
+  SESSION_CARD_CLS: 'block w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 px-3.5 py-3 text-left transition-colors',
+  // Actions row beneath a session card's title row: wraps freely, indented
+  // to align under the title (w-9 icon + gap-3).
+  SESSION_CARD_ACTIONS_CLS: 'flex flex-wrap items-center gap-2 pl-12 mt-2',
 
   // Per-type tinted icon chips — the Dev list's identity system, a mini
   // version of the home tiles' avatar square. [tint classes, SVG path].
@@ -1566,7 +1575,9 @@ const AppView = {
         // block caption + Make visible button) renders in demo previews.
         fetch(`/api/me/active-sessions${AppView._demoQS()}`).catch(() => null),
         fetch(`/api/apps/${encodeURIComponent(slug)}/shared-sessions${AppView._demoQS()}`).catch(() => null),
-        fetch(`/api/apps/${encodeURIComponent(slug)}/sessions`).catch(() => null),
+        // ?demo=1 forwarded here too so the staging mock archived row
+        // (the "Show archived" toggle demo anchor) renders in previews.
+        fetch(`/api/apps/${encodeURIComponent(slug)}/sessions${AppView._demoQS()}`).catch(() => null),
       ]);
       if (activeRes && activeRes.ok) {
         const data = await activeRes.json().catch(() => ({}));
@@ -2508,11 +2519,14 @@ const AppView = {
   },
 
   // ── Session cards in the In progress area ──────────────────────────
-  // The viewer's in-progress (active/paused, not-yet-promoted) sessions
-  // render pinned at the top of the In progress column (kanban) / top of
-  // the list (list view); other users' shared sessions render at the
-  // bottom of the same area. Promoted sessions are absent — they render
-  // as proposal cards. All card controls are wired via the delegated
+  // The viewer's PRIVATE in-progress (active/paused, not-yet-promoted)
+  // sessions render pinned at the top of the In progress column (kanban)
+  // / top of the list (list view) under the "Only you can see" caption;
+  // their VISIBLE (shared) sessions render below the archived toggle
+  // under the "Visible to everyone." caption, signaling they appear on
+  // everyone's board; other users' shared sessions render at the bottom
+  // of the same area. Promoted sessions are absent — they render as
+  // proposal cards. All card controls are wired via the delegated
   // #dev-body handler in renderDevView, so repaints stay cheap.
 
   _sessionCardLabel(s) {
@@ -2527,33 +2541,42 @@ const AppView = {
 
   // One of the viewer's own session cards. A clickable <div> (not
   // <button>) so the inner Archive / visibility buttons are valid HTML.
-  // The row opens the owner's dev chat; the 💬 badge (shared sessions
-  // only — count comes from the shared-sessions row) opens the public
-  // discussion instead.
+  // Two rows: title row (icon + wrapping title + chevron) and an actions
+  // row (status tag + buttons) that flex-wraps — the title can never be
+  // crushed by fixed-width controls. Clicking the card opens the owner's
+  // dev chat; the "Open chat" button (visible sessions only) opens the
+  // public discussion instead.
   _renderMySessionCard(s) {
     const label = AppView._sessionCardLabel(s);
     const statusTag = AppView._sessionStatusTagHtml(s);
     const shared = !!s.shared_at;
+    // Count comes from the shared-sessions row; a freshly-shared session
+    // may not be in _sharedById yet (background refresh pending) — the
+    // button still renders, with the count at 0.
     const sh = shared ? (AppView._sharedById || {})[s.id] : null;
-    const badge = sh
-      ? `<button type="button" class="shrink-0" data-session-discuss="${s.id}" title="Open the public discussion on this session">${AppView._devChatBadge(sh.chat_count)}</button>`
+    const chatBtn = shared
+      ? `<button type="button" class="gc-vote-btn inline-flex items-center gap-1" data-session-discuss="${s.id}" title="Open the public discussion on this session">Open chat ${AppView._devChatBadge(sh ? sh.chat_count : 0)}</button>`
       : '';
     const visBtn = shared
       ? `<button type="button" class="gc-vote-btn" data-unshare-chip="${s.id}" title="Make this session private again (removes it from everyone's In progress area)">Hide</button>`
-      : `<button type="button" class="gc-vote-btn" data-share-chip="${s.id}" title="Show this session at the bottom of everyone's In progress area — others can comment, but can't open your dev chat">Make visible</button>`;
+      : `<button type="button" class="gc-vote-btn" data-share-chip="${s.id}" title="Show this session in everyone's In progress area — others can comment, but can't open your dev chat">Make visible</button>`;
     return `<div data-session-chip="${s.id}" role="button" tabindex="0"
-      class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}"
+      class="${AppView.SESSION_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}"
       title="${s.busy ? 'AI is working — ' : ''}${label}">
-      ${AppView._devCardIcon('session')}
-      <span class="flex-1 min-w-0">
-        <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200 break-words">${label}</span>
-        <span class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">${shared ? 'Visible to everyone' : 'Your dev session'}</span>
-      </span>
-      ${statusTag}
-      ${badge}
-      ${visBtn}
-      <button type="button" class="dc-active-archive" data-archive-chip="${s.id}" data-name="${label}" title="Archive this session (closes the PR, frees the slot)">Archive</button>
-      <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+      <div class="flex items-center gap-3">
+        ${AppView._devCardIcon('session')}
+        <span class="flex-1 min-w-0">
+          <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200 break-words">${label}</span>
+          <span class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">${shared ? 'Visible to everyone' : 'Your dev session'}</span>
+        </span>
+        ${AppView.DEV_CARD_CHEVRON}
+      </div>
+      <div class="${AppView.SESSION_CARD_ACTIONS_CLS}">
+        ${statusTag}
+        ${chatBtn}
+        ${visBtn}
+        <button type="button" class="dc-active-archive" data-archive-chip="${s.id}" data-name="${label}" title="Archive this session (closes the PR, frees the slot)">Archive</button>
+      </div>
     </div>`;
   },
 
@@ -2571,22 +2594,35 @@ const AppView = {
       ? `<button type="button" class="gc-vote-btn gc-vote-btn-preview" title="Open this session's staging preview" onclick="AppView.swapToStagingForSession(${s.id}, '${s.staging_url}')">Preview</button>`
       : '';
     const nav = noNav ? '' : ` data-shared-session-row="${s.id}" role="button" tabindex="0"`;
-    const chevron = noNav ? '' : '<svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>';
-    return `<div${nav} class="${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" title="${label}">
-      ${AppView._devCardIcon('session')}
-      <span class="flex-1 min-w-0">
-        <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200 break-words">${label}</span>
-        <span class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">${owner} is working on this</span>
-      </span>
-      ${statusTag}
-      ${AppView._devChatBadge(s.chat_count)}
-      ${preview}
-      ${chevron}
+    const chevron = noNav ? '' : AppView.DEV_CARD_CHEVRON;
+    // Same two-row structure as the owner's cards (see _renderMySessionCard)
+    // — the Preview pill plus a busy tag can crush the title just the same.
+    return `<div${nav} class="${AppView.SESSION_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" title="${label}">
+      <div class="flex items-center gap-3">
+        ${AppView._devCardIcon('session')}
+        <span class="flex-1 min-w-0">
+          <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200 break-words">${label}</span>
+          <span class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">${owner} is working on this</span>
+        </span>
+        ${chevron}
+      </div>
+      <div class="${AppView.SESSION_CARD_ACTIONS_CLS}">
+        ${statusTag}
+        ${AppView._devChatBadge(s.chat_count)}
+        ${preview}
+      </div>
     </div>`;
   },
 
   _sessionsCaptionHtml() {
     return '<div class="text-xs text-zinc-500 dark:text-zinc-400 px-0.5">Only you can see your active sessions.</div>';
+  },
+
+  // Caption over the viewer's VISIBLE (shared) sessions — rendered below
+  // the archived toggle, outside the private area, to signal that these
+  // cards appear on everyone else's In progress board too.
+  _visibleSessionsCaptionHtml() {
+    return '<div class="text-xs text-zinc-500 dark:text-zinc-400 px-0.5">Visible to everyone.</div>';
   },
 
   // Archived toggle — collapsed by default on every render (no
@@ -2628,30 +2664,41 @@ const AppView = {
     if (caret) caret.style.transform = open ? 'rotate(90deg)' : '';
   },
 
-  // The pinned own-sessions block for LIST view: caption + session cards
-  // + the archived toggle, above the feed and outside its pager. '' when
-  // the viewer has nothing to show.
+  // The pinned own-sessions block for LIST view, above the feed and
+  // outside its pager: private caption + private session cards, the
+  // archived toggle, then the "Visible to everyone" caption + the
+  // viewer's shared session cards. '' when the viewer has nothing to
+  // show.
   _mySessionsBlockHtml() {
     const mine = AppView._mySessions || [];
+    const priv = mine.filter((s) => !s.shared_at);
+    const vis = mine.filter((s) => !!s.shared_at);
     const archivedHtml = AppView._archivedToggleHtml();
     if (!mine.length && !archivedHtml) return '';
     let html = '<div class="space-y-2 mb-2">';
-    if (mine.length) {
+    if (priv.length) {
       html += AppView._sessionsCaptionHtml();
-      html += mine.map((s) => AppView._renderMySessionCard(s)).join('');
+      html += priv.map((s) => AppView._renderMySessionCard(s)).join('');
     }
     html += archivedHtml;
+    if (vis.length) {
+      html += AppView._visibleSessionsCaptionHtml();
+      html += vis.map((s) => AppView._renderMySessionCard(s)).join('');
+    }
     html += '</div>';
     return html;
   },
 
-  // The In progress KANBAN column's cards: pinned own sessions (caption +
-  // archived toggle beneath), then issue cards, then other users' shared
-  // sessions at the bottom. `entries` are the typed {kind, item} rows from
-  // _bucketDevItems (already filter-applied by the caller).
+  // The In progress KANBAN column's cards: pinned PRIVATE own sessions
+  // (caption + archived toggle beneath), then the viewer's VISIBLE own
+  // sessions under their own caption, then issue cards, then other users'
+  // shared sessions at the bottom. `entries` are the typed {kind, item}
+  // rows from _bucketDevItems (already filter-applied by the caller).
   _inProgressCardsHtml(entries, filtering) {
     const list = entries || [];
     const mine = list.filter((e) => e.kind === 'my-session');
+    const priv = mine.filter((e) => !e.item.shared_at);
+    const vis = mine.filter((e) => !!e.item.shared_at);
     const issues = list.filter((e) => e.kind === 'issue');
     const shared = list.filter((e) => e.kind === 'shared-session');
     const archivedHtml = AppView._archivedToggleHtml();
@@ -2659,11 +2706,15 @@ const AppView = {
       return `<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">${filtering ? 'No matching cards' : 'Nothing here yet'}</div>`;
     }
     let html = '<div class="space-y-2">';
-    if (mine.length) {
+    if (priv.length) {
       html += AppView._sessionsCaptionHtml();
-      html += mine.map((e) => AppView._renderMySessionCard(e.item)).join('');
+      html += priv.map((e) => AppView._renderMySessionCard(e.item)).join('');
     }
     html += archivedHtml;
+    if (vis.length) {
+      html += AppView._visibleSessionsCaptionHtml();
+      html += vis.map((e) => AppView._renderMySessionCard(e.item)).join('');
+    }
     html += issues.map((e) => AppView._renderIssueRow(e.item)).join('');
     html += shared.map((e) => AppView._renderSharedSessionCard(e.item)).join('');
     html += '</div>';
