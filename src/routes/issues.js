@@ -855,11 +855,18 @@ function issueRoutes(config) {
       // a preview — a clear leader, a tie, and an untouched (placeholder)
       // row. Only where the real query found nothing. No-op in production.
       if (IS_STAGING) {
+        // #600: so both states of the "Assign to me" button are reviewable,
+        // 900001's assignee is seeded to the VIEWING user (myValue = their
+        // own username, and the chip shows them as the leader) — that card
+        // renders "Assigned to you" and exercises the unassign/DELETE path.
+        // 900002 stays untouched (Unassigned) so the "Assign to me" POST
+        // path is reviewable on the same board.
+        const viewer = (req.user && req.user.username) || 'staging-tester';
         const mockAttrs = new Map([
-          // Clear leader on both fields.
+          // Clear leader on both fields; the viewer is their own assignee.
           [900001, {
             priority: { top: 'high', count: 3, myValue: null },
-            assignee: { top: 'staging-tester', count: 2, myValue: null },
+            assignee: { top: viewer, count: 2, myValue: viewer },
           }],
           // A tie (count 1 vs 1) — the earlier-suggested value wins the chip.
           [900003, {
@@ -873,7 +880,8 @@ function issueRoutes(config) {
             priority: { top: 'medium', count: 2, myValue: null },
             assignee: { top: 'maya-builder', count: 3, myValue: null },
           }],
-          // 900002 deliberately left untouched → muted "Set priority" / "Unassigned".
+          // 900002 deliberately left untouched → muted "Set priority" /
+          // "Unassigned" + an "Assign to me" (POST) button.
         ]);
         for (const issue of issues) {
           const m = mockAttrs.get(issue.number);

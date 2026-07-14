@@ -174,6 +174,22 @@ async function castVote(pool, appId, targetType, ref, field, value, userId) {
   return listOptions(pool, appId, targetType, ref, field, userId);
 }
 
+// Remove the caller's own vote for (target, field), then return the
+// refreshed option list (same shape as castVote / listOptions) so the FE
+// can repaint the chip, the "Assign to me" button, and any open dropdown
+// in one round-trip. Idempotent: deleting a non-existent vote is a no-op
+// that still returns the current tally. Only touches THIS user's row for
+// THIS field — other users' votes and the sibling field are untouched.
+async function clearVote(pool, appId, targetType, ref, field, userId) {
+  await pool.query(
+    `DELETE FROM topic_attribute_votes
+      WHERE app_id = $1 AND target_type = $2 AND target_ref = $3
+        AND field = $4 AND user_id = $5`,
+    [appId, targetType, ref, field, userId]
+  );
+  return listOptions(pool, appId, targetType, ref, field, userId);
+}
+
 module.exports = {
   TARGET_TYPES,
   FIELDS,
@@ -186,4 +202,5 @@ module.exports = {
   summarizeForTargets,
   listOptions,
   castVote,
+  clearVote,
 };

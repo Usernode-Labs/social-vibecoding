@@ -2954,6 +2954,20 @@ html.in-native-webview #header-title {
 }
 button.attr-chip { cursor: pointer; }
 
+/* #600: the one-tap "Assign to me" / "Assigned to you" toggle button sits
+   next to the assignee chip in the card badge row. Same UA-chrome reset as
+   .attr-chip so it lines up at the same height; the tint + hover come from
+   utility classes chosen in JS per state. */
+.attr-assign-me {
+  cursor: pointer;
+  font: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  white-space: nowrap;
+}
+.attr-assign-me:disabled { opacity: 0.6; cursor: default; }
+
 /* #489: the assignee initial-avatar inside a chip — a tiny circle carrying
    the assignee's first letter. The tint (bg + text colour) comes from a
    utility class chosen per-username in JS; sizing/centring live here. */

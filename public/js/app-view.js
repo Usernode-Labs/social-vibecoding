@@ -3230,12 +3230,43 @@ const AppView = {
     return `<button type="button" class="${base} ${cls} ${hover}" data-attr-chip data-attr-field="${field}" data-attr-target-type="${targetType}" data-attr-target-ref="${targetRef}" title="${escapeAttr(title)}">${label}${countHtml}</button>`;
   },
 
+  // Is the signed-in viewer already their own assignee vote on this card?
+  // Case-insensitive, mirroring the service's groupKey dedupe so "Evan"
+  // and "evan" collapse. Reads the summary's myValue (the viewer's current
+  // pick, populated by summarizeForTargets) against App.user.username.
+  _assigneeIsMe(summary) {
+    const me = (typeof App !== 'undefined' && App.user && App.user.username) || '';
+    const mine = summary && summary.myValue;
+    if (!me || !mine) return false;
+    return String(mine).trim().toLowerCase() === String(me).trim().toLowerCase();
+  },
+
+  // The one-tap "Assign to me" / "Assigned to you" toggle button. Casts
+  // (POST) the viewer's own assignee vote, or clears it (DELETE) when they
+  // already hold it — a shortcut over the chip dropdown. Only rendered for
+  // signed-in viewers on interactive (non-readonly) cards; the chip still
+  // shows the top-voted assignee independently. #600.
+  _assignToMeBtnHtml(targetType, targetRef, assigneeSummary) {
+    if (typeof App === 'undefined' || !App.user || !App.user.username) return '';
+    const isMe = AppView._assigneeIsMe(assigneeSummary);
+    const base = 'attr-assign-me inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded';
+    const cls = isMe
+      ? 'bg-violet-500/10 text-violet-400 hover:bg-violet-500/20'
+      : 'bg-zinc-500/10 text-zinc-500 hover:bg-zinc-500/20';
+    const label = isMe ? '&#10003; Assigned to you' : '&#43; Assign to me';
+    const title = isMe ? 'You\'re assigned — click to unassign yourself' : 'Assign this task to yourself';
+    return `<button type="button" class="${base} ${cls}" data-assign-me data-assign-mine="${isMe ? '1' : '0'}" data-attr-target-type="${targetType}" data-attr-target-ref="${targetRef}" title="${escapeAttr(title)}">${label}</button>`;
+  },
+
   // Both chips for a card, in the badge row. opts.readonly drops the
-  // dropdown (used on merged/completed proposals).
+  // dropdown (used on merged/completed proposals) and the "Assign to me"
+  // button.
   _attrChipsHtml(targetType, targetRef, item, opts) {
     const readonly = !!(opts && opts.readonly);
+    const assignee = item && item.assignee;
     return AppView._attrChipHtml('priority', targetType, targetRef, item && item.priority, readonly)
-      + AppView._attrChipHtml('assignee', targetType, targetRef, item && item.assignee, readonly);
+      + AppView._attrChipHtml('assignee', targetType, targetRef, assignee, readonly)
+      + (readonly ? '' : AppView._assignToMeBtnHtml(targetType, targetRef, assignee));
   },
 
   // Install the one-time document-level handlers that open / close the
@@ -3244,6 +3275,14 @@ const AppView = {
     if (AppView._attrInited) return;
     AppView._attrInited = true;
     document.addEventListener('click', (e) => {
+      const assignBtn = e.target.closest('[data-assign-me]');
+      if (assignBtn) {
+        // Don't let the card's open-discussion handler fire.
+        e.preventDefault();
+        e.stopPropagation();
+        AppView._toggleAssignToMe(assignBtn);
+        return;
+      }
       const chip = e.target.closest('[data-attr-chip]');
       if (chip) {
         // Don't let the card's open-discussion handler fire.
@@ -3422,6 +3461,54 @@ const AppView = {
       }
     } catch (err) {
       alert(`Could not save your vote: ${err.message}`);
+    }
+  },
+
+  // In-flight guard so a double-tap on "Assign to me" can't race two
+  // requests for the same card (mirrors _voteInFlight / _bountyInFlight).
+  _assignInFlight: new Set(),
+
+  // The "Assign to me" / "Assigned to you" toggle. POSTs the viewer's own
+  // assignee vote (their username) when not currently theirs, or DELETEs
+  // it when it is. Repaints through the same _applyAttrSummary +
+  // _refreshAttrCards flow the dropdown uses, so the chip, the button
+  // label, and any open popover all update from one round-trip. #600.
+  async _toggleAssignToMe(btn) {
+    const targetType = btn.dataset.attrTargetType;
+    const targetRef = parseInt(btn.dataset.attrTargetRef, 10);
+    const slug = AppView.appData && AppView.appData.slug;
+    const username = (typeof App !== 'undefined' && App.user && App.user.username) || '';
+    if (!slug || !targetType || !targetRef || !username) return;
+
+    const key = `${targetType}:${targetRef}`;
+    if (AppView._assignInFlight.has(key)) return;
+    AppView._assignInFlight.add(key);
+    btn.disabled = true;
+
+    const mine = btn.dataset.assignMine === '1';
+    const url = `/api/apps/${encodeURIComponent(slug)}/topics/${targetType}/${targetRef}/attributes`;
+    try {
+      const res = mine
+        ? await fetch(`${url}?field=assignee`, { method: 'DELETE' })
+        : await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ field: 'assignee', value: username }),
+          });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { alert(data.error || 'Could not update the assignee.'); return; }
+      AppView._applyAttrSummary(targetType, targetRef, 'assignee', data);
+      AppView._refreshAttrCards();
+      // If the assignee dropdown for this card is open, repaint it too.
+      if (AppView._attrPopover && AppView._attrPopover.field === 'assignee'
+          && AppView._attrPopover.targetType === targetType
+          && AppView._attrPopover.targetRef === targetRef) {
+        AppView._renderAttrPopoverBody(data);
+      }
+    } catch (err) {
+      alert(`Could not update the assignee: ${err.message}`);
+    } finally {
+      AppView._assignInFlight.delete(key);
     }
   },
 

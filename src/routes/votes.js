@@ -25,7 +25,12 @@ const topicAttrs = require('../services/topic-attributes');
 // a vote on one 404s harmlessly. Strictly a no-op in production.
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
-function stagingMockProposals() {
+// `viewer` (the requesting user's username, when known) seeds ONE mock
+// proposal's assignee as the viewer's own so the "Assigned to you" state
+// of the #600 "Assign to me" button — and its unassign/DELETE path — is
+// reviewable on staging via ?demo=1; the rest stay assigned to
+// staging-tester (an "Assign to me" POST target) or unowned.
+function stagingMockProposals(viewer) {
   const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
   const hoursAhead = (h) => new Date(Date.now() + h * 3600 * 1000).toISOString();
   // gate = { required, windowEndsAt, contested } — precomputed because mock
@@ -285,7 +290,16 @@ function stagingMockProposals() {
     mk(9000010, 900110,
       '[Mock] Ready-to-merge test: votes passed and checks are green — queued to merge',
       4, 9, 0, 3),
-  ];
+  ].map((p) => {
+    // #600: seed the FIRST mock proposal's assignee as the viewer's own so
+    // its card renders "Assigned to you" (and the unassign/DELETE path is
+    // reviewable). Everyone else stays assigned to staging-tester → an
+    // "Assign to me" (POST) target.
+    if (viewer && p.id === 9000001) {
+      return { ...p, assignee: { top: viewer, count: 2, myValue: viewer } };
+    }
+    return p;
+  });
 }
 
 // #194: staging demo rows for the Completed (merged) list, mirroring
@@ -1171,7 +1185,7 @@ function voteRoutes(config) {
       // result. See stagingMockProposals above.
       if (IS_STAGING && req.query.demo === '1') {
         const have = new Set(rows.map((r) => r.id));
-        rows.push(...stagingMockProposals().filter((m) => !have.has(m.id)));
+        rows.push(...stagingMockProposals(req.user?.username).filter((m) => !have.has(m.id)));
       }
 
       const { active: activeUsers, majority } = await getActiveUserStats(pool, appRows[0].id);

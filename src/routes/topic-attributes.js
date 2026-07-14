@@ -92,6 +92,37 @@ function topicAttributeRoutes(config) {
     }
   });
 
+  // Clear the caller's own vote for (target, field). Drives the
+  // "Assigned to you" → unassign toggle on the "Assign to me" button
+  // (public/js/app-view.js). Field-generic — same collab gate, target /
+  // field validation, and rate limiter as POST; the field is read from
+  // the query string since a DELETE carries no body. Idempotent.
+  router.delete('/api/apps/:slug/topics/:targetType/:targetRef/attributes', attributeVoteLimiter, async (req, res) => {
+    try {
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+
+      const t = parseTarget(req);
+      if (!t) return res.status(400).json({ error: 'Invalid target' });
+
+      const field = String(req.query.field || '');
+      if (!attrs.FIELDS.includes(field)) {
+        return res.status(400).json({ error: 'Invalid field' });
+      }
+
+      const data = await attrs.clearVote(
+        pool, app.id, t.targetType, t.targetRef, field, req.user.id
+      );
+      res.json(data);
+    } catch (err) {
+      log.error('topic-attrs', 'Failed to clear attribute vote', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   return router;
 }
 
