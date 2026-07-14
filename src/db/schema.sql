@@ -724,6 +724,35 @@ CREATE TABLE IF NOT EXISTS topic_attribute_votes (
 CREATE INDEX IF NOT EXISTS idx_topic_attribute_votes_target
   ON topic_attribute_votes (app_id, target_type, target_ref, field);
 
+-- #613: manual drag-and-drop ordering of cards WITHIN a Dev-board kanban
+-- column. The board's default order is derived (recency / merge-priority);
+-- this table is an OVERLAY: cards whose identity appears here sort first,
+-- by `position` asc, and everything else keeps the derived order. Keyed the
+-- same way as topic_attribute_votes (heterogeneous cards addressed by a
+-- (type, ref) pair) because a column mixes GitHub issues (ref = issue
+-- NUMBER) with promoted PR proposals (ref = chat_sessions.id) and governance
+-- proposals (ref = issues.id). column_key ∈ 'issues' | 'review' (the two
+-- shared columns this feature covers; In progress is per-viewer and Done is
+-- paginated, so both are out of scope). One movable order per app+column;
+-- writes REPLACE the whole (app_id, column_key) set with a dense 0..N-1
+-- sequence (last-write-wins). NOT staging:private — like topic_attribute_votes
+-- this is a shared, governance-style signal that everyone sees, so it must
+-- copy into staging clones.
+CREATE TABLE IF NOT EXISTS dev_board_card_order (
+  id          SERIAL PRIMARY KEY,
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  column_key  VARCHAR(16) NOT NULL,   -- 'issues' | 'review'
+  card_type   VARCHAR(16) NOT NULL,   -- 'issue' | 'proposal' | 'gov'
+  card_ref    INTEGER NOT NULL,       -- github_issue_number | chat_sessions.id | issues.id
+  position    INTEGER NOT NULL,
+  updated_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(app_id, column_key, card_type, card_ref)
+);
+-- Per-column ordered read (position asc within one app+column).
+CREATE INDEX IF NOT EXISTS idx_dev_board_card_order_col
+  ON dev_board_card_order (app_id, column_key, position);
+
 -- LLM usage tracking
 CREATE TABLE IF NOT EXISTS llm_usage (
   id              SERIAL PRIMARY KEY,

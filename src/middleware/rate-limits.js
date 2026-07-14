@@ -207,4 +207,16 @@ const attributeVoteLimiter = makeLimiter({
   message: 'Too many updates — slow down for a minute.',
 });
 
-module.exports = { authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, proposalDiscussLimiter, attributeVoteLimiter, attachmentUploadLimiter, feedbackTitleLimiter };
+// #613: drag-and-drop reorder of Dev-board cards. Dragging is bursty (a
+// tester can reshuffle a column several times in a few seconds), so the
+// window is generous but still caps a scripted write loop. Per-user keyed,
+// mirroring attributeVoteLimiter.
+const boardOrderLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 60,
+  name: 'board-order',
+  keyByUser: true,
+  message: 'Too many reorder updates — slow down for a minute.',
+});
+
+module.exports = { authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, proposalDiscussLimiter, attributeVoteLimiter, attachmentUploadLimiter, feedbackTitleLimiter, boardOrderLimiter };

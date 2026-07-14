@@ -177,6 +177,11 @@ const AppView = {
   _proposals: [],
   _govProposals: [],
   _proposalsCtx: { majority: 1, activeUsers: 1, locked: false, lockedHint: '' },
+  // #613: manual drag-and-drop order overlay for the kanban Issues + In
+  // review columns, loaded by _loadDevData from GET /board-order. Shape
+  // { issues: [{type,ref}], review: [{type,ref}] }; empty arrays mean the
+  // default derived sort (today's board).
+  _boardOrder: { issues: [], review: [] },
   // One-shot flag set by the "Create proposal" button so the freshly
   // opened dev session renders a "promoting this PR creates the
   // proposal" hint.
@@ -1654,7 +1659,7 @@ const AppView = {
     if (!AppView.appData) return false;
     const slug = AppView.appData.slug;
     try {
-      const [ghRes, issuesRes, promotedRes, mergedRes] = await Promise.all([
+      const [ghRes, issuesRes, promotedRes, mergedRes, orderRes] = await Promise.all([
         fetch(`/api/apps/${slug}/github-issues${AppView._demoQS()}`),
         // Forward ?demo=1 here too so the staging mock GOVERNANCE rows
         // (stagingMockGovernance — rename / secret / close-issue cards)
@@ -1667,6 +1672,12 @@ const AppView = {
         // Server-side the demo append is gated on IS_STAGING, so this is a
         // no-op in production. votes.js stagingMockMerged() supplies the rows.
         fetch(`/api/apps/${slug}/merged${AppView._demoQS()}`),
+        // #613: the manual drag-and-drop order overlay for the Issues + In
+        // review columns. Forward ?demo=1 so a staging preview seeds a
+        // visibly non-default order; a no-op in production. `.catch` keeps a
+        // failed order fetch from sinking the whole board load — an absent
+        // order just means the default (derived) sort, i.e. today's board.
+        fetch(`/api/apps/${slug}/board-order${AppView._demoQS()}`).catch(() => null),
         // Session caches (own + shared + archived) ride along in the same
         // parallel load; the helper stores them on AppView directly, so
         // there's no destructured slot for it.
@@ -1677,6 +1688,14 @@ const AppView = {
       const promotedData = promotedRes.ok ? await promotedRes.json() : { promoted: [] };
       const mergedData = mergedRes.ok ? await mergedRes.json() : { merged: [], hasMore: false };
       const merged = mergedData.merged || [];
+      // #613: manual card-order overlay per column. Shape { issues:[{type,ref}],
+      // review:[{type,ref}] }. Tolerates a missing/failed fetch (older server
+      // or transient error) by keeping the previous cache / defaulting empty.
+      const orderData = (orderRes && orderRes.ok) ? await orderRes.json().catch(() => null) : null;
+      AppView._boardOrder = {
+        issues: (orderData && Array.isArray(orderData.issues)) ? orderData.issues : [],
+        review: (orderData && Array.isArray(orderData.review)) ? orderData.review : [],
+      };
 
       AppView._ghIssues = Array.isArray(ghData.issues) ? ghData.issues : [];
       AppView._ghIssuesMeta = {
@@ -2123,6 +2142,56 @@ const AppView = {
     };
   },
 
+  // ── Manual card order overlay (#613) ─────────────────────────────────
+  //
+  // Pure re-sort of one already-bucketed column against a stored manual
+  // order. `cards` is the column array in its derived (default) order;
+  // `orderRefs` is the saved [{type, ref}, …] list; `keyFn(card)` returns
+  // the card's identity string (or null if it has none). Cards whose
+  // identity appears in `orderRefs` come FIRST, in stored order; every
+  // remaining card follows in its original derived order (stable). Stale
+  // stored refs whose card is no longer in the column are simply skipped.
+  // No DOM, no AppView state — unit-testable in isolation (see
+  // tests/dev-board-order.test.js). Empty/absent order → array returned
+  // untouched, so the unordered board stays byte-identical to today.
+  _applyManualOrder(cards, orderRefs, keyFn) {
+    const arr = Array.isArray(cards) ? cards : [];
+    const order = Array.isArray(orderRefs) ? orderRefs : [];
+    if (!order.length || arr.length < 2) return arr.slice();
+    // Rank each stored identity by its position in the saved order.
+    const rank = new Map();
+    order.forEach((o, i) => {
+      if (!o) return;
+      rank.set(`${o.type}:${o.ref}`, i);
+    });
+    const placed = [];   // [{ card, r }] — cards with a stored position
+    const rest = [];     // cards without one, in derived order
+    for (const card of arr) {
+      const key = keyFn(card);
+      const r = (key != null) ? rank.get(key) : undefined;
+      if (r === undefined) rest.push(card);
+      else placed.push({ card, r });
+    }
+    placed.sort((a, b) => a.r - b.r);
+    return [...placed.map((p) => p.card), ...rest];
+  },
+
+  // Identity string for a bucketed card, matching the (card_type, card_ref)
+  // pairs the server stores and the data-*-row attributes the drag handler
+  // reads. `column` picks how to read the ref: Issues holds bare issue rows,
+  // In review holds { kind, item } entries (proposal | gov).
+  _cardOrderKey(column, entry) {
+    if (entry == null) return null;
+    if (column === 'issues') {
+      return (entry.number != null) ? `issue:${entry.number}` : null;
+    }
+    // 'review' — { kind: 'proposal'|'gov', item }
+    const it = entry.item || {};
+    if (entry.kind === 'proposal') return (it.id != null) ? `proposal:${it.id}` : null;
+    if (entry.kind === 'gov') return (it.id != null) ? `gov:${it.id}` : null;
+    return null;
+  },
+
   // ── Kanban filters (#482) ───────────────────────────────────────────
   //
   // Pure card-level filter predicate for the kanban filter bar. kind ∈
@@ -2294,6 +2363,11 @@ const AppView = {
   // leaving the filter bar node untouched. Every filter-control event and
   // WS-driven kanban refresh routes through here.
   _repaintKanbanBoard() {
+    // #613: never rebuild the board out from under an in-progress drag — a
+    // mid-drag innerHTML swap (e.g. a WS board_order_update from another
+    // user) would drop the pointer capture and strand the card. The commit
+    // that ends the drag repaints once it lands.
+    if (AppView._dragState) return;
     const board = document.getElementById('dev-kanban-board');
     if (!board) return;
     board.innerHTML = AppView._renderKanbanInner();
@@ -2304,6 +2378,128 @@ const AppView = {
     if (window.Kudos) Kudos.attach(board);
     AppView._applyAskAiCardAvailability(board);
     AppView._updateKanbanFilterBarUI();
+    AppView._initKanbanDrag(board);
+  },
+
+  // ── Drag-to-reorder within a column (#613) ───────────────────────────
+  //
+  // Pointer-events based (not native HTML5 DnD) so it works with touch and
+  // doesn't hijack the card's own click/vote/kudos handlers: a drag only
+  // starts from the grip handle in the card's left gutter. On drop the new
+  // order is optimistically applied to _boardOrder + repainted, then POSTed;
+  // a failed save reverts to server truth. _dragState is non-null for the
+  // life of one drag and blocks board repaints (see _repaintKanbanBoard).
+  _dragState: null,
+
+  _initKanbanDrag(board) {
+    if (!board || board._dragBound) return;
+    board._dragBound = true;
+    board.addEventListener('pointerdown', AppView._onDragPointerDown);
+  },
+
+  _onDragPointerDown(e) {
+    // Left mouse button only (touch/pen report button 0 / -1); ignore others.
+    if (typeof e.button === 'number' && e.button > 0) return;
+    const handle = e.target.closest && e.target.closest('.dev-drag-handle');
+    if (!handle) return;
+    const item = handle.closest('.dev-drag-item');
+    const list = item && item.closest('.dev-drag-list');
+    if (!item || !list || !item.dataset.orderKey) return;
+    e.preventDefault();
+    AppView._dragState = {
+      item, list, handle,
+      column: list.dataset.orderCol,
+      pointerId: e.pointerId,
+      moved: false,
+    };
+    try { handle.setPointerCapture(e.pointerId); } catch {}
+    item.classList.add('opacity-50');
+    handle.classList.add('cursor-grabbing');
+    document.addEventListener('pointermove', AppView._onDragPointerMove);
+    document.addEventListener('pointerup', AppView._onDragPointerUp);
+    document.addEventListener('pointercancel', AppView._onDragPointerUp);
+  },
+
+  _onDragPointerMove(e) {
+    const st = AppView._dragState;
+    if (!st) return;
+    st.moved = true;
+    // Insert the dragged item before the first sibling whose vertical
+    // midpoint is below the pointer; append when the pointer is past them
+    // all. Direct children only, so nested cards never confuse the scan.
+    const items = Array.from(st.list.children).filter((el) => el.classList.contains('dev-drag-item'));
+    const y = e.clientY;
+    let before = null;
+    for (const other of items) {
+      if (other === st.item) continue;
+      const rect = other.getBoundingClientRect();
+      if (y < rect.top + rect.height / 2) { before = other; break; }
+    }
+    if (before) {
+      if (st.item.nextElementSibling !== before) st.list.insertBefore(st.item, before);
+    } else if (st.list.lastElementChild !== st.item) {
+      st.list.appendChild(st.item);
+    }
+  },
+
+  _onDragPointerUp() {
+    const st = AppView._dragState;
+    if (!st) return;
+    document.removeEventListener('pointermove', AppView._onDragPointerMove);
+    document.removeEventListener('pointerup', AppView._onDragPointerUp);
+    document.removeEventListener('pointercancel', AppView._onDragPointerUp);
+    try { st.handle.releasePointerCapture(st.pointerId); } catch {}
+    st.item.classList.remove('opacity-50');
+    st.handle.classList.remove('cursor-grabbing');
+    const { list, column, moved } = st;
+    AppView._dragState = null;
+    if (!moved) return;
+    const keys = Array.from(list.children)
+      .filter((el) => el.classList.contains('dev-drag-item'))
+      .map((el) => el.dataset.orderKey)
+      .filter(Boolean);
+    AppView._commitBoardOrder(column, keys);
+  },
+
+  // Parse an identity string ('issue:123' / 'proposal:45') back into the
+  // { type, ref } the server stores. Returns null on a malformed key.
+  _orderKeyToRef(key) {
+    const idx = String(key || '').indexOf(':');
+    if (idx < 0) return null;
+    const type = key.slice(0, idx);
+    const ref = parseInt(key.slice(idx + 1), 10);
+    if (!Number.isFinite(ref)) return null;
+    return { type, ref };
+  },
+
+  // Persist a column's new order. Optimistically updates _boardOrder +
+  // repaints (so the order sticks and the handles re-bind), then POSTs. On
+  // failure, reverts to the pre-drag order and repaints.
+  async _commitBoardOrder(column, keys) {
+    if (column !== 'issues' && column !== 'review') return;
+    const order = (keys || []).map(AppView._orderKeyToRef).filter(Boolean);
+    const prev = AppView._boardOrder || { issues: [], review: [] };
+    AppView._boardOrder = { ...prev, [column]: order };
+    AppView._repaintKanbanBoard();
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug) return;
+    try {
+      const res = await fetch(`/api/apps/${slug}/board-order${AppView._demoQS()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ column, order }),
+      });
+      if (!res.ok) throw new Error('save failed');
+      const data = await res.json().catch(() => null);
+      if (data && Array.isArray(data.issues) && Array.isArray(data.review)) {
+        AppView._boardOrder = { issues: data.issues, review: data.review };
+        AppView._repaintKanbanBoard();
+      }
+    } catch {
+      AppView._boardOrder = prev;
+      AppView._repaintKanbanBoard();
+      alert('Couldn’t save the new order — reverted.');
+    }
   },
 
   // Render the kanban board (inner HTML for #dev-kanban-board) from cached
@@ -2319,6 +2515,16 @@ const AppView = {
       sharedSessions: AppView._sharedSessions || [],
     });
     const meta = AppView._ghIssuesMeta || {};
+
+    // #613: apply the manual drag order overlay to the Issues + In review
+    // columns BEFORE filtering, so hiding cards via the filter bar never
+    // disturbs the saved order. Empty order → no change (identical to the
+    // pre-#613 board).
+    const order = AppView._boardOrder || { issues: [], review: [] };
+    buckets.issues = AppView._applyManualOrder(
+      buckets.issues, order.issues, (c) => AppView._cardOrderKey('issues', c));
+    buckets.inReview = AppView._applyManualOrder(
+      buckets.inReview, order.review, (c) => AppView._cardOrderKey('review', c));
 
     // #482: apply the filter bar AFTER bucketing, per column. Filtering
     // the inputs instead would resurrect issues whose open proposal was
@@ -2388,12 +2594,18 @@ const AppView = {
     }
 
     const cols = [
-      { title: 'Issues', items: kIssues, render: (i) => AppView._renderIssueRow(i), footer: issuesFooter },
+      // #613: `orderCol` marks a column as drag-reorderable and names the
+      // stored column_key; `orderKey(item)` yields the card identity the
+      // overlay + drag handler share. Filtering disables dragging (the saved
+      // order applies to the full column, not a filtered subset).
+      { title: 'Issues', items: kIssues, render: (i) => AppView._renderIssueRow(i), footer: issuesFooter,
+        orderCol: 'issues', orderKey: (i) => AppView._cardOrderKey('issues', i) },
       // In progress renders through a dedicated builder: pinned own
       // sessions (+ the visibility caption and the archived toggle),
       // then issue cards, then other users' shared sessions.
       { title: 'In progress', items: kInProgress, cardsHtml: AppView._inProgressCardsHtml(kInProgress, filtering) },
-      { title: 'In review', items: kInReview, render: (x) => (x.kind === 'proposal' ? AppView._renderProposalCard(x.item) : AppView._renderGovCard(x.item)) },
+      { title: 'In review', items: kInReview, render: (x) => (x.kind === 'proposal' ? AppView._renderProposalCard(x.item) : AppView._renderGovCard(x.item)),
+        orderCol: 'review', orderKey: (x) => AppView._cardOrderKey('review', x) },
       { title: 'Done', items: kDone, render: (m) => AppView._renderMergedCard(m), count: filtering ? kDone.length : doneTotal, footer: doneFooter },
     ];
 
@@ -2403,11 +2615,21 @@ const AppView = {
       // be overridden (Done uses the server total) and falls back to the
       // loaded length for every other column.
       const count = (typeof col.count === 'number') ? col.count : col.items.length;
-      const cards = (typeof col.cardsHtml === 'string')
-        ? col.cardsHtml
-        : (col.items.length
-          ? `<div class="space-y-2">${col.items.map(col.render).join('')}</div>`
-          : `<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">${filtering ? 'No matching cards' : 'Nothing here yet'}</div>`);
+      // Reorder is offered only on a reorderable column that isn't being
+      // filtered (a filtered view hides cards the saved order still covers).
+      const reorder = !!col.orderCol && !filtering;
+      let cards;
+      if (typeof col.cardsHtml === 'string') {
+        cards = col.cardsHtml;
+      } else if (!col.items.length) {
+        cards = `<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">${filtering ? 'No matching cards' : 'Nothing here yet'}</div>`;
+      } else if (reorder) {
+        cards = `<div class="space-y-2 dev-drag-list" data-order-col="${col.orderCol}">`
+          + col.items.map((it) => AppView._wrapDraggable(col.orderKey(it), col.render(it))).join('')
+          + '</div>';
+      } else {
+        cards = `<div class="space-y-2">${col.items.map(col.render).join('')}</div>`;
+      }
       const footer = col.footer ? `<div class="mt-2">${col.footer}</div>` : '';
       html += `
         <div class="dev-kanban-col flex-1 basis-0 min-w-[16rem]">
@@ -2420,6 +2642,24 @@ const AppView = {
     }
     html += '</div>';
     return html;
+  },
+
+  // #613: wrap one rendered card in a drag shell — a grip handle in a left
+  // gutter (44px tall for touch) plus the card. `key` is the card identity
+  // ('issue:123' / 'proposal:45'); a card with no identity (shouldn't happen
+  // for the reorderable columns) renders un-draggable so it can't be moved
+  // into an unsaveable state.
+  _wrapDraggable(key, cardHtml) {
+    if (!key) return `<div class="dev-drag-item">${cardHtml}</div>`;
+    const grip = '<svg viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4" aria-hidden="true">'
+      + '<circle cx="7" cy="5" r="1.4"/><circle cx="13" cy="5" r="1.4"/>'
+      + '<circle cx="7" cy="10" r="1.4"/><circle cx="13" cy="10" r="1.4"/>'
+      + '<circle cx="7" cy="15" r="1.4"/><circle cx="13" cy="15" r="1.4"/></svg>';
+    return `<div class="dev-drag-item relative pl-6" data-order-key="${escapeAttr(key)}">
+        <button type="button" class="dev-drag-handle absolute left-0 top-0 bottom-0 w-6 flex items-center justify-center text-zinc-300 dark:text-zinc-600 hover:text-zinc-500 dark:hover:text-zinc-400 cursor-grab touch-none"
+          aria-label="Drag to reorder" title="Drag to reorder">${grip}</button>
+        ${cardHtml}
+      </div>`;
   },
 
   // ── PM view (tasks by assignee) ──────────────────────────────────────
