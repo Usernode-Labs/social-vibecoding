@@ -4688,10 +4688,13 @@ const AppView = {
   },
 
   // "Create proposal" / "Create new proposal" — spin up a fresh dev chat for
-  // this issue and seed the first turn with the issue's number/title/body so
-  // the Mayor links it (addresses_issues → linked_issues → `Closes #N`) and
-  // solves it. Mirrors DevChat.startNewChange's create→open→render flow, then
-  // sends the seed. Safe to call from either button state — each call spawns a
+  // this issue and PREFILL (never send) the composer with a kickoff message
+  // built from the issue's number/title/body, so the user can edit it before
+  // the agent starts (#609). Sending the default text as-is makes the Mayor
+  // link the issue (addresses_issues → linked_issues → `Closes #N`) and solve
+  // it. Mirrors DevChat.startNewChange's create→open→render flow; the seed
+  // lands in the box via the per-session draft (_setDraft → _restoreDraft on
+  // render). Safe to call from either button state — each call spawns a
   // brand-new session.
   async createPrForIssue(issueNumber) {
     const slug = AppView.appData && AppView.appData.slug;
@@ -4711,6 +4714,20 @@ const AppView = {
       if (typeof AppView._repaintCards === 'function') AppView._repaintCards();
     }
 
+    // Kickoff seed the user gets to edit before sending. Naming the number
+    // is what drives the merge-time bounty payout, so the default text keeps
+    // the `Closes #N` guidance intact.
+    const title = issue ? issue.title : '';
+    const body = issue && issue.body ? `\n\n${issue.body}` : '';
+    const seed =
+      `Please implement GitHub issue #${issueNumber}: "${title}".${body}\n\n`
+      + `Open a PR that closes this issue (include "Closes #${issueNumber}" so it links and closes the issue on merge).`;
+
+    // #609: stash the seed as the session's draft BEFORE navigating — the
+    // chat view's render path calls _restoreDraft(), which fills the
+    // composer (unsent) for us. Nothing is sent until the user hits Send.
+    if (typeof DevChat._setDraft === 'function') DevChat._setDraft(session.id, seed);
+
     // Land on the Dev Chat tab focused on the new session. switchTab
     // ('individual-chat') → renderDevChatTab(sessionId) opens the session,
     // renders the chat view, and syncs the hash for us.
@@ -4718,15 +4735,26 @@ const AppView = {
       await App.switchTab('dev', session.id, 'sessions');
     }
 
-    // Seed the first turn so the Mayor links the issue (addresses_issues →
-    // linked_issues → `Closes #N`) and solves it. Naming the number is what
-    // drives the merge-time bounty payout.
-    const title = issue ? issue.title : '';
-    const body = issue && issue.body ? `\n\n${issue.body}` : '';
-    const seed =
-      `Please implement GitHub issue #${issueNumber}: "${title}".${body}\n\n`
-      + `Open a PR that closes this issue (include "Closes #${issueNumber}" so it links and closes the issue on merge).`;
-    if (typeof DevChat.sendMessage === 'function') DevChat.sendMessage(seed);
+    // Fallback for localStorage-disabled browsers (_setDraft silently
+    // no-ops there): put the seed straight into the mounted textarea if the
+    // draft restore left it empty. Focus with the cursor parked at the end
+    // on fine-pointer devices only — focusing on touch would pop the
+    // on-screen keyboard over the chat (#568, same rule as the quick-reply
+    // pills).
+    const input = document.getElementById('dc-input');
+    if (input) {
+      if (!input.value) {
+        input.value = seed;
+        input.style.height = 'auto';
+        input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+      }
+      if (typeof DevChat._isCoarsePointer !== 'function' || !DevChat._isCoarsePointer()) {
+        try {
+          input.focus();
+          input.setSelectionRange(input.value.length, input.value.length);
+        } catch {}
+      }
+    }
   },
 
   // ---- Headless auto sessions (#155) --------------------------------------
