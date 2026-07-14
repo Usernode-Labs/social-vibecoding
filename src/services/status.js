@@ -557,4 +557,6 @@ function start(config) {
   });
 }
 
-module.exports = { gather, start };
+// listContainers/getStats are also consumed by the prod-debug internal
+// API (#616 — src/routes/internal.js) for the usernode-debug CLI.
+module.exports = { gather, start, listContainers, getStats };

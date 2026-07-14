@@ -65,6 +65,15 @@ COPY usernode-attachments /usr/local/bin/usernode-attachments
 # Platform-side dedup + rate limit bound the spam. See
 # src/routes/internal.js + src/routes/sessions.js (confirm route).
 COPY usernode-report-platform-issue /usr/local/bin/usernode-report-platform-issue
+# usernode-debug (#616) is read-only production debugging for ADMIN
+# sessions on the self-edit app. It calls the platform's prod-debug
+# internal API (deny-listed read-only SQL role, allowlisted container
+# logs/status) with PROD_DEBUG_JWT — an env var the platform injects
+# ONLY into eligible turns, and whose claims are re-verified against the
+# DB on every call. In every other session the script is present but
+# inert (no JWT). No DB credential or docker access ever enters this
+# container.
+COPY usernode-debug /usr/local/bin/usernode-debug
 # `.claude` must exist (owned by node) in the image so that when we mount a
 # named volume at that path for persistent CC sessions, Docker initialises the
 # volume with node ownership instead of defaulting to root.
@@ -74,6 +83,7 @@ RUN chmod +x /usr/local/bin/worker-run.sh \
               /usr/local/bin/usernode-issues \
               /usr/local/bin/usernode-attachments \
               /usr/local/bin/usernode-report-platform-issue \
+              /usr/local/bin/usernode-debug \
   && mkdir -p /home/node/workspace /home/node/.claude \
   && chown -R node:node /home/node
 

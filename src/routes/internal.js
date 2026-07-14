@@ -7,6 +7,9 @@ const { getPool } = require('../db/pool');
 const { internalAuth } = require('../middleware/internal-auth');
 const log = require('../services/logger');
 const worker = require('../services/worker');
+const docker = require('../services/docker');
+const statusSvc = require('../services/status');
+const debugAccess = require('../services/debug-access');
 const github = require('../services/github');
 const { USERNODE_DOMAIN } = require('../services/caddy');
 const appAccess = require('../services/app-access');
@@ -822,6 +825,210 @@ function internalRoutes(_config) {
         sessionId, appSlug: session.app_slug, msgId,
       });
       return res.json({ ok: true, suggested: true, msgId });
+    }
+  );
+
+  // ── Prod-debug surface (#616) ─────────────────────────────────────────
+  //
+  // Read-only production access for the usernode-debug worker CLI. Only
+  // reachable with a PROD_DEBUG_JWT (worker.mintProdDebugJwt — carries
+  // the `prod_debug: true` claim), which the dispatch path mints solely
+  // for build/scout turns of admin-owned sessions on the self-edit app.
+  // The guard below ALSO re-checks eligibility in the DB on every request
+  // so revoking admin (or the session moving off the self-edit app) cuts
+  // access immediately despite the JWT's 24h TTL. Everything here is a
+  // read: SQL runs under the deny-listed usernode_debug_ro role
+  // (services/debug-access.js), docker access is `logs`/`ps` against an
+  // allowlist — no write or exec path exists.
+  const debugLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 60,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    keyGenerator: (req) => `session:${req.workerSession?.sessionId || 'anon'}`,
+    handler: (req, res) => {
+      log.warn('internal-api', 'Prod-debug rate-limited', {
+        sessionId: req.workerSession?.sessionId,
+      });
+      res.status(429).json({ ok: false, code: 'rate_limited' });
+    },
+  });
+
+  const requireProdDebug = async (req, res, next) => {
+    const sessionId = parseInt(req.params.sessionId, 10);
+    if (!Number.isFinite(sessionId)) {
+      return res.status(400).json({ ok: false, code: 'bad_session_id' });
+    }
+    if (req.workerSession.sessionId !== sessionId) {
+      log.warn('prod-debug', 'Session mismatch between JWT and route', {
+        jwt: req.workerSession.sessionId, route: sessionId,
+      });
+      return res.status(403).json({ ok: false, code: 'session_mismatch' });
+    }
+    if (!req.workerSession.prodDebug) {
+      log.warn('prod-debug', 'Rejected token without prod_debug claim', { sessionId });
+      return res.status(403).json({ ok: false, code: 'not_prod_debug' });
+    }
+    let check;
+    try {
+      check = await debugAccess.checkSessionEligibility(pool, sessionId);
+    } catch (err) {
+      log.error('prod-debug', 'Eligibility check failed', { sessionId, err: err.message });
+      return res.status(500).json({ ok: false, code: 'db_error' });
+    }
+    if (!check.found) return res.status(404).json({ ok: false, code: 'session_not_found' });
+    if (!check.eligible) {
+      log.warn('prod-debug', 'Rejected ineligible session', {
+        sessionId, selfHosted: check.selfHosted, isAdmin: check.isAdmin,
+      });
+      return res.status(403).json({ ok: false, code: 'not_eligible' });
+    }
+    // Audit trail: every prod-debug call, before it executes, with the
+    // owner it's attributed to. Route handlers add call-specific detail
+    // (the SQL text, the container name) on top.
+    req.prodDebug = { sessionId, ownerId: check.ownerId };
+    log.info('prod-debug', 'Prod-debug call', {
+      sessionId, ownerId: check.ownerId, method: req.method, path: req.path,
+    });
+    next();
+  };
+
+  // Read-only SQL against the platform DB via the usernode_debug_ro
+  // role. Deny-listed tables/columns error at the Postgres-grant layer;
+  // writes are impossible (role-level default_transaction_read_only + no
+  // write grants). Postgres errors are surfaced verbatim so the agent
+  // can self-correct its query.
+  router.post(
+    '/api/internal/sessions/:sessionId/prod-debug/sql',
+    internalAuth,
+    debugLimiter,
+    requireProdDebug,
+    async (req, res) => {
+      const query = typeof req.body?.query === 'string' ? req.body.query : '';
+      // Audit the query text itself (redacted) before executing, so even
+      // failed/unavailable attempts are on the record.
+      log.info('prod-debug', 'SQL query', {
+        sessionId: req.prodDebug.sessionId,
+        ownerId: req.prodDebug.ownerId,
+        query: log.redactString(query.slice(0, 2000)),
+      });
+      if (!query.trim()) {
+        return res.status(400).json({ ok: false, code: 'bad_query' });
+      }
+      try {
+        const result = await debugAccess.runQuery(query, { config: _config });
+        return res.json({
+          ok: true,
+          rows: result.rows,
+          rowCount: result.rowCount,
+          truncated: result.truncated,
+        });
+      } catch (err) {
+        if (err.code === 'unavailable') {
+          return res.status(503).json({ ok: false, code: 'unavailable', message: err.message });
+        }
+        if (err.code === 'bad_query') {
+          return res.status(400).json({ ok: false, code: 'bad_query', message: err.message });
+        }
+        // Postgres-level error (syntax, permission denied on a denied
+        // column, read-only violation, timeout) — a 200-with-error so the
+        // CLI prints something the agent can act on.
+        return res.json({ ok: false, code: 'query_error', message: log.redactString(err.message || '') });
+      }
+    }
+  );
+
+  // Container inventory: `docker ps -a` + `docker stats` summaries via
+  // the status service's existing helpers.
+  router.get(
+    '/api/internal/sessions/:sessionId/prod-debug/containers',
+    internalAuth,
+    debugLimiter,
+    requireProdDebug,
+    async (req, res) => {
+      try {
+        const [containers, stats] = await Promise.all([
+          statusSvc.listContainers(),
+          statusSvc.getStats(),
+        ]);
+        return res.json({
+          ok: true,
+          containers: containers.map((c) => ({
+            ...c,
+            mem: stats[c.name]?.mem || null,
+            cpu: stats[c.name]?.cpu || null,
+          })),
+        });
+      } catch (err) {
+        log.error('prod-debug', 'Container list failed', {
+          sessionId: req.prodDebug.sessionId, err: err.message,
+        });
+        return res.status(500).json({ ok: false, code: 'docker_error' });
+      }
+    }
+  );
+
+  // Recent log lines from ONE allowlisted container. Output is capped
+  // and passed through the logger's secret scrubber — the platform's own
+  // stdout is already redacted at write time, but child-app logs are
+  // not, so redact here as defense in depth.
+  router.get(
+    '/api/internal/sessions/:sessionId/prod-debug/logs/:container',
+    internalAuth,
+    debugLimiter,
+    requireProdDebug,
+    async (req, res) => {
+      const name = String(req.params.container || '');
+      if (!debugAccess.isAllowedLogContainer(name)) {
+        return res.status(400).json({ ok: false, code: 'bad_container' });
+      }
+      const tail = debugAccess.clampTail(req.query.tail);
+      log.info('prod-debug', 'Container logs read', {
+        sessionId: req.prodDebug.sessionId, container: name, tail,
+      });
+      try {
+        const { stdout, stderr } = await docker.execFileAsync('docker', [
+          'logs', '--tail', String(tail), name,
+        ], { timeout: 15000, maxBuffer: 8 * 1024 * 1024 });
+        // docker writes the container's stderr stream to its own stderr;
+        // both are log content here.
+        let text = `${stdout || ''}${stderr ? `\n${stderr}` : ''}`;
+        let truncated = false;
+        if (text.length > debugAccess.MAX_LOG_BYTES) {
+          text = text.slice(-debugAccess.MAX_LOG_BYTES);
+          truncated = true;
+        }
+        return res.json({
+          ok: true, container: name, tail, truncated,
+          logs: log.redactString(text),
+        });
+      } catch (err) {
+        return res.status(404).json({
+          ok: false, code: 'container_unavailable',
+          message: log.redactString(String(err.message || '')),
+        });
+      }
+    }
+  );
+
+  // Platform health snapshot: the admin /status payload (stuck sessions,
+  // warm workers, staging, budgets, deploy state) plus the recent
+  // redacted platform log ring.
+  router.get(
+    '/api/internal/sessions/:sessionId/prod-debug/status',
+    internalAuth,
+    debugLimiter,
+    requireProdDebug,
+    async (req, res) => {
+      try {
+        const payload = await statusSvc.gather(_config, { isAdmin: true });
+        return res.json({ ok: true, status: payload, recentLog: log.tail(100) });
+      } catch (err) {
+        log.error('prod-debug', 'Status snapshot failed', {
+          sessionId: req.prodDebug.sessionId, err: err.message,
+        });
+        return res.status(500).json({ ok: false, code: 'status_error' });
+      }
     }
   );
 

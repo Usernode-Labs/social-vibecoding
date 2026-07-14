@@ -914,6 +914,15 @@ CREATE INDEX IF NOT EXISTS idx_apps_self_hosted
 -- sentinel for NOT NULL columns) so the surrounding row survives.
 -- See src/prompts/app-conventions.md for the convention doc.
 --
+-- RELATED (#616): the prod-debug read-only role (usernode_debug_ro,
+-- src/services/debug-access.js) carries its OWN deny lists
+-- (DENIED_TABLES / DENIED_COLUMNS). When you add a NEW credential-
+-- bearing table or column here (anything you'd tag staging:private
+-- because it stores a password, key, or token — not merely private
+-- user content), add it to those deny lists too so admin debugging
+-- sessions can never SELECT it. tests/prod-debug-access.test.js
+-- cross-checks the credential-tagged columns below against the lists.
+--
 -- Table-level: every row is sensitive in its entirety.
 COMMENT ON TABLE sessions               IS 'staging:private';
 COMMENT ON TABLE activation_codes       IS 'staging:private';

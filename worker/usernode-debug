@@ -1,0 +1,105 @@
+#!/bin/sh
+# Read-only production debugging for ADMIN sessions on the self-edit app
+# (#616). Only present/usable when the platform injected PROD_DEBUG_JWT
+# into this turn's env — which it does solely for build/scout turns of
+# admin-owned sessions on the platform's own (self_hosted) app row. The
+# platform re-checks eligibility on every call, so this CLI grants
+# nothing by itself.
+#
+# Everything runs PLATFORM-SIDE: SQL executes under a deny-listed
+# read-only Postgres role, container logs/status go through docker on the
+# host. This container never sees a DB credential or the docker socket.
+# All operations are strictly read-only; credential-bearing tables and
+# columns are excluded at the database-grant level.
+#
+# Usage:
+#   usernode-debug sql "SELECT id, status FROM chat_sessions ORDER BY id DESC LIMIT 5"
+#   usernode-debug containers
+#   usernode-debug logs <container> [tail]     (tail default 200, max 2000)
+#   usernode-debug status
+#
+# Endpoints (Authorization: Bearer $PROD_DEBUG_JWT):
+#   POST /api/internal/sessions/$SESSION_ID/prod-debug/sql
+#   GET  /api/internal/sessions/$SESSION_ID/prod-debug/containers
+#   GET  /api/internal/sessions/$SESSION_ID/prod-debug/logs/<container>?tail=N
+#   GET  /api/internal/sessions/$SESSION_ID/prod-debug/status
+#
+# Prints the JSON body to stdout. Exit 0 on HTTP 200, non-zero otherwise.
+# On failure it still prints well-formed JSON so the caller (Claude Code)
+# always gets something parseable.
+
+set -u
+
+: "${PROD_DEBUG_JWT:?PROD_DEBUG_JWT required — prod debug is not enabled for this session}"
+: "${SESSION_ID:?SESSION_ID required}"
+: "${PLATFORM_URL:=http://usernode:3000}"
+
+BASE="${PLATFORM_URL%/}/api/internal/sessions/${SESSION_ID}/prod-debug"
+CMD="${1:-}"
+
+fail() {
+  printf '{"ok":false,"note":"%s"}\n' "$1"
+  exit 1
+}
+
+do_request() {
+  # $1 = method, $2 = url, $3 = optional JSON body
+  if [ -n "${3:-}" ]; then
+    RESP=$(curl -sS -X "$1" \
+      -H "Authorization: Bearer $PROD_DEBUG_JWT" \
+      -H "Accept: application/json" \
+      -H "Content-Type: application/json" \
+      --data-binary "$3" \
+      -w "\n%{http_code}" \
+      --max-time 60 \
+      "$2" 2>&1) || fail "request failed"
+  else
+    RESP=$(curl -sS -X "$1" \
+      -H "Authorization: Bearer $PROD_DEBUG_JWT" \
+      -H "Accept: application/json" \
+      -w "\n%{http_code}" \
+      --max-time 60 \
+      "$2" 2>&1) || fail "request failed"
+  fi
+  CODE=$(printf '%s' "$RESP" | tail -n1)
+  BODY=$(printf '%s' "$RESP" | sed '$d')
+  printf '%s\n' "$BODY"
+  [ "$CODE" = "200" ]
+}
+
+case "$CMD" in
+  sql)
+    QUERY="${2:-}"
+    [ -n "$QUERY" ] || fail "usage: usernode-debug sql \"SELECT ...\""
+    # JSON-encode the query via node (always present in the worker image)
+    # so quotes/newlines inside the SQL can't break the request body.
+    BODY=$(node -e 'process.stdout.write(JSON.stringify({ query: process.argv[1] }))' "$QUERY") \
+      || fail "failed to encode query"
+    do_request POST "$BASE/sql" "$BODY"
+    ;;
+  containers)
+    do_request GET "$BASE/containers"
+    ;;
+  logs)
+    CONTAINER="${2:-}"
+    [ -n "$CONTAINER" ] || fail "usage: usernode-debug logs <container> [tail]"
+    case "$CONTAINER" in
+      *[!A-Za-z0-9_.-]*) fail "bad container name" ;;
+    esac
+    TAIL="${3:-}"
+    URL="$BASE/logs/$CONTAINER"
+    if [ -n "$TAIL" ]; then
+      case "$TAIL" in
+        *[!0-9]*) fail "tail must be a number" ;;
+      esac
+      URL="$URL?tail=$TAIL"
+    fi
+    do_request GET "$URL"
+    ;;
+  status)
+    do_request GET "$BASE/status"
+    ;;
+  *)
+    fail "usage: usernode-debug sql|containers|logs|status"
+    ;;
+esac
