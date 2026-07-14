@@ -3761,11 +3761,7 @@ const AppView = {
     AppView._attrPopover = { field, targetType, targetRef, slug };
 
     // Position under the chip, clamped to the viewport.
-    const r = chip.getBoundingClientRect();
-    pop.style.position = 'fixed';
-    pop.style.top = `${Math.round(r.bottom + 4)}px`;
-    const left = Math.min(Math.round(r.left), window.innerWidth - 240);
-    pop.style.left = `${Math.max(8, left)}px`;
+    AppView._positionAttrPopover(pop, chip);
 
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/topics/${targetType}/${targetRef}/attributes?field=${field}`);
@@ -3780,6 +3776,17 @@ const AppView = {
       const live = document.getElementById('attr-popover');
       if (live) live.innerHTML = '<div class="px-3 py-2 text-xs text-red-500">Couldn\'t load options.</div>';
     }
+  },
+
+  // Place the popover just under `chip`, clamped to the viewport. Shared
+  // by the initial open and the post-repaint re-anchor (#608) so both use
+  // the same math.
+  _positionAttrPopover(pop, chip) {
+    const r = chip.getBoundingClientRect();
+    pop.style.position = 'fixed';
+    pop.style.top = `${Math.round(r.bottom + 4)}px`;
+    const left = Math.min(Math.round(r.left), window.innerWidth - 240);
+    pop.style.left = `${Math.max(8, left)}px`;
   },
 
   // Render the popover contents from a { field, options, myValue } payload
@@ -3894,7 +3901,8 @@ const AppView = {
       if (!res.ok) { alert(data.error || 'Could not save your vote.'); return; }
       // Update the cached item's summary so re-renders show the new leader.
       AppView._applyAttrSummary(targetType, targetRef, field, data);
-      // Repaint cards (feed if mounted, topic head if open) and the popover.
+      // Repaint whichever card surface is mounted (list / kanban / PM /
+      // topic head) and the popover.
       AppView._refreshAttrCards();
       if (AppView._attrPopover && AppView._attrPopover.field === field
           && AppView._attrPopover.targetRef === targetRef) {
@@ -3921,20 +3929,36 @@ const AppView = {
     if (item) item[field] = summary;
   },
 
-  // Repaint surfaces that show chips, without disturbing the popover (which
-  // lives on <body>, positioned by coordinates).
+  // Repaint every surface that shows chips. #608: this used to repaint
+  // only #dev-feed / #gc-thread-head / #gc-merged, so in kanban and PM
+  // view modes (which mount #dev-kanban-board / #dev-pm instead) a vote
+  // updated the cache but the visible chips stayed stale until a reload.
+  // _repaintCards is mode-aware (list feed + Completed block, kanban
+  // board, PM view, plus the opened-topic head), all from cache. The
+  // popover lives on <body>, positioned by coordinates, so the repaint
+  // never removes it — but its chip's card can move (PM view regroups by
+  // assignee) or leave the board (kanban filter no longer matching), so
+  // re-anchor it to the freshly-rendered chip, or close it when the chip
+  // is gone.
   _refreshAttrCards() {
-    if (document.getElementById('dev-feed')) AppView._rerenderFeed();
-    if (typeof App !== 'undefined' && App.currentSubTab === 'topic'
-        && document.getElementById('gc-thread-head')) {
-      AppView._renderTopicHead();
-    }
-    const mergedEl = document.getElementById('gc-merged');
-    if (mergedEl && (AppView._merged || []).length) {
-      mergedEl.innerHTML = AppView._renderMergedInner();
-      if (window.Kudos) Kudos.attach(mergedEl);
-      AppView._applyAskAiCardAvailability(mergedEl);
-    }
+    AppView._repaintCards();
+    AppView._reanchorAttrPopover();
+  },
+
+  // Snap the open popover back under its chip's current position after a
+  // repaint; close it when the chip is no longer rendered anywhere.
+  _reanchorAttrPopover() {
+    const ctx = AppView._attrPopover;
+    if (!ctx) return;
+    const pop = document.getElementById('attr-popover');
+    if (!pop) return;
+    const chip = document.querySelector(
+      `[data-attr-chip][data-attr-field="${ctx.field}"]`
+      + `[data-attr-target-type="${ctx.targetType}"]`
+      + `[data-attr-target-ref="${ctx.targetRef}"]`
+    );
+    if (chip) AppView._positionAttrPopover(pop, chip);
+    else AppView._closeAttrPopover();
   },
 
   // Live badge bump for a thread the viewer doesn't have open (called
