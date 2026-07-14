@@ -1046,6 +1046,17 @@ CREATE INDEX IF NOT EXISTS idx_app_favorites_user ON app_favorites(user_id);
 -- resolved by the fallback, and PUT /api/favorites/order rewrites the
 -- caller's full set contiguously on every save anyway.
 ALTER TABLE app_favorites ADD COLUMN IF NOT EXISTS sort_order INTEGER;
+-- #618: per-user "Your apps" opt-out for member apps. Membership
+-- (app_collaborators) pins an app into the home screen's "Your apps"
+-- section; a hidden=TRUE row here suppresses that pin for this user
+-- only — display preference, zero effect on access or permissions.
+-- Row semantics: hidden=FALSE (the default, and every pre-migration
+-- row) = a manual add (the classic favorite); hidden=TRUE = an
+-- explicit opt-out. The favorite toggle endpoint decides which to
+-- write: members get the hidden upsert, non-members get the old
+-- insert/delete (see POST /api/apps/:slug/favorite in
+-- src/routes/apps.js).
+ALTER TABLE app_favorites ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Append-only product-analytics event log. The long-term source of truth
 -- behind the admin /dashboard (growth, retention, and the dapp-usage /
