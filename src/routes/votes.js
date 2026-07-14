@@ -93,7 +93,7 @@ function stagingMockProposals(viewer) {
     priority: { top: 'high', count: 2, myValue: null },
     assignee: { top: 'staging-tester', count: 3, myValue: null },
   });
-  return [
+  const rows = [
     // Unopposed, thin support: threshold met but a multi-day visibility
     // window still running → "Merging in ~2d" countdown pill.
     mk(9000001, 900101,
@@ -311,7 +311,23 @@ function stagingMockProposals(viewer) {
     mk(9000010, 900110,
       '[Mock] Ready-to-merge test: votes passed and checks are green — queued to merge',
       4, 9, 0, 3),
-  ].map((p) => {
+  ];
+  // Spread the community-voted priority/assignee across a few rows (the mk
+  // factory otherwise stamps every proposal high / staging-tester) so the
+  // kanban board's Priority and Assignee filters have >1 distinct value to
+  // choose from and filtering visibly narrows the board. The assignees mirror
+  // the mock issues' (staging-demo-user, maya-builder), so filtering by one of
+  // them catches cards across both the issue and proposal columns.
+  const attrOverrides = new Map([
+    [9000001, { priority: { top: 'medium', count: 2, myValue: null }, assignee: { top: 'staging-demo-user', count: 2, myValue: null } }],
+    [9000002, { priority: { top: 'low', count: 1, myValue: null }, assignee: { top: 'maya-builder', count: 1, myValue: null } }],
+    [9000013, { priority: { top: 'low', count: 3, myValue: null }, assignee: { top: 'staging-demo-user', count: 1, myValue: null } }],
+  ]);
+  for (const row of rows) {
+    const o = attrOverrides.get(row.id);
+    if (o) { row.priority = o.priority; row.assignee = o.assignee; }
+  }
+  return rows.map((p) => {
     // #600: seed the FIRST mock proposal's assignee as the viewer's own so
     // opening its dropdown shows the "already voted" state (name box empty,
     // viewer's pick checked). Everyone else stays assigned to staging-tester

@@ -159,11 +159,46 @@ const AppView = {
     const next = (mode === 'kanban' || mode === 'pm') ? mode : 'list';
     try { window.localStorage.setItem(AppView.VIEW_MODE_KEY, next); } catch {}
   },
-  // #482: kanban filter-bar state. In-memory only — deliberately NOT
-  // persisted to localStorage (unlike the view mode above): a filter saved
-  // across visits could land a user on a mysteriously empty board days
-  // later. Reset per app when the card list mounts (renderDevView).
+  // #482: kanban filter-bar state. The active object always reflects the
+  // CURRENT app; it is (re)loaded per slug from sessionStorage whenever the
+  // board mounts (_repaintDevBody) and written back on every change
+  // (_repaintKanbanBoard). sessionStorage — not localStorage — is deliberate:
+  // filters survive in-app navigation and a page reload within the tab
+  // session, but auto-clear when the tab closes, so a filter can't land a
+  // user on a mysteriously empty board days later.
+  KANBAN_FILTERS_KEY: 'devKanbanFilters',
   _kanbanFilters: { q: '', priority: null, assignee: null, needsVote: false },
+  // Single source of truth for the empty/default filter set.
+  _defaultKanbanFilters() {
+    return { q: '', priority: null, assignee: null, needsVote: false };
+  },
+  // Load the saved filters for an app slug, merged over the defaults so a
+  // stored object missing a (future) field degrades gracefully. Returns
+  // defaults for a falsy slug, nothing stored, or any storage/parse failure.
+  _loadKanbanFilters(slug) {
+    const def = AppView._defaultKanbanFilters();
+    if (!slug) return def;
+    try {
+      const raw = window.sessionStorage.getItem(`${AppView.KANBAN_FILTERS_KEY}:${slug}`);
+      if (!raw) return def;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return def;
+      return { ...def, ...parsed };
+    } catch { return def; }
+  },
+  // Persist the current filters under the app slug. Clears the key when the
+  // filters are at their defaults so a cleared board leaves no residue.
+  _saveKanbanFilters(slug) {
+    if (!slug) return;
+    try {
+      const key = `${AppView.KANBAN_FILTERS_KEY}:${slug}`;
+      if (AppView._kanbanFiltersActive()) {
+        window.sessionStorage.setItem(key, JSON.stringify(AppView._kanbanFilters));
+      } else {
+        window.sessionStorage.removeItem(key);
+      }
+    } catch {}
+  },
   // Refresh timer for the session cards' busy indicators (see
   // _syncSessionPolling); self-clears when #dev-body leaves the DOM.
   _stripTimer: null,
@@ -582,9 +617,10 @@ const AppView = {
 
     // The card list.
     AppView._feedShown = 20;
-    // #482: kanban filters are transient per app — reset alongside the
-    // feed pager whenever the card list is (re)built.
-    AppView._kanbanFilters = { q: '', priority: null, assignee: null, needsVote: false };
+    // #482: kanban filters are NOT reset here — they persist per app across
+    // in-app navigation and are (re)loaded per slug from sessionStorage when
+    // the board mounts in _repaintDevBody. Resetting on every card-list mount
+    // was the cause of filters vanishing on Back / tab switches.
 
     content.innerHTML = `
       <div class="flex flex-col h-full min-h-0">
@@ -1797,6 +1833,11 @@ const AppView = {
       // surviving _kanbanFilters, so filter state outlives the toggle.
       if (!document.getElementById('dev-kanban-filterbar')
           || !document.getElementById('dev-kanban-board')) {
+        // Restore this app's persisted filters before building the bar, so
+        // the controls (and the board) come back exactly as the user left
+        // them across navigation / reload. Keyed per slug, so switching apps
+        // shows that app's own filters (or a clean board).
+        AppView._kanbanFilters = AppView._loadKanbanFilters(App.currentApp);
         body.innerHTML = '<div id="dev-kanban-filterbar" class="mb-2"></div><div id="dev-kanban-board"></div>';
         AppView._renderKanbanFilterBar();
       }
@@ -2337,7 +2378,7 @@ const AppView = {
       AppView._repaintKanbanBoard();
     });
     el.querySelector('#dev-kanban-clear').addEventListener('click', () => {
-      AppView._kanbanFilters = { q: '', priority: null, assignee: null, needsVote: false };
+      AppView._kanbanFilters = AppView._defaultKanbanFilters();
       // Rebuild the bar so every control snaps back to its default value.
       AppView._renderKanbanFilterBar();
       AppView._repaintKanbanBoard();
@@ -2370,6 +2411,10 @@ const AppView = {
     if (AppView._dragState) return;
     const board = document.getElementById('dev-kanban-board');
     if (!board) return;
+    // Every filter-control change (and Clear) funnels through here, so this
+    // is the single write point that keeps the persisted per-app filters in
+    // sync. WS-driven repaints re-save the same values — idempotent.
+    AppView._saveKanbanFilters(App.currentApp);
     board.innerHTML = AppView._renderKanbanInner();
     // The headless-state poller is keyed off the cached issue data, same
     // as the list feed — filtering a generating row off-screen doesn't
