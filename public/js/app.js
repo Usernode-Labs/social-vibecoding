@@ -1587,6 +1587,7 @@ const App = {
     }
 
     // Feedback
+    const feedbackTitle = document.getElementById('feedback-title');
     const feedbackText = document.getElementById('feedback-text');
     const feedbackBtn = document.getElementById('feedback-submit');
     const feedbackStatus = document.getElementById('feedback-status');
@@ -1651,6 +1652,10 @@ const App = {
         // while the modal is open can't retarget an in-flight request.
         const target = feedbackTarget;
         const body = { description: text, target };
+        // #556: optional user-chosen title — omitted entirely when blank
+        // so the server auto-generates one as before.
+        const customTitle = feedbackTitle.value.trim();
+        if (customTitle) body.title = customTitle;
         if (target === 'app') body.appSlug = App.currentApp;
         const res = await fetch('/api/feedback', {
           method: 'POST',
@@ -1665,12 +1670,14 @@ const App = {
           feedbackStatus.className = 'text-sm mt-2 text-emerald-400';
           feedbackStatus.classList.remove('hidden');
           feedbackText.value = '';
+          feedbackTitle.value = '';
           // Lock the textarea and keep the submit button disabled for
           // the 1500ms "Thanks!" grace window so a user can't keep
           // typing (or re-fire cmd+enter) after their feedback has
           // already been filed — fixes #32. Both controls are
           // re-enabled when the modal is reopened below.
           feedbackText.disabled = true;
+          feedbackTitle.disabled = true;
           feedbackBtn.textContent = 'Submitted';
           // #125: make the new issue show up in this app's "Open Issues"
           // panel without a reload. The server seeds its issues cache and
@@ -1706,6 +1713,7 @@ const App = {
       // Reset any "Submitted" lock from a prior session so a returning
       // user can file another piece of feedback without reloading.
       feedbackText.disabled = false;
+      feedbackTitle.disabled = false;
       feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
       feedbackStatus.classList.add('hidden');
 
@@ -1754,7 +1762,9 @@ const App = {
     document.getElementById('feedback-cancel').addEventListener('click', () => {
       document.getElementById('feedback-modal').classList.add('hidden');
       feedbackText.value = '';
+      feedbackTitle.value = '';
       feedbackText.disabled = false;
+      feedbackTitle.disabled = false;
       feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
       feedbackStatus.classList.add('hidden');
     });
@@ -1766,6 +1776,15 @@ const App = {
     // Textareas swallow Enter by default (it inserts a newline), so we
     // only intercept when the modifier key is held.
     feedbackText.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        submitFeedback();
+      }
+    });
+    // #556: same shortcut in the optional title input. Plain Enter is
+    // NOT intercepted — the natural next step from the title is writing
+    // the description, and there's no <form> for Enter to submit.
+    feedbackTitle.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         submitFeedback();

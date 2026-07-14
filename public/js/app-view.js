@@ -3787,6 +3787,17 @@ const AppView = {
     const rowTitle = issue.created_by_username
       ? `${issue.title} · ${issue.created_by_username}`
       : issue.title;
+    // #556: author-only inline title edit, topic head only (noNav) — feed
+    // cards are whole-card tap targets, so an inline editor there would
+    // fight the delegated open handler. The check is cosmetic (decides
+    // whether the pencil renders); the PATCH route's author check is the
+    // authoritative gate, and it re-derives the same created_by_username.
+    const canEditTitle = !!(noNav && issue.created_by_username
+      && typeof App !== 'undefined' && App.user
+      && issue.created_by_username === App.user.username);
+    const editTitleBtn = canEditTitle
+      ? ` <button type="button" class="align-middle text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors" title="Edit this issue's title (you created it)" aria-label="Edit title" onclick="AppView.beginIssueTitleEdit(${n})"><svg class="w-3.5 h-3.5 inline -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></button>`
+      : '';
 
     html += `
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" data-ref-issue="${n}"${noNav ? '' : ` data-issue-row="${n}" title="Open this issue's discussion"`}>
@@ -3794,7 +3805,7 @@ const AppView = {
         <div class="flex-1 min-w-0">
           <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
             <div class="dev-card-headline">
-              <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words" title="${escapeHtml(rowTitle)}">${escapeHtml(issue.title)}</div>
+              <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words"${canEditTitle ? ` data-issue-title="${n}"` : ''} title="${escapeHtml(rowTitle)}">${escapeHtml(issue.title)}${editTitleBtn}</div>
               <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta"><a href="${href}" target="_blank" rel="noopener" class="font-mono text-violet-400 hover:underline">#${n}</a>${issue.created_by_username ? ` · ${escapeHtml(issue.created_by_username)}` : ''}</div>
             </div>
             ${fallbackChip}
@@ -3807,6 +3818,67 @@ const AppView = {
         ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
       </div>`;
     return html;
+  },
+
+  // #556: inline issue-title editor in the topic head. Swaps the title div
+  // (marked data-issue-title by _renderIssueRow's noNav variant) for an
+  // input + Save/Cancel. Cancel just repaints the head; Save PATCHes the
+  // rename route, then optimistically updates the cached _ghIssues row so
+  // this tab repaints even if its events socket is momentarily down (the
+  // server's issue_update broadcast covers everyone else).
+  beginIssueTitleEdit(n) {
+    const holder = document.querySelector(`#gc-thread-head [data-issue-title="${n}"]`);
+    const issue = (AppView._ghIssues || []).find((i) => i.number === n);
+    if (!holder || !issue) return;
+    holder.innerHTML = `
+      <div class="flex flex-wrap items-center gap-2">
+        <input id="dev-issue-title-input" type="text" maxlength="200"
+          class="flex-1 min-w-0 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
+        <button type="button" class="gc-vote-btn" onclick="AppView.saveIssueTitle(${n})">Save</button>
+        <button type="button" class="gc-vote-btn" onclick="AppView.cancelIssueTitleEdit()">Cancel</button>
+        <span id="dev-issue-title-error" class="w-full text-xs text-red-400 hidden"></span>
+      </div>`;
+    const input = document.getElementById('dev-issue-title-input');
+    input.value = issue.title || '';
+    input.focus();
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); AppView.saveIssueTitle(n); }
+      if (e.key === 'Escape') { e.preventDefault(); AppView.cancelIssueTitleEdit(); }
+    });
+  },
+
+  cancelIssueTitleEdit() {
+    // Repaint the head from the cached row — drops the editor.
+    AppView._renderTopicHead();
+  },
+
+  async saveIssueTitle(n) {
+    const input = document.getElementById('dev-issue-title-input');
+    const errEl = document.getElementById('dev-issue-title-error');
+    const issue = (AppView._ghIssues || []).find((i) => i.number === n);
+    if (!input || input.disabled || !issue || !AppView.appData) return;
+    const newTitle = input.value.trim();
+    // Empty or unchanged → treat as cancel (the server would no-op too).
+    if (!newTitle || newTitle === issue.title) { AppView._renderTopicHead(); return; }
+    input.disabled = true;
+    const showError = (msg) => {
+      input.disabled = false;
+      if (errEl) { errEl.textContent = msg; errEl.classList.remove('hidden'); }
+    };
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/github-issues/${n}/title`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: newTitle }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return showError(data.error || 'Failed to update the title');
+      issue.title = data.title || newTitle;
+      issue.title_fallback = false;
+      AppView._renderTopicHead();
+    } catch {
+      showError('Network error');
+    }
   },
 
   // ---- Merged (closed) PRs section ----------------------------------------
