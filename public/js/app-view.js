@@ -3433,15 +3433,205 @@ const AppView = {
     const roster = pr.status !== 'merged'
       ? `<div id="dev-vote-roster-${pr.id}" class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Loading votes…</div>`
       : '';
+    // "How voting works" explainer affordances — only on live proposals
+    // (the vote/time rules are settled once merged). The circular "?" sits
+    // on the meta line next to the tally that the card above renders; the
+    // one-line hint under the roster is the discoverable text entry point.
+    // Both carry data-voting-help and open the same popover (see _attrInit
+    // → _openVotingHelpPopover), reading the current topic item live.
+    const showHelp = pr.status !== 'merged';
+    const helpBtn = showHelp
+      ? ` <button type="button" class="voting-help-btn" data-voting-help aria-label="How voting and merges work" title="How voting and merges work">?</button>`
+      : '';
+    const helpHint = showHelp
+      ? `<div class="voting-help-hint mt-1">Merges are decided by votes over time. <button type="button" class="voting-help-link" data-voting-help>How voting works</button></div>`
+      : '';
     return `
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">
-        <div>${details.join(' · ')}</div>
+        <div>${details.join(' · ')}${helpBtn}</div>
         ${chips ? `<div class="mt-1 flex flex-wrap gap-1 items-center"><span>Linked issues:</span> ${chips}</div>` : ''}
         ${AppView._mergeConflictDetailHtml(pr)}
         ${AppView._checksDetailHtml(pr)}
         ${roster}
+        ${helpHint}
         ${lockedNote}
       </div>`;
+  },
+
+  // ── "How voting works" explainer ────────────────────────────────────
+  // A read-only, client-side explainer for the vote/merge rules, anchored
+  // in the focused proposal view (see _proposalDetailsHtml). The static
+  // rules blurb is kept in ONE place so copy edits happen once; it
+  // describes the SHAPE of the rules ("a few days", "shorter with more
+  // support") rather than exact durations, since the window lengths and
+  // fractions are env-tunable (MERGE_GATE_CONSTANTS in
+  // services/active-users.js) and per-app thresholds are on the roadmap
+  // (issue #428) — so quoting fixed numbers here would drift out of date.
+  _VOTING_HELP_RULES_HTML:
+    '<ul class="voting-help-rules">'
+    + '<li>Only people who’ve actually used the app recently count as voters. The number of Yes votes needed scales with how many active testers there are.</li>'
+    + '<li>A proposal with clear support and no objections merges on its own after a short visibility window (a few days), so everyone has a chance to look — <strong>silence counts as agreement</strong>.</li>'
+    + '<li>The more support a proposal has, the shorter the wait. A clear majority merges almost immediately; thin, unopposed support waits longer.</li>'
+    + '<li><strong>No</strong> votes make a proposal harder to pass: they raise the number of Yes votes needed and lengthen the wait.</li>'
+    + '<li>If enough people vote No, the proposal becomes <strong>Contested</strong> — the time-based path turns off and it needs a straight majority of Yes votes to merge.</li>'
+    + '<li>A proposal that’s being voted down with little support is closed automatically after a countdown (“Rejecting in …”).</li>'
+    + '<li>Even after winning the vote, a proposal only merges once its <strong>automated checks pass</strong> and it’s <strong>up to date with the main app</strong>. Locked apps also need an admin’s Yes.</li>'
+    + '</ul>',
+
+  // The live "This proposal, right now" line. Reads the serialized gate
+  // fields the /promoted endpoint attaches (votes_required,
+  // merge_window_ends_at, reject_window_ends_at, rejection_armed,
+  // contested) plus status/check_state/behind_main, so the wording never
+  // contradicts the tally pill / countdown beside it (voteCountPill). Pure
+  // given (pr + _proposalsCtx), so it's unit-testable under Node. Returns
+  // '' for a missing row.
+  _votingHelpText(pr) {
+    if (!pr) return '';
+    const ctx = AppView._proposalsCtx || {};
+    const yes = parseInt(pr.yes_count) || 0;
+    const no = parseInt(pr.no_count) || 0;
+    const snap = parseInt(pr.votes_required);
+    const required = (Number.isFinite(snap) && snap > 0)
+      ? snap : (parseInt(ctx.majority) || 1);
+    const active = parseInt(ctx.activeUsers) || Math.max(required, yes + no, 1);
+    const tally = `Currently ${yes} Yes, ${no} No.`;
+    const reached = yes >= required;
+
+    // Terminal / in-flight lifecycle states win first.
+    if (pr.status === 'merged') return 'This proposal has already merged into the app.';
+    if (pr.status === 'merging') return 'This passed and is being merged into the app right now.';
+
+    // A single merge-blocking clause (lowercase, no trailing period) when
+    // one applies — folded into the "reached" sentence, or appended as a
+    // note to the others so the explainer never implies a countdown will
+    // merge straight past a blocked gate. Ordered by checkAndMerge's own
+    // gate precedence (conflict → checks → behind → lock).
+    let blocker = '';
+    const mcs = pr.merge_conflict_state;
+    const check = pr.check_state;
+    if (mcs === 'failed') {
+      blocker = 'automatic conflict resolution failed, so the proposer must resolve it before it can merge';
+    } else if (mcs === 'resolving' || pr.resolving === true) {
+      blocker = 'conflicts with the main app are being reconciled automatically before it can merge';
+    } else if (check === 'failing') {
+      blocker = 'its automated checks are failing, so it can’t merge until they pass';
+    } else if (check === 'pending') {
+      blocker = 'its automated checks are still running, so it can’t merge until they finish';
+    } else if (check === 'error') {
+      blocker = 'its automated checks couldn’t run, so it can’t merge until they pass';
+    } else if ((parseInt(pr.behind_main, 10) || 0) > 0 || mcs === 'behind' || mcs === 'conflict') {
+      blocker = 'it’s behind the main app and will sync automatically before merging';
+    } else if (reached && ctx.locked) {
+      blocker = 'the app is locked, so it also needs an admin’s Yes';
+    }
+
+    // Countdown geometry, mirroring voteCountPill.
+    const now = Date.now();
+    const mergeEnds = pr.merge_window_ends_at ? Date.parse(pr.merge_window_ends_at) : NaN;
+    const inMergeWindow = Number.isFinite(mergeEnds) && mergeEnds > now;
+    const rejectEnds = pr.reject_window_ends_at ? Date.parse(pr.reject_window_ends_at) : NaN;
+    const inReject = Number.isFinite(rejectEnds) && rejectEnds > now;
+    const lazyLead = !reached && yes >= 1 && yes > no;
+    const contested = !!pr.contested;
+
+    let sentence;
+    let foldedBlocker = false;
+    if (!contested && inMergeWindow && (reached || lazyLead)) {
+      const cd = AppView._fmtCountdown(mergeEnds - now);
+      sentence = reached
+        ? `There are enough Yes votes (${yes} of ${required}) — this merges in ${cd} unless someone objects.`
+        : `It has support (${yes} of ${required} needed) and no objections — it merges in ${cd} unless the vote changes; silence counts as agreement.`;
+    } else if (pr.rejection_armed && inReject) {
+      const cd = AppView._fmtCountdown(rejectEnds - now);
+      sentence = `More No than Yes, without enough support — this closes in ${cd} unless it gains support. ${tally}`;
+    } else if (contested) {
+      sentence = `It’s contested — enough people object that the timed path is off, so it now needs a clear majority of Yes votes to pass. ${tally}`;
+    } else if (reached) {
+      sentence = blocker
+        ? `It has enough Yes votes (${yes} of ${required}), but it can’t merge yet: ${blocker}.`
+        : `It has the votes it needs (${yes} of ${required}) and green checks — queued to merge shortly.`;
+      foldedBlocker = true;
+    } else {
+      sentence = `It needs ${required} of ${active} active testers to vote Yes. ${tally}`;
+    }
+    if (blocker && !foldedBlocker) sentence += ` Note: ${blocker}.`;
+    return sentence;
+  },
+
+  _closeVotingHelpPopover() {
+    const el = document.getElementById('voting-help-popover');
+    if (el) el.remove();
+    AppView._votingHelpOpen = null;
+  },
+
+  // Open the "How voting & merges work" popover anchored under `anchorEl`
+  // (the "?" button or the inline "How voting works" link). Read-only —
+  // renders the live status line + the static rules blurb, no fetch.
+  // Modeled on _openAttrPopover: a fixed, viewport-clamped element on
+  // document.body, toggled off on re-trigger / outside-click / scroll /
+  // resize / Escape (wired in _attrInit).
+  _openVotingHelpPopover(anchorEl, pr) {
+    // Toggle closed if one is already open (only one proposal is in view).
+    if (AppView._votingHelpOpen) { AppView._closeVotingHelpPopover(); return; }
+    AppView._closeAttrPopover();
+
+    const pop = document.createElement('div');
+    pop.id = 'voting-help-popover';
+    pop.className = 'voting-help-popover';
+    pop.setAttribute('role', 'dialog');
+    pop.setAttribute('aria-label', 'How voting and merges work');
+    const live = AppView._votingHelpText(pr);
+    pop.innerHTML =
+      '<div class="attr-pop-head">How voting &amp; merges work</div>'
+      + (live
+        ? '<div class="vh-live"><div class="vh-live-title">This proposal, right now</div>'
+          + `<div class="vh-live-body">${escapeHtml(live)}</div></div>`
+        : '')
+      + `<div class="vh-rules">${AppView._VOTING_HELP_RULES_HTML}</div>`;
+    document.body.appendChild(pop);
+    AppView._votingHelpOpen = { prId: pr && pr.id };
+
+    // Position under the anchor, fully clamped to the viewport so it never
+    // runs off the bottom or sides on small / mobile screens. Falls back to
+    // the top-left corner when the anchor has no rect (e.g. under the
+    // unit-test sandbox). The popover has overflow-y:auto, so capping
+    // max-height to the room actually available makes its body scroll
+    // internally instead of spilling past the viewport edge.
+    const MARGIN = 8;
+    const GAP = 6;
+    const rect = anchorEl && anchorEl.getBoundingClientRect
+      ? anchorEl.getBoundingClientRect()
+      : { top: MARGIN, bottom: MARGIN, left: MARGIN, right: MARGIN };
+    const vw = (typeof window !== 'undefined' && window.innerWidth) || 360;
+    const vh = (typeof window !== 'undefined' && window.innerHeight) || 640;
+
+    // Width: preferred 320, but never wider than the viewport minus margins.
+    const W = Math.min(320, vw - MARGIN * 2);
+    pop.style.position = 'fixed';
+    pop.style.width = `${W}px`;
+
+    // Horizontal: align to the anchor's left edge, then clamp so the whole
+    // popover stays on-screen (both edges within the margins).
+    const left = Math.max(MARGIN, Math.min(Math.round(rect.left || MARGIN), vw - W - MARGIN));
+    pop.style.left = `${left}px`;
+
+    // Vertical: prefer opening below the anchor; flip above when there's
+    // more room there. Either way, cap the height to the chosen side's
+    // available space so it fits within the viewport.
+    const spaceBelow = vh - (rect.bottom || 0) - GAP - MARGIN;
+    const spaceAbove = (rect.top || 0) - GAP - MARGIN;
+    const placeBelow = spaceBelow >= spaceAbove;
+    const avail = Math.max(120, Math.floor(placeBelow ? spaceBelow : spaceAbove));
+    pop.style.maxHeight = `${avail}px`;
+    if (placeBelow) {
+      pop.style.top = `${Math.round((rect.bottom || 0) + GAP)}px`;
+      pop.style.bottom = 'auto';
+    } else {
+      // Anchor to the bottom so the popover grows upward from just above
+      // the trigger, keeping its top edge inside the viewport.
+      pop.style.bottom = `${Math.round(vh - (rect.top || 0) + GAP)}px`;
+      pop.style.top = 'auto';
+    }
   },
 
   // #47: expanded per-test detail for the proposal detail screen — the
@@ -4107,13 +4297,44 @@ const AppView = {
         AppView._openAttrPopover(chip);
         return;
       }
-      // A click anywhere outside the open popover closes it.
+      // "How voting works" help affordance (topic-head "?" button + the
+      // inline "How voting works" link). Both carry data-voting-help and
+      // open the same read-only popover for the current topic item.
+      const help = e.target.closest('[data-voting-help]');
+      if (help) {
+        e.preventDefault();
+        e.stopPropagation();
+        AppView._openVotingHelpPopover(help, AppView._findTopicItem());
+        return;
+      }
+      // A click anywhere outside an open popover closes it.
       if (!e.target.closest('#attr-popover')) AppView._closeAttrPopover();
+      if (!e.target.closest('#voting-help-popover')) AppView._closeVotingHelpPopover();
     });
-    // Reposition / close on scroll + resize so the popover never drifts
-    // away from its chip.
-    window.addEventListener('resize', () => AppView._closeAttrPopover());
-    document.addEventListener('scroll', () => AppView._closeAttrPopover(), true);
+    // Reposition / close on scroll + resize so the popovers never drift
+    // away from their anchor.
+    window.addEventListener('resize', () => {
+      AppView._closeAttrPopover();
+      AppView._closeVotingHelpPopover();
+    });
+    document.addEventListener('scroll', (e) => {
+      AppView._closeAttrPopover();
+      // Ignore the popover's OWN internal overflow scrolling (it has a
+      // capped max-height and scrolls its rules list) — only an
+      // outside-page scroll should dismiss it. The scroll event's target
+      // is the scrolled element (or `document` for the page itself).
+      const t = e.target;
+      const insidePopover = t && t.nodeType === 1 && typeof t.closest === 'function'
+        && t.closest('#voting-help-popover');
+      if (!insidePopover) AppView._closeVotingHelpPopover();
+    }, true);
+    // Escape dismisses either popover (a11y — the help popover is a dialog).
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        AppView._closeAttrPopover();
+        AppView._closeVotingHelpPopover();
+      }
+    });
   },
 
   _closeAttrPopover() {
