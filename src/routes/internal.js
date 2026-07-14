@@ -515,7 +515,7 @@ function internalRoutes(_config) {
       }
       try {
         const { rows } = await pool.query(
-          `SELECT id, kind, filename, content_type, size_bytes, created_at
+          `SELECT id, kind, filename, content_type, size_bytes, meta, created_at
              FROM chat_session_attachments
             WHERE session_id = $1 AND message_id IS NOT NULL
             ORDER BY created_at ASC, id ASC`,
@@ -526,6 +526,7 @@ function internalRoutes(_config) {
           attachments: rows.map((r) => ({
             id: r.id, kind: r.kind, filename: r.filename,
             contentType: r.content_type, sizeBytes: r.size_bytes,
+            meta: r.meta || null,
             createdAt: r.created_at,
           })),
         });

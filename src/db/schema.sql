@@ -1431,27 +1431,33 @@ CREATE TABLE IF NOT EXISTS user_agent_files (
 CREATE INDEX IF NOT EXISTS idx_user_agent_files_user ON user_agent_files (user_id, kind, name);
 COMMENT ON TABLE user_agent_files IS 'staging:private';
 
--- Dev-chat file attachments (#450). Users attach images / text files to
--- dev-chat messages as extra context for the Mayor, scout, and coding
--- agent. Bytea-in-Postgres like session_visuals (the platform container
+-- Dev-chat file attachments (#450). Users attach files to dev-chat
+-- messages as extra context for the Mayor, scout, and coding agent.
+-- Bytea-in-Postgres like session_visuals (the platform container
 -- has no persistent file volume); ids are random 32-hex tokens generated
 -- in Node. message_id is NULL between upload and send — the chat handler
 -- links it when the message posts, and server.js's session sweeper GCs
 -- orphans older than 24h. Retention otherwise follows the parent session
--- (ON DELETE CASCADE), bounded by a 25 MB per-session cap at upload time.
+-- (ON DELETE CASCADE), bounded by a 50 MB per-session cap at upload time.
 CREATE TABLE IF NOT EXISTS chat_session_attachments (
   id           VARCHAR(32) PRIMARY KEY,
   session_id   INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
   message_id   INTEGER REFERENCES chat_session_messages(id) ON DELETE CASCADE,
   user_id      INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  -- 'image' (png/jpeg/gif/webp, magic-byte verified) | 'text' (UTF-8)
+  -- 'image' (png/jpeg/gif/webp, magic-byte verified) | 'text' (UTF-8,
+  -- inlined into prompts) | 'zip' (central-directory-validated archive)
+  -- | 'binary' (opaque pass-through for the coding agent)
   kind         VARCHAR(8)   NOT NULL,
   filename     VARCHAR(256) NOT NULL,
   content_type VARCHAR(64)  NOT NULL,
   size_bytes   INTEGER      NOT NULL,
+  -- Kind-specific metadata captured at upload; for 'zip' the manifest
+  -- { entryCount, uncompressedBytes, topLevel } from validateZip.
+  meta         JSONB,
   data         BYTEA        NOT NULL,
   created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
+ALTER TABLE chat_session_attachments ADD COLUMN IF NOT EXISTS meta JSONB;
 CREATE INDEX IF NOT EXISTS idx_chat_session_attachments_session ON chat_session_attachments(session_id);
 CREATE INDEX IF NOT EXISTS idx_chat_session_attachments_message ON chat_session_attachments(message_id);
 CREATE INDEX IF NOT EXISTS idx_chat_session_attachments_orphan

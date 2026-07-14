@@ -1,12 +1,13 @@
 #!/bin/sh
-# Read-only: list this session's dev-chat file attachments, or download
-# ONE attachment's bytes to a local file (#450).
+# Read-only: list this session's dev-chat file attachments, download
+# ONE attachment's bytes to a local file, or download-and-extract a zip
+# attachment into a directory (#450).
 #
-# Users can attach images / text files to their dev-chat messages. Text
-# files are inlined into the dispatch prompt directly; images can't ride
-# an env var, so this CLI fetches them from the platform's internal
-# attachments endpoint into the worker container, where Claude Code's
-# Read tool can view them natively.
+# Users can attach images / text files / zips / arbitrary binaries to
+# their dev-chat messages. Text files are inlined into the dispatch
+# prompt directly; everything else can't ride an env var, so this CLI
+# fetches them from the platform's internal attachments endpoint into
+# the worker container, where Claude Code's tools can use them.
 #
 # Like usernode-issues, this is allowed in BOTH build and scout modes:
 # it authenticates with ISSUES_JWT (session-scoped, read-only) —
@@ -16,15 +17,26 @@
 # Usage:
 #   usernode-attachments                 list attachments as JSON
 #                                        ({ ok, attachments: [{ id, kind,
-#                                        filename, contentType, sizeBytes }] })
+#                                        filename, contentType, sizeBytes,
+#                                        meta }] })
 #   usernode-attachments <id> <outpath>  download that attachment's bytes
 #                                        to <outpath>
+#   usernode-attachments <id> --unzip <dir>
+#                                        download a zip attachment and
+#                                        extract it into <dir> (must be
+#                                        under /home/node/). The archive's
+#                                        entry names were already
+#                                        traversal/symlink/bomb-validated
+#                                        platform-side at upload; unzip's
+#                                        own ../-stripping is a second
+#                                        layer behind that.
 #
 # Endpoints: GET /api/internal/sessions/$SESSION_ID/attachments
 #            GET /api/internal/sessions/$SESSION_ID/attachments/<id>
 #   Authorization: Bearer $ISSUES_JWT
-# List form prints the JSON body to stdout; download form prints a tiny
-# status JSON. Exit 0 on success, non-zero otherwise — always parseable.
+# List form prints the JSON body to stdout; download/extract forms print
+# a tiny status JSON. Exit 0 on success, non-zero otherwise — always
+# parseable.
 
 set -u
 
@@ -56,7 +68,7 @@ if [ -z "$ATT_ID" ]; then
   exit 1
 fi
 
-# Download form: id must be 32 lowercase hex chars; outpath required.
+# Download/extract forms: id must be 32 lowercase hex chars.
 case "$ATT_ID" in
   *[!0-9a-f]*)
     echo '{"ok":false,"note":"bad attachment id"}'
@@ -64,8 +76,62 @@ case "$ATT_ID" in
     ;;
 esac
 if [ "${#ATT_ID}" -ne 32 ] || [ -z "$OUT_PATH" ]; then
-  echo '{"ok":false,"note":"usage: usernode-attachments <id> <outpath>"}'
+  echo '{"ok":false,"note":"usage: usernode-attachments <id> <outpath> | <id> --unzip <dir>"}'
   exit 1
+fi
+
+# ── Extract form: <id> --unzip <dir> ──────────────────────────────────
+if [ "$OUT_PATH" = "--unzip" ]; then
+  DEST_DIR="${3:-}"
+  if [ -z "$DEST_DIR" ]; then
+    echo '{"ok":false,"note":"usage: usernode-attachments <id> --unzip <dir>"}'
+    exit 1
+  fi
+  # Keep extraction inside the container's home — never the repo tree's
+  # parent or anywhere the host might see.
+  case "$DEST_DIR" in
+    /home/node/*) ;;
+    *)
+      echo '{"ok":false,"note":"extract dir must be under /home/node/"}'
+      exit 1
+      ;;
+  esac
+  TMP_ZIP=$(mktemp /tmp/usernode-att-XXXXXX.zip) || {
+    echo '{"ok":false,"note":"mktemp failed"}'
+    exit 1
+  }
+  URL="${PLATFORM_URL%/}/api/internal/sessions/${SESSION_ID}/attachments/${ATT_ID}"
+  CODE=$(curl -sS -X GET \
+    -H "Authorization: Bearer $ISSUES_JWT" \
+    -o "$TMP_ZIP" \
+    -w "%{http_code}" \
+    --max-time 60 \
+    "$URL" 2>/dev/null) || {
+    rm -f "$TMP_ZIP"
+    echo '{"ok":false,"note":"fetch failed"}'
+    exit 1
+  }
+  if [ "$CODE" != "200" ]; then
+    rm -f "$TMP_ZIP"
+    echo '{"ok":false,"note":"unavailable"}'
+    exit 1
+  fi
+  mkdir -p "$DEST_DIR" || {
+    rm -f "$TMP_ZIP"
+    echo '{"ok":false,"note":"mkdir failed"}'
+    exit 1
+  }
+  # -n never overwrites existing files (re-runs are safe); the entry
+  # names were traversal-validated platform-side at upload.
+  if ! unzip -q -n "$TMP_ZIP" -d "$DEST_DIR" >/dev/null 2>&1; then
+    rm -f "$TMP_ZIP"
+    echo '{"ok":false,"note":"unzip failed"}'
+    exit 1
+  fi
+  rm -f "$TMP_ZIP"
+  FILES=$(find "$DEST_DIR" -type f | wc -l | tr -d ' ')
+  printf '{"ok":true,"dir":"%s","files":%s}\n' "$DEST_DIR" "$FILES"
+  exit 0
 fi
 
 URL="${PLATFORM_URL%/}/api/internal/sessions/${SESSION_ID}/attachments/${ATT_ID}"
