@@ -101,8 +101,10 @@ function boardOrderRoutes(config) {
 
   router.get('/api/apps/:slug/board-order', async (req, res) => {
     try {
+      // View-level (#621): read-only viewers render the kanban in the
+      // saved order; persisting a reorder (POST below) stays collab.
       const app = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
       );
       if (!app) return res.status(404).json({ error: 'App not found' });
 

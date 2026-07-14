@@ -41,6 +41,7 @@ async function migrate(config) {
   await seedStagingFailedApp(pool);
   await seedStagingForkLineage(pool);
   await seedStagingMembersPanel(pool);
+  await seedStagingReadonlyDevTab(pool);
   await seedStagingYourApps(pool, config);
   await seedStagingAppQuotaUsers(pool);
   await seedStagingViewOnlyAdmin(pool);
@@ -2154,6 +2155,69 @@ async function seedStagingMembersPanel(pool) {
     log.info('db', 'Staging members-panel fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging members-panel seeding failed', { message: err.message });
+  }
+}
+
+// #621: fixtures for read-only Dev tab access. A collab-private but
+// VIEW-PUBLIC app the staging tester is NOT a collaborator on, so a
+// non-admin account sees its Dev tab in read-only mode (admins bypass
+// every gate, so testing needs a non-admin login). Seeds the app, its
+// builder-member owner, a few general-chat messages, one open issue and
+// one promoted proposal with a vote so the feed, chat history and tally
+// all render non-empty. Ids in the free 90008x range; idempotent via
+// explicit ids + ON CONFLICT DO NOTHING; strictly a no-op outside
+// staging.
+async function seedStagingReadonlyDevTab(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password)
+       VALUES (900080, 'staging-demo-builder', 'staging-demo-not-a-login')
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by)
+       VALUES (900080, 'Staging demo read-only app', 'staging-demo-readonly', 'running',
+               'private', 'public', 900080)
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, invited_by, accepted_at)
+       VALUES (900080, 900080, 'member', 900080, NOW())
+       ON CONFLICT (app_id, user_id) DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO chat_messages (id, app_id, user_id, content, msg_type, created_at)
+       VALUES
+         (900080, 900080, 900080, 'Staging demo: welcome to the read-only demo app''s group chat.', 'message', NOW() - INTERVAL '30 minutes'),
+         (900081, 900080, 900080, 'Staging demo: non-collaborators can read this history but the composer is replaced with a notice.', 'message', NOW() - INTERVAL '20 minutes'),
+         (900082, 900080, 900080, 'Staging demo: the proposal below shows its tally without vote buttons for read-only viewers.', 'message', NOW() - INTERVAL '10 minutes')
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO issues (id, app_id, title, description, created_by, status)
+       VALUES (900080, 900080, 'Staging demo read-only issue',
+               'Staging demo issue — visible to read-only viewers, with no vote buttons.',
+               900080, 'open')
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_title, status, promoted_at, created_at)
+       VALUES (900080, 900080, 900080, 'staging-demo/readonly-proposal', 900080,
+               'Staging demo read-only proposal — tally visible, voting hidden', 'promoted',
+               NOW() - INTERVAL '1 hour', NOW() - INTERVAL '2 hours')
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO pr_votes (session_id, user_id, vote)
+       VALUES (900080, 900080, 'yes')
+       ON CONFLICT (session_id, user_id) DO NOTHING`
+    );
+    log.info('db', 'Staging read-only dev-tab fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Staging read-only dev-tab seeding failed', { message: err.message });
   }
 }
 

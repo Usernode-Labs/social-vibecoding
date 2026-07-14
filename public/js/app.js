@@ -2628,15 +2628,9 @@ const App = {
       subTab = 'forum';
       ref = null;
     }
-    // The Dev mode is gated for non-collaborators of an invite-only app
-    // (the button is hidden by AppView.open; this catches hash/back-
-    // forward/programmatic requests). The server enforces the same gate
-    // on every API behind it.
-    if (tab === 'dev' && AppView.appData && AppView.appData.can_collaborate === false) {
-      tab = 'app';
-      subTab = null;
-      ref = null;
-    }
+    // #621: the Dev mode is visible to non-collaborators too, read-only
+    // (see AppView.readOnly). Only the settings sub-page stays
+    // collaborator-facing — renderDevView coerces it back to the feed.
     App.currentTab = tab;
     App.currentSubTab = tab === 'dev' ? (subTab || 'forum') : null;
     document.querySelectorAll('.app-tab').forEach((btn) => {

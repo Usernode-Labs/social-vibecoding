@@ -334,7 +334,11 @@ function loadWs() {
   // swallowed as warnings and never affect the INSERT under test.
   stub(ids.notifications, {});
   stub(ids.events, { record() {}, EVENT_TYPES: {} });
-  stub(ids.appAccess, {});
+  // #621: handleMessage's write gate consults checkAppAccess before every
+  // mutating message — pass everyone so these tests keep exercising the
+  // length-cap semantics (the gate has its own tests in
+  // readonly-dev-access.test.js).
+  stub(ids.appAccess, { checkAppAccess: async () => true });
   delete require.cache[ids.subject];
   const ws = require('../src/services/ws');
   Module._load = _origLoad;
@@ -354,6 +358,10 @@ test('handleMessage caps an over-length chat body at MAX_CHAT_LEN on insert', as
   let insertedContent = null;
   const pool = {
     async query(sql, params) {
+      // #621: the write gate resolves the app first — answer collab-public.
+      if (/FROM apps WHERE id/.test(sql)) {
+        return { rows: [{ id: params[0], collab_visibility: 'public', view_visibility: 'public' }] };
+      }
       if (/INSERT INTO chat_messages/.test(sql)) {
         insertedContent = params[2];
         return { rows: [{ id: 1, created_at: '2026-06-16T00:00:00.000Z' }] };
@@ -371,6 +379,10 @@ test('handleMessage caps an over-length edit body at MAX_CHAT_LEN on update', as
   let updatedContent = null;
   const pool = {
     async query(sql, params) {
+      // #621: the write gate resolves the app first — answer collab-public.
+      if (/FROM apps WHERE id/.test(sql)) {
+        return { rows: [{ id: params[0], collab_visibility: 'public', view_visibility: 'public' }] };
+      }
       if (/SELECT user_id, msg_type/.test(sql)) {
         return { rows: [{ user_id: 2, msg_type: 'message', thread_type: null, thread_ref: null }] };
       }

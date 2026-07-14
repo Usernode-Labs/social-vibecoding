@@ -1115,11 +1115,13 @@ function voteRoutes(config) {
     }
   });
 
-  // List promoted sessions (for the vote panel in group chat)
+  // List promoted sessions (for the vote panel in group chat).
+  // View-level (#621): read-only viewers see proposals + tallies;
+  // voting itself stays collab-gated on POST /api/sessions/:id/vote.
   router.get('/api/apps/:slug/promoted', async (req, res) => {
     try {
       const gatedApp = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'collab', `${appAccess.ACCESS_COLUMNS}, locked`
+        pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, locked`
       );
       if (!gatedApp) return res.status(404).json({ error: 'App not found' });
       const appRows = [gatedApp];
@@ -1281,11 +1283,11 @@ function voteRoutes(config) {
     }
   });
 
-  // List merged sessions
+  // List merged sessions. View-level (#621) — read-only history.
   router.get('/api/apps/:slug/merged', async (req, res) => {
     try {
       const gatedApp = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
       );
       if (!gatedApp) return res.status(404).json({ error: 'App not found' });
       const appRows = [gatedApp];
@@ -1412,8 +1414,10 @@ function voteRoutes(config) {
   // (active rows are normally fully cached, but this stays robust).
   router.get('/api/apps/:slug/proposals/:id', async (req, res) => {
     try {
+      // View-level (#621): read-only viewers can open a proposal's
+      // topic view (my_vote resolves to null for them).
       const gatedApp = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
       );
       if (!gatedApp) return res.status(404).json({ error: 'App not found' });
 

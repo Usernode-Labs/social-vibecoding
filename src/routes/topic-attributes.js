@@ -36,8 +36,10 @@ function topicAttributeRoutes(config) {
 
   router.get('/api/apps/:slug/topics/:targetType/:targetRef/attributes', async (req, res) => {
     try {
+      // View-level (#621): priority/assignee summaries are read-only;
+      // casting an attribute vote (POST below) stays collab-gated.
       const app = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
       );
       if (!app) return res.status(404).json({ error: 'App not found' });
 

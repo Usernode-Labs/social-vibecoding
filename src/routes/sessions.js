@@ -392,8 +392,10 @@ function sessionRoutes(config) {
   // List sessions for an app (user's own)
   router.get('/api/apps/:slug/sessions', async (req, res) => {
     try {
+      // View-level (#621): the query below is owner-scoped, so a
+      // read-only viewer just gets an empty list instead of a 404.
       const app = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
       );
       if (!app) return res.status(404).json({ error: 'App not found' });
       const appRows = [app];
@@ -449,8 +451,10 @@ function sessionRoutes(config) {
   //   the proposal card will inherit on promotion.
   router.get('/api/apps/:slug/shared-sessions', async (req, res) => {
     try {
+      // View-level (#621): explicitly-shared rows are metadata-only by
+      // design, so read-only viewers may see them.
       const app = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
       );
       if (!app) return res.status(404).json({ error: 'App not found' });
 

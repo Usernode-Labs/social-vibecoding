@@ -249,11 +249,12 @@ function issueRoutes(config) {
   // /close): collab-level access via the issue's app, 404 on deny.
   router.use('/api/issues/:id', appAccess.issueCollabGuard(pool));
 
-  // List issues for an app
+  // List issues for an app. View-level (#621): read-only viewers see
+  // the issue board; creating/voting stays collab-gated.
   router.get('/api/apps/:slug/issues', async (req, res) => {
     try {
       const gatedApp = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
       );
       if (!gatedApp) return res.status(404).json({ error: 'App not found' });
 
@@ -619,8 +620,9 @@ function issueRoutes(config) {
   // ----------------------------------------------------------------
   router.get('/api/apps/:slug/github-issues', async (req, res) => {
     try {
+      // View-level (#621): the GitHub issue list is read-only.
       const app = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'collab', `${appAccess.ACCESS_COLUMNS}, repo_url`
+        pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, repo_url`
       );
       if (!app) return res.status(404).json({ error: 'App not found' });
 
@@ -959,8 +961,9 @@ function issueRoutes(config) {
   // ----------------------------------------------------------------
   router.get('/api/apps/:slug/github-issues/:number/comments', async (req, res) => {
     try {
+      // View-level (#621): comment history is read-only.
       const app = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'collab', `${appAccess.ACCESS_COLUMNS}, repo_url`
+        pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, repo_url`
       );
       if (!app) return res.status(404).json({ error: 'App not found' });
 

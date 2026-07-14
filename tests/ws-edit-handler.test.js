@@ -45,7 +45,11 @@ function loadWs() {
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.notifications, {});
   stub(ids.events, { record() {}, EVENT_TYPES: {} });
-  stub(ids.appAccess, {});
+  // #621: handleMessage's write gate consults checkAppAccess before every
+  // mutating message — pass everyone so these suites keep testing the edit
+  // semantics themselves (the gate has its own tests in
+  // readonly-dev-access.test.js).
+  stub(ids.appAccess, { checkAppAccess: async () => true });
 
   delete require.cache[ids.subject];
   const ws = require('../src/services/ws');
@@ -69,6 +73,11 @@ function makeEditPool(selectRows) {
     select() { return seen.find((q) => /SELECT user_id, msg_type/.test(q.sql)); },
     async query(sql, params) {
       seen.push({ sql, params });
+      // #621: the write gate resolves the app before any edit statement
+      // runs — answer with a collab-public app so the gate passes.
+      if (/FROM apps WHERE id/.test(sql)) {
+        return { rows: [{ id: params[0], collab_visibility: 'public', view_visibility: 'public' }] };
+      }
       if (/SELECT user_id, msg_type/.test(sql)) return { rows: selectRows };
       if (/UPDATE chat_messages SET content/.test(sql)) {
         return { rows: [{ edited_at: '2026-06-16T18:41:00.000Z' }] };
@@ -116,20 +125,25 @@ for (const msgType of ['system', 'vote', 'conflict', 'spec_share']) {
   });
 }
 
-test('empty / whitespace-only content is rejected before any query', async () => {
+// #621: the collab write gate resolves the app before the edit case runs,
+// so "no edit statements" now means no SELECT/UPDATE beyond the gate's
+// app/membership lookups rather than a fully empty query log.
+test('empty / whitespace-only content is rejected before any edit statement', async () => {
   const { handleMessage } = loadWs();
   const pool = makeEditPool(ownMessageRow);
   const client = { user: { id: 5, username: 'alice' }, appId: 7 };
   await handleMessage(pool, client, { type: 'edit', messageId: 42, content: '   \n  ' });
-  assert.equal(pool.seen.length, 0, 'no SELECT or UPDATE for an empty edit');
+  assert.equal(pool.select(), undefined, 'no authorization SELECT for an empty edit');
+  assert.equal(pool.update(), undefined, 'no UPDATE for an empty edit');
 });
 
-test('invalid messageId is rejected before any query', async () => {
+test('invalid messageId is rejected before any edit statement', async () => {
   const { handleMessage } = loadWs();
   const pool = makeEditPool(ownMessageRow);
   const client = { user: { id: 5, username: 'alice' }, appId: 7 };
   await handleMessage(pool, client, { type: 'edit', messageId: 'nope', content: 'x' });
-  assert.equal(pool.seen.length, 0, 'non-integer messageId short-circuits');
+  assert.equal(pool.select(), undefined, 'non-integer messageId short-circuits');
+  assert.equal(pool.update(), undefined, 'no UPDATE for a bad messageId');
 });
 
 test('content is capped at MAX_CHAT_LEN (8000) characters', async () => {
