@@ -124,11 +124,6 @@
       "expectSelector": ".attr-avatar"
     },
     {
-      "name": "Task cards show the Assign to me toggle button",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": ".attr-assign-me"
-    },
-    {
       "name": "Close-issue governance card renders in the dev board",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#close-issue-form",

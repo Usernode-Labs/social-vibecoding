@@ -131,13 +131,6 @@ function makeMockPool() {
         else store.push({ app_id: appId, target_type: type, target_ref: ref, field, value, user_id: userId, created_at: ts });
         return { rows: [] };
       }
-      // clearVote — remove only the caller's row for this target+field.
-      if (/DELETE FROM topic_attribute_votes/.test(sql)) {
-        const [appId, type, ref, field, userId] = params;
-        const i = store.findIndex((r) => r.app_id === appId && r.target_type === type && r.target_ref === ref && r.field === field && r.user_id === userId);
-        if (i >= 0) store.splice(i, 1);
-        return { rows: [] };
-      }
       throw new Error(`unexpected SQL in mock: ${sql.slice(0, 60)}`);
     },
   };
@@ -182,40 +175,6 @@ test('summarizeForTargets returns top + count + myValue per target', async () =>
   assert.equal(map.get(7).assignee.top, null); // untouched field → placeholder
   assert.equal(map.get(8).assignee.top, 'alice');
   assert.equal(map.get(8).assignee.myValue, null); // user 3 didn't vote here
-});
-
-// #600: clearVote removes the caller's own vote (the "Assign to me" toggle
-// off / unassign path).
-test('clearVote removes only the caller\'s row + is idempotent', async () => {
-  const pool = makeMockPool();
-  await attrs.castVote(pool, 1, 'issue', 7, 'assignee', 'alice', 1);
-  await attrs.castVote(pool, 1, 'issue', 7, 'assignee', 'bob', 2);
-  assert.equal(pool.store.length, 2);
-
-  // User 1 clears their own vote → only their row goes; user 2 untouched.
-  const after = await attrs.clearVote(pool, 1, 'issue', 7, 'assignee', 1);
-  assert.equal(pool.store.length, 1);
-  assert.equal(pool.store[0].user_id, 2);
-  assert.equal(after.myValue, null, 'caller no longer backs any option');
-  assert.equal(after.options.length, 1);
-  assert.equal(after.options[0].value, 'bob', 'refreshed tally re-ranks to the survivor');
-
-  // Clearing again is a no-op that still returns the current tally.
-  const again = await attrs.clearVote(pool, 1, 'issue', 7, 'assignee', 1);
-  assert.equal(pool.store.length, 1);
-  assert.equal(again.options[0].value, 'bob');
-});
-
-test('clearVote leaves the sibling field + other targets alone', async () => {
-  const pool = makeMockPool();
-  await attrs.castVote(pool, 1, 'issue', 7, 'assignee', 'alice', 1);
-  await attrs.castVote(pool, 1, 'issue', 7, 'priority', 'high', 1);
-  await attrs.castVote(pool, 1, 'issue', 8, 'assignee', 'alice', 1);
-
-  await attrs.clearVote(pool, 1, 'issue', 7, 'assignee', 1);
-  assert.equal(pool.store.length, 2, 'only the (7, assignee) row is removed');
-  assert.ok(pool.store.some((r) => r.target_ref === 7 && r.field === 'priority'), 'priority on 7 survives');
-  assert.ok(pool.store.some((r) => r.target_ref === 8 && r.field === 'assignee'), 'assignee on 8 survives');
 });
 
 // ── HTTP endpoints ──────────────────────────────────────────────────────
@@ -282,35 +241,6 @@ test('POST then GET round-trips the option list + myValue', async () => {
   assert.equal(get.options.find((o) => o.value === 'medium').count, 1);
 });
 
-// #600: the DELETE endpoint backing the "Assigned to you" → unassign toggle.
-test('DELETE clears the caller\'s vote and round-trips to "no vote"', async () => {
-  // Assign myself, confirm the vote lands, then DELETE it back off.
-  const post = await fetch(`${base}/api/apps/demo/topics/issue/42/attributes`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ field: 'assignee', value: 'tester' }),
-  });
-  assert.equal(post.status, 200);
-  assert.equal((await post.json()).myValue, 'tester');
-
-  const del = await fetch(`${base}/api/apps/demo/topics/issue/42/attributes?field=assignee`, { method: 'DELETE' });
-  assert.equal(del.status, 200);
-  const cleared = await del.json();
-  assert.equal(cleared.field, 'assignee');
-  assert.equal(cleared.myValue, null, 'caller no longer holds the assignment');
-  assert.ok(!cleared.options.some((o) => o.mine), 'no option is flagged mine');
-
-  // Idempotent: a second DELETE still succeeds.
-  const del2 = await fetch(`${base}/api/apps/demo/topics/issue/42/attributes?field=assignee`, { method: 'DELETE' });
-  assert.equal(del2.status, 200);
-});
-
-test('DELETE rejects an unknown field and a bad target type', async () => {
-  const bad1 = await fetch(`${base}/api/apps/demo/topics/issue/5/attributes?field=colour`, { method: 'DELETE' });
-  assert.equal(bad1.status, 400);
-  const bad2 = await fetch(`${base}/api/apps/demo/topics/widget/5/attributes?field=assignee`, { method: 'DELETE' });
-  assert.equal(bad2.status, 400);
-});
-
 // ── 3. Source guards ───────────────────────────────────────────────────
 test('feed routes attach the priority/assignee summary', () => {
   const issuesSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'issues.js'), 'utf-8');
@@ -333,52 +263,38 @@ test('card renderer emits the two chips', () => {
   assert.match(fe, /data-attr-chip/, 'chip carries the delegated-click hook');
 });
 
-// #600: the DELETE (unassign) endpoint is wired with the same collab gate,
-// validation, and rate limiter as POST.
-test('route exposes a rate-limited DELETE that clears the caller vote', () => {
+// #600: the assignee dropdown pre-fills the name box with the viewer's own
+// username, but only when they have no current pick, and without a
+// standalone "Assign to me" button (that approach was replaced).
+test('assignee dropdown defaults the name box to the viewer, gated on no prior vote', () => {
+  const fe = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf-8');
+  // The pre-fill lives in the assignee branch of _renderAttrPopoverBody:
+  // reads App.user.username, gated on !data.myValue, sets + selects the box.
+  assert.match(fe, /const me = \(typeof App !== 'undefined' && App\.user && App\.user\.username\)/,
+    'reads the signed-in username');
+  assert.match(fe, /if \(me && !data\.myValue\) \{/, 'only pre-fills when the viewer has no current pick');
+  assert.match(fe, /input\.value = me;/, 'sets the name box to the viewer');
+  assert.match(fe, /input\.select\(\);/, 'selects the pre-filled text so typing replaces it');
+
+  // The standalone button + its plumbing are gone.
+  assert.doesNotMatch(fe, /_assignToMeBtnHtml/, 'no assign-to-me button helper');
+  assert.doesNotMatch(fe, /data-assign-me/, 'no assign-to-me button hook');
+  assert.doesNotMatch(fe, /_toggleAssignToMe/, 'no assign-to-me click handler');
+  assert.doesNotMatch(fe, /_assignInFlight/, 'no assign-to-me in-flight guard');
+
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf-8');
+  assert.doesNotMatch(css, /\.attr-assign-me/, 'no leftover assign-to-me button CSS');
+
   const routeSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'topic-attributes.js'), 'utf-8');
-  assert.match(routeSrc, /router\.delete\(\s*'\/api\/apps\/:slug\/topics\/:targetType\/:targetRef\/attributes',\s*attributeVoteLimiter/,
-    'DELETE route is registered with the attributeVoteLimiter');
-  assert.match(routeSrc, /attrs\.clearVote\(/, 'DELETE handler calls the clearVote service');
-  // The DELETE handler reuses the collab gate + auth guard like POST.
-  const delIdx = routeSrc.indexOf('router.delete(');
-  const delBody = routeSrc.slice(delIdx);
-  assert.match(delBody, /getAppForUser\([^)]*'collab'/s, 'DELETE enforces collab access');
-  assert.match(delBody, /Not authenticated/, 'DELETE requires an authenticated user');
-
+  assert.doesNotMatch(routeSrc, /router\.delete\(/, 'the unassign DELETE endpoint is removed');
   const svc = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'topic-attributes.js'), 'utf-8');
-  assert.match(svc, /clearVote,/, 'service exports clearVote');
+  assert.doesNotMatch(svc, /clearVote/, 'clearVote service method is removed');
 });
 
-// #600: the "Assign to me" / "Assigned to you" toggle button.
-test('card renderer emits the assign-to-me toggle button on active cards', () => {
-  const fe = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf-8');
-  assert.match(fe, /_assignToMeBtnHtml/, 'a helper renders the assign-to-me button');
-  assert.match(fe, /data-assign-me/, 'the button carries the delegated-click hook');
-  assert.match(fe, /Assign to me/, 'unassigned label present');
-  assert.match(fe, /Assigned to you/, 'assigned label present');
-  // The button is suppressed on readonly (merged/completed) cards.
-  assert.match(fe, /readonly \? '' : AppView\._assignToMeBtnHtml/, 'readonly cards drop the button');
-  // The click handler toggles POST/DELETE with a double-submit guard.
-  assert.match(fe, /_toggleAssignToMe/, 'click handler present');
-  assert.match(fe, /_assignInFlight/, 'double-submit guard present');
-  assert.match(fe, /method: 'DELETE'/, 'toggle-off issues a DELETE');
-});
-
-// #600: "am I the assignee?" is case-insensitive, matching the service's
-// groupKey dedupe.
-test('assignToMe button state comparison is case-insensitive', () => {
-  const fe = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf-8');
-  const idx = fe.indexOf('_assigneeIsMe(');
-  assert.ok(idx > 0, '_assigneeIsMe helper exists');
-  const body = fe.slice(idx, idx + 400);
-  assert.match(body, /toLowerCase\(\)/, 'compares lower-cased values');
-});
-
-// #600: staging seeds make BOTH button states reviewable via ?demo=1 — one
-// card assigned to the viewer (Assigned to you / DELETE path) and one
-// unassigned (Assign to me / POST path).
-test('staging seeds cover both assign-to-me button states', () => {
+// #600: staging seeds make BOTH assignee-dropdown states reviewable via
+// ?demo=1 — one card the viewer already voted on (dropdown opens empty,
+// their pick checked) and unassigned rows (dropdown pre-fills their name).
+test('staging seeds cover both assignee-dropdown states', () => {
   const issuesSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'issues.js'), 'utf-8');
   assert.match(issuesSrc, /myValue: viewer/, 'an issue mock is assigned to the viewer');
   assert.match(issuesSrc, /req\.user && req\.user\.username/, 'the viewer name is sourced from req.user');
