@@ -1,7 +1,9 @@
 FROM node:22-bookworm-slim
 
+# unzip backs `usernode-attachments <id> --unzip <dir>` — extracting
+# user-attached reference zips inside this disposable container.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl wget ca-certificates \
+    git curl wget ca-certificates unzip \
   && rm -rf /var/lib/apt/lists/*
 
 # Cache-bust the Claude Code install so the worker tracks the latest CLI
@@ -52,9 +54,11 @@ COPY usernode-push   /usr/local/bin/usernode-push
 COPY usernode-issues /usr/local/bin/usernode-issues
 # usernode-attachments is read-only like usernode-issues (same ISSUES_JWT
 # auth, works in scout + build): it lists the session's user-attached
-# dev-chat files, or downloads one into the container so Claude Code can
-# Read it (images especially — text files are already inlined in the
-# prompt). See src/routes/internal.js attachments routes (#450).
+# dev-chat files, downloads one into the container so Claude Code can
+# Read it (images/binaries — text files are already inlined in the
+# prompt), or downloads + extracts a zip attachment via --unzip so the
+# agent can browse a whole reference project. See src/routes/internal.js
+# attachments routes (#450).
 COPY usernode-attachments /usr/local/bin/usernode-attachments
 # usernode-report-platform-issue is the worker's escalation valve: a
 # build-turn write path (WORKER_JWT, like usernode-push) that DRAFTS a

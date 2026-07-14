@@ -605,6 +605,19 @@ html, body {
 
 .dc-attach-size { color: var(--text-muted); font-size: 11px; }
 
+/* Kind badge on zip/binary chips ("ZIP · 214 files", "BIN"). */
+.dc-attach-kind {
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
 .dc-attach-remove {
   border: none;
   background: var(--bg-tertiary);

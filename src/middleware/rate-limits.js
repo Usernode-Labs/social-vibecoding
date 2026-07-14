@@ -184,9 +184,9 @@ const feedbackTitleLimiter = makeLimiter({
 });
 
 // Dev-chat attachment uploads (#450): 30 / minute / user. Each upload is
-// a ≤4 MB bytea INSERT; honest use is a handful per message, so 30/min
+// a ≤20 MB bytea INSERT; honest use is a handful per message, so 30/min
 // never bites, while a scripted loop trying to balloon the DB bounces
-// off quickly (per-session totals are additionally capped at 25 MB in
+// off quickly (per-session totals are additionally capped at 50 MB in
 // the route itself). Per-user keyed for shared-NAT fairness.
 const attachmentUploadLimiter = makeLimiter({
   windowMs: 60 * 1000,

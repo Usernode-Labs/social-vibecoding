@@ -3420,13 +3420,15 @@ async function seedStagingCloneSpecPills(pool, config) {
 // chat_session_messages / chat_session_attachments are all
 // staging:private (schema-only in staging), so without this seed the
 // attachment UI — the thumbnail + file chip inside a sent user bubble,
-// the full-size image open, and the text-file download — would be
-// invisible on a staging preview. One fixture session owned by the
-// first admin (the user the tester logs in as) carrying a user message
-// with one tiny PNG and one small text file, plus an assistant reply so
-// the conversation reads naturally. Idempotent via the branch-name
-// existence check; attachment ids are fixed 32-hex constants with
-// ON CONFLICT DO NOTHING.
+// the full-size image open, the text-file download, and the zip/binary
+// kind badges — would be invisible on a staging preview. One fixture
+// session owned by the first admin (the user the tester logs in as)
+// carrying a user message with one tiny PNG, one small text file, one
+// real 2-entry zip (with its validateZip manifest in meta), and one
+// tiny .ico binary, plus an assistant reply so the conversation reads
+// naturally. Idempotent via the branch-name existence check;
+// attachment ids are fixed 32-hex constants with ON CONFLICT DO
+// NOTHING.
 async function seedStagingChatAttachments(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
@@ -3473,6 +3475,8 @@ async function seedStagingChatAttachments(pool, config) {
   // Fixed ids (32-hex) so re-seeding after a partial run stays clean.
   const pngId = 'a11ac4e5fabc4450a11ac4e5fabc4450';
   const txtId = 'b22bd5f60bcd5450b22bd5f60bcd5450';
+  const zipId = 'c33ce6071cde5450c33ce6071cde5450';
+  const icoId = 'd44df7182def5450d44df7182def5450';
 
   // 1×1 red PNG — a real, valid image so the thumbnail and the
   // full-size open both work against the serving route.
@@ -3484,6 +3488,20 @@ async function seedStagingChatAttachments(pool, config) {
     'Staging demo notes\n\nThis text file was attached to a dev-chat message so the\nattachment chip and its download can be tested in staging.\n',
     'utf8'
   );
+  // Real stored-method zip (2 entries under reference/) — passes
+  // validateZip and extracts cleanly, so the ZIP chip badge, the "N
+  // files" label, and the download all work. Its meta below is the
+  // exact validateZip manifest for these bytes.
+  const zipData = Buffer.from(
+    'UEsDBBQAAAAAAAAAAACVZ0MwTwAAAE8AAAATAAAAcmVmZXJlbmNlL1JFQURNRS5tZFN0YWdpbmcgZGVtbyByZWZlcmVuY2UgcHJvamVjdAoKU2VlZGVkIHNvIHRoZSB6aXAgYXR0YWNobWVudCBjaGlwIGlzIHRlc3RhYmxlLgpQSwMEFAAAAAAAAAAAAIrMSx8nAAAAJwAAABIAAAByZWZlcmVuY2UvaW5kZXguanNjb25zb2xlLmxvZygic3RhZ2luZyBkZW1vIHJlZmVyZW5jZSIpOwpQSwECFAAUAAAAAAAAAAAAlWdDME8AAABPAAAAEwAAAAAAAAAAAAAAAAAAAAAAcmVmZXJlbmNlL1JFQURNRS5tZFBLAQIUABQAAAAAAAAAAACKzEsfJwAAACcAAAASAAAAAAAAAAAAAAAAAIAAAAByZWZlcmVuY2UvaW5kZXguanNQSwUGAAAAAAIAAgCBAAAA1wAAAAAA',
+    'base64'
+  );
+  const zipMeta = { entryCount: 2, uncompressedBytes: 118, topLevel: ['reference/'] };
+  // Tiny 1×1 32-bit ICO — classifies as 'binary' (pass-through kind).
+  const icoData = Buffer.from(
+    'AAABAAEAAQEAAAEAIAAwAAAAFgAAACgAAAABAAAAAgAAAAEAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/RET/AAAAAA==',
+    'base64'
+  );
 
   const { rows: msgRows } = await pool.query(
     `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
@@ -3491,11 +3509,13 @@ async function seedStagingChatAttachments(pool, config) {
      RETURNING id`,
     [
       sessionId,
-      'Here\'s a mockup screenshot and my notes — can you match the header color to the mockup?',
+      'Here\'s a mockup screenshot, my notes, a reference project zip, and the favicon — can you match the header color to the mockup?',
       JSON.stringify({
         attachments: [
           { id: pngId, kind: 'image', filename: 'staging-demo-mockup.png', contentType: 'image/png', sizeBytes: pngData.length },
           { id: txtId, kind: 'text', filename: 'staging-demo-notes.txt', contentType: 'text/plain', sizeBytes: txtData.length },
+          { id: zipId, kind: 'zip', filename: 'staging-demo-reference.zip', contentType: 'application/zip', sizeBytes: zipData.length, meta: zipMeta },
+          { id: icoId, kind: 'binary', filename: 'staging-demo-icon.ico', contentType: 'application/octet-stream', sizeBytes: icoData.length },
         ],
       }),
     ]
@@ -3504,18 +3524,23 @@ async function seedStagingChatAttachments(pool, config) {
 
   await pool.query(
     `INSERT INTO chat_session_attachments
-       (id, session_id, message_id, user_id, kind, filename, content_type, size_bytes, data, created_at)
+       (id, session_id, message_id, user_id, kind, filename, content_type, size_bytes, meta, data, created_at)
      VALUES
-       ($1, $2, $3, $4, 'image', 'staging-demo-mockup.png', 'image/png', $5, $6, NOW() - INTERVAL '9 minutes'),
-       ($7, $2, $3, $4, 'text', 'staging-demo-notes.txt', 'text/plain', $8, $9, NOW() - INTERVAL '9 minutes')
+       ($1, $2, $3, $4, 'image', 'staging-demo-mockup.png', 'image/png', $5, NULL, $6, NOW() - INTERVAL '9 minutes'),
+       ($7, $2, $3, $4, 'text', 'staging-demo-notes.txt', 'text/plain', $8, NULL, $9, NOW() - INTERVAL '9 minutes'),
+       ($10, $2, $3, $4, 'zip', 'staging-demo-reference.zip', 'application/zip', $11, $12, $13, NOW() - INTERVAL '9 minutes'),
+       ($14, $2, $3, $4, 'binary', 'staging-demo-icon.ico', 'application/octet-stream', $15, NULL, $16, NOW() - INTERVAL '9 minutes')
      ON CONFLICT (id) DO NOTHING`,
-    [pngId, sessionId, messageId, owner.id, pngData.length, pngData, txtId, txtData.length, txtData]
+    [pngId, sessionId, messageId, owner.id, pngData.length, pngData,
+     txtId, txtData.length, txtData,
+     zipId, zipData.length, JSON.stringify(zipMeta), zipData,
+     icoId, icoData.length, icoData]
   );
 
   await pool.query(
     `INSERT INTO chat_session_messages (session_id, role, content, created_at)
      VALUES ($1, 'assistant', $2, NOW() - INTERVAL '8 minutes')`,
-    [sessionId, 'Got it — I can see the mockup and your notes. Tell me when you want me to build the header change.']
+    [sessionId, 'Got it — I can see the mockup and your notes, and the reference zip (2 files) and favicon will be handed to the coding agent when we build. Tell me when you want me to start.']
   );
 
   log.info('db', 'Staging chat-attachments fixture seeded', {
