@@ -125,6 +125,17 @@
         title: 'Automated tests are still running on the staging build — merge is blocked until they pass.',
       });
     }
+    // 6a (#607) — a promoted proposal with NO verdict recorded at all: the
+    // first run hasn't stamped 'pending' yet (e.g. the promote-time staging
+    // build is still going). Same in-progress treatment as 'pending'.
+    // Rows carrying a console snapshot are genuine pre-#47 legacy and keep
+    // falling through to the vote states.
+    if (!check && status === 'promoted' && !p.console_check_state) {
+      return descriptor('checks_running', 'Checks starting…', 'neutral', true, {
+        votes: votes,
+        title: 'The staging preview is being prepared and automated tests are about to run — merge is blocked until they pass.',
+      });
+    }
     // 6b — checks explicitly skipped (#461): there was genuinely nothing to
     // test (branch level with main, or no GitHub wired up). Terminal and
     // NON-blocking — the gate treats it like 'passing' — so grey, no

@@ -330,6 +330,19 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
 // no-op cases (no repo / no bot token → rebuildSessionStaging returns
 // 'skipped'); a genuine build failure propagates to the caller.
 async function recheckSessionChecks({ config, pool, session, reason }) {
+  // #607: stamp 'pending' + tell open clients the moment the re-run is
+  // requested — a needed staging rebuild can take minutes, and before this
+  // the badge kept showing the stale verdict (or nothing at all for a
+  // NULL-verdict row) the whole time. Best-effort; captureForSession
+  // re-stamps idempotently (same commit sha → failure streak preserved).
+  {
+    const visuals = require('./visuals');
+    await visuals.setChecksPending(pool, session.id, session.checks_commit_sha || null)
+      .catch((err) => log.warn('staging-recovery', 'recheck setChecksPending failed (non-fatal)', {
+        sessionId: session.id, err: err.message,
+      }));
+    visuals.notifyChecksPending(session.id, session.checks_commit_sha || null);
+  }
   if (await stagingNeedsRebuild(session)) {
     // rebuildSessionStaging owns the capture (see above) and the no-op
     // short-circuits (missing owner/repo or bot token → 'skipped').

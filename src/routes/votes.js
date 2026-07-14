@@ -232,7 +232,10 @@ function stagingMockProposals(viewer) {
     },
     // #47: a proposal still running its checks — the grey "Checks running…"
     // spinner badge is reviewable via ?demo=1, and the gate would block the
-    // merge until the run reports.
+    // merge until the run reports. #607: the run started ~2 minutes ago
+    // (checks_checked_at override), so the detail shows the fresh state —
+    // spinner + "Started 2 minutes ago" with NO re-run button (recheckable
+    // is set, but the freshness gate hides the escape hatch).
     {
       ...mk(9000008, 900108,
         '[Mock] Checks-pending test: tests are still running on the staging build',
@@ -240,6 +243,23 @@ function stagingMockProposals(viewer) {
       check_state: 'pending',
       recheckable: true,
       test_results: [],
+      checks_checked_at: hoursAgo(0.03),
+    },
+    // #607: a freshly promoted proposal whose first checks run hasn't even
+    // stamped 'pending' yet (staging build still going) — NO verdict, NO
+    // console snapshot. The grey "Checks starting…" spinner badge + the
+    // "Checks are starting…" detail block (with no re-run button, since the
+    // row is minutes old) are reviewable via ?demo=1.
+    {
+      ...mk(9000021, 900121,
+        '[Mock] Checks-starting test: just promoted, the first run has not begun yet',
+        0.05, 1, 0, 0, { required: 2, windowEndsAt: hoursAhead(71) }),
+      check_state: null,
+      console_check_state: null,
+      console_errors: [],
+      console_checked_at: null,
+      test_results: [],
+      checks_checked_at: null,
     },
     // #447: a proposal STUCK in 'pending' — it crossed the vote threshold but
     // its checks have been "running" far longer than any real run takes
@@ -667,6 +687,19 @@ function voteRoutes(config) {
             } catch {}
           }
           const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
+          // #607: stamp 'pending' + broadcast before the (minutes-long)
+          // staging build so the freshly promoted proposal's card shows
+          // "Checks running…" instead of a bare NULL-verdict "Re-run
+          // checks" button. captureForSession re-stamps idempotently.
+          {
+            const visualsService = require('../services/visuals');
+            await visualsService.setChecksPending(
+              pool, session.id, commitHash === 'latest' ? null : commitHash
+            ).catch((err) => log.warn('votes', 'promote setChecksPending failed (non-fatal)', {
+              sessionId: session.id, err: err.message,
+            }));
+            visualsService.notifyChecksPending(session.id, commitHash === 'latest' ? null : commitHash);
+          }
           let result;
           try {
             result = await staging.buildAndDeployStaging(config, session, app, commitHash);

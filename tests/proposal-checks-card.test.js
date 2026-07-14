@@ -154,6 +154,70 @@ test('the checks detail shows a skipped block with the reason and the re-run but
   assert.match(html, /Re-run checks/);
 });
 
+// #607: a fresh proposal with NOTHING recorded yet (no check_state, no
+// console snapshot — the first run hasn't stamped 'pending') shows an
+// explicit in-progress state instead of silence / a bare re-run button.
+test('a fresh row with no verdict renders the "Checks starting…" spinner badge', () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._renderProposalCard(baseProposal({}));
+  assert.match(html, /Checks starting/);
+  assert.match(html, /dc-status-spinner-arc/);
+});
+
+test('a fresh-NULL detail shows "Checks are starting…" with NO re-run button', () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._checksDetailHtml(baseProposal({
+    user_id: ME,
+    created_at: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+  }));
+  assert.match(html, /Checks are starting/);
+  assert.match(html, /dc-status-spinner-arc/);
+  assert.doesNotMatch(html, /Re-run checks/);
+});
+
+test('a stale fresh-NULL row (old created_at) offers the re-run escape hatch to the owner', () => {
+  const AppView = makeAppView(ME);
+  // baseProposal's created_at is far in the past → past the 10-min window.
+  const html = AppView._checksDetailHtml(baseProposal({ user_id: ME }));
+  assert.match(html, /Checks are starting/);
+  assert.match(html, /Re-run checks/);
+});
+
+test('a FRESH pending run shows the spinner + started line and hides the re-run button', () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._checksDetailHtml(baseProposal({
+    user_id: ME, check_state: 'pending', test_results: [],
+    checks_checked_at: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+  }));
+  assert.match(html, /Checks are still running/);
+  assert.match(html, /dc-status-spinner-arc/);
+  assert.match(html, /Started .+\./); // relTime renders "2m ago" / "just now"
+  assert.doesNotMatch(html, /Re-run checks/);
+});
+
+test('a STALE pending run (past the 10-min window) still offers the re-run button', () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._checksDetailHtml(baseProposal({
+    user_id: ME, check_state: 'pending', test_results: [],
+    checks_checked_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+  }));
+  assert.match(html, /Checks are still running/);
+  assert.match(html, /re-runs the checks automatically/);
+  assert.match(html, /Re-run checks/);
+});
+
+// #607: a WS/poll-driven re-render mid-recheck must not resurrect an
+// enabled button.
+test('an in-flight recheck renders a disabled "Re-running…" button on re-render', () => {
+  const AppView = makeAppView(ME);
+  const pr = baseProposal({ user_id: ME, check_state: 'error', test_results: [] });
+  AppView._recheckInFlight.add(pr.id);
+  const html = AppView._recheckBtnHtml(pr);
+  assert.match(html, /Re-running…/);
+  assert.match(html, /disabled/);
+  assert.doesNotMatch(html, /castRecheck/);
+});
+
 test('_proposalPinRank pins failing/error proposals above ordinary ones', () => {
   const AppView = makeAppView(ME);
   assert.equal(AppView._proposalPinRank(baseProposal({ status: 'merging' })), 0);

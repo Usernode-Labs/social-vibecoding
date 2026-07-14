@@ -65,9 +65,13 @@ function makeAppView(userId) {
 }
 
 const ME = 42;
+// check_state 'passing' keeps these rows on the conflict/behind rungs under
+// test — with NO verdict recorded the #607 "Checks starting…" rung would
+// outrank behind, same as 'pending' does.
 const baseProposal = (over) => ({
   id: 7, pr_number: 700, pr_title: 'Tidy the header', username: 'me',
   user_id: ME, status: 'promoted', created_at: '2026-06-01T00:00:00Z',
+  check_state: 'passing', test_results: [],
   ...over,
 });
 
@@ -149,6 +153,7 @@ function makeHome() {
 const homeProposal = (over) => ({
   id: 7, app_slug: 'demo', app_name: 'Demo', pr_number: 700,
   pr_title: 'Tidy the header', yes_count: 1, majority: 2, status: 'promoted',
+  check_state: 'passing', test_results: [],
   ...over,
 });
 

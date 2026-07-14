@@ -1318,6 +1318,38 @@ const AppView = {
   // lock_changed). The feed re-render preserves the open accordion
   // card. The chat view only needs the vote snapshot refreshed; the
   // session and settings views have their own refresh paths.
+  // #607: polling fallback while any loaded proposal's checks are in
+  // progress ('pending', or fresh-NULL with no verdict recorded yet). The
+  // WS checks_ready broadcasts are the primary update channel; this only
+  // covers missed pushes (disconnect, laptop waking from sleep). Called
+  // after every dev-data load, so the interval self-clears on the load
+  // that finds nothing in progress.
+  _checksPollHandle: null,
+  _syncChecksPoll(proposals) {
+    const inProgress = Array.isArray(proposals) && proposals.some((pr) =>
+      pr && pr.status !== 'merged'
+      && (pr.check_state === 'pending' || (!pr.check_state && !pr.console_check_state)));
+    if (!inProgress) {
+      if (AppView._checksPollHandle) {
+        clearInterval(AppView._checksPollHandle);
+        AppView._checksPollHandle = null;
+      }
+      return;
+    }
+    if (AppView._checksPollHandle) return;
+    AppView._checksPollHandle = setInterval(() => {
+      // Leaving the dev tab (or the app view) ends the poll; a hidden tab
+      // just skips the tick and resumes when visible again.
+      if (!AppView.appData || typeof App === 'undefined' || App.currentTab !== 'dev') {
+        clearInterval(AppView._checksPollHandle);
+        AppView._checksPollHandle = null;
+        return;
+      }
+      if (document.hidden) return;
+      AppView.refreshDevData('checks-poll');
+    }, 20000);
+  },
+
   refreshDevData(kind) {
     if (!AppView.appData || typeof App === 'undefined' || App.currentTab !== 'dev') return;
     if (App.currentSubTab === 'chat') {
@@ -1363,6 +1395,9 @@ const AppView = {
       if (typeof GroupChat !== 'undefined' && GroupChat.refreshVoteControls) {
         GroupChat.refreshVoteControls();
       }
+      // #607: keep the checks-in-progress polling fallback in sync on the
+      // chat sub-tab's vote-snapshot path too.
+      AppView._syncChecksPoll(promoted);
       return { promoted, merged, promotedData };
     } catch {
       return null;
@@ -1706,6 +1741,9 @@ const AppView = {
       AppView._mergedTotal = (typeof mergedData.total === 'number')
         ? mergedData.total
         : merged.length;
+      // #607: keep the checks-in-progress polling fallback in sync with
+      // what this load actually saw.
+      AppView._syncChecksPoll(promoted);
       return true;
     } catch {
       return false;
@@ -3131,9 +3169,25 @@ const AppView = {
   _checksDetailHtml(pr) {
     if (!pr) return '';
     const state = pr.check_state;
-    // #447: a never-recorded (legacy/clone) check still offers a manual
-    // re-run for owners/admins so it isn't stuck blocked with no way out.
     if (!state) {
+      // #607: a fresh proposal with nothing recorded yet — the first run
+      // hasn't stamped 'pending' (staging build still going). Show an
+      // explicit starting state instead of a bare "Re-run checks" button.
+      // The re-run escape hatch only appears once the proposal is old
+      // enough (10 min, mirroring the server's stale-checks sweep) that
+      // "starting" has plausibly wedged.
+      if (!pr.console_check_state) {
+        const stale = AppView._checksRunStale(pr.created_at);
+        return `
+        <div class="mt-2 rounded border border-zinc-300/40 dark:border-zinc-700/60 bg-zinc-500/5 px-2 py-1.5 text-zinc-600 dark:text-zinc-400">
+          <div class="font-medium"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks are starting…</div>
+          <div class="mt-0.5 opacity-90">The staging preview is being prepared, then automated tests run against it. Merge is blocked until all tests pass.</div>
+          ${stale ? '<div class="mt-1 opacity-80">If this has been stuck for a while, the platform re-runs the checks automatically — or re-run them now.</div>' : ''}
+          ${stale ? AppView._recheckBtnHtml(pr) : ''}
+        </div>`;
+      }
+      // #447: a never-recorded legacy/clone check still offers a manual
+      // re-run for owners/admins so it isn't stuck blocked with no way out.
       const fallback = AppView._consoleCheckDetailHtml(pr);
       const rb = AppView._recheckBtnHtml(pr);
       return rb ? `${fallback}<div class="mt-1">${rb}</div>` : fallback;
@@ -3143,13 +3197,20 @@ const AppView = {
     if (state === 'pending') {
       // #447: stuck-'pending' checks now self-heal (the platform re-runs them
       // automatically once they've been running too long) and can be kicked
-      // manually — so this is no longer an indefinite, unexplained spinner.
+      // manually. #607: a FRESH run (under the ~10-min stale window) shows
+      // just the spinner + started-at line — offering "Re-run checks"
+      // seconds after a run began was the confusion in the issue report.
+      const stale = AppView._checksRunStale(pr.checks_checked_at);
+      const started = pr.checks_checked_at
+        ? `<div class="mt-0.5 opacity-80">Started ${escapeHtml(relTime(pr.checks_checked_at))}.</div>`
+        : '';
       return `
         <div class="mt-2 rounded border border-zinc-300/40 dark:border-zinc-700/60 bg-zinc-500/5 px-2 py-1.5 text-zinc-600 dark:text-zinc-400">
-          <div class="font-medium">Checks are still running…</div>
+          <div class="font-medium"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks are still running…</div>
           <div class="mt-0.5 opacity-90">The staging build is being tested. Merge is blocked until all tests pass.</div>
-          <div class="mt-1 opacity-80">If this has been running for a while, the platform re-runs the checks automatically — or re-run them now.</div>
-          ${AppView._recheckBtnHtml(pr)}
+          ${started}
+          ${stale ? '<div class="mt-1 opacity-80">If this has been running for a while, the platform re-runs the checks automatically — or re-run them now.</div>' : ''}
+          ${stale ? AppView._recheckBtnHtml(pr) : ''}
         </div>`;
     }
     if (state === 'error') {
@@ -3219,6 +3280,18 @@ const AppView = {
       </div>`;
   },
 
+  // #607: is an in-progress checks run old enough to count as stuck? A
+  // fresh run keeps the quiet spinner; past the window (mirrors the
+  // server's CHECKS_STALE_MS default) the detail offers the manual re-run
+  // escape hatch. A missing/unparseable timestamp counts as stale so a
+  // row with no bookkeeping is never left without a way out.
+  CHECKS_STALE_CLIENT_MS: 10 * 60 * 1000,
+  _checksRunStale(ts) {
+    if (!ts) return true;
+    const t = new Date(ts).getTime();
+    return !Number.isFinite(t) || (Date.now() - t) > AppView.CHECKS_STALE_CLIENT_MS;
+  },
+
   // #447: the "Re-run checks" action. Renders for the proposal's owner or an
   // admin when the checks are stuck running, couldn't run, were never
   // recorded, or are failing — never for a clean 'passing' run. Hitting it
@@ -3232,6 +3305,11 @@ const AppView = {
     // button is reviewable regardless of the demo viewer's owner/admin status;
     // real proposals never carry it and stay owner/admin-only.
     if (!owner && !App.user?.isAdmin && !pr.recheckable) return '';
+    // #607: a WS/poll-driven re-render mid-request must not resurrect an
+    // enabled button — keep it disabled while the request is in flight.
+    if (AppView._recheckInFlight.has(pr.id)) {
+      return `<button type="button" class="gc-vote-btn mt-1" disabled>Re-running…</button>`;
+    }
     return `<button type="button" class="gc-vote-btn mt-1" title="Rebuild the staging preview if needed and re-run the automated tests" onclick="AppView.castRecheck(${pr.id}, this)">Re-run checks</button>`;
   },
 
@@ -3252,7 +3330,19 @@ const AppView = {
         const data = await resp.json().catch(() => ({}));
         alert(data.error || `Re-run failed (HTTP ${resp.status}).`);
         if (btn) { btn.disabled = false; btn.textContent = 'Re-run checks'; }
+        return;
       }
+      const data = await resp.json().catch(() => ({}));
+      // Rechecks can't run inside a staging preview of the platform itself.
+      if (data.status === 'unavailable') {
+        alert('Re-running checks is unavailable in this preview.');
+        if (btn) { btn.disabled = false; btn.textContent = 'Re-run checks'; }
+        return;
+      }
+      // #607: the server stamped 'pending' before responding — refresh so
+      // the spinning "Checks running…" badge renders immediately (the WS
+      // pending broadcast covers everyone else's screens).
+      AppView.refreshDevData('recheck');
     } catch (err) {
       alert(`Re-run failed: ${err.message}`);
       if (btn) { btn.disabled = false; btn.textContent = 'Re-run checks'; }
@@ -5028,7 +5118,18 @@ const AppView = {
     // badge says it all; don't stack a redundant "✓ Checks passing".
     if (pr.status === 'merged') return '';
     const state = pr.check_state;
-    if (!state) return AppView.consoleWarningBadgeHtml(pr);
+    if (!state) {
+      // #607: a fresh proposal with NOTHING recorded yet (post-#47 rows
+      // dual-write console_check_state alongside every verdict, so both
+      // missing means the first run hasn't stamped 'pending' yet — e.g.
+      // the promote-time staging build is still going). Show the spinner
+      // instead of silence. Rows carrying a console snapshot are genuine
+      // pre-#47 legacy — keep their advisory fallback.
+      if (!pr.console_check_state) {
+        return `<span class="gc-checks-running-badge" title="The staging preview is being prepared and automated tests are about to run — merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks starting…</span>`;
+      }
+      return AppView.consoleWarningBadgeHtml(pr);
+    }
     if (state === 'passing') {
       return `<span class="gc-merged-badge" title="All automated tests passed on the staging build">✓ Checks passing</span>`;
     }
