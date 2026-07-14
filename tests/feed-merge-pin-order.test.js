@@ -80,6 +80,9 @@ test('_proposalPinRank: maps each state to the badge-matching tier', () => {
   assert.equal(AppView._proposalPinRank({ status: 'merging' }), 0, 'merging → 0');
   assert.equal(AppView._proposalPinRank({ status: 'promoted', resolving: true }), 1, 'resolving → 1');
   assert.equal(AppView._proposalPinRank({ status: 'promoted', merge_conflict_state: 'failed' }), 2, 'failed → 2');
+  // A merge-time 'conflict' snapshot pins in the same tier: a real merge
+  // attempt failed and the gate-filtered auto-resolver may never touch it.
+  assert.equal(AppView._proposalPinRank({ status: 'promoted', merge_conflict_state: 'conflict' }), 2, 'conflict → 2');
   // #47: failing / error checks pin at tier 3, just below conflict-failed.
   assert.equal(AppView._proposalPinRank({ status: 'promoted', check_state: 'failing' }), 3, 'checks failing → 3');
   assert.equal(AppView._proposalPinRank({ status: 'promoted', check_state: 'error' }), 3, 'checks error → 3');
@@ -120,7 +123,7 @@ test('feed: within a pinned tier, most-recent-activity wins (stable)', () => {
   );
 });
 
-test("feed: 'behind' and a bare 'conflict' snapshot are NOT pinned", () => {
+test("feed: 'behind' is NOT pinned, but a 'conflict' snapshot IS (a real merge attempt failed)", () => {
   const AppView = makeAppView();
   AppView._proposals = [
     prop({ id: 'behind', merge_conflict_state: 'behind', behind_main: 3, created_at: at(1), promoted_at: at(1), last_message_at: at(1) }),
@@ -128,10 +131,12 @@ test("feed: 'behind' and a bare 'conflict' snapshot are NOT pinned", () => {
     prop({ id: 'normal-new', created_at: at(7), promoted_at: at(7), last_message_at: at(7) }),
     prop({ id: 'merging', status: 'merging', created_at: at(1), promoted_at: at(1), last_message_at: at(1) }),
   ];
-  // Only 'merging' pins; the rest stay in the normal tier ordered by recency.
+  // 'merging' pins first; 'conflict' pins in the failed tier (the
+  // auto-resolver may never pick it up, so it must stay visible until the
+  // creator finishes the merge); 'behind' stays in the normal tier.
   assert.deepEqual(
     idsOf(AppView._feedItems()),
-    ['merging', 'normal-new', 'conflict', 'behind']
+    ['merging', 'conflict', 'normal-new', 'behind']
   );
 });
 

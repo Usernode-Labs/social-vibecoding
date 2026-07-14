@@ -2083,12 +2083,12 @@ const AppView = {
     const govT = (g) => Math.max(ts(g.created_at), ts(g.last_message_at));
     const mergedT = (m) => Math.max(ts(m.created_at), ts(m.last_message_at));
     // Mirror of _proposalPinRank, inlined to keep this helper self-contained
-    // (merging > resolving > conflict-failed > normal).
+    // (merging > resolving > conflict-failed/merge-conflict > normal).
     const pinRank = (pr) => {
       if (!pr) return 3;
       if (pr.status === 'merging') return 0;
       if (pr.resolving) return 1;
-      if (pr.merge_conflict_state === 'failed') return 2;
+      if (pr.merge_conflict_state === 'failed' || pr.merge_conflict_state === 'conflict') return 2;
       return 3;
     };
 
@@ -3626,29 +3626,40 @@ const AppView = {
   // Lists the conflicting file paths and when the snapshot was last
   // checked, plus the standing guidance to run "Sync with main" from the
   // session's dev-chat.
-  // #386: only renders for the 'failed' state — an auto-resolve attempt
-  // actually ran and could not fix the conflict. A pre-attempt 'conflict'
-  // snapshot (or a clean/behind proposal) shows nothing here; the neutral
-  // card badge is enough while the auto-resolver does its work.
+  // #386: renders for the 'failed' state — an auto-resolve attempt actually
+  // ran and could not fix the conflict — and (since the silent-merge-failure
+  // fix) for 'conflict': a real merge attempt 405'd at GitHub. 'conflict'
+  // matters because the auto-resolver only picks up vote-eligible proposals,
+  // so a failed merge can otherwise sit with no visible record of the
+  // attempt and nothing telling anyone who has to act. While the resolver
+  // IS actively working the card shows "Resolving conflicts…" instead
+  // (the 'resolving' state outranks both in MergeStatus.lifecycle).
   _mergeConflictDetailHtml(pr) {
     const mcs = pr.merge_conflict_state;
-    if (mcs !== 'failed') return '';
+    if (mcs !== 'failed' && mcs !== 'conflict') return '';
+    if (pr.resolving) return '';
     const files = Array.isArray(pr.conflict_files) ? pr.conflict_files : [];
-    const heading = 'Automatic conflict resolution failed.';
+    const heading = mcs === 'failed'
+      ? 'Automatic conflict resolution failed.'
+      : 'A merge was attempted, but this proposal conflicts with main.';
     const fileList = files.length
       ? `<div class="mt-1">Conflicting files:</div>
          <ul class="mt-0.5 ml-3 list-disc space-y-0.5">${files.map((f) =>
            `<li class="font-mono text-[0.7rem] break-all">${escapeHtml(String(f))}</li>`).join('')}</ul>`
       : '';
     const checked = pr.conflict_checked_at
-      ? `<div class="mt-1 opacity-80">Last checked ${escapeHtml(relTime(pr.conflict_checked_at))}.</div>`
+      ? `<div class="mt-1 opacity-80">Last attempt ${escapeHtml(relTime(pr.conflict_checked_at))}.</div>`
       : '';
+    const creator = pr.username ? `<span class="font-medium">${escapeHtml(pr.username)}</span>` : 'the proposal\u2019s creator';
+    const guidance = mcs === 'failed'
+      ? `${creator} needs to resolve it: run "Sync with main" from the session's dev-chat.`
+      : `Automatic resolution may not run for this proposal — ${creator} needs to finish the merge: open the session's dev-chat and run "Sync with main".`;
     return `
       <div class="mt-2 rounded border border-red-500/30 bg-red-500/5 px-2 py-1.5 text-red-500">
         <div class="font-medium">${heading}</div>
         ${fileList}
         ${checked}
-        <div class="mt-1 opacity-80">The owner can run "Sync with main" from the session's dev-chat to resolve it.</div>
+        <div class="mt-1 opacity-80">${guidance}</div>
       </div>`;
   },
 
@@ -4461,17 +4472,19 @@ const AppView = {
   // the list position always agrees with the badge the user sees:
   //   0 — 'merging'  ("Merging…")            being merged right now
   //   1 — resolving  ("Resolving conflicts…")  auto-resolver sync in flight
-  //   2 — merge_conflict_state 'failed'        ("⚠ Conflict resolution failed")
+  //   2 — merge_conflict_state 'failed' ("⚠ Conflict resolution failed") or
+  //       'conflict' ("⚠ Merge failed — conflict"): a real attempt failed
+  //       and the auto-resolver may never pick it up (it only touches
+  //       vote-eligible proposals), so the card must stay visible until the
+  //       creator finishes the merge.
   //   3 — everything else (normal, by recency)
-  // A bare 'behind'/'conflict' snapshot is NOT pinned: both render as the
-  // neutral "Behind main · N" badge (a fresh 'conflict' bumps behind_main
-  // and flips `resolving` true shortly after, at which point rank 1 takes
-  // over), and many PRs can be behind main.
+  // A bare 'behind' snapshot is NOT pinned: it renders as the neutral
+  // "Behind main · N" badge, and many PRs can be behind main.
   _proposalPinRank(pr) {
     if (!pr) return 4;
     if (pr.status === 'merging') return 0;
     if (pr.resolving) return 1;
-    if (pr.merge_conflict_state === 'failed') return 2;
+    if (pr.merge_conflict_state === 'failed' || pr.merge_conflict_state === 'conflict') return 2;
     // #47: a proposal whose checks failed / couldn't run blocks merge and
     // needs the owner's attention — pin it just below the conflict-failed
     // affordance so it stays visible above ordinary chatter.

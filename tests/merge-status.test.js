@@ -125,10 +125,38 @@ test('state 7 — behind main, with the commit count in the label', () => {
   assert.equal(life.key, 'behind');
   assert.equal(life.label, 'Behind main · 4');
   assert.equal(life.tone, 'amber');
-  // A 'behind'/'conflict' snapshot with no count still resolves. (A
-  // verdict is set — with none recorded the #607 checks-starting rung
-  // would outrank behind, same as 'pending' does.)
-  assert.equal(key({ status: 'promoted', merge_conflict_state: 'conflict', check_state: 'passing' }), 'behind');
+  // A 'behind' snapshot with no count still resolves. (A verdict is set —
+  // with none recorded the #607 checks-starting rung would outrank behind,
+  // same as 'pending' does.)
+  assert.equal(key({ status: 'promoted', merge_conflict_state: 'behind', check_state: 'passing' }), 'behind');
+});
+
+// Silent-merge-failure fix: a 'conflict' snapshot means a REAL merge attempt
+// 405'd at GitHub (routes/votes.js is the only writer). It no longer hides
+// behind the reassuring "Behind main" badge — the auto-resolver only picks
+// up vote-eligible proposals, so below the gate nothing would ever happen
+// and nobody was told. Red, and the tooltip names the way out (the creator
+// finishing the merge from their session).
+test("state 4b — 'conflict' (merge attempt failed) is red and says the creator must finish", () => {
+  const life = MergeStatus.lifecycle({
+    status: 'promoted', merge_conflict_state: 'conflict', check_state: 'passing', behind_main: 1,
+  });
+  assert.equal(life.key, 'merge_conflict');
+  assert.equal(life.label, 'Merge failed — conflict');
+  assert.equal(life.tone, 'red');
+  assert.match(life.title, /creator needs to finish the merge/);
+  assert.match(life.title, /Sync with main/);
+  // While the auto-resolver actually runs, the in-flight state wins so the
+  // card shows progress, not a stale failure.
+  assert.equal(
+    key({ status: 'promoted', merge_conflict_state: 'conflict', resolving: true }),
+    'resolving'
+  );
+  // 'failed' (resolver ran and gave up) still outranks it.
+  assert.equal(
+    key({ status: 'promoted', merge_conflict_state: 'failed' }),
+    'conflict_failed'
+  );
 });
 
 test('state 8 — awaiting admin: locked + majority reached', () => {
@@ -242,7 +270,7 @@ test('pillHtml: in-vote pill appends the tally; badgeHtml does not', () => {
 test('STATE_BADGE_KEYS covers the merge-pipeline / conflict / ready states only', () => {
   assert.deepEqual(
     MergeStatus.STATE_BADGE_KEYS.slice().sort(),
-    ['behind', 'conflict_failed', 'merged', 'merging', 'ready', 'resolving'].sort()
+    ['behind', 'conflict_failed', 'merge_conflict', 'merged', 'merging', 'ready', 'resolving'].sort()
   );
   // in_vote / draft / checks states are deliberately excluded (pill + the
   // dedicated checks badge cover them on the feed card).

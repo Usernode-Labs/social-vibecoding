@@ -2379,8 +2379,13 @@ async function checkAndMerge(config, pool, session, options = {}) {
       const label = session.pr_title
         ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
+      // Honest wording: the auto-resolver drain only picks up proposals
+      // that are vote-eligible to merge, so "syncing automatically" was a
+      // false promise for anything below the gate (including admin
+      // force-merges). The creator's "Sync with main" is the path that
+      // always works, so lead with it.
       await sendSystemMessage(pool, session.app_id,
-        `${label} hit a conflict with main — syncing automatically and will retry the merge. ${owner}: you can also resolve it from the session's dev-chat.`,
+        `${label} hit a conflict with main during a merge attempt. ${owner}: finish the merge by running "Sync with main" from the session's dev-chat. (Auto-resolution retries only when the proposal is eligible to merge on votes.)`,
         'system'
       );
       // Auto-heal the conflict the same way the behind_main gate does.

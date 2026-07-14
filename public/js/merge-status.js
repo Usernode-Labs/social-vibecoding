@@ -94,6 +94,20 @@
         title: 'The last automatic conflict resolution failed — the owner needs to resolve manually.',
       });
     }
+    // 4b — a real merge attempt hit a GitHub conflict ('conflict' is written
+    // ONLY by the merge-time 405 path in routes/votes.js). The auto-resolver
+    // may pick it up (state 3 takes over while it runs), but it only touches
+    // vote-eligible proposals — so without this state a failed merge could
+    // sit silently behind a reassuring "Behind main · syncing automatically"
+    // badge forever. Red: the reliable way out is the proposal's creator
+    // finishing the merge from their session.
+    if (mcs === 'conflict') {
+      return descriptor('merge_conflict', 'Merge failed — conflict', 'red', false, {
+        glyph: '⚠', votes: votes,
+        title: 'A merge was attempted but this proposal conflicts with main. '
+          + 'The proposal\u2019s creator needs to finish the merge from their dev session ("Sync with main").',
+      });
+    }
     // 5a — the staging preview itself couldn't boot, so checks never ran
     // (#237). Distinct from a test failure: nothing was even exercised. Red,
     // with the captured crash reason in the tooltip so the owner knows what
@@ -148,9 +162,10 @@
           : 'Automated checks were skipped — there was nothing to test. This does not block the merge.',
       });
     }
-    // 7 — behind main (or a fresh conflict snapshot, which always carries
-    // behind_main ≥ 1 while the auto-resolver runs).
-    if (behind > 0 || mcs === 'behind' || mcs === 'conflict') {
+    // 7 — behind main. ('conflict' no longer falls through here — it has its
+    // own red state 4b above, since "syncing automatically" was a false
+    // promise for proposals the gate-filtered auto-resolver never picks up.)
+    if (behind > 0 || mcs === 'behind') {
       return descriptor('behind', behind ? 'Behind main · ' + behind : 'Behind main', 'amber', false, {
         votes: votes,
         title: 'This proposal is behind main — syncing automatically, then it will retry the merge.',
@@ -224,7 +239,7 @@
     // Keys whose canonical badge belongs in the feed card's "state" slot.
     // In-vote / draft are conveyed by the vote pill; checks states keep their
     // own detailed badge (with per-test counts), so they're excluded here.
-    STATE_BADGE_KEYS: ['merged', 'merging', 'resolving', 'conflict_failed', 'behind', 'ready'],
+    STATE_BADGE_KEYS: ['merged', 'merging', 'resolving', 'conflict_failed', 'merge_conflict', 'behind', 'ready'],
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = MergeStatus;
