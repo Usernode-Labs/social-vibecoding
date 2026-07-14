@@ -145,8 +145,7 @@ test('#dev-body tap opens the proposal topic on a bare merged-row click', async 
   AppView._wirePlusMenu = () => {};
   AppView._wireViewToggle = () => {};
   AppView._loadChatCardPreview = () => {};
-  AppView._renderSessionsStrip = () => {};
-  AppView._syncStripPolling = () => {};
+  AppView._syncSessionPolling = () => {};
   AppView._loadDevFeed = async () => {};
   AppView._getFeedScroll = () => 0;
   const opened = [];

@@ -1879,6 +1879,11 @@ const App = {
           } else if (sec === 'governance' && parts[4]) {
             subTab = 'topic';
             ref = { kind: 'gov', id: parseInt(parts[4]) || null };
+          } else if (sec === 'shared' && parts[4]) {
+            // A shared dev session's public discussion page (distinct
+            // from dev/sessions/{id}, which is the OWNER's dev chat).
+            subTab = 'topic';
+            ref = { kind: 'session', id: parseInt(parts[4]) || null };
           } else {
             // dev, dev/issues, dev/proposals, dev/sessions (no id) —
             // all land on the plain card list.
@@ -2048,7 +2053,8 @@ const App = {
             && typeof AppView !== 'undefined' && AppView._devTopic) {
           const t = AppView._devTopic;
           const seg = t.kind === 'issue' ? 'issues'
-            : t.kind === 'proposal' ? 'proposals' : 'governance';
+            : t.kind === 'proposal' ? 'proposals'
+            : t.kind === 'session' ? 'shared' : 'governance';
           newHash = `#app/${App.currentApp}/dev/${seg}/${t.id}`;
         } else {
           newHash = `#app/${App.currentApp}/dev`;
@@ -2077,7 +2083,7 @@ const App = {
     // entry, so device/browser back mirrors the in-page back buttons —
     // but which session/topic isn't part of the id (moving between two
     // topics of the same kind replaces in place).
-    const SUB_SCREENS = new Set(['sessions', 'chat', 'settings', 'issues', 'proposals', 'governance']);
+    const SUB_SCREENS = new Set(['sessions', 'chat', 'settings', 'issues', 'proposals', 'governance', 'shared']);
     const screenIdOf = (h) => {
       const segs = String(h || '').replace(/^#/, '').split('/');
       if (segs[0] === 'app' && segs[2] === 'dev') {
